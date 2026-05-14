@@ -8,6 +8,9 @@
 
 import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
+import fs from "node:fs";
+import os from "node:os";
+import nodePath from "node:path";
 
 const { shellQuote, runCapture } = require("../runner");
 
@@ -20,6 +23,7 @@ const { isWsl } = require("../platform");
 export const OLLAMA_CONTAINER_PORT = isWsl() ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
 
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
+export const LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV = "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL";
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 export const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
 export const QWEN3_6_OLLAMA_MODEL = "qwen3.6:35b";
@@ -104,10 +108,47 @@ export interface LocalProviderHealthStatus {
   providerLabel: string;
   endpoint: string;
   detail: string;
+  /**
+   * Specific failure mode, rendered as the status word (e.g. `unauthorized`,
+   * `unreachable`). Absent on `ok:true`; defaults to `unreachable` at the
+   * render layer if absent on `ok:false`. (#3265)
+   */
+  failureLabel?: "unreachable" | "unhealthy" | "unauthorized";
+  /**
+   * Short qualifier (e.g. "auth proxy") rendered as `Inference (<probeLabel>):`
+   * for additional hops so multi-hop health surfaces in the status output.
+   * Absent for the main backend probe. (#3265)
+   */
+  probeLabel?: string;
+  /**
+   * Additional probes that share the same Inference rendering — currently
+   * used to surface the Ollama auth-proxy hop alongside the backend probe so
+   * a failing proxy doesn't get hidden behind a healthy backend. (#3265)
+   */
+  subprobes?: LocalProviderHealthStatus[];
 }
 
 export interface LocalProviderHealthProbeOptions {
   runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
+  /**
+   * Reads the persisted Ollama auth-proxy bearer token. Injectable for tests.
+   * Default reads from `~/.nemoclaw/ollama-proxy-token` (written by
+   * inference/ollama/proxy.ts during onboard).
+   */
+  loadOllamaProxyTokenImpl?: () => string | null;
+}
+
+function defaultLoadOllamaProxyToken(): string | null {
+  const tokenPath = nodePath.join(os.homedir(), ".nemoclaw", "ollama-proxy-token");
+  try {
+    if (fs.existsSync(tokenPath)) {
+      const token = fs.readFileSync(tokenPath, "utf-8").trim();
+      return token || null;
+    }
+  } catch {
+    /* ignore — null means "no auth-proxy onboarded; skip the subprobe" */
+  }
+  return null;
 }
 
 export function validateOllamaPortConfiguration(): ValidationResult {
@@ -124,13 +165,34 @@ export function validateOllamaPortConfiguration(): ValidationResult {
   return { ok: true };
 }
 
-export function getLocalProviderBaseUrl(provider: string): string | null {
+function normalizeLocalInferenceHostUrl(raw: string | null | undefined): string | null {
+  const value = String(raw || "").trim().replace(/\/+$/, "");
+  if (!value) return null;
+  if (/^[A-Za-z0-9_.-]+$/.test(value)) return `http://${value}`;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === "http:" && parsed.hostname) return `http://${parsed.hostname}`;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function getLocalInferenceSandboxHostUrl(): string {
+  return normalizeLocalInferenceHostUrl(process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV]) || HOST_GATEWAY_URL;
+}
+
+export function getLocalProviderBaseUrl(
+  provider: string,
+  options: { hostUrl?: string | null } = {},
+): string | null {
+  const hostUrl = normalizeLocalInferenceHostUrl(options.hostUrl) || getLocalInferenceSandboxHostUrl();
   switch (provider) {
     case "vllm-local":
-      return `${HOST_GATEWAY_URL}:${VLLM_PORT}/v1`;
+      return `${hostUrl}:${VLLM_PORT}/v1`;
     case "ollama-local":
       // Containers reach Ollama through the auth proxy, not directly.
-      return `${HOST_GATEWAY_URL}:${OLLAMA_CONTAINER_PORT}/v1`;
+      return `${hostUrl}:${OLLAMA_CONTAINER_PORT}/v1`;
     default:
       return null;
   }
@@ -199,6 +261,74 @@ function buildLocalProviderProbeDetail(
   return `${label} is reachable on ${endpoint}, but the health probe failed. (${result.message})`;
 }
 
+/**
+ * Probe the Ollama auth proxy on :11435 with the persisted bearer token.
+ *
+ * Returns `null` when no token has been persisted (no Ollama onboard ever
+ * ran), so callers omit the line rather than report a misleading
+ * "unreachable". Returns `ok:false` with a "401 unauthorized" detail when
+ * the proxy is reachable but rejects the token — this is the exact signal
+ * the false-positive in #3265 was hiding (e.g. when the proxy fails to
+ * inject NEMOCLAW_OLLAMA_PROXY_TOKEN, #3198). (#3265)
+ */
+export function probeOllamaAuthProxyHealth(
+  options: LocalProviderHealthProbeOptions = {},
+): LocalProviderHealthStatus | null {
+  const loadToken = options.loadOllamaProxyTokenImpl ?? defaultLoadOllamaProxyToken;
+  const token = loadToken();
+  if (!token) {
+    return null;
+  }
+  const endpoint = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags`;
+  const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
+  const result = runCurlProbeImpl([
+    "-sS",
+    "--connect-timeout",
+    "3",
+    "--max-time",
+    "5",
+    "-H",
+    `Authorization: Bearer ${token}`,
+    endpoint,
+  ]);
+
+  const base = {
+    providerLabel: "Ollama auth proxy",
+    endpoint,
+    probeLabel: "auth proxy",
+  };
+  if (result.ok) {
+    return { ...base, ok: true, detail: `Ollama auth proxy is reachable on ${endpoint}.` };
+  }
+  if (result.httpStatus === 401) {
+    return {
+      ...base,
+      ok: false,
+      failureLabel: "unauthorized",
+      detail:
+        `Ollama auth proxy returned 401 on ${endpoint} — the persisted token is no longer ` +
+        `accepted. Re-run \`nemoclaw onboard\` (Ollama path) to rotate the proxy token.`,
+    };
+  }
+  if (result.httpStatus === 0) {
+    return {
+      ...base,
+      ok: false,
+      failureLabel: "unreachable",
+      detail:
+        `Ollama auth proxy is unreachable on ${endpoint}. The proxy process may have stopped; ` +
+        `re-run \`nemoclaw <sandbox> connect\` to restart it. (${result.message})`,
+    };
+  }
+  return {
+    ...base,
+    ok: false,
+    failureLabel: "unhealthy",
+    detail:
+      `Ollama auth proxy returned HTTP ${result.httpStatus} on ${endpoint}. (${result.message})`,
+  };
+}
+
 export function probeLocalProviderHealth(
   provider: string,
   options: LocalProviderHealthProbeOptions = {},
@@ -212,12 +342,29 @@ export function probeLocalProviderHealth(
   const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
   const result = runCurlProbeImpl(["-sS", "--connect-timeout", "3", "--max-time", "5", endpoint]);
 
+  // Per #3265 the status line is renamed `Inference (<backend>):` for local
+  // providers so the upcoming `Inference (auth proxy):` subprobe lines render
+  // in parallel and the user can see which hop is broken.
+  const probeLabel =
+    provider === "ollama-local" ? "ollama backend" :
+    provider === "vllm-local" ? "vllm backend" : undefined;
+
+  const subprobes: LocalProviderHealthStatus[] = [];
+  if (provider === "ollama-local") {
+    const proxyProbe = probeOllamaAuthProxyHealth(options);
+    if (proxyProbe) subprobes.push(proxyProbe);
+  }
+  const attachSubprobes = subprobes.length > 0 ? { subprobes } : {};
+  const attachProbeLabel = probeLabel ? { probeLabel } : {};
+
   if (result.ok) {
     return {
       ok: true,
       providerLabel,
       endpoint,
       detail: `${providerLabel} is reachable on ${endpoint}.`,
+      ...attachProbeLabel,
+      ...attachSubprobes,
     };
   }
 
@@ -226,6 +373,8 @@ export function probeLocalProviderHealth(
     providerLabel,
     endpoint,
     detail: buildLocalProviderProbeDetail(provider, endpoint, result),
+    ...attachProbeLabel,
+    ...attachSubprobes,
   };
 }
 

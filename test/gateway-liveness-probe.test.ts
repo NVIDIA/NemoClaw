@@ -133,16 +133,16 @@ describe("gateway liveness probe (#2020)", () => {
     );
   });
 
-  it("checks sandbox bridge reachability before every Docker-driver ready return (#3439)", () => {
+  it("Docker-driver gateway startup verifies sandbox bridge reachability before successful returns", () => {
     const dockerStart = content.indexOf("async function startDockerDriverGateway(");
     const dockerEnd = content.indexOf("\nasync function startGateway(", dockerStart);
     expect(dockerStart).toBeGreaterThanOrEqual(0);
     expect(dockerEnd).toBeGreaterThan(dockerStart);
     const dockerSection = content.slice(dockerStart, dockerEnd);
     const calls = dockerSection.match(
-      /verifySandboxBridgeGatewayReachableOrExit\(exitOnFailure\)/g,
+      /verifySandboxBridgeGatewayReachableOrExit\(\s*exitOnFailure/g,
     );
-    expect(calls?.length).toBeGreaterThanOrEqual(3);
+    expect(calls?.length ?? 0).toBeGreaterThanOrEqual(3);
 
     for (const marker of [
       "Reusing existing Docker-driver gateway",
@@ -152,9 +152,7 @@ describe("gateway liveness probe (#2020)", () => {
       const markerIdx = dockerSection.indexOf(marker);
       expect(markerIdx).toBeGreaterThan(0);
       const before = dockerSection.slice(0, markerIdx);
-      expect(
-        before.lastIndexOf("verifySandboxBridgeGatewayReachableOrExit(exitOnFailure)"),
-      ).toBeGreaterThan(0);
+      expect(before).toMatch(/verifySandboxBridgeGatewayReachableOrExit\(\s*exitOnFailure/);
     }
   });
 

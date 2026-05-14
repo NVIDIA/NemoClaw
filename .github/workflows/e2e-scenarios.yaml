@@ -1,0 +1,112 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Scenario-based E2E. Runs a single setup scenario by id against the
+# matching runner; can also validate resolution / coverage via --plan-only.
+#
+# Manual-only (workflow_dispatch) while scenario-based coverage migrates.
+# Existing nightly-e2e / macos-e2e / wsl-e2e workflows remain unchanged.
+
+name: E2E / Scenario Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Scenario id (e.g. ubuntu-repo-cloud-openclaw)"
+        required: true
+        type: string
+      plan_only:
+        description: "Resolve and print plan only (no install/onboard/suites)"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      suite_filter:
+        description: "Comma-separated suite ids to run (optional; defaults to the scenario's full suite list)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-scenarios-${{ github.event.inputs.scenario }}
+  cancel-in-progress: false
+
+jobs:
+  # Route the scenario to the correct runner.
+  #
+  # Scenario ids encode their target platform as the first segment
+  # (e.g. `macos-repo-cloud-openclaw`, `wsl-repo-cloud-openclaw`,
+  # `gpu-repo-local-ollama-openclaw`). The workflow previously pinned
+  # `runs-on: ubuntu-latest` for every scenario, which caused non-Ubuntu
+  # scenarios to fail on the wrong runner (CodeRabbit review item #1).
+  resolve-runner:
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        env:
+          SCENARIO: ${{ github.event.inputs.scenario }}
+        run: |
+          case "${SCENARIO}" in
+            macos-*)  echo "runner=macos-latest"   >> "$GITHUB_OUTPUT" ;;
+            wsl-*)    echo "runner=windows-latest" >> "$GITHUB_OUTPUT" ;;
+            gpu-*)    echo "runner=self-hosted"    >> "$GITHUB_OUTPUT" ;;
+            ubuntu-*|brev-*) echo "runner=ubuntu-latest" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::Unknown scenario prefix for runner selection: ${SCENARIO}" >&2
+              exit 1
+              ;;
+          esac
+
+  run-scenario:
+    needs: resolve-runner
+    runs-on: ${{ needs.resolve-runner.outputs.runner }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Render coverage report
+        run: |
+          mkdir -p .e2e
+          bash test/e2e/runtime/coverage-report.sh > .e2e/coverage.md
+          echo '## E2E scenario coverage' >> "$GITHUB_STEP_SUMMARY"
+          cat .e2e/coverage.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Show resolved plan
+        run: |
+          bash test/e2e/runtime/run-scenario.sh "${{ github.event.inputs.scenario }}" --plan-only
+
+      - name: Run scenario
+        if: github.event.inputs.plan_only != 'true'
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          E2E_SUITE_FILTER: ${{ github.event.inputs.suite_filter }}
+        run: |
+          bash test/e2e/runtime/run-scenario.sh "${{ github.event.inputs.scenario }}"
+
+      - name: Upload scenario artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-scenario-${{ github.event.inputs.scenario }}
+          path: |
+            .e2e/
+            test/e2e/logs/
+          if-no-files-found: warn
+          retention-days: 14

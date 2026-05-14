@@ -124,6 +124,32 @@ describe("sandbox-create-stream", () => {
     expect(child.unref).toHaveBeenCalled();
   });
 
+  it("can abort a stuck create stream from a failure check", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      spawnImpl: () => child,
+      readyCheck: () => false,
+      failureCheck: () => "Docker GPU patch failed while OpenShell sandbox create was still waiting.",
+      pollIntervalMs: 5,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine,
+    });
+
+    await vi.advanceTimersByTimeAsync(6);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 1,
+      sawProgress: true,
+      output: expect.stringContaining("Docker GPU patch failed while OpenShell sandbox create"),
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+    expect(child.unref).toHaveBeenCalled();
+  });
+
   it("flushes the final partial line before resolving", async () => {
     const child = new FakeChild();
     const promise = streamSandboxCreate("echo create", process.env, {
@@ -293,6 +319,28 @@ describe("sandbox-create-stream", () => {
 
     const calls = logLine.mock.calls.map((c) => c[0] as string);
     expect(calls.some((l) => /Still pulling base image from registry\.\.\./.test(l))).toBe(true);
+    expect(calls.some((l) => /Still building sandbox image\.\.\./.test(l))).toBe(false);
+  });
+
+  it("moves to the create phase after the sandbox image is built", async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      logLine,
+      spawnImpl: () => child as never,
+      heartbeatIntervalMs: 100,
+      silentPhaseMs: 50,
+    });
+
+    child.stdout.emit("data", Buffer.from("  Built image openshell/sandbox-from:123\n"));
+    await vi.advanceTimersByTimeAsync(200);
+    child.emit("close", 0);
+    await promise;
+
+    const calls = logLine.mock.calls.map((c) => c[0] as string);
+    expect(calls).toContain("  Creating sandbox in gateway...");
+    expect(calls.some((l) => /Still creating sandbox in gateway\.\.\./.test(l))).toBe(true);
     expect(calls.some((l) => /Still building sandbox image\.\.\./.test(l))).toBe(false);
   });
 

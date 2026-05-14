@@ -1,0 +1,161 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# E2E parity compare.
+#
+# Runs a legacy `test/e2e/test-*.sh` script AND its migrated scenario on
+# the same runner, collects PASS/FAIL per assertion from both, and fails
+# the job if any mapped assertion in test/e2e/docs/parity-map.yaml diverges.
+#
+# Manual-only (workflow_dispatch). Each migration phase dispatches this
+# workflow for every scenario it introduces and records zero-divergence
+# before marking the phase complete.
+
+name: E2E / Parity Compare
+
+on:
+  workflow_dispatch:
+    inputs:
+      legacy_script:
+        description: "Legacy script filename under test/e2e/ (e.g. test-full-e2e.sh). Empty = no legacy run, empty-diff only."
+        required: false
+        default: ""
+        type: string
+      scenario:
+        description: "Migrated scenario id (e.g. ubuntu-repo-cloud-openclaw). Empty = use script map/default bucket scenarios."
+        required: false
+        default: ""
+        type: string
+      bucket:
+        description: "Parity bucket to run (onboarding-baseline, lifecycle, rebuild-runtime, providers-messaging, final-security-policy-platform-misc)."
+        required: false
+        default: ""
+        type: string
+      all_migrated:
+        description: "Run all migrated buckets from parity-map.yaml."
+        required: false
+        default: false
+        type: boolean
+      strict:
+        description: "Pass --strict to compare-parity.sh and fail on missing mapped log assertions."
+        required: false
+        default: true
+        type: boolean
+      deferred_handling:
+        description: "How deferred/retired assertions are handled by reporting."
+        required: false
+        default: "skip"
+        type: choice
+        options:
+          - skip
+          - report
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-parity-compare-${{ github.event.inputs.legacy_script }}-${{ github.event.inputs.scenario }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-runner:
+    runs-on: ubuntu-latest
+    outputs:
+      runner: ${{ steps.pick.outputs.runner }}
+    steps:
+      - id: pick
+        env:
+          SCENARIO: ${{ github.event.inputs.scenario }}
+        run: |
+          case "${SCENARIO}" in
+            macos-*)         echo "runner=macos-latest"   >> "$GITHUB_OUTPUT" ;;
+            wsl-*)           echo "runner=windows-latest" >> "$GITHUB_OUTPUT" ;;
+            gpu-*)           echo "runner=self-hosted"    >> "$GITHUB_OUTPUT" ;;
+            ubuntu-*|brev-*|"") echo "runner=ubuntu-latest" >> "$GITHUB_OUTPUT" ;;
+            *)
+              echo "::error::Unknown scenario prefix for runner selection: ${SCENARIO}" >&2
+              exit 1
+              ;;
+          esac
+
+  compare:
+    needs: resolve-runner
+    runs-on: ${{ needs.resolve-runner.outputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Run legacy script
+        id: legacy
+        if: ${{ github.event.inputs.legacy_script != '' }}
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          mkdir -p .e2e/parity
+          LOG=".e2e/parity/legacy.log"
+          if [ ! -x "test/e2e/${{ github.event.inputs.legacy_script }}" ]; then
+            echo "::error::legacy script not found: test/e2e/${{ github.event.inputs.legacy_script }}"
+            exit 1
+          fi
+          bash "test/e2e/${{ github.event.inputs.legacy_script }}" 2>&1 | tee "$LOG" || true
+
+      - name: Run migrated scenario
+        id: scenario
+        if: ${{ github.event.inputs.scenario != '' }}
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+        run: |
+          mkdir -p .e2e/parity
+          LOG=".e2e/parity/scenario.log"
+          bash test/e2e/runtime/run-scenario.sh "${{ github.event.inputs.scenario }}" 2>&1 | tee "$LOG" || true
+
+      - name: Compare parity
+        env:
+          LEGACY_SCRIPT: ${{ github.event.inputs.legacy_script }}
+        run: |
+          mkdir -p .e2e/parity
+          LEGACY_LOG=".e2e/parity/legacy.log"
+          SCENARIO_LOG=".e2e/parity/scenario.log"
+          [ -f "$LEGACY_LOG" ]   || : > "$LEGACY_LOG"
+          [ -f "$SCENARIO_LOG" ] || : > "$SCENARIO_LOG"
+          SCRIPT_ARG="${LEGACY_SCRIPT:-none.sh}"
+          REPORT=".e2e/parity/parity-report.json"
+          STRICT_ARGS=()
+          if [ "${{ github.event.inputs.strict }}" = "true" ]; then
+            STRICT_ARGS+=(--strict)
+          fi
+          bash scripts/e2e/compare-parity.sh \
+            --script "$SCRIPT_ARG" \
+            --legacy "$LEGACY_LOG" \
+            --scenario "$SCENARIO_LOG" \
+            --map test/e2e/docs/parity-map.yaml \
+            --bucket "${{ github.event.inputs.bucket }}" \
+            --all-migrated "${{ github.event.inputs.all_migrated }}" \
+            --deferred-handling "${{ github.event.inputs.deferred_handling }}" \
+            --report "$REPORT" \
+            "${STRICT_ARGS[@]}"
+
+      - name: Render coverage report
+        if: always()
+        run: |
+          mkdir -p .e2e/parity
+          bash test/e2e/runtime/coverage-report.sh > .e2e/parity/coverage-report.md
+
+      - name: Upload parity artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-parity-${{ github.event.inputs.scenario }}-${{ github.event.inputs.legacy_script }}
+          path: |
+            .e2e/
+          if-no-files-found: warn
+          retention-days: 14

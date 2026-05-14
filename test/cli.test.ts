@@ -4739,7 +4739,9 @@ describe("CLI dispatch", () => {
     });
 
     expect(r.code).toBe(0);
-    expect(r.out).toContain("Inference:");
+    // #3265: backend label is qualified `Inference (ollama backend):` so the
+    // upcoming auth-proxy subprobe line renders in parallel.
+    expect(r.out).toContain("Inference (ollama backend):");
     expect(r.out).toContain("unreachable");
     expect(r.out).toContain("Start Ollama and retry");
     expect(r.out).toContain("http://127.0.0.1:11434/api/tags");

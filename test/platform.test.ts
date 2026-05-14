@@ -63,6 +63,7 @@ describe("platform helpers", () => {
       expect(getDockerSocketCandidates({ platform: "darwin", home })).toEqual([
         path.join(home, ".colima/default/docker.sock"),
         path.join(home, ".config/colima/default/docker.sock"),
+        path.join(home, ".colima/docker.sock"),
         path.join(home, ".local/share/containers/podman/machine/podman.sock"),
         "/var/run/docker.sock",
         path.join(home, ".docker/run/docker.sock"),
@@ -206,6 +207,22 @@ describe("platform helpers", () => {
         dockerHost: `unix://${colimaSocket}`,
         source: "socket",
         socketPath: colimaSocket,
+      });
+    });
+
+    it("discovers the bare ~/.colima/docker.sock layout (regression for #3503)", () => {
+      // The reporter's Colima setup puts the socket at the top-level
+      // ~/.colima/docker.sock rather than under ~/.colima/default/. Before
+      // this fix, detection returned null and the gateway fell back to
+      // /var/run/docker.sock, breaking onboard.
+      const home = "/tmp/test-home";
+      const bareColimaSocket = path.join(home, ".colima/docker.sock");
+      const existsSync = (candidate: string) => candidate === bareColimaSocket;
+
+      expect(detectDockerHost({ env: {}, platform: "darwin", home, existsSync })).toEqual({
+        dockerHost: `unix://${bareColimaSocket}`,
+        source: "socket",
+        socketPath: bareColimaSocket,
       });
     });
   });

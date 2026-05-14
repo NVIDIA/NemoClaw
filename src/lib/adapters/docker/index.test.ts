@@ -18,6 +18,7 @@ import {
   dockerInfoFormat,
   dockerListVolumesByPrefix,
   dockerPull,
+  dockerRename,
   dockerRemoveVolumesByPrefix,
   dockerRmi,
   dockerRunDetached,
@@ -35,12 +36,14 @@ describe("docker helpers", () => {
     dockerPull("ghcr.io/example/image:latest");
     dockerBuild("Dockerfile", "example:tag", "/tmp/build");
     dockerRunDetached(["--name", "example", "busybox:latest"]);
+    dockerRename("example", "example-backup");
     dockerRmi("example:tag");
 
     expect(runMock.mock.calls).toEqual([
       [["docker", "pull", "ghcr.io/example/image:latest"], {}],
       [["docker", "build", "-f", "Dockerfile", "-t", "example:tag", "/tmp/build"], {}],
       [["docker", "run", "-d", "--name", "example", "busybox:latest"], {}],
+      [["docker", "rename", "example", "example-backup"], {}],
       [["docker", "rmi", "example:tag"], {}],
     ]);
   });

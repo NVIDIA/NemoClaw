@@ -51,10 +51,13 @@ type OnboardTestInternals = {
   buildCompatibleEndpointSandboxSmokeCommand: (model: string) => string;
   buildCompatibleEndpointSandboxSmokeScript: (model: string) => string;
   buildSandboxConfigSyncScript: ShimFn<string>;
-  buildSandboxGpuCreateArgs: (config: {
-    sandboxGpuEnabled: boolean;
-    sandboxGpuDevice?: string | null;
-  }) => string[];
+  buildSandboxGpuCreateArgs: (
+    config: {
+      sandboxGpuEnabled: boolean;
+      sandboxGpuDevice?: string | null;
+    },
+    options?: { suppressGpuFlag?: boolean },
+  ) => string[];
   buildDirectGpuPolicyYaml: (basePolicy: string) => string;
   buildDirectSandboxGpuProofCommands: (sandboxName: string) => { label: string; args: string[] }[];
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
@@ -143,6 +146,12 @@ type OnboardTestInternals = {
       | undefined,
     sessionGpuPassthrough?: boolean,
   ) => { flag: "enable" | "disable" | null; device: string | null };
+  getSandboxReadyTimeoutSecs: (
+    config: { sandboxGpuEnabled: boolean },
+    env?: NodeJS.ProcessEnv,
+    platform?: NodeJS.Platform,
+    arch?: NodeJS.Architecture,
+  ) => number;
   shouldAllowOpenshellAboveBlueprintMax: (
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
@@ -236,6 +245,7 @@ function isOnboardTestInternals(
     typeof value.parseDockerCdiSpecDirs === "function" &&
     typeof value.resolveSandboxGpuConfig === "function" &&
     typeof value.getResumeSandboxGpuOverrides === "function" &&
+    typeof value.getSandboxReadyTimeoutSecs === "function" &&
     typeof value.shouldAllowOpenshellAboveBlueprintMax === "function" &&
     typeof value.hasChatCompletionsToolCall === "function" &&
     typeof value.hasChatCompletionsToolCallLeak === "function" &&
@@ -295,6 +305,7 @@ const {
   parseDockerCdiSpecDirs,
   resolveSandboxGpuConfig,
   getResumeSandboxGpuOverrides,
+  getSandboxReadyTimeoutSecs,
   shouldAllowOpenshellAboveBlueprintMax,
   versionGte,
   getRequestedModelHint,
@@ -385,6 +396,28 @@ describe("onboard helpers", () => {
     expect(
       buildSandboxGpuCreateArgs({ sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=0" }),
     ).toEqual(["--gpu", "--gpu-device", "nvidia.com/gpu=0"]);
+    expect(
+      buildSandboxGpuCreateArgs(
+        { sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=0" },
+        { suppressGpuFlag: true },
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps the default sandbox readiness timeout unless explicitly overridden", () => {
+    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: false }, {}, "linux")).toBe(180);
+    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: true }, {}, "linux")).toBe(180);
+    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: true }, {}, "win32")).toBe(180);
+  });
+
+  it("honors explicit sandbox readiness timeout overrides", () => {
+    expect(
+      getSandboxReadyTimeoutSecs(
+        { sandboxGpuEnabled: true },
+        { NEMOCLAW_SANDBOX_READY_TIMEOUT: "75" },
+        "linux",
+      ),
+    ).toBe(75);
   });
 
   it(
@@ -681,11 +714,20 @@ network_policies:
   it("builds direct sandbox GPU proof commands", () => {
     const commands = buildDirectSandboxGpuProofCommands("alpha");
     expect(commands.map((entry) => entry.label)).toEqual([
-      "nvidia-smi",
+      "nvidia-smi when available",
       "/proc/<pid>/task/<tid>/comm write",
       "cuInit(0) via libcuda.so.1",
     ]);
-    expect(commands[0].args).toEqual(["sandbox", "exec", "-n", "alpha", "--", "nvidia-smi"]);
+    expect(commands[0].args).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "alpha",
+      "--",
+      "sh",
+      "-lc",
+      expect.stringContaining("command -v nvidia-smi"),
+    ]);
     expect(commands[1].args.join(" ")).toContain("/proc/$$/task/$$/comm");
     expect(commands[1].args.join(" ")).not.toContain("ls /proc/self/task");
     expect(commands[2].args.join(" ")).toContain("cuInit(0)");
@@ -2503,6 +2545,249 @@ const { loadAgent } = require(${agentDefsPath});
     expect(versionGte(max, min)).toBe(true);
   });
 
+  describe("resolveOpenshellInstallVersion (#3404)", () => {
+    const installModule = require("../dist/lib/onboard/openshell-install") as {
+      parseOpenshellReleaseTag: (tag: unknown) => string | null;
+      resolveOpenshellInstallVersion: (
+        available: readonly string[],
+        options: { max: string | null },
+        helpers: { versionGte: (a: string, b: string) => boolean },
+      ) => {
+        kind: "pin" | "no-max" | "incompatible";
+        version?: string;
+        latest?: string | null;
+        max?: string;
+        message?: string;
+        reason?: "latest" | "max-cap";
+      };
+    };
+    const helpers = { versionGte };
+
+    it("picks the highest available release ≤ max when latest exceeds max", () => {
+      const result = installModule.resolveOpenshellInstallVersion(
+        ["v0.0.34", "0.0.35", "v0.0.38"],
+        { max: "0.0.36" },
+        helpers,
+      );
+      expect(result.kind).toBe("pin");
+      expect(result.version).toBe("0.0.35");
+      expect(result.reason).toBe("max-cap");
+      expect(result.latest).toBe("0.0.38");
+    });
+
+    it("picks latest unchanged when latest is ≤ max", () => {
+      const result = installModule.resolveOpenshellInstallVersion(
+        ["v0.0.34", "0.0.35", "v0.0.36"],
+        { max: "0.0.39" },
+        helpers,
+      );
+      expect(result.kind).toBe("pin");
+      expect(result.version).toBe("0.0.36");
+      expect(result.reason).toBe("latest");
+      expect(result.latest).toBe("0.0.36");
+    });
+
+    it("returns an incompatible resolution when no release ≤ max exists", () => {
+      const result = installModule.resolveOpenshellInstallVersion(
+        ["v0.0.38", "0.0.39"],
+        { max: "0.0.36" },
+        helpers,
+      );
+      expect(result.kind).toBe("incompatible");
+      expect(result.latest).toBe("0.0.39");
+      expect(result.max).toBe("0.0.36");
+      expect(result.message).toContain("0.0.39");
+      expect(result.message).toContain("0.0.36");
+    });
+
+    it("falls back to legacy fetch behaviour when max is missing", () => {
+      const result = installModule.resolveOpenshellInstallVersion(
+        ["v0.0.38", "0.0.39"],
+        { max: null },
+        helpers,
+      );
+      expect(result.kind).toBe("no-max");
+      expect(result.latest).toBe("0.0.39");
+    });
+
+    it("falls back to legacy fetch when max is malformed", () => {
+      for (const max of ["", "-1.0.0", "not-a-version", "v"] as const) {
+        const result = installModule.resolveOpenshellInstallVersion(
+          ["v0.0.38"],
+          { max },
+          helpers,
+        );
+        expect(result.kind).toBe("no-max");
+      }
+    });
+
+    it("silently drops malformed entries from the available list", () => {
+      const result = installModule.resolveOpenshellInstallVersion(
+        ["", "v0.0.35", "-1.0.0", "not-a-version", "v0.0.34"],
+        { max: "0.0.36" },
+        helpers,
+      );
+      expect(result.kind).toBe("pin");
+      expect(result.version).toBe("0.0.35");
+    });
+
+    it("parseOpenshellReleaseTag strips leading v and rejects malformed input", () => {
+      expect(installModule.parseOpenshellReleaseTag("v0.0.39")).toBe("0.0.39");
+      expect(installModule.parseOpenshellReleaseTag("0.0.39")).toBe("0.0.39");
+      expect(installModule.parseOpenshellReleaseTag("")).toBe(null);
+      expect(installModule.parseOpenshellReleaseTag("   ")).toBe(null);
+      expect(installModule.parseOpenshellReleaseTag("-1.0.0")).toBe(null);
+      expect(installModule.parseOpenshellReleaseTag("0.0")).toBe(null);
+      expect(installModule.parseOpenshellReleaseTag(42)).toBe(null);
+      expect(installModule.parseOpenshellReleaseTag(null)).toBe(null);
+    });
+
+    it("matches the DGX Spark repro: latest=0.0.38 max=0.0.36 picks 0.0.36", () => {
+      const result = installModule.resolveOpenshellInstallVersion(
+        ["v0.0.36", "v0.0.37", "v0.0.38"],
+        { max: "0.0.36" },
+        helpers,
+      );
+      expect(result.kind).toBe("pin");
+      expect(result.version).toBe("0.0.36");
+      expect(result.reason).toBe("max-cap");
+    });
+  });
+
+  describe("resolveOpenshellInstallPin (#3404 orchestrator)", () => {
+    const pinModule = require("../dist/lib/onboard/openshell-pin") as {
+      resolveOpenshellInstallPin: (deps: {
+        getBlueprintMaxOpenshellVersion: () => string | null;
+        versionGte: (a: string, b: string) => boolean;
+        listReleases?: () => string[] | null;
+        log?: (m: string) => void;
+      }) => { kind: "pin" | "no-max" | "incompatible"; version?: string; message?: string };
+    };
+
+    it("returns no-max when the blueprint has no max_openshell_version", () => {
+      const result = pinModule.resolveOpenshellInstallPin({
+        getBlueprintMaxOpenshellVersion: () => null,
+        versionGte,
+        listReleases: () => ["v0.0.38"],
+      });
+      expect(result.kind).toBe("no-max");
+    });
+
+    it("falls back to no-max when GitHub fetch fails (offline)", () => {
+      const result = pinModule.resolveOpenshellInstallPin({
+        getBlueprintMaxOpenshellVersion: () => "0.0.36",
+        versionGte,
+        listReleases: () => null,
+      });
+      expect(result.kind).toBe("no-max");
+    });
+
+    it("falls back to no-max when GitHub returns an empty list", () => {
+      const result = pinModule.resolveOpenshellInstallPin({
+        getBlueprintMaxOpenshellVersion: () => "0.0.36",
+        versionGte,
+        listReleases: () => [],
+      });
+      expect(result.kind).toBe("no-max");
+    });
+
+    it("pins to highest ≤ max when releases exceed the cap (QA repro)", () => {
+      const logged: string[] = [];
+      const result = pinModule.resolveOpenshellInstallPin({
+        getBlueprintMaxOpenshellVersion: () => "0.0.36",
+        versionGte,
+        listReleases: () => ["v0.0.36", "v0.0.37", "v0.0.38"],
+        log: (m) => logged.push(m),
+      });
+      expect(result.kind).toBe("pin");
+      expect(result.version).toBe("0.0.36");
+      expect(logged.join("\n")).toContain("0.0.36");
+      expect(logged.join("\n")).toContain("0.0.38");
+    });
+
+    it("surfaces incompatible when no published release ≤ max exists", () => {
+      const result = pinModule.resolveOpenshellInstallPin({
+        getBlueprintMaxOpenshellVersion: () => "0.0.36",
+        versionGte,
+        listReleases: () => ["v0.0.38", "v0.0.39"],
+      });
+      expect(result.kind).toBe("incompatible");
+      expect(result.message ?? "").toContain("0.0.36");
+      expect(result.message ?? "").toContain("0.0.39");
+    });
+  });
+
+  describe("computeOpenshellInstallEnv overlays MIN/MAX/PIN (#3404 widening)", () => {
+    const pinModule = require("../dist/lib/onboard/openshell-pin") as {
+      computeOpenshellInstallEnv: (
+        baseEnv: Record<string, string | undefined>,
+        deps: {
+          getBlueprintMinOpenshellVersion?: () => string | null;
+          getBlueprintMaxOpenshellVersion: () => string | null;
+          versionGte: (a: string, b: string) => boolean;
+          listReleases?: () => string[] | null;
+          log?: (m: string) => void;
+        },
+      ) => { env: Record<string, string | undefined> | null };
+    };
+
+    it("overlays MIN/MAX/PIN env vars from blueprint when latest exceeds max", () => {
+      const result = pinModule.computeOpenshellInstallEnv(
+        { EXISTING: "preserved" },
+        {
+          getBlueprintMinOpenshellVersion: () => "0.0.39",
+          getBlueprintMaxOpenshellVersion: () => "0.0.39",
+          versionGte,
+          listReleases: () => ["v0.0.38", "v0.0.39", "v0.0.42"],
+        },
+      );
+      expect(result.env).not.toBe(null);
+      expect(result.env?.EXISTING).toBe("preserved");
+      expect(result.env?.NEMOCLAW_OPENSHELL_MIN_VERSION).toBe("0.0.39");
+      expect(result.env?.NEMOCLAW_OPENSHELL_MAX_VERSION).toBe("0.0.39");
+      expect(result.env?.NEMOCLAW_OPENSHELL_PIN_VERSION).toBe("0.0.39");
+    });
+
+    it("overlays MIN/MAX but no PIN when GitHub fetch fails (offline)", () => {
+      const result = pinModule.computeOpenshellInstallEnv(
+        {},
+        {
+          getBlueprintMinOpenshellVersion: () => "0.0.39",
+          getBlueprintMaxOpenshellVersion: () => "0.0.39",
+          versionGte,
+          listReleases: () => null,
+        },
+      );
+      expect(result.env).not.toBe(null);
+      expect(result.env?.NEMOCLAW_OPENSHELL_MIN_VERSION).toBe("0.0.39");
+      expect(result.env?.NEMOCLAW_OPENSHELL_MAX_VERSION).toBe("0.0.39");
+      expect(result.env?.NEMOCLAW_OPENSHELL_PIN_VERSION).toBeUndefined();
+    });
+
+    it("returns the base env unchanged when blueprint exposes no min/max", () => {
+      const baseEnv = { ONLY_THIS: "value" };
+      const result = pinModule.computeOpenshellInstallEnv(baseEnv, {
+        getBlueprintMinOpenshellVersion: () => null,
+        getBlueprintMaxOpenshellVersion: () => null,
+        versionGte,
+        listReleases: () => ["v0.0.38"],
+      });
+      expect(result.env).toBe(baseEnv);
+    });
+
+    it("aborts (env=null) when no release ≤ max exists", () => {
+      const result = pinModule.computeOpenshellInstallEnv(
+        {},
+        {
+          getBlueprintMaxOpenshellVersion: () => "0.0.36",
+          versionGte,
+          listReleases: () => ["v0.0.38", "v0.0.39"],
+        },
+      );
+      expect(result.env).toBe(null);
+    });
+  });
+
   it("pins the gateway image to the installed OpenShell release version", () => {
     expect(getInstalledOpenshellVersion("openshell 0.0.12")).toBe("0.0.12");
     expect(getInstalledOpenshellVersion("openshell 0.0.13-dev.8+gbbcaed2ea")).toBe("0.0.13");
@@ -2611,8 +2896,10 @@ const { loadAgent } = require(${agentDefsPath});
     );
 
     assert.match(envSource, /NEMOCLAW_SANDBOX_READY_TIMEOUT", 180/);
-    assert.match(source, /Math\.ceil\(SANDBOX_READY_TIMEOUT_SECS \/ 2\)/);
-    assert.match(source, /within \$\{SANDBOX_READY_TIMEOUT_SECS\}s/);
+    assert.match(source, /Math\.ceil\(sandboxReadyTimeoutSecs \/ 2\)/);
+    assert.match(source, /within \$\{sandboxReadyTimeoutSecs\}s/);
+    assert.doesNotMatch(source, /DOCKER_DRIVER_GPU_SANDBOX_READY_TIMEOUT_SECS = 600/);
+    assert.doesNotMatch(source, /OPENSHELL_PROVISION_TIMEOUT = String\(sandboxReadyTimeoutSecs\)/);
   });
 
   it("classifies gateway reuse states conservatively", () => {
@@ -5077,6 +5364,35 @@ ${webSearchVerifySource}`;
       /const gpuPassthrough = sandboxGpuConfig\.sandboxGpuEnabled;/,
     );
     assert.match(source, /Use --no-gpu to opt out/);
+  });
+
+  it("uses the NemoClaw Docker GPU patch without passing --gpu to sandbox create", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const patchSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "docker-gpu-patch.ts"),
+      "utf-8",
+    );
+
+    const createSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /useDockerGpuPatch = dockerGpuSandboxCreate\.shouldUseDockerGpuPatchForCreate/);
+    assert.match(source, /suppressGpuFlag: useDockerGpuPatch/);
+    assert.match(source, /maybeApplyDuringCreate/);
+    assert.match(source, /printDockerGpuReadinessFailure/);
+    assert.match(source, /printDockerGpuProofFailure/);
+    assert.match(createSource, /applyDockerGpuPatchOrExit/);
+    assert.match(createSource, /getDockerGpuSupervisorReconnectTimeoutSecs/);
+    assert.match(createSource, /waitForOpenShellSupervisorReconnect/);
+    assert.match(createSource, /recreateOpenShellDockerSandboxWithGpu/);
+    assert.match(patchSource, /recreateOpenShellDockerSandboxWithGpu/);
+    assert.match(patchSource, /collectDockerGpuPatchDiagnostics/);
+    assert.match(patchSource, /has been left in place for inspection/);
   });
 
   it("does not persist sandboxName to onboard-session.json before createSandbox completes (#2753)", () => {

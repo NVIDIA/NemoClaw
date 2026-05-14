@@ -377,6 +377,48 @@ describe("nim", () => {
       }
     });
 
+    it("detects Jetson/Tegra GPUs from firmware when nvidia-smi is absent", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "nvidia-smi") return "";
+        if (cmd[0] === "free" && cmd[1] === "-m") {
+          return "              total        used        free\nMem:          65536        4096       50000\nSwap:             0           0           0";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const origReadFileSync = fs.readFileSync;
+      const origExistsSync = fs.existsSync;
+      fs.readFileSync = (p: string, ...args: unknown[]) => {
+        if (p === "/sys/class/dmi/id/product_name") throw new Error("ENOENT");
+        if (p === "/sys/firmware/devicetree/base/model") return "NVIDIA Jetson AGX Orin\0";
+        return origReadFileSync(p, ...args);
+      };
+      fs.existsSync = (p: string) => {
+        if (p === "/dev/nvhost-gpu") return true;
+        return origExistsSync(p);
+      };
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA Jetson AGX Orin",
+          count: 1,
+          totalMemoryMB: 65536,
+          perGpuMB: 65536,
+          nimCapable: true,
+          unifiedMemory: true,
+          spark: false,
+          platform: "jetson",
+          gpus: [{ name: "NVIDIA Jetson AGX Orin", memoryMB: 65536 }],
+        });
+      } finally {
+        fs.readFileSync = origReadFileSync;
+        fs.existsSync = origExistsSync;
+        restore();
+      }
+    });
+
     // Same invariant as the primary-path mixed-model test: don't pin a
     // single name on hosts with multiple distinct GPU models, even on the
     // unified-memory fallback. Hypothetical today (no shipping platform mixes
