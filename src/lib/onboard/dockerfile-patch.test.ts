@@ -143,6 +143,42 @@ describe("dockerfile patch helpers", () => {
     );
   });
 
+  it("can override the sandbox inference base URL for Docker GPU host networking", () => {
+    const dockerfilePath = dockerfileWith(
+      [
+        "ARG NEMOCLAW_MODEL=old",
+        "ARG NEMOCLAW_PROVIDER_KEY=old",
+        "ARG NEMOCLAW_PRIMARY_MODEL_REF=old",
+        "ARG CHAT_UI_URL=old",
+        "ARG NEMOCLAW_INFERENCE_BASE_URL=old",
+        "ARG NEMOCLAW_INFERENCE_API=old",
+        "ARG NEMOCLAW_INFERENCE_COMPAT_B64=old",
+        "ARG NEMOCLAW_BUILD_ID=old",
+        "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      ].join("\n"),
+    );
+
+    patchStagedDockerfile(
+      dockerfilePath,
+      "qwen2.5:7b",
+      "https://chat.example",
+      "build-1",
+      "ollama-local",
+      null,
+      null,
+      [],
+      {},
+      {},
+      null,
+      {},
+      false,
+      "http://127.0.0.1:11434/v1",
+    );
+
+    const patched = fs.readFileSync(dockerfilePath, "utf-8");
+    expect(patched).toContain("ARG NEMOCLAW_INFERENCE_BASE_URL=http://127.0.0.1:11434/v1");
+  });
+
   it("strips CR/LF from Dockerfile ARG interpolations", () => {
     const dockerfilePath = dockerfileWith(
       [

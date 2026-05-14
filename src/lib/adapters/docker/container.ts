@@ -36,6 +36,14 @@ export function dockerForceRm(containerName: string, opts: DockerRunOptions = {}
   return dockerRun(["rm", "-f", containerName], opts);
 }
 
+export function dockerRename(
+  oldContainerName: string,
+  newContainerName: string,
+  opts: DockerRunOptions = {},
+) {
+  return dockerRun(["rename", oldContainerName, newContainerName], opts);
+}
+
 export function dockerRunDetached(args: readonly string[], opts: DockerRunOptions = {}) {
   return dockerRun(["run", "-d", ...args], opts);
 }

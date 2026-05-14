@@ -54,6 +54,13 @@ export default defineConfig({
       },
       {
         test: {
+          name: "e2e-scenario-framework",
+          testTimeout: testTimeout(),
+          include: ["test/e2e/scenario-framework-tests/**/*.test.ts"],
+        },
+      },
+      {
+        test: {
           name: "e2e-branch-validation",
           include: ["test/e2e/brev-e2e.test.ts"],
           // Branch validation E2E: installs from source on a Brev instance.

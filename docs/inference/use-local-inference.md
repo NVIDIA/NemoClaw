@@ -104,10 +104,20 @@ For non-WSL Ollama setups, the onboard wizard manages the proxy automatically:
   `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
 - Starts the proxy after Ollama and verifies it before continuing.
 - Cleans up stale proxy processes from previous runs.
-- Retries the sandbox container reachability check and can continue when the host-side proxy is healthy even if the container probe fails.
+- Probes the sandbox Docker network path to the proxy before committing the inference route.
 - Stops matching proxy processes during uninstall before deleting NemoClaw state.
 - Reuses the persisted token after a host reboot so you do not need to re-run
   onboard.
+
+On native Linux hosts, a firewall can allow the host proxy health check while still blocking sandbox containers on the OpenShell Docker bridge.
+When the sandbox-side proxy probe fails with a TCP error, onboarding exits before it saves the inference route and prints a command like:
+
+```console
+$ sudo ufw allow from <openshell-docker-subnet> to any port 11435 proto tcp
+$ nemoclaw onboard
+```
+
+If the probe cannot run, for example because Docker Desktop or WSL uses a different host routing model, onboarding continues and relies on the regular proxy health check.
 
 The sandbox provider is configured to use proxy port `11435` with the generated
 token as its `OPENAI_API_KEY` credential.

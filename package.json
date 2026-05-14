@@ -78,6 +78,7 @@
     "@biomejs/biome": "^2.4.14",
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
+    "@earendil-works/pi-coding-agent": "0.74.0",
     "@j178/prek": "^0.3.6",
     "@types/node": "^25.5.2",
     "@vitest/coverage-v8": "^4.1.0",

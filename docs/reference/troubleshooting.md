@@ -327,7 +327,27 @@ If the installed OpenShell version exceeds the configured maximum, `nemoclaw onb
 
 Upgrade NemoClaw to a version that supports your OpenShell release, or install a supported OpenShell version from the [OpenShell releases page](https://github.com/NVIDIA/OpenShell/releases).
 
-The `install-openshell.sh` script also enforces this constraint and pins fresh installs to the validated maximum version.
+For fresh installs, NemoClaw passes the blueprint range to `install-openshell.sh` and resolves a compatible published OpenShell release before downloading.
+If GitHub release metadata is unavailable, the script uses its bundled fallback pin and the post-install gate still enforces the configured range.
+
+### Sandbox containers cannot reach the gateway
+
+On native Linux Docker-driver hosts, `nemoclaw onboard` verifies the route that sandbox containers use to reach the OpenShell gateway.
+If a host firewall blocks that path, onboarding exits with output like:
+
+```text
+✗ Sandbox containers cannot reach the gateway at host.openshell.internal:8080.
+  A host firewall may be blocking traffic from the OpenShell Docker bridge.
+```
+
+Apply the `ufw` command printed by onboarding, then rerun onboarding.
+If the message does not include a subnet, derive it from the OpenShell Docker network:
+
+```console
+$ SUBNET=$(docker network inspect openshell-docker --format '{{(index .IPAM.Config 0).Subnet}}')
+$ sudo ufw allow from "$SUBNET" to any port 8080 proto tcp
+$ nemoclaw onboard
+```
 
 ### Invalid sandbox name
 
@@ -920,6 +940,28 @@ permissions.
 If the file is missing or unreadable after a host reboot, re-running
 `nemoclaw onboard` regenerates it.
 
+### Ollama auth proxy is unreachable from the sandbox
+
+On native Linux Docker-driver hosts, a host firewall can allow the host proxy check but block sandbox traffic to the Ollama auth proxy.
+When that happens, onboarding exits before it saves the inference route and prints output like:
+
+```text
+✗ Sandbox containers cannot reach the Ollama auth proxy at host.openshell.internal:11435.
+  A host firewall may be blocking traffic from the OpenShell Docker bridge.
+```
+
+Apply the `ufw` command printed by onboarding, then rerun onboarding.
+If the message does not include a subnet, derive it from the OpenShell Docker network:
+
+```console
+$ SUBNET=$(docker network inspect openshell-docker --format '{{(index .IPAM.Config 0).Subnet}}')
+$ sudo ufw allow from "$SUBNET" to any port 11435 proto tcp
+$ nemoclaw onboard
+```
+
+Docker Desktop, WSL, and hosts without the OpenShell Docker network use different routing models.
+In those cases NemoClaw treats an unavailable sandbox-side probe as non-blocking and relies on the regular proxy health check.
+
 ### Local inference health check resolves to IPv6
 
 Local inference health checks now use `127.0.0.1` instead of `localhost`.
@@ -981,6 +1023,20 @@ $ nemoclaw onboard
 ```
 
 If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
+
+### Docker GPU patch failed during sandbox create
+
+On Linux Docker-driver gateways, NemoClaw may create the sandbox first and then recreate the OpenShell-managed Docker container with NVIDIA GPU flags.
+If that compatibility patch fails, onboarding leaves the failed sandbox and diagnostic bundle in place so you can inspect the OpenShell and Docker state.
+The output includes a cleanup command such as:
+
+```console
+$ openshell sandbox delete <sandbox-name>
+```
+
+Fix the NVIDIA Container Toolkit or CDI configuration reported in the diagnostics, clean up the failed sandbox, then rerun onboarding.
+If you do not need GPU access inside the sandbox, rerun with `--no-sandbox-gpu`.
+Set `NEMOCLAW_DOCKER_GPU_PATCH=0` only when you need to bypass this compatibility path during troubleshooting.
 
 ### `pip install` fails with a system-packages error
 

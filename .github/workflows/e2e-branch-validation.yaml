@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: e2e-branch-validation
+name: E2E / Branch Validation
 
 # ─── Branch Validation E2E ───────────────────────────────────────────────────
 #
@@ -43,10 +43,12 @@ name: e2e-branch-validation
 #                              and L7 proxy token rewriting for Telegram + Discord. Creates
 #                              its own sandbox (e2e-msg-provider). (~15 min)
 #   dashboard-remote-bind    — Verifies opt-in remote dashboard forwards bind 0.0.0.0.
+#   gpu                      — Provisions a Brev GPU VM and runs the Ollama GPU E2E
+#                              sandbox proof suite from source. (~45 min)
 #   all                      — Runs credential-sanitization + telegram-injection (NOT full,
 #                              which destroys the sandbox the security tests need).
 #
-# Required secrets: BREV_API_TOKEN, NVIDIA_API_KEY
+# Required secrets: BREV_API_KEY + BREV_ORG_ID (or legacy BREV_API_TOKEN), NVIDIA_API_KEY
 # Instance cost: Brev CPU credits (~$0.10/run for 4x16 instance)
 
 on:
@@ -67,6 +69,7 @@ on:
           - telegram-injection
           - messaging-providers
           - dashboard-remote-bind
+          - gpu
           - all
       use_launchable:
         description: "Use CI launchable (true) or bare brev create + brev-setup.sh (false)"
@@ -80,6 +83,26 @@ on:
         default: false
       brev_token:
         description: "Brev refresh token (overrides BREV_API_TOKEN secret if provided)"
+        required: false
+        default: ""
+      brev_provider:
+        description: "Brev provider filter for provisioning (blank = Brev default/any)"
+        required: false
+        default: ""
+      brev_gpu_type:
+        description: "Exact Brev GPU instance type for test_suite=gpu (overrides GPU filters)"
+        required: false
+        default: ""
+      brev_gpu_name:
+        description: "GPU name filter for test_suite=gpu (blank = any GPU)"
+        required: false
+        default: ""
+      brev_gpu_min_vram:
+        description: "Minimum total GPU VRAM in GB for test_suite=gpu"
+        required: false
+        default: "20"
+      brev_create_timeout_seconds:
+        description: "Brev create timeout in seconds"
         required: false
         default: ""
   workflow_call:
@@ -107,9 +130,33 @@ on:
         required: false
         type: boolean
         default: true
+      brev_provider:
+        required: false
+        type: string
+        default: ""
+      brev_gpu_type:
+        required: false
+        type: string
+        default: ""
+      brev_gpu_name:
+        required: false
+        type: string
+        default: ""
+      brev_gpu_min_vram:
+        required: false
+        type: string
+        default: "20"
+      brev_create_timeout_seconds:
+        required: false
+        type: string
+        default: ""
     secrets:
       BREV_API_TOKEN:
-        required: true
+        required: false
+      BREV_API_KEY:
+        required: false
+      BREV_ORG_ID:
+        required: false
       NVIDIA_API_KEY:
         required: true
 
@@ -127,6 +174,8 @@ jobs:
     # if: github.repository == 'NVIDIA/NemoClaw'  # Disabled for fork testing — re-enable before merge
     runs-on: ubuntu-latest
     timeout-minutes: 90
+    env:
+      BREV_E2E_INSTANCE_NAME: e2e-${{ inputs.pr_number || 'run' }}-${{ github.run_id }}-${{ github.run_attempt }}
     steps:
       - name: Resolve branch from PR number
         if: inputs.pr_number != ''
@@ -167,43 +216,56 @@ jobs:
       - name: Install Brev CLI
         env:
           BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
+          BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+          BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
         run: |
-          # Brev CLI v0.6.322+ — CPU instances use `brev search cpu | brev create`
+          # Brev CLI v0.6.324+ — CPU instances use `brev search cpu | brev create`
           # Startup scripts use `brev create --startup-script @file` (not brev start --cpu)
-          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.322/brev-cli_0.6.322_linux_amd64.tar.gz"
+          curl -fsSL -o /tmp/brev.tar.gz "https://github.com/brevdev/brev-cli/releases/download/v0.6.324/brev-cli_0.6.324_linux_amd64.tar.gz"
           tar -xzf /tmp/brev.tar.gz -C /usr/local/bin brev
           chmod +x /usr/local/bin/brev
-          # Brev CLI does not read BREV_API_TOKEN from env — it requires
-          # ~/.brev/credentials.json. The login call was removed in #1470
-          # (374a847d), breaking CI. Write the credentials file so `brev ls`
-          # works in the test harness's hasAuthenticatedBrev check.
-          if [ -z "${BREV_API_TOKEN:-}" ]; then
-            echo "::error::BREV_API_TOKEN is empty — cannot authenticate Brev CLI."
-            exit 1
+
+          if [ -n "${BREV_API_KEY:-}" ] && [ -n "${BREV_ORG_ID:-}" ]; then
+            brev login --api-key "$BREV_API_KEY" --org-id "$BREV_ORG_ID"
+          else
+            # Legacy fallback for older callers that still pass a refresh token.
+            if [ -z "${BREV_API_TOKEN:-}" ]; then
+              echo "::error::Brev auth is empty — set BREV_API_KEY/BREV_ORG_ID or BREV_API_TOKEN."
+              exit 1
+            fi
+            mkdir -p ~/.brev
+            umask 077
+            printf '{"refresh_token":"%s"}' "$BREV_API_TOKEN" > ~/.brev/credentials.json
+            chmod 600 ~/.brev/credentials.json
           fi
-          mkdir -p ~/.brev
-          umask 077
-          printf '{"refresh_token":"%s"}' "$BREV_API_TOKEN" > ~/.brev/credentials.json
-          chmod 600 ~/.brev/credentials.json
           # Skip the first-run onboarding wizard that blocks on stdin (also removed in #1470)
+          mkdir -p ~/.brev
           printf '{"step":1,"hasRunBrevShell":true,"hasRunBrevOpen":true}' > ~/.brev/onboarding_step.json
           brev ls >/dev/null
 
       - name: Install dependencies
         run: npm install --ignore-scripts
 
+      - name: Build CLI
+        run: npm run build:cli
+
       - name: Run ephemeral Brev E2E
         env:
           BREV_API_TOKEN: ${{ inputs.brev_token || secrets.BREV_API_TOKEN }}
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
-          INSTANCE_NAME: e2e-pr-${{ inputs.pr_number || github.run_id }}
+          INSTANCE_NAME: ${{ env.BREV_E2E_INSTANCE_NAME }}
           TEST_SUITE: ${{ inputs.test_suite }}
           USE_LAUNCHABLE: ${{ inputs.use_launchable && '1' || '0' }}
           LAUNCHABLE_SETUP_SCRIPT: ${{ inputs.setup_script_url || '' }}
-          BREV_PROVIDER: gcp
+          BREV_PROVIDER: ${{ inputs.brev_provider || vars.BREV_PROVIDER || '' }}
+          BREV_GPU_TYPE: ${{ inputs.brev_gpu_type || vars.BREV_GPU_TYPE || '' }}
+          BREV_GPU_NAME: ${{ inputs.brev_gpu_name || vars.BREV_GPU_NAME || '' }}
+          BREV_GPU_MIN_VRAM: ${{ inputs.brev_gpu_min_vram || vars.BREV_GPU_MIN_VRAM || '20' }}
+          BREV_CREATE_TIMEOUT_SECONDS: ${{ inputs.brev_create_timeout_seconds || vars.BREV_CREATE_TIMEOUT_SECONDS || '' }}
+          NEMOCLAW_GPU_E2E_MODEL: ${{ vars.NEMOCLAW_GPU_E2E_MODEL || 'qwen2.5:7b' }}
           KEEP_ALIVE: ${{ inputs.keep_alive }}
-        run: npx vitest run --project e2e-branch-validation
+        run: npx vitest run --project e2e-branch-validation --silent=false --reporter=default
 
       - name: Update check run (completed)
         if: always() && inputs.pr_number != '' && env.CHECK_RUN_ID != ''
@@ -230,7 +292,7 @@ jobs:
             EMOJI="❌"
             STATUS="FAILED"
           fi
-          INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}"
+          INSTANCE="${{ env.BREV_E2E_INSTANCE_NAME }}"
           BRANCH="${RESOLVED_BRANCH:-${{ inputs.branch || 'main' }}}"
           BODY="${EMOJI} **Brev E2E** (${{ inputs.test_suite }}): **${STATUS}** on branch \`${BRANCH}\` — [See logs](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})"
           if [ "${{ inputs.keep_alive }}" = "true" ]; then
@@ -252,7 +314,7 @@ jobs:
         if: failure()
         continue-on-error: true
         run: |
-          INSTANCE="e2e-pr-${{ inputs.pr_number || github.run_id }}"
+          INSTANCE="${{ env.BREV_E2E_INSTANCE_NAME }}"
           mkdir -p brev-debug-bundle
           brev refresh >/dev/null 2>&1 || true
           ssh -o StrictHostKeyChecking=no -o LogLevel=ERROR \

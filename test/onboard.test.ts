@@ -51,10 +51,13 @@ type OnboardTestInternals = {
   buildCompatibleEndpointSandboxSmokeCommand: (model: string) => string;
   buildCompatibleEndpointSandboxSmokeScript: (model: string) => string;
   buildSandboxConfigSyncScript: ShimFn<string>;
-  buildSandboxGpuCreateArgs: (config: {
-    sandboxGpuEnabled: boolean;
-    sandboxGpuDevice?: string | null;
-  }) => string[];
+  buildSandboxGpuCreateArgs: (
+    config: {
+      sandboxGpuEnabled: boolean;
+      sandboxGpuDevice?: string | null;
+    },
+    options?: { suppressGpuFlag?: boolean },
+  ) => string[];
   buildDirectGpuPolicyYaml: (basePolicy: string) => string;
   buildDirectSandboxGpuProofCommands: (sandboxName: string) => { label: string; args: string[] }[];
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
@@ -65,6 +68,12 @@ type OnboardTestInternals = {
     options?: { webSearchSupported?: boolean | null },
   ) => T[];
   formatEnvAssignment: (name: string, value: string) => string;
+  findAvailableDashboardPort: (
+    sandboxName: string,
+    preferredPort: number,
+    forwardListOutput: string | null,
+    isPortBoundCheck?: (port: number) => boolean,
+  ) => number;
   findDashboardForwardOwner: (
     forwardListOutput: string | null | undefined,
     portToStop: string,
@@ -143,6 +152,12 @@ type OnboardTestInternals = {
       | undefined,
     sessionGpuPassthrough?: boolean,
   ) => { flag: "enable" | "disable" | null; device: string | null };
+  getSandboxReadyTimeoutSecs: (
+    config: { sandboxGpuEnabled: boolean },
+    env?: NodeJS.ProcessEnv,
+    platform?: NodeJS.Platform,
+    arch?: NodeJS.Architecture,
+  ) => number;
   shouldAllowOpenshellAboveBlueprintMax: (
     versionOutput?: string | null,
     platform?: NodeJS.Platform,
@@ -225,6 +240,7 @@ function isOnboardTestInternals(
     typeof value.buildDirectGpuPolicyYaml === "function" &&
     typeof value.buildDirectSandboxGpuProofCommands === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
+    typeof value.findAvailableDashboardPort === "function" &&
     typeof value.getDockerDriverGatewayEnv === "function" &&
     typeof value.getGatewayStartEnv === "function" &&
     typeof value.shouldRequireDockerDriverEnv === "function" &&
@@ -236,6 +252,7 @@ function isOnboardTestInternals(
     typeof value.parseDockerCdiSpecDirs === "function" &&
     typeof value.resolveSandboxGpuConfig === "function" &&
     typeof value.getResumeSandboxGpuOverrides === "function" &&
+    typeof value.getSandboxReadyTimeoutSecs === "function" &&
     typeof value.shouldAllowOpenshellAboveBlueprintMax === "function" &&
     typeof value.hasChatCompletionsToolCall === "function" &&
     typeof value.hasChatCompletionsToolCallLeak === "function" &&
@@ -295,6 +312,7 @@ const {
   parseDockerCdiSpecDirs,
   resolveSandboxGpuConfig,
   getResumeSandboxGpuOverrides,
+  getSandboxReadyTimeoutSecs,
   shouldAllowOpenshellAboveBlueprintMax,
   versionGte,
   getRequestedModelHint,
@@ -329,6 +347,7 @@ const {
   shouldIncludeBuildContextPath,
   shouldRunCompatibleEndpointSandboxSmoke,
   writeSandboxConfigSyncFile,
+  findAvailableDashboardPort,
   findDashboardForwardOwner,
   formatOnboardConfigSummary,
   formatSandboxBuildEstimateNote,
@@ -385,6 +404,28 @@ describe("onboard helpers", () => {
     expect(
       buildSandboxGpuCreateArgs({ sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=0" }),
     ).toEqual(["--gpu", "--gpu-device", "nvidia.com/gpu=0"]);
+    expect(
+      buildSandboxGpuCreateArgs(
+        { sandboxGpuEnabled: true, sandboxGpuDevice: "nvidia.com/gpu=0" },
+        { suppressGpuFlag: true },
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps the default sandbox readiness timeout unless explicitly overridden", () => {
+    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: false }, {}, "linux")).toBe(180);
+    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: true }, {}, "linux")).toBe(180);
+    expect(getSandboxReadyTimeoutSecs({ sandboxGpuEnabled: true }, {}, "win32")).toBe(180);
+  });
+
+  it("honors explicit sandbox readiness timeout overrides", () => {
+    expect(
+      getSandboxReadyTimeoutSecs(
+        { sandboxGpuEnabled: true },
+        { NEMOCLAW_SANDBOX_READY_TIMEOUT: "75" },
+        "linux",
+      ),
+    ).toBe(75);
   });
 
   it(
@@ -681,11 +722,20 @@ network_policies:
   it("builds direct sandbox GPU proof commands", () => {
     const commands = buildDirectSandboxGpuProofCommands("alpha");
     expect(commands.map((entry) => entry.label)).toEqual([
-      "nvidia-smi",
+      "nvidia-smi when available",
       "/proc/<pid>/task/<tid>/comm write",
       "cuInit(0) via libcuda.so.1",
     ]);
-    expect(commands[0].args).toEqual(["sandbox", "exec", "-n", "alpha", "--", "nvidia-smi"]);
+    expect(commands[0].args).toEqual([
+      "sandbox",
+      "exec",
+      "-n",
+      "alpha",
+      "--",
+      "sh",
+      "-lc",
+      expect.stringContaining("command -v nvidia-smi"),
+    ]);
     expect(commands[1].args.join(" ")).toContain("/proc/$$/task/$$/comm");
     expect(commands[1].args.join(" ")).not.toContain("ls /proc/self/task");
     expect(commands[2].args.join(" ")).toContain("cuInit(0)");
@@ -2520,6 +2570,249 @@ const { loadAgent } = require(${agentDefsPath});
     expect(versionGte(max, min)).toBe(true);
   });
 
+  describe("resolveOpenshellInstallVersion (#3404)", () => {
+    const installModule = require("../dist/lib/onboard/openshell-install") as {
+      parseOpenshellReleaseTag: (tag: unknown) => string | null;
+      resolveOpenshellInstallVersion: (
+        available: readonly string[],
+        options: { max: string | null },
+        helpers: { versionGte: (a: string, b: string) => boolean },
+      ) => {
+        kind: "pin" | "no-max" | "incompatible";
+        version?: string;
+        latest?: string | null;
+        max?: string;
+        message?: string;
+        reason?: "latest" | "max-cap";
+      };
+    };
+    const helpers = { versionGte };
+
+    it("picks the highest available release ≤ max when latest exceeds max", () => {
+      const result = installModule.resolveOpenshellInstallVersion(
+        ["v0.0.34", "0.0.35", "v0.0.38"],
+        { max: "0.0.36" },
+        helpers,
+      );
+      expect(result.kind).toBe("pin");
+      expect(result.version).toBe("0.0.35");
+      expect(result.reason).toBe("max-cap");
+      expect(result.latest).toBe("0.0.38");
+    });
+
+    it("picks latest unchanged when latest is ≤ max", () => {
+      const result = installModule.resolveOpenshellInstallVersion(
+        ["v0.0.34", "0.0.35", "v0.0.36"],
+        { max: "0.0.39" },
+        helpers,
+      );
+      expect(result.kind).toBe("pin");
+      expect(result.version).toBe("0.0.36");
+      expect(result.reason).toBe("latest");
+      expect(result.latest).toBe("0.0.36");
+    });
+
+    it("returns an incompatible resolution when no release ≤ max exists", () => {
+      const result = installModule.resolveOpenshellInstallVersion(
+        ["v0.0.38", "0.0.39"],
+        { max: "0.0.36" },
+        helpers,
+      );
+      expect(result.kind).toBe("incompatible");
+      expect(result.latest).toBe("0.0.39");
+      expect(result.max).toBe("0.0.36");
+      expect(result.message).toContain("0.0.39");
+      expect(result.message).toContain("0.0.36");
+    });
+
+    it("falls back to legacy fetch behaviour when max is missing", () => {
+      const result = installModule.resolveOpenshellInstallVersion(
+        ["v0.0.38", "0.0.39"],
+        { max: null },
+        helpers,
+      );
+      expect(result.kind).toBe("no-max");
+      expect(result.latest).toBe("0.0.39");
+    });
+
+    it("falls back to legacy fetch when max is malformed", () => {
+      for (const max of ["", "-1.0.0", "not-a-version", "v"] as const) {
+        const result = installModule.resolveOpenshellInstallVersion(
+          ["v0.0.38"],
+          { max },
+          helpers,
+        );
+        expect(result.kind).toBe("no-max");
+      }
+    });
+
+    it("silently drops malformed entries from the available list", () => {
+      const result = installModule.resolveOpenshellInstallVersion(
+        ["", "v0.0.35", "-1.0.0", "not-a-version", "v0.0.34"],
+        { max: "0.0.36" },
+        helpers,
+      );
+      expect(result.kind).toBe("pin");
+      expect(result.version).toBe("0.0.35");
+    });
+
+    it("parseOpenshellReleaseTag strips leading v and rejects malformed input", () => {
+      expect(installModule.parseOpenshellReleaseTag("v0.0.39")).toBe("0.0.39");
+      expect(installModule.parseOpenshellReleaseTag("0.0.39")).toBe("0.0.39");
+      expect(installModule.parseOpenshellReleaseTag("")).toBe(null);
+      expect(installModule.parseOpenshellReleaseTag("   ")).toBe(null);
+      expect(installModule.parseOpenshellReleaseTag("-1.0.0")).toBe(null);
+      expect(installModule.parseOpenshellReleaseTag("0.0")).toBe(null);
+      expect(installModule.parseOpenshellReleaseTag(42)).toBe(null);
+      expect(installModule.parseOpenshellReleaseTag(null)).toBe(null);
+    });
+
+    it("matches the DGX Spark repro: latest=0.0.38 max=0.0.36 picks 0.0.36", () => {
+      const result = installModule.resolveOpenshellInstallVersion(
+        ["v0.0.36", "v0.0.37", "v0.0.38"],
+        { max: "0.0.36" },
+        helpers,
+      );
+      expect(result.kind).toBe("pin");
+      expect(result.version).toBe("0.0.36");
+      expect(result.reason).toBe("max-cap");
+    });
+  });
+
+  describe("resolveOpenshellInstallPin (#3404 orchestrator)", () => {
+    const pinModule = require("../dist/lib/onboard/openshell-pin") as {
+      resolveOpenshellInstallPin: (deps: {
+        getBlueprintMaxOpenshellVersion: () => string | null;
+        versionGte: (a: string, b: string) => boolean;
+        listReleases?: () => string[] | null;
+        log?: (m: string) => void;
+      }) => { kind: "pin" | "no-max" | "incompatible"; version?: string; message?: string };
+    };
+
+    it("returns no-max when the blueprint has no max_openshell_version", () => {
+      const result = pinModule.resolveOpenshellInstallPin({
+        getBlueprintMaxOpenshellVersion: () => null,
+        versionGte,
+        listReleases: () => ["v0.0.38"],
+      });
+      expect(result.kind).toBe("no-max");
+    });
+
+    it("falls back to no-max when GitHub fetch fails (offline)", () => {
+      const result = pinModule.resolveOpenshellInstallPin({
+        getBlueprintMaxOpenshellVersion: () => "0.0.36",
+        versionGte,
+        listReleases: () => null,
+      });
+      expect(result.kind).toBe("no-max");
+    });
+
+    it("falls back to no-max when GitHub returns an empty list", () => {
+      const result = pinModule.resolveOpenshellInstallPin({
+        getBlueprintMaxOpenshellVersion: () => "0.0.36",
+        versionGte,
+        listReleases: () => [],
+      });
+      expect(result.kind).toBe("no-max");
+    });
+
+    it("pins to highest ≤ max when releases exceed the cap (QA repro)", () => {
+      const logged: string[] = [];
+      const result = pinModule.resolveOpenshellInstallPin({
+        getBlueprintMaxOpenshellVersion: () => "0.0.36",
+        versionGte,
+        listReleases: () => ["v0.0.36", "v0.0.37", "v0.0.38"],
+        log: (m) => logged.push(m),
+      });
+      expect(result.kind).toBe("pin");
+      expect(result.version).toBe("0.0.36");
+      expect(logged.join("\n")).toContain("0.0.36");
+      expect(logged.join("\n")).toContain("0.0.38");
+    });
+
+    it("surfaces incompatible when no published release ≤ max exists", () => {
+      const result = pinModule.resolveOpenshellInstallPin({
+        getBlueprintMaxOpenshellVersion: () => "0.0.36",
+        versionGte,
+        listReleases: () => ["v0.0.38", "v0.0.39"],
+      });
+      expect(result.kind).toBe("incompatible");
+      expect(result.message ?? "").toContain("0.0.36");
+      expect(result.message ?? "").toContain("0.0.39");
+    });
+  });
+
+  describe("computeOpenshellInstallEnv overlays MIN/MAX/PIN (#3404 widening)", () => {
+    const pinModule = require("../dist/lib/onboard/openshell-pin") as {
+      computeOpenshellInstallEnv: (
+        baseEnv: Record<string, string | undefined>,
+        deps: {
+          getBlueprintMinOpenshellVersion?: () => string | null;
+          getBlueprintMaxOpenshellVersion: () => string | null;
+          versionGte: (a: string, b: string) => boolean;
+          listReleases?: () => string[] | null;
+          log?: (m: string) => void;
+        },
+      ) => { env: Record<string, string | undefined> | null };
+    };
+
+    it("overlays MIN/MAX/PIN env vars from blueprint when latest exceeds max", () => {
+      const result = pinModule.computeOpenshellInstallEnv(
+        { EXISTING: "preserved" },
+        {
+          getBlueprintMinOpenshellVersion: () => "0.0.39",
+          getBlueprintMaxOpenshellVersion: () => "0.0.39",
+          versionGte,
+          listReleases: () => ["v0.0.38", "v0.0.39", "v0.0.42"],
+        },
+      );
+      expect(result.env).not.toBe(null);
+      expect(result.env?.EXISTING).toBe("preserved");
+      expect(result.env?.NEMOCLAW_OPENSHELL_MIN_VERSION).toBe("0.0.39");
+      expect(result.env?.NEMOCLAW_OPENSHELL_MAX_VERSION).toBe("0.0.39");
+      expect(result.env?.NEMOCLAW_OPENSHELL_PIN_VERSION).toBe("0.0.39");
+    });
+
+    it("overlays MIN/MAX but no PIN when GitHub fetch fails (offline)", () => {
+      const result = pinModule.computeOpenshellInstallEnv(
+        {},
+        {
+          getBlueprintMinOpenshellVersion: () => "0.0.39",
+          getBlueprintMaxOpenshellVersion: () => "0.0.39",
+          versionGte,
+          listReleases: () => null,
+        },
+      );
+      expect(result.env).not.toBe(null);
+      expect(result.env?.NEMOCLAW_OPENSHELL_MIN_VERSION).toBe("0.0.39");
+      expect(result.env?.NEMOCLAW_OPENSHELL_MAX_VERSION).toBe("0.0.39");
+      expect(result.env?.NEMOCLAW_OPENSHELL_PIN_VERSION).toBeUndefined();
+    });
+
+    it("returns the base env unchanged when blueprint exposes no min/max", () => {
+      const baseEnv = { ONLY_THIS: "value" };
+      const result = pinModule.computeOpenshellInstallEnv(baseEnv, {
+        getBlueprintMinOpenshellVersion: () => null,
+        getBlueprintMaxOpenshellVersion: () => null,
+        versionGte,
+        listReleases: () => ["v0.0.38"],
+      });
+      expect(result.env).toBe(baseEnv);
+    });
+
+    it("aborts (env=null) when no release ≤ max exists", () => {
+      const result = pinModule.computeOpenshellInstallEnv(
+        {},
+        {
+          getBlueprintMaxOpenshellVersion: () => "0.0.36",
+          versionGte,
+          listReleases: () => ["v0.0.38", "v0.0.39"],
+        },
+      );
+      expect(result.env).toBe(null);
+    });
+  });
+
   it("pins the gateway image to the installed OpenShell release version", () => {
     expect(getInstalledOpenshellVersion("openshell 0.0.12")).toBe("0.0.12");
     expect(getInstalledOpenshellVersion("openshell 0.0.13-dev.8+gbbcaed2ea")).toBe("0.0.13");
@@ -2628,8 +2921,10 @@ const { loadAgent } = require(${agentDefsPath});
     );
 
     assert.match(envSource, /NEMOCLAW_SANDBOX_READY_TIMEOUT", 180/);
-    assert.match(source, /Math\.ceil\(SANDBOX_READY_TIMEOUT_SECS \/ 2\)/);
-    assert.match(source, /within \$\{SANDBOX_READY_TIMEOUT_SECS\}s/);
+    assert.match(source, /Math\.ceil\(sandboxReadyTimeoutSecs \/ 2\)/);
+    assert.match(source, /within \$\{sandboxReadyTimeoutSecs\}s/);
+    assert.doesNotMatch(source, /DOCKER_DRIVER_GPU_SANDBOX_READY_TIMEOUT_SECS = 600/);
+    assert.doesNotMatch(source, /OPENSHELL_PROVISION_TIMEOUT = String\(sandboxReadyTimeoutSecs\)/);
   });
 
   it("classifies gateway reuse states conservatively", () => {
@@ -5092,6 +5387,35 @@ ${webSearchVerifySource}`;
       /const gpuPassthrough = sandboxGpuConfig\.sandboxGpuEnabled;/,
     );
     assert.match(source, /Use --no-gpu to opt out/);
+  });
+
+  it("uses the NemoClaw Docker GPU patch without passing --gpu to sandbox create", () => {
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    const patchSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "docker-gpu-patch.ts"),
+      "utf-8",
+    );
+
+    const createSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "docker-gpu-sandbox-create.ts"),
+      "utf-8",
+    );
+
+    assert.match(source, /useDockerGpuPatch = dockerGpuSandboxCreate\.shouldUseDockerGpuPatchForCreate/);
+    assert.match(source, /suppressGpuFlag: useDockerGpuPatch/);
+    assert.match(source, /maybeApplyDuringCreate/);
+    assert.match(source, /printDockerGpuReadinessFailure/);
+    assert.match(source, /printDockerGpuProofFailure/);
+    assert.match(createSource, /applyDockerGpuPatchOrExit/);
+    assert.match(createSource, /getDockerGpuSupervisorReconnectTimeoutSecs/);
+    assert.match(createSource, /waitForOpenShellSupervisorReconnect/);
+    assert.match(createSource, /recreateOpenShellDockerSandboxWithGpu/);
+    assert.match(patchSource, /recreateOpenShellDockerSandboxWithGpu/);
+    assert.match(patchSource, /collectDockerGpuPatchDiagnostics/);
+    assert.match(patchSource, /has been left in place for inspection/);
   });
 
   it("does not persist sandboxName to onboard-session.json before createSandbox completes (#2753)", () => {
@@ -10026,7 +10350,8 @@ const { createSandbox } = require(${onboardPath});
     );
 
     assert.match(source, /const preferredEntry = findForwardEntry/);
-    assert.match(source, /function isLiveForwardStatus/);
+    // isLiveForwardStatus lives in ./onboard/dashboard-port and is imported above;
+    // the call site itself is the meaningful assertion.
     assert.match(source, /!isLiveForwardStatus\(preferredEntry\.status\)/);
     assert.match(
       source,
@@ -10036,6 +10361,181 @@ const { createSandbox } = require(${onboardPath});
       source,
       /findAvailableDashboardPort\(sandboxName, preferredPort, existingForwards\)/,
     );
+  });
+
+  describe("findAvailableDashboardPort port-conflict detection (#3260)", () => {
+    const stubBound = (...bound: number[]) => {
+      const set = new Set(bound);
+      return (port: number) => set.has(port);
+    };
+
+    it("returns the preferred port when no forward owns it and the host says it is free", () => {
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, "", stubBound()),
+        18789,
+      );
+    });
+
+    it("skips the preferred port when host reports it bound and falls through to the range scan", () => {
+      // The proactive probe in isPortBoundOnHost can now see root-owned
+      // listeners (sudo lsof) and Node-bind-failure listeners that the
+      // bare lsof missed; the allocator must skip those ports just as it
+      // skips ports owned by other forwards.
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, "", stubBound(18789)),
+        18790,
+      );
+    });
+
+    it("skips ports owned by other sandboxes and host-bound ports together", () => {
+      const forwardList = [
+        "SANDBOX  BIND  PORT  PID  STATUS",
+        "alpha    127.0.0.1  18789  111  running",
+      ].join("\n");
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, forwardList, stubBound(18790)),
+        18791,
+      );
+    });
+
+    it("returns the preferred port when this sandbox already owns it", () => {
+      const forwardList = [
+        "SANDBOX  BIND  PORT  PID  STATUS",
+        "cursor   127.0.0.1  18789  111  running",
+      ].join("\n");
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, forwardList, stubBound(18789)),
+        18789,
+      );
+    });
+
+    it("throws when every port in the range is occupied by other sandboxes", () => {
+      const lines = ["SANDBOX  BIND  PORT  PID  STATUS"];
+      for (let p = 18789; p <= 18799; p++) {
+        lines.push(`other${p}    127.0.0.1  ${p}  ${p}  running`);
+      }
+      assert.throws(
+        () => findAvailableDashboardPort("cursor", 18789, lines.join("\n"), stubBound()),
+        /All dashboard ports in range 18789-18799 are occupied/,
+      );
+    });
+
+    it("includes host-bound ports in the exhaustion error so users know what's blocking them", () => {
+      // When every candidate is skipped by isPortBoundCheck rather than by
+      // an OpenShell forward, the error must still surface which ports are
+      // bound — otherwise users see "all ports are occupied" with an empty
+      // owner list and no remediation hint (CodeRabbit catch on #3260).
+      const allBound = new Set<number>();
+      for (let p = 18789; p <= 18799; p++) allBound.add(p);
+      assert.throws(
+        () => findAvailableDashboardPort("cursor", 18789, "", (p) => allBound.has(p)),
+        /18789 → non-OpenShell host listener[\s\S]*18799 → non-OpenShell host listener/,
+      );
+    });
+
+    it("probes each port at most once even when the preferred port is in the range", () => {
+      // Avoid re-probing the same port via the proactive lsof + sudo lsof +
+      // Node bind chain — those are subprocess-spawning probes and the call
+      // count matters.
+      const calls: number[] = [];
+      const stub = (p: number) => {
+        calls.push(p);
+        return false;
+      };
+      findAvailableDashboardPort("cursor", 18789, "", stub);
+      assert.equal(calls.length, 1, `expected 1 probe call, got ${calls.length}`);
+      assert.equal(calls[0], 18789);
+    });
+  });
+
+  it("isPortBoundOnHost has a layered probe chain — lsof, sudo lsof, Node bind (#3260)", () => {
+    // Source-shape guard for the strengthened detection chain. Behavioural
+    // testing of the real probes spawns subprocesses and is covered by
+    // higher-level tests; this assertion just keeps the chain in place
+    // when the function is refactored.
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "dashboard-port.ts"),
+      "utf-8",
+    );
+    assert.match(source, /export function isPortBoundOnHost/);
+    assert.match(source, /\["lsof", "-i", `:\$\{port\}`, "-sTCP:LISTEN", "-P", "-n"\]/);
+    assert.match(
+      source,
+      /\["sudo", "-n", "lsof", "-i", `:\$\{port\}`, "-sTCP:LISTEN", "-P", "-n"\]/,
+    );
+    assert.match(source, /export function probePortBoundSync/);
+    assert.match(source, /EADDRINUSE/);
+  });
+
+  it("ensureDashboardForward rolls back when forward-start fails on the create path (#3260)", () => {
+    // The sandbox is committed to its dashboard port at create time
+    // (Dockerfile ARG + NEMOCLAW_DASHBOARD_PORT env). If `openshell forward
+    // start` fails after the build (TOCTOU race), we must not silently
+    // return a broken port — roll back the sandbox so the next onboard
+    // can pick a different port. The rollback must classify the failure
+    // (port conflict vs other) so users aren't pointed at the wrong fix.
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    assert.match(source, /if \(fwdResult && fwdResult\.status !== 0\)/);
+    assert.match(source, /if \(rollbackSandboxOnFailure\)/);
+    assert.match(source, /const looksLikePortConflict =/);
+    assert.match(source, /eaddrinuse\|address already in use/i);
+    assert.match(source, /suppressOutput: true/);
+    assert.match(source, /runBackgroundForwardStartWithDiagnostics/);
+    assert.doesNotMatch(
+      source,
+      /forward", "start", "--background"[\s\S]{0,260}stdio: \["ignore", "pipe", "pipe"\]/,
+      "background forward start must not capture pipe stdio; daemonized children can keep pipes open and hang install.sh",
+    );
+    const helperSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "forward-start.ts"),
+      "utf-8",
+    );
+    assert.match(helperSource, /secureTempFile\("nemoclaw-forward-start", "\.out"\)/);
+    assert.match(helperSource, /runForwardStart\(\["ignore", outFd, errFd\], timeoutMs\)/);
+    assert.match(
+      source,
+      /runOpenshell\(\["sandbox", "delete", sandboxName\], \{ ignoreError: true \}\)/,
+    );
+    assert.match(source, /buildOrphanedSandboxRollbackMessage/);
+  });
+
+  it("ensureDashboardForward rolls back when the create path reallocates to a different port (#3260)", () => {
+    // The sandbox bakes CHAT_UI_URL and NEMOCLAW_DASHBOARD_PORT from
+    // `preselectedPort` at build time. If that port becomes host-bound
+    // during the multi-minute image build (TOCTOU), findAvailableDashboardPort
+    // returns a different port — but the sandbox is already configured to
+    // serve on the original one. Starting the forward on the new port
+    // would reproduce "onboard exits successfully but dashboard is
+    // unreachable" on the new port. The fix: on the create path, treat
+    // actualPort !== preferredPort as unrecoverable, roll back the sandbox,
+    // and let the next onboard re-bake with a clean port. Reuse paths still
+    // warn-and-continue because the sandbox image is fixed.
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    // Locate the actualPort != preferredPort branch and verify it carries
+    // both the create-path rollback (gated on rollbackSandboxOnFailure) and
+    // the reuse-path warn fallback.
+    const mismatchBranch = source.match(
+      /if \(actualPort !== preferredPort\) \{[\s\S]*?\n  \}/,
+    );
+    assert.ok(mismatchBranch, "Expected actualPort !== preferredPort branch in ensureDashboardForward");
+    const branchBody = mismatchBranch[0];
+    assert.match(branchBody, /if \(rollbackSandboxOnFailure\)/);
+    assert.match(branchBody, /became host-bound during sandbox build/);
+    assert.match(
+      branchBody,
+      /runOpenshell\(\["sandbox", "delete", sandboxName\], \{ ignoreError: true \}\)/,
+    );
+    assert.match(branchBody, /buildOrphanedSandboxRollbackMessage/);
+    assert.match(branchBody, /process\.exit\(1\)/);
+    // Reuse-path fallback (the warn) must still be present so non-create
+    // callers keep the existing warn-and-continue semantics.
+    assert.match(branchBody, /is taken\. Using port .* instead/);
   });
 
   it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {
