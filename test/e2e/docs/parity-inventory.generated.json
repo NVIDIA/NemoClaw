@@ -10713,33 +10713,33 @@
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 207,
-          "text": "macOS installer did not request the Darwin openshell-driver-vm asset",
+          "text": "macOS installer still requested the Darwin openshell-driver-vm asset",
           "polarity": "fail",
-          "normalized_id": "macos.installer.did.not.request.the.darwin.openshell.driver.vm.asset",
+          "normalized_id": "macos.installer.still.requested.the.darwin.openshell.driver.vm.asset",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 211,
-          "text": "macOS OpenShell ${CURRENT_OPENSHELL_VERSION} incomplete install fetches Darwin gateway and VM driver assets",
+          "text": "macOS OpenShell ${CURRENT_OPENSHELL_VERSION} incomplete install fetches Darwin gateway asset",
           "polarity": "pass",
-          "normalized_id": "macos.openshell.current.openshell.version.incomplete.install.fetches.darwin.gateway.and.vm.driver.assets",
+          "normalized_id": "macos.openshell.current.openshell.version.incomplete.install.fetches.darwin.gateway.asset",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 280,
-          "text": "macOS installer did not repair missing openshell-driver-vm Hypervisor entitlement",
+          "text": "macOS installer still required openshell-driver-vm Hypervisor entitlement",
           "polarity": "fail",
-          "normalized_id": "macos.installer.did.not.repair.missing.openshell.driver.vm.hypervisor.entitlement",
+          "normalized_id": "macos.installer.still.required.openshell.driver.vm.hypervisor.entitlement",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 287,
-          "text": "macOS installer did not codesign openshell-driver-vm with entitlements",
+          "text": "macOS installer still codesigned openshell-driver-vm",
           "polarity": "fail",
-          "normalized_id": "macos.installer.did.not.codesign.openshell.driver.vm.with.entitlements",
+          "normalized_id": "macos.installer.still.codesigned.openshell.driver.vm",
           "mapping_status": "deferred"
         },
         {
@@ -10753,9 +10753,9 @@
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 298,
-          "text": "macOS OpenShell ${CURRENT_OPENSHELL_VERSION} installer repairs missing VM driver Hypervisor entitlement",
+          "text": "macOS OpenShell ${CURRENT_OPENSHELL_VERSION} installer does not require VM driver Hypervisor entitlement",
           "polarity": "pass",
-          "normalized_id": "macos.openshell.current.openshell.version.installer.repairs.missing.vm.driver.hypervisor.entitlement",
+          "normalized_id": "macos.openshell.current.openshell.version.installer.does.not.require.vm.driver.hypervisor.entitlement",
           "mapping_status": "deferred"
         },
         {
@@ -10777,9 +10777,9 @@
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 307,
-          "text": "onboard does not enable macOS VM rootfs compatibility for Darwin sandbox builds",
+          "text": "onboard does not keep macOS Docker sandbox builds out of the VM rootfs compatibility path",
           "polarity": "fail",
-          "normalized_id": "onboard.does.not.enable.macos.vm.rootfs.compatibility.for.darwin.sandbox.builds",
+          "normalized_id": "onboard.does.not.keep.macos.docker.sandbox.builds.out.of.the.vm.rootfs.compatibility.path",
           "mapping_status": "deferred"
         },
         {
@@ -10817,9 +10817,9 @@
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 316,
-          "text": "macOS VM sandbox builds enable OpenClaw and Hermes rootfs ownership compatibility",
+          "text": "macOS Docker sandbox builds keep VM rootfs compatibility disabled",
           "polarity": "pass",
-          "normalized_id": "macos.vm.sandbox.builds.enable.openclaw.and.hermes.rootfs.ownership.compatibility",
+          "normalized_id": "macos.docker.sandbox.builds.keep.vm.rootfs.compatibility.disabled",
           "mapping_status": "deferred"
         },
         {

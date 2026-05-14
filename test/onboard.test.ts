@@ -14,6 +14,7 @@ import type { AgentDefinition } from "../dist/lib/agent/defs.js";
 import { loadAgent } from "../dist/lib/agent/defs.js";
 import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard/contract.js";
 import { NAME_ALLOWED_FORMAT } from "../dist/lib/name-validation.js";
+import { hasOpenShellVmDriverChildProcessFromPsOutput } from "../dist/lib/onboard/vm-driver-process.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
@@ -68,6 +69,12 @@ type OnboardTestInternals = {
     options?: { webSearchSupported?: boolean | null },
   ) => T[];
   formatEnvAssignment: (name: string, value: string) => string;
+  findAvailableDashboardPort: (
+    sandboxName: string,
+    preferredPort: number,
+    forwardListOutput: string | null,
+    isPortBoundCheck?: (port: number) => boolean,
+  ) => number;
   findDashboardForwardOwner: (
     forwardListOutput: string | null | undefined,
     portToStop: string,
@@ -234,6 +241,7 @@ function isOnboardTestInternals(
     typeof value.buildDirectGpuPolicyYaml === "function" &&
     typeof value.buildDirectSandboxGpuProofCommands === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
+    typeof value.findAvailableDashboardPort === "function" &&
     typeof value.getDockerDriverGatewayEnv === "function" &&
     typeof value.getGatewayStartEnv === "function" &&
     typeof value.shouldRequireDockerDriverEnv === "function" &&
@@ -340,6 +348,7 @@ const {
   shouldIncludeBuildContextPath,
   shouldRunCompatibleEndpointSandboxSmoke,
   writeSandboxConfigSyncFile,
+  findAvailableDashboardPort,
   findDashboardForwardOwner,
   formatOnboardConfigSummary,
   formatSandboxBuildEstimateNote,
@@ -480,12 +489,13 @@ network_policies:
     expect(linuxEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
 
     const darwinEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "darwin");
-    expect(darwinEnv.OPENSHELL_DRIVERS).toBe("vm");
+    expect(darwinEnv.OPENSHELL_DRIVERS).toBe("docker");
     expect(darwinEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
-    expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://host.containers.internal:8080");
+    expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
     expect(darwinEnv.OPENSHELL_SSH_GATEWAY_HOST).toBe("127.0.0.1");
-    expect(darwinEnv.OPENSHELL_VM_DRIVER_STATE_DIR).toContain("vm-driver");
-    expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBeUndefined();
+    expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
+    expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBeUndefined();
+    expect(darwinEnv.OPENSHELL_VM_DRIVER_STATE_DIR).toBeUndefined();
 
     const originalOverlayFix = process.env.NEMOCLAW_DISABLE_OVERLAY_FIX;
     process.env.NEMOCLAW_DISABLE_OVERLAY_FIX = "1";
@@ -541,7 +551,7 @@ network_policies:
         },
         "arm64",
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       areRequiredDockerDriverBinariesPresent(
         "darwin",
@@ -569,6 +579,18 @@ network_policies:
     expect(shouldRequireDockerDriverEnv("linux")).toBe(true);
     expect(shouldRequireDockerDriverEnv("darwin")).toBe(false);
     expect(shouldRequireDockerDriverEnv("win32")).toBe(false);
+  });
+
+  it("detects VM-driver children attached to a macOS standalone gateway", () => {
+    const psOutput = [
+      " 1000     1 /Users/me/.local/bin/openshell-gateway",
+      " 1001  1000 /Users/me/.local/bin/openshell-driver-vm --bind-socket /tmp/compute.sock",
+      " 1002  1001 /Users/me/.local/bin/openshell-driver-vm --internal-run-vm",
+      " 1003  1000 /usr/bin/other-process",
+    ].join("\n");
+    expect(hasOpenShellVmDriverChildProcessFromPsOutput(1000, psOutput)).toBe(true);
+    expect(hasOpenShellVmDriverChildProcessFromPsOutput(1001, psOutput)).toBe(true);
+    expect(hasOpenShellVmDriverChildProcessFromPsOutput(1003, psOutput)).toBe(false);
   });
 
   it("detects stale Docker-driver gateway runtime state before reuse", () => {
@@ -885,7 +907,8 @@ network_policies:
     assert.match(script, /https:\/\/inference\.local\/v1/);
     assert.match(script, /apiKey.*unused/);
     assert.match(script, /agents\.defaults\.model\.primary/);
-    assert.match(script, /curl[\s\S]*\/chat\/completions/);
+    assert.match(script, /INFERENCE_URL=.*\/chat\/completions/);
+    assert.match(script, /curl[\s\S]*"\$INFERENCE_URL"/);
     assert.doesNotMatch(script, /COMPATIBLE_API_KEY/);
     assert.doesNotMatch(script, /api\.deepinfra\.com/);
   });
@@ -10003,7 +10026,8 @@ const { createSandbox } = require(${onboardPath});
     );
 
     assert.match(source, /const preferredEntry = findForwardEntry/);
-    assert.match(source, /function isLiveForwardStatus/);
+    // isLiveForwardStatus lives in ./onboard/dashboard-port and is imported above;
+    // the call site itself is the meaningful assertion.
     assert.match(source, /!isLiveForwardStatus\(preferredEntry\.status\)/);
     assert.match(
       source,
@@ -10013,6 +10037,181 @@ const { createSandbox } = require(${onboardPath});
       source,
       /findAvailableDashboardPort\(sandboxName, preferredPort, existingForwards\)/,
     );
+  });
+
+  describe("findAvailableDashboardPort port-conflict detection (#3260)", () => {
+    const stubBound = (...bound: number[]) => {
+      const set = new Set(bound);
+      return (port: number) => set.has(port);
+    };
+
+    it("returns the preferred port when no forward owns it and the host says it is free", () => {
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, "", stubBound()),
+        18789,
+      );
+    });
+
+    it("skips the preferred port when host reports it bound and falls through to the range scan", () => {
+      // The proactive probe in isPortBoundOnHost can now see root-owned
+      // listeners (sudo lsof) and Node-bind-failure listeners that the
+      // bare lsof missed; the allocator must skip those ports just as it
+      // skips ports owned by other forwards.
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, "", stubBound(18789)),
+        18790,
+      );
+    });
+
+    it("skips ports owned by other sandboxes and host-bound ports together", () => {
+      const forwardList = [
+        "SANDBOX  BIND  PORT  PID  STATUS",
+        "alpha    127.0.0.1  18789  111  running",
+      ].join("\n");
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, forwardList, stubBound(18790)),
+        18791,
+      );
+    });
+
+    it("returns the preferred port when this sandbox already owns it", () => {
+      const forwardList = [
+        "SANDBOX  BIND  PORT  PID  STATUS",
+        "cursor   127.0.0.1  18789  111  running",
+      ].join("\n");
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, forwardList, stubBound(18789)),
+        18789,
+      );
+    });
+
+    it("throws when every port in the range is occupied by other sandboxes", () => {
+      const lines = ["SANDBOX  BIND  PORT  PID  STATUS"];
+      for (let p = 18789; p <= 18799; p++) {
+        lines.push(`other${p}    127.0.0.1  ${p}  ${p}  running`);
+      }
+      assert.throws(
+        () => findAvailableDashboardPort("cursor", 18789, lines.join("\n"), stubBound()),
+        /All dashboard ports in range 18789-18799 are occupied/,
+      );
+    });
+
+    it("includes host-bound ports in the exhaustion error so users know what's blocking them", () => {
+      // When every candidate is skipped by isPortBoundCheck rather than by
+      // an OpenShell forward, the error must still surface which ports are
+      // bound — otherwise users see "all ports are occupied" with an empty
+      // owner list and no remediation hint (CodeRabbit catch on #3260).
+      const allBound = new Set<number>();
+      for (let p = 18789; p <= 18799; p++) allBound.add(p);
+      assert.throws(
+        () => findAvailableDashboardPort("cursor", 18789, "", (p) => allBound.has(p)),
+        /18789 → non-OpenShell host listener[\s\S]*18799 → non-OpenShell host listener/,
+      );
+    });
+
+    it("probes each port at most once even when the preferred port is in the range", () => {
+      // Avoid re-probing the same port via the proactive lsof + sudo lsof +
+      // Node bind chain — those are subprocess-spawning probes and the call
+      // count matters.
+      const calls: number[] = [];
+      const stub = (p: number) => {
+        calls.push(p);
+        return false;
+      };
+      findAvailableDashboardPort("cursor", 18789, "", stub);
+      assert.equal(calls.length, 1, `expected 1 probe call, got ${calls.length}`);
+      assert.equal(calls[0], 18789);
+    });
+  });
+
+  it("isPortBoundOnHost has a layered probe chain — lsof, sudo lsof, Node bind (#3260)", () => {
+    // Source-shape guard for the strengthened detection chain. Behavioural
+    // testing of the real probes spawns subprocesses and is covered by
+    // higher-level tests; this assertion just keeps the chain in place
+    // when the function is refactored.
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "dashboard-port.ts"),
+      "utf-8",
+    );
+    assert.match(source, /export function isPortBoundOnHost/);
+    assert.match(source, /\["lsof", "-i", `:\$\{port\}`, "-sTCP:LISTEN", "-P", "-n"\]/);
+    assert.match(
+      source,
+      /\["sudo", "-n", "lsof", "-i", `:\$\{port\}`, "-sTCP:LISTEN", "-P", "-n"\]/,
+    );
+    assert.match(source, /export function probePortBoundSync/);
+    assert.match(source, /EADDRINUSE/);
+  });
+
+  it("ensureDashboardForward rolls back when forward-start fails on the create path (#3260)", () => {
+    // The sandbox is committed to its dashboard port at create time
+    // (Dockerfile ARG + NEMOCLAW_DASHBOARD_PORT env). If `openshell forward
+    // start` fails after the build (TOCTOU race), we must not silently
+    // return a broken port — roll back the sandbox so the next onboard
+    // can pick a different port. The rollback must classify the failure
+    // (port conflict vs other) so users aren't pointed at the wrong fix.
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    assert.match(source, /if \(fwdResult && fwdResult\.status !== 0\)/);
+    assert.match(source, /if \(rollbackSandboxOnFailure\)/);
+    assert.match(source, /const looksLikePortConflict =/);
+    assert.match(source, /eaddrinuse\|address already in use/i);
+    assert.match(source, /suppressOutput: true/);
+    assert.match(source, /runBackgroundForwardStartWithDiagnostics/);
+    assert.doesNotMatch(
+      source,
+      /forward", "start", "--background"[\s\S]{0,260}stdio: \["ignore", "pipe", "pipe"\]/,
+      "background forward start must not capture pipe stdio; daemonized children can keep pipes open and hang install.sh",
+    );
+    const helperSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "forward-start.ts"),
+      "utf-8",
+    );
+    assert.match(helperSource, /secureTempFile\("nemoclaw-forward-start", "\.out"\)/);
+    assert.match(helperSource, /runForwardStart\(\["ignore", outFd, errFd\], timeoutMs\)/);
+    assert.match(
+      source,
+      /runOpenshell\(\["sandbox", "delete", sandboxName\], \{ ignoreError: true \}\)/,
+    );
+    assert.match(source, /buildOrphanedSandboxRollbackMessage/);
+  });
+
+  it("ensureDashboardForward rolls back when the create path reallocates to a different port (#3260)", () => {
+    // The sandbox bakes CHAT_UI_URL and NEMOCLAW_DASHBOARD_PORT from
+    // `preselectedPort` at build time. If that port becomes host-bound
+    // during the multi-minute image build (TOCTOU), findAvailableDashboardPort
+    // returns a different port — but the sandbox is already configured to
+    // serve on the original one. Starting the forward on the new port
+    // would reproduce "onboard exits successfully but dashboard is
+    // unreachable" on the new port. The fix: on the create path, treat
+    // actualPort !== preferredPort as unrecoverable, roll back the sandbox,
+    // and let the next onboard re-bake with a clean port. Reuse paths still
+    // warn-and-continue because the sandbox image is fixed.
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    // Locate the actualPort != preferredPort branch and verify it carries
+    // both the create-path rollback (gated on rollbackSandboxOnFailure) and
+    // the reuse-path warn fallback.
+    const mismatchBranch = source.match(
+      /if \(actualPort !== preferredPort\) \{[\s\S]*?\n  \}/,
+    );
+    assert.ok(mismatchBranch, "Expected actualPort !== preferredPort branch in ensureDashboardForward");
+    const branchBody = mismatchBranch[0];
+    assert.match(branchBody, /if \(rollbackSandboxOnFailure\)/);
+    assert.match(branchBody, /became host-bound during sandbox build/);
+    assert.match(
+      branchBody,
+      /runOpenshell\(\["sandbox", "delete", sandboxName\], \{ ignoreError: true \}\)/,
+    );
+    assert.match(branchBody, /buildOrphanedSandboxRollbackMessage/);
+    assert.match(branchBody, /process\.exit\(1\)/);
+    // Reuse-path fallback (the warn) must still be present so non-create
+    // callers keep the existing warn-and-continue semantics.
+    assert.match(branchBody, /is taken\. Using port .* instead/);
   });
 
   it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {

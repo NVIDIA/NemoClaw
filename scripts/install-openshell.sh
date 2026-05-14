@@ -122,7 +122,7 @@ required_driver_bins_present() {
       command -v openshell-gateway >/dev/null 2>&1 && command -v openshell-sandbox >/dev/null 2>&1
       ;;
     Darwin)
-      command -v openshell-gateway >/dev/null 2>&1 && command -v openshell-driver-vm >/dev/null 2>&1
+      command -v openshell-gateway >/dev/null 2>&1
       ;;
     *)
       return 0
@@ -275,8 +275,6 @@ if command -v openshell >/dev/null 2>&1; then
         warn "openshell $INSTALLED_VERSION is missing Docker-driver binaries — reinstalling pinned OpenShell ${PIN_VERSION}..."
       elif ! openshell_has_required_messaging_features; then
         fail "${OPENSHELL_FEATURE_CHECK_ERROR:-openshell $INSTALLED_VERSION is missing required messaging credential rewrite support. Install an OpenShell build that includes provider aliases, WebSocket text rewrite, and request-body credential rewrite.}"
-      elif ! repair_existing_macos_vm_driver; then
-        warn "openshell $INSTALLED_VERSION has an unsigned macOS VM driver that could not be repaired in place — reinstalling pinned OpenShell ${PIN_VERSION}..."
       else
         info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION, <= $MAX_VERSION, messaging rewrite capable)"
         exit 0
@@ -311,9 +309,7 @@ case "$OS" in
     case "$ARCH_LABEL" in
       aarch64)
         ASSETS+=("openshell-gateway-aarch64-apple-darwin.tar.gz")
-        ASSETS+=("openshell-driver-vm-aarch64-apple-darwin.tar.gz")
         CHECKSUM_FILES+=("openshell-gateway-checksums-sha256.txt")
-        CHECKSUM_FILES+=("openshell-checksums-sha256.txt")
         ;;
       x86_64)
         fail "OpenShell ${PIN_VERSION} does not publish macOS x86_64 standalone gateway assets."
