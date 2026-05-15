@@ -647,6 +647,41 @@ $ nemoclaw onboard
 For local Ollama and vLLM, onboarding retries the container reachability check and can fall back to the host-side health check when the local backend is healthy.
 If all attempts fail, the error includes container reachability diagnostics such as HTTP status and host gateway resolution.
 
+`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only covers the inference-server validation probe.
+The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); see [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.
+
+### Sandbox onboard times out with "did not become ready within Ns"
+
+Onboarding ends with:
+
+```text
+  Sandbox 'my-assistant' was created but did not become ready within 180s.
+  The orphaned sandbox has been removed — you can safely retry.
+```
+
+This is a separate budget from `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` — it covers the readiness wait that follows sandbox creation (in-sandbox boot, OpenClaw start, policy load), not the inference probe.
+The 180-second default fits typical workstations but can be exceeded when:
+
+- The host is building or uploading the sandbox image for the first time (cold caches, slow link).
+- The selected model is large (70B+ parameters or 4-bit/8-bit quantisations that take time to memory-map).
+- Onboarding runs on a remote VM where image upload to the gateway streams over the network (for example DGX Station first-run installer).
+
+Raise the budget before re-running onboard:
+
+```console
+$ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
+$ nemoclaw onboard
+```
+
+The variable accepts seconds and applies to the readiness wait only.
+When the deadline expires, NemoClaw deletes the partially-created sandbox before printing the retry hint, so the next `nemoclaw onboard` starts from a clean state.
+If readiness still fails after the extended budget, inspect the gateway and sandbox status:
+
+```console
+$ openshell sandbox list
+$ nemoclaw <name> status
+```
+
 ### Agent fails at runtime after onboarding succeeds with a compatible endpoint
 
 Some OpenAI-compatible servers (such as SGLang) expose `/v1/responses` but their

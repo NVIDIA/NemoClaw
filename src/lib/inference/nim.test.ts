@@ -349,6 +349,75 @@ describe("nim", () => {
       }
     });
 
+    it("accepts unrecognised GPU names on Spark firmware (JMJWOA-Generic-GPU)", () => {
+      // On DGX Spark the GPU sometimes identifies as
+      // "NVIDIA JMJWOA-Generic-GPU" with memory.total=[N/A]. The primary
+      // path skips it (parseInt([N/A]) -> NaN) and the legacy fallback
+      // dropped it because the name matches none of UNIFIED_MEMORY_GPU_TAGS.
+      // With firmware confirming Spark, the fallback now accepts whatever
+      // name nvidia-smi reports and reads total memory from the host RAM.
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd.some((a: string) => a.includes("name,memory.total"))) {
+          return "NVIDIA JMJWOA-Generic-GPU, [N/A]\n";
+        }
+        if (cmd.some((a: string) => a.includes("query-gpu=name"))) {
+          return "NVIDIA JMJWOA-Generic-GPU";
+        }
+        if (cmd[0] === "free" && cmd[1] === "-m") {
+          return "              total        used        free      shared  buff/cache   available\nMem:         122543       10240       90000        1024       21279      111279\nSwap:             0           0           0";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("NVIDIA DGX Spark", () => {
+          expect(nimModule.detectGpu()).toMatchObject({
+            type: "nvidia",
+            name: "NVIDIA JMJWOA-Generic-GPU",
+            count: 1,
+            totalMemoryMB: 122543,
+            perGpuMB: 122543,
+            unifiedMemory: true,
+            spark: true,
+            platform: "spark",
+            gpus: [{ name: "NVIDIA JMJWOA-Generic-GPU", memoryMB: 122543 }],
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("does not accept unrecognised GPU names on generic Linux firmware", () => {
+      // Guard against false positives: an unknown GPU name on a non-Spark,
+      // non-Jetson host must not be promoted to a unified-memory NVIDIA
+      // device just because nvidia-smi reported it.
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd.some((a: string) => a.includes("name,memory.total"))) {
+          return "Acme MysteryCard, [N/A]\n";
+        }
+        if (cmd.some((a: string) => a.includes("query-gpu=name"))) {
+          return "Acme MysteryCard";
+        }
+        if (cmd[0] === "free" && cmd[1] === "-m") {
+          return "              total        used        free\nMem:          65536        4096       50000\nSwap:             0           0           0";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withGenericLinuxFirmware(() => {
+          expect(nimModule.detectGpu()).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
     it("detects Orin unified-memory GPUs without marking them as Spark", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");

@@ -1094,6 +1094,7 @@ All ports must be non-privileged integers between 1024 and 65535.
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |
+| `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback) | Dashboard forward bind address — set to `0.0.0.0` to opt in to remote bind for SSH-deployed hosts |
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
 `NEMOCLAW_GATEWAY_PORT` also cannot overlap the configured dashboard, vLLM, Ollama, or Ollama proxy ports, and cannot use the dashboard auto-allocation range `18789` through `18799` or the default inference/proxy ports `8000`, `11434`, and `11435`.
@@ -1102,6 +1103,12 @@ If you run Ollama on port 11435, set `NEMOCLAW_OLLAMA_PROXY_PORT` to another fre
 
 `NEMOCLAW_GATEWAY_BIND_ADDRESS` accepts only `127.0.0.1` and `0.0.0.0`.
 Binding the OpenShell gateway to `0.0.0.0` may make it reachable from other hosts on the network.
+
+`NEMOCLAW_DASHBOARD_BIND` controls the dashboard port forward bind address.
+By default the forward stays on `127.0.0.1` (loopback only).
+Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before `nemoclaw onboard` (or `nemoclaw <sandbox> connect`) to bind the dashboard on all interfaces — useful when the host is reached over SSH (Brev, cloud workstations) and the dashboard URL needs to be opened from a different machine on the network.
+Only `0.0.0.0` enables the remote bind; other values are ignored.
+When the remote bind is opted in, the dashboard auth flow accepts non-loopback origins.
 
 ```console
 $ export NEMOCLAW_DASHBOARD_PORT=19000
@@ -1183,13 +1190,18 @@ Set them before running `nemoclaw onboard` if a slow connection or large model p
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
+| `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for the post-create readiness wait, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the deadline expires onboarding deletes the orphaned sandbox and prints the retry hint. |
 
 ```console
 $ export NEMOCLAW_OLLAMA_PULL_TIMEOUT=3600
+$ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $ nemoclaw onboard
 ```
 
-If the pull exceeds the limit, onboarding emits the timeout in minutes plus a hint to raise this variable, and the partial download is preserved for the next attempt.
+If a timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable.
+The Ollama pull preserves its partial download for the next attempt.
+The readiness wait deletes the orphaned sandbox first so the next `nemoclaw onboard` starts clean.
 
 ### Lifecycle Behavior Flags
 

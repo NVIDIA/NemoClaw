@@ -4,7 +4,7 @@
 import { deleteCredential, saveCredential } from "../credentials/store";
 
 export interface ChannelDef {
-  envKey: string;
+  envKey?: string;
   description: string;
   help: string;
   label: string;
@@ -91,7 +91,18 @@ export function listChannels(): Array<{ name: string } & ChannelDef> {
 }
 
 export function getChannelTokenKeys(channel: ChannelDef): string[] {
+  if (!channel.envKey) return [];
   return channel.appTokenEnvKey ? [channel.envKey, channel.appTokenEnvKey] : [channel.envKey];
+}
+
+export function channelUsesQrPairing(channel: ChannelDef): boolean {
+  return !channel.envKey;
+}
+
+export function channelHasStaticToken(
+  channel: ChannelDef,
+): channel is ChannelDef & { envKey: string } {
+  return typeof channel.envKey === "string" && channel.envKey.length > 0;
 }
 
 export function persistChannelTokens(tokens: Record<string, string>): void {

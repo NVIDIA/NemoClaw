@@ -5,10 +5,13 @@ import { describe, expect, it } from "vitest";
 
 import {
   KNOWN_CHANNELS,
+  channelHasStaticToken,
+  channelUsesQrPairing,
   getChannelDef,
   getChannelTokenKeys,
   knownChannelNames,
   listChannels,
+  type ChannelDef,
 } from "./channels";
 
 describe("sandbox-channels KNOWN_CHANNELS", () => {
@@ -59,6 +62,31 @@ describe("sandbox-channels getChannelTokenKeys", () => {
       "SLACK_BOT_TOKEN",
       "SLACK_APP_TOKEN",
     ]);
+  });
+
+  it("returns an empty list when the channel has no static envKey", () => {
+    const tokenless: ChannelDef = { description: "", help: "", label: "" };
+    expect(getChannelTokenKeys(tokenless)).toEqual([]);
+  });
+});
+
+describe("sandbox-channels token-shape helpers", () => {
+  it("channelUsesQrPairing flags channels without an envKey", () => {
+    const qr: ChannelDef = { description: "", help: "", label: "" };
+    expect(channelUsesQrPairing(qr)).toBe(true);
+    expect(channelUsesQrPairing(KNOWN_CHANNELS.telegram)).toBe(false);
+    expect(channelUsesQrPairing(KNOWN_CHANNELS.slack)).toBe(false);
+  });
+
+  it("channelHasStaticToken narrows to ChannelDef with a defined envKey", () => {
+    const qr: ChannelDef = { description: "", help: "", label: "" };
+    expect(channelHasStaticToken(qr)).toBe(false);
+    expect(channelHasStaticToken(KNOWN_CHANNELS.telegram)).toBe(true);
+    if (channelHasStaticToken(KNOWN_CHANNELS.telegram)) {
+      // Type-narrowed: envKey is `string`, no longer `string | undefined`.
+      const envKey: string = KNOWN_CHANNELS.telegram.envKey;
+      expect(envKey).toBe("TELEGRAM_BOT_TOKEN");
+    }
   });
 });
 
