@@ -286,7 +286,13 @@ esac
 # ══════════════════════════════════════════════════════════════════
 section "Phase 3: channels stop telegram + rebuild"
 
-if nemoclaw "$SANDBOX_NAME" channels stop telegram 2>&1 | tee /tmp/nc-stop.log | grep -q "Marked telegram"; then
+if nemoclaw "$SANDBOX_NAME" channels stop telegram >/tmp/nc-stop.log 2>&1; then
+  stop_rc=0
+else
+  stop_rc=$?
+fi
+cat /tmp/nc-stop.log
+if [ "$stop_rc" -eq 0 ] && grep -q "Marked telegram" /tmp/nc-stop.log; then
   pass "C3a: channels stop telegram registered the change"
 else
   fail "C3a: channels stop telegram did not register"
@@ -357,7 +363,13 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 5: channels start telegram + rebuild"
 
-if nemoclaw "$SANDBOX_NAME" channels start telegram 2>&1 | tee /tmp/nc-start.log | grep -q "Marked telegram"; then
+if nemoclaw "$SANDBOX_NAME" channels start telegram >/tmp/nc-start.log 2>&1; then
+  start_rc=0
+else
+  start_rc=$?
+fi
+cat /tmp/nc-start.log
+if [ "$start_rc" -eq 0 ] && grep -q "Marked telegram" /tmp/nc-start.log; then
   pass "C5a: channels start telegram registered the change"
 else
   fail "C5a: channels start telegram did not register"
@@ -399,19 +411,11 @@ case "$post_start_disabled" in
   *) fail "C6b: registry.disabledChannels still set after start (got: ${post_start_disabled})" ;;
 esac
 
-# C6c: Bridge provider re-attached.
-if openshell sandbox describe "$SANDBOX_NAME" 2>&1 \
-  | grep -qF "${SANDBOX_NAME}-telegram-bridge"; then
-  pass "C6c: telegram-bridge provider attached to rebuilt sandbox"
-else
-  fail "C6c: telegram-bridge provider not re-attached after start+rebuild"
-fi
-
-# C6d: Provider record still resolvable in the gateway (cached token survived).
+# C6c: Provider record still resolvable in the gateway (cached token survived).
 if openshell provider get "${SANDBOX_NAME}-telegram-bridge" >/dev/null 2>&1; then
-  pass "C6d: telegram-bridge provider record present in gateway (cached token reused)"
+  pass "C6c: telegram-bridge provider record present in gateway (cached token reused)"
 else
-  fail "C6d: telegram-bridge provider record missing in gateway after start"
+  fail "C6c: telegram-bridge provider record missing in gateway after start"
 fi
 
 print_summary

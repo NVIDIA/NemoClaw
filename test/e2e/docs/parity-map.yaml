@@ -610,22 +610,12 @@ scripts:
       reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
-    - legacy: 'C6c: telegram-bridge provider attached to rebuilt sandbox'
+    - legacy: 'C6c: telegram-bridge provider record present in gateway (cached token reused)'
       status: deferred
       reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
-    - legacy: 'C6c: telegram-bridge provider not re-attached after start+rebuild'
-      status: deferred
-      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
-    - legacy: 'C6d: telegram-bridge provider record present in gateway (cached token reused)'
-      status: deferred
-      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
-    - legacy: 'C6d: telegram-bridge provider record missing in gateway after start'
+    - legacy: 'C6c: telegram-bridge provider record missing in gateway after start'
       status: deferred
       reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
       owner: e2e-maintainers

@@ -227,6 +227,14 @@ describe("registry", () => {
     expect(persisted.sandboxes.s1.disabledChannels).toBeUndefined();
   });
 
+  it("updateSandbox clears disabledChannels when explicitly set to undefined", () => {
+    registry.registerSandbox({ name: "s1" });
+    registry.setChannelDisabled("s1", "telegram", true);
+    expect(registry.updateSandbox("s1", { disabledChannels: undefined })).toBe(true);
+    const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(persisted.sandboxes.s1.disabledChannels).toBeUndefined();
+  });
+
   it("setChannelDisabled returns false when sandbox is missing", () => {
     expect(registry.setChannelDisabled("missing", "telegram", true)).toBe(false);
   });

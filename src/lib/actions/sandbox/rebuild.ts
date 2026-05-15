@@ -28,26 +28,26 @@ const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("../../onb
   REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
 };
 
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import { loadAgent } from "../../agent/defs";
 import { ensureAgentBaseImage } from "../../agent/onboard";
+import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
+import * as policies from "../../policy";
+import { parseLiveSandboxNames } from "../../runtime-recovery";
+import * as sandboxVersion from "../../sandbox/version";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
-import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
-import * as policies from "../../policy";
 import * as registry from "../../state/registry";
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { parseLiveSandboxNames } from "../../runtime-recovery";
-import { removeSandboxRegistryEntry } from "./destroy";
-import { executeSandboxCommand } from "./process-recovery";
+import * as sandboxState from "../../state/sandbox";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
-import * as sandboxState from "../../state/sandbox";
-import * as sandboxVersion from "../../sandbox/version";
-import { B, D, G, R, RD as _RD, YW } from "../../cli/terminal-style";
+import { removeSandboxRegistryEntry } from "./destroy";
+import { executeSandboxCommand } from "./process-recovery";
 
 const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
@@ -640,9 +640,8 @@ export async function rebuildSandbox(
 
   const preservedRegistryFields = {
     ...(hasRebuildMessagingChannels ? { messagingChannels: [...rebuildMessagingChannels] } : {}),
-    ...(Array.isArray(sb.disabledChannels) && sb.disabledChannels.length > 0
-      ? { disabledChannels: [...sb.disabledChannels] }
-      : {}),
+    disabledChannels:
+      rebuildDisabledChannels.length > 0 ? [...rebuildDisabledChannels] : undefined,
     ...(sb.providerCredentialHashes ? { providerCredentialHashes: sb.providerCredentialHashes } : {}),
   };
   if (Object.keys(preservedRegistryFields).length > 0) {
