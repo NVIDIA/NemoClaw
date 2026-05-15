@@ -183,6 +183,8 @@ reviews:
         - `cloud-e2e` — full onboard + cloud inference
         - `sandbox-operations-e2e` — multi-sandbox lifecycle
         - `rebuild-openclaw-e2e` — workspace state survives rebuild
+        - `channels-stop-start-e2e` — channel disable/enable lifecycle across
+          rebuild with cached Telegram credentials
         - `messaging-compatible-endpoint-e2e` — Telegram + compatible endpoint
           inference.local regression
         - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
@@ -193,8 +195,36 @@ reviews:
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,messaging-compatible-endpoint-e2e,hermes-discord-e2e,hermes-slack-e2e,openshell-gateway-upgrade-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,channels-stop-start-e2e,messaging-compatible-endpoint-e2e,hermes-discord-e2e,hermes-slack-e2e,openshell-gateway-upgrade-e2e
         ```
+
+    - path: "src/lib/onboard/channel-state.ts"
+      instructions: &e2e-channel-stop-start |
+        This file controls disabled channel resolution used during onboard
+        and rebuild. Changes affect whether `channels stop` persists across
+        sandbox destroy/recreate and whether `channels start` reattaches
+        cached credentials.
+
+        **E2E test recommendation:**
+        - `channels-stop-start-e2e` — Telegram channel stop/start lifecycle
+          across rebuild with cached credentials
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=channels-stop-start-e2e
+        ```
+
+    - path: "src/lib/state/onboard-session.ts"
+      instructions: *e2e-channel-stop-start
+
+    - path: "src/lib/actions/sandbox/rebuild.ts"
+      instructions: *e2e-channel-stop-start
+
+    - path: "src/lib/commands/sandbox/channels/**"
+      instructions: *e2e-channel-stop-start
+
+    - path: "test/e2e/test-channels-stop-start.sh"
+      instructions: *e2e-channel-stop-start
 
     - path: "src/lib/actions/inference-set.ts"
       instructions: |
