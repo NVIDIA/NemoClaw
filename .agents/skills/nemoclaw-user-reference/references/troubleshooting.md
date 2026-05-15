@@ -147,6 +147,8 @@ When the lookup returns an answer, retry onboarding.
 The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8080`.
 If another sandbox already owns the dashboard port, onboarding scans ports `18789` through `18799` and uses the next free port.
 If all ports in that range are occupied, the error lists the owner for each port and suggests using `--control-ui-port` with a port outside the range.
+On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts.
+If a port becomes occupied after preflight but before `openshell forward start` runs, onboarding deletes the just-created sandbox and exits with a retry message instead of leaving a sandbox with an unreachable dashboard URL.
 
 When a previous onboard, upgrade, or sandbox crash leaves a stale `openclaw-gateway` host process holding the dashboard port, `nemoclaw onboard --fresh`, `nemoclaw <name> destroy` (when destroying the last sandbox), and `nemoclaw uninstall` automatically sweep the dashboard port range and signal `SIGTERM` then `SIGKILL` to recover.
 The sweep only targets processes owned by the current user whose command line matches `openclaw-gateway` or `openshell forward` markers, and skips dashboard ports owned by other live sandboxes.
@@ -345,7 +347,8 @@ The wizard cleans up stale port forwards and waits for gateway readiness automat
 ### Colima socket not detected (macOS)
 
 Newer Colima versions use the XDG base directory (`~/.config/colima/default/docker.sock`) instead of the legacy path (`~/.colima/default/docker.sock`).
-NemoClaw checks both paths.
+Some installations expose a top-level Colima socket at `~/.colima/docker.sock`.
+NemoClaw checks all three paths.
 If neither is found, verify that Colima is running:
 
 ```console
@@ -596,6 +599,8 @@ $ nemoclaw <name> status
 
 For local Ollama and local vLLM, `nemoclaw <name> status` also prints an `Inference` line that probes the host-side health endpoint directly.
 If that line shows `unreachable`, start the local backend first and then retry the request.
+For Local Ollama, current releases also print `Inference (auth proxy)` when a proxy token is available.
+If the backend is healthy but the auth proxy is `unauthorized` or `unreachable`, re-run onboarding so NemoClaw can recreate the proxy token, restart the proxy, and refresh the route.
 
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.

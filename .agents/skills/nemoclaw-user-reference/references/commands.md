@@ -336,6 +336,8 @@ The command probes every inference provider and reports one of three states on t
 Local providers (Ollama, vLLM) probe the host-side health endpoint.
 Remote providers (NVIDIA Endpoints, OpenAI, Anthropic, Gemini) use a lightweight reachability check; any HTTP response, including `401` or `403`, counts as reachable.
 No API keys are sent.
+For Local Ollama, the command also probes the authenticated proxy and prints an `Inference (auth proxy)` line when a proxy token is available.
+Use that line to distinguish a healthy backend from a broken proxy path that the sandbox uses for inference.
 For cloud-only providers, the output omits the NIM status line unless a NIM container is registered or an unexpected NIM container is running.
 If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state.
 Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.
@@ -568,6 +570,8 @@ $ nemoclaw my-assistant channels list
 Store credentials for a messaging channel (`telegram`, `discord`, or `slack`) and rebuild the sandbox so the image picks up the new channel.
 The command prompts for any missing token, registers it with the OpenShell gateway, then asks whether to rebuild immediately.
 Running `add` for an already-configured channel simply overwrites the stored tokens — the operation is idempotent.
+Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
+After a successful add, NemoClaw prints a `policy-add <channel>` hint when a matching built-in network policy preset exists but is not applied to the sandbox yet.
 
 ```console
 $ nemoclaw my-assistant channels add telegram
@@ -882,6 +886,7 @@ This command remains as a compatibility alias to `nemoclaw tunnel stop`.
 
 Show the sandbox list and the status of host auxiliary services (for example cloudflared).
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and messaging health.
+For each listed sandbox, the text output includes the configured inference provider and model plus whether an active SSH session is connected.
 
 ```console
 $ nemoclaw status
@@ -893,6 +898,7 @@ The command suggests `openshell gateway start --name nemoclaw` or `nemoclaw onbo
 It exits with code `1` so shell scripts and CI can detect the degraded state from `$?`.
 For `--json`, the structured output includes `gatewayHealth`, and the exit code is set after the report is generated.
 A clean machine with no registered sandboxes keeps the legacy `0` exit because no gateway is expected to be configured yet.
+If cloudflared is installed but not running, the host-service section reports whether the PID file is missing, invalid, or points at a dead process, then suggests `nemoclaw tunnel start` as the recovery command.
 
 ### `nemoclaw inference get`
 

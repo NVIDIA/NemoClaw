@@ -32,6 +32,7 @@ export interface UninstallPaths {
   nemoclawConfigDir: string;
   nemoclawShimPath: string;
   nemoclawStateDir: string;
+  gatewayLocalStateDir: string;
   openshellConfigDir: string;
   openshellInstallPaths: string[];
   repoRoot: string;
@@ -57,6 +58,7 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
     nemoclawConfigDir: path.join(options.home, ".config", "nemoclaw"),
     nemoclawShimPath: path.join(options.home, ".local", "bin", "nemoclaw"),
     nemoclawStateDir: path.join(options.home, ".nemoclaw"),
+    gatewayLocalStateDir: path.join(options.home, ".local", "state", "nemoclaw"),
     openshellConfigDir: path.join(options.home, ".config", "openshell"),
     openshellInstallPaths: openshellInstallPathsForBinDirs(["/usr/local/bin", xdgBinHome]),
     repoRoot: options.repoRoot || path.resolve(__dirname, "..", "..", "..", ".."),
@@ -73,6 +75,6 @@ export function defaultUninstallPaths(options: UninstallPathOptions): UninstallP
   };
 }
 
-export function uninstallStatePaths(paths: Pick<UninstallPaths, "nemoclawConfigDir" | "nemoclawStateDir" | "openshellConfigDir">): string[] {
-  return [paths.nemoclawStateDir, paths.openshellConfigDir, paths.nemoclawConfigDir];
+export function uninstallStatePaths(paths: Pick<UninstallPaths, "nemoclawConfigDir" | "nemoclawStateDir" | "openshellConfigDir" | "gatewayLocalStateDir">): string[] {
+  return [paths.nemoclawStateDir, paths.gatewayLocalStateDir, paths.openshellConfigDir, paths.nemoclawConfigDir];
 }

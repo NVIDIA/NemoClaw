@@ -95,6 +95,11 @@ export function setResolvedOllamaHost(host: string): void {
 
 export interface GpuInfo {
   totalMemoryMB: number;
+  // Optional, narrows the GpuDetection union from inference/nim.ts. Used to
+  // gate the large-Ollama-model defaults so a partially-identified device
+  // does not get sized as if it were confirmed NVIDIA / Apple Silicon
+  // (#3510).
+  type?: string;
 }
 
 export interface ValidationResult {
@@ -619,9 +624,22 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   return parseOllamaList(listOutput);
 }
 
+function isLargeOllamaCapableGpu(gpu: GpuInfo | null): boolean {
+  // Only confirmed-NVIDIA and Apple-Silicon devices get the large-model
+  // default.  Other detection outcomes (null, missing `type`, or a partial
+  // result that fell through the NVIDIA path with type set to something
+  // else) fall back to the smaller model so we never download a 22 GB
+  // model onto a host whose acceleration is unconfirmed (#3510).
+  return (
+    !!gpu &&
+    (gpu.type === "nvidia" || gpu.type === "apple") &&
+    gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB
+  );
+}
+
 export function getBootstrapOllamaModelOptions(gpu: GpuInfo | null): string[] {
   const options = [SMALL_OLLAMA_MODEL];
-  if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
+  if (isLargeOllamaCapableGpu(gpu)) {
     options.push(DEFAULT_OLLAMA_MODEL);
     options.push(QWEN3_6_OLLAMA_MODEL);
   }
@@ -634,7 +652,7 @@ export function getDefaultOllamaModel(
 ): string {
   const models = getOllamaModelOptions(runCaptureImpl);
   if (models.length === 0) {
-    if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
+    if (isLargeOllamaCapableGpu(gpu)) {
       return QWEN3_6_OLLAMA_MODEL;
     }
     return SMALL_OLLAMA_MODEL;

@@ -520,15 +520,67 @@ describe("local inference helpers", () => {
   it("falls back to bootstrap model options when no Ollama models are installed", () => {
     expect(getBootstrapOllamaModelOptions(null)).toEqual(["qwen2.5:7b"]);
     expect(
-      getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB - 1 }),
+      getBootstrapOllamaModelOptions({
+        type: "nvidia",
+        totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB - 1,
+      }),
     ).toEqual(["qwen2.5:7b"]);
-    expect(getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB })).toEqual(
-      ["qwen2.5:7b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL],
+    expect(
+      getBootstrapOllamaModelOptions({
+        type: "nvidia",
+        totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB,
+      }),
+    ).toEqual(["qwen2.5:7b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL]);
+    expect(getDefaultOllamaModel({ type: "nvidia", totalMemoryMB: 16384 }, () => "")).toBe(
+      "qwen2.5:7b",
     );
-    expect(getDefaultOllamaModel({ totalMemoryMB: 16384 }, () => "")).toBe("qwen2.5:7b");
+    expect(
+      getDefaultOllamaModel(
+        { type: "nvidia", totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB },
+        () => "",
+      ),
+    ).toBe(QWEN3_6_OLLAMA_MODEL);
+  });
+
+  it("offers the large Ollama model on Apple Silicon with sufficient unified memory", () => {
+    expect(
+      getBootstrapOllamaModelOptions({
+        type: "apple",
+        totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB,
+      }),
+    ).toEqual(["qwen2.5:7b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL]);
+    expect(
+      getDefaultOllamaModel(
+        { type: "apple", totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB },
+        () => "",
+      ),
+    ).toBe(QWEN3_6_OLLAMA_MODEL);
+  });
+
+  it("downgrades the default Ollama model when the GPU type is unrecognised (#3510)", () => {
+    // Defensive guard: even with sufficient memory, an unknown/missing
+    // `type` field must not promote a host to the 22 GB model.  The
+    // failure mode this guards against is a partial-detection regression
+    // where totalMemoryMB is set but the device type is "generic" or
+    // unspecified.
+    expect(
+      getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB }),
+    ).toEqual(["qwen2.5:7b"]);
     expect(
       getDefaultOllamaModel({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB }, () => ""),
-    ).toBe(QWEN3_6_OLLAMA_MODEL);
+    ).toBe("qwen2.5:7b");
+    expect(
+      getBootstrapOllamaModelOptions({
+        type: "generic",
+        totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB * 4,
+      }),
+    ).toEqual(["qwen2.5:7b"]);
+    expect(
+      getDefaultOllamaModel(
+        { type: "generic", totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB * 4 },
+        () => "",
+      ),
+    ).toBe("qwen2.5:7b");
   });
 
   it("builds a background warmup command for ollama models", () => {

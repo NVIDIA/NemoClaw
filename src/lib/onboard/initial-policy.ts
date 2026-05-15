@@ -24,7 +24,14 @@ function isProcEntryOwnedByOpenShell(entry: string): boolean {
   return entry === PROC_PATH || entry === STALE_PROC_COMM_READ_WRITE_PATH;
 }
 
-export function buildDirectGpuPolicyYaml(basePolicy: string): string {
+type DirectGpuPolicyOptions = {
+  procReadWrite?: boolean;
+};
+
+export function buildDirectGpuPolicyYaml(
+  basePolicy: string,
+  options: DirectGpuPolicyOptions = {},
+): string {
   const parsed = YAML.parse(basePolicy);
   if (!parsed || typeof parsed !== "object") {
     throw new Error("Cannot prepare direct GPU sandbox policy; base policy is not a YAML mapping.");
@@ -41,6 +48,14 @@ export function buildDirectGpuPolicyYaml(basePolicy: string): string {
     ? fsPolicy.read_write.map((entry: unknown) => String(entry))
     : [];
   fsPolicy.read_write = readWrite.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry));
+  if (options.procReadWrite && !fsPolicy.read_write.includes(PROC_PATH)) {
+    // Linux Docker-driver GPU patching recreates the container with GPU flags
+    // after `openshell sandbox create`, so OpenShell never sees `--gpu` and
+    // cannot add its native /proc GPU enrichment. Mirror that enrichment here
+    // for the patched path; without it Landlock denies the NVIDIA runtime's
+    // /proc/<pid>/task/<tid>/comm write even though Docker GPU access works.
+    fsPolicy.read_write.push(PROC_PATH);
+  }
   return YAML.stringify(parsed);
 }
 
@@ -93,10 +108,13 @@ export function buildDirectSandboxGpuProofCommands(
   ];
 }
 
-function prepareDirectGpuSandboxPolicy(basePolicyPath: string): InitialSandboxPolicy {
+function prepareDirectGpuSandboxPolicy(
+  basePolicyPath: string,
+  options: DirectGpuPolicyOptions = {},
+): InitialSandboxPolicy {
   const basePolicy = fs.readFileSync(basePolicyPath, "utf-8");
   const policyPath = secureTempFile("nemoclaw-gpu-policy", ".yaml");
-  fs.writeFileSync(policyPath, buildDirectGpuPolicyYaml(basePolicy), {
+  fs.writeFileSync(policyPath, buildDirectGpuPolicyYaml(basePolicy, options), {
     encoding: "utf-8",
     mode: 0o600,
   });
@@ -134,9 +152,13 @@ export function getNetworkPolicyNames(policyContent: string): Set<string> | null
 export function prepareInitialSandboxCreatePolicy(
   basePolicyPath: string,
   activeMessagingChannels: string[],
-  options: { directGpu?: boolean } = {},
+  options: { directGpu?: boolean; dockerGpuPatch?: boolean } = {},
 ): InitialSandboxPolicy {
-  const directGpuPolicy = options.directGpu ? prepareDirectGpuSandboxPolicy(basePolicyPath) : null;
+  const directGpuPolicy = options.directGpu
+    ? prepareDirectGpuSandboxPolicy(basePolicyPath, {
+        procReadWrite: options.dockerGpuPatch === true,
+      })
+    : null;
   const effectiveBasePolicyPath = directGpuPolicy?.policyPath || basePolicyPath;
   const cleanupFns = directGpuPolicy?.cleanup ? [directGpuPolicy.cleanup] : [];
   const requestedCreateTimePresets = [

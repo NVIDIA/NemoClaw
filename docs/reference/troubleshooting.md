@@ -174,6 +174,9 @@ The NemoClaw dashboard uses port `18789` by default and the gateway uses port `8
 If another sandbox already owns the dashboard port, onboarding scans ports `18789` through `18799` and uses the next free port.
 If all ports in that range are occupied, the error lists the owner for each port and suggests using `--control-ui-port` with a port outside the range.
 
+On macOS, the port check also tries a privileged `lsof` probe without prompting for a password so root-owned listeners are detected before the sandbox build starts.
+If a port becomes occupied after preflight but before `openshell forward start` runs, onboarding deletes the just-created sandbox and exits with a retry message instead of leaving a sandbox with an unreachable dashboard URL.
+
 When a previous onboard, upgrade, or sandbox crash leaves a stale `openclaw-gateway` host process holding the dashboard port, `nemoclaw onboard --fresh`, `nemoclaw <name> destroy` (when destroying the last sandbox), and `nemoclaw uninstall` automatically sweep the dashboard port range and signal `SIGTERM` then `SIGKILL` to recover.
 The sweep only targets processes owned by the current user whose command line matches `openclaw-gateway` or `openshell forward` markers, and skips dashboard ports owned by other live sandboxes.
 
@@ -371,7 +374,8 @@ The wizard cleans up stale port forwards and waits for gateway readiness automat
 ### Colima socket not detected (macOS)
 
 Newer Colima versions use the XDG base directory (`~/.config/colima/default/docker.sock`) instead of the legacy path (`~/.colima/default/docker.sock`).
-NemoClaw checks both paths.
+Some installations expose a top-level Colima socket at `~/.colima/docker.sock`.
+NemoClaw checks all three paths.
 If neither is found, verify that Colima is running:
 
 ```console
@@ -626,6 +630,8 @@ $ nemoclaw <name> status
 
 For local Ollama and local vLLM, `nemoclaw <name> status` also prints an `Inference` line that probes the host-side health endpoint directly.
 If that line shows `unreachable`, start the local backend first and then retry the request.
+For Local Ollama, current releases also print `Inference (auth proxy)` when a proxy token is available.
+If the backend is healthy but the auth proxy is `unauthorized` or `unreachable`, re-run onboarding so NemoClaw can recreate the proxy token, restart the proxy, and refresh the route.
 
 If the endpoint is correct but requests still fail, check for network policy rules that may block the connection.
 Then verify the credential and base URL for the provider you selected during onboarding.
@@ -640,6 +646,41 @@ $ nemoclaw onboard
 
 For local Ollama and vLLM, onboarding retries the container reachability check and can fall back to the host-side health check when the local backend is healthy.
 If all attempts fail, the error includes container reachability diagnostics such as HTTP status and host gateway resolution.
+
+`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only covers the inference-server validation probe.
+The post-create readiness wait has its own budget (`NEMOCLAW_SANDBOX_READY_TIMEOUT`); see [Sandbox onboard times out with "did not become ready within Ns"](#sandbox-onboard-times-out-with-did-not-become-ready-within-ns) for the readiness path.
+
+### Sandbox onboard times out with "did not become ready within Ns"
+
+Onboarding ends with:
+
+```text
+  Sandbox 'my-assistant' was created but did not become ready within 180s.
+  The orphaned sandbox has been removed — you can safely retry.
+```
+
+This is a separate budget from `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` — it covers the readiness wait that follows sandbox creation (in-sandbox boot, OpenClaw start, policy load), not the inference probe.
+The 180-second default fits typical workstations but can be exceeded when:
+
+- The host is building or uploading the sandbox image for the first time (cold caches, slow link).
+- The selected model is large (70B+ parameters or 4-bit/8-bit quantisations that take time to memory-map).
+- Onboarding runs on a remote VM where image upload to the gateway streams over the network (for example DGX Station first-run installer).
+
+Raise the budget before re-running onboard:
+
+```console
+$ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
+$ nemoclaw onboard
+```
+
+The variable accepts seconds and applies to the readiness wait only.
+When the deadline expires, NemoClaw deletes the partially-created sandbox before printing the retry hint, so the next `nemoclaw onboard` starts from a clean state.
+If readiness still fails after the extended budget, inspect the gateway and sandbox status:
+
+```console
+$ openshell sandbox list
+$ nemoclaw <name> status
+```
 
 ### Agent fails at runtime after onboarding succeeds with a compatible endpoint
 
@@ -1012,14 +1053,24 @@ Verify the toolkit is configured by running `docker run --rm --runtime=nvidia --
 
 Recent NVIDIA Container Toolkit installs configure the Docker daemon for Container Device Interface (CDI) device injection, which OpenShell's `gateway start --gpu` then auto-selects.
 If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
-`nemoclaw onboard` now detects this gap during preflight and prints the remediation up front, but the underlying fix is the same on any Docker host whose `docker info` advertises a non-empty `CDISpecDirs`.
+The standard NemoClaw installer detects this gap before onboarding, first tries to enable the NVIDIA CDI refresh systemd units, and falls back to generating the spec directly with `nvidia-ctk`.
+If you run `nemoclaw onboard` directly, preflight prints the manual remediation instead.
+The underlying fix is the same on any Docker host whose `docker info` advertises a non-empty `CDISpecDirs`.
 
-Generate the spec, verify it lists `nvidia.com/gpu` entries, then rerun onboarding:
+Enable the refresh units, verify they list `nvidia.com/gpu` entries, then rerun onboarding:
 
 ```console
-$ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+$ sudo systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service
 $ nvidia-ctk cdi list
 $ nemoclaw onboard
+```
+
+If the refresh units are unavailable or do not generate CDI devices, generate the spec directly:
+
+```console
+$ sudo mkdir -p /etc/cdi
+$ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
+$ nvidia-ctk cdi list
 ```
 
 If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.

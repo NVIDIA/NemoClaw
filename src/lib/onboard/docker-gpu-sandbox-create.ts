@@ -34,6 +34,11 @@ type DockerGpuSandboxConfig = {
   sandboxGpuDevice?: string | null;
 };
 
+type DockerGpuSandboxCreatePlan = {
+  useDockerGpuPatch: boolean;
+  logMessage: string | null;
+};
+
 export type DockerGpuSandboxCreatePatch = {
   maybeApplyDuringCreate: () => void;
   createFailureMessage: () => string | null;
@@ -142,4 +147,17 @@ export function shouldUseDockerGpuPatchForCreate(
     );
   }
   return enabled;
+}
+
+export function resolveDockerGpuSandboxCreatePlan(
+  config: DockerGpuSandboxConfig,
+  options: { dockerDriverGateway: boolean },
+): DockerGpuSandboxCreatePlan {
+  const useDockerGpuPatch = shouldUseDockerGpuPatchForCreate(config, options);
+  const logMessage = config.sandboxGpuEnabled
+    ? useDockerGpuPatch
+      ? "  Docker-driver GPU patch active; allowing /proc writes required by Docker GPU initialization."
+      : "  Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment."
+    : null;
+  return { useDockerGpuPatch, logMessage };
 }

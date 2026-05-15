@@ -360,7 +360,12 @@ The command probes every inference provider and reports one of three states on t
 Local providers (Ollama, vLLM) probe the host-side health endpoint.
 Remote providers (NVIDIA Endpoints, OpenAI, Anthropic, Gemini) use a lightweight reachability check; any HTTP response, including `401` or `403`, counts as reachable.
 No API keys are sent.
+
+For Local Ollama, the command also probes the authenticated proxy and prints an `Inference (auth proxy)` line when a proxy token is available.
+Use that line to distinguish a healthy backend from a broken proxy path that the sandbox uses for inference.
+
 For cloud-only providers, the output omits the NIM status line unless a NIM container is registered or an unexpected NIM container is running.
+
 If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state.
 Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.
 
@@ -596,6 +601,8 @@ $ nemoclaw my-assistant channels list
 Store credentials for a messaging channel (`telegram`, `discord`, or `slack`) and rebuild the sandbox so the image picks up the new channel.
 The command prompts for any missing token, registers it with the OpenShell gateway, then asks whether to rebuild immediately.
 Running `add` for an already-configured channel simply overwrites the stored tokens — the operation is idempotent.
+Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
+After a successful add, NemoClaw prints a `policy-add <channel>` hint when a matching built-in network policy preset exists but is not applied to the sandbox yet.
 
 ```console
 $ nemoclaw my-assistant channels add telegram
@@ -914,6 +921,7 @@ This command remains as a compatibility alias to `nemoclaw tunnel stop`.
 
 Show the sandbox list and the status of host auxiliary services (for example cloudflared).
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and messaging health.
+For each listed sandbox, the text output includes the configured inference provider and model plus whether an active SSH session is connected.
 
 ```console
 $ nemoclaw status
@@ -925,6 +933,7 @@ The command suggests `openshell gateway start --name nemoclaw` or `nemoclaw onbo
 It exits with code `1` so shell scripts and CI can detect the degraded state from `$?`.
 For `--json`, the structured output includes `gatewayHealth`, and the exit code is set after the report is generated.
 A clean machine with no registered sandboxes keeps the legacy `0` exit because no gateway is expected to be configured yet.
+If cloudflared is installed but not running, the host-service section reports whether the PID file is missing, invalid, or points at a dead process, then suggests `nemoclaw tunnel start` as the recovery command.
 
 ### `nemoclaw inference get`
 
@@ -1085,6 +1094,7 @@ All ports must be non-privileged integers between 1024 and 65535.
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |
+| `NEMOCLAW_DASHBOARD_BIND` | *unset* (loopback) | Dashboard forward bind address — set to `0.0.0.0` to opt in to remote bind for SSH-deployed hosts |
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
 `NEMOCLAW_GATEWAY_PORT` also cannot overlap the configured dashboard, vLLM, Ollama, or Ollama proxy ports, and cannot use the dashboard auto-allocation range `18789` through `18799` or the default inference/proxy ports `8000`, `11434`, and `11435`.
@@ -1093,6 +1103,12 @@ If you run Ollama on port 11435, set `NEMOCLAW_OLLAMA_PROXY_PORT` to another fre
 
 `NEMOCLAW_GATEWAY_BIND_ADDRESS` accepts only `127.0.0.1` and `0.0.0.0`.
 Binding the OpenShell gateway to `0.0.0.0` may make it reachable from other hosts on the network.
+
+`NEMOCLAW_DASHBOARD_BIND` controls the dashboard port forward bind address.
+By default the forward stays on `127.0.0.1` (loopback only).
+Set `NEMOCLAW_DASHBOARD_BIND=0.0.0.0` before `nemoclaw onboard` (or `nemoclaw <sandbox> connect`) to bind the dashboard on all interfaces — useful when the host is reached over SSH (Brev, cloud workstations) and the dashboard URL needs to be opened from a different machine on the network.
+Only `0.0.0.0` enables the remote bind; other values are ignored.
+When the remote bind is opted in, the dashboard auth flow accepts non-loopback origins.
 
 ```console
 $ export NEMOCLAW_DASHBOARD_PORT=19000
@@ -1174,13 +1190,18 @@ Set them before running `nemoclaw onboard` if a slow connection or large model p
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `NEMOCLAW_OLLAMA_PULL_TIMEOUT` | `1800` (30 minutes) | Wall-clock timeout for `ollama pull` during onboard, in seconds. Accepts integer or float values. Already-downloaded layers are kept; re-running the pull resumes them. |
+| `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` | `180` | Wall-clock timeout for the inference-server validation probe during onboard, in seconds. Raise on slow networks or for very large prompts. |
+| `NEMOCLAW_SANDBOX_READY_TIMEOUT` | `180` | Wall-clock timeout for the post-create readiness wait, in seconds. Raise when the sandbox image build, gateway upload, or in-sandbox boot exceeds the default (typical on 70B+ models, first-time gateway uploads over slow links, or DGX Station / remote-VM first runs). When the deadline expires onboarding deletes the orphaned sandbox and prints the retry hint. |
 
 ```console
 $ export NEMOCLAW_OLLAMA_PULL_TIMEOUT=3600
+$ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
 $ nemoclaw onboard
 ```
 
-If the pull exceeds the limit, onboarding emits the timeout in minutes plus a hint to raise this variable, and the partial download is preserved for the next attempt.
+If a timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable.
+The Ollama pull preserves its partial download for the next attempt.
+The readiness wait deletes the orphaned sandbox first so the next `nemoclaw onboard` starts clean.
 
 ### Lifecycle Behavior Flags
 

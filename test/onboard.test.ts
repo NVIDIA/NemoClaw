@@ -16,6 +16,7 @@ import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard/contract.j
 import { NAME_ALLOWED_FORMAT } from "../dist/lib/name-validation.js";
 import { hasOpenShellVmDriverChildProcessFromPsOutput } from "../dist/lib/onboard/vm-driver-process.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
+import { applyOnboardVmDnsMonkeypatch } from "../dist/lib/onboard/vm-dns-monkeypatch.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 type ShimScalar = string | number | boolean | null | undefined;
@@ -59,7 +60,7 @@ type OnboardTestInternals = {
     },
     options?: { suppressGpuFlag?: boolean },
   ) => string[];
-  buildDirectGpuPolicyYaml: (basePolicy: string) => string;
+  buildDirectGpuPolicyYaml: (basePolicy: string, options?: { procReadWrite?: boolean }) => string;
   buildDirectSandboxGpuProofCommands: (sandboxName: string) => { label: string; args: string[] }[];
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
   compactText: (value?: string) => string;
@@ -445,6 +446,22 @@ describe("onboard helpers", () => {
       expect(baseDoc.filesystem_policy.read_only).toContain("/proc");
       expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");
       expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
+    },
+  );
+
+  it(
+    "adds /proc read-write when Docker GPU patch must own GPU enrichment",
+    () => {
+      const basePolicy = fs.readFileSync(
+        path.join(repoRoot, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+        "utf-8",
+      );
+      const gpuPolicy = buildDirectGpuPolicyYaml(basePolicy, { procReadWrite: true });
+      const gpuDoc = YAML.parse(gpuPolicy);
+
+      expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_write).toContain("/proc");
       expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
     },
   );
@@ -2970,7 +2987,7 @@ const { loadAgent } = require(${agentDefsPath});
     expect(getGatewayReuseState("", "")).toBe("missing");
   });
 
-  it("prints doctor logs automatically when gateway fails to start (#1605)", () => {
+  it("prints doctor logs automatically when gateway fails to start (#1605)", testTimeoutOptions(20_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3398,6 +3415,106 @@ startGateway(null).catch(() => {});
         "arm64",
       ),
     ).toBe(false);
+  });
+
+  it("runs the OpenShell VM DNS monkeypatch after sandbox registration", () => {
+    const onboardSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf8",
+    );
+
+    assert.match(
+      onboardSource,
+      /registry\.setDefault\(sandboxName\);[\s\S]*applyOnboardVmDnsMonkeypatch\(sandboxName, sandboxRuntimeFields\)/,
+    );
+  });
+
+  it("logs applied only when the onboard VM DNS monkeypatch changes files", () => {
+    const changedLogs: string[] = [];
+    applyOnboardVmDnsMonkeypatch(
+      "demo",
+      { openshellDriver: "vm" },
+      {
+        apply: () => ({
+          attempted: true,
+          changed: true,
+          ok: true,
+          status: "applied",
+        }),
+        log: (message) => changedLogs.push(message),
+        warn: (message) => changedLogs.push(message),
+      },
+    );
+
+    const unchangedLogs: string[] = [];
+    applyOnboardVmDnsMonkeypatch(
+      "demo",
+      { openshellDriver: "vm" },
+      {
+        apply: () => ({
+          attempted: true,
+          changed: false,
+          ok: true,
+          status: "already-present",
+        }),
+        log: (message) => unchangedLogs.push(message),
+        warn: (message) => unchangedLogs.push(message),
+      },
+    );
+
+    expect(changedLogs).toEqual(["  ✓ Applied OpenShell VM DNS monkeypatch"]);
+    expect(unchangedLogs).toEqual(["  OpenShell VM DNS monkeypatch already present"]);
+    expect(unchangedLogs.join("\n")).not.toContain("Applied");
+  });
+
+  it("logs skipped VM DNS monkeypatch state for VM sandboxes", () => {
+    const logs: string[] = [];
+
+    applyOnboardVmDnsMonkeypatch(
+      "demo",
+      { openshellDriver: "vm" },
+      {
+        apply: () => ({
+          attempted: false,
+          changed: false,
+          ok: false,
+          reason: "disabled by NEMOCLAW_DISABLE_VM_DNS_MONKEYPATCH=1",
+          status: "skipped",
+        }),
+        log: (message) => logs.push(message),
+        warn: (message) => logs.push(message),
+      },
+    );
+
+    expect(logs).toEqual([
+      "  OpenShell VM DNS monkeypatch skipped: disabled by NEMOCLAW_DISABLE_VM_DNS_MONKEYPATCH=1",
+    ]);
+  });
+
+  it("warns without aborting when the onboard VM DNS monkeypatch fails", () => {
+    const warnings: string[] = [];
+
+    expect(() =>
+      applyOnboardVmDnsMonkeypatch(
+        "demo",
+        { openshellDriver: "vm" },
+        {
+          apply: () => ({
+            attempted: true,
+            changed: false,
+            ok: false,
+            reason: "VM rootfs not found",
+            status: "failed",
+          }),
+          log: (message) => warnings.push(message),
+          warn: (message) => warnings.push(message),
+        },
+      ),
+    ).not.toThrow();
+
+    expect(warnings).toEqual([
+      "  Warning: OpenShell VM DNS monkeypatch did not apply: VM rootfs not found",
+    ]);
   });
 
   it("writes sandbox sync scripts to a temp file for stdin redirection", () => {
@@ -3832,7 +3949,7 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
-  it("configures Model Router as a host provider while sandboxes keep inference.local", () => {
+  it("configures Model Router as a host provider while sandboxes keep inference.local", testTimeoutOptions(60_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-inference-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -4241,7 +4358,7 @@ const { setupInference } = require(${onboardPath});
     }
   });
 
-  it("prefers the managed Model Router command over PATH", () => {
+  it("prefers the managed Model Router command over PATH", testTimeoutOptions(60_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-managed-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -4422,7 +4539,7 @@ const { setupInference } = require(${onboardPath});
     }
   });
 
-  it("refreshes stale managed Model Router command when source fingerprint changes", () => {
+  it("refreshes stale managed Model Router command when source fingerprint changes", testTimeoutOptions(60_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-refresh-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -5350,9 +5467,9 @@ ${webSearchVerifySource}`;
 
     assert.match(
       source,
-      // #2753: sandboxName is intentionally absent from the options here so
-      // the session does not record a name before createSandbox completes.
-      /startRecordedStep\("sandbox", \{ provider, model \}\);\s*const recordedMessagingChannels = getRecordedMessagingChannelsForResume\(resume, session\);[\s\S]*?selectedMessagingChannels = recordedMessagingChannels;[\s\S]*?selectedMessagingChannels = await setupMessagingChannels\(\);[\s\S]*?const messagingChannelConfig = readMessagingChannelConfigFromEnv\(\);[\s\S]*?onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*current\.messagingChannelConfig = messagingChannelConfig;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*opts\.controlUiPort \|\| null,\s*sandboxGpuConfig,\s*\);/,
+      // #2753: sandboxName is read for resume hints here, but the session still
+      // does not persist a sandbox name before createSandbox completes.
+      /startRecordedStep\("sandbox", \{ provider, model \}\);\s*const recordedMessagingChannels = getRecordedMessagingChannelsForResume\(resume, session, sandboxName\);[\s\S]*?selectedMessagingChannels = recordedMessagingChannels;[\s\S]*?selectedMessagingChannels = await setupMessagingChannels\(\);[\s\S]*?const messagingChannelConfig = readMessagingChannelConfigFromEnv\(\);[\s\S]*?onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*current\.messagingChannelConfig = messagingChannelConfig;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*opts\.controlUiPort \|\| null,\s*sandboxGpuConfig,\s*\);/,
     );
   });
 
@@ -5404,7 +5521,7 @@ ${webSearchVerifySource}`;
       "utf-8",
     );
 
-    assert.match(source, /useDockerGpuPatch = dockerGpuSandboxCreate\.shouldUseDockerGpuPatchForCreate/);
+    assert.match(source, /resolveDockerGpuSandboxCreatePlan\(effectiveSandboxGpuConfig/);
     assert.match(source, /suppressGpuFlag: useDockerGpuPatch/);
     assert.match(source, /maybeApplyDuringCreate/);
     assert.match(source, /printDockerGpuReadinessFailure/);
@@ -8190,6 +8307,7 @@ const { createSandbox } = require(${onboardPath});
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
+          OPENSHELL_DRIVERS: "docker",
         },
         timeout: 15000,
       });
@@ -8884,6 +9002,22 @@ const { setupMessagingChannels } = require(${onboardPath});
     },
   );
 
+  it("non-interactive onboard reuses stored messaging channels when bridge providers exist", () => {
+    const source = fs.readFileSync(path.join(import.meta.dirname, "../src/lib/onboard.ts"), "utf-8");
+    const reuseSource = fs.readFileSync(
+      path.join(import.meta.dirname, "../src/lib/onboard/messaging-reuse.ts"),
+      "utf-8",
+    );
+    assert.match(
+      reuseSource,
+      /function getNonInteractiveStoredMessagingChannels\([\s\S]*?getSandbox\(sandboxName\)[\s\S]*?providerExists\(provider\)/,
+    );
+    assert.match(
+      source,
+      /getRecordedMessagingChannelsForResume\(resume, session, sandboxName\)[\s\S]*?selectedMessagingChannels = await setupMessagingChannels\(\)/,
+    );
+  });
+
   it(
     "interactive setupMessagingChannels drops slack when prompted token fails tokenFormat check (#1912)",
     { timeout: 60_000 },
@@ -9196,7 +9330,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
     }
   });
 
-  it("uses the custom Dockerfile parent directory as build context when --from is given", async () => {
+  it("uses the custom Dockerfile parent directory as build context when --from is given", testTimeoutOptions(60_000), async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-dockerfile-"));
     const fakeBin = path.join(tmpDir, "bin");

@@ -22,6 +22,9 @@ class FakeChild extends EventEmitter implements StreamableChildProcess {
   unref = vi.fn();
 }
 
+const dockerEnv = { ...process.env, OPENSHELL_DRIVERS: "docker" };
+const vmEnv = { ...process.env, OPENSHELL_DRIVERS: "vm" };
+
 describe("sandbox-create-stream", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -30,7 +33,7 @@ describe("sandbox-create-stream", () => {
   it("prints the initial build banner immediately", async () => {
     const child = new FakeChild();
     const logLine = vi.fn();
-    const promise = streamSandboxCreate("echo create", process.env, {
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
       logLine,
       spawnImpl: () => child,
     });
@@ -43,7 +46,7 @@ describe("sandbox-create-stream", () => {
   it("streams visible progress lines and returns the collected output", async () => {
     const child = new FakeChild();
     const logLine = vi.fn();
-    const promise = streamSandboxCreate("echo create", process.env, {
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
       logLine,
       spawnImpl: () => child,
       heartbeatIntervalMs: 1_000,
@@ -99,7 +102,7 @@ describe("sandbox-create-stream", () => {
 
     const child = new FakeChild();
     let checks = 0;
-    const promise = streamSandboxCreate("echo create", process.env, {
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
       spawnImpl: () => child,
       readyCheck: () => {
         checks += 1;
@@ -122,6 +125,65 @@ describe("sandbox-create-stream", () => {
     });
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
     expect(child.unref).toHaveBeenCalled();
+  });
+
+  it("does not detach on Ready until required startup output appears", async () => {
+    vi.useFakeTimers();
+
+    const child = new FakeChild();
+    const logLine = vi.fn();
+    let resolved = false;
+    const promise = streamSandboxCreate("echo create", vmEnv, {
+      spawnImpl: () => child,
+      readyCheck: () => true,
+      pollIntervalMs: 5,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine,
+    }).then((result) => {
+      resolved = true;
+      return result;
+    });
+
+    child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
+    await vi.advanceTimersByTimeAsync(12);
+
+    expect(resolved).toBe(false);
+    expect(child.kill).not.toHaveBeenCalled();
+    expect(logLine).toHaveBeenCalledWith(
+      "  Sandbox reported Ready; waiting for startup command output before detaching.",
+    );
+
+    child.stderr.emit("data", Buffer.from("Setting up NemoClaw (Hermes)...\n"));
+    await vi.advanceTimersByTimeAsync(6);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 0,
+      forcedReady: true,
+      output: expect.stringContaining("Setting up NemoClaw (Hermes)..."),
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("does not recover a non-zero close before required startup output appears", async () => {
+    const child = new FakeChild();
+    const promise = streamSandboxCreate("echo create", vmEnv, {
+      spawnImpl: () => child,
+      readyCheck: () => true,
+      pollIntervalMs: 60_000,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine: vi.fn(),
+    });
+
+    child.stdout.emit("data", Buffer.from("Created sandbox: demo\n"));
+    child.emit("close", 255);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 255,
+      sawProgress: true,
+    });
+    expect((await promise).forcedReady).toBeUndefined();
   });
 
   it("can abort a stuck create stream from a failure check", async () => {
@@ -170,7 +232,7 @@ describe("sandbox-create-stream", () => {
   it("recovers when sandbox is ready at the moment the stream exits non-zero", async () => {
     const child = new FakeChild();
     const logLine = vi.fn();
-    const promise = streamSandboxCreate("echo create", process.env, {
+    const promise = streamSandboxCreate("echo create", dockerEnv, {
       spawnImpl: () => child,
       readyCheck: () => true, // sandbox is already Ready
       pollIntervalMs: 60_000, // large interval so the poll doesn't fire first
@@ -187,6 +249,27 @@ describe("sandbox-create-stream", () => {
       status: 0,
       forcedReady: true,
       sawProgress: true,
+    });
+  });
+
+  it("recovers when required startup output is the final partial line", async () => {
+    const child = new FakeChild();
+    const promise = streamSandboxCreate("echo create", vmEnv, {
+      spawnImpl: () => child,
+      readyCheck: () => true,
+      pollIntervalMs: 60_000,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+      logLine: vi.fn(),
+    });
+
+    child.stderr.emit("data", Buffer.from("Created sandbox: demo\nSetting up NemoClaw"));
+    child.emit("close", 255);
+
+    await expect(promise).resolves.toMatchObject({
+      status: 0,
+      forcedReady: true,
+      output: expect.stringContaining("Setting up NemoClaw"),
     });
   });
 

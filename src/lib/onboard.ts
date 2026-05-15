@@ -354,7 +354,8 @@ import type {
   ProbeResult,
   ValidationFailureLike,
 } from "./onboard/types";
-import { listChannels } from "./sandbox/channels";
+import { channelHasStaticToken, getChannelTokenKeys, listChannels } from "./sandbox/channels";
+import { getMessagingToken } from "./onboard/messaging-token";
 import { streamGatewayStart } from "./onboard/gateway";
 import { reportGpuPassthroughRecovery } from "./onboard/gpu-recovery";
 import type { StreamSandboxCreateResult } from "./sandbox/create-stream";
@@ -1973,20 +1974,14 @@ function getMessagingChannelForEnvKey(envKey: string): string | null {
   return null;
 }
 
-function getKnownMessagingChannels(channels: string[] | null | undefined): string[] {
-  if (!Array.isArray(channels)) return [];
-  const known = new Set(MESSAGING_CHANNELS.map((channel) => channel.name));
-  return [...new Set(channels.filter((channel) => known.has(channel)))];
-}
 
 function getRecordedMessagingChannelsForResume(
   resume: boolean,
-  session: Session | null,
+  session: Session | null, sandboxName: string | null,
 ): string[] | null {
-  if (!resume || !isNonInteractive() || !Array.isArray(session?.messagingChannels)) {
-    return null;
-  }
-  return getKnownMessagingChannels(session.messagingChannels);
+  return require("./onboard/messaging-reuse").getNonInteractiveStoredMessagingChannels(
+    resume, session?.messagingChannels, sandboxName, MESSAGING_CHANNELS, (envKey: string) => Boolean(getCredential(envKey) || normalizeCredentialValue(process.env[envKey])),
+    registry.getSandbox.bind(registry), registry.getDisabledChannels.bind(registry), providerExistsInGateway, isNonInteractive());
 }
 
 /**
@@ -4804,7 +4799,7 @@ function getSandboxRuntimeRegistryFields(
     sandboxGpuEnabled: config.sandboxGpuEnabled,
     sandboxGpuMode: config.mode,
     sandboxGpuDevice: config.sandboxGpuDevice,
-    openshellDriver: isLinuxDockerDriverGatewayEnabled() ? "docker" : "kubernetes",
+    openshellDriver: isLinuxDockerDriverGatewayEnabled() ? (process.platform === "darwin" ? "vm" : "docker") : "kubernetes",
     openshellVersion: getInstalledOpenshellVersion(
       runCaptureOpenshell(["--version"], { ignoreError: true }),
     ),
@@ -5054,8 +5049,6 @@ async function createSandbox(
   // Check whether messaging providers will be needed — this must happen before
   // the sandbox reuse decision so we can detect stale sandboxes that were created
   // without provider attachments (security: prevents legacy raw-env-var leaks).
-  const getMessagingToken = (envKey: string): string | null =>
-    getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
 
   // The UI toggle list can include channels the user toggled on but then
   // skipped the token prompt for. Only channels with a real token will have a
@@ -5064,8 +5057,8 @@ async function createSandbox(
   const conflictCheckChannels = Array.isArray(enabledChannels)
     ? enabledChannels.flatMap((name) => {
         const def = MESSAGING_CHANNELS.find((c) => c.name === name);
-        if (!def || !getMessagingToken(def.envKey)) return [];
-        const tokenEnvKeys = def.appTokenEnvKey ? [def.envKey, def.appTokenEnvKey] : [def.envKey];
+        if (!def || !def.envKey || !getMessagingToken(def.envKey)) return [];
+        const tokenEnvKeys = getChannelTokenKeys(def);
         const credentialHashes: Record<string, string> = {};
         for (const envKey of tokenEnvKeys) {
           const hash = hashCredential(getMessagingToken(envKey));
@@ -5113,7 +5106,7 @@ async function createSandbox(
     enabledChannels != null
       ? new Set(
           MESSAGING_CHANNELS.filter((c) => enabledChannels.includes(c.name)).flatMap((c) =>
-            c.appTokenEnvKey ? [c.envKey, c.appTokenEnvKey] : [c.envKey],
+            getChannelTokenKeys(c),
           ),
         )
       : null;
@@ -5125,7 +5118,7 @@ async function createSandbox(
   const disabledChannels = registry.getDisabledChannels(sandboxName);
   const disabledEnvKeys = new Set(
     MESSAGING_CHANNELS.filter((c) => disabledChannels.includes(c.name)).flatMap((c) =>
-      c.appTokenEnvKey ? [c.envKey, c.appTokenEnvKey] : [c.envKey],
+      getChannelTokenKeys(c),
     ),
   );
 
@@ -5610,10 +5603,14 @@ async function createSandbox(
       ...reusableMessagingChannels,
     ]),
   ];
+  const { useDockerGpuPatch, logMessage: sandboxGpuLogMessage } =
+    dockerGpuSandboxCreate.resolveDockerGpuSandboxCreatePlan(effectiveSandboxGpuConfig, {
+      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+    });
   const initialSandboxPolicy = prepareInitialSandboxCreatePolicy(
     basePolicyPath,
     activeMessagingChannels,
-    { directGpu: effectiveSandboxGpuConfig.sandboxGpuEnabled },
+    { directGpu: effectiveSandboxGpuConfig.sandboxGpuEnabled, dockerGpuPatch: useDockerGpuPatch },
   );
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
@@ -5623,13 +5620,7 @@ async function createSandbox(
       `  Including policy preset(s) at sandbox boot: ${initialSandboxPolicy.appliedPresets.join(", ")}`,
     );
   }
-  if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
-    console.log("  Direct sandbox GPU enabled; allowing only /proc task comm writes.");
-  }
-  const useDockerGpuPatch = dockerGpuSandboxCreate.shouldUseDockerGpuPatchForCreate(
-    effectiveSandboxGpuConfig,
-    { dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(), log: console.log },
-  );
+  if (sandboxGpuLogMessage) console.log(sandboxGpuLogMessage);
   const createArgs = [
     "--from",
     `${buildCtx}/Dockerfile`,
@@ -5662,6 +5653,7 @@ async function createSandbox(
   const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
   for (const ch of MESSAGING_CHANNELS) {
     if (
+      ch.envKey &&
       enabledTokenEnvKeys.has(ch.envKey) &&
       ch.userIdEnvKey &&
       process.env[ch.userIdEnvKey]
@@ -6056,11 +6048,12 @@ async function createSandbox(
     ? builtImageMatch[1]
     : `openshell/sandbox-from:${buildId}`;
 
+  const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   registry.registerSandbox({
     name: sandboxName,
     model: model || null,
     provider: provider || null,
-    ...getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig),
+    ...sandboxRuntimeFields,
     ...getSandboxAgentRegistryFields(agent, !fromDockerfile),
     imageTag: resolvedImageTag,
     providerCredentialHashes:
@@ -6099,12 +6092,14 @@ async function createSandbox(
 
   // DNS proxy — run a forwarder in the sandbox pod so the isolated
   // sandbox namespace can resolve hostnames (fixes #626).
-  if (!isLinuxDockerDriverGatewayEnabled()) {
+  if (sandboxRuntimeFields.openshellDriver === "kubernetes") {
     console.log("  Setting up sandbox DNS proxy...");
     runFile("bash", [path.join(SCRIPTS, "setup-dns-proxy.sh"), GATEWAY_NAME, sandboxName], {
       ignoreError: true,
     });
   }
+
+  require("./onboard/vm-dns-monkeypatch").applyOnboardVmDnsMonkeypatch(sandboxName, sandboxRuntimeFields);
 
   // Check that messaging providers exist in the gateway (sandbox attachment
   // cannot be verified via CLI yet — only gateway-level existence is checked).
@@ -8105,9 +8100,6 @@ async function checkTelegramReachability(token: string) {
 async function setupMessagingChannels(): Promise<string[]> {
   step(5, 8, "Messaging channels");
 
-  const getMessagingToken = (envKey: string): string | null =>
-    getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
-
   const getMessagingConfigValue = (envKey: string): string | null =>
     normalizeMessagingChannelConfigValue(envKey, process.env[envKey]);
 
@@ -8242,6 +8234,7 @@ async function setupMessagingChannels(): Promise<string[]> {
       console.log(`  Unknown channel: ${name}`);
       continue;
     }
+    if (!channelHasStaticToken(ch)) continue;
     if (getMessagingToken(ch.envKey)) {
       console.log(`  ✓ ${ch.name} — already configured`);
     } else {
@@ -10604,12 +10597,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         nextWebSearchConfig = await configureWebSearch(null, agent, webSearchSupportProbePath);
       }
       startRecordedStep("sandbox", { provider, model });
-      const recordedMessagingChannels = getRecordedMessagingChannelsForResume(resume, session);
+      const recordedMessagingChannels = getRecordedMessagingChannelsForResume(resume, session, sandboxName);
       if (recordedMessagingChannels) {
         selectedMessagingChannels = recordedMessagingChannels;
         if (selectedMessagingChannels.length > 0) {
           note(
-            `  [resume] Reusing messaging channel configuration: ${selectedMessagingChannels.join(", ")}`,
+            `  [non-interactive] Reusing messaging channel configuration: ${selectedMessagingChannels.join(", ")}`,
           );
         }
       } else {

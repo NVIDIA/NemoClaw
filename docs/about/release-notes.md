@@ -24,6 +24,20 @@ status: published
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
+## v0.0.42
+
+NemoClaw v0.0.42 improves onboarding, status diagnostics, local inference checks, and messaging setup:
+
+- `nemoclaw onboard` uses the Docker-driver OpenShell gateway path on macOS and no longer requires VM driver helper assets for standard macOS onboarding.
+- Dashboard port selection probes occupied ports more thoroughly, including root-owned listeners on macOS, and rolls back a newly-created sandbox if the dashboard forward cannot start after the image build.
+- `nemoclaw status` shows `Inference` and `Connected` fields for each listed sandbox, and cloudflared service output now distinguishes stopped, invalid PID file, and stale PID states with a `nemoclaw tunnel start` recovery hint.
+- Local Ollama status and doctor checks now probe the authenticated proxy in addition to the backend, so a broken proxy is reported separately from a healthy `127.0.0.1:11434` backend.
+- Compatible OpenAI endpoint validation retries reasoning-only smoke responses with a larger output budget before classifying the setup as a model output budget problem instead of a route failure.
+- `channels add` and `channels remove` normalize channel names before saving or rebuilding, and `channels add` hints when a matching built-in policy preset exists but is not applied yet.
+- GPU recovery and uninstall output now use registry-aware recovery commands and clearer gateway removal wording.
+- Onboarding applies selected built-in policy presets in a single policy update when possible, while preserving the final live policy and registry state.
+- The installer handles unchanged user-local CLI shims idempotently, avoiding duplicate shim-creation messages during install-plus-verify flows.
+
 ## v0.0.41
 
 NemoClaw v0.0.41 improves Docker-driver onboarding and release compatibility:

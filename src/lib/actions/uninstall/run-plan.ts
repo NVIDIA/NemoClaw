@@ -601,6 +601,7 @@ function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: Uninst
       if (options.keepOpenShell) runtime.log("Keeping OpenShell binaries as requested.");
       else for (const target of paths.openshellInstallPaths) removeFileWithOptionalSudo(target, runtime);
       removePath(paths.nemoclawStateDir, runtime);
+      removePath(paths.gatewayLocalStateDir, runtime);
       removePath(paths.openshellConfigDir, runtime);
       removePath(paths.nemoclawConfigDir, runtime);
     }
