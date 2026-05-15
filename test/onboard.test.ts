@@ -14,9 +14,13 @@ import type { AgentDefinition } from "../dist/lib/agent/defs.js";
 import { loadAgent } from "../dist/lib/agent/defs.js";
 import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard/contract.js";
 import { NAME_ALLOWED_FORMAT } from "../dist/lib/name-validation.js";
+import {
+  shouldInspectLegacyGatewayGpuPassthrough,
+} from "../dist/lib/onboard/gateway-gpu-passthrough.js";
 import { hasOpenShellVmDriverChildProcessFromPsOutput } from "../dist/lib/onboard/vm-driver-process.js";
-import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
 import { applyOnboardVmDnsMonkeypatch } from "../dist/lib/onboard/vm-dns-monkeypatch.js";
+import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
+import type { GatewayReuseState } from "../dist/lib/state/gateway.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 type ShimScalar = string | number | boolean | null | undefined;
@@ -398,6 +402,17 @@ describe("onboard helpers", () => {
 
     const legacyGpuSession = getResumeSandboxGpuOverrides(null, true);
     expect(legacyGpuSession.flag).toBe("enable");
+  });
+
+  it("only inspects legacy gateway containers for reusable GPU passthrough", () => {
+    const HEALTHY: GatewayReuseState = "healthy";
+    const MISSING: GatewayReuseState = "missing";
+
+    expect(shouldInspectLegacyGatewayGpuPassthrough(HEALTHY, true, false, true)).toBe(true);
+    expect(shouldInspectLegacyGatewayGpuPassthrough(HEALTHY, true, false, false)).toBe(false);
+    expect(shouldInspectLegacyGatewayGpuPassthrough(HEALTHY, true, true, true)).toBe(false);
+    expect(shouldInspectLegacyGatewayGpuPassthrough(MISSING, true, false, true)).toBe(false);
+    expect(shouldInspectLegacyGatewayGpuPassthrough(HEALTHY, false, false, true)).toBe(false);
   });
 
   it("builds OpenShell sandbox GPU create args", () => {

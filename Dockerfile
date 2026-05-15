@@ -159,7 +159,6 @@ RUN set -eu; \
 #
 # Both patches fail-close: if grep finds no targets, the build aborts so
 # the next maintainer reviewing an OPENCLAW_VERSION bump knows to revisit.
-COPY scripts/rcf_patch.py /usr/local/lib/nemoclaw/rcf_patch.py
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
     OC_DIST=/usr/local/lib/node_modules/openclaw/dist; \
@@ -191,20 +190,6 @@ RUN set -eu; \
     sed -i 's/const baseLstat = await fs\.lstat(params\.installBaseDir)/const baseLstat = await fs.stat(params.installBaseDir)/' "$ipd_file"; \
     sed -i 's/baseLstat\.isSymbolicLink()/false \/* nemoclaw: symlink check disabled, realpath guards containment *\//' "$ipd_file"; \
     if grep -q 'fs\.lstat(params\.installBaseDir)' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left lstat in assertInstallBaseStable" >&2; exit 1; fi; \
-    # --- Patch 4: graceful EACCES in replaceConfigFile for sandbox (#2254) --- \
-    # Plugin install persists metadata via replaceConfigFile. In the sandbox, \
-    # openclaw.json is immutable (444 root:root) by design.  OpenClaw 2026.4.24 \
-    # restructured config writes: replaceConfigFile now first attempts a \
-    # single-key include-file mutation (tryWriteSingleTopLevelIncludeMutation), \
-    # falling back to writeConfigFile for the full config.  Both paths can hit \
-    # EACCES in the read-only sandbox tree.  This patch wraps the entire \
-    # write block in a try/catch that catches EACCES when OPENSHELL_SANDBOX=1 \
-    # and emits a warning instead of crashing.  Plugins still load via \
-    # auto-discovery from the extensions directory. \
-    rcf_file="$(grep -RIlE --include='*.js' 'async function replaceConfigFile\(params\)' "$OC_DIST" | head -n 1)"; \
-    test -n "$rcf_file" || { echo "ERROR: replaceConfigFile function not found in OpenClaw dist" >&2; exit 1; }; \
-    python3 /usr/local/lib/nemoclaw/rcf_patch.py "$rcf_file"; \
-    grep -REq --include='*.js' 'OPENSHELL_SANDBOX.*EACCES' "$rcf_file" || { echo "ERROR: Patch 4 (replaceConfigFile EACCES) not applied" >&2; exit 1; }; \
     # --- Patch 5: bump default WS handshake timeout 10s -> 60s (#2484) --- \
     # OpenClaw's WS connect handshake has a hard-coded 10s timeout on both \
     # client and server. Server-side connect-handler processing can exceed \

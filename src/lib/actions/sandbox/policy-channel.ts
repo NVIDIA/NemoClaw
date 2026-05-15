@@ -456,12 +456,17 @@ async function acquireHostQrChannel(
   channel: ChannelDef,
   acquired: Record<string, string>,
 ): Promise<void> {
+  const envKey = channel.envKey;
+  if (!envKey) {
+    console.error(`  Channel '${channelArg}' does not declare a credential environment key.`);
+    process.exit(1);
+  }
   // Cached-token short-circuit. A sandbox originally onboarded with this
   // channel already has the bot token in OpenShell + the per-account
   // metadata in session.wechatConfig. Re-running QR would invalidate the
   // upstream plugin's existing iLink session; prefer the cache and let
   // the rebuild's env-stash re-bake from session.
-  const cached = getCredential(channel.envKey);
+  const cached = getCredential(envKey);
   if (cached) {
     if (channelArg === "wechat") {
       // The rebuild needs accountId/baseUrl/userId to reconstruct the
@@ -487,7 +492,7 @@ async function acquireHostQrChannel(
         process.exit(1);
       }
     }
-    acquired[channel.envKey] = cached;
+    acquired[envKey] = cached;
     return;
   }
   if (isNonInteractive()) {
@@ -528,7 +533,7 @@ async function acquireHostQrChannel(
     console.error("  Aborted — host-qr handler returned no token.");
     process.exit(1);
   }
-  acquired[channel.envKey] = result.token;
+  acquired[envKey] = result.token;
   if (result.extraEnv) {
     for (const [key, value] of Object.entries(result.extraEnv)) {
       process.env[key] = value;

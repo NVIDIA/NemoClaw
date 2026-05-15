@@ -8,7 +8,7 @@ import {
   saveCredential,
 } from "../credentials/store";
 import { normalizeMessagingChannelConfigValue } from "../messaging-channel-config";
-import type { ChannelDef } from "../sandbox/channels";
+import { channelHasStaticToken, type ChannelDef } from "../sandbox/channels";
 import { dispatchHostQrLogin } from "./host-qr-dispatch";
 
 type ChannelEntry = { name: string } & ChannelDef;
@@ -41,7 +41,7 @@ export async function setupSelectedMessagingChannels(
       console.log(`  Unknown channel: ${name}`);
       continue;
     }
-    if (getMessagingToken(ch.envKey)) {
+    if (channelHasStaticToken(ch) && getMessagingToken(ch.envKey)) {
       console.log(`  ✓ ${ch.name} — already configured`);
     } else if (ch.loginMethod === "host-qr") {
       console.log("");
@@ -55,6 +55,7 @@ export async function setupSelectedMessagingChannels(
       const suffix = outcome.summary ? ` (${outcome.summary})` : "";
       console.log(`  ✓ ${ch.name} token saved${suffix}`);
     } else {
+      if (!channelHasStaticToken(ch)) continue;
       console.log("");
       console.log(`  ${ch.help}`);
       const token = normalizeCredentialValue(await prompt(`  ${ch.label}: `, { secret: true }));

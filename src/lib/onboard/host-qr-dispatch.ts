@@ -45,7 +45,7 @@ export async function dispatchHostQrLogin(
             : `login failed: ${result.message ?? "unknown error"}`;
     return { ok: false, reason };
   }
-  if (result.token) {
+  if (result.token && ch.envKey) {
     saveCredential(ch.envKey, result.token);
     process.env[ch.envKey] = result.token;
   }
