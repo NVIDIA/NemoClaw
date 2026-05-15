@@ -50,6 +50,8 @@ export function patchStagedDockerfile(
   wechatConfig: LooseObject = {},
   darwinVmCompat = false,
   inferenceBaseUrlOverride: string | null = null,
+  hermesToolGateways: string[] = [],
+  hermesToolBrokerToken: string | null = null,
 ): void {
   const sanitizedModel = sanitizeDockerArg(model);
   const sandboxInference = getSandboxInferenceConfig(
@@ -230,6 +232,24 @@ export function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_WECHAT_CONFIG_B64=.*$/m,
       `ARG NEMOCLAW_WECHAT_CONFIG_B64=${encodeSanitizedDockerJsonArg(wechatConfig)}`,
+    );
+  }
+  if (hermesToolGateways.length > 0) {
+    const brokerToken = String(hermesToolBrokerToken || "").trim();
+    if (!brokerToken) {
+      throw new Error("Hermes managed tools require a host broker token from OAuth setup");
+    }
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=.*$/m,
+      "ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1",
+    );
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=.*$/m,
+      `ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${encodeSanitizedDockerJsonArg(hermesToolGateways)}`,
+    );
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_HERMES_TOOL_BROKER_TOKEN=.*$/m,
+      `ARG NEMOCLAW_HERMES_TOOL_BROKER_TOKEN=${sanitizeDockerArg(brokerToken)}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);

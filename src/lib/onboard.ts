@@ -190,6 +190,10 @@ const {
 const onboardProviders = require("./onboard/providers");
 const hermesProviderAuth = require("./hermes-provider-auth");
 
+function getHermesToolGatewayBroker(): any {
+  return require("./hermes-tool-gateway-broker");
+}
+
 type RemoteProviderConfigEntry = {
   label: string;
   providerName: string;
@@ -343,6 +347,13 @@ import {
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
 import { reportGpuPassthroughRecovery } from "./onboard/gpu-recovery";
+import {
+  HERMES_TOOL_GATEWAY_PRESET_NAMES,
+  hermesToolGatewayLabels,
+  mergeRequiredHermesToolGatewayPolicyPresets,
+  setupHermesToolGateways,
+  stringSetsEqual,
+} from "./onboard/hermes-managed-tools";
 import { getMessagingToken } from "./onboard/messaging-token";
 import type {
   DockerDriverBinaryOverrides,
@@ -350,6 +361,12 @@ import type {
   OpenShellInstallResult,
 } from "./onboard/openshell-install";
 import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
+import {
+  computeSetupPresetSuggestions as computeSetupPresetSuggestionsImpl,
+  setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
+  type SetupPolicySelectionOptions,
+  type SetupPresetSuggestionOptions,
+} from "./onboard/policy-selection";
 import {
   getResumeSandboxGpuOverrides,
   resolveSandboxGpuConfig,
@@ -1469,6 +1486,30 @@ async function ensureHermesNousApiKeyEnv(): Promise<string> {
   }
   process.env[HERMES_NOUS_API_KEY_CREDENTIAL_ENV] = key;
   return key;
+}
+
+function openshellResultMessage(result: {
+  stdout?: string | Buffer | null;
+  stderr?: string | Buffer | null;
+}): string {
+  return compactText(redact(`${result.stderr || ""} ${result.stdout || ""}`));
+}
+
+function checkHermesProviderStoreReachable(
+  runOpenshellImpl: typeof runOpenshell = runOpenshell,
+): { ok: true } | { ok: false; message: string } {
+  const result = runOpenshellImpl(["provider", "list"], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 10_000,
+  });
+  if (result.status === 0) return { ok: true };
+  return {
+    ok: false,
+    message:
+      openshellResultMessage(result) ||
+      "OpenShell provider storage is unreachable; the gateway may be stopped or refusing connections.",
+  };
 }
 
 async function selectOnboardAgent({
@@ -4703,6 +4744,7 @@ async function createSandbox(
   agent: AgentDefinition | null = null,
   controlUiPort: number | null = null,
   sandboxGpuConfig: SandboxGpuConfig | null = null,
+  hermesToolGateways: string[] = [],
 ) {
   step(6, 8, "Creating sandbox");
 
@@ -4959,6 +5001,8 @@ async function createSandbox(
     const selectionDrift = getSelectionDrift(sandboxName, provider, model, { runOpenshell });
     const confirmedSelectionDrift = selectionDrift.changed && !selectionDrift.unknown;
     const sandboxGpuDrift = hasSandboxGpuDrift(sandboxName, effectiveSandboxGpuConfig);
+    const recordedHermesToolGateways = registry.getSandbox(sandboxName)?.hermesToolGateways ?? [];
+    const hermesToolGatewayDrift = !stringSetsEqual(recordedHermesToolGateways, hermesToolGateways);
 
     // Detect whether any messaging credential has been rotated since the
     // sandbox was created. Provider credentials are resolved once at sandbox
@@ -4972,7 +5016,8 @@ async function createSandbox(
       !recreateForAgentDrift &&
       !needsProviderMigration &&
       !sandboxGpuDrift &&
-      !credentialRotation.changed
+      !credentialRotation.changed &&
+      !hermesToolGatewayDrift
     ) {
       // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
       // Placed before the non-interactive / interactive split so all reuse
@@ -5154,6 +5199,8 @@ async function createSandbox(
       note(`  Sandbox '${sandboxName}' exists — recreating to apply model/provider change.`);
     } else if (sandboxGpuDrift) {
       note(`  Sandbox '${sandboxName}' exists — recreating to apply sandbox GPU settings.`);
+    } else if (hermesToolGatewayDrift) {
+      note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes managed-tool changes.`);
     } else if (credentialRotation.changed) {
       // Message already printed above during backup.
     } else if (existingSandboxState === "ready") {
@@ -5322,7 +5369,11 @@ async function createSandbox(
   const initialSandboxPolicy = prepareInitialSandboxCreatePolicy(
     basePolicyPath,
     activeMessagingChannels,
-    { directGpu: effectiveSandboxGpuConfig.sandboxGpuEnabled, dockerGpuPatch: useDockerGpuPatch },
+    {
+      directGpu: effectiveSandboxGpuConfig.sandboxGpuEnabled,
+      dockerGpuPatch: useDockerGpuPatch,
+      additionalPresets: hermesToolGateways,
+    },
   );
   if (initialSandboxPolicy.cleanup) {
     process.on("exit", initialSandboxPolicy.cleanup);
@@ -5354,6 +5405,10 @@ async function createSandbox(
   ];
   for (const p of messagingProviders) {
     createArgs.push("--provider", p);
+  }
+  if (hermesToolGateways.length > 0) {
+    const hermesToolGateway = getHermesToolGatewayBroker();
+    createArgs.push("--provider", hermesToolGateway.getHermesToolGatewayProviderName(sandboxName));
   }
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
@@ -5464,7 +5519,16 @@ async function createSandbox(
       effectiveSandboxGpuConfig,
       provider,
       { dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(), log: console.log },
-  );
+    );
+  let hermesToolBrokerToken: string | null = null;
+  if (hermesToolGateways.length > 0) {
+    hermesToolBrokerToken = getHermesToolGatewayBroker().getHermesToolGatewayBrokerToken(sandboxName);
+    if (!hermesToolBrokerToken) {
+      console.error("  Hermes managed tools were selected, but no broker token was prepared.");
+      console.error("  Re-run OAuth setup with managed tools enabled and retry onboarding.");
+      process.exit(1);
+    }
+  }
   patchStagedDockerfile(
     stagedDockerfile,
     model,
@@ -5483,6 +5547,8 @@ async function createSandbox(
     // compatibility path disabled unless a future VM-specific flow opts in.
     false,
     sandboxInferenceBaseUrlOverride,
+    hermesToolGateways,
+    hermesToolBrokerToken,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -5774,6 +5840,7 @@ async function createSandbox(
       enabledChannels != null ? [...new Set(enabledChannels)] : activeMessagingChannels,
     messagingChannelConfig: messagingChannelConfig || undefined,
     disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,
+    hermesToolGateways: hermesToolGateways.length > 0 ? [...hermesToolGateways] : undefined,
     dashboardPort: actualDashboardPort,
   });
   registry.setDefault(sandboxName);
@@ -6096,6 +6163,7 @@ async function setupNim(
   endpointUrl: string | null;
   credentialEnv: string | null;
   hermesAuthMethod: HermesAuthMethod | null;
+  hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   nimContainer: string | null;
 }> {
@@ -6107,6 +6175,7 @@ async function setupNim(
   let endpointUrl: string | null = REMOTE_PROVIDER_CONFIG.build.endpointUrl;
   let credentialEnv: string | null = REMOTE_PROVIDER_CONFIG.build.credentialEnv;
   let hermesAuthMethod: HermesAuthMethod | null = null;
+  let hermesToolGateways: string[] = [];
   let preferredInferenceApi: string | null = null;
 
   // Detect local inference options. Bound curl with --connect-timeout/--max-time
@@ -6446,6 +6515,7 @@ async function setupNim(
       }
       if (selected.key !== "hermesProvider") {
         hermesAuthMethod = null;
+        hermesToolGateways = [];
       }
 
       if (REMOTE_PROVIDER_CONFIG[selected.key]) {
@@ -6536,6 +6606,15 @@ async function setupNim(
           } else {
             credentialEnv = remoteConfig.credentialEnv;
           }
+          const recordedHermesToolGateways = sandboxName
+            ? registry.getSandbox(sandboxName)?.hermesToolGateways ?? null
+            : null;
+          hermesToolGateways = await setupHermesToolGateways(
+            provider,
+            hermesAuthMethod,
+            recordedHermesToolGateways,
+            { prompt, note, isNonInteractive },
+          );
 
           const defaultModel =
             requestedModel ||
@@ -7347,6 +7426,7 @@ async function setupNim(
     endpointUrl,
     credentialEnv,
     hermesAuthMethod,
+    hermesToolGateways,
     preferredInferenceApi,
     nimContainer,
   };
@@ -7361,6 +7441,7 @@ async function setupInference(
   endpointUrl: string | null = null,
   credentialEnv: string | null = null,
   hermesAuthMethod: HermesAuthMethod | string | null = null,
+  hermesToolGateways: string[] = [],
 ): Promise<{ ok: true; retry?: undefined } | { retry: "selection" }> {
   step(4, 8, "Setting up inference provider");
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
@@ -7372,11 +7453,26 @@ async function setupInference(
       (credentialEnv === HERMES_NOUS_API_KEY_CREDENTIAL_ENV
         ? HERMES_AUTH_METHOD_API_KEY
         : HERMES_AUTH_METHOD_OAUTH);
+    const providerStore = checkHermesProviderStoreReachable(runOpenshell);
+    if (!providerStore.ok) {
+      console.error("  ✗ OpenShell provider storage is unreachable.");
+      console.error(`    ${providerStore.message}`);
+      console.error("    Restart or recreate the OpenShell gateway, then rerun onboarding.");
+      if (isNonInteractive()) process.exit(1);
+      return { retry: "selection" };
+    }
     const providerRegistered = hermesProviderAuth.isHermesProviderRegistered(runOpenshell);
+    const toolGatewayProviderRegistered =
+      hermesToolGateways.length === 0
+        ? true
+        : providerExistsInGateway(
+            getHermesToolGatewayBroker().getHermesToolGatewayProviderName(targetSandbox),
+          );
     const hasFreshNousApiKey =
       resolvedHermesAuthMethod === HERMES_AUTH_METHOD_API_KEY && !!resolveHermesNousApiKey();
     const shouldPrepareHermesCredentials =
       !providerRegistered ||
+      !toolGatewayProviderRegistered ||
       hasFreshNousApiKey ||
       (resolvedHermesAuthMethod === HERMES_AUTH_METHOD_OAUTH && !isNonInteractive());
     if (shouldPrepareHermesCredentials) {
@@ -7392,6 +7488,7 @@ async function setupInference(
                 allowInteractiveLogin: !isNonInteractive(),
                 runOpenshell,
                 baseUrl: endpointUrl || undefined,
+                toolGatewayPresets: hermesToolGateways,
               });
         if (!state) {
           const authLabel = hermesAuthMethodLabel(resolvedHermesAuthMethod);
@@ -8511,208 +8608,39 @@ async function presetsCheckboxSelector(
 
 function computeSetupPresetSuggestions(
   tierName: string,
-  options: {
-    enabledChannels?: string[] | null;
-    webSearchConfig?: WebSearchConfig | null;
-    provider?: string | null;
-    knownPresetNames?: string[] | null;
-    webSearchSupported?: boolean | null;
-  } = {},
+  options: SetupPresetSuggestionOptions = {},
 ): string[] {
-  const { enabledChannels = null, webSearchConfig = null, provider = null } = options;
-  const known = Array.isArray(options.knownPresetNames) ? new Set(options.knownPresetNames) : null;
-  const supportOptions = { webSearchSupported: options.webSearchSupported };
-  const suggestions = tiers
-    .resolveTierPresets(tierName)
-    .map((p) => p.name)
-    .filter((name) => policies.setupPolicyPresetSupported(name, supportOptions))
-    .filter((name) => !known || known.has(name));
-  const add = (name: string) => {
-    if (!policies.setupPolicyPresetSupported(name, supportOptions)) return;
-    if (suggestions.includes(name)) return;
-    if (known && !known.has(name)) return;
-    suggestions.push(name);
-  };
-  if (webSearchConfig) add("brave");
-  if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider)) add("local-inference");
-  if (Array.isArray(enabledChannels)) {
-    for (const channel of enabledChannels) add(channel);
-  }
-  return suggestions;
+  return computeSetupPresetSuggestionsImpl(
+    { policies, tiers, localInferenceProviders: LOCAL_INFERENCE_PROVIDERS },
+    tierName,
+    options,
+  );
 }
 
 async function setupPoliciesWithSelection(
   sandboxName: string,
-  options: {
-    selectedPresets?: string[] | null;
-    onSelection?: ((policyPresets: string[]) => void) | null;
-    webSearchConfig?: WebSearchConfig | null;
-    enabledChannels?: string[] | null;
-    provider?: string | null;
-    knownPresetNames?: string[];
-    webSearchSupported?: boolean | null;
-  } = {},
+  options: SetupPolicySelectionOptions = {},
 ) {
-  const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
-  const onSelection = typeof options.onSelection === "function" ? options.onSelection : null;
-  const webSearchConfig = options.webSearchConfig || null;
-  const enabledChannels = Array.isArray(options.enabledChannels) ? options.enabledChannels : null;
-  const provider = options.provider || null;
-
-  step(8, 8, "Policy presets");
-
-  const supportOptions = { webSearchSupported: options.webSearchSupported };
-  const allPresets = policies.listSetupPolicyPresets(sandboxName, supportOptions);
-  const knownPresets = new Set(allPresets.map((p) => p.name));
-  const customPresetNames = new Set(
-    policies.listCustomPresets(sandboxName).map((p: { name: string }) => p.name),
+  const selectedTier = await setupPoliciesWithSelectionImpl(
+    {
+      policies,
+      tiers,
+      localInferenceProviders: LOCAL_INFERENCE_PROVIDERS,
+      step,
+      note,
+      isNonInteractive,
+      waitForSandboxReady,
+      syncPresetSelection,
+      selectPolicyTier,
+      setPolicyTier: (sandbox, tierName) => registry.updateSandbox(sandbox, { policyTier: tierName }),
+      selectTierPresetsAndAccess,
+      parsePolicyPresetEnv,
+      env: process.env,
+    },
+    sandboxName,
+    options,
   );
-  const currentAppliedPresets = policies.getAppliedPresets(sandboxName);
-  const selectablePresets = [
-    ...allPresets,
-    ...currentAppliedPresets.map((name) => ({ name })),
-  ];
-  const applied = policies.clampSetupPolicyPresetNames(
-    currentAppliedPresets,
-    selectablePresets,
-    supportOptions,
-    customPresetNames,
-  );
-  const filterSupportedPresetNames = (presetNames: string[]) =>
-    presetNames.filter(
-      (name) =>
-        customPresetNames.has(name) || policies.setupPolicyPresetSupported(name, supportOptions),
-    );
-  let chosen = selectedPresets !== null
-    ? policies.clampSetupPolicyPresetNames(
-        selectedPresets,
-        selectablePresets,
-        supportOptions,
-        customPresetNames,
-      )
-    : null;
-
-  // Resume path: caller supplies the preset list from a previous run.
-  if (selectedPresets !== null) {
-    const resumeSelection = chosen || [];
-    if (onSelection) onSelection(resumeSelection);
-    if (!waitForSandboxReady(sandboxName)) {
-      console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
-      process.exit(1);
-    }
-    note(`  [resume] Reapplying policy presets: ${resumeSelection.join(", ")}`);
-    syncPresetSelection(sandboxName, currentAppliedPresets, resumeSelection);
-    return resumeSelection;
-  }
-
-  // Tier selection — determines the default preset list for this install.
-  const tierName = await selectPolicyTier();
-  registry.updateSandbox(sandboxName, { policyTier: tierName });
-  const suggestions = computeSetupPresetSuggestions(tierName, {
-    enabledChannels,
-    webSearchConfig,
-    provider,
-    knownPresetNames: allPresets.map((p) => p.name),
-    webSearchSupported: options.webSearchSupported,
-  });
-
-  if (isNonInteractive()) {
-    const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
-    chosen = suggestions;
-    let isAuthoritative = false;
-
-    if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
-      note("  [non-interactive] Skipping policy presets.");
-      return [];
-    }
-
-    if (policyMode === "custom" || policyMode === "list") {
-      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
-      if (envPresets.length === 0) {
-        console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
-        process.exit(1);
-      }
-      chosen = filterSupportedPresetNames(envPresets);
-      isAuthoritative = true;
-    } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
-      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
-      if (envPresets.length > 0) chosen = filterSupportedPresetNames(envPresets);
-    } else {
-      // #2429: step 8/8 runs after the sandbox is created. Exiting here left
-      // the sandbox with no presets. Warn, optionally suggest the intended
-      // variable, and fall through to the tier-derived suggestions list.
-      console.warn(`  Unsupported NEMOCLAW_POLICY_MODE: ${policyMode}`);
-      console.warn(
-        "  Valid values: suggested, custom, skip (aliases: default/auto, list, none/no).",
-      );
-      if (tiers.getTier(policyMode)) {
-        console.warn(
-          `  '${policyMode}' is a policy tier — did you mean NEMOCLAW_POLICY_TIER=${policyMode}?`,
-        );
-      }
-      console.warn(`  Falling back to suggested presets for tier '${tierName}'.`);
-    }
-
-    const invalidPresets = chosen.filter((name) => !knownPresets.has(name));
-    if (invalidPresets.length > 0) {
-      console.error(`  Unknown policy preset(s): ${invalidPresets.join(", ")}`);
-      process.exit(1);
-    }
-
-    // Suggested mode is additive: presets the user added beyond the tier
-    // defaults (typically via `nemoclaw <name> policy-add`, including custom
-    // presets loaded with `--from-file`/`--from-dir`) must survive a
-    // re-onboard. `applied` comes from the registry and is the source of
-    // truth for what is currently on the sandbox, so trust it directly
-    // instead of intersecting with the built-in list. Custom mode remains
-    // authoritative — the operator-supplied list is exactly what the
-    // sandbox ends up with, and deselected presets are removed.
-    if (!isAuthoritative) {
-      const chosenSet = new Set(chosen);
-      const preserved: string[] = [];
-      for (const name of applied) {
-        if (chosenSet.has(name)) continue;
-        chosen.push(name);
-        chosenSet.add(name);
-        preserved.push(name);
-      }
-      if (preserved.length > 0) {
-        note(`  [non-interactive] Preserving previously-applied presets: ${preserved.join(", ")}`);
-      }
-    }
-
-    if (onSelection) onSelection(chosen);
-    if (!waitForSandboxReady(sandboxName)) {
-      console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
-      process.exit(1);
-    }
-    note(`  [non-interactive] Applying policy presets: ${chosen.join(", ")}`);
-    syncPresetSelection(sandboxName, currentAppliedPresets, chosen);
-    return chosen;
-  }
-
-  // Interactive: combined tier preset selector + access-mode toggle.
-  // extraSelected seeds the initial checked state beyond the tier defaults:
-  // - presets already applied from a previous run
-  // - credential-based additions from suggestions (e.g. brave when webSearchConfig is set)
-  const knownNames = new Set(allPresets.map((p) => p.name));
-  const extraSelected = [
-    ...applied.filter((name) => knownNames.has(name)),
-    ...suggestions.filter((name) => knownNames.has(name) && !applied.includes(name)),
-  ];
-  const resolvedPresets = await selectTierPresetsAndAccess(tierName, allPresets, extraSelected);
-  const interactiveChoice = resolvedPresets.map((p) => p.name);
-
-  if (onSelection) onSelection(interactiveChoice);
-  if (!waitForSandboxReady(sandboxName)) {
-    console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
-    process.exit(1);
-  }
-
-  const accessByName: Record<string, string> = {};
-  for (const p of resolvedPresets) accessByName[p.name] = p.access;
-  syncPresetSelection(sandboxName, currentAppliedPresets, interactiveChoice, accessByName);
-  return interactiveChoice;
+  return selectedTier;
 }
 
 // ── Dashboard ────────────────────────────────────────────────────
@@ -9138,6 +9066,7 @@ function toSessionUpdates(
     policyPresets?: string[] | null;
     messagingChannels?: string[] | null;
     messagingChannelConfig?: MessagingChannelConfig | null;
+    hermesToolGateways?: string[] | null;
   } = {},
 ): SessionUpdates {
   const normalized: SessionUpdates = {};
@@ -9157,11 +9086,14 @@ function toSessionUpdates(
   if (updates.nimContainer !== undefined)
     normalized.nimContainer = toNullableString(updates.nimContainer);
   if (updates.webSearchConfig !== undefined) normalized.webSearchConfig = updates.webSearchConfig;
-  if (updates.policyPresets) normalized.policyPresets = updates.policyPresets;
-  if (updates.messagingChannels) normalized.messagingChannels = updates.messagingChannels;
+  if (updates.policyPresets !== undefined) normalized.policyPresets = updates.policyPresets;
+  if (updates.messagingChannels !== undefined)
+    normalized.messagingChannels = updates.messagingChannels;
   if (updates.messagingChannelConfig !== undefined) {
     normalized.messagingChannelConfig = updates.messagingChannelConfig;
   }
+  if (updates.hermesToolGateways !== undefined)
+    normalized.hermesToolGateways = updates.hermesToolGateways;
   return normalized;
 }
 
@@ -9180,7 +9112,7 @@ function startRecordedStep(
       if (updates.sandboxName !== undefined) session.sandboxName = updates.sandboxName;
       if (updates.provider !== undefined) session.provider = updates.provider;
       if (updates.model !== undefined) session.model = updates.model;
-      if (updates.policyPresets) session.policyPresets = updates.policyPresets;
+      if (updates.policyPresets !== undefined) session.policyPresets = updates.policyPresets;
       return session;
     });
   }
@@ -9757,6 +9689,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       session?.credentialEnv === HERMES_NOUS_API_KEY_CREDENTIAL_ENV
         ? HERMES_AUTH_METHOD_API_KEY
         : null);
+    let hermesToolGateways = session?.hermesToolGateways || [];
     let preferredInferenceApi = session?.preferredInferenceApi || null;
     let nimContainer = session?.nimContainer || null;
     let webSearchConfig = session?.webSearchConfig || null;
@@ -9784,6 +9717,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         endpointUrl = selection.endpointUrl;
         credentialEnv = selection.credentialEnv;
         hermesAuthMethod = selection.hermesAuthMethod;
+        hermesToolGateways = selection.hermesToolGateways;
         preferredInferenceApi = selection.preferredInferenceApi;
         nimContainer = selection.nimContainer;
         onboardSession.markStepComplete(
@@ -9794,6 +9728,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             endpointUrl,
             credentialEnv,
             hermesAuthMethod,
+            hermesToolGateways,
             preferredInferenceApi,
             nimContainer,
           }),
@@ -9817,6 +9752,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             endpointUrl,
             credentialEnv,
             hermesAuthMethod,
+            hermesToolGateways,
           );
           if (inferenceResult?.retry === "selection") {
             forceProviderSelection = true;
@@ -9824,7 +9760,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           }
           onboardSession.markStepComplete(
             "inference",
-            toSessionUpdates({ provider, model, hermesAuthMethod, nimContainer }),
+            toSessionUpdates({ provider, model, hermesAuthMethod, nimContainer, hermesToolGateways }),
           );
           break;
         }
@@ -9844,7 +9780,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }
         onboardSession.markStepComplete(
           "inference",
-          toSessionUpdates({ provider, model, hermesAuthMethod, nimContainer }),
+          toSessionUpdates({ provider, model, hermesAuthMethod, nimContainer, hermesToolGateways }),
         );
         break;
       }
@@ -9863,6 +9799,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           credentialEnv,
           hermesAuthMethod,
           webSearchConfig,
+          hermesToolGateways,
           enabledChannels: selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
           sandboxName,
           notes: buildEstimateNote ? [buildEstimateNote] : [],
@@ -9888,6 +9825,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         endpointUrl,
         credentialEnv,
         hermesAuthMethod,
+        hermesToolGateways,
       );
       delete process.env.NVIDIA_API_KEY;
       if (inferenceResult?.retry === "selection") {
@@ -9899,7 +9837,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       }
       onboardSession.markStepComplete(
         "inference",
-        toSessionUpdates({ provider, model, hermesAuthMethod, nimContainer }),
+        toSessionUpdates({ provider, model, hermesAuthMethod, nimContainer, hermesToolGateways }),
       );
       break;
     }
@@ -9956,6 +9894,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       ? hasSandboxGpuDrift(sandboxName, sandboxGpuConfig)
       : false;
     const wechatConfigChanged = hasWechatConfigDrift(session);
+    const recordedHermesToolGateways = sandboxName
+      ? registry.getSandbox(sandboxName)?.hermesToolGateways ?? []
+      : [];
+    const hermesToolGatewayConfigChanged = !stringSetsEqual(
+      recordedHermesToolGateways,
+      hermesToolGateways,
+    );
     const resumeSandbox =
       resume &&
       !webSearchConfigChanged &&
@@ -9963,6 +9908,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       !sandboxGpuConfigChanged &&
       !wechatConfigChanged &&
       !messagingChannelConfigChanged &&
+      !hermesToolGatewayConfigChanged &&
       session?.steps?.sandbox?.status === "complete" &&
       sandboxReuseState === "ready";
     if (resumeSandbox) {
@@ -9995,6 +9941,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           }
         } else if (messagingChannelConfigChanged) {
           note("  [resume] Messaging channel configuration changed; recreating sandbox.");
+          if (sandboxName) {
+            registry.removeSandbox(sandboxName);
+          }
+        } else if (hermesToolGatewayConfigChanged) {
+          note("  [resume] Hermes managed tool gateway selection changed; recreating sandbox.");
           if (sandboxName) {
             registry.removeSandbox(sandboxName);
           }
@@ -10061,6 +10012,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         agent,
         opts.controlUiPort || null,
         sandboxGpuConfig,
+        hermesToolGateways,
       );
       webSearchConfig = nextWebSearchConfig;
       registry.updateSandbox(sandboxName, {
@@ -10078,6 +10030,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           nimContainer,
           webSearchConfig,
           messagingChannelConfig,
+          hermesToolGateways,
         }),
       );
     }
@@ -10111,14 +10064,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         skippedStepMessage("openclaw", sandboxName);
         onboardSession.markStepComplete(
           "openclaw",
-          toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod }),
+          toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
         );
       } else {
         startRecordedStep("openclaw", { sandboxName, provider, model });
         await setupOpenclaw(sandboxName, model, provider);
         onboardSession.markStepComplete(
           "openclaw",
-          toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod }),
+          toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
         );
       }
       onboardSession.markStepSkipped("agent_setup");
@@ -10142,17 +10095,26 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       agent,
     });
     const policyPresetSupportOptions = { webSearchSupported };
-    const recordedPolicyPresetsForSupport = policies.clampSetupPolicyPresetNames(
-      recordedPolicyPresets || [],
-      [
-        ...policies.listSetupPolicyPresets(sandboxName, policyPresetSupportOptions),
-        ...policies.getAppliedPresets(sandboxName).map((name) => ({ name })),
-      ],
-      policyPresetSupportOptions,
-      new Set(
-        policies.listCustomPresets(sandboxName).map((p: { name: string }) => p.name),
-      ),
+    const selectablePolicyPresetsForSupport = [
+      ...policies.listSetupPolicyPresets(sandboxName, policyPresetSupportOptions),
+      ...policies.getAppliedPresets(sandboxName).map((name) => ({ name })),
+    ];
+    const customPolicyPresetNames = new Set(
+      policies.listCustomPresets(sandboxName).map((p: { name: string }) => p.name),
     );
+    let recordedPolicyPresetsForSupport = policies.clampSetupPolicyPresetNames(
+      recordedPolicyPresets || [],
+      selectablePolicyPresetsForSupport,
+      policyPresetSupportOptions,
+      customPolicyPresetNames,
+    );
+    if (recordedPolicyPresets) {
+      recordedPolicyPresetsForSupport = mergeRequiredHermesToolGatewayPolicyPresets(
+        recordedPolicyPresetsForSupport,
+        hermesToolGateways,
+        selectablePolicyPresetsForSupport.map((p) => p.name),
+      );
+    }
     const recordedPolicyPresetsHaveUnsupported =
       Array.isArray(recordedPolicyPresets) &&
       recordedPolicyPresetsForSupport.length !== recordedPolicyPresets.length;
@@ -10191,6 +10153,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         webSearchConfig,
         provider,
         webSearchSupported,
+        hermesToolGateways,
         onSelection: (policyPresets) => {
           onboardSession.updateSession((current: Session) => {
             current.policyPresets = policyPresets;
@@ -10209,7 +10172,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     onboardSession.completeSession(
-      toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod }),
+      toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
     );
     completed = true;
     // Onboarding finished successfully. Delete the legacy plaintext
@@ -10393,6 +10356,7 @@ module.exports = {
   arePolicyPresetsApplied,
   getSuggestedPolicyPresets,
   computeSetupPresetSuggestions,
+  mergeRequiredHermesToolGatewayPolicyPresets,
   filterSetupPolicyPresets: policies.filterSetupPolicyPresets,
   LOCAL_INFERENCE_PROVIDERS,
   presetsCheckboxSelector,

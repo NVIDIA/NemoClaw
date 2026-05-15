@@ -1129,6 +1129,9 @@ Defaults are unchanged when no variable is set.
 If `NEMOCLAW_DASHBOARD_PORT` or the port from `CHAT_UI_URL` is already occupied by another sandbox, onboarding scans `18789` through `18799` and uses the next free dashboard port.
 Pass `--control-ui-port <N>` to require a specific port.
 
+Hermes Provider sandboxes that use Nous Portal OAuth and selected managed Nous tools also start a Hermes-owned host broker on port `11436`.
+That broker is not part of the default OpenClaw service set; it is started only for Hermes managed-tool gateway sessions.
+
 ### Onboarding Configuration
 
 These variables let you tune onboarding without editing the Dockerfile or passing repeated flags.
@@ -1140,6 +1143,8 @@ Set them before running `nemoclaw onboard`.
 | `NEMOCLAW_HERMES_AUTH_METHOD` | `oauth` | Selects Hermes Provider authentication in non-interactive onboarding. Valid values: `oauth`, `nous-portal-oauth`, `api-key`, `nous-api-key`. |
 | `NEMOCLAW_HERMES_AUTH` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Back-compatible alias for Hermes Provider authentication selection. |
 | `NEMOCLAW_NOUS_AUTH_METHOD` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Nous-specific alias for Hermes Provider authentication selection. |
+| `NEMOCLAW_HERMES_TOOL_GATEWAYS` | comma-separated managed-tool presets | Selects Hermes managed Nous tools in non-interactive OAuth onboarding. Valid values: `nous-web`, `nous-image`, `nous-audio`, `nous-browser`, `nous-code`. These require Nous Portal OAuth/subscription; API-key mode remains inference-only. |
+| `NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS` | same as `NEMOCLAW_HERMES_TOOL_GATEWAYS` | Back-compatible alias for selecting Hermes managed-tool presets. |
 | `NEMOCLAW_ENDPOINT_URL` | URL | Custom OpenAI-compatible endpoint URL. Used together with `NEMOCLAW_PROVIDER=compatible`. |
 | `NEMOCLAW_PREFERRED_API` | `completions` (currently the only honored value) | Forces the validation probe to use the `/v1/chat/completions` API path instead of the newer `/v1/responses` API. |
 | `NEMOCLAW_INFERENCE_INPUTS` | comma-separated list of `text` and/or `image` | Declares model input modalities for vision-capable models. Validated strictly; unknown tokens are ignored. |

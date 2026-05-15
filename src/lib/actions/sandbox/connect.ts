@@ -555,6 +555,23 @@ function ensureSandboxInferenceRouteOrExit(
   return result.sandbox;
 }
 
+function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
+  if (
+    !sb ||
+    sb.agent !== "hermes" ||
+    !Array.isArray(sb.hermesToolGateways) ||
+    sb.hermesToolGateways.length === 0
+  ) {
+    return;
+  }
+  try {
+    const hermesToolGatewayBroker = require("../../hermes-tool-gateway-broker");
+    hermesToolGatewayBroker.ensureHermesToolGatewayBrokerForSandboxEntry(sb);
+  } catch {
+    /* non-fatal — managed-tool calls will surface broker guidance if needed */
+  }
+}
+
 function exitWithSpawnResult(result: SpawnLikeResult): void {
   if (result.status !== null) {
     process.exit(result.status);
@@ -704,6 +721,7 @@ export async function connectSandbox(
   // cluster-wide inference.local route may still point at the other provider.
   // After the sandbox is Ready, verify and recover the route before SSH.
   sb = ensureSandboxInferenceRouteOrExit(sandboxName);
+  maybeEnsureHermesToolGatewayBroker(sb);
 
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,
