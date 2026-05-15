@@ -314,9 +314,19 @@ export function detectGpu(): GpuDetection | null {
       .split("\n")
       .map((line: string) => line.trim())
       .filter(Boolean);
-    const unifiedGpuNames = gpuNames.filter((name: string) =>
+    // Cross-check the firmware model up front. On DGX Spark, nvidia-smi may
+    // identify the GPU as something like "NVIDIA JMJWOA-Generic-GPU" that
+    // matches none of UNIFIED_MEMORY_GPU_TAGS, even though the device is a
+    // unified-memory one (#3510). When firmware confirms a unified-memory
+    // platform, accept whatever name nvidia-smi reports.
+    const firmwarePlatform = detectNvidiaPlatform();
+    const firmwareIsUnifiedMemory =
+      firmwarePlatform === "spark" || firmwarePlatform === "jetson";
+    const taggedNames = gpuNames.filter((name: string) =>
       UNIFIED_MEMORY_GPU_TAGS.some((tag) => new RegExp(tag, "i").test(name)),
     );
+    const unifiedGpuNames =
+      taggedNames.length > 0 ? taggedNames : firmwareIsUnifiedMemory ? gpuNames : [];
     if (unifiedGpuNames.length > 0) {
       const totalMemoryMB = readHostMemoryMB();
       const count = unifiedGpuNames.length;
@@ -329,7 +339,6 @@ export function detectGpu(): GpuDetection | null {
         !!firstUnifiedName && unifiedGpuNames.every((n: string) => n === firstUnifiedName);
       // Cross-check the firmware model against the GPU name. Spark must have
       // a GB10; falling through to firmware lets us classify Station too.
-      const firmwarePlatform = detectNvidiaPlatform();
       const hasGb10 = unifiedGpuNames.some((name: string) => /GB10/i.test(name));
       const platform: NvidiaPlatform =
         firmwarePlatform === "spark" || hasGb10

@@ -104,10 +104,20 @@ For non-WSL Ollama setups, the onboard wizard manages the proxy automatically:
   `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
 - Starts the proxy after Ollama and verifies it before continuing.
 - Cleans up stale proxy processes from previous runs.
-- Retries the sandbox container reachability check and can continue when the host-side proxy is healthy even if the container probe fails.
+- Probes the sandbox Docker network path to the proxy before committing the inference route.
 - Stops matching proxy processes during uninstall before deleting NemoClaw state.
 - Reuses the persisted token after a host reboot so you do not need to re-run
   onboard.
+
+On native Linux hosts, a firewall can allow the host proxy health check while still blocking sandbox containers on the OpenShell Docker bridge.
+When the sandbox-side proxy probe fails with a TCP error, onboarding exits before it saves the inference route and prints a command like:
+
+```console
+$ sudo ufw allow from <openshell-docker-subnet> to any port 11435 proto tcp
+$ nemoclaw onboard
+```
+
+If the probe cannot run, for example because Docker Desktop or WSL uses a different host routing model, onboarding continues and relies on the regular proxy health check.
 
 The sandbox provider is configured to use proxy port `11435` with the generated
 token as its `OPENAI_API_KEY` credential.
@@ -178,6 +188,8 @@ If your server does not require authentication, enter any non-empty string (for 
 NemoClaw validates the endpoint by sending a test inference request before continuing.
 The wizard probes `/v1/chat/completions` by default for the compatible-endpoint provider.
 If you set `NEMOCLAW_PREFERRED_API=openai-responses`, NemoClaw probes `/v1/responses` instead and only selects it when the response includes the streaming events OpenClaw requires.
+If a reasoning model returns only reasoning content before producing a final answer, NemoClaw retries the smoke request with a larger response budget.
+Route, configuration, and authentication failures still fail immediately.
 
 ### Non-Interactive Setup
 
@@ -345,6 +357,18 @@ The value is in seconds.
 This setting is baked into the sandbox at build time.
 Changing it after onboarding requires re-running `nemoclaw onboard`.
 
+`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only governs the inference-server validation probe.
+The post-create readiness wait (image build, gateway upload, in-sandbox boot) has its own budget, `NEMOCLAW_SANDBOX_READY_TIMEOUT`, also defaulting to 180 seconds.
+On hosts where the sandbox image takes minutes to build or upload — large quantised models, DGX Station first runs, or remote VMs over a slow link — raise both together:
+
+```console
+$ export NEMOCLAW_LOCAL_INFERENCE_TIMEOUT=300
+$ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
+$ nemoclaw onboard
+```
+
+If onboard ends with `Sandbox '<name>' was created but did not become ready within 180s`, refer to [Troubleshooting](../reference/troubleshooting.md#sandbox-onboard-times-out-with-did-not-become-ready-within-ns).
+
 ## Verify the Configuration
 
 After onboarding completes, confirm the active provider and model.
@@ -354,6 +378,8 @@ $ nemoclaw <name> status
 ```
 
 The output shows the provider label (for example, "Local vLLM" or "Other OpenAI-compatible endpoint") and the active model.
+For Local Ollama, status also checks the authenticated proxy when a proxy token is available.
+If `Inference` is healthy but `Inference (auth proxy)` is not, rerun onboarding to repair the proxy path that sandbox requests use.
 
 ## Switch Models at Runtime
 

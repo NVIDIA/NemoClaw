@@ -95,6 +95,13 @@ policies.applyPreset = (_name, preset) => {
   // and false on recoverable errors (unknown preset, malformed YAML, etc).
   return true;
 };
+policies.applyPresets = (_name, presets) => {
+  for (const preset of presets) {
+    appliedCalls.push(preset);
+    if (!appliedState.includes(preset)) appliedState.push(preset);
+  }
+  return true;
+};
 policies.removePreset = (_name, preset) => {
   removedCalls.push(preset);
   appliedState = appliedState.filter((p) => p !== preset);

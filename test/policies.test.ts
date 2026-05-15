@@ -282,6 +282,82 @@ describe("policies", () => {
     });
   });
 
+  describe("applyPresets", () => {
+    it("merges built-in presets and submits one policy update", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-batch-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      const callsPath = path.join(tmpDir, "calls.log");
+      const policyOut = path.join(tmpDir, "policy.yaml");
+      const script = String.raw`
+const fs = require("node:fs");
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({ name: "test-sandbox", policies: [] });
+const result = policies.applyPresets("test-sandbox", ["npm", "pypi"]);
+process.stdout.write("\n__RESULT__" + JSON.stringify({
+  result,
+  calls: fs.readFileSync(process.env.CALLS_PATH, "utf-8").trim().split("\n").filter(Boolean),
+  policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
+  registry: registry.getSandbox("test-sandbox"),
+}));
+`;
+      fs.writeFileSync(
+        fakeOpenshell,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
+if [ "$1 $2" = "policy get" ]; then
+  printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  exit 0
+fi
+if [ "$1 $2" = "policy set" ]; then
+  policy_file=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      policy_file="$2"
+      break
+    fi
+    shift
+  done
+  cp "$policy_file" ${JSON.stringify(policyOut)}
+  printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
+  exit 0
+fi
+exit 1
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const result = spawnSync(process.execPath, ["-e", script], {
+          cwd: REPO_ROOT,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
+            CALLS_PATH: callsPath,
+            POLICY_OUT: policyOut,
+          },
+        });
+
+        expect(result.status).toBe(0);
+        const marker = "__RESULT__";
+        const markerIndex = result.stdout.indexOf(marker);
+        expect(markerIndex).toBeGreaterThanOrEqual(0);
+        const payload = JSON.parse(result.stdout.slice(markerIndex + marker.length));
+        expect(payload.result).toBe(true);
+        expect(payload.calls.filter((call: string) => call.startsWith("policy get "))).toHaveLength(1);
+        expect(payload.calls.filter((call: string) => call.startsWith("policy set "))).toHaveLength(1);
+        expect(payload.policy).toContain("npm_yarn:");
+        expect(payload.policy).toContain("pypi:");
+        expect(payload.registry.policies).toEqual(["npm", "pypi"]);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+  });
+
   describe("applyPreset disclosure logging", () => {
     it("logs egress endpoints before applying", () => {
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -757,6 +833,11 @@ describe("policies", () => {
           credentialRewrite: true,
         },
         {
+          preset: "discord",
+          host: "*.discord.gg",
+          credentialRewrite: true,
+        },
+        {
           preset: "slack",
           host: "wss-primary.slack.com",
           credentialRewrite: true,
@@ -853,6 +934,7 @@ describe("policies", () => {
       ];
       const cases = [
         "gateway.discord.gg",
+        "*.discord.gg",
         "wss-primary.slack.com",
         "wss-backup.slack.com",
       ];

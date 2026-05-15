@@ -251,7 +251,7 @@ nemoclaw uninstall
 | Flag               | Effect                                               |
 |--------------------|------------------------------------------------------|
 | `--yes`            | Skip the confirmation prompt.                        |
-| `--keep-openshell` | Leave the `openshell` binary installed.              |
+| `--keep-openshell` | Leave OpenShell binaries installed.                  |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
 
 `nemoclaw uninstall` runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.

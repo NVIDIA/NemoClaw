@@ -53,6 +53,8 @@
 # Only runs on schedule and manual dispatch — never on PRs (secret protection).
 
 name: E2E / Nightly
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && inputs.advisor_dispatch_id != '' && format('E2E / Nightly ({0})', inputs.advisor_dispatch_id) || 'E2E / Nightly' }}
 
 on:
   schedule:
@@ -95,6 +97,11 @@ on:
         default: ""
       pr_number:
         description: Optional PR number for selective-dispatch result comments.
+        required: false
+        type: string
+        default: ""
+      advisor_dispatch_id:
+        description: Optional correlation ID from e2e-advisor auto-dispatch.
         required: false
         type: string
         default: ""

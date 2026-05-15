@@ -19,6 +19,10 @@ export interface StreamSandboxCreateOptions {
   heartbeatIntervalMs?: number;
   silentPhaseMs?: number;
   logLine?: (line: string) => void;
+  // Optional guard for the early-ready escape hatch. When set, readyCheck()
+  // alone cannot detach the create stream until at least one streamed output
+  // line matches a configured pattern.
+  readyCheckOutputPatterns?: readonly RegExp[];
   // Initial progress phase:
   //   build  — docker-building the sandbox image
   //   upload — pushing the built image into the gateway registry
@@ -91,8 +95,29 @@ const VISIBLE_PROGRESS_PATTERNS: readonly RegExp[] = [
   /^✓ /,
 ];
 
+const VM_READY_DETACH_OUTPUT_PATTERNS: readonly RegExp[] = [/Setting up NemoClaw/];
+
 function matchesAny(line: string, patterns: readonly RegExp[]) {
   return patterns.some((pattern) => pattern.test(line));
+}
+
+function selectedDrivers(env: NodeJS.ProcessEnv): string[] {
+  const raw =
+    env.OPENSHELL_DRIVERS ??
+    process.env.OPENSHELL_DRIVERS ??
+    (process.platform === "darwin" ? "vm" : "docker");
+  return raw
+    .split(",")
+    .map((driver) => driver.trim())
+    .filter(Boolean);
+}
+
+function getReadyCheckOutputPatterns(
+  env: NodeJS.ProcessEnv,
+  patterns: readonly RegExp[] | undefined,
+): readonly RegExp[] {
+  if (patterns) return patterns;
+  return selectedDrivers(env).includes("vm") ? VM_READY_DETACH_OUTPUT_PATTERNS : [];
 }
 
 export function streamSandboxCreate(
@@ -111,6 +136,12 @@ export function streamSandboxCreate(
   let pending = "";
   let lastPrintedLine = "";
   let sawProgress = false;
+  const readyCheckOutputPatterns = getReadyCheckOutputPatterns(
+    env,
+    options.readyCheckOutputPatterns,
+  );
+  let readyCheckOutputMatched = readyCheckOutputPatterns.length === 0;
+  let printedReadyCheckOutputWait = false;
   let settled = false;
   let polling = false;
   const pollIntervalMs = options.pollIntervalMs || 2000;
@@ -173,6 +204,9 @@ export function streamSandboxCreate(
     if (!line) return;
     lines.push(line);
     lastOutputAt = Date.now();
+    if (!readyCheckOutputMatched && matchesAny(line, readyCheckOutputPatterns)) {
+      readyCheckOutputMatched = true;
+    }
     if (/^ {2}Built image /.test(line)) {
       setPhase("create");
     } else if (matchesAny(line, BUILD_PROGRESS_PATTERNS)) {
@@ -201,10 +235,17 @@ export function streamSandboxCreate(
     parts.forEach(flushLine);
   }
 
+  function flushPendingLine() {
+    if (!pending) return;
+    const trailing = pending;
+    pending = "";
+    flushLine(trailing);
+  }
+
   function finish(status: number, overrides: Partial<StreamSandboxCreateResult> = {}) {
     if (settled) return;
     settled = true;
-    if (pending) flushLine(pending);
+    flushPendingLine();
     if (readyTimer) clearInterval(readyTimer);
     clearInterval(heartbeatTimer);
     resolvePromise({
@@ -241,6 +282,16 @@ export function streamSandboxCreate(
           }
           if (ready) {
             setPhase("ready");
+            if (!readyCheckOutputMatched) {
+              if (!printedReadyCheckOutputWait) {
+                const detail =
+                  "Sandbox reported Ready; waiting for startup command output before detaching.";
+                lines.push(detail);
+                printProgressLine(`  ${detail}`);
+                printedReadyCheckOutputWait = true;
+              }
+              return;
+            }
             const detail = "Sandbox reported Ready before create stream exited; continuing.";
             lines.push(detail);
             printProgressLine(`  ${detail}`);
@@ -317,9 +368,10 @@ export function streamSandboxCreate(
     child.on("close", (code) => {
       // One last ready-check: the sandbox may have become Ready between the
       // last poll tick and the stream exit (e.g. SSH 255 after "Created sandbox:").
+      flushPendingLine();
       if (code && code !== 0 && options.readyCheck) {
         try {
-          if (options.readyCheck()) {
+          if (options.readyCheck() && readyCheckOutputMatched) {
             finish(0, { forcedReady: true });
             return;
           }

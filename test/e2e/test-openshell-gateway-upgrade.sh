@@ -200,18 +200,18 @@ EOF
     rm -rf "$tmp"
     fail "macOS installer did not request the Darwin openshell-gateway asset"
   fi
-  if ! grep -q "openshell-driver-vm-aarch64-apple-darwin.tar.gz" "$curl_log"; then
+  if grep -q "openshell-driver-vm-aarch64-apple-darwin.tar.gz" "$curl_log"; then
     diag "curl log:"
     cat "$curl_log" 2>/dev/null || true
     rm -rf "$tmp"
-    fail "macOS installer did not request the Darwin openshell-driver-vm asset"
+    fail "macOS installer still requested the Darwin openshell-driver-vm asset"
   fi
 
   rm -rf "$tmp"
-  pass "macOS OpenShell ${CURRENT_OPENSHELL_VERSION} incomplete install fetches Darwin gateway and VM driver assets"
+  pass "macOS OpenShell ${CURRENT_OPENSHELL_VERSION} incomplete install fetches Darwin gateway asset"
 }
 
-exercise_macos_vm_driver_entitlement_repair() {
+exercise_macos_vm_driver_entitlement_not_required() {
   local tmp fake_bin state_file sign_log install_out install_err
   tmp="$(mktemp -d)"
   fake_bin="$tmp/bin"
@@ -277,14 +277,14 @@ EOF
     diag "installer stderr:"
     cat "$install_err" 2>/dev/null || true
     rm -rf "$tmp"
-    fail "macOS installer did not repair missing openshell-driver-vm Hypervisor entitlement"
+    fail "macOS installer still required openshell-driver-vm Hypervisor entitlement"
   fi
 
-  if ! grep -q -- "--force --sign - --entitlements" "$sign_log"; then
+  if [ -s "$sign_log" ] && grep -q -- "--force --sign - --entitlements" "$sign_log"; then
     diag "codesign log:"
     cat "$sign_log" 2>/dev/null || true
     rm -rf "$tmp"
-    fail "macOS installer did not codesign openshell-driver-vm with entitlements"
+    fail "macOS installer still codesigned openshell-driver-vm"
   fi
 
   if grep -q "Installing OpenShell from release" "$install_out"; then
@@ -295,16 +295,16 @@ EOF
   fi
 
   rm -rf "$tmp"
-  pass "macOS OpenShell ${CURRENT_OPENSHELL_VERSION} installer repairs missing VM driver Hypervisor entitlement"
+  pass "macOS OpenShell ${CURRENT_OPENSHELL_VERSION} installer does not require VM driver Hypervisor entitlement"
 }
 
-exercise_macos_vm_rootfs_permission_regression() {
+exercise_macos_docker_rootfs_permission_regression() {
   grep -q "ARG NEMOCLAW_DARWIN_VM_COMPAT=0" Dockerfile \
     || fail "Dockerfile is missing the macOS VM rootfs compatibility ARG"
   grep -Fq "ARG NEMOCLAW_DARWIN_VM_COMPAT=\${sanitizeDockerArg(darwinVmCompat ? \"1\" : \"0\")}" src/lib/onboard/dockerfile-patch.ts \
     || fail "Dockerfile patch helper does not patch the macOS VM rootfs compatibility ARG"
-  grep -q 'process.platform === "darwin"' src/lib/onboard.ts \
-    || fail "onboard does not enable macOS VM rootfs compatibility for Darwin sandbox builds"
+  grep -Fq "Docker-on-Colima uses normal container ownership" src/lib/onboard.ts \
+    || fail "onboard does not keep macOS Docker sandbox builds out of the VM rootfs compatibility path"
   grep -q "chmod -R a+rwX /sandbox/.openclaw" Dockerfile \
     || fail "Dockerfile does not relax OpenClaw state permissions for macOS VM rootfs remapping"
   grep -q "ARG NEMOCLAW_DARWIN_VM_COMPAT=0" agents/hermes/Dockerfile \
@@ -313,7 +313,7 @@ exercise_macos_vm_rootfs_permission_regression() {
     || fail "Hermes Dockerfile does not relax Hermes state permissions for macOS VM rootfs remapping"
   grep -q "chmod a+rw /sandbox/.bashrc /sandbox/.profile" agents/hermes/Dockerfile \
     || fail "Hermes Dockerfile does not relax trusted rc files for macOS VM ownership repair"
-  pass "macOS VM sandbox builds enable OpenClaw and Hermes rootfs ownership compatibility"
+  pass "macOS Docker sandbox builds keep VM rootfs compatibility disabled"
 }
 
 wait_for_survivor_ready() {
@@ -586,8 +586,8 @@ load_shell_path
 
 if [ "$(uname -s)" != "Linux" ]; then
   exercise_macos_gateway_installer_regression
-  exercise_macos_vm_driver_entitlement_repair
-  exercise_macos_vm_rootfs_permission_regression
+  exercise_macos_vm_driver_entitlement_not_required
+  exercise_macos_docker_rootfs_permission_regression
   pass "Skipping live Docker-driver gateway restart regression on non-Linux host"
   exit 0
 fi
@@ -604,5 +604,5 @@ assert_survivor_sandbox_after_upgrade
 pass "Current NemoClaw installer upgraded old ${OLD_NEMOCLAW_REF} claw, restored state, and kept OpenClaw running on OpenShell ${CURRENT_OPENSHELL_VERSION}"
 
 exercise_macos_gateway_installer_regression
-exercise_macos_vm_driver_entitlement_repair
-exercise_macos_vm_rootfs_permission_regression
+exercise_macos_vm_driver_entitlement_not_required
+exercise_macos_docker_rootfs_permission_regression

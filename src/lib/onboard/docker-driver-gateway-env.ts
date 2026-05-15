@@ -29,6 +29,8 @@ export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_DOCKER_NETWORK_NAME",
   "OPENSHELL_DOCKER_SUPERVISOR_IMAGE",
   "OPENSHELL_DOCKER_SUPERVISOR_BIN",
+  "OPENSHELL_VM_DRIVER_STATE_DIR",
+  "OPENSHELL_DRIVER_DIR",
 ] as const;
 
 export interface BuildDockerDriverGatewayEnvOptions {
@@ -36,7 +38,6 @@ export interface BuildDockerDriverGatewayEnvOptions {
   stateDir: string;
   dockerNetworkName?: string;
   getDockerSupervisorImage: () => string;
-  resolveVmDriverBin: () => string | null;
   resolveSandboxBin: () => string | null;
 }
 
@@ -69,29 +70,19 @@ export function buildDockerDriverGatewayEnv({
   stateDir,
   dockerNetworkName = "openshell-docker",
   getDockerSupervisorImage,
-  resolveVmDriverBin,
   resolveSandboxBin,
 }: BuildDockerDriverGatewayEnvOptions): Record<string, string> {
   const env: Record<string, string> = {
-    OPENSHELL_DRIVERS: platform === "darwin" ? "vm" : "docker",
+    OPENSHELL_DRIVERS: "docker",
     ...getGatewayStartNetworkEnv(),
     OPENSHELL_DISABLE_TLS: "true",
     OPENSHELL_DISABLE_GATEWAY_AUTH: "true",
     OPENSHELL_DB_URL: `sqlite:${path.join(stateDir, "openshell.db")}`,
-    OPENSHELL_GRPC_ENDPOINT:
-      platform === "darwin"
-        ? `http://host.containers.internal:${GATEWAY_PORT}`
-        : getDockerDriverGatewayEndpoint(),
+    OPENSHELL_GRPC_ENDPOINT: getDockerDriverGatewayEndpoint(),
+    OPENSHELL_DOCKER_NETWORK_NAME: dockerNetworkName,
+    OPENSHELL_DOCKER_SUPERVISOR_IMAGE: getDockerSupervisorImage(),
   };
-  if (platform === "darwin") {
-    env.OPENSHELL_VM_DRIVER_STATE_DIR = path.join(stateDir, "vm-driver");
-    const vmDriverBin = resolveVmDriverBin();
-    if (vmDriverBin) {
-      env.OPENSHELL_DRIVER_DIR = path.dirname(vmDriverBin);
-    }
-  } else {
-    env.OPENSHELL_DOCKER_NETWORK_NAME = dockerNetworkName;
-    env.OPENSHELL_DOCKER_SUPERVISOR_IMAGE = getDockerSupervisorImage();
+  if (platform === "linux") {
     const sandboxBin = resolveSandboxBin();
     if (sandboxBin) {
       env.OPENSHELL_DOCKER_SUPERVISOR_BIN = sandboxBin;

@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
-import { execFileSync, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
-import { isErrnoException } from "../../core/errno";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
-import { probeProviderHealth } from "../../inference/health";
+import { readCloudflaredState } from "../../tunnel/services";
+import { probeProviderHealth, type ProviderHealthStatus } from "../../inference/health";
+import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
 import { parseGatewayInference } from "../../inference/config";
 import { stripAnsi } from "../../adapters/openshell/client";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
@@ -45,6 +46,26 @@ type CommandCapture = {
   stderr: string;
   error?: Error;
 };
+
+function pushInferenceHealthCheck(
+  checks: DoctorCheck[],
+  probe: ProviderHealthStatus,
+): void {
+  const label = probe.probeLabel
+    ? `Provider health (${probe.probeLabel})`
+    : "Provider health";
+  if (!probe.probed) {
+    checks.push({ group: "Inference", label, status: "info", detail: probe.detail });
+    return;
+  }
+  checks.push({
+    group: "Inference",
+    label,
+    status: probe.ok ? "ok" : "fail",
+    detail: probe.ok ? `${probe.endpoint} reachable` : probe.detail,
+    hint: probe.ok ? undefined : "check network access or provider credentials",
+  });
+}
 
 function captureHostCommand(
   command: string,
@@ -238,7 +259,7 @@ function stoppedCloudflaredCheck(): DoctorCheck {
     label: "cloudflared",
     status: "info",
     detail: "stopped",
-    hint: `start when needed with \`${CLI_NAME} tunnel start\``,
+    hint: `no cloudflared process; run \`${CLI_NAME} tunnel start\` to start it`,
   };
 }
 
@@ -248,7 +269,7 @@ function staleCloudflaredPidFileCheck(): DoctorCheck {
     label: "cloudflared",
     status: "warn",
     detail: "stale PID file",
-    hint: `run \`${CLI_NAME} tunnel stop\` and start it again if you need a public tunnel`,
+    hint: `no cloudflared process (stored PID is invalid); run \`${CLI_NAME} tunnel start\` to restart it`,
   };
 }
 
@@ -258,81 +279,26 @@ function staleCloudflaredPidCheck(pid: number): DoctorCheck {
     label: "cloudflared",
     status: "warn",
     detail: `stale PID ${pid}`,
-    hint: `run \`${CLI_NAME} tunnel stop\` to clean up the service state`,
+    hint: `no cloudflared process (PID ${pid} is dead or not cloudflared); run \`${CLI_NAME} tunnel start\` to restart it`,
   };
 }
 
-function readCloudflaredPidFile(pidFile: string): string | null {
-  try {
-    return fs.readFileSync(pidFile, "utf-8").trim();
-  } catch (error) {
-    if (isErrnoException(error) && error.code === "ENOENT") {
-      return null;
-    }
-    throw error;
-  }
-}
-
-function commandLineNamesCloudflared(commandLine: string): boolean {
-  return commandLine
-    .split(/\0|\s+/)
-    .filter(Boolean)
-    .some((token) => path.basename(token) === "cloudflared");
-}
-
-function readProcessCommandLine(pid: number): string | null {
-  if (process.platform === "win32") {
-    return null;
-  }
-  try {
-    return fs.readFileSync(`/proc/${pid}/cmdline`, "utf-8");
-  } catch {
-    try {
-      return execFileSync("ps", ["-p", String(pid), "-o", "comm=", "-o", "args="], {
-        encoding: "utf-8",
-        stdio: ["ignore", "pipe", "ignore"],
-        timeout: 1000,
-      });
-    } catch {
-      return null;
-    }
-  }
-}
-
-function isCloudflaredProcess(pid: number): boolean {
-  const commandLine = readProcessCommandLine(pid);
-  if (commandLine === null) {
-    return false;
-  }
-  return commandLineNamesCloudflared(commandLine);
-}
-
 function cloudflaredDoctorCheck(sandboxName: string): DoctorCheck {
-  const pidFile = path.join(`/tmp/nemoclaw-services-${sandboxName}`, "cloudflared.pid");
-  if (!fs.existsSync(pidFile)) {
-    return stoppedCloudflaredCheck();
-  }
-  const rawPid = readCloudflaredPidFile(pidFile);
-  if (rawPid === null) {
-    return stoppedCloudflaredCheck();
-  }
-  const pid = Number(rawPid);
-  if (!Number.isFinite(pid) || pid <= 0) {
-    return staleCloudflaredPidFileCheck();
-  }
-  try {
-    process.kill(pid, 0);
-    if (!isCloudflaredProcess(pid)) {
-      return staleCloudflaredPidCheck(pid);
-    }
-    return {
-      group: "Local services",
-      label: "cloudflared",
-      status: "ok",
-      detail: `running (PID ${pid})`,
-    };
-  } catch {
-    return staleCloudflaredPidCheck(pid);
+  const state = readCloudflaredState(path.join("/tmp", `nemoclaw-services-${sandboxName}`));
+  switch (state.kind) {
+    case "stopped":
+      return stoppedCloudflaredCheck();
+    case "stale-pid-file":
+      return staleCloudflaredPidFileCheck();
+    case "stale-pid-process":
+      return staleCloudflaredPidCheck(state.pid);
+    case "running":
+      return {
+        group: "Local services",
+        label: "cloudflared",
+        status: "ok",
+        detail: `running (PID ${state.pid})`,
+      };
   }
 }
 
@@ -563,23 +529,30 @@ export async function runSandboxDoctor(sandboxName: string, args: string[] = [])
         status: "info",
         detail: `no health probe registered for ${currentProvider}`,
       });
-    } else if (!inferenceHealth.probed) {
-      checks.push({
-        group: "Inference",
-        label: "Provider health",
-        status: "info",
-        detail: inferenceHealth.detail,
-      });
     } else {
-      checks.push({
-        group: "Inference",
-        label: "Provider health",
-        status: inferenceHealth.ok ? "ok" : "fail",
-        detail: inferenceHealth.ok
-          ? `${inferenceHealth.endpoint} reachable`
-          : inferenceHealth.detail,
-        hint: inferenceHealth.ok ? undefined : "check network access or provider credentials",
-      });
+      // #3265 optional 3rd line — append gateway-chain probe for local
+      // providers so doctor sees the full path the agent uses.
+      if (currentProvider === "ollama-local" || currentProvider === "vllm-local") {
+        const gatewayChain = await probeSandboxInferenceGatewayHealth(sandboxName);
+        if (gatewayChain) {
+          inferenceHealth.subprobes = [
+            ...(inferenceHealth.subprobes ?? []),
+            {
+              ok: gatewayChain.ok,
+              probed: true,
+              providerLabel: "Inference gateway chain",
+              endpoint: gatewayChain.endpoint,
+              detail: gatewayChain.detail,
+              probeLabel: "gateway",
+              ...(gatewayChain.ok ? {} : { failureLabel: "unreachable" as const }),
+            },
+          ];
+        }
+      }
+      pushInferenceHealthCheck(checks, inferenceHealth);
+      for (const sub of inferenceHealth.subprobes ?? []) {
+        pushInferenceHealthCheck(checks, sub);
+      }
     }
   }
 

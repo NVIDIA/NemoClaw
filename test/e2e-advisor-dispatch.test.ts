@@ -77,6 +77,8 @@ describe("E2E advisor auto-dispatch planning", () => {
       env: {
         GITHUB_EVENT_NAME: "pull_request",
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        GITHUB_RUN_ID: "456789",
+        GITHUB_RUN_ATTEMPT: "2",
       },
     });
 
@@ -86,7 +88,9 @@ describe("E2E advisor auto-dispatch planning", () => {
       jobs: "network-policy-e2e",
       target_ref: "abc123def456",
       pr_number: "123",
+      advisor_dispatch_id: "advisor-123-456789-2",
     });
+    expect(plan.advisorDispatchId).toBe("advisor-123-456789-2");
   });
 
   it("plans dispatch for allowlisted authors whose private org membership appears as contributor", () => {
@@ -187,11 +191,13 @@ describe("E2E advisor auto-dispatch planning", () => {
         jobs: "network-policy-e2e,cloud_e2e",
         target_ref: "abc123def456",
         pr_number: "123",
+        advisor_dispatch_id: "advisor-123-456789",
       }),
     ).toEqual({
       jobs: "network-policy-e2e,cloud_e2e",
       target_ref: "abc123def456",
       pr_number: "123",
+      advisor_dispatch_id: "advisor-123-456789",
     });
   });
 
@@ -237,6 +243,12 @@ describe("E2E advisor auto-dispatch planning", () => {
       jobs: "network-policy-e2e",
       target_ref: "abc123def456",
       pr_number: "123abc",
+    },
+    {
+      jobs: "network-policy-e2e",
+      target_ref: "abc123def456",
+      pr_number: "123",
+      advisor_dispatch_id: "advisor/123",
     },
   ])("rejects unsafe dispatch inputs %#", (inputs) => {
     expect(() => validateDispatchInputs(inputs)).toThrow(/Refusing to dispatch unsafe/);

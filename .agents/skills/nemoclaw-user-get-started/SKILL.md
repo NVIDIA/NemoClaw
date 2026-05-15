@@ -36,6 +36,7 @@ If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.
 On Linux, the installer checks Docker before it installs NemoClaw.
 If Docker is missing, the installer downloads the official Docker convenience script, asks for `sudo`, installs Docker, and starts the Docker service when systemd is available.
 If Docker is installed but your current shell cannot use the Docker socket yet, the installer adds your user to the `docker` group when needed and exits with a recovery command.
+On macOS, the installer uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
 
 ```console
 $ newgrp docker
@@ -294,6 +295,10 @@ Status:      nemoclaw my-gpt-claw status
 Logs:        nemoclaw my-gpt-claw logs --follow
 ──────────────────────────────────────────────────
 
+To change settings later:
+  Model:       nemoclaw inference get
+               nemoclaw inference set --model <model> --provider <provider> --sandbox my-gpt-claw
+
 [INFO]  === Installation complete ===
 ```
 
@@ -308,6 +313,7 @@ You can chat with the agent from the terminal or the browser.
 The onboard wizard starts a background port forward to the sandbox dashboard, then prints the dashboard URL in the install summary.
 The default host port is `18789`.
 If that port is already taken, NemoClaw uses the next free dashboard port, such as `18790`, and prints that port in the final URL.
+If the chosen port becomes occupied after the sandbox build starts, onboarding rolls back the newly-created sandbox and asks you to retry instead of printing an unreachable dashboard URL.
 The gateway token is redacted from displayed output; retrieve it explicitly when the browser asks for authentication.
 
 ```text

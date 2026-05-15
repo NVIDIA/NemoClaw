@@ -14,7 +14,13 @@ import type { AgentDefinition } from "../dist/lib/agent/defs.js";
 import { loadAgent } from "../dist/lib/agent/defs.js";
 import { buildChain, buildControlUiUrls } from "../dist/lib/dashboard/contract.js";
 import { NAME_ALLOWED_FORMAT } from "../dist/lib/name-validation.js";
+import {
+  shouldInspectLegacyGatewayGpuPassthrough,
+} from "../dist/lib/onboard/gateway-gpu-passthrough.js";
+import { hasOpenShellVmDriverChildProcessFromPsOutput } from "../dist/lib/onboard/vm-driver-process.js";
+import { applyOnboardVmDnsMonkeypatch } from "../dist/lib/onboard/vm-dns-monkeypatch.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
+import type { GatewayReuseState } from "../dist/lib/state/gateway.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
 type ShimScalar = string | number | boolean | null | undefined;
@@ -58,7 +64,7 @@ type OnboardTestInternals = {
     },
     options?: { suppressGpuFlag?: boolean },
   ) => string[];
-  buildDirectGpuPolicyYaml: (basePolicy: string) => string;
+  buildDirectGpuPolicyYaml: (basePolicy: string, options?: { procReadWrite?: boolean }) => string;
   buildDirectSandboxGpuProofCommands: (sandboxName: string) => { label: string; args: string[] }[];
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
   compactText: (value?: string) => string;
@@ -68,6 +74,12 @@ type OnboardTestInternals = {
     options?: { webSearchSupported?: boolean | null },
   ) => T[];
   formatEnvAssignment: (name: string, value: string) => string;
+  findAvailableDashboardPort: (
+    sandboxName: string,
+    preferredPort: number,
+    forwardListOutput: string | null,
+    isPortBoundCheck?: (port: number) => boolean,
+  ) => number;
   findDashboardForwardOwner: (
     forwardListOutput: string | null | undefined,
     portToStop: string,
@@ -234,6 +246,7 @@ function isOnboardTestInternals(
     typeof value.buildDirectGpuPolicyYaml === "function" &&
     typeof value.buildDirectSandboxGpuProofCommands === "function" &&
     typeof value.classifySandboxCreateFailure === "function" &&
+    typeof value.findAvailableDashboardPort === "function" &&
     typeof value.getDockerDriverGatewayEnv === "function" &&
     typeof value.getGatewayStartEnv === "function" &&
     typeof value.shouldRequireDockerDriverEnv === "function" &&
@@ -340,6 +353,7 @@ const {
   shouldIncludeBuildContextPath,
   shouldRunCompatibleEndpointSandboxSmoke,
   writeSandboxConfigSyncFile,
+  findAvailableDashboardPort,
   findDashboardForwardOwner,
   formatOnboardConfigSummary,
   formatSandboxBuildEstimateNote,
@@ -388,6 +402,17 @@ describe("onboard helpers", () => {
 
     const legacyGpuSession = getResumeSandboxGpuOverrides(null, true);
     expect(legacyGpuSession.flag).toBe("enable");
+  });
+
+  it("only inspects legacy gateway containers for reusable GPU passthrough", () => {
+    const HEALTHY: GatewayReuseState = "healthy";
+    const MISSING: GatewayReuseState = "missing";
+
+    expect(shouldInspectLegacyGatewayGpuPassthrough(HEALTHY, true, false, true)).toBe(true);
+    expect(shouldInspectLegacyGatewayGpuPassthrough(HEALTHY, true, false, false)).toBe(false);
+    expect(shouldInspectLegacyGatewayGpuPassthrough(HEALTHY, true, true, true)).toBe(false);
+    expect(shouldInspectLegacyGatewayGpuPassthrough(MISSING, true, false, true)).toBe(false);
+    expect(shouldInspectLegacyGatewayGpuPassthrough(HEALTHY, false, false, true)).toBe(false);
   });
 
   it("builds OpenShell sandbox GPU create args", () => {
@@ -440,6 +465,22 @@ describe("onboard helpers", () => {
     },
   );
 
+  it(
+    "adds /proc read-write when Docker GPU patch must own GPU enrichment",
+    () => {
+      const basePolicy = fs.readFileSync(
+        path.join(repoRoot, "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
+        "utf-8",
+      );
+      const gpuPolicy = buildDirectGpuPolicyYaml(basePolicy, { procReadWrite: true });
+      const gpuDoc = YAML.parse(gpuPolicy);
+
+      expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_write).toContain("/proc");
+      expect(gpuDoc.filesystem_policy.read_write).not.toContain("/proc/self/task/*/comm");
+    },
+  );
+
   it("removes stale proc entries from GPU policy input", () => {
     const gpuPolicy = buildDirectGpuPolicyYaml(`
 version: 1
@@ -480,12 +521,13 @@ network_policies:
     expect(linuxEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
 
     const darwinEnv = getDockerDriverGatewayEnv("openshell 0.0.37", "darwin");
-    expect(darwinEnv.OPENSHELL_DRIVERS).toBe("vm");
+    expect(darwinEnv.OPENSHELL_DRIVERS).toBe("docker");
     expect(darwinEnv.OPENSHELL_BIND_ADDRESS).toBe("127.0.0.1");
-    expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://host.containers.internal:8080");
+    expect(darwinEnv.OPENSHELL_GRPC_ENDPOINT).toBe("http://127.0.0.1:8080");
     expect(darwinEnv.OPENSHELL_SSH_GATEWAY_HOST).toBe("127.0.0.1");
-    expect(darwinEnv.OPENSHELL_VM_DRIVER_STATE_DIR).toContain("vm-driver");
-    expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toBeUndefined();
+    expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_IMAGE).toContain(":0.0.37");
+    expect(darwinEnv.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBeUndefined();
+    expect(darwinEnv.OPENSHELL_VM_DRIVER_STATE_DIR).toBeUndefined();
 
     const originalOverlayFix = process.env.NEMOCLAW_DISABLE_OVERLAY_FIX;
     process.env.NEMOCLAW_DISABLE_OVERLAY_FIX = "1";
@@ -541,7 +583,7 @@ network_policies:
         },
         "arm64",
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       areRequiredDockerDriverBinariesPresent(
         "darwin",
@@ -569,6 +611,18 @@ network_policies:
     expect(shouldRequireDockerDriverEnv("linux")).toBe(true);
     expect(shouldRequireDockerDriverEnv("darwin")).toBe(false);
     expect(shouldRequireDockerDriverEnv("win32")).toBe(false);
+  });
+
+  it("detects VM-driver children attached to a macOS standalone gateway", () => {
+    const psOutput = [
+      " 1000     1 /Users/me/.local/bin/openshell-gateway",
+      " 1001  1000 /Users/me/.local/bin/openshell-driver-vm --bind-socket /tmp/compute.sock",
+      " 1002  1001 /Users/me/.local/bin/openshell-driver-vm --internal-run-vm",
+      " 1003  1000 /usr/bin/other-process",
+    ].join("\n");
+    expect(hasOpenShellVmDriverChildProcessFromPsOutput(1000, psOutput)).toBe(true);
+    expect(hasOpenShellVmDriverChildProcessFromPsOutput(1001, psOutput)).toBe(true);
+    expect(hasOpenShellVmDriverChildProcessFromPsOutput(1003, psOutput)).toBe(false);
   });
 
   it("detects stale Docker-driver gateway runtime state before reuse", () => {
@@ -885,7 +939,8 @@ network_policies:
     assert.match(script, /https:\/\/inference\.local\/v1/);
     assert.match(script, /apiKey.*unused/);
     assert.match(script, /agents\.defaults\.model\.primary/);
-    assert.match(script, /curl[\s\S]*\/chat\/completions/);
+    assert.match(script, /INFERENCE_URL=.*\/chat\/completions/);
+    assert.match(script, /curl[\s\S]*"\$INFERENCE_URL"/);
     assert.doesNotMatch(script, /COMPATIBLE_API_KEY/);
     assert.doesNotMatch(script, /api\.deepinfra\.com/);
   });
@@ -2947,7 +3002,7 @@ const { loadAgent } = require(${agentDefsPath});
     expect(getGatewayReuseState("", "")).toBe("missing");
   });
 
-  it("prints doctor logs automatically when gateway fails to start (#1605)", () => {
+  it("prints doctor logs automatically when gateway fails to start (#1605)", testTimeoutOptions(20_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3375,6 +3430,106 @@ startGateway(null).catch(() => {});
         "arm64",
       ),
     ).toBe(false);
+  });
+
+  it("runs the OpenShell VM DNS monkeypatch after sandbox registration", () => {
+    const onboardSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf8",
+    );
+
+    assert.match(
+      onboardSource,
+      /registry\.setDefault\(sandboxName\);[\s\S]*applyOnboardVmDnsMonkeypatch\(sandboxName, sandboxRuntimeFields\)/,
+    );
+  });
+
+  it("logs applied only when the onboard VM DNS monkeypatch changes files", () => {
+    const changedLogs: string[] = [];
+    applyOnboardVmDnsMonkeypatch(
+      "demo",
+      { openshellDriver: "vm" },
+      {
+        apply: () => ({
+          attempted: true,
+          changed: true,
+          ok: true,
+          status: "applied",
+        }),
+        log: (message) => changedLogs.push(message),
+        warn: (message) => changedLogs.push(message),
+      },
+    );
+
+    const unchangedLogs: string[] = [];
+    applyOnboardVmDnsMonkeypatch(
+      "demo",
+      { openshellDriver: "vm" },
+      {
+        apply: () => ({
+          attempted: true,
+          changed: false,
+          ok: true,
+          status: "already-present",
+        }),
+        log: (message) => unchangedLogs.push(message),
+        warn: (message) => unchangedLogs.push(message),
+      },
+    );
+
+    expect(changedLogs).toEqual(["  ✓ Applied OpenShell VM DNS monkeypatch"]);
+    expect(unchangedLogs).toEqual(["  OpenShell VM DNS monkeypatch already present"]);
+    expect(unchangedLogs.join("\n")).not.toContain("Applied");
+  });
+
+  it("logs skipped VM DNS monkeypatch state for VM sandboxes", () => {
+    const logs: string[] = [];
+
+    applyOnboardVmDnsMonkeypatch(
+      "demo",
+      { openshellDriver: "vm" },
+      {
+        apply: () => ({
+          attempted: false,
+          changed: false,
+          ok: false,
+          reason: "disabled by NEMOCLAW_DISABLE_VM_DNS_MONKEYPATCH=1",
+          status: "skipped",
+        }),
+        log: (message) => logs.push(message),
+        warn: (message) => logs.push(message),
+      },
+    );
+
+    expect(logs).toEqual([
+      "  OpenShell VM DNS monkeypatch skipped: disabled by NEMOCLAW_DISABLE_VM_DNS_MONKEYPATCH=1",
+    ]);
+  });
+
+  it("warns without aborting when the onboard VM DNS monkeypatch fails", () => {
+    const warnings: string[] = [];
+
+    expect(() =>
+      applyOnboardVmDnsMonkeypatch(
+        "demo",
+        { openshellDriver: "vm" },
+        {
+          apply: () => ({
+            attempted: true,
+            changed: false,
+            ok: false,
+            reason: "VM rootfs not found",
+            status: "failed",
+          }),
+          log: (message) => warnings.push(message),
+          warn: (message) => warnings.push(message),
+        },
+      ),
+    ).not.toThrow();
+
+    expect(warnings).toEqual([
+      "  Warning: OpenShell VM DNS monkeypatch did not apply: VM rootfs not found",
+    ]);
   });
 
   it("writes sandbox sync scripts to a temp file for stdin redirection", () => {
@@ -3809,7 +3964,7 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
-  it("configures Model Router as a host provider while sandboxes keep inference.local", () => {
+  it("configures Model Router as a host provider while sandboxes keep inference.local", testTimeoutOptions(60_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-inference-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -4218,7 +4373,7 @@ const { setupInference } = require(${onboardPath});
     }
   });
 
-  it("prefers the managed Model Router command over PATH", () => {
+  it("prefers the managed Model Router command over PATH", testTimeoutOptions(60_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-managed-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -4399,7 +4554,7 @@ const { setupInference } = require(${onboardPath});
     }
   });
 
-  it("refreshes stale managed Model Router command when source fingerprint changes", () => {
+  it("refreshes stale managed Model Router command when source fingerprint changes", testTimeoutOptions(60_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-refresh-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -5327,9 +5482,9 @@ ${webSearchVerifySource}`;
 
     assert.match(
       source,
-      // #2753: sandboxName is intentionally absent from the options here so
-      // the session does not record a name before createSandbox completes.
-      /startRecordedStep\("sandbox", \{ provider, model \}\);\s*const recordedMessagingChannels = getRecordedMessagingChannelsForResume\(resume, session\);[\s\S]*?selectedMessagingChannels = recordedMessagingChannels;[\s\S]*?selectedMessagingChannels = await setupMessagingChannels\(\);[\s\S]*?const messagingChannelConfig = readMessagingChannelConfigFromEnv\(\);[\s\S]*?onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*current\.messagingChannelConfig = messagingChannelConfig;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*opts\.controlUiPort \|\| null,\s*sandboxGpuConfig,\s*\);/,
+      // #2753: sandboxName is read for resume hints here, but the session still
+      // does not persist a sandbox name before createSandbox completes.
+      /startRecordedStep\("sandbox", \{ provider, model \}\);\s*const recordedMessagingChannels = getRecordedMessagingChannelsForResume\(resume, session, sandboxName\);[\s\S]*?selectedMessagingChannels = recordedMessagingChannels;[\s\S]*?selectedMessagingChannels = await setupMessagingChannels\(\);[\s\S]*?const messagingChannelConfig = readMessagingChannelConfigFromEnv\(\);[\s\S]*?onboardSession\.updateSession\(\(current[^)]*\) => \{\s*current\.messagingChannels = selectedMessagingChannels;\s*current\.messagingChannelConfig = messagingChannelConfig;\s*return current;\s*\}\);[\s\S]*?sandboxName = await createSandbox\(\s*gpu,\s*model,\s*provider,\s*preferredInferenceApi,\s*sandboxName,\s*nextWebSearchConfig,\s*selectedMessagingChannels,\s*fromDockerfile,\s*agent,\s*opts\.controlUiPort \|\| null,\s*sandboxGpuConfig,\s*\);/,
     );
   });
 
@@ -5381,7 +5536,7 @@ ${webSearchVerifySource}`;
       "utf-8",
     );
 
-    assert.match(source, /useDockerGpuPatch = dockerGpuSandboxCreate\.shouldUseDockerGpuPatchForCreate/);
+    assert.match(source, /resolveDockerGpuSandboxCreatePlan\(effectiveSandboxGpuConfig/);
     assert.match(source, /suppressGpuFlag: useDockerGpuPatch/);
     assert.match(source, /maybeApplyDuringCreate/);
     assert.match(source, /printDockerGpuReadinessFailure/);
@@ -8167,6 +8322,7 @@ const { createSandbox } = require(${onboardPath});
           HOME: tmpDir,
           PATH: `${fakeBin}:${process.env.PATH || ""}`,
           NEMOCLAW_NON_INTERACTIVE: "1",
+          OPENSHELL_DRIVERS: "docker",
         },
         timeout: 15000,
       });
@@ -8861,6 +9017,22 @@ const { setupMessagingChannels } = require(${onboardPath});
     },
   );
 
+  it("non-interactive onboard reuses stored messaging channels when bridge providers exist", () => {
+    const source = fs.readFileSync(path.join(import.meta.dirname, "../src/lib/onboard.ts"), "utf-8");
+    const reuseSource = fs.readFileSync(
+      path.join(import.meta.dirname, "../src/lib/onboard/messaging-reuse.ts"),
+      "utf-8",
+    );
+    assert.match(
+      reuseSource,
+      /function getNonInteractiveStoredMessagingChannels\([\s\S]*?getSandbox\(sandboxName\)[\s\S]*?providerExists\(provider\)/,
+    );
+    assert.match(
+      source,
+      /getRecordedMessagingChannelsForResume\(resume, session, sandboxName\)[\s\S]*?selectedMessagingChannels = await setupMessagingChannels\(\)/,
+    );
+  });
+
   it(
     "interactive setupMessagingChannels drops slack when prompted token fails tokenFormat check (#1912)",
     { timeout: 60_000 },
@@ -9173,7 +9345,7 @@ const { setupMessagingChannels, MESSAGING_CHANNELS } = require(${onboardPath});
     }
   });
 
-  it("uses the custom Dockerfile parent directory as build context when --from is given", async () => {
+  it("uses the custom Dockerfile parent directory as build context when --from is given", testTimeoutOptions(60_000), async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-from-dockerfile-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -10003,7 +10175,8 @@ const { createSandbox } = require(${onboardPath});
     );
 
     assert.match(source, /const preferredEntry = findForwardEntry/);
-    assert.match(source, /function isLiveForwardStatus/);
+    // isLiveForwardStatus lives in ./onboard/dashboard-port and is imported above;
+    // the call site itself is the meaningful assertion.
     assert.match(source, /!isLiveForwardStatus\(preferredEntry\.status\)/);
     assert.match(
       source,
@@ -10013,6 +10186,181 @@ const { createSandbox } = require(${onboardPath});
       source,
       /findAvailableDashboardPort\(sandboxName, preferredPort, existingForwards\)/,
     );
+  });
+
+  describe("findAvailableDashboardPort port-conflict detection (#3260)", () => {
+    const stubBound = (...bound: number[]) => {
+      const set = new Set(bound);
+      return (port: number) => set.has(port);
+    };
+
+    it("returns the preferred port when no forward owns it and the host says it is free", () => {
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, "", stubBound()),
+        18789,
+      );
+    });
+
+    it("skips the preferred port when host reports it bound and falls through to the range scan", () => {
+      // The proactive probe in isPortBoundOnHost can now see root-owned
+      // listeners (sudo lsof) and Node-bind-failure listeners that the
+      // bare lsof missed; the allocator must skip those ports just as it
+      // skips ports owned by other forwards.
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, "", stubBound(18789)),
+        18790,
+      );
+    });
+
+    it("skips ports owned by other sandboxes and host-bound ports together", () => {
+      const forwardList = [
+        "SANDBOX  BIND  PORT  PID  STATUS",
+        "alpha    127.0.0.1  18789  111  running",
+      ].join("\n");
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, forwardList, stubBound(18790)),
+        18791,
+      );
+    });
+
+    it("returns the preferred port when this sandbox already owns it", () => {
+      const forwardList = [
+        "SANDBOX  BIND  PORT  PID  STATUS",
+        "cursor   127.0.0.1  18789  111  running",
+      ].join("\n");
+      assert.equal(
+        findAvailableDashboardPort("cursor", 18789, forwardList, stubBound(18789)),
+        18789,
+      );
+    });
+
+    it("throws when every port in the range is occupied by other sandboxes", () => {
+      const lines = ["SANDBOX  BIND  PORT  PID  STATUS"];
+      for (let p = 18789; p <= 18799; p++) {
+        lines.push(`other${p}    127.0.0.1  ${p}  ${p}  running`);
+      }
+      assert.throws(
+        () => findAvailableDashboardPort("cursor", 18789, lines.join("\n"), stubBound()),
+        /All dashboard ports in range 18789-18799 are occupied/,
+      );
+    });
+
+    it("includes host-bound ports in the exhaustion error so users know what's blocking them", () => {
+      // When every candidate is skipped by isPortBoundCheck rather than by
+      // an OpenShell forward, the error must still surface which ports are
+      // bound — otherwise users see "all ports are occupied" with an empty
+      // owner list and no remediation hint (CodeRabbit catch on #3260).
+      const allBound = new Set<number>();
+      for (let p = 18789; p <= 18799; p++) allBound.add(p);
+      assert.throws(
+        () => findAvailableDashboardPort("cursor", 18789, "", (p) => allBound.has(p)),
+        /18789 → non-OpenShell host listener[\s\S]*18799 → non-OpenShell host listener/,
+      );
+    });
+
+    it("probes each port at most once even when the preferred port is in the range", () => {
+      // Avoid re-probing the same port via the proactive lsof + sudo lsof +
+      // Node bind chain — those are subprocess-spawning probes and the call
+      // count matters.
+      const calls: number[] = [];
+      const stub = (p: number) => {
+        calls.push(p);
+        return false;
+      };
+      findAvailableDashboardPort("cursor", 18789, "", stub);
+      assert.equal(calls.length, 1, `expected 1 probe call, got ${calls.length}`);
+      assert.equal(calls[0], 18789);
+    });
+  });
+
+  it("isPortBoundOnHost has a layered probe chain — lsof, sudo lsof, Node bind (#3260)", () => {
+    // Source-shape guard for the strengthened detection chain. Behavioural
+    // testing of the real probes spawns subprocesses and is covered by
+    // higher-level tests; this assertion just keeps the chain in place
+    // when the function is refactored.
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "dashboard-port.ts"),
+      "utf-8",
+    );
+    assert.match(source, /export function isPortBoundOnHost/);
+    assert.match(source, /\["lsof", "-i", `:\$\{port\}`, "-sTCP:LISTEN", "-P", "-n"\]/);
+    assert.match(
+      source,
+      /\["sudo", "-n", "lsof", "-i", `:\$\{port\}`, "-sTCP:LISTEN", "-P", "-n"\]/,
+    );
+    assert.match(source, /export function probePortBoundSync/);
+    assert.match(source, /EADDRINUSE/);
+  });
+
+  it("ensureDashboardForward rolls back when forward-start fails on the create path (#3260)", () => {
+    // The sandbox is committed to its dashboard port at create time
+    // (Dockerfile ARG + NEMOCLAW_DASHBOARD_PORT env). If `openshell forward
+    // start` fails after the build (TOCTOU race), we must not silently
+    // return a broken port — roll back the sandbox so the next onboard
+    // can pick a different port. The rollback must classify the failure
+    // (port conflict vs other) so users aren't pointed at the wrong fix.
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    assert.match(source, /if \(fwdResult && fwdResult\.status !== 0\)/);
+    assert.match(source, /if \(rollbackSandboxOnFailure\)/);
+    assert.match(source, /const looksLikePortConflict =/);
+    assert.match(source, /eaddrinuse\|address already in use/i);
+    assert.match(source, /suppressOutput: true/);
+    assert.match(source, /runBackgroundForwardStartWithDiagnostics/);
+    assert.doesNotMatch(
+      source,
+      /forward", "start", "--background"[\s\S]{0,260}stdio: \["ignore", "pipe", "pipe"\]/,
+      "background forward start must not capture pipe stdio; daemonized children can keep pipes open and hang install.sh",
+    );
+    const helperSource = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard", "forward-start.ts"),
+      "utf-8",
+    );
+    assert.match(helperSource, /secureTempFile\("nemoclaw-forward-start", "\.out"\)/);
+    assert.match(helperSource, /runForwardStart\(\["ignore", outFd, errFd\], timeoutMs\)/);
+    assert.match(
+      source,
+      /runOpenshell\(\["sandbox", "delete", sandboxName\], \{ ignoreError: true \}\)/,
+    );
+    assert.match(source, /buildOrphanedSandboxRollbackMessage/);
+  });
+
+  it("ensureDashboardForward rolls back when the create path reallocates to a different port (#3260)", () => {
+    // The sandbox bakes CHAT_UI_URL and NEMOCLAW_DASHBOARD_PORT from
+    // `preselectedPort` at build time. If that port becomes host-bound
+    // during the multi-minute image build (TOCTOU), findAvailableDashboardPort
+    // returns a different port — but the sandbox is already configured to
+    // serve on the original one. Starting the forward on the new port
+    // would reproduce "onboard exits successfully but dashboard is
+    // unreachable" on the new port. The fix: on the create path, treat
+    // actualPort !== preferredPort as unrecoverable, roll back the sandbox,
+    // and let the next onboard re-bake with a clean port. Reuse paths still
+    // warn-and-continue because the sandbox image is fixed.
+    const source = fs.readFileSync(
+      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
+      "utf-8",
+    );
+    // Locate the actualPort != preferredPort branch and verify it carries
+    // both the create-path rollback (gated on rollbackSandboxOnFailure) and
+    // the reuse-path warn fallback.
+    const mismatchBranch = source.match(
+      /if \(actualPort !== preferredPort\) \{[\s\S]*?\n  \}/,
+    );
+    assert.ok(mismatchBranch, "Expected actualPort !== preferredPort branch in ensureDashboardForward");
+    const branchBody = mismatchBranch[0];
+    assert.match(branchBody, /if \(rollbackSandboxOnFailure\)/);
+    assert.match(branchBody, /became host-bound during sandbox build/);
+    assert.match(
+      branchBody,
+      /runOpenshell\(\["sandbox", "delete", sandboxName\], \{ ignoreError: true \}\)/,
+    );
+    assert.match(branchBody, /buildOrphanedSandboxRollbackMessage/);
+    assert.match(branchBody, /process\.exit\(1\)/);
+    // Reuse-path fallback (the warn) must still be present so non-create
+    // callers keep the existing warn-and-continue semantics.
+    assert.match(branchBody, /is taken\. Using port .* instead/);
   });
 
   it("formatOnboardConfigSummary renders all collected fields (#2165)", () => {

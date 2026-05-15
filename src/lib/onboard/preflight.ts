@@ -116,6 +116,7 @@ export interface HostAssessment {
   hasNvidiaGpu: boolean;
   dockerCdiSpecDirs: string[];
   cdiNvidiaGpuSpecMissing: boolean;
+  nvidiaContainerToolkitInstalled: boolean;
   notes: string[];
 }
 
@@ -228,6 +229,19 @@ export function parseDockerCdiSpecDirs(info = ""): string[] {
   const match = info.match(/"CDISpecDirs"\s*:\s*\[([^\]]*)\]/);
   if (!match) return [];
   return Array.from(match[1].matchAll(/"([^"]+)"/g), (m) => m[1]).filter(Boolean);
+}
+
+function normalizeCdiSpecDir(specDir: string | undefined): string {
+  const trimmed = String(specDir || "/etc/cdi")
+    .trim()
+    .replace(/\/+$/, "");
+  return trimmed || "/etc/cdi";
+}
+
+export function getNvidiaCdiSpecPath(
+  assessment: Pick<HostAssessment, "dockerCdiSpecDirs">,
+): string {
+  return path.join(normalizeCdiSpecDir(assessment.dockerCdiSpecDirs[0]), "nvidia.yaml");
 }
 
 // True when at least one CDI spec under the configured directories declares
@@ -386,6 +400,35 @@ function parseSystemctlState(value = ""): boolean | null {
   return null;
 }
 
+export function buildContainerToolkitBootstrapCommands(
+  packageManager: PackageManager | undefined,
+  generateCommands: readonly string[],
+): string[] {
+  const installGuide =
+    "https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html";
+  if (packageManager === "apt") {
+    return [
+      "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg",
+      "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list",
+      "sudo apt-get update",
+      "sudo apt-get install -y nvidia-container-toolkit",
+      ...generateCommands,
+    ];
+  }
+  if (packageManager === "dnf" || packageManager === "yum") {
+    const pmCommand = packageManager === "dnf" ? "dnf" : "yum";
+    return [
+      `curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo | sudo tee /etc/yum.repos.d/nvidia-container-toolkit.repo`,
+      `sudo ${pmCommand} install -y nvidia-container-toolkit`,
+      ...generateCommands,
+    ];
+  }
+  return [
+    `# Install nvidia-container-toolkit per NVIDIA's install guide: ${installGuide}`,
+    ...generateCommands,
+  ];
+}
+
 export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const platform = opts.platform ?? process.platform;
   const env = opts.env ?? process.env;
@@ -401,6 +444,8 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
   const openshellInstalled =
     opts.commandExistsImpl?.("openshell") ?? commandExists("openshell", runCaptureImpl);
   const hasNvidiaGpu = opts.gpuProbeImpl?.() ?? detectNvidiaGpu(runCaptureImpl);
+  const nvidiaContainerToolkitInstalled =
+    opts.commandExistsImpl?.("nvidia-ctk") ?? commandExists("nvidia-ctk", runCaptureImpl);
   const packageManager = detectPackageManager(runCaptureImpl);
   const systemctlAvailable = commandExists("systemctl", runCaptureImpl);
 
@@ -525,6 +570,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
     hasNvidiaGpu,
     dockerCdiSpecDirs,
     cdiNvidiaGpuSpecMissing,
+    nvidiaContainerToolkitInstalled,
     notes: [],
   };
 
@@ -694,22 +740,44 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
   }
 
   if (assessment.cdiNvidiaGpuSpecMissing) {
-    const specDir = assessment.dockerCdiSpecDirs[0] ?? "/etc/cdi";
-    actions.push({
-      id: "generate_nvidia_cdi_spec",
-      title: "Generate NVIDIA CDI device specs",
-      kind: "sudo",
-      reason:
-        "Docker is configured for CDI device injection (CDISpecDirs is set) but no " +
-        "nvidia.com/gpu CDI spec is present on the host. OpenShell's `gateway start --gpu` " +
-        "will fail with `unresolvable CDI devices nvidia.com/gpu=all` until a spec is generated.",
-      commands: [
-        `sudo nvidia-ctk cdi generate --output=${specDir.replace(/\/+$/, "")}/nvidia.yaml`,
-        "nvidia-ctk cdi list   # verify nvidia.com/gpu entries appear",
-        "nemoclaw onboard      # or rerun with --no-gpu to skip GPU passthrough",
-      ],
-      blocking: true,
-    });
+    const specPath = getNvidiaCdiSpecPath(assessment);
+    const specDir = path.dirname(specPath);
+    const generateCommands = [
+      `sudo mkdir -p ${specDir}`,
+      `sudo nvidia-ctk cdi generate --output=${specPath}`,
+      "nvidia-ctk cdi list   # verify nvidia.com/gpu entries appear",
+      "nemoclaw onboard      # or rerun with --no-gpu to skip GPU passthrough",
+    ];
+    if (assessment.nvidiaContainerToolkitInstalled) {
+      actions.push({
+        id: "generate_nvidia_cdi_spec",
+        title: "Generate NVIDIA CDI device specs",
+        kind: "sudo",
+        reason:
+          "Docker is configured for CDI device injection (CDISpecDirs is set) but no " +
+          "nvidia.com/gpu CDI spec is present on the host. OpenShell's `gateway start --gpu` " +
+          "will fail with `unresolvable CDI devices nvidia.com/gpu=all` until a spec is generated.",
+        commands: generateCommands,
+        blocking: true,
+      });
+    } else {
+      actions.push({
+        id: "install_nvidia_container_toolkit",
+        title: "Install NVIDIA Container Toolkit and generate CDI device specs",
+        kind: "sudo",
+        reason:
+          "Docker is configured for CDI device injection (CDISpecDirs is set) but the " +
+          "`nvidia-container-toolkit` package (which provides `nvidia-ctk`) is not installed " +
+          "on the host. OpenShell's `gateway start --gpu` will fail with " +
+          "`unresolvable CDI devices nvidia.com/gpu=all` until the toolkit is installed and a " +
+          "CDI spec is generated.",
+        commands: buildContainerToolkitBootstrapCommands(
+          assessment.packageManager,
+          generateCommands,
+        ),
+        blocking: true,
+      });
+    }
   }
 
   return actions;
