@@ -653,15 +653,18 @@ if [ -n "$port_a" ] && [ -n "$port_b" ] && [ "$port_a" != "$port_b" ]; then
   openshell forward stop "$port_b" 2>/dev/null || true
 
   PROBE_LOG="$(mktemp)"
+  PROBE_ATTEMPTS="${NEMOCLAW_E2E_PROBE_ATTEMPTS:-3}"
+  PROBE_DELAY_SECONDS="${NEMOCLAW_E2E_PROBE_DELAY_SECONDS:-3}"
+  PROBE_TIMEOUT_SECONDS="${NEMOCLAW_E2E_PROBE_TIMEOUT_SECONDS:-30}"
   probe_exit=1
   probe_output=""
-  for attempt in 1 2 3; do
-    info "Probe-only connect attempt ${attempt}/3 for '$SANDBOX_B'..."
-    run_nemoclaw "$SANDBOX_B" connect --probe-only >"$PROBE_LOG" 2>&1
+  for attempt in $(seq 1 "$PROBE_ATTEMPTS"); do
+    info "Probe-only connect attempt ${attempt}/${PROBE_ATTEMPTS} for '$SANDBOX_B'..."
+    run_with_timeout "$PROBE_TIMEOUT_SECONDS" "${NEMOCLAW_CMD[@]}" "$SANDBOX_B" connect --probe-only >"$PROBE_LOG" 2>&1
     probe_exit=$?
     probe_output="$(cat "$PROBE_LOG")"
     [ "$probe_exit" -eq 0 ] && break
-    sleep 3
+    [ "$attempt" -lt "$PROBE_ATTEMPTS" ] && sleep "$PROBE_DELAY_SECONDS"
   done
   rm -f "$PROBE_LOG"
 
