@@ -345,9 +345,9 @@ const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-f
 
 import type { AgentDefinition } from "./agent/defs";
 import type { CurlProbeResult } from "./adapters/http/probe";
-import type { GatewayReuseState } from "./state/gateway";
 import type { GatewayInference } from "./inference/config";
 import type { GpuInfo, ValidationResult } from "./inference/local";
+import type { WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
@@ -355,32 +355,32 @@ import {
   readMessagingChannelConfigFromEnv,
   sanitizeMessagingChannelConfig,
 } from "./messaging-channel-config";
-import type { ContainerRuntime } from "./platform";
-import type { Session, SessionUpdates } from "./state/onboard-session";
+import { streamGatewayStart } from "./onboard/gateway";
+import { reportGpuPassthroughRecovery } from "./onboard/gpu-recovery";
+import { getMessagingToken } from "./onboard/messaging-token";
+import type {
+  DockerDriverBinaryOverrides,
+  OpenShellInstallDeps,
+  OpenShellInstallResult,
+} from "./onboard/openshell-install";
+import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
+import type { SelectionDrift } from "./onboard/selection-drift";
 import type {
   ModelCatalogFetchResult,
   ModelValidationResult,
   ProbeResult,
   ValidationFailureLike,
 } from "./onboard/types";
-import { getMessagingToken } from "./onboard/messaging-token";
-import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
+import type { ContainerRuntime } from "./platform";
+import type { TierDefinition, TierPreset } from "./policy/tiers";
 import { channelHasStaticToken, getChannelTokenKeys, listChannels } from "./sandbox/channels";
-import { streamGatewayStart } from "./onboard/gateway";
-import { reportGpuPassthroughRecovery } from "./onboard/gpu-recovery";
 import type { StreamSandboxCreateResult } from "./sandbox/create-stream";
+import type { GatewayReuseState } from "./state/gateway";
+import type { Session, SessionUpdates } from "./state/onboard-session";
 import type { SandboxEntry } from "./state/registry";
 import type { BackupResult } from "./state/sandbox";
-import type { TierDefinition, TierPreset } from "./policy/tiers";
 import type { SandboxCreateFailure, ValidationClassification } from "./validation";
 import type { ProbeRecovery } from "./validation-recovery";
-import type { WebSearchConfig } from "./inference/web-search";
-import type {
-  DockerDriverBinaryOverrides,
-  OpenShellInstallDeps,
-  OpenShellInstallResult,
-} from "./onboard/openshell-install";
-import type { SelectionDrift } from "./onboard/selection-drift";
 
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -1379,9 +1379,7 @@ function validateSandboxGpuPreflight(config: SandboxGpuConfig): void {
   if (cdiSpecFiles.length === 0) {
     console.error("");
     console.error("  ✗ Docker CDI GPU support was not detected.");
-    for (const line of sandboxGpuRemediationLines()) {
-      console.error(`    ${line}`);
-    }
+    for (const line of sandboxGpuRemediationLines()) console.error(`    ${line}`);
     process.exit(1);
   }
   console.log(`  ✓ Docker CDI GPU support detected (${cdiSpecFiles.join(", ")})`);
@@ -1467,31 +1465,8 @@ function getDockerDriverGatewayEndpointArg(): string {
   return safeOpenShellArgument(getDockerDriverGatewayEndpoint(), "gateway endpoint");
 }
 
-/**
- * Execute a shell command inside a sandbox for post-deployment verification.
- * Returns a structured result with status, stdout, stderr — or null if
- * the sandbox is unreachable. Uses `openshell sandbox exec` with sh -c.
- */
-function executeSandboxCommandForVerification(
-  sandboxName: string,
-  script: string,
-): { status: number; stdout: string; stderr: string } | null {
-  try {
-    const result = spawnSync(
-      getOpenshellBinary(),
-      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", script],
-      { encoding: "utf-8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    if (result.error) return null;
-    return {
-      status: result.status ?? 1,
-      stdout: (result.stdout || "").trim(),
-      stderr: (result.stderr || "").trim(),
-    };
-  } catch {
-    return null;
-  }
-}
+const { executeSandboxCommandForVerification }: typeof import("./onboard/sandbox-verification-exec") =
+  require("./onboard/sandbox-verification-exec");
 
 // URL/string utilities — delegated to src/lib/core/url-utils.ts
 const {
@@ -1935,6 +1910,7 @@ function verifyDirectSandboxGpu(sandboxName: string): void {
       console.log(`  ✓ GPU proof passed: ${proof.label}`);
       continue;
     }
+    if (proof.optional === true) return;
     const diagnostic = compactText(redact(`${result.stderr || ""} ${result.stdout || ""}`));
     console.error(`  ✗ GPU proof failed: ${proof.label}`);
     if (diagnostic) console.error(`    ${diagnostic.slice(0, 300)}`);
@@ -5120,7 +5096,7 @@ async function createSandbox(
   // Credentials stay in the keychain; the bridge simply isn't registered with
   // the gateway on the next rebuild. `channels start` removes the entry and
   // the bridge comes back.
-  const disabledChannels = registry.getDisabledChannels(sandboxName);
+  const disabledChannels = require("./onboard/channel-state").resolveDisabledChannels(sandboxName);
   const disabledEnvKeys = new Set(
     MESSAGING_CHANNELS.filter((c) => disabledChannels.includes(c.name)).flatMap((c) =>
       getChannelTokenKeys(c),
@@ -10716,12 +10692,22 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     // every target is already clean.
     cleanupStaleHostFiles();
 
+    // Step [8/8] policy-apply restarts the sandbox container; the OpenClaw
+    // gateway inside the new container is launched lazily (normally by the
+    // first `nemoclaw <name> connect`). Bring it up explicitly here so the
+    // verifyDeployment block below does not race the post-policy startup and
+    // surface a false "gateway crashed during startup" warning. The helper
+    // is a no-op when the gateway is already running. Fixes #3573.
+    const processRecovery: typeof import("./actions/sandbox/process-recovery") =
+      require("./actions/sandbox/process-recovery");
+    processRecovery.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+
     // Post-deployment verification — confirm the full delivery chain is
     // operational before telling the user "YOUR AGENT IS LIVE". Fixes #2342.
     const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
     const _verifyChatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`;
     const verifyChain = buildChain({ chatUiUrl: _verifyChatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress() });
-    const verificationResult = verifyDeploymentModule.verifyDeployment(
+    const verificationResult = await verifyDeploymentModule.verifyDeployment(
       sandboxName,
       verifyChain,
       {

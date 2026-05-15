@@ -11,14 +11,16 @@ import os from "node:os";
 import nodePath from "node:path";
 import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
+import type { CaptureResult } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 
-const { shellQuote, runCapture } = require("../runner");
+const { shellQuote, runCapture, runCaptureEx } = require("../runner");
 
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 
 const { isWsl } = require("../platform");
+const { detectNvidiaPlatform } = require("./nim");
 
 /** Port containers use to reach Ollama — proxy on non-WSL, direct on WSL2. */
 export const OLLAMA_CONTAINER_PORT = isWsl() ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
@@ -32,6 +34,8 @@ export const SMALL_OLLAMA_MODEL = "qwen2.5:7b";
 export const LARGE_OLLAMA_MIN_MEMORY_MB = 32768;
 
 export type RunCaptureFn = (cmd: string | string[], opts?: { ignoreError?: boolean }) => string;
+
+export type RunCaptureExFn = (cmd: string[]) => CaptureResult;
 
 // Hosts that the WSL-side onboard CLI tries when probing Ollama. Native Linux
 // and macOS only ever reach Ollama on the local loopback. WSL with Docker
@@ -720,10 +724,22 @@ export function getOllamaProbeCommand(
 export function validateOllamaModel(
   model: string,
   runCaptureImpl?: RunCaptureFn,
+  isSparkImpl?: () => boolean,
+  runCaptureExImpl?: RunCaptureExFn,
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
+  const captureEx = runCaptureExImpl ?? runCaptureEx;
+  const isSpark = isSparkImpl ?? (() => detectNvidiaPlatform() === "spark");
   const probeCmd = getOllamaProbeCommand(model);
-  const output = capture(probeCmd, { ignoreError: true });
+  const probeResult = captureEx(probeCmd);
+  let output = probeResult.stdout;
+  // On DGX Spark (128 GB unified memory), loading a large model from disk can take >2 min.
+  // Only retry with a 300 s timeout when the initial probe genuinely timed out — fast
+  // failures (connection refused, Ollama not running) surface immediately. (#3251)
+  if (isSpark() && probeResult.timedOut) {
+    const retryResult = captureEx(getOllamaProbeCommand(model, 300));
+    output = retryResult.stdout;
+  }
   if (!output) {
     return {
       ok: false,
@@ -745,6 +761,25 @@ export function validateOllamaModel(
             `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
             `model's capabilities and pick one whose list includes 'tools'.`,
         };
+      }
+      // Ollama checks available RAM instead of total; false positive on DGX Spark
+      // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
+      const memMatch = errText.match(
+        /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
+      );
+      if (memMatch && isSpark()) {
+        const requiresGiB = parseFloat(memMatch[1]);
+        const freeOut = capture(["free", "-m"], { ignoreError: true });
+        if (freeOut) {
+          const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
+          if (memLine) {
+            const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
+            const totalGiB = totalMB / 1024;
+            if (totalGiB >= requiresGiB) {
+              return { ok: true };
+            }
+          }
+        }
       }
       return {
         ok: false,

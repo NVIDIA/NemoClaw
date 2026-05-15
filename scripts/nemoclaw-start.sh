@@ -205,7 +205,7 @@ else
       exit 1
       ;;
   esac
-  if [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; then
+  if ! [ "$_DASHBOARD_PORT" -ge 1024 ] || ! [ "$_DASHBOARD_PORT" -le 65535 ]; then
     echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
     exit 1
   fi

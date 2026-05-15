@@ -149,6 +149,8 @@ export type DockerContainerInspect = {
     Dns?: string[] | null;
     DnsSearch?: string[] | null;
     ShmSize?: number;
+    ReadonlyPaths?: string[] | null;
+    MaskedPaths?: string[] | null;
   } | null;
   NetworkSettings?: {
     Networks?: Record<

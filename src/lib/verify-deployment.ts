@@ -62,9 +62,47 @@ export interface VerifyDeploymentDeps {
   providerExistsInGateway: (providerName: string) => boolean;
 }
 
+export interface VerifyDeploymentOptions {
+  /**
+   * Delays in ms between blocking-probe retries. Gateway and dashboard probes
+   * can race the post-onboard startup on slower hosts (#3563) — the wizard
+   * returns from createSandbox before the gateway process or the host port
+   * forward have finished coming up. Each entry below adds one extra attempt
+   * after the initial try, scheduled at the given delay from the previous
+   * attempt. The defaults give roughly a 25 s budget per probe before the
+   * wizard surfaces a ✗ marker.
+   * Tests pass `[]` to disable retry.
+   */
+  retryDelaysMs?: number[];
+  /** Sleep helper, injectable for tests. */
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const DEFAULT_RETRY_DELAYS_MS: readonly number[] = [1000, 2000, 5000, 7000, 10000];
+
+function defaultSleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 // HTTP status codes that indicate the gateway process is alive.
 // 401 = device auth is enabled but the gateway is running.
 const GATEWAY_ALIVE_CODES = new Set([200, 401]);
+
+// Gateway-failure hint: cover both layers the probe could be failing at.
+// The probe runs curl inside the sandbox against the in-sandbox OpenClaw
+// gateway (initialised at /tmp/gateway.log by agent/runtime.ts), so the
+// sandbox log is the first thing to check. If the sandbox itself never
+// came up, the host-side OpenShell gateway log is the right place to
+// look — see gatewayLogCandidates() in onboard/sandbox-create-failure.ts.
+function buildGatewayLogHint(sandboxName: string): string {
+  return (
+    `The gateway probe failed after retrying. Inspect the in-sandbox gateway log with ` +
+    `\`nemoclaw ${sandboxName} logs\` (the gateway writes to /tmp/gateway.log inside the sandbox when it starts). ` +
+    `If the sandbox itself never came up, also check the host-side OpenShell gateway log at ` +
+    `~/.local/state/nemoclaw/openshell-docker-gateway/openshell-gateway.log ` +
+    `(or ~/.local/state/openshell/openshell-gateway.log on older installs).`
+  );
+}
 
 // ── Core verification ────────────────────────────────────────────────
 
@@ -72,7 +110,7 @@ const GATEWAY_ALIVE_CODES = new Set([200, 401]);
  * Probe the gateway /health endpoint inside the sandbox.
  * Uses HTTP status code extraction (not curl -sf) so 401 counts as alive.
  */
-function verifyGatewayInSandbox(
+function probeGatewayInSandboxOnce(
   sandboxName: string,
   chain: DashboardDeliveryChain,
   deps: VerifyDeploymentDeps,
@@ -89,6 +127,23 @@ function verifyGatewayInSandbox(
     return { reachable: true, httpCode: code, detail: `HTTP ${code}` };
   }
   return { reachable: false, httpCode: code, detail: `HTTP ${code} (gateway not responding)` };
+}
+
+async function verifyGatewayInSandbox(
+  sandboxName: string,
+  chain: DashboardDeliveryChain,
+  deps: VerifyDeploymentDeps,
+  retryDelaysMs: readonly number[],
+  sleep: (ms: number) => Promise<void>,
+): Promise<{ reachable: boolean; httpCode: number; detail: string }> {
+  let last = probeGatewayInSandboxOnce(sandboxName, chain, deps);
+  if (last.reachable) return last;
+  for (const delayMs of retryDelaysMs) {
+    await sleep(delayMs);
+    last = probeGatewayInSandboxOnce(sandboxName, chain, deps);
+    if (last.reachable) return last;
+  }
+  return last;
 }
 
 /**
@@ -134,7 +189,7 @@ function verifyInferenceRoute(
 /**
  * Verify the dashboard port is reachable from the host (port forward working).
  */
-function verifyDashboardFromHost(
+function probeDashboardFromHostOnce(
   chain: DashboardDeliveryChain,
   deps: VerifyDeploymentDeps,
 ): { reachable: boolean; detail: string } {
@@ -146,6 +201,22 @@ function verifyDashboardFromHost(
     return { reachable: false, detail: `host probe HTTP ${code} (unexpected)` };
   }
   return { reachable: false, detail: "port forward not working (connection refused)" };
+}
+
+async function verifyDashboardFromHost(
+  chain: DashboardDeliveryChain,
+  deps: VerifyDeploymentDeps,
+  retryDelaysMs: readonly number[],
+  sleep: (ms: number) => Promise<void>,
+): Promise<{ reachable: boolean; detail: string }> {
+  let last = probeDashboardFromHostOnce(chain, deps);
+  if (last.reachable) return last;
+  for (const delayMs of retryDelaysMs) {
+    await sleep(delayMs);
+    last = probeDashboardFromHostOnce(chain, deps);
+    if (last.reachable) return last;
+  }
+  return last;
 }
 
 /**
@@ -189,29 +260,30 @@ function verifyMessagingBridges(
  * Returns a structured result with pass/fail for each link and
  * actionable diagnostics on failure.
  */
-export function verifyDeployment(
+export async function verifyDeployment(
   sandboxName: string,
   chain: DashboardDeliveryChain,
   deps: VerifyDeploymentDeps,
-): VerifyDeploymentResult {
+  options: VerifyDeploymentOptions = {},
+): Promise<VerifyDeploymentResult> {
+  const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  const sleep = options.sleep ?? defaultSleep;
   const diagnostics: DeploymentDiagnostic[] = [];
 
   // 1. Gateway reachable inside sandbox
-  const gateway = verifyGatewayInSandbox(sandboxName, chain, deps);
+  const gateway = await verifyGatewayInSandbox(sandboxName, chain, deps, retryDelaysMs, sleep);
   diagnostics.push({
     link: "gateway",
     status: gateway.reachable ? "ok" : "fail",
     detail: gateway.detail,
-    hint: gateway.reachable
-      ? ""
-      : "The gateway process may have crashed during startup. Check /tmp/gateway.log inside the sandbox.",
+    hint: gateway.reachable ? "" : buildGatewayLogHint(sandboxName),
   });
 
   // 2. Gateway version (cosmetic — not a health signal)
   const gatewayVersion = gateway.reachable ? fetchGatewayVersion(sandboxName, deps) : null;
 
   // 3. Dashboard reachable from host (port forward)
-  const dashboard = verifyDashboardFromHost(chain, deps);
+  const dashboard = await verifyDashboardFromHost(chain, deps, retryDelaysMs, sleep);
   diagnostics.push({
     link: "dashboard",
     status: dashboard.reachable ? "ok" : "fail",

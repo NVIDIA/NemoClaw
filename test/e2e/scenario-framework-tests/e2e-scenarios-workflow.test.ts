@@ -33,13 +33,14 @@ describe("e2e-scenarios workflow", () => {
     const inputs = dispatch?.inputs as AnyRecord | undefined;
     expect(inputs).toBeTruthy();
     expect(inputs).toHaveProperty("scenario");
-    expect(inputs).toHaveProperty("plan_only");
+    expect(inputs).not.toHaveProperty("plan_only");
     expect(inputs).toHaveProperty("suite_filter");
   });
 
-  it("e2e_scenarios_workflow_should_call_run_scenario", () => {
+  it("e2e_scenarios_workflow_should_call_run_scenario_without_plan_only", () => {
     const raw = fs.readFileSync(WORKFLOW_PATH, "utf8");
     expect(raw).toMatch(/test\/e2e\/runtime\/run-scenario\.sh/);
+    expect(raw).not.toMatch(/--plan-only|plan_only/);
   });
 
   it("e2e_scenarios_workflow_should_upload_artifacts", () => {
@@ -47,8 +48,9 @@ describe("e2e-scenarios workflow", () => {
     expect(raw).toMatch(/actions\/upload-artifact/);
     // Artifact name should be scenario-scoped.
     expect(raw).toMatch(/e2e-scenario-.*\$\{\{\s*(?:inputs|github\.event\.inputs)\.scenario\s*\}\}/);
-    // Uploads .e2e/ artifacts.
+    // Uploads .e2e/ artifacts, including hidden artifact paths.
     expect(raw).toMatch(/\.e2e\//);
+    expect(raw).toMatch(/include-hidden-files:\s*true/);
   });
 
   it("e2e_scenarios_workflow_should_be_manual_only", () => {

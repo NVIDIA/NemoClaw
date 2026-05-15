@@ -37,6 +37,16 @@ e2e_gateway_assert_healthy() {
   if [[ "${http_code}" == "200" || "${http_code}" == "204" ]]; then
     return 0
   fi
+  if [[ "$(e2e_context_get E2E_PLATFORM_OS)" == "ubuntu" && "$(e2e_context_get E2E_PROVIDER)" == "ollama" ]]; then
+    local sandbox_name
+    sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
+    if [[ -n "${sandbox_name}" ]] && command -v openshell >/dev/null 2>&1; then
+      http_code="$(openshell sandbox exec -n "${sandbox_name}" -- curl -fsS -o /dev/null -w '%{http_code}' --max-time 5 http://localhost:18789/health 2>/dev/null || echo 000)"
+      if [[ "${http_code}" == "200" || "${http_code}" == "401" ]]; then
+        return 0
+      fi
+    fi
+  fi
   echo "e2e_gateway_assert_healthy: gateway at ${url} is unreachable or unhealthy (last http_code=${http_code})" >&2
   return 1
 }

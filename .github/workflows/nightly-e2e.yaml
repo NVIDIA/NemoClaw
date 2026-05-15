@@ -83,7 +83,7 @@ on:
           credential-sanitization-e2e, telegram-injection-e2e,
           overlayfs-autofix-e2e, device-auth-health-e2e,
           launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
-          brave-search-e2e
+          channels-stop-start-e2e, brave-search-e2e
         required: false
         type: string
         default: ""
@@ -369,6 +369,45 @@ jobs:
         with:
           name: install-log-messaging-compatible-endpoint
           path: /tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log
+          if-no-files-found: ignore
+
+  # ── Channels stop/start lifecycle E2E (#3462 Test 1) ─────────
+  # Regression coverage for #3453 (channels stop must actually disable the
+  # channel across rebuild) and #3381 (channels start must re-attach from
+  # the cached credential). Telegram-only — Discord/Slack walk the same
+  # disabledChannels filter; telegram is the cheapest regression gate.
+  channels-stop-start-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',channels-stop-start-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run channels stop/start lifecycle E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_POLICY_TIER: "open"
+          NEMOCLAW_SANDBOX_NAME: "e2e-channels-stop-start"
+          GITHUB_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-stop-start-e2e"
+          TELEGRAM_ALLOWED_IDS: "123456789"
+        run: bash test/e2e/test-channels-stop-start.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-channels-stop-start
+          path: /tmp/nemoclaw-e2e-install.log
           if-no-files-found: ignore
 
   # ── Brave Search E2E (#2687) ─────────────────────────────────
@@ -1976,6 +2015,7 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         messaging-compatible-endpoint-e2e,
+        channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
         token-rotation-e2e,
@@ -2068,6 +2108,7 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         messaging-compatible-endpoint-e2e,
+        channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
         token-rotation-e2e,
@@ -2217,6 +2258,7 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         messaging-compatible-endpoint-e2e,
+        channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
         token-rotation-e2e,

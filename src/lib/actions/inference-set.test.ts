@@ -79,6 +79,7 @@ function baseSession(overrides: Partial<Session> = {}): Session {
     policyPresets: null,
     messagingChannels: null,
     messagingChannelConfig: null,
+    disabledChannels: null,
     migratedLegacyValueHashes: null,
     gpuPassthrough: false,
     telegramConfig: null,

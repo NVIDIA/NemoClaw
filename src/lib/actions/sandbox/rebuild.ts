@@ -28,31 +28,31 @@ const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("../../onb
   REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
 };
 
-import { loadAgent } from "../../agent/defs";
-import { ensureAgentBaseImage } from "../../agent/onboard";
-import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
-import * as nim from "../../inference/nim";
-import type { Session } from "../../state/onboard-session";
-import * as onboardSession from "../../state/onboard-session";
-import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import {
   detectOpenShellStateRpcPreflightIssue,
   detectOpenShellStateRpcResultIssue,
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
-import * as policies from "../../policy";
-import * as registry from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
+import { loadAgent } from "../../agent/defs";
+import { ensureAgentBaseImage } from "../../agent/onboard";
+import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
+import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
+import * as nim from "../../inference/nim";
+import * as policies from "../../policy";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
-import { removeSandboxRegistryEntry } from "./destroy";
-import { executeSandboxCommand } from "./process-recovery";
+import * as sandboxVersion from "../../sandbox/version";
+import type { Session } from "../../state/onboard-session";
+import * as onboardSession from "../../state/onboard-session";
+import * as registry from "../../state/registry";
+import * as sandboxState from "../../state/sandbox";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
-import * as sandboxState from "../../state/sandbox";
-import * as sandboxVersion from "../../sandbox/version";
-import { B, D, G, R, RD as _RD, YW } from "../../cli/terminal-style";
+import { removeSandboxRegistryEntry } from "./destroy";
+import { executeSandboxCommand } from "./process-recovery";
 
 const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
@@ -543,6 +543,21 @@ export async function rebuildSandbox(
     sb.messagingChannelConfig ?? sessionMessagingChannelConfig ?? null;
   const hasRebuildMessagingChannels =
     registryMessagingChannels !== null || sessionMessagingChannels !== null;
+  // Snapshot the operator's paused channel set BEFORE `removeSandboxRegistryEntry`
+  // wipes the registry entry. Otherwise the `disabledChannels` filter inside
+  // `createSandbox` (onboard.ts) reads back `[]` from the freshly-empty registry
+  // and the stopped channel comes back live in the rebuilt image. The session
+  // mirror is the only place this list can survive the destroy/recreate window.
+  //
+  // Always re-stash from `sb` — do NOT fall back to a prior session value.
+  // `sb` is loaded fresh from the registry at the top of rebuildSandbox, so it
+  // already reflects the latest `channels stop|start` write. The session mirror
+  // is downstream of the registry; re-stashing on every rebuild keeps a stale
+  // ["telegram"] from a prior stop/rebuild cycle from leaking into the next
+  // start/rebuild and filtering the channel back out.
+  const rebuildDisabledChannels = Array.isArray(sb.disabledChannels)
+    ? sb.disabledChannels.filter((value: unknown): value is string => typeof value === "string")
+    : [];
   log(
     `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
   );
@@ -558,6 +573,7 @@ export async function rebuildSandbox(
     s.agent = rebuildAgent;
     s.messagingChannels = rebuildMessagingChannels;
     s.messagingChannelConfig = rebuildMessagingChannelConfig;
+    s.disabledChannels = rebuildDisabledChannels;
     // Persist inference selection from the about-to-be-removed registry entry
     // so onboard --resume can recreate with the same provider/model in
     // non-interactive mode. Without this the registry is gone by the time
@@ -683,9 +699,8 @@ export async function rebuildSandbox(
 
   const preservedRegistryFields = {
     ...(hasRebuildMessagingChannels ? { messagingChannels: [...rebuildMessagingChannels] } : {}),
-    ...(Array.isArray(sb.disabledChannels) && sb.disabledChannels.length > 0
-      ? { disabledChannels: [...sb.disabledChannels] }
-      : {}),
+    disabledChannels:
+      rebuildDisabledChannels.length > 0 ? [...rebuildDisabledChannels] : undefined,
     ...(sb.providerCredentialHashes ? { providerCredentialHashes: sb.providerCredentialHashes } : {}),
   };
   if (Object.keys(preservedRegistryFields).length > 0) {

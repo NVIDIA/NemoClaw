@@ -230,6 +230,379 @@
       ]
     },
     {
+      "script": "test/e2e/test-channels-stop-start.sh",
+      "assertions": [
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 154,
+          "text": "C0: NVIDIA_API_KEY is required",
+          "polarity": "fail",
+          "normalized_id": "c0.nvidia.api.key.is.required",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 157,
+          "text": "C0: NVIDIA_API_KEY is set",
+          "polarity": "pass",
+          "normalized_id": "c0.nvidia.api.key.is.set",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 160,
+          "text": "C0: NEMOCLAW_NON_INTERACTIVE=1 is required",
+          "polarity": "fail",
+          "normalized_id": "c0.nemoclaw.non.interactive.1.is.required",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 163,
+          "text": "C0: NEMOCLAW_NON_INTERACTIVE=1 is set",
+          "polarity": "pass",
+          "normalized_id": "c0.nemoclaw.non.interactive.1.is.set",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 181,
+          "text": "C1a: Pre-cleanup complete",
+          "polarity": "pass",
+          "normalized_id": "c1a.pre.cleanup.complete",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 223,
+          "text": "C1b: install.sh + onboard completed (exit 0)",
+          "polarity": "pass",
+          "normalized_id": "c1b.install.sh.onboard.completed.exit.0",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 225,
+          "text": "C1b: install.sh failed (exit $install_exit)",
+          "polarity": "fail",
+          "normalized_id": "c1b.install.sh.failed.exit.install.exit",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 231,
+          "text": "C1c: openshell not on PATH after install",
+          "polarity": "fail",
+          "normalized_id": "c1c.openshell.not.on.path.after.install",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 234,
+          "text": "C1c: openshell installed",
+          "polarity": "pass",
+          "normalized_id": "c1c.openshell.installed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 237,
+          "text": "C1d: nemoclaw not on PATH after install",
+          "polarity": "fail",
+          "normalized_id": "c1d.nemoclaw.not.on.path.after.install",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 240,
+          "text": "C1d: nemoclaw installed",
+          "polarity": "pass",
+          "normalized_id": "c1d.nemoclaw.installed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 243,
+          "text": "C1e: Sandbox '${SANDBOX_NAME}' is Ready",
+          "polarity": "pass",
+          "normalized_id": "c1e.sandbox.sandbox.name.is.ready",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 245,
+          "text": "C1e: Sandbox '${SANDBOX_NAME}' not Ready",
+          "polarity": "fail",
+          "normalized_id": "c1e.sandbox.sandbox.name.not.ready",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 255,
+          "text": "C2a: Provider '${SANDBOX_NAME}-telegram-bridge' exists in gateway",
+          "polarity": "pass",
+          "normalized_id": "c2a.provider.sandbox.name.telegram.bridge.exists.in.gateway",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 257,
+          "text": "C2a: Provider '${SANDBOX_NAME}-telegram-bridge' missing in gateway",
+          "polarity": "fail",
+          "normalized_id": "c2a.provider.sandbox.name.telegram.bridge.missing.in.gateway",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 261,
+          "text": "C2b: openclaw.json contains 'telegram' channel block",
+          "polarity": "pass",
+          "normalized_id": "c2b.openclaw.json.contains.telegram.channel.block",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 265,
+          "text": "C2b: could not read openclaw.json inside sandbox",
+          "polarity": "fail",
+          "normalized_id": "c2b.could.not.read.openclaw.json.inside.sandbox",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 267,
+          "text": "C2b: openclaw.json missing 'telegram' channel before stop (precondition failed)",
+          "polarity": "fail",
+          "normalized_id": "c2b.openclaw.json.missing.telegram.channel.before.stop.precondition.failed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 273,
+          "text": "C2c: registry.messagingChannels contains telegram (${baseline_messaging})",
+          "polarity": "pass",
+          "normalized_id": "c2c.registry.messagingchannels.contains.telegram.baseline.messaging",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 275,
+          "text": "C2c: registry.messagingChannels missing telegram (got: ${baseline_messaging})",
+          "polarity": "fail",
+          "normalized_id": "c2c.registry.messagingchannels.missing.telegram.got.baseline.messaging",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 280,
+          "text": "C2d: registry.disabledChannels empty at baseline",
+          "polarity": "pass",
+          "normalized_id": "c2d.registry.disabledchannels.empty.at.baseline",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 281,
+          "text": "C2d: registry.disabledChannels unexpectedly non-empty at baseline (got: ${baseline_disabled})",
+          "polarity": "fail",
+          "normalized_id": "c2d.registry.disabledchannels.unexpectedly.non.empty.at.baseline.got.baseline.disabled",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 296,
+          "text": "C3a: channels stop telegram registered the change",
+          "polarity": "pass",
+          "normalized_id": "c3a.channels.stop.telegram.registered.the.change",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 298,
+          "text": "C3a: channels stop telegram did not register",
+          "polarity": "fail",
+          "normalized_id": "c3a.channels.stop.telegram.did.not.register",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 304,
+          "text": "C3b: rebuild (post-stop) completed",
+          "polarity": "pass",
+          "normalized_id": "c3b.rebuild.post.stop.completed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 306,
+          "text": "C3b: rebuild (post-stop) failed",
+          "polarity": "fail",
+          "normalized_id": "c3b.rebuild.post.stop.failed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 321,
+          "text": "C4a: REGRESSION — openclaw.json still contains 'telegram' after stop+rebuild (#3453)",
+          "polarity": "fail",
+          "normalized_id": "c4a.regression.openclaw.json.still.contains.telegram.after.stop.rebuild.3453",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 327,
+          "text": "C4a: could not read openclaw.json inside sandbox post-stop",
+          "polarity": "fail",
+          "normalized_id": "c4a.could.not.read.openclaw.json.inside.sandbox.post.stop",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 329,
+          "text": "C4a: openclaw.json excludes 'telegram' after stop+rebuild (#3453 fixed)",
+          "polarity": "pass",
+          "normalized_id": "c4a.openclaw.json.excludes.telegram.after.stop.rebuild.3453.fixed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 337,
+          "text": "C4b: registry.messagingChannels still contains telegram (${post_stop_messaging})",
+          "polarity": "pass",
+          "normalized_id": "c4b.registry.messagingchannels.still.contains.telegram.post.stop.messaging",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 339,
+          "text": "C4b: registry.messagingChannels lost telegram after stop (got: ${post_stop_messaging})",
+          "polarity": "fail",
+          "normalized_id": "c4b.registry.messagingchannels.lost.telegram.after.stop.got.post.stop.messaging",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 345,
+          "text": "C4c: registry.disabledChannels contains telegram (${post_stop_disabled})",
+          "polarity": "pass",
+          "normalized_id": "c4c.registry.disabledchannels.contains.telegram.post.stop.disabled",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 347,
+          "text": "C4c: registry.disabledChannels missing telegram (got: ${post_stop_disabled})",
+          "polarity": "fail",
+          "normalized_id": "c4c.registry.disabledchannels.missing.telegram.got.post.stop.disabled",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 356,
+          "text": "C4d: telegram-bridge provider not attached to rebuilt sandbox",
+          "polarity": "pass",
+          "normalized_id": "c4d.telegram.bridge.provider.not.attached.to.rebuilt.sandbox",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 358,
+          "text": "C4d: telegram-bridge provider still attached after stop+rebuild (${attached})",
+          "polarity": "fail",
+          "normalized_id": "c4d.telegram.bridge.provider.still.attached.after.stop.rebuild.attached",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 373,
+          "text": "C5a: channels start telegram registered the change",
+          "polarity": "pass",
+          "normalized_id": "c5a.channels.start.telegram.registered.the.change",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 375,
+          "text": "C5a: channels start telegram did not register",
+          "polarity": "fail",
+          "normalized_id": "c5a.channels.start.telegram.did.not.register",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 381,
+          "text": "C5b: rebuild (post-start) completed",
+          "polarity": "pass",
+          "normalized_id": "c5b.rebuild.post.start.completed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 383,
+          "text": "C5b: rebuild (post-start) failed",
+          "polarity": "fail",
+          "normalized_id": "c5b.rebuild.post.start.failed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 397,
+          "text": "C6a: openclaw.json contains 'telegram' again after start+rebuild (#3381 fixed)",
+          "polarity": "pass",
+          "normalized_id": "c6a.openclaw.json.contains.telegram.again.after.start.rebuild.3381.fixed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 401,
+          "text": "C6a: could not read openclaw.json inside sandbox post-start",
+          "polarity": "fail",
+          "normalized_id": "c6a.could.not.read.openclaw.json.inside.sandbox.post.start",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 403,
+          "text": "C6a: openclaw.json missing 'telegram' after start+rebuild (#3381 regression)",
+          "polarity": "fail",
+          "normalized_id": "c6a.openclaw.json.missing.telegram.after.start.rebuild.3381.regression",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 410,
+          "text": "C6b: registry.disabledChannels cleared (${post_start_disabled})",
+          "polarity": "pass",
+          "normalized_id": "c6b.registry.disabledchannels.cleared.post.start.disabled",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 411,
+          "text": "C6b: registry.disabledChannels still set after start (got: ${post_start_disabled})",
+          "polarity": "fail",
+          "normalized_id": "c6b.registry.disabledchannels.still.set.after.start.got.post.start.disabled",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 416,
+          "text": "C6c: telegram-bridge provider record present in gateway (cached token reused)",
+          "polarity": "pass",
+          "normalized_id": "c6c.telegram.bridge.provider.record.present.in.gateway.cached.token.reused",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 418,
+          "text": "C6c: telegram-bridge provider record missing in gateway after start",
+          "polarity": "fail",
+          "normalized_id": "c6c.telegram.bridge.provider.record.missing.in.gateway.after.start",
+          "mapping_status": "deferred"
+        }
+      ]
+    },
+    {
       "script": "test/e2e/test-cloud-inference-e2e.sh",
       "assertions": [
         {
@@ -15938,8 +16311,8 @@
     }
   ],
   "totals": {
-    "scripts": 49,
-    "assertions": 1961,
+    "scripts": 50,
+    "assertions": 2007,
     "zero_assertion_scripts": 1
   }
 }

@@ -259,6 +259,49 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
 // Unified redaction — see redact.ts (#2381).
 const { redact, redactError, writeRedactedResult } = require("./security/redact");
 
+/** Structured result returned by runCaptureEx. */
+export interface CaptureResult {
+  stdout: string;
+  exitCode: number | null;
+  /** True when spawnSync sets result.error due to a timeout (ETIMEDOUT). */
+  timedOut: boolean;
+}
+
+/**
+ * Like runCapture but returns a structured result instead of throwing or
+ * collapsing errors to an empty string.  Use this when the caller needs to
+ * distinguish a real timeout (curl exit 28 / spawn ETIMEDOUT) from other
+ * failures such as connection-refused.
+ */
+function runCaptureEx(cmd: readonly string[], opts: Omit<CaptureOptions, "ignoreError"> = {}): CaptureResult {
+  if (!Array.isArray(cmd) || cmd.length === 0) {
+    throw new Error("runCaptureEx: cmd must be a non-empty argv array");
+  }
+  const exe = cmd[0];
+  const args = cmd.slice(1);
+  const { env: extraEnv, stdio: _stdio, ...spawnOpts } = opts as CaptureOptions;
+  try {
+    const result = spawnSync(exe, args, {
+      ...spawnOpts,
+      cwd: ROOT,
+      env: { ...process.env, ...extraEnv },
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf-8",
+    });
+    const timedOut =
+      (result.error != null && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") ||
+      result.status === 28;
+    const stdout = result.stdout || "";
+    return {
+      stdout: (typeof stdout === "string" ? stdout : stdout.toString("utf-8")).trim(),
+      exitCode: result.status,
+      timedOut,
+    };
+  } catch (err) {
+    throw redactError(err);
+  }
+}
+
 /**
  * Shell-quote a value for safe interpolation into bash -c strings.
  * Wraps in single quotes and escapes embedded single quotes.
@@ -295,6 +338,7 @@ export {
   run,
   runShell,
   runCapture,
+  runCaptureEx,
   runFile,
   runInteractive,
   runInteractiveShell,

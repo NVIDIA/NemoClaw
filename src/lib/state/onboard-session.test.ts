@@ -315,6 +315,48 @@ describe("onboard session", () => {
     expect(loaded.messagingChannels).toEqual(["telegram", "discord"]);
   });
 
+  it("persists disabledChannels across save/load roundtrips", () => {
+    // Regression: `channels stop X` followed by rebuild must carry the paused
+    // set through the destroy/recreate window. The Session mirror is the only
+    // place this can survive, because rebuild destroys the registry entry
+    // before `onboard --resume` reads it back.
+    const created = session.createSession();
+    created.disabledChannels = ["telegram"];
+    session.saveSession(created);
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.disabledChannels).toEqual(["telegram"]);
+  });
+
+  it("filters non-string entries out of persisted disabledChannels", () => {
+    const created = session.createSession();
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({
+        ...created,
+        disabledChannels: ["telegram", 42, null, "discord"],
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.disabledChannels).toEqual(["telegram", "discord"]);
+  });
+
+  it("defaults disabledChannels to null for fresh sessions", () => {
+    const fresh = session.createSession();
+    expect(fresh.disabledChannels).toBeNull();
+  });
+
+  it("filterSafeUpdates passes through disabledChannels and accepts explicit null clear", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", { disabledChannels: ["discord"] });
+    expect(requireLoadedSession(session.loadSession()).disabledChannels).toEqual(["discord"]);
+
+    session.markStepComplete("provider_selection", { disabledChannels: null });
+    expect(requireLoadedSession(session.loadSession()).disabledChannels).toBeNull();
+  });
+
   it("defaults messagingChannels to null for fresh sessions", () => {
     const fresh = session.createSession();
     expect(fresh.messagingChannels).toBeNull();
