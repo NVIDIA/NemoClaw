@@ -317,11 +317,11 @@ const openshellPinFlow: typeof import("./onboard/openshell-pin") =
 const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-failure") =
   require("./onboard/sandbox-create-failure");
 
-import type { AgentDefinition } from "./agent/defs";
 import type { CurlProbeResult } from "./adapters/http/probe";
-import type { GatewayReuseState } from "./state/gateway";
+import type { AgentDefinition } from "./agent/defs";
 import type { GatewayInference } from "./inference/config";
 import type { GpuInfo, ValidationResult } from "./inference/local";
+import type { WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
@@ -330,29 +330,29 @@ import {
   readMessagingChannelConfigFromEnv,
   sanitizeMessagingChannelConfig,
 } from "./messaging-channel-config";
-import type { ContainerRuntime } from "./platform";
-import type { Session, SessionUpdates } from "./state/onboard-session";
-import type {
-  ModelCatalogFetchResult,
-  ModelValidationResult,
-  ProbeResult,
-  ValidationFailureLike,
-} from "./onboard/types";
-import { listChannels } from "./sandbox/channels";
 import { streamGatewayStart } from "./onboard/gateway";
-import type { StreamSandboxCreateResult } from "./sandbox/create-stream";
-import type { SandboxEntry } from "./state/registry";
-import type { BackupResult } from "./state/sandbox";
-import type { TierDefinition, TierPreset } from "./policy/tiers";
-import type { SandboxCreateFailure, ValidationClassification } from "./validation";
-import type { ProbeRecovery } from "./validation-recovery";
-import type { WebSearchConfig } from "./inference/web-search";
 import type {
   DockerDriverBinaryOverrides,
   OpenShellInstallDeps,
   OpenShellInstallResult,
 } from "./onboard/openshell-install";
 import type { SelectionDrift } from "./onboard/selection-drift";
+import type {
+  ModelCatalogFetchResult,
+  ModelValidationResult,
+  ProbeResult,
+  ValidationFailureLike,
+} from "./onboard/types";
+import type { ContainerRuntime } from "./platform";
+import type { TierDefinition, TierPreset } from "./policy/tiers";
+import { listChannels } from "./sandbox/channels";
+import type { StreamSandboxCreateResult } from "./sandbox/create-stream";
+import type { GatewayReuseState } from "./state/gateway";
+import type { Session, SessionUpdates } from "./state/onboard-session";
+import type { SandboxEntry } from "./state/registry";
+import type { BackupResult } from "./state/sandbox";
+import type { SandboxCreateFailure, ValidationClassification } from "./validation";
+import type { ProbeRecovery } from "./validation-recovery";
 
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -5142,17 +5142,7 @@ async function createSandbox(
   // Credentials stay in the keychain; the bridge simply isn't registered with
   // the gateway on the next rebuild. `channels start` removes the entry and
   // the bridge comes back.
-  //
-  // Read the session mirror first: `rebuildSandbox` destroys the registry entry
-  // before calling `onboard --resume`, so by the time we reach this point the
-  // registry's disabledChannels is empty even when the operator stopped a
-  // channel. The session is the only place the paused set survives the
-  // destroy/recreate window; fall back to the registry for the fresh-onboard
-  // path where the session has no mirror yet.
-  const sessionDisabledChannels = onboardSession.loadSession()?.disabledChannels;
-  const disabledChannels = Array.isArray(sessionDisabledChannels)
-    ? sessionDisabledChannels
-    : registry.getDisabledChannels(sandboxName);
+  const disabledChannels = require("./onboard/channel-state").resolveDisabledChannels(sandboxName);
   const disabledEnvKeys = new Set(
     MESSAGING_CHANNELS.filter((c) => disabledChannels.includes(c.name)).flatMap((c) =>
       c.appTokenEnvKey ? [c.envKey, c.appTokenEnvKey] : [c.envKey],
