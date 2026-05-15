@@ -108,6 +108,10 @@ The agent's home directory (`/sandbox`) is writable by default:
 | `/sandbox/.nemoclaw` | read-write | Plugin state and config; blueprints within are DAC-protected (root-owned) |
 | `/tmp` | read-write | Temporary files and logs |
 
+This writable default is intentional.
+Seeing the sandbox user create files under `/sandbox` or `/sandbox/.openclaw` in a fresh sandbox does not mean Landlock failed.
+Landlock still enforces the fixed read-only system paths below.
+
 System paths remain read-only to prevent agents from:
 
 - Replacing system binaries with trojanized versions

@@ -585,4 +585,208 @@ describe("inventory commands", () => {
     expect(lines).toContain("    alpha * (minimaxai/minimax-m2.7)");
     expect(lines).toContain("      (onboarded: unknown)");
   });
+
+  // #2604: bare `nemoclaw status` previously only showed the model in parens
+  // and didn't label provider or connection state. Users had to run the
+  // per-sandbox `nemoclaw <name> status` to see those fields.
+  it("emits an Inference line with provider / model under each sandbox row (#2604)", () => {
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          {
+            name: "alpha",
+            model: "nvidia/nemotron-3-super-120b-a12b",
+            provider: "nvidia-prod",
+          },
+          { name: "beta", model: "qwen2.5:7b", provider: "ollama-local" },
+        ],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines).toContain("      Inference: nvidia-prod / nvidia/nemotron-3-super-120b-a12b");
+    expect(lines).toContain("      Inference: ollama-local / qwen2.5:7b");
+  });
+
+  it("prefers live gateway provider for the default sandbox in the Inference line (#2604)", () => {
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "alpha", model: "stored-model", provider: "stored-provider" },
+        ],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => ({ provider: "live-provider", model: "live-model" }),
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines).toContain("      Inference: live-provider / live-model");
+  });
+
+  it("emits a Connected line per sandbox when getActiveSessionCount is provided (#2604)", () => {
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [
+          { name: "alpha", model: "m" },
+          { name: "beta", model: "m" },
+        ],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      getActiveSessionCount: (name) => (name === "alpha" ? 2 : 0),
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines).toContain("      Connected: yes (2 sessions)");
+    expect(lines).toContain("      Connected: no");
+  });
+
+  it("renders `1 session` (singular) when the active count is exactly one (#2604)", () => {
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "alpha", model: "m" }],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      getActiveSessionCount: () => 1,
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines).toContain("      Connected: yes (1 session)");
+  });
+
+  it("omits the Connected line when getActiveSessionCount returns null (probe unavailable)", () => {
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "alpha", model: "m" }],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      getActiveSessionCount: () => null,
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines.some((l) => l.includes("Connected:"))).toBe(false);
+  });
+
+  it("omits the Connected line when the dep is not wired", () => {
+    const lines: string[] = [];
+    showStatusCommand({
+      listSandboxes: () => ({
+        sandboxes: [{ name: "alpha", model: "m" }],
+        defaultSandbox: "alpha",
+      }),
+      getLiveInference: () => null,
+      showServiceStatus: vi.fn(),
+      log: (message = "") => lines.push(message),
+    });
+
+    expect(lines.some((l) => l.includes("Connected:"))).toBe(false);
+  });
+
+  it("emits a gateway-down diagnostic and sets process.exitCode when the gateway is unhealthy (#3386)", () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
+    const lines: string[] = [];
+    try {
+      showStatusCommand({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "alpha", model: "m" }],
+          defaultSandbox: "alpha",
+        }),
+        getLiveInference: () => null,
+        showServiceStatus: vi.fn(),
+        getGatewayHealth: () => ({
+          healthy: false,
+          state: "named_unreachable",
+          reason: "host port held or container not running",
+        }),
+        log: (message = "") => lines.push(message),
+      });
+
+      expect(
+        lines.some((l) =>
+          l.includes("gateway: down [named_unreachable] (host port held or container not running)"),
+        ),
+      ).toBe(true);
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("keeps process.exitCode at 0 when getGatewayHealth reports healthy", () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
+    const lines: string[] = [];
+    try {
+      showStatusCommand({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "alpha", model: "m" }],
+          defaultSandbox: "alpha",
+        }),
+        getLiveInference: () => null,
+        showServiceStatus: vi.fn(),
+        getGatewayHealth: () => ({ healthy: true, state: "healthy_named" }),
+        log: (message = "") => lines.push(message),
+      });
+
+      expect(lines.some((l) => l.includes("gateway: down"))).toBe(false);
+      expect(process.exitCode).toBe(0);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("preserves legacy 0-exit behaviour when getGatewayHealth dep is omitted", () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
+    try {
+      showStatusCommand({
+        listSandboxes: () => ({
+          sandboxes: [{ name: "alpha", model: "m" }],
+          defaultSandbox: "alpha",
+        }),
+        getLiveInference: () => null,
+        showServiceStatus: vi.fn(),
+      });
+      expect(process.exitCode).toBe(0);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
+
+  it("skips the gateway health check when no sandboxes are registered", () => {
+    const previousExitCode = process.exitCode;
+    process.exitCode = 0;
+    const lines: string[] = [];
+    const getGatewayHealth = vi.fn();
+    try {
+      showStatusCommand({
+        listSandboxes: () => ({ sandboxes: [], defaultSandbox: null }),
+        getLiveInference: () => null,
+        showServiceStatus: vi.fn(),
+        getGatewayHealth,
+        log: (message = "") => lines.push(message),
+      });
+
+      expect(getGatewayHealth).not.toHaveBeenCalled();
+      expect(lines.some((l) => l.includes("gateway: down"))).toBe(false);
+      expect(process.exitCode).toBe(0);
+    } finally {
+      process.exitCode = previousExitCode;
+    }
+  });
 });

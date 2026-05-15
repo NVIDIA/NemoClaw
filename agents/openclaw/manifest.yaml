@@ -51,6 +51,7 @@ state_dirs:
   - cron
   - memory
   - telegram
+  - wechat
   - credentials
 
 # ── Authentication ──────────────────────────────────────────────
@@ -63,6 +64,7 @@ messaging_platforms:
     - telegram
     - discord
     - slack
+    - wechat
 
 # ── Inference ───────────────────────────────────────────────────
 inference:

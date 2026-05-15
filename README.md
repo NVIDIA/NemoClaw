@@ -115,6 +115,10 @@ Status:      nemoclaw my-assistant status
 Logs:        nemoclaw my-assistant logs --follow
 ──────────────────────────────────────────────────
 
+To change settings later:
+  Model:       nemoclaw inference get
+               nemoclaw inference set --model <model> --provider <provider> --sandbox my-assistant
+
 [INFO]  === Installation complete ===
 ```
 
@@ -201,7 +205,7 @@ nemoclaw uninstall
 | Flag               | Effect                                              |
 |--------------------|-----------------------------------------------------|
 | `--yes`            | Skip the confirmation prompt.                       |
-| `--keep-openshell` | Leave the `openshell` binary installed.              |
+| `--keep-openshell` | Leave OpenShell binaries installed.                  |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
 
 `nemoclaw uninstall` runs the version-pinned `uninstall.sh` shipped with your installed CLI, with no network fetch at uninstall time.
@@ -225,8 +229,9 @@ Refer to the following pages on the official documentation website for more info
 | Page | Description |
 |------|-------------|
 | [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html) | What NemoClaw does and how it fits together. |
-| [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) | Plugin, blueprint, sandbox lifecycle, and protection layers. |
-| [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html) | Plugin structure, blueprint lifecycle, sandbox environment, and host-side state. |
+| [Architecture Overview](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) | High-level overview of Plugin, blueprint, sandbox lifecycle, and protection layers. |
+| [Ecosystem](https://docs.nvidia.com/nemoclaw/latest/about/ecosystem.html) | How OpenClaw, OpenShell, and NemoClaw form a stack and when to use NemoClaw versus OpenShell alone. |
+| [Architecture Details](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html) | Detailed description of Plugin structure, blueprint lifecycle, sandbox environment, and host-side state. |
 | [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) | Hardware, software, and supported platforms, with any platform-specific pre-setup. |
 | [Inference Options](https://docs.nvidia.com/nemoclaw/latest/inference/inference-options.html) | Supported providers, validation, and routed inference configuration. |
 | [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html) | Baseline rules, operator approval flow, and egress control. |

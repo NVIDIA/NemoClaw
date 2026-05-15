@@ -47,7 +47,7 @@ describe("agent definitions", () => {
       envFile: null,
       format: "json",
     });
-    expect(openclaw.messagingPlatforms).toEqual(["telegram", "discord", "slack"]);
+    expect(openclaw.messagingPlatforms).toEqual(["telegram", "discord", "slack", "wechat"]);
     expect(openclaw.legacyPaths?.startScript).toContain("scripts/nemoclaw-start.sh");
   });
 

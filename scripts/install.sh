@@ -51,7 +51,7 @@ resolve_installer_version() {
     return
   fi
   # Prefer git tags (works in dev clones and CI)
-  if command -v git &>/dev/null && [[ -d "${repo_root}/.git" ]]; then
+  if command -v git &>/dev/null && [[ -e "${repo_root}/.git" ]]; then
     local git_ver=""
     if git_ver="$(git -C "$repo_root" describe --tags --match 'v*' 2>/dev/null)"; then
       git_ver="${git_ver#v}"
@@ -548,9 +548,14 @@ usage() {
   printf "    NVIDIA_API_KEY                API key (skips credential prompt)\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
+  printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
+  printf "    NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1\n"
+  printf "                                  Allow automatic pre-0.0.37 OpenShell gateway upgrade\n"
+  printf "    NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1\n"
+  printf "                                  Continue after manually backing up and retiring old gateway\n"
   printf "    NEMOCLAW_RECREATE_SANDBOX=1   Recreate an existing sandbox\n"
   printf "    NEMOCLAW_INSTALL_TAG         Git ref to install (default: latest release)\n"
   printf "    NEMOCLAW_PROVIDER             build | openai | anthropic | anthropicCompatible\n"
@@ -827,6 +832,7 @@ ONBOARD_RAN=false
 # invoke the CLI directly so a stale PATH cache does not silently skip
 # auto-onboarding (#3276).
 _CLI_PATH=""
+_PREEXISTING_SANDBOX_COUNT=0
 
 # Compare two semver strings (major.minor.patch). Returns 0 if $1 >= $2.
 # Rejects prerelease suffixes (e.g. "22.16.0-rc.1") to avoid arithmetic errors.
@@ -995,7 +1001,7 @@ prefer_user_local_openshell() {
 
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
-  local npm_bin shim_path node_path node_dir cli_path
+  local npm_bin shim_path node_path node_dir cli_path expected_shim
   npm_bin="$(resolve_npm_bin)" || true
   shim_path="${NEMOCLAW_SHIM_DIR}/${cli_bin}"
 
@@ -1024,12 +1030,22 @@ ensure_cli_shim() {
     return 0
   fi
 
-  mkdir -p "$NEMOCLAW_SHIM_DIR"
-  cat >"$shim_path" <<EOF
+  expected_shim="$(
+    cat <<EOF
 #!/usr/bin/env bash
 export PATH="$node_dir:\$PATH"
 exec "$cli_path" "\$@"
 EOF
+  )"
+
+  if [[ -x "$shim_path" ]] && cmp -s "$shim_path" <(printf '%s\n' "$expected_shim"); then
+    refresh_path
+    ensure_local_bin_in_profile
+    return 0
+  fi
+
+  mkdir -p "$NEMOCLAW_SHIM_DIR"
+  printf '%s\n' "$expected_shim" >"$shim_path"
   chmod +x "$shim_path"
   refresh_path
   ensure_local_bin_in_profile
@@ -1341,7 +1357,7 @@ is_source_checkout() {
     return 1
   fi
 
-  if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -d "${repo_root}/.git" ]]; then
+  if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -e "${repo_root}/.git" ]]; then
     return 0
   fi
 
@@ -1476,6 +1492,13 @@ verify_nemoclaw() {
       # current shell's PATH cache is stale. The user-facing PATH-refresh
       # hint is still emitted so future shells pick the binary up by name
       # (#3276).
+      #
+      # Deliberately leave NEMOCLAW_READY_NOW=false here: that flag means
+      # "the calling shell can resolve $_CLI_BIN by name", which is exactly
+      # what's not true on this branch. print_done() routes through ONBOARD_RAN
+      # + _needs_cli_refresh to render the "refresh PATH before using the CLI"
+      # message; flipping READY_NOW=true would short-circuit that and falsely
+      # advertise the CLI as immediately runnable by name.
       _CLI_PATH="$npm_bin/$_CLI_BIN"
       NEMOCLAW_CURRENT_SHELL_NEEDS_PATH_REFRESH=true
       NEMOCLAW_RECOVERY_PROFILE="$(detect_shell_profile)"
@@ -1493,31 +1516,329 @@ verify_nemoclaw() {
     fi
   fi
 
+  # Single warn header, then plain printf for each bullet. warn() prefixes
+  # every line with "[warn]" + colour codes, which would render the bulleted
+  # diagnostic table as six separate warnings rather than one structured block.
   warn "Could not locate the ${_CLI_BIN} executable after install. Searched:"
   if command_exists "$_CLI_BIN"; then
-    warn "  - PATH lookup ('command -v ${_CLI_BIN}'):  $(command -v "$_CLI_BIN")  (rejected — not the real CLI)"
+    printf '    - PATH lookup (command -v %s):  %s  (rejected — not the real CLI)\n' \
+      "$_CLI_BIN" "$(command -v "$_CLI_BIN")"
   else
-    warn "  - PATH lookup ('command -v ${_CLI_BIN}'):  not found"
+    printf '    - PATH lookup (command -v %s):  not found\n' "$_CLI_BIN"
   fi
   if [[ -n "$npm_bin" ]]; then
-    warn "  - npm prefix bin:                          ${npm_bin}/${_CLI_BIN}"
+    printf '    - npm prefix bin:    %s/%s\n' "$npm_bin" "$_CLI_BIN"
   else
-    warn "  - npm prefix bin:                          (npm not configured)"
+    printf '    - npm prefix bin:    (npm not configured)\n'
   fi
-  warn "  - User shim dir:                           ${NEMOCLAW_SHIM_DIR}/${_CLI_BIN}"
-  warn "  Active PATH: ${PATH:-(empty)}"
+  printf '    - User shim dir:     %s/%s\n' "$NEMOCLAW_SHIM_DIR" "$_CLI_BIN"
+  printf '    Active PATH: %s\n' "${PATH:-(empty)}"
   warn "Try re-running:  curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash"
   error "Installation failed: ${_CLI_BIN} binary not found."
+}
+
+registered_sandbox_count() {
+  local reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  if [ ! -f "$reg_file" ]; then
+    printf "0"
+    return
+  fi
+  python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(len(d.get('sandboxes', {})))
+except Exception:
+    print(0)
+" "$reg_file" 2>/dev/null || printf "0"
+}
+
+resolve_existing_cli_runner() {
+  local resolved_cli=""
+  if command_exists "$_CLI_BIN"; then
+    resolved_cli="$(command -v "$_CLI_BIN")"
+    if is_real_nemoclaw_cli "$resolved_cli" "$_CLI_BIN"; then
+      printf "%s" "$resolved_cli"
+      return 0
+    fi
+  fi
+
+  local npm_bin
+  npm_bin="$(resolve_npm_bin)" || true
+  if [[ -n "$npm_bin" && -x "$npm_bin/$_CLI_BIN" ]]; then
+    if is_real_nemoclaw_cli "$npm_bin/$_CLI_BIN" "$_CLI_BIN"; then
+      printf "%s" "$npm_bin/$_CLI_BIN"
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+installed_openshell_version() {
+  command_exists openshell || return 1
+  openshell --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+}
+
+truthy_env() {
+  case "${1:-}" in
+    1 | true | TRUE | yes | YES | y | Y) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+legacy_openshell_gateway_upgrade_needed() {
+  local version="$1"
+  [[ -n "$version" ]] && ! version_gte "$version" "0.0.37"
+}
+
+existing_cli_supports_backup_all() {
+  local cli_runner="$1" help_output
+  [[ -n "$cli_runner" ]] || return 1
+  help_output="$("$cli_runner" --help 2>/dev/null || true)"
+  grep -Eq '(^|[[:space:]])backup-all([[:space:]]|$)' <<<"$help_output"
+}
+
+installer_non_interactive() {
+  [[ "${NON_INTERACTIVE:-}" == "1" || "${NEMOCLAW_NON_INTERACTIVE:-}" == "1" ]]
+}
+
+print_openshell_upgrade_manual_commands() {
+  cat <<EOF
+  Manual upgrade path:
+    ${_CLI_BIN} backup-all
+    openshell gateway destroy -g nemoclaw || openshell gateway destroy
+    curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
+    ${_CLI_BIN} upgrade-sandboxes --check
+
+  Use NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 to allow the installer
+  to run the backup, gateway retirement, and restore preparation automatically.
+EOF
+}
+
+abort_unsupported_automatic_openshell_upgrade() {
+  local old_openshell_version="$1"
+  warn "Existing sandbox sessions use OpenShell ${old_openshell_version}, but the current ${_CLI_BIN} CLI does not support '${_CLI_BIN} backup-all'."
+  cat <<EOF
+  The automatic legacy OpenShell gateway upgrade is disabled for this install.
+  Upgrade from a ${_CLI_BIN} version that supports '${_CLI_BIN} backup-all', or
+  manually preserve sandbox state before retiring the old OpenShell gateway.
+
+EOF
+  print_openshell_upgrade_manual_commands
+  error "Aborting before OpenShell gateway upgrade. Existing gateway and sandboxes were left unchanged."
+}
+
+confirm_experimental_openshell_gateway_upgrade() {
+  local sandbox_count="$1" old_openshell_version="$2"
+
+  if truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
+    info "Using manually prepared OpenShell gateway upgrade state."
+    export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
+    return 1
+  fi
+
+  if truthy_env "${NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE:-}"; then
+    info "Accepted experimental OpenShell gateway upgrade for ${sandbox_count} existing sandbox(es)."
+    return 0
+  fi
+
+  cat <<EOF
+
+  Existing NemoClaw sandbox state uses OpenShell ${old_openshell_version}.
+  This release upgrades OpenShell to the current supported version, which uses a
+  different gateway layout than pre-0.0.37 gateways.
+
+  NemoClaw can run the new automatic upgrade path now:
+    1. back up registered sandbox state
+    2. retire the old OpenShell gateway while the old CLI is still available
+    3. install the current supported OpenShell
+    4. recreate and restore the registered sandbox during onboarding
+
+  This upgrade path is new. Durable workspace and agent configuration state
+  should be preserved, but running processes may be interrupted.
+
+EOF
+  print_openshell_upgrade_manual_commands
+  printf "\n"
+
+  if installer_non_interactive; then
+    error "OpenShell gateway upgrade requires explicit opt-in. Set NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 to continue automatically, or run the manual commands above."
+  fi
+
+  local answer=""
+  if [ -t 0 ]; then
+    printf "  Continue with automatic OpenShell gateway upgrade? [Y/n]: "
+    IFS= read -r answer || answer=""
+  elif { exec 3</dev/tty; } 2>/dev/null; then
+    info "Installer stdin is piped; prompting for OpenShell gateway upgrade on /dev/tty..."
+    printf "  Continue with automatic OpenShell gateway upgrade? [Y/n]: "
+    IFS= read -r answer <&3 || answer=""
+    exec 3<&-
+  else
+    error "OpenShell gateway upgrade requires a TTY prompt. Set NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1 to continue automatically, or run the manual commands above."
+  fi
+
+  answer="$(printf "%s" "$answer" | tr '[:upper:]' '[:lower:]')"
+  case "$answer" in
+    "" | y | yes)
+      info "Accepted experimental OpenShell gateway upgrade."
+      return 0
+      ;;
+    *)
+      error "Aborting before OpenShell gateway upgrade. Existing gateway and sandboxes were left unchanged."
+      ;;
+  esac
+}
+
+preinstall_backup_and_retire_legacy_gateway() {
+  local reg_file="${HOME}/.nemoclaw/sandboxes.json"
+  [ -f "$reg_file" ] || return 0
+  command_exists openshell || return 0
+
+  local sandbox_count
+  sandbox_count="$(registered_sandbox_count)"
+  _PREEXISTING_SANDBOX_COUNT="$sandbox_count"
+  [ "$sandbox_count" -gt 0 ] 2>/dev/null || return 0
+
+  if [[ "${NEMOCLAW_SINGLE_SESSION:-}" == "1" ]]; then
+    error "Aborting — NEMOCLAW_SINGLE_SESSION is set. Destroy existing sessions with '${_CLI_BIN} <name> destroy' before reinstalling."
+  fi
+
+  local old_openshell_version=""
+  old_openshell_version="$(installed_openshell_version || true)"
+  local old_cli_runner=""
+  if ! old_cli_runner="$(resolve_existing_cli_runner)"; then
+    if legacy_openshell_gateway_upgrade_needed "$old_openshell_version" && truthy_env "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}"; then
+      info "Using manually prepared OpenShell gateway upgrade state."
+      export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
+      return 0
+    fi
+    if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
+      warn "Existing sandbox sessions use OpenShell ${old_openshell_version}, but no usable ${_CLI_BIN} CLI was found for pre-upgrade backup."
+      print_openshell_upgrade_manual_commands
+      error "Aborting before OpenShell gateway upgrade. Restore a working ${_CLI_BIN} CLI or manually back up and retire the old gateway first."
+    fi
+    warn "Existing sandbox sessions detected, but no usable ${_CLI_BIN} CLI was found for pre-upgrade backup."
+    return 0
+  fi
+
+  if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
+    if ! existing_cli_supports_backup_all "$old_cli_runner"; then
+      abort_unsupported_automatic_openshell_upgrade "$old_openshell_version"
+    fi
+    if ! confirm_experimental_openshell_gateway_upgrade "$sandbox_count" "$old_openshell_version"; then
+      return 0
+    fi
+  fi
+
+  info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
+  if ! "$old_cli_runner" backup-all 2>&1; then
+    if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
+      error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
+    fi
+    error "Pre-upgrade backup failed. Fix the OpenShell gateway state, rerun '${_CLI_BIN} backup-all', then rerun the installer."
+  fi
+  export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
+
+  # Current OpenShell builds are not compatible with pre-0.0.37 gateway state,
+  # and those CLIs no longer have lifecycle verbs for destroying that old gateway.
+  # Retire the old gateway while the old CLI can still do it, after backup.
+  if [[ -n "$old_openshell_version" ]] && ! version_gte "$old_openshell_version" "0.0.37"; then
+    info "Retiring OpenShell ${old_openshell_version} gateway before installing current OpenShell…"
+    openshell gateway destroy -g nemoclaw >/dev/null 2>&1 \
+      || openshell gateway destroy >/dev/null 2>&1 \
+      || warn "Could not destroy the legacy OpenShell gateway before upgrade; onboarding will clean up stale runtime state."
+  fi
 }
 
 # ---------------------------------------------------------------------------
 # 5. Onboard
 # ---------------------------------------------------------------------------
+repair_installer_nvidia_cdi_spec() {
+  local preflight_module="$1"
+  local spec_path=""
+
+  spec_path="$(
+    # shellcheck disable=SC2016
+    node -e '
+      const preflightPath = process.argv[1];
+      try {
+        const { assessHost, getNvidiaCdiSpecPath } = require(preflightPath);
+        const host = assessHost();
+        if (host && host.cdiNvidiaGpuSpecMissing) {
+          process.stdout.write(getNvidiaCdiSpecPath(host));
+        }
+      } catch {
+        process.exit(0);
+      }
+    ' "$preflight_module" 2>/dev/null || true
+  )"
+
+  if [[ -z "$spec_path" ]]; then
+    return 0
+  fi
+  if ! command_exists nvidia-ctk; then
+    return 0
+  fi
+
+  local spec_dir="${spec_path%/*}"
+  if [[ -z "$spec_dir" || "$spec_dir" == "$spec_path" ]]; then
+    spec_dir="/etc/cdi"
+    spec_path="${spec_dir}/nvidia.yaml"
+  fi
+
+  local sudo_cmd=()
+  info "Generating missing NVIDIA CDI device spec at ${spec_path}."
+  if [[ "$(id -u)" -ne 0 ]]; then
+    sudo_cmd=(sudo)
+    info "This host is missing NVIDIA CDI device specs. The next steps use sudo to repair them."
+    if ! sudo -v; then
+      warn "Could not obtain sudo credentials for NVIDIA CDI device spec generation."
+      return 0
+    fi
+  fi
+
+  local cdi_list_output=""
+  if command_exists systemctl; then
+    info "Trying NVIDIA CDI refresh service (auto-generates GPU CDI specs)."
+    if "${sudo_cmd[@]}" systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service >/dev/null 2>&1 \
+      && cdi_list_output="$(nvidia-ctk cdi list 2>/dev/null)" \
+      && grep -q 'nvidia\.com/gpu' <<<"$cdi_list_output"; then
+      ok "Enabled NVIDIA CDI refresh service and generated NVIDIA CDI device spec."
+      return 0
+    fi
+    warn "NVIDIA CDI refresh service did not produce nvidia.com/gpu; falling back to direct generation."
+  fi
+
+  local cdi_generate_output=""
+  if "${sudo_cmd[@]}" mkdir -p "$spec_dir" && cdi_generate_output="$("${sudo_cmd[@]}" nvidia-ctk cdi generate --output="$spec_path" 2>&1)"; then
+    if cdi_list_output="$(nvidia-ctk cdi list 2>/dev/null)"; then
+      if grep -q 'nvidia\.com/gpu' <<<"$cdi_list_output"; then
+        ok "Generated NVIDIA CDI device spec."
+      else
+        warn "Generated NVIDIA CDI device spec, but nvidia-ctk cdi list did not show nvidia.com/gpu."
+      fi
+    else
+      ok "Generated NVIDIA CDI device spec."
+      warn "Could not verify it with nvidia-ctk cdi list."
+    fi
+  else
+    warn "Could not generate the NVIDIA CDI device spec automatically."
+    if [[ -n "$cdi_generate_output" ]]; then
+      warn "nvidia-ctk cdi generate output:"
+      printf "%s\n" "$cdi_generate_output" | tail -40 | sed 's/^/  /'
+    fi
+  fi
+}
+
 run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
   if ! command_exists node || [[ ! -f "$preflight_module" ]]; then
     return 0
   fi
+
+  repair_installer_nvidia_cdi_spec "$preflight_module"
 
   local output status
   if output="$(
@@ -1866,6 +2187,7 @@ maybe_offer_express_install() {
       info "Using express install for ${platform}."
       NON_INTERACTIVE=1
       export NEMOCLAW_NON_INTERACTIVE=1
+      export NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
       export NEMOCLAW_YES=1
       export NEMOCLAW_POLICY_MODE=suggested
       case "$platform" in
@@ -1958,14 +2280,10 @@ main() {
   # `nemoclaw onboard` (the install-ollama / install-vllm branches).
   # install.sh stays focused on dependency setup.
   fix_npm_permissions
+  preinstall_backup_and_retire_legacy_gateway
   install_nemoclaw
   verify_nemoclaw
 
-  # Pre-upgrade safety: back up all sandbox state before onboarding (which may
-  # upgrade OpenShell). If the upgrade destroys sandbox contents, the backups
-  # in ~/.nemoclaw/rebuild-backups/ let the user recover via `nemoclaw <name> rebuild`.
-  # Check the registry file directly to avoid shelling out to nemoclaw (which
-  # may be a stub in test environments).
   # Gate the onboarding-adjacent steps on the absolute CLI path so a stale
   # shell PATH cache no longer suppresses auto-onboarding (#3276). Falls
   # back to PATH lookup as a safety net for unusual environments.
@@ -1974,23 +2292,6 @@ main() {
     _cli_runner="$_CLI_PATH"
   elif command_exists "$_CLI_BIN"; then
     _cli_runner="$_CLI_BIN"
-  fi
-
-  local _reg_file="${HOME}/.nemoclaw/sandboxes.json"
-  if [ -f "$_reg_file" ] && [ -n "$_cli_runner" ] && command_exists openshell; then
-    local _has_sandboxes
-    _has_sandboxes="$(python3 -c "
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    print(len(d.get('sandboxes', {})))
-except Exception:
-    print(0)
-" "$_reg_file" 2>/dev/null || echo 0)"
-    if [ "$_has_sandboxes" -gt 0 ]; then
-      info "Backing up $_has_sandboxes sandbox(es) before upgrade…"
-      "$_cli_runner" backup-all 2>&1 || warn "Pre-upgrade backup failed (non-fatal). Continuing."
-    fi
   fi
 
   step 3 "Onboarding"
@@ -2017,7 +2318,7 @@ except Exception:
       ONBOARD_RAN=true
       # After onboard, check for stale sandboxes that need rebuilding (#1904).
       # Uses --auto so it runs non-interactively in piped/CI contexts.
-      if [ "${_has_sandboxes:-0}" -gt 0 ] 2>/dev/null && [ -n "$_cli_runner" ]; then
+      if [ "${_PREEXISTING_SANDBOX_COUNT:-0}" -gt 0 ] 2>/dev/null && [ -n "$_cli_runner" ]; then
         info "Checking for sandboxes that need upgrading…"
         "$_cli_runner" upgrade-sandboxes --auto 2>&1 || warn "Sandbox upgrade check failed (non-fatal)."
       fi

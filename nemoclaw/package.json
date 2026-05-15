@@ -9,11 +9,19 @@
   "openclaw": {
     "extensions": [
       "./dist/index.js"
-    ]
+    ],
+    "compat": {
+      "pluginApi": ">=2026.5.10-beta.1",
+      "minGatewayVersion": "2026.5.10-beta.1"
+    },
+    "build": {
+      "openclawVersion": "2026.5.10-beta.1"
+    }
   },
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
+    "test": "vitest run --config vitest.config.ts",
     "lint": "biome lint src",
     "lint:fix": "biome lint --write src",
     "format": "biome format --write src",

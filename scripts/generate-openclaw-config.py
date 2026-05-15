@@ -12,6 +12,7 @@ Usage:
 
 Environment variables:
     CHAT_UI_URL                         Dashboard URL (default: http://127.0.0.1:18789)
+    NEMOCLAW_DASHBOARD_PORT            Dashboard/gateway port (default: 18789)
     NEMOCLAW_MODEL                      Model identifier
     NEMOCLAW_PROVIDER_KEY               Provider key for model config
     NEMOCLAW_PRIMARY_MODEL_REF          Primary model reference
@@ -29,6 +30,7 @@ Environment variables:
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map
     NEMOCLAW_DISCORD_GUILDS_B64         Base64-encoded Discord guild config
     NEMOCLAW_TELEGRAM_CONFIG_B64        Base64-encoded Telegram config (e.g. {"requireMention": true})
+    NEMOCLAW_WECHAT_CONFIG_B64          Base64-encoded WeChat config (e.g. {"accountId": "...", "baseUrl": "...", "userId": "..."})
     NEMOCLAW_DISABLE_DEVICE_AUTH        Set to "1" to force-disable device auth
     NEMOCLAW_PROXY_HOST                 Egress proxy host (default: 10.200.0.1)
     NEMOCLAW_PROXY_PORT                 Egress proxy port (default: 3128)
@@ -50,6 +52,9 @@ MODEL_SETUP_EFFECT_KEYS = {
     "openclaw": {"openclawCompat", "openclawPlugins"},
     "hermes": {"hermesCompat"},
 }
+DEFAULT_DASHBOARD_PORT = 18789
+MIN_DASHBOARD_PORT = 1024
+MAX_DASHBOARD_PORT = 65535
 
 
 def _coerce_positive_int(env: dict, name: str, default: int) -> int:
@@ -78,6 +83,41 @@ def is_loopback(hostname: str) -> bool:
     if normalized == "localhost" or normalized == "::1":
         return True
     return bool(re.match(r"^127(?:\.\d{1,3}){3}$", normalized))
+
+
+def _normalize_url_for_parse(raw_url: str) -> str:
+    if raw_url and not re.match(r"^[a-z][a-z0-9+.-]*://", raw_url, re.IGNORECASE):
+        return f"http://{raw_url}"
+    return raw_url
+
+
+def _validate_dashboard_port(raw: str, env_name: str) -> int:
+    stripped = raw.strip()
+    if not re.match(r"^\d+$", stripped):
+        raise ValueError(f"{env_name} must be an integer between 1024 and 65535")
+    value = int(stripped)
+    if value < MIN_DASHBOARD_PORT or value > MAX_DASHBOARD_PORT:
+        raise ValueError(f"{env_name} must be an integer between 1024 and 65535")
+    return value
+
+
+def _chat_ui_url_port(chat_ui_url: str) -> int | None:
+    try:
+        port = urlparse(_normalize_url_for_parse(chat_ui_url)).port
+    except ValueError:
+        return None
+    if port is None:
+        return None
+    if port < MIN_DASHBOARD_PORT or port > MAX_DASHBOARD_PORT:
+        return None
+    return port
+
+
+def _resolve_gateway_port(env: dict, chat_ui_url: str) -> int:
+    raw_dashboard_port = env.get("NEMOCLAW_DASHBOARD_PORT") or ""
+    if raw_dashboard_port.strip():
+        return _validate_dashboard_port(raw_dashboard_port, "NEMOCLAW_DASHBOARD_PORT")
+    return _chat_ui_url_port(chat_ui_url) or DEFAULT_DASHBOARD_PORT
 
 
 def _registry_roots(env: dict) -> list[Path]:
@@ -318,7 +358,14 @@ def build_config(env: dict | None = None) -> dict:
     proxy_port = env.get("NEMOCLAW_PROXY_PORT") or "3128"
     proxy_url = f"http://{proxy_host}:{proxy_port}"
     model = env["NEMOCLAW_MODEL"]
-    chat_ui_url = env.get("CHAT_UI_URL") or "http://127.0.0.1:18789"
+    raw_chat_ui_url = env.get("CHAT_UI_URL") or ""
+    chat_ui_url = raw_chat_ui_url or f"http://127.0.0.1:{DEFAULT_DASHBOARD_PORT}"
+    gateway_port = _resolve_gateway_port(env, chat_ui_url)
+    if (env.get("NEMOCLAW_DASHBOARD_PORT") or "").strip() and (
+        not raw_chat_ui_url
+        or raw_chat_ui_url == f"http://127.0.0.1:{DEFAULT_DASHBOARD_PORT}"
+    ):
+        chat_ui_url = f"http://127.0.0.1:{gateway_port}"
     provider_key = env["NEMOCLAW_PROVIDER_KEY"]
     primary_model_ref = env["NEMOCLAW_PRIMARY_MODEL_REF"]
     inference_base_url = env["NEMOCLAW_INFERENCE_BASE_URL"]
@@ -396,8 +443,18 @@ def build_config(env: dict | None = None) -> dict:
             env.get("NEMOCLAW_TELEGRAM_CONFIG_B64", "e30=") or "e30="
         ).decode("utf-8")
     )
+    # NEMOCLAW_WECHAT_CONFIG_B64 is intentionally not decoded here. The
+    # WeChat plugin's per-account state (accountId/baseUrl/userId) is read by
+    # seed-wechat-accounts.py, which the Dockerfile invokes separately after
+    # `openclaw plugins install` registers the openclaw-weixin channel id.
+    # Decoding it here too would create a misleading second consumer that
+    # nothing acts on.
 
-    _token_keys = {"discord": "token", "telegram": "botToken", "slack": "botToken"}
+    _token_keys = {
+        "discord": "token",
+        "telegram": "botToken",
+        "slack": "botToken",
+    }
     _env_keys = {
         "discord": "DISCORD_BOT_TOKEN",
         "telegram": "TELEGRAM_BOT_TOKEN",
@@ -407,9 +464,8 @@ def build_config(env: dict | None = None) -> dict:
     # Slack's Bolt SDK validates token shape at App construction (^xoxb-…$ /
     # ^xapp-…$) before any HTTP call leaves the process, so the canonical
     # openshell:resolve:env:VAR placeholder is rejected synchronously. Emit a
-    # Bolt-regex-compatible placeholder instead; the slack-token-rewriter
-    # Node preload translates it to canonical form on outbound HTTP, where
-    # OpenShell's L7 proxy substitutes the real token from env.
+    # Bolt-regex-compatible placeholder instead; OpenShell resolves the
+    # provider-shaped alias directly at the egress boundary.
     def _placeholder(channel: str, env_key: str) -> str:
         if channel == "slack" and env_key == "SLACK_BOT_TOKEN":
             return f"xoxb-OPENSHELL-RESOLVE-ENV-{env_key}"
@@ -428,7 +484,7 @@ def build_config(env: dict | None = None) -> dict:
         }
         if ch == "slack":
             account["appToken"] = _placeholder(ch, "SLACK_APP_TOKEN")
-        if ch in ("telegram", "discord"):
+        if ch == "telegram":
             account["proxy"] = proxy_url
         if ch == "telegram":
             account["groupPolicy"] = "open"
@@ -436,6 +492,24 @@ def build_config(env: dict | None = None) -> dict:
             account["dmPolicy"] = "allowlist"
             account["allowFrom"] = _allowed_ids[ch]
         _ch_cfg[ch] = {"accounts": {"default": account}}
+
+    # WeChat (openclaw-weixin) is NOT added to channels.* here — writing
+    # channels.openclaw-weixin upfront makes `openclaw plugins install` fail
+    # with "unknown channel id: openclaw-weixin" because the plugin registry
+    # hasn't seen the channel yet (chicken-and-egg). The block is written
+    # AFTER `openclaw plugins install` runs, by scripts/seed-wechat-accounts.py,
+    # which adds:
+    #   channels.openclaw-weixin.channelConfigUpdatedAt = <ISO timestamp>
+    #   channels.openclaw-weixin.accounts.<accountId>.enabled = true
+    # The upstream plugin's auth/accounts.ts reads that block at boot to
+    # decide which accounts to start; without enabled=true the bridge no-ops.
+    #
+    # Per-account secrets (token, baseUrl, userId) still live in the plugin's
+    # own state dir at <stateDir>/openclaw-weixin/accounts/<accountId>.json
+    # (also seeded by seed-wechat-accounts.py). DM allowlist uses the
+    # framework allowFrom file at credentials/openclaw-weixin-{accountId}-
+    # allowFrom.json — not the openclaw.json accounts.<id>.allowFrom mechanism
+    # that telegram/discord/slack use.
 
     if "discord" in _ch_cfg and _discord_guilds:
         _ch_cfg["discord"].update(
@@ -447,15 +521,14 @@ def build_config(env: dict | None = None) -> dict:
 
     # Normalize schemeless URLs before parsing — urlparse("remote-host:18789")
     # misclassifies hostname as scheme. Mirrors ensureScheme() in dashboard-contract.ts.
-    _normalized_url = chat_ui_url
-    if chat_ui_url and not re.match(r"^[a-z][a-z0-9+.-]*://", chat_ui_url, re.IGNORECASE):
-        _normalized_url = f"http://{chat_ui_url}"
+    _normalized_url = _normalize_url_for_parse(chat_ui_url)
 
     parsed = urlparse(_normalized_url)
+    loopback_origin = f"http://127.0.0.1:{gateway_port}"
     chat_origin = (
         f"{parsed.scheme}://{parsed.netloc}"
         if parsed.scheme and parsed.netloc
-        else "http://127.0.0.1:18789"
+        else loopback_origin
     )
     # When onboard injects an internal port (e.g. :18789) into a URL that the
     # user provided without an explicit port, the browser origin from a reverse
@@ -471,9 +544,7 @@ def build_config(env: dict | None = None) -> dict:
         portless_origin = f"{parsed.scheme}://{host_part}"
     else:
         portless_origin = None
-    origins = list(dict.fromkeys(
-        filter(None, ["http://127.0.0.1:18789", chat_origin, portless_origin])
-    ))
+    origins = list(dict.fromkeys(filter(None, [loopback_origin, chat_origin, portless_origin])))
 
     # Auto-disable device auth when CHAT_UI_URL is non-loopback — terminal-based
     # pairing is impossible when the user only has web access (Brev Launchable,
@@ -519,6 +590,12 @@ def build_config(env: dict | None = None) -> dict:
         "acpx": {"enabled": False},
         "bonjour": {"enabled": False},
         "qqbot": {"enabled": False},
+        # The @tencent-weixin/openclaw-weixin plugin is pre-installed in the
+        # base image (Dockerfile.base) so onboarding does not depend on the
+        # public npm registry for it. Enable the entry unconditionally — the
+        # bridge no-ops at startup unless seed-wechat-accounts.py has also
+        # registered an accountId under channels.openclaw-weixin.accounts.
+        "openclaw-weixin": {"enabled": True},
     }
     _bundled_provider_plugins = {
         "amazon-bedrock": {"amazon-bedrock", "bedrock"},
@@ -597,6 +674,7 @@ def build_config(env: dict | None = None) -> dict:
         "plugins": plugins,
         "gateway": {
             "mode": "local",
+            "port": gateway_port,
             "controlUi": {
                 "allowInsecureAuth": allow_insecure,
                 "dangerouslyDisableDeviceAuth": disable_device_auth,
@@ -630,6 +708,10 @@ def main() -> None:
     with open(path, "w") as f:
         json.dump(config, f, indent=2)
     os.chmod(path, 0o600)
+    # NOTE: seed-wechat-accounts.py is invoked separately from the Dockerfile
+    # AFTER `openclaw plugins install`. Calling it here would write
+    # channels.openclaw-weixin before the plugin registers its channel id,
+    # which makes the install fail with "unknown channel id: openclaw-weixin".
 
 
 if __name__ == "__main__":

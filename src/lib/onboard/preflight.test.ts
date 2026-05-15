@@ -10,6 +10,7 @@ import {
   checkPortAvailable,
   getDockerBridgeGatewayIp,
   getMemoryInfo,
+  getNvidiaCdiSpecPath,
   ensureSwap,
   isDockerUnderProvisioned,
   MIN_RECOMMENDED_DOCKER_CPUS,
@@ -43,6 +44,21 @@ describe("checkPortAvailable", () => {
     });
 
     expect(probedPort).toBe(18789);
+    expect(result).toEqual({ ok: true });
+  });
+
+  it("passes the requested host to the fallback probe", async () => {
+    let probedHost: string | null = null;
+    const result = await checkPortAvailable(8990, {
+      lsofOutput: "",
+      host: "0.0.0.0",
+      probeImpl: async (_port, host) => {
+        probedHost = host;
+        return { ok: true };
+      },
+    });
+
+    expect(probedHost).toBe("0.0.0.0");
     expect(result).toEqual({ ok: true });
   });
 
@@ -160,6 +176,20 @@ describe("probePortAvailability", () => {
     const port = srv.address().port;
     try {
       const result = await probePortAvailability(port, {});
+      expect(result.ok).toBe(false);
+      expect(result.reason).toContain("EADDRINUSE");
+    } finally {
+      await new Promise<void>((resolve) => srv.close(resolve));
+    }
+  });
+
+  it("uses the requested host for real net probes", async () => {
+    const net = require("node:net");
+    const srv = net.createServer();
+    await new Promise<void>((resolve) => srv.listen(0, "0.0.0.0", resolve));
+    const port = srv.address().port;
+    try {
+      const result = await probePortAvailability(port, { host: "0.0.0.0" });
       expect(result.ok).toBe(false);
       expect(result.reason).toContain("EADDRINUSE");
     } finally {
@@ -694,6 +724,14 @@ describe("assessHost — CDI device-spec gap (#3152)", () => {
   });
 });
 
+describe("getNvidiaCdiSpecPath", () => {
+  it("builds the default NVIDIA CDI spec path from Docker CDI dirs", () => {
+    expect(getNvidiaCdiSpecPath({ dockerCdiSpecDirs: ["/etc/cdi/", "/var/run/cdi"] })).toBe(
+      "/etc/cdi/nvidia.yaml",
+    );
+  });
+});
+
 describe("planHostRemediation", () => {
   it("recommends starting docker when installed but unreachable and service inactive", () => {
     const actions = planHostRemediation({
@@ -719,6 +757,7 @@ describe("planHostRemediation", () => {
       hasNvidiaGpu: false,
       dockerCdiSpecDirs: [],
       cdiNvidiaGpuSpecMissing: false,
+      nvidiaContainerToolkitInstalled: true,
       notes: [],
     });
 
@@ -751,6 +790,7 @@ describe("planHostRemediation", () => {
       hasNvidiaGpu: false,
       dockerCdiSpecDirs: [],
       cdiNvidiaGpuSpecMissing: false,
+      nvidiaContainerToolkitInstalled: true,
       notes: [],
     });
 
@@ -787,6 +827,7 @@ describe("planHostRemediation", () => {
       hasNvidiaGpu: false,
       dockerCdiSpecDirs: [],
       cdiNvidiaGpuSpecMissing: false,
+      nvidiaContainerToolkitInstalled: true,
       notes: [],
     });
 
@@ -821,6 +862,7 @@ describe("planHostRemediation", () => {
       hasNvidiaGpu: false,
       dockerCdiSpecDirs: [],
       cdiNvidiaGpuSpecMissing: false,
+      nvidiaContainerToolkitInstalled: true,
       notes: [],
     });
 
@@ -852,6 +894,7 @@ describe("planHostRemediation", () => {
       hasNvidiaGpu: false,
       dockerCdiSpecDirs: [],
       cdiNvidiaGpuSpecMissing: false,
+      nvidiaContainerToolkitInstalled: true,
       notes: [],
     });
 
@@ -882,6 +925,7 @@ describe("planHostRemediation", () => {
       hasNvidiaGpu: true,
       dockerCdiSpecDirs: ["/etc/cdi", "/var/run/cdi"],
       cdiNvidiaGpuSpecMissing: true,
+      nvidiaContainerToolkitInstalled: true,
       notes: [],
     });
 
@@ -891,12 +935,107 @@ describe("planHostRemediation", () => {
     expect(action).toBeTruthy();
     expect(action?.kind).toBe("sudo");
     expect(action?.blocking).toBe(true);
-    expect(action?.commands[0]).toBe(
+    expect(action?.commands[0]).toBe("sudo mkdir -p /etc/cdi");
+    expect(action?.commands[1]).toBe(
       "sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml",
     );
-    expect(action?.commands[1]).toContain("nvidia-ctk cdi list");
-    expect(action?.commands[2]).toContain("nemoclaw onboard");
+    expect(action?.commands[2]).toContain("nvidia-ctk cdi list");
+    expect(action?.commands[3]).toContain("nemoclaw onboard");
     expect(action?.reason).toContain("nvidia.com/gpu");
+  });
+
+  it("emits an install_nvidia_container_toolkit action with apt bootstrap when nvidia-ctk is missing on apt hosts", () => {
+    const actions = planHostRemediation({
+      platform: "linux",
+      isWsl: false,
+      runtime: "docker",
+      packageManager: "apt",
+      systemctlAvailable: true,
+      dockerServiceActive: true,
+      dockerServiceEnabled: true,
+      dockerInstalled: true,
+      dockerRunning: true,
+      dockerReachable: true,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "v2",
+      dockerDefaultCgroupnsMode: "unknown",
+      isContainerRuntimeUnderProvisioned: false,
+      hasNestedOverlayConflict: false,
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: true,
+      dockerCdiSpecDirs: ["/etc/cdi", "/var/run/cdi"],
+      cdiNvidiaGpuSpecMissing: true,
+      nvidiaContainerToolkitInstalled: false,
+      notes: [],
+    });
+
+    expect(actions.find((entry) => entry.id === "generate_nvidia_cdi_spec")).toBeUndefined();
+    const action = actions.find((entry) => entry.id === "install_nvidia_container_toolkit");
+    expect(action).toBeTruthy();
+    expect(action?.kind).toBe("sudo");
+    expect(action?.blocking).toBe(true);
+    expect(action?.title).toContain("Install NVIDIA Container Toolkit");
+    expect(action?.reason).toContain("nvidia-container-toolkit");
+    expect(action?.commands.some((c) => c.includes("nvidia-container-toolkit-keyring.gpg"))).toBe(
+      true,
+    );
+    expect(action?.commands.some((c) => c === "sudo apt-get install -y nvidia-container-toolkit")).toBe(
+      true,
+    );
+    expect(
+      action?.commands.some((c) => c.startsWith("sudo nvidia-ctk cdi generate --output=")),
+    ).toBe(true);
+    const ctkInstallIndex =
+      action?.commands.findIndex((c) => c === "sudo apt-get install -y nvidia-container-toolkit") ??
+      -1;
+    const ctkGenerateIndex =
+      action?.commands.findIndex((c) => c.startsWith("sudo nvidia-ctk cdi generate --output=")) ??
+      -1;
+    expect(ctkInstallIndex).toBeGreaterThanOrEqual(0);
+    expect(ctkGenerateIndex).toBeGreaterThan(ctkInstallIndex);
+  });
+
+  it("emits an install_nvidia_container_toolkit action with a docs pointer when nvidia-ctk is missing on unknown package managers", () => {
+    const actions = planHostRemediation({
+      platform: "linux",
+      isWsl: false,
+      runtime: "docker",
+      packageManager: "unknown",
+      systemctlAvailable: true,
+      dockerServiceActive: true,
+      dockerServiceEnabled: true,
+      dockerInstalled: true,
+      dockerRunning: true,
+      dockerReachable: true,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "v2",
+      dockerDefaultCgroupnsMode: "unknown",
+      isContainerRuntimeUnderProvisioned: false,
+      hasNestedOverlayConflict: false,
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: true,
+      dockerCdiSpecDirs: ["/etc/cdi", "/var/run/cdi"],
+      cdiNvidiaGpuSpecMissing: true,
+      nvidiaContainerToolkitInstalled: false,
+      notes: [],
+    });
+
+    const action = actions.find((entry) => entry.id === "install_nvidia_container_toolkit");
+    expect(action).toBeTruthy();
+    expect(
+      action?.commands.some((c) =>
+        c.includes("docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide"),
+      ),
+    ).toBe(true);
+    expect(
+      action?.commands.some((c) => c.startsWith("sudo nvidia-ctk cdi generate --output=")),
+    ).toBe(true);
   });
 });
 

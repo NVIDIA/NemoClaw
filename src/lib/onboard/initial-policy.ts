@@ -17,72 +17,116 @@ const CREATE_TIME_POLICY_PRESETS_BY_CHANNEL: Record<string, string[]> = {
   slack: ["slack"],
 };
 
-const PROC_COMM_READ_WRITE_PATH = "/proc/self/task/*/comm";
+const PROC_PATH = "/proc";
+const PROC_COMM_READ_WRITE_PATHS = ["/proc/self/comm", "/proc/self/task/*/comm"];
 
-export function buildDirectGpuPolicyYaml(basePolicy: string): string {
+function isProcEntryOwnedByOpenShell(entry: string): boolean {
+  return entry === PROC_PATH || PROC_COMM_READ_WRITE_PATHS.includes(entry);
+}
+
+type DirectGpuPolicyOptions = {
+  procReadWrite?: boolean;
+};
+
+export function buildDirectGpuPolicyYaml(
+  basePolicy: string,
+  options: DirectGpuPolicyOptions = {},
+): string {
   const parsed = YAML.parse(basePolicy);
   if (!parsed || typeof parsed !== "object") {
     throw new Error("Cannot prepare direct GPU sandbox policy; base policy is not a YAML mapping.");
   }
   parsed.filesystem_policy = parsed.filesystem_policy || {};
   const fsPolicy = parsed.filesystem_policy;
-  fsPolicy.read_only = Array.isArray(fsPolicy.read_only)
+  // OpenShell adds /proc as read-write only after GPU devices are present.
+  // Remove entries that would block that enrichment or be treated as literal paths.
+  const readOnly = Array.isArray(fsPolicy.read_only)
     ? fsPolicy.read_only.map((entry: unknown) => String(entry))
     : [];
-  if (!fsPolicy.read_only.includes("/proc")) {
-    fsPolicy.read_only.push("/proc");
-  }
+  fsPolicy.read_only = readOnly.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry));
   const readWrite = Array.isArray(fsPolicy.read_write)
     ? fsPolicy.read_write.map((entry: unknown) => String(entry))
     : [];
-  fsPolicy.read_write = readWrite.filter((entry: string) => entry !== "/proc");
-  if (!fsPolicy.read_write.includes(PROC_COMM_READ_WRITE_PATH)) {
-    fsPolicy.read_write.push(PROC_COMM_READ_WRITE_PATH);
+  fsPolicy.read_write = readWrite.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry));
+  if (options.procReadWrite && !fsPolicy.read_write.includes(PROC_PATH)) {
+    // Linux Docker-driver GPU patching recreates the container with GPU flags
+    // after `openshell sandbox create`, so OpenShell never sees `--gpu` and
+    // cannot add its native /proc GPU enrichment. Mirror that enrichment here
+    // for the patched path; without it Landlock denies the NVIDIA runtime's
+    // /proc/<pid>/task/<tid>/comm write even though Docker GPU access works.
+    fsPolicy.read_write.push(PROC_PATH);
   }
   return YAML.stringify(parsed);
 }
 
-const PROC_COMM_WRITE_PROBE = `
-set -eu
-tid="$(ls /proc/self/task | head -n 1)"
-old="$(cat "/proc/self/task/\${tid}/comm" 2>/dev/null || true)"
-printf nemoclaw-gpu >"/proc/self/task/\${tid}/comm"
-if [ -n "$old" ]; then printf "%s" "$old" >"/proc/self/task/\${tid}/comm" || true; fi
-`;
+const PROC_COMM_WRITE_PROBE = [
+  "set -eu;",
+  'comm="/proc/self/comm";',
+  'old="$(cat "$comm" 2>/dev/null || true)";',
+  'printf nemoclaw-gpu >"$comm";',
+  'if [ -n "$old" ]; then',
+  'printf "%s" "$old" >"$comm" || true;',
+  "fi",
+].join(" ");
 
-const CUDA_INIT_PROBE = `
-python3 - <<'PY'
-import ctypes
-lib = ctypes.CDLL("libcuda.so.1")
-rc = lib.cuInit(0)
-print(f"cuInit(0)={rc}")
-raise SystemExit(0 if rc == 0 else 1)
-PY
-`;
+const CUDA_INIT_PROBE = [
+  "python3",
+  "-c",
+  [
+    "'import ctypes;",
+    'lib = ctypes.CDLL("libcuda.so.1");',
+    "rc = lib.cuInit(0);",
+    'print(f"cuInit(0)={rc}");',
+    "raise SystemExit(0 if rc == 0 else 1)'",
+  ].join(" "),
+].join(" ");
+
+const NVIDIA_SMI_OPTIONAL_PROBE = [
+  "set -eu;",
+  "if command -v nvidia-smi >/dev/null 2>&1; then",
+  "exec nvidia-smi;",
+  "fi;",
+  'echo "nvidia-smi not installed; skipping optional visibility check"',
+].join(" ");
+
+export type DirectSandboxGpuProofCommand = {
+  id: string;
+  label: string;
+  args: string[];
+  optional?: boolean;
+};
 
 export function buildDirectSandboxGpuProofCommands(
   sandboxName: string,
-): { label: string; args: string[] }[] {
+): DirectSandboxGpuProofCommand[] {
   return [
     {
-      label: "nvidia-smi",
-      args: ["sandbox", "exec", "-n", sandboxName, "--", "nvidia-smi"],
+      id: "nvidia-smi",
+      label: "nvidia-smi when available",
+      args: ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", NVIDIA_SMI_OPTIONAL_PROBE],
     },
     {
-      label: "/proc/self/task/<tid>/comm write",
+      id: "proc-comm-write",
+      label: "/proc/<pid>/task/<tid>/comm write",
+      optional: true,
       args: ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", PROC_COMM_WRITE_PROBE],
     },
     {
+      id: "cuda-init",
       label: "cuInit(0) via libcuda.so.1",
+      optional: true,
       args: ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", CUDA_INIT_PROBE],
     },
   ];
 }
 
-function prepareDirectGpuSandboxPolicy(basePolicyPath: string): InitialSandboxPolicy {
+function prepareDirectGpuSandboxPolicy(
+  basePolicyPath: string,
+  options: DirectGpuPolicyOptions = {},
+): InitialSandboxPolicy {
   const basePolicy = fs.readFileSync(basePolicyPath, "utf-8");
   const policyPath = secureTempFile("nemoclaw-gpu-policy", ".yaml");
-  fs.writeFileSync(policyPath, buildDirectGpuPolicyYaml(basePolicy), {
+  fs.writeFileSync(policyPath, buildDirectGpuPolicyYaml(basePolicy, options), {
     encoding: "utf-8",
     mode: 0o600,
   });
@@ -120,9 +164,13 @@ export function getNetworkPolicyNames(policyContent: string): Set<string> | null
 export function prepareInitialSandboxCreatePolicy(
   basePolicyPath: string,
   activeMessagingChannels: string[],
-  options: { directGpu?: boolean } = {},
+  options: { directGpu?: boolean; dockerGpuPatch?: boolean } = {},
 ): InitialSandboxPolicy {
-  const directGpuPolicy = options.directGpu ? prepareDirectGpuSandboxPolicy(basePolicyPath) : null;
+  const directGpuPolicy = options.directGpu
+    ? prepareDirectGpuSandboxPolicy(basePolicyPath, {
+        procReadWrite: options.dockerGpuPatch === true,
+      })
+    : null;
   const effectiveBasePolicyPath = directGpuPolicy?.policyPath || basePolicyPath;
   const cleanupFns = directGpuPolicy?.cleanup ? [directGpuPolicy.cleanup] : [];
   const requestedCreateTimePresets = [

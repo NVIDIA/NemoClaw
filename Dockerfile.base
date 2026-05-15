@@ -40,7 +40,6 @@
 #                                      Dockerfile and Dockerfile.base
 #   5. New .openclaw subdirectory   — add mkdir below
 #   6. PyYAML or other pip dep bump — change the version below
-#
 # For ad-hoc rebuilds (e.g., security patch), use workflow_dispatch on
 # the base-image workflow.
 #

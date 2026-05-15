@@ -3,13 +3,14 @@
 # SPDX-License-Identifier: Apache-2.0
 
 # Hermes Discord E2E: onboard --agent hermes with Discord enabled, then verify
-# the Hermes sandbox has the schema and placeholder/token isolation required by
-# NVIDIA/NemoClaw#3032.
+# the Hermes sandbox has the schema, placeholder/token isolation, and native
+# OpenShell WebSocket Gateway rewrite path required by NVIDIA/NemoClaw#3032.
 #
 # Uses a fake Discord token by default. The fake token should never appear in
 # /sandbox/.hermes/config.yaml, /sandbox/.hermes/.env, sandbox env, sandbox
 # process args, or sandbox filesystem. The sandbox should hold only the
-# OpenShell resolver placeholder.
+# OpenShell resolver placeholder. Gateway proof uses a hermetic fake Discord
+# Gateway on the host, not a local in-sandbox facade or live Discord token.
 #
 # Environment variables:
 #   NEMOCLAW_NON_INTERACTIVE=1             - required
@@ -18,6 +19,8 @@
 #   NEMOCLAW_POLICY_TIER=open              - auto-set if not already set
 #   NEMOCLAW_SANDBOX_NAME                  - sandbox name (default: e2e-hermes-discord)
 #   NEMOCLAW_RECREATE_SANDBOX=1            - auto-set
+#   NEMOCLAW_FRESH=1                       - auto-set to discard interrupted onboard sessions
+#   NEMOCLAW_OPENSHELL_BIN                 - optional OpenShell binary under test
 #   NVIDIA_API_KEY                         - required for Hermes onboarding
 #   DISCORD_BOT_TOKEN                      - defaults to a fake token
 #   DISCORD_SERVER_IDS                     - defaults to a fake snowflake
@@ -70,7 +73,7 @@ run_with_timeout() {
 
 dump_hermes_discord_diagnostics() {
   info "--- Hermes Discord sandbox diagnostics ---"
-  if ! command -v openshell >/dev/null 2>&1; then
+  if ! openshell --version >/dev/null 2>&1; then
     info "openshell is not available for sandbox diagnostics"
     return
   fi
@@ -94,10 +97,9 @@ dump_hermes_discord_diagnostics() {
   diag_script+='; echo "== hermes health =="; curl -sf http://localhost:8642/health 2>&1 || true'
   diag_script+='; echo "== hermes-related processes =="'
   # shellcheck disable=SC2016  # script is intentionally evaluated inside the sandbox
-  diag_script+='; for p in /proc/[0-9]*; do cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true); case "$cmd" in *hermes*|*socat*|*nemoclaw-decode-proxy*|*nemoclaw-discord-facade*) echo "$(basename "$p") $cmd" ;; esac; done'
+  diag_script+='; for p in /proc/[0-9]*; do cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true); case "$cmd" in *hermes*|*socat*) echo "$(basename "$p") $cmd" ;; esac; done'
   diag_script+='; echo "== /tmp/nemoclaw-start.log tail =="; tail -n 80 /tmp/nemoclaw-start.log 2>&1 || true'
   diag_script+='; echo "== /tmp/gateway.log tail =="; tail -n 120 /tmp/gateway.log 2>&1 || true'
-  diag_script+='; echo "== /tmp/discord-facade.log tail =="; tail -n 120 /tmp/discord-facade.log 2>&1 || true'
   diag_output=$(openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$diag_script" 2>&1 || true)
 
   echo "$diag_output" | while IFS= read -r line; do
@@ -159,11 +161,21 @@ else
 fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-hermes-discord}"
+OPENSHELL_BIN="${NEMOCLAW_OPENSHELL_BIN:-openshell}"
 DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-hermes-e2e}"
+
+openshell() {
+  if [ "$OPENSHELL_BIN" = "openshell" ]; then
+    command openshell "$@"
+  else
+    "$OPENSHELL_BIN" "$@"
+  fi
+}
 export NEMOCLAW_AGENT="${NEMOCLAW_AGENT:-hermes}"
 export NEMOCLAW_POLICY_TIER="${NEMOCLAW_POLICY_TIER:-open}"
 export NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME"
 export NEMOCLAW_RECREATE_SANDBOX=1
+export NEMOCLAW_FRESH=1
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
 export DISCORD_SERVER_IDS="${DISCORD_SERVER_IDS:-1491590992753590594}"
 export DISCORD_ALLOWED_IDS="${DISCORD_ALLOWED_IDS:-1005536447329222676}"
@@ -172,6 +184,9 @@ export DISCORD_REQUIRE_MENTION="${DISCORD_REQUIRE_MENTION:-0}"
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
+
+# shellcheck source=test/e2e/lib/discord-gateway-proof.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/discord-gateway-proof.sh"
 
 section "Phase 0: Prerequisites"
 
@@ -221,7 +236,7 @@ info "Pre-cleanup..."
 if command -v nemoclaw >/dev/null 2>&1; then
   nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
 fi
-if command -v openshell >/dev/null 2>&1; then
+if openshell --version >/dev/null 2>&1; then
   openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
   openshell gateway destroy -g nemoclaw 2>/dev/null || true
 fi
@@ -268,7 +283,7 @@ else
   exit 1
 fi
 
-if command -v openshell >/dev/null 2>&1; then
+if openshell --version >/dev/null 2>&1; then
   pass "openshell installed ($(openshell --version 2>&1 || echo unknown))"
 else
   fail "openshell not found on PATH after install"
@@ -372,24 +387,18 @@ fi
 env_probe=$(
   sandbox_exec_stdin "EXPECTED_ALLOWED_USERS=$expected_allowed_users EXPECTED_GUILD_IDS=$expected_guild_ids python3 -" <<'PY'
 import os
-import re
 from pathlib import Path
 text = Path("/sandbox/.hermes/.env").read_text(encoding="utf-8")
-lines = set(text.splitlines())
 errors = []
-token_pattern = re.compile(r"^DISCORD_BOT_TOKEN=openshell:resolve:env:(?:v[0-9]+_)?DISCORD_BOT_TOKEN$")
-if not any(token_pattern.match(line) for line in lines):
-    errors.append("missing DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN")
 required = [
-    "DISCORD_PROXY=http://127.0.0.1:3129",
-    "NEMOCLAW_DISCORD_FACADE_URL=http://127.0.0.1:3130",
+    "DISCORD_BOT_TOKEN=openshell:resolve:env:DISCORD_BOT_TOKEN",
     f"NEMOCLAW_DISCORD_GUILD_IDS={os.environ['EXPECTED_GUILD_IDS']}",
     f"DISCORD_ALLOWED_USERS={os.environ['EXPECTED_ALLOWED_USERS']}",
 ]
 for line in required:
-    if line not in lines:
+    if line not in text.splitlines():
         errors.append(f"missing {line}")
-if "API_SERVER_PORT=18642" not in lines:
+if "API_SERVER_PORT=18642" not in text.splitlines():
     errors.append("missing API_SERVER_PORT")
 if errors:
     print("FAIL " + "; ".join(errors))
@@ -399,118 +408,52 @@ PY
 )
 
 if [ "$env_probe" = "OK" ]; then
-  pass ".hermes/.env contains Discord placeholder, proxy bridge, and allowed users"
+  pass ".hermes/.env contains Discord placeholder and allowed users"
 else
   fail ".hermes/.env check failed: ${env_probe:0:400}"
 fi
 
-gateway_proxy_log=$(sandbox_exec "grep -F 'Using proxy for Discord: http://127.0.0.1:3129' /tmp/gateway.log 2>/dev/null | tail -1 || true")
-if [ -n "$gateway_proxy_log" ]; then
-  info "Hermes Discord proxy diagnostic: ${gateway_proxy_log:0:200}"
+fake_gateway_ready=0
+if start_fake_discord_gateway "$DISCORD_TOKEN"; then
+  fake_gateway_ready=1
+  pass "Hermetic fake Discord Gateway started on host port ${FAKE_DISCORD_GATEWAY_PORT}"
 else
-  info "Hermes Discord proxy diagnostic log line not present; relying on env, facade, and REST checks"
+  fail "Failed to start hermetic fake Discord Gateway"
 fi
 
-facade_health=""
-for facade_attempt in $(seq 1 15); do
-  facade_health=$(sandbox_exec "curl -sf http://127.0.0.1:3130/health 2>/dev/null || true")
-  if echo "$facade_health" | grep -qi '"ok":true'; then
-    break
-  fi
-  if [ "$facade_attempt" -lt 15 ]; then
-    info "Facade health check attempt ${facade_attempt}/15 - waiting 4s..."
-    sleep 4
-  fi
-done
-if echo "$facade_health" | grep -qi '"ok":true'; then
-  pass "Hermes fake Discord facade is healthy inside the sandbox"
+if [ "$fake_gateway_ready" = "1" ] \
+  && apply_fake_discord_gateway_policy "$SANDBOX_NAME" "$FAKE_DISCORD_GATEWAY_PORT" >/tmp/nemoclaw-hermes-fake-discord-policy.log 2>&1; then
+  pass "Applied native WebSocket policy with credential rewrite for Hermes fake Discord Gateway"
 else
-  fail "Hermes fake Discord facade did not answer health probe: ${facade_health:0:200}"
+  fail "Failed to apply Hermes fake Discord Gateway policy: $(tail -20 /tmp/nemoclaw-hermes-fake-discord-policy.log 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
 fi
 
-facade_protocol=$(
-  cat <<'PY' | sandbox_exec_stdin 'NEMOCLAW_DISCORD_FACADE_URL=http://127.0.0.1:3130 PYTHONPATH=/opt/nemoclaw-hermes-discord-preload python3 - 2>&1' 2>/dev/null || true
-import asyncio
-import json
-
-from aiohttp import ClientSession, WSMsgType
-
-PLACEHOLDER = "openshell:resolve:env:DISCORD_BOT_TOKEN"
-
-
-async def receive_json(ws, label):
-    msg = await ws.receive(timeout=5)
-    if msg.type != WSMsgType.TEXT:
-        raise AssertionError(f"{label}: expected text frame, got {msg.type} {msg.data!r}")
-    return json.loads(msg.data)
-
-
-async def main():
-    async with ClientSession() as session:
-        async with session.get("https://discord.com/api/v10/gateway") as response:
-            data = await response.json()
-            assert response.status == 200, data
-            assert data["url"] == "ws://127.0.0.1:3130/gateway", data
-
-        async with session.ws_connect("wss://gateway.discord.gg/?v=10&encoding=json") as ws:
-            hello = await receive_json(ws, "HELLO")
-            assert hello["op"] == 10, hello
-
-            await ws.send_json({
-                "op": 2,
-                "d": {
-                    "token": PLACEHOLDER,
-                    "intents": 0,
-                    "properties": {
-                        "os": "linux",
-                        "browser": "nemoclaw-e2e",
-                        "device": "nemoclaw-e2e",
-                    },
-                },
-            })
-            ready = await receive_json(ws, "READY")
-            assert ready["op"] == 0 and ready["t"] == "READY", ready
-            assert ready["d"]["resume_gateway_url"] == "ws://127.0.0.1:3130/gateway", ready
-
-            await ws.send_json({"op": 1, "d": ready.get("s")})
-            ack = await receive_json(ws, "HEARTBEAT_ACK")
-            assert ack["op"] == 11, ack
-
-        async with session.ws_connect("wss://gateway.discord.gg/?v=10&encoding=json") as ws:
-            hello = await receive_json(ws, "reject HELLO")
-            assert hello["op"] == 10, hello
-            await ws.send_json({
-                "op": 2,
-                "d": {
-                    "token": "not-the-openshell-placeholder",
-                    "intents": 0,
-                    "properties": {
-                        "os": "linux",
-                        "browser": "nemoclaw-e2e",
-                        "device": "nemoclaw-e2e",
-                    },
-                },
-            })
-            close = await ws.receive(timeout=5)
-            assert close.type in (WSMsgType.CLOSE, WSMsgType.CLOSED, WSMsgType.CLOSING), close
-            assert ws.close_code == 4004 or close.data == 4004, (ws.close_code, close.data)
-
-        async with session.post("http://127.0.0.1:3130/interactions", json={"type": 1}) as response:
-            assert response.status == 401, await response.text()
-
-    print("OK preload_rest=local preload_gateway=ready heartbeat=ack reject=4004 unsigned_interaction=401")
-
-
-asyncio.run(main())
-PY
-)
-info "Fake Discord facade protocol probe: ${facade_protocol:0:300}"
-if echo "$facade_protocol" | grep -q "OK preload_rest=local preload_gateway=ready heartbeat=ack reject=4004 unsigned_interaction=401"; then
-  pass "Hermes Discord preload and fake Gateway protocol path work inside the sandbox"
-elif echo "$facade_protocol" | grep -q "ModuleNotFoundError"; then
-  fail "Hermes Discord facade protocol probe could not import required Python modules: ${facade_protocol:0:300}"
+native_gateway_protocol=""
+if [ "$fake_gateway_ready" = "1" ]; then
+  native_gateway_protocol=$(run_fake_discord_gateway_python_client "$FAKE_DISCORD_GATEWAY_PORT" || true)
+fi
+info "Hermes native Discord Gateway protocol probe: ${native_gateway_protocol:0:400}"
+if echo "$native_gateway_protocol" | grep -q "^UPGRADE$" \
+  && echo "$native_gateway_protocol" | grep -q "^HELLO$" \
+  && echo "$native_gateway_protocol" | grep -q "^IDENTIFY_SENT_PLACEHOLDER$" \
+  && echo "$native_gateway_protocol" | grep -q "^READY$" \
+  && echo "$native_gateway_protocol" | grep -q "^HEARTBEAT_ACK$"; then
+  pass "Hermes Python Discord Gateway path reaches READY through native OpenShell WebSocket policy"
+elif echo "$native_gateway_protocol" | grep -q "IMPORT_DISCORD_FAILED"; then
+  fail "Hermes native Gateway probe could not import discord.py: ${native_gateway_protocol:0:300}"
 else
-  fail "Hermes Discord facade protocol probe failed: ${facade_protocol:0:300}"
+  fail "Hermes native Gateway protocol probe failed: ${native_gateway_protocol:0:300}"
+fi
+
+if [ "$fake_gateway_ready" = "1" ] \
+  && grep -Fq "\"token\":\"$DISCORD_TOKEN\"" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" \
+  && ! grep -Fq "openshell:resolve:env:DISCORD_BOT_TOKEN" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE"; then
+  pass "Hermes fake Gateway received host-side Discord token while sandbox sent only the placeholder"
+else
+  if [ "$fake_gateway_ready" = "1" ]; then
+    info "Hermes fake Gateway capture: $(tail -20 "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" 2>/dev/null | tr '\n' ' ' | cut -c1-500)"
+  fi
+  fail "Hermes fake Gateway did not prove WebSocket placeholder rewrite"
 fi
 
 token_file_hits=$(printf '%s' "$DISCORD_TOKEN" | sandbox_exec_stdin 'grep -Fq -f - /sandbox/.hermes/config.yaml /sandbox/.hermes/.env 2>/dev/null && echo LEAK || echo OK')
@@ -527,12 +470,10 @@ if [ -z "$sandbox_env_all" ]; then
   skip "Sandbox environment dump is empty"
 elif echo "$sandbox_env_all" | grep -qF "$DISCORD_TOKEN"; then
   fail "Raw Discord token found in sandbox environment"
-elif ! echo "$sandbox_env_all" | grep -qx "DISCORD_PROXY=http://127.0.0.1:3129"; then
-  fail "Sandbox environment missing DISCORD_PROXY bridge setting"
-elif ! echo "$sandbox_env_all" | grep -qx "NEMOCLAW_DISCORD_FACADE_URL=http://127.0.0.1:3130"; then
-  fail "Sandbox environment missing fake Discord facade setting"
+elif echo "$sandbox_env_all" | grep -q "^DISCORD_PROXY="; then
+  fail "Sandbox environment still contains DISCORD_PROXY bridge setting"
 else
-  pass "Raw Discord token absent from sandbox environment; Discord proxy and facade settings are present"
+  pass "Raw Discord token absent from sandbox environment; no DISCORD_PROXY bridge setting"
 fi
 
 sandbox_ps=$(sandbox_exec 'cat /proc/[0-9]*/cmdline 2>/dev/null | tr "\0" "\n"')
@@ -556,49 +497,29 @@ section "Phase 6: Discord REST placeholder egress"
 dc_api=$(sandbox_exec 'NODE_NO_WARNINGS=1 node -e "
 const fs = require(\"fs\");
 const https = require(\"https\");
-let token = \"\";
-const runtimeToken = process.env.DISCORD_BOT_TOKEN || \"\";
-if (runtimeToken.startsWith(\"openshell:resolve:env:\")) {
-  token = runtimeToken;
-}
-if (!token) {
-  const env = fs.readFileSync(\"/sandbox/.hermes/.env\", \"utf8\");
-  const line = env.split(/\\n/).find((entry) => entry.startsWith(\"DISCORD_BOT_TOKEN=\"));
-  token = line ? line.slice(\"DISCORD_BOT_TOKEN=\".length) : runtimeToken;
-}
+const env = fs.readFileSync(\"/sandbox/.hermes/.env\", \"utf8\");
+const line = env.split(/\\n/).find((entry) => entry.startsWith(\"DISCORD_BOT_TOKEN=\"));
+const token = line ? line.slice(\"DISCORD_BOT_TOKEN=\".length) : \"\";
 if (!token) {
   console.log(JSON.stringify({ error: \"missing_token\" }));
   process.exit(0);
 }
-const maxAttempts = 5;
-let attempt = 0;
-function probe() {
-  attempt += 1;
-  const req = https.request({
-    hostname: \"discord.com\",
-    path: \"/api/v10/users/@me\",
-    method: \"GET\",
-    headers: { \"Authorization\": \"Bot \" + token },
-  }, (res) => {
-    let body = \"\";
-    res.on(\"data\", (d) => body += d);
-    res.on(\"end\", () => {
-      if (res.statusCode === 503 && attempt < maxAttempts) {
-        setTimeout(probe, 2000);
-        return;
-      }
-      console.log(JSON.stringify({
-        statusCode: res.statusCode,
-        body: body.slice(0, 200),
-        attempt,
-      }));
-    });
-  });
-  req.on(\"error\", (e) => console.log(JSON.stringify({ error: e.message, attempt })));
-  req.setTimeout(20000, () => { req.destroy(); console.log(JSON.stringify({ error: \"timeout\", attempt })); });
-  req.end();
-}
-probe();
+const req = https.request({
+  hostname: \"discord.com\",
+  path: \"/api/v10/users/@me\",
+  method: \"GET\",
+  headers: { \"Authorization\": \"Bot \" + token },
+}, (res) => {
+  let body = \"\";
+  res.on(\"data\", (d) => body += d);
+  res.on(\"end\", () => console.log(JSON.stringify({
+    statusCode: res.statusCode,
+    body: body.slice(0, 200),
+  })));
+});
+req.on(\"error\", (e) => console.log(JSON.stringify({ error: e.message })));
+req.setTimeout(20000, () => { req.destroy(); console.log(JSON.stringify({ error: \"timeout\" })); });
+req.end();
 "' 2>/dev/null || true)
 
 info "Discord users/@me response: ${dc_api:0:300}"
@@ -629,48 +550,33 @@ else
   fail "Unexpected Discord API response: ${dc_api:0:300}"
 fi
 
-section "Phase 7: Discord gateway auth boundary"
+section "Phase 7: No local Discord bridge"
 
-gateway_connected_status=""
-for gw_attempt in $(seq 1 10); do
-  gateway_connected_status=$(
-    sandbox_exec_stdin 'python3 -' <<'PY'
-import json
-from pathlib import Path
-
-path = Path("/sandbox/.hermes/gateway_state.json")
-try:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-except FileNotFoundError:
-    print("MISSING /sandbox/.hermes/gateway_state.json")
-except Exception as exc:
-    print(f"ERROR reading gateway_state.json: {type(exc).__name__}: {exc}")
-else:
-    platforms = payload.get("platforms") if isinstance(payload, dict) else {}
-    discord = platforms.get("discord") if isinstance(platforms, dict) else {}
-    if isinstance(discord, dict) and discord.get("state") == "connected":
-        print("CONNECTED")
-    else:
-        print(json.dumps(
-            {
-                "gateway_state": payload.get("gateway_state") if isinstance(payload, dict) else None,
-                "discord": discord if isinstance(discord, dict) else None,
-            },
-            sort_keys=True,
-        ))
-PY
-  )
-  [ "$gateway_connected_status" = "CONNECTED" ] && break
-  if [ "$gw_attempt" -lt 10 ]; then
-    info "Gateway runtime status check attempt ${gw_attempt}/10 - waiting 3s..."
-    sleep 3
-  fi
-done
-if [ "$gateway_connected_status" = "CONNECTED" ]; then
-  pass "Hermes Discord gateway reached READY through the fake local Gateway"
+# shellcheck disable=SC2016  # Remote script is intentionally single-quoted for sandbox execution.
+facade_residue=$(sandbox_exec 'set +e
+env_needle="$(printf "%s%s" "NEMOCLAW_DISCORD_" "FACADE_URL")"
+name_needle="$(printf "%s%s" "nemoclaw-discord-" "facade")"
+proxy_needle="$(printf "%s" "DISCORD_PROXY")"
+decode_needle="$(printf "%s%s%s" "nemoclaw-" "decode" "-proxy")"
+if env | grep -q "$env_needle"; then echo ENV_FACADE; fi
+if env | grep -q "^${proxy_needle}="; then echo ENV_DISCORD_PROXY; fi
+if grep -Fq "$env_needle" /sandbox/.hermes/.env /sandbox/.hermes/config.yaml /tmp/nemoclaw-proxy-env.sh /tmp/gateway.env 2>/dev/null; then echo FILE_FACADE; fi
+if grep -Fq "$proxy_needle" /sandbox/.hermes/.env /sandbox/.hermes/config.yaml /tmp/nemoclaw-proxy-env.sh /tmp/gateway.env 2>/dev/null; then echo FILE_DISCORD_PROXY; fi
+if find /tmp -maxdepth 1 -type f \( -name "discord-facade.log" -o -name "nemoclaw-discord-facade*" \) 2>/dev/null | grep -q .; then echo FILE_FACADE; fi
+if command -v "$decode_needle" >/dev/null 2>&1; then echo BIN_DECODE_PROXY; fi
+current_pid="$$"
+for p in /proc/[0-9]*; do
+  pid=$(basename "$p")
+  [ "$pid" = "$current_pid" ] && continue
+  cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true)
+  case "$cmd" in *"name_needle="*|*"for p in /proc/"*) continue ;; esac
+  case "$cmd" in *"$name_needle"*) echo PROCESS_FACADE ;; esac
+  case "$cmd" in *"$decode_needle"*) echo PROCESS_DECODE_PROXY ;; esac
+done')
+if [ -z "$facade_residue" ]; then
+  pass "Hermes Discord proof used native WebSocket policy with no local facade, decode proxy, or DISCORD_PROXY residue"
 else
-  info "Hermes Discord runtime status: ${gateway_connected_status:0:400}"
-  fail "Hermes Discord gateway did not reach READY through the fake local Gateway"
+  fail "Local Discord bridge residue found after native Gateway proof: ${facade_residue:0:300}"
   dump_hermes_discord_diagnostics
 fi
 
@@ -698,7 +604,7 @@ echo "    Total:   $TOTAL"
 echo "========================================"
 
 if [ "$FAIL" -eq 0 ]; then
-  printf '\n\033[1;32m  Hermes Discord E2E PASSED - schema, placeholder, provider, and sandbox boot verified.\033[0m\n'
+  printf '\n\033[1;32m  Hermes Discord E2E PASSED - schema, placeholder, provider, sandbox boot, and native Gateway rewrite verified.\033[0m\n'
   exit 0
 else
   printf '\n\033[1;31m  %d test(s) failed.\033[0m\n' "$FAIL"

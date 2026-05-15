@@ -76,7 +76,11 @@ credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + ms
 credentials.ensureApiKey = async () => {};
 credentials.getCredential = () => null;
 runner.run = () => {};
-runner.runCapture = () => ${JSON.stringify(runCaptureReturn)};
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : String(command);
+  if (text.includes("sandbox list")) return "test-sb Ready";
+  return ${JSON.stringify(runCaptureReturn)};
+};
 ${openshellStub}
 
 const updates = [];
@@ -258,6 +262,7 @@ console.log = (...args) => lines.push(args.join(" "));
       String.raw`
 const policies = require(${policiesPath});
 policies.applyPreset = () => {};
+policies.applyPresets = () => true;
 policies.getAppliedPresets = () => [];
 
 const lines = [];
@@ -303,6 +308,7 @@ console.log = (...args) => lines.push(args.join(" "));
 const policies = require(${policiesPath});
 const appliedCalls = [];
 policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.getAppliedPresets = () => [];
 
 console.log = () => {};
@@ -345,6 +351,7 @@ const policies = require(${policiesPath});
 const appliedCalls = [];
 const removedCalls = [];
 policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
 policies.getAppliedPresets = () => ["brave", "npm"];
 
@@ -391,6 +398,7 @@ const policies = require(${policiesPath});
 const appliedCalls = [];
 const removedCalls = [];
 policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
 policies.getAppliedPresets = () => ["brave"];
 
@@ -431,6 +439,7 @@ const policies = require(${policiesPath});
 const appliedCalls = [];
 const removedCalls = [];
 policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
 policies.getAppliedPresets = () => ["brave"];
 
@@ -471,6 +480,7 @@ const policies = require(${policiesPath});
 const appliedCalls = [];
 const removedCalls = [];
 policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
 policies.getAppliedPresets = () => ["brave"];
 policies.listCustomPresets = () => [{ name: "brave", description: "custom preset" }];
@@ -512,6 +522,7 @@ const policies = require(${policiesPath});
 const appliedCalls = [];
 const removedCalls = [];
 policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
 policies.getAppliedPresets = () => ["brave"];
 policies.listCustomPresets = () => [{ name: "brave", description: "custom preset" }];
@@ -560,6 +571,7 @@ console.log = () => {};
 const policies = require(${policiesPath});
 const appliedCalls = [];
 policies.applyPreset = (sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.getAppliedPresets = () => [];
 
 // Silence onboard's note()/console.log so stdout is pure JSON.
@@ -602,6 +614,7 @@ console.log = () => {};
       String.raw`
 const policies = require(${policiesPath});
 policies.applyPreset = () => true;
+policies.applyPresets = () => true;
 policies.getAppliedPresets = () => [];
 
 console.log = () => {};

@@ -74,6 +74,17 @@ describe("messaging legacy bridge credentials", () => {
     // provider credentials, but this credential key stays for deploy.ts.
     expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("ALLOWED_CHAT_IDS");
   });
+
+  it("registers WECHAT_BOT_TOKEN alongside the other channel bot tokens", () => {
+    // The WeChat host-QR onboarding writes the captured token via
+    // saveCredential("WECHAT_BOT_TOKEN", ...). If this key is missing from
+    // the known list, sanitization and rotation will silently skip it and
+    // the token may leak through diagnostic dumps.
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("WECHAT_BOT_TOKEN");
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("TELEGRAM_BOT_TOKEN");
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("DISCORD_BOT_TOKEN");
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("SLACK_BOT_TOKEN");
+  });
 });
 
 describe("host-side credential staging", () => {
@@ -633,7 +644,7 @@ describe("prompt machinery (unchanged)", () => {
       ${JSON.stringify(process.execPath)} -e 'const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "bin", "lib", "credentials"))}); (async()=>{ await prompt("first: "); await prompt("second: "); })().catch(err=>{ console.error(err); process.exit(1); });' < "$pipe"
     `;
 
-    const result = spawnSync("bash", ["-lc", script], {
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
       timeout: 5000,
@@ -722,7 +733,7 @@ ${JSON.stringify(process.execPath)} ${JSON.stringify(scriptFile)} < "$pipe"
 `;
     let result: ReturnType<typeof spawnSync>;
     try {
-      result = spawnSync("bash", ["-lc", bash], {
+      result = spawnSync("bash", ["--noprofile", "--norc", "-c", bash], {
         encoding: "utf-8",
         env: { ...process.env, NVIDIA_API_KEY: "" },
         timeout: 5000,

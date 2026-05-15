@@ -1,26 +1,25 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import {
+  type SpawnSyncOptionsWithStringEncoding,
+  type SpawnSyncReturns,
+  spawnSync,
+} from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import {
-  spawnSync,
-  type SpawnSyncOptionsWithStringEncoding,
-  type SpawnSyncReturns,
-} from "node:child_process";
-
+import { isErrnoException } from "../../core/errno";
+import { compactText } from "../../core/url-utils";
 import type { ProbeResult } from "../../onboard/types";
 import { ROOT } from "../../state/paths";
-import { compactText } from "../../core/url-utils";
-
-import { isErrnoException } from "../../core/errno";
 
 export type CurlProbeResult = ProbeResult;
 
 export interface CurlProbeOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
+  replaceEnv?: boolean;
   timeoutMs?: number;
   spawnSyncImpl?: (
     command: string,
@@ -143,10 +142,7 @@ export function runCurlProbe(argv: string[], opts: CurlProbeOptions = {}): CurlP
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
         timeout: opts.timeoutMs ?? 30_000,
-        env: {
-          ...process.env,
-          ...opts.env,
-        },
+        env: opts.replaceEnv ? (opts.env ?? {}) : { ...process.env, ...opts.env },
       },
     );
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";

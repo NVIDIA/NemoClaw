@@ -6,8 +6,7 @@
 #   cloud-e2e                Cloud inference (NVIDIA Endpoint API) on ubuntu-latest.
 #   messaging-providers-e2e  Validates messaging credential provider/placeholder/L7-proxy chain
 #                            for Telegram + Discord + Slack. Uses fake tokens. Slack additionally
-#                            exercises the slack-token-rewriter Bolt-shape → canonical placeholder
-#                            translation (#2085). See PR #1081.
+#                            exercises OpenShell provider-shaped alias resolution (#2085 follow-up).
 #   messaging-compatible-endpoint-e2e
 #                            Validates Telegram + OpenAI-compatible endpoint inference routing
 #                            through inference.local with a hermetic local mock (#2766).
@@ -20,13 +19,9 @@
 #   sandbox-survival-e2e     Sandbox survival across gateway restarts (onboard, inference,
 #                            gateway stop/start, verify sandbox + workspace + inference).
 #   openshell-gateway-upgrade-e2e
-#                            Validates stale Linux Docker-driver OpenShell gateway
-#                            processes are restarted after an OpenShell upgrade.
-#   gateway-health-honest-e2e
-#                            Coverage guard for #3111: onboard must not log
-#                            "Docker-driver gateway is healthy" when the gateway
-#                            binary crashes on startup (detached-zombie + metadata-
-#                            only health check regression).
+#                            Validates real v0.0.36 curl install upgrade into
+#                            the current supported OpenShell with pre-upgrade backup, restored
+#                            agent state, and the same agent type running.
 #   hermes-e2e               Hermes Agent E2E — install → onboard --agent hermes → health
 #                            probe → live inference. Validates the multi-agent architecture.
 #   hermes-inference-switch-e2e
@@ -35,7 +30,7 @@
 #   hermes-discord-e2e       Hermes Discord onboarding — validates the top-level Hermes
 #                            Discord schema plus OpenShell placeholder/token isolation.
 #   hermes-slack-e2e         Hermes Slack onboarding — validates the Hermes Slack policy,
-#                            Slack providers, and Python placeholder egress path.
+#                            Slack providers, and OpenShell credential rewrite path.
 #   openclaw-inference-switch-e2e
 #                            Switches a running OpenClaw sandbox with `nemoclaw inference set`
 #                            and verifies route, openclaw.json, hashes, and live requests.
@@ -57,7 +52,9 @@
 #     variable empty in the job — repository secrets and environment secrets are separate.)
 # Only runs on schedule and manual dispatch — never on PRs (secret protection).
 
-name: nightly-e2e
+name: E2E / Nightly
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' && inputs.advisor_dispatch_id != '' && format('E2E / Nightly ({0})', inputs.advisor_dispatch_id) || 'E2E / Nightly' }}
 
 on:
   schedule:
@@ -72,12 +69,12 @@ on:
           messaging-compatible-endpoint-e2e,
           kimi-inference-compat-e2e,
           token-rotation-e2e, sandbox-survival-e2e,
-          openshell-gateway-upgrade-e2e, gateway-health-honest-e2e,
+          openshell-gateway-upgrade-e2e,
           issue-2478-crash-loop-recovery-e2e, hermes-e2e,
           hermes-inference-switch-e2e, hermes-discord-e2e,
           hermes-slack-e2e, sandbox-operations-e2e, inference-routing-e2e,
           openclaw-inference-switch-e2e,
-          network-policy-e2e, deployment-services-e2e, diagnostics-e2e,
+          network-policy-e2e, state-backup-restore-e2e, tunnel-lifecycle-e2e, diagnostics-e2e,
           credential-migration-e2e,
           snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e,
           upgrade-stale-sandbox-e2e, rebuild-hermes-e2e,
@@ -86,7 +83,25 @@ on:
           credential-sanitization-e2e, telegram-injection-e2e,
           overlayfs-autofix-e2e, device-auth-health-e2e,
           launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
-          brave-search-e2e
+          channels-stop-start-e2e, brave-search-e2e
+        required: false
+        type: string
+        default: ""
+      target_ref:
+        description: >-
+          Optional branch, ref, or SHA to test. When empty, tests run against
+          the workflow ref selected for the dispatch. Used by e2e-advisor
+          auto-dispatch so the trusted main workflow can test a PR head SHA.
+        required: false
+        type: string
+        default: ""
+      pr_number:
+        description: Optional PR number for selective-dispatch result comments.
+        required: false
+        type: string
+        default: ""
+      advisor_dispatch_id:
+        description: Optional correlation ID from e2e-advisor auto-dispatch.
         required: false
         type: string
         default: ""
@@ -95,9 +110,15 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly-e2e-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.ref || 'schedule' }}
+  group: nightly-e2e-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && format('{0}-{1}', github.ref, inputs.pr_number || 'manual') || 'schedule' }}
   cancel-in-progress: true
 
+# Selective-dispatch contract: tools/e2e-advisor/dispatch.mts discovers
+# dispatchable jobs by looking for each job's exact predicate shape below:
+#   github.event_name != 'workflow_dispatch' || inputs.jobs == '' ||
+#   contains(format(',{0},', inputs.jobs), ',<job-id>,')
+# Keep this predicate format in sync with test/e2e-advisor-dispatch.test.ts if
+# the workflow changes how individual jobs opt in to selective dispatch.
 jobs:
   cloud-e2e:
     if: >-
@@ -110,6 +131,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run cloud E2E test
         env:
@@ -144,6 +167,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run cloud onboard E2E test
         env:
@@ -180,6 +205,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run cloud inference E2E test
         env:
@@ -212,6 +239,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run skill agent E2E test
         env:
@@ -244,6 +273,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Install NemoClaw
         env:
@@ -279,6 +310,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run messaging providers E2E test
         env:
@@ -317,6 +350,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run messaging compatible endpoint E2E test
         env:
@@ -334,6 +369,45 @@ jobs:
         with:
           name: install-log-messaging-compatible-endpoint
           path: /tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log
+          if-no-files-found: ignore
+
+  # ── Channels stop/start lifecycle E2E (#3462 Test 1) ─────────
+  # Regression coverage for #3453 (channels stop must actually disable the
+  # channel across rebuild) and #3381 (channels start must re-attach from
+  # the cached credential). Telegram-only — Discord/Slack walk the same
+  # disabledChannels filter; telegram is the cheapest regression gate.
+  channels-stop-start-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',channels-stop-start-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run channels stop/start lifecycle E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_POLICY_TIER: "open"
+          NEMOCLAW_SANDBOX_NAME: "e2e-channels-stop-start"
+          GITHUB_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-stop-start-e2e"
+          TELEGRAM_ALLOWED_IDS: "123456789"
+        run: bash test/e2e/test-channels-stop-start.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-channels-stop-start
+          path: /tmp/nemoclaw-e2e-install.log
           if-no-files-found: ignore
 
   # ── Brave Search E2E (#2687) ─────────────────────────────────
@@ -354,6 +428,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run Brave Search E2E test
         env:
@@ -394,6 +470,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run Kimi inference compatibility E2E test
         env:
@@ -444,6 +522,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run token rotation E2E test
         env:
@@ -482,6 +562,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run sandbox survival E2E test
         env:
@@ -515,6 +597,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run #2478 crash-loop recovery E2E test
         env:
@@ -548,6 +632,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run Hermes Agent E2E test
         env:
@@ -583,6 +669,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run Hermes inference switch E2E test
         env:
@@ -618,6 +706,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run Hermes Discord E2E test
         env:
@@ -658,6 +748,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run Hermes Slack E2E test
         env:
@@ -696,6 +788,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Start gateway log streamer (background)
         run: |
@@ -942,6 +1036,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run inference error classification E2E test
         env:
@@ -974,6 +1070,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run OpenClaw inference switch E2E test
         env:
@@ -1007,6 +1105,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run network policy E2E test
         env:
@@ -1025,36 +1125,66 @@ jobs:
           path: test-network-policy-*.log
           if-no-files-found: ignore
 
-  # ── Deployment & Services E2E ────────────────────────────────
-  # TC-STATE-02: backup-workspace.sh lifecycle (backup → destroy → restore)
-  # TC-DEPLOY-01: nemoclaw start/stop (cloudflared tunnel)
-  # TC-DEPLOY-03: uninstall --keep-openshell (destructive, runs last in script)
-  deployment-services-e2e:
+  # ── Workspace Backup & Restore E2E ───────────────────────────
+  # TC-STATE-01: backup-workspace.sh lifecycle (backup → destroy → restore)
+  state-backup-restore-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
       (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
-       contains(format(',{0},', inputs.jobs), ',deployment-services-e2e,'))
+       contains(format(',{0},', inputs.jobs), ',state-backup-restore-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
-      - name: Run deployment services E2E test
+      - name: Run state backup/restore E2E test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-deploy-svc"
-        run: bash test/e2e/test-deployment-services.sh
+        run: bash test/e2e/test-state-backup-restore.sh
 
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: deployment-services-test-log
-          path: test-deployment-services-*.log
+          name: state-backup-restore-test-log
+          path: test-state-backup-restore-*.log
+          if-no-files-found: ignore
+
+  # ── Tunnel Lifecycle E2E ─────────────────────────────────────
+  # TC-DEPLOY-01a/b/c: nemoclaw tunnel start / probe / stop (cloudflared tunnel)
+  tunnel-lifecycle-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',tunnel-lifecycle-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run tunnel lifecycle E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash test/e2e/test-tunnel-lifecycle.sh
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tunnel-lifecycle-test-log
+          path: test-tunnel-lifecycle-*.log
           if-no-files-found: ignore
 
   # ── Diagnostics E2E ─────────────────────────────────────────
@@ -1072,6 +1202,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run diagnostics E2E test
         env:
@@ -1106,6 +1238,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run credential migration E2E test
         env:
@@ -1139,6 +1273,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run snapshot commands E2E test
         env:
@@ -1171,6 +1307,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run shields & config E2E test
         env:
@@ -1203,6 +1341,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run OpenClaw rebuild upgrade E2E test
         env:
@@ -1236,6 +1376,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run upgrade stale sandbox E2E test
         env:
@@ -1257,9 +1399,9 @@ jobs:
           if-no-files-found: ignore
 
   # ── OpenShell gateway upgrade E2E ────────────────────────────
-  # Reproduces the old-install upgrade edge case for Linux Docker-driver
-  # gateways: a healthy gateway process with stale supervisor/runtime env must
-  # be restarted rather than reused after the current OpenShell install.
+  # Reproduces the old-install upgrade edge case: a working claw on the previous
+  # NemoClaw/OpenShell release must run through current curl-style install/onboard
+  # and keep the same in-sandbox agent process alive under the upgraded gateway.
   openshell-gateway-upgrade-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -1267,10 +1409,12 @@ jobs:
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',openshell-gateway-upgrade-e2e,'))
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -1291,60 +1435,12 @@ jobs:
           name: openshell-gateway-upgrade-logs
           path: |
             /tmp/nemoclaw-e2e-openshell-gateway-upgrade.log
+            /tmp/nemoclaw-e2e-openshell-gateway-install.log
+            /tmp/nemoclaw-e2e-openshell-gateway-old-install.log
+            /tmp/nemoclaw-e2e-openshell-gateway-current-install.log
             /tmp/nemoclaw-e2e-openshell-gateway-start.log
             /tmp/nemoclaw-e2e-openshell-gateway-process.log
-          if-no-files-found: ignore
-
-  # ── Gateway health-honesty E2E ──────────────────────────────
-  # Coverage guard for #3111. Issue #3111 reported that onboard prints
-  # "✓ Docker-driver gateway is healthy" on Ubuntu 22.04 even though the
-  # shipped openshell-gateway binary (GNU-linked against GLIBC 2.38/2.39)
-  # crashes immediately on a 22.04 host (GLIBC 2.35).
-  #
-  # Root cause is platform-independent: the detached child remains a
-  # zombie so isPidAlive() returns true, registerDockerDriverGatewayEndpoint()
-  # writes metadata without any TCP probe, and isGatewayHealthy() is a
-  # string match on openshell CLI output rather than a real health check.
-  # Any scenario where the gateway binary fails before serving connections
-  # will surface the same false-positive log on ANY Linux host — not just
-  # Ubuntu 22.04.
-  #
-  # This test sabotages the gateway binary with a shim that matches the
-  # #3111 failure mode (immediate exit with GLIBC-style stderr) and asserts
-  # that onboard does NOT log "healthy" and exits non-zero.
-  gateway-health-honest-e2e:
-    if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
-       inputs.jobs == '' ||
-       contains(format(',{0},', inputs.jobs), ',gateway-health-honest-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node
-        uses: actions/setup-node@v6
-        with:
-          node-version: "22"
-
-      - name: Run gateway health-honesty E2E test
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-        run: bash test/e2e/test-gateway-health-honest.sh
-
-      - name: Upload gateway health-honesty logs on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: gateway-health-honest-logs
-          path: |
-            /tmp/nemoclaw-e2e-gateway-health-honest.log
-            /tmp/nemoclaw-e2e-gateway-health-honest-start.log
-            /tmp/nemoclaw-e2e-gateway-health-honest-process.log
+            /tmp/nemoclaw-e2e-openshell-gateway-compatible-mock.log
           if-no-files-found: ignore
 
   # ── Hermes rebuild upgrade E2E ──────────────────────────────
@@ -1360,6 +1456,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run Hermes rebuild upgrade E2E test
         env:
@@ -1393,6 +1491,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run Hermes stale base-image rebuild E2E test
         env:
@@ -1425,19 +1525,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-double-install"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run double onboard E2E test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_E2E_INSTALL_SANDBOX_NAME: "e2e-double-install"
         run: |
           [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
           export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -1464,19 +1564,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-repair-install"
         run: bash install.sh --non-interactive --yes-i-accept-third-party-software
       - name: Run onboard repair E2E test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_E2E_INSTALL_SANDBOX_NAME: "e2e-repair-install"
         run: |
           [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
           export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -1503,6 +1603,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1540,6 +1642,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1578,6 +1682,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
       - name: Install NemoClaw and onboard sandbox
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1619,6 +1725,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
       - name: Install NemoClaw and onboard sandbox
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1663,6 +1771,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run overlayfs auto-fix E2E test
         env:
@@ -1701,6 +1811,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run device auth health E2E
         env:
@@ -1737,6 +1849,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Run launchable install-flow smoke test
         env:
@@ -1794,6 +1908,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Verify GPU availability
         run: |
@@ -1847,6 +1963,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Verify GPU availability
         run: |
@@ -1897,6 +2015,7 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         messaging-compatible-endpoint-e2e,
+        channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
         token-rotation-e2e,
@@ -1910,7 +2029,8 @@ jobs:
         inference-routing-e2e,
         openclaw-inference-switch-e2e,
         network-policy-e2e,
-        deployment-services-e2e,
+        state-backup-restore-e2e,
+        tunnel-lifecycle-e2e,
         diagnostics-e2e,
         credential-migration-e2e,
         snapshot-commands-e2e,
@@ -1918,7 +2038,6 @@ jobs:
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
         openshell-gateway-upgrade-e2e,
-        gateway-health-honest-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         double-onboard-e2e,
@@ -1933,7 +2052,7 @@ jobs:
         gpu-e2e,
         gpu-double-onboard-e2e,
       ]
-    if: ${{ always() && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
+    if: ${{ always() && github.event_name == 'schedule' && (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')) }}
     permissions:
       issues: write
     steps:
@@ -1989,6 +2108,7 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         messaging-compatible-endpoint-e2e,
+        channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
         token-rotation-e2e,
@@ -2002,7 +2122,8 @@ jobs:
         inference-routing-e2e,
         openclaw-inference-switch-e2e,
         network-policy-e2e,
-        deployment-services-e2e,
+        state-backup-restore-e2e,
+        tunnel-lifecycle-e2e,
         diagnostics-e2e,
         credential-migration-e2e,
         snapshot-commands-e2e,
@@ -2010,7 +2131,6 @@ jobs:
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
         openshell-gateway-upgrade-e2e,
-        gateway-health-honest-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         double-onboard-e2e,
@@ -2027,6 +2147,7 @@ jobs:
       ]
     if: ${{ always() && github.event_name == 'workflow_dispatch' }}
     permissions:
+      issues: write
       pull-requests: write
     steps:
       - name: Post E2E results to PR
@@ -2035,23 +2156,30 @@ jobs:
           script: |
             const needs = ${{ toJSON(needs) }};
             const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const branch = context.ref.replace('refs/heads/', '');
+            const workflowBranch = context.ref.replace('refs/heads/', '');
+            const targetRef = ${{ toJSON(inputs.target_ref) }} || '';
+            const prNumberInput = ${{ toJSON(inputs.pr_number) }} || '';
+            const displayRef = targetRef || workflowBranch;
             const requestedJobs = ${{ toJSON(inputs.jobs) }} || "";
 
-            // Find open PR for this branch
-            const { data: prs } = await github.rest.pulls.list({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              head: `${context.repo.owner}:${branch}`,
-              state: 'open',
-            });
+            let prNumber = prNumberInput ? Number.parseInt(prNumberInput, 10) : undefined;
+            if (!prNumber) {
+              // Find open PR for this branch. This is the legacy manual-dispatch
+              // path where the workflow itself is dispatched on the PR branch.
+              const { data: prs } = await github.rest.pulls.list({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                head: `${context.repo.owner}:${workflowBranch}`,
+                state: 'open',
+              });
 
-            if (prs.length === 0) {
-              core.info(`No open PR found for branch ${branch} — skipping comment.`);
-              return;
+              if (prs.length === 0) {
+                core.info(`No open PR found for branch ${workflowBranch} — skipping comment.`);
+                return;
+              }
+
+              prNumber = prs[0].number;
             }
-
-            const pr = prs[0];
 
             const requested = requestedJobs
               .split(',')
@@ -2090,7 +2218,8 @@ jobs:
               `### Selective E2E Results — ${status}`,
               '',
               `**Run:** [${context.runId}](${runUrl})`,
-              `**Branch:** \`${branch}\``,
+              `**Target ref:** \`${displayRef}\``,
+              targetRef ? `**Workflow ref:** \`${workflowBranch}\`` : undefined,
               requestedJobs ? `**Requested jobs:** \`${requestedJobs}\`` : '**Requested jobs:** all (no filter)',
               `**Summary:** ${passed.length} passed, ${failed.length} failed, ${skipped.length} skipped`,
               '',
@@ -2109,7 +2238,7 @@ jobs:
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: pr.number,
+              issue_number: prNumber,
               body,
             });
 
@@ -2129,6 +2258,7 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         messaging-compatible-endpoint-e2e,
+        channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
         token-rotation-e2e,
@@ -2142,7 +2272,8 @@ jobs:
         inference-routing-e2e,
         openclaw-inference-switch-e2e,
         network-policy-e2e,
-        deployment-services-e2e,
+        state-backup-restore-e2e,
+        tunnel-lifecycle-e2e,
         diagnostics-e2e,
         credential-migration-e2e,
         snapshot-commands-e2e,
@@ -2150,7 +2281,6 @@ jobs:
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
         openshell-gateway-upgrade-e2e,
-        gateway-health-honest-e2e,
         rebuild-hermes-e2e,
         rebuild-hermes-stale-base-e2e,
         double-onboard-e2e,

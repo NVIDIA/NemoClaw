@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
@@ -90,6 +92,53 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("Claws retracted. Until next time.");
     expect(dockerCalls).toEqual(expect.arrayContaining([["rm", "-f", "abc"], ["rmi", "-f", "img1"]]));
     expect(dockerCalls.some((args) => args.join(" ") === "volume rm -f openshell-cluster-nemoclaw")).toBe(true);
+  });
+
+  it("removes all managed OpenShell helper binaries from the writable user bin", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-openshell-bins-"));
+    const userBin = path.join(tmpHome, ".local", "bin");
+    fs.mkdirSync(userBin, { recursive: true });
+
+    const removed: string[] = [];
+    const logs: string[] = [];
+    const existing = new Set([
+      path.join(userBin, "openshell"),
+      path.join(userBin, "openshell-gateway"),
+      path.join(userBin, "openshell-sandbox"),
+      path.join(userBin, "openshell-driver-vm"),
+    ]);
+
+    try {
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: false },
+        {
+          commandExists: (command) => command !== "docker" && command !== "lsof" && command !== "openshell" && command !== "pgrep",
+          env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+          existsSync: (target) => existing.has(target),
+          isTty: false,
+          log: (line) => logs.push(line),
+          rmSync: vi.fn((target: fs.PathLike) => {
+            removed.push(String(target));
+          }),
+          run: vi.fn(() => ok()),
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(0);
+      expect(removed).toEqual(
+        expect.arrayContaining([
+          path.join(userBin, "openshell"),
+          path.join(userBin, "openshell-gateway"),
+          path.join(userBin, "openshell-sandbox"),
+          path.join(userBin, "openshell-driver-vm"),
+        ]),
+      );
+      expect(logs).toContain(`Removed ${path.join(userBin, "openshell-gateway")}`);
+      expect(logs).toContain(`Removed ${path.join(userBin, "openshell-sandbox")}`);
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
   });
 
   it("uses NemoHermes uninstall copy when Hermes is the active agent", () => {
@@ -532,5 +581,42 @@ describe("uninstall run plan", () => {
     expect(result.exitCode).toBe(0);
     expect(warnings).toContain("Failed to disable /swapfile; skipping swap cleanup.");
     expect(logs).not.toContain("Swap file removed");
+  });
+
+  it("#3456 sub-bug #4: gateway destroy no-op uses the 'already removed' wording, not 'Destroyed ... skipped'", () => {
+    // When `openshell gateway destroy -g nemoclaw` returns non-zero (gateway
+    // already gone), the previous code printed `Destroyed gateway 'nemoclaw'
+    // skipped` — self-contradictory. The fix routes this branch to an onSkip
+    // message that describes the actual state.
+    const warnings: string[] = [];
+    const logs: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command !== "docker" && command !== "pgrep",
+        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        error: (line) => warnings.push(line),
+        existsSync: () => false,
+        isTty: false,
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          // The openshell gateway destroy command no-ops when the gateway is
+          // already gone — return non-zero to exercise the onSkip branch.
+          if (command === "openshell" && args[0] === "gateway" && args[1] === "destroy") {
+            return notFound();
+          }
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          return ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' already removed or unreachable");
+    expect(`${warnings.join("\n")}\n${logs.join("\n")}`).not.toContain(
+      "Destroyed gateway 'nemoclaw' skipped",
+    );
   });
 });

@@ -86,6 +86,8 @@ $ nemoclaw my-assistant channels add slack
 ```
 
 `channels add` prompts for missing credentials, registers the bridge with the OpenShell gateway, updates the sandbox registry, and asks whether to rebuild immediately.
+The command accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase channel name.
+If the matching built-in network policy preset exists but is not applied yet, the command prints a `policy-add <channel>` hint after it registers the channel.
 Choose the rebuild so the running sandbox image picks up the new channel.
 If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, or `DISCORD_REQUIRE_MENTION`, export them before the rebuild starts.
 If you defer the rebuild, apply the change later:

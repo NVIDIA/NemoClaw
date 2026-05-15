@@ -220,6 +220,51 @@ export async function isSandboxGatewayRunningForStatus(
 }
 
 /**
+ * Probe the full inference chain by curling `https://inference.local/v1/models`
+ * from inside the sandbox via `openshell sandbox exec`. This is the path agent
+ * traffic actually takes (openclaw gateway → auth proxy → backend). Any HTTP
+ * response (including 401) means routing works; 000 / no response means DNS,
+ * proxy, or gateway is broken. The optional 3rd line in #3265.
+ *
+ * Injectable via `execImpl` for tests.
+ */
+export async function probeSandboxInferenceGatewayHealth(
+  sandboxName: string,
+  options: {
+    execImpl?: (sandboxName: string, command: string) => Promise<SandboxCommandResult | null>;
+  } = {},
+): Promise<{
+  ok: boolean;
+  endpoint: string;
+  httpStatus: number;
+  detail: string;
+} | null> {
+  const endpoint = "https://inference.local/v1/models";
+  const command =
+    `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 5 ${shellQuote(endpoint)} 2>/dev/null || echo 000); echo "$HTTP_CODE"`;
+  const exec = options.execImpl ?? executeSandboxExecCommandForStatus;
+  const result = await exec(sandboxName, command);
+  if (!result || result.status !== 0) return null;
+  const status = Number.parseInt(result.stdout.trim(), 10) || 0;
+  if (status > 0) {
+    return {
+      ok: true,
+      endpoint,
+      httpStatus: status,
+      detail: `Inference gateway responded HTTP ${status} on ${endpoint} (full chain reachable).`,
+    };
+  }
+  return {
+    ok: false,
+    endpoint,
+    httpStatus: 0,
+    detail:
+      `Inference gateway unreachable on ${endpoint} from inside the sandbox. ` +
+      `DNS may have failed or the openclaw gateway / auth proxy is not running.`,
+  };
+}
+
+/**
  * Restart the gateway process inside the sandbox after a pod restart.
  * Cleans stale lock/temp files, sources proxy config, and launches the gateway
  * in the background. Returns true on success.
@@ -310,16 +355,26 @@ function ensureSandboxPortForward(sandboxName: string): boolean {
  * The in-sandbox gateway and the host-side forward are independent
  * dimensions: the forward can die (host SSH session dropped, list shows
  * STATUS=dead) while the gateway keeps listening on 127.0.0.1:<port>.
+ *
+ * Also falls back to a local TCP/HTTP probe of 127.0.0.1:<port> when
+ * `forward list` would classify the entry as not-running. openshell's
+ * STATUS column lags real state — it can show "dead" for an entry that
+ * is still serving traffic, or hide an entry whose SSH session was just
+ * recycled (#3334). Trusting the column verbatim made every `connect`
+ * print a "missing or dead" preamble followed by a "Failed to
+ * re-establish" line even though the forward worked.
  */
 function isSandboxForwardHealthy(sandboxName: string): SandboxForwardHealth {
-  const port = String(resolveSandboxDashboardPort(sandboxName));
+  const port = resolveSandboxDashboardPort(sandboxName);
   const result = captureOpenshell(["forward", "list"], {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (!result || isCommandTimeout(result) || result.status !== 0) return null;
   const entries = parseForwardList(result.output) as SandboxForwardListEntry[];
-  return classifySandboxForwardHealth(entries, sandboxName, port);
+  return classifyForwardHealthWithReachability(entries, sandboxName, String(port), () =>
+    isLocalForwardReachable(port),
+  );
 }
 
 export function classifySandboxForwardHealth(
@@ -331,6 +386,50 @@ export function classifySandboxForwardHealth(
   if (!match) return false;
   if (match.sandboxName !== sandboxName) return "occupied";
   return match.status === "running";
+}
+
+/**
+ * Like {@link classifySandboxForwardHealth} but accepts a reachability
+ * callback that probes whether the local forwarded port actually answers.
+ * When the entry-based classification would return `false`, the
+ * reachability check overrides it: a port that answers is healthy
+ * regardless of what `forward list` reports. The "occupied" verdict is
+ * preserved — we never silently take over a forward owned by another
+ * sandbox, even if that forward happens to be reachable.
+ */
+export function classifyForwardHealthWithReachability(
+  entries: SandboxForwardListEntry[],
+  sandboxName: string,
+  port: string,
+  isReachable: () => boolean,
+): Exclude<SandboxForwardHealth, null> {
+  const verdict = classifySandboxForwardHealth(entries, sandboxName, port);
+  if (verdict !== false) return verdict;
+  return isReachable() ? true : false;
+}
+
+/**
+ * Synchronous reachability check for a local port. Used to override a
+ * negative `openshell forward list` verdict when the forward is actually
+ * still serving traffic — see {@link classifyForwardHealthWithReachability}.
+ * Returns false on any error so the existing recovery path stays intact
+ * when Node can't probe (e.g., restrictive sandbox).
+ */
+function isLocalForwardReachable(port: number): boolean {
+  const script =
+    "const net=require('node:net');" +
+    `const s=net.createConnection({host:'127.0.0.1',port:${port}});` +
+    "s.setTimeout(1000);" +
+    "s.on('connect',()=>{s.destroy();process.exit(0)});" +
+    "s.on('error',()=>process.exit(1));" +
+    "s.on('timeout',()=>{s.destroy();process.exit(1)});";
+  const result = spawnSync(process.execPath, ["-e", script], {
+    encoding: "utf-8",
+    stdio: ["ignore", "ignore", "ignore"],
+    timeout: 2000,
+  });
+  if (result.error) return false;
+  return result.status === 0;
 }
 
 /**

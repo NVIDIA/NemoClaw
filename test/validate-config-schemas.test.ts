@@ -215,6 +215,67 @@ describe("sandbox-policy.schema.json", () => {
     };
     expect(validate(bad)).toBe(false);
   });
+
+  it("accepts sandbox-policy native WebSocket text rules and credential rewrite", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [
+            {
+              host: "gateway.example.com",
+              port: 443,
+              protocol: "websocket",
+              enforcement: "enforce",
+              websocket_credential_rewrite: true,
+              allowed_ips: ["10.0.0.0/8", "172.16.0.0/12"],
+              rules: [
+                { allow: { method: "GET", path: "/**" } },
+                { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "websocket policy");
+  });
+
+  it("accepts sandbox-policy request-body credential rewrite on REST endpoints", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        slack: {
+          name: "Slack",
+          endpoints: [
+            {
+              host: "api.slack.com",
+              port: 443,
+              protocol: "rest",
+              enforcement: "enforce",
+              request_body_credential_rewrite: true,
+              rules: [{ allow: { method: "POST", path: "/**" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "rest body rewrite policy");
+  });
+
+  it("rejects sandbox-policy endpoint with protocol websocket but no rules or access", () => {
+    const bad = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "gateway.example.com", port: 443, protocol: "websocket" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
 });
 
 // ── Policy presets ───────────────────────────────────────────────────────────
@@ -260,6 +321,67 @@ describe("policy-preset.schema.json", () => {
         test_service: {
           name: "Test Service",
           endpoints: [{ host: "api.example.com", port: 443, protocol: "rest" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("accepts preset native WebSocket text rules and credential rewrite", () => {
+    const valid = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [
+            {
+              host: "gateway.example.com",
+              port: 443,
+              protocol: "websocket",
+              enforcement: "enforce",
+              websocket_credential_rewrite: true,
+              allowed_ips: ["10.0.0.0/8", "172.16.0.0/12"],
+              rules: [
+                { allow: { method: "GET", path: "/**" } },
+                { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "websocket preset");
+  });
+
+  it("accepts preset request-body credential rewrite on REST endpoints", () => {
+    const valid = {
+      preset: { name: "slack", description: "Slack" },
+      network_policies: {
+        slack: {
+          name: "Slack",
+          endpoints: [
+            {
+              host: "api.slack.com",
+              port: 443,
+              protocol: "rest",
+              enforcement: "enforce",
+              request_body_credential_rewrite: true,
+              rules: [{ allow: { method: "POST", path: "/**" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "rest body rewrite preset");
+  });
+
+  it("rejects preset endpoint with protocol websocket but no rules", () => {
+    const bad = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "gateway.example.com", port: 443, protocol: "websocket" }],
         },
       },
     };

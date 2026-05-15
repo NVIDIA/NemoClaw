@@ -4,7 +4,7 @@
 # Weekly check that the pinned Dockerfile base-image digest is still current.
 # Fails with an actionable message when a newer node:22-trixie-slim is available.
 
-name: docker-pin-check
+name: Security / Docker Pin Check
 
 on:
   schedule:

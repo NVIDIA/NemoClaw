@@ -57,13 +57,15 @@ On Linux, the installer checks Docker before it installs NemoClaw.
 If Docker is missing, the installer downloads the official Docker convenience script, asks for `sudo`, installs Docker, and starts the Docker service when systemd is available.
 If Docker is installed but your current shell cannot use the Docker socket yet, the installer adds your user to the `docker` group when needed and exits with a recovery command.
 
+On macOS, the installer uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
+
 ```console
 $ newgrp docker
 $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 On DGX Spark and DGX Station, an interactive installer can offer express install after you accept the third-party software notice.
-Express install switches onboarding to non-interactive mode, applies the suggested security policy, and selects the managed local inference path for that platform.
+Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, applies the suggested security policy, and selects the managed local inference path for that platform.
 Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer when you want to choose a provider yourself.
 
 The installer auto-launches `nemoclaw onboard` when it can locate the freshly-installed binary.
@@ -300,7 +302,7 @@ For example, Slack bot tokens must start with `xoxb-`.
 ### Choose Network Policy Presets
 
 After the sandbox image builds and OpenClaw starts inside the sandbox, NemoClaw asks which network policy tier to apply.
-The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, and Brave Search.
+The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, and Brave Search when the selected agent supports web search.
 Use the arrow keys or `j` and `k` to move, Space to select, and Enter to confirm.
 
 The preset selector lets you include more destinations, such as GitHub, Jira, Slack, Telegram, or local inference.
@@ -322,6 +324,10 @@ Status:      nemoclaw my-gpt-claw status
 Logs:        nemoclaw my-gpt-claw logs --follow
 ──────────────────────────────────────────────────
 
+To change settings later:
+  Model:       nemoclaw inference get
+               nemoclaw inference set --model <model> --provider <provider> --sandbox my-gpt-claw
+
 [INFO]  === Installation complete ===
 ```
 
@@ -336,6 +342,7 @@ You can chat with the agent from the terminal or the browser.
 The onboard wizard starts a background port forward to the sandbox dashboard, then prints the dashboard URL in the install summary.
 The default host port is `18789`.
 If that port is already taken, NemoClaw uses the next free dashboard port, such as `18790`, and prints that port in the final URL.
+If the chosen port becomes occupied after the sandbox build starts, onboarding rolls back the newly-created sandbox and asks you to retry instead of printing an unreachable dashboard URL.
 The gateway token is redacted from displayed output; retrieve it explicitly when the browser asks for authentication.
 
 ```text
@@ -368,12 +375,15 @@ openclaw agent --agent main --local -m "hello" --session-id test
 
 ## Next Steps
 
-- [NemoHermes Quickstart](quickstart-hermes.md) to launch Hermes instead of the default OpenClaw agent.
+Navigate to the following topics to learn more about NemoClaw.
+
+- [NemoClaw Overview](../about/overview.md) to learn what NemoClaw is and its capabilities.
+- [Architecture Overview](../about/how-it-works.md) to understand how NemoClaw works.
+- [Ecosystem](../about/ecosystem.md) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
+
+Use the following topics to learn how to use NemoClaw.
+
 - [Manage NemoClaw sandboxes](../manage-sandboxes/lifecycle.md) for port forwards, rebuilds, upgrades, and uninstall.
-- [Switch inference providers](../inference/switch-inference-providers.md) to use a different model or endpoint.
-- [Approve or deny network requests](../network-policy/approve-network-requests.md) when the agent tries to reach external hosts.
-- [Customize the network policy](../network-policy/customize-network-policy.md) to pre-approve trusted domains.
-- [Common integration policy examples](../network-policy/integration-policy-examples.md) for maintained policy presets such as Outlook, messaging, GitHub, Jira, Brave Search, package managers, Hugging Face, and local inference.
-- [Deploy to a remote GPU instance](../deployment/deploy-to-remote-gpu.md) for always-on operation.
-- [Monitor sandbox activity](../monitoring/monitor-sandbox-activity.md) through the OpenShell TUI.
-- [Consult the troubleshooting guide](../reference/troubleshooting.md) for common error messages and resolution steps.
+- [Inference Options](../inference/inference-options.md) to use a different model or endpoint.
+- [Network Policies](../network-policy/approve-network-requests.md) to manage egress approvals.
+- [Troubleshooting](../reference/troubleshooting.md) for common error messages and resolution steps.

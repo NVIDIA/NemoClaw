@@ -1,0 +1,44 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# WeChat (personal) channel egress, via @tencent-weixin/openclaw-weixin.
+#
+# OpenShell's SSRF engine matches `host:` as a literal string — `*.wechat.com`
+# style wildcards are accepted by NemoClaw's preset validator but never expand
+# at runtime, so any traffic to a non-listed subdomain logs `policy:- engine:ssrf`
+# and fails DNS resolution. Until OpenShell ships wildcard support, every iLink
+# IDC host the upstream plugin can hit must be listed explicitly here.
+#
+# Known hosts (extend when an operator observes a new IDC redirect):
+#   - ilinkai.weixin.qq.com   bootstrap; hard-coded in src/ext/wechat/qr.ts
+#   - ilinkai.wechat.com      per-account baseUrl returned after QR confirm
+#
+# To discover more: tail the sandbox OCSF log for `DENIED ... -> <host>:443`
+# entries during the bridge's getUpdates loop and add the host below, then
+# rebuild. The host also surfaces in `session.wechatConfig.baseUrl` for the
+# operator's own account at login time.
+preset:
+  name: wechat
+  description: "WeChat (personal) iLink API access via @tencent-weixin/openclaw-weixin"
+
+network_policies:
+  wechat_bridge:
+    name: wechat_bridge
+    endpoints:
+      - host: ilinkai.weixin.qq.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: ilinkai.wechat.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/node }
+      - { path: /usr/bin/node }
