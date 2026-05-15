@@ -56,7 +56,7 @@ restore_directory() {
   while IFS= read -r -d '' file; do
     local rel="${file#"${src_dir}/"}"
     local rel_parent
-    rel_parent="$(dirname "$rel")"
+    rel_parent="$(dirname -- "$rel")"
 
     local remote_parent="${WORKSPACE_PATH}/${dir_name}"
     if [ "$rel_parent" != "." ]; then
