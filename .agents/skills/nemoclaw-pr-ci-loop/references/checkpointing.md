@@ -1,4 +1,7 @@
-## Persistence: Checkpoint & Resume
+# Persistence: Checkpoint & Resume
+
+<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
+
 
 The loop MUST survive session death. All state is checkpointed to disk.
 
@@ -81,4 +84,3 @@ Write the checkpoint after EVERY state transition:
 - After resolving or explicitly deferring a review thread
 
 ---
-

@@ -1,4 +1,7 @@
-## Step 5: Action Order for Selected PR
+# Step 5: Action Order for Selected PR
+
+<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
+
 
 Do exactly one coherent action per pass, then update state and exit.
 
@@ -180,4 +183,3 @@ After triggering, exit and let a later pass inspect results.
 ### F. Report Merge-Ready PRs
 
 If a PR is approved, mergeable, current, and all checks/E2E are green, report it as merge-ready but do **not** merge without explicit user approval.
-

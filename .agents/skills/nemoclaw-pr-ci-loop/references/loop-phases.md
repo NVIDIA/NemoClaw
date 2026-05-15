@@ -1,4 +1,7 @@
-## Loop Phases
+# Loop Phases
+
+<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
+
 
 ### Phase 0: Identify PR, Check Checkpoint, Gather State
 
@@ -292,4 +295,3 @@ When ALL of the following are true:
 **Only then EXIT the loop** and produce the final summary. If any item is unknown, do not mark complete; report `blocked` or continue waiting.
 
 ---
-

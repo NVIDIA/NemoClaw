@@ -1,4 +1,7 @@
-## Phase 4.5 — Delegate to issue-kickoff for PR-A (`issue-first` mode only)
+# Phase 4.5 — Delegate to issue-kickoff for PR-A (`issue-first` mode only)
+
+<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
+
 
 Skipped in `pr-a-first` mode.
 
@@ -160,4 +163,3 @@ Write to `$REPORTS_DIR/pr-e2e-loop-<PR_A>-<PR_B>-<YYYYMMDD>.md`:
 Move `$CHECKPOINT_DIR/<PR_A>.json` to `$CHECKPOINT_DIR/archive/` with a timestamp suffix. Leave the worktrees in place — user cleans up via `/skill:nemoclaw-worktree-cleanup`.
 
 ---
-

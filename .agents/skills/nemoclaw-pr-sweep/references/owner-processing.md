@@ -1,4 +1,7 @@
-## Per-PR Processing: OWNER Role
+# Per-PR Processing: OWNER Role
+
+<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
+
 
 ### 3a: Sync with main (auto)
 
@@ -173,4 +176,3 @@ gh workflow run e2e-brev.yaml --repo "$REPO" -f pr_number="$PR_NUMBER" -f test_s
 Report what was triggered and why.
 
 ---
-

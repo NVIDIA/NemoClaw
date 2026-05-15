@@ -1,4 +1,7 @@
-### Step 4: Security Review
+# Step 4: Security Review
+
+<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
+
 
 NemoClaw's security model has multiple layers. Verify changes respect all of them:
 
@@ -121,4 +124,3 @@ Security review patterns:
 - **Don't overstate security claims** — if a check is bypassable, say so explicitly
 - **Defense-in-depth is good but must be labeled correctly** — distinguish trust boundaries from convenience filters
 - **Check the blast radius** — does this weaken security for deployments that don't need the feature?
-

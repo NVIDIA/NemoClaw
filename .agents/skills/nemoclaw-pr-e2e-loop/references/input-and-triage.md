@@ -1,4 +1,7 @@
-## Phase 0 — Input Resolution & Candidate Selection
+# Phase 0 — Input Resolution & Candidate Selection
+
+<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
+
 
 This phase resolves the user's input into a concrete PR-A. The exact path depends on what was provided.
 
@@ -293,4 +296,3 @@ Otherwise hold the comment text in the checkpoint for posting at end of Phase 5.
 Write checkpoint `phase = "PHASE_2_DESIGN_TEST"`.
 
 ---
-

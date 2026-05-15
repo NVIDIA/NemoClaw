@@ -1,4 +1,7 @@
-## Phase 2 — Design PR-B (the failing test) — full-auto
+# Phase 2 — Design PR-B (the failing test) — full-auto
+
+<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
+
 
 Author the test end to end. No checkpoint until Phase 2.4.
 
@@ -189,4 +192,3 @@ Write checkpoint `phase = "PHASE_5_VERIFY_GREEN"`.
 Write checkpoint `phase = "PHASE_4_5_KICKOFF_PR_A"` and proceed to **Phase 4.5**.
 
 ---
-
