@@ -6,15 +6,16 @@
  * health checks, and command generators for vLLM and Ollama.
  */
 
-import type { CurlProbeResult } from "../adapters/http/probe";
-import { runCurlProbe } from "../adapters/http/probe";
 import fs from "node:fs";
 import os from "node:os";
 import nodePath from "node:path";
+import type { CurlProbeResult } from "../adapters/http/probe";
+import { runCurlProbe } from "../adapters/http/probe";
+import { buildSubprocessEnv } from "../subprocess-env";
 
 const { shellQuote, runCapture } = require("../runner");
 
-import { VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../core/ports";
+import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 
 const { isWsl } = require("../platform");
@@ -136,6 +137,12 @@ export interface LocalProviderHealthStatus {
 export interface LocalProviderHealthProbeOptions {
   runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
   /**
+   * Lets callers that perform their own Ollama auth-proxy check avoid the
+   * legacy inline proxy subprobe. The inline subprobe is retained for status
+   * rendering paths that still need a combined backend/proxy result.
+   */
+  skipOllamaAuthProxySubprobe?: boolean;
+  /**
    * Reads the persisted Ollama auth-proxy bearer token. Injectable for tests.
    * Default reads from `~/.nemoclaw/ollama-proxy-token` (written by
    * inference/ollama/proxy.ts during onboard).
@@ -154,6 +161,10 @@ function defaultLoadOllamaProxyToken(): string | null {
     /* ignore — null means "no auth-proxy onboarded; skip the subprobe" */
   }
   return null;
+}
+
+function runLocalCurlProbe(argv: string[]): CurlProbeResult {
+  return runCurlProbe(argv, { env: buildSubprocessEnv(), replaceEnv: true });
 }
 
 export function validateOllamaPortConfiguration(): ValidationResult {
@@ -285,7 +296,7 @@ export function probeOllamaAuthProxyHealth(
     return null;
   }
   const endpoint = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags`;
-  const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
+  const runCurlProbeImpl = options.runCurlProbeImpl ?? runLocalCurlProbe;
   const result = runCurlProbeImpl([
     "-sS",
     "--connect-timeout",
@@ -344,7 +355,7 @@ export function probeLocalProviderHealth(
     return null;
   }
 
-  const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
+  const runCurlProbeImpl = options.runCurlProbeImpl ?? runLocalCurlProbe;
   const result = runCurlProbeImpl(["-sS", "--connect-timeout", "3", "--max-time", "5", endpoint]);
 
   // Per #3265 the status line is renamed `Inference (<backend>):` for local
@@ -355,7 +366,7 @@ export function probeLocalProviderHealth(
     provider === "vllm-local" ? "vllm backend" : undefined;
 
   const subprobes: LocalProviderHealthStatus[] = [];
-  if (provider === "ollama-local") {
+  if (provider === "ollama-local" && !options.skipOllamaAuthProxySubprobe) {
     const proxyProbe = probeOllamaAuthProxyHealth(options);
     if (proxyProbe) subprobes.push(proxyProbe);
   }

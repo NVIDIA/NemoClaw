@@ -453,19 +453,37 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
   // the rebuild used to drop the queued token.
   await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, acquired);
   console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
-  maybeHintPolicyPresetForChannel(sandboxName, canonical);
+
+  applyChannelPresetIfAvailable(sandboxName, canonical);
+
   await promptAndRebuild(sandboxName, `add '${canonical}'`);
 }
 
-function maybeHintPolicyPresetForChannel(sandboxName: string, channelName: string): void {
-  const presetExists = policies.listPresets().some((p) => p.name === channelName);
-  if (!presetExists) return;
-  const applied = policies.getAppliedPresets(sandboxName);
-  if (applied.includes(channelName)) return;
-  console.log(
-    `  Hint: the ${channelName} network preset is not applied to '${sandboxName}'. ` +
-      `Run \`${CLI_NAME} ${sandboxName} policy-add ${channelName}\` so the rebuilt sandbox can reach the ${channelName} service.`,
-  );
+// Must run before promptAndRebuild — the rebuild's backup manifest only
+// captures presets already applied (#3437). Without this, channel bridges
+// boot without egress to their upstream API after rebuild.
+function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): void {
+  const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
+  if (!builtinPresets.has(channelName)) {
+    return;
+  }
+  try {
+    const applied = policies.applyPreset(sandboxName, channelName);
+    if (!applied) {
+      console.error(
+        `  ${YW}⚠${R} Channel '${channelName}' bridge registered but its policy preset failed to apply.`,
+      );
+      console.error(
+        `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
+      );
+    }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset: ${msg}`);
+    console.error(
+      `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
+    );
+  }
 }
 
 export async function removeSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
