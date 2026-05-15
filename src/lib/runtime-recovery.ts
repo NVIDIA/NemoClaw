@@ -19,6 +19,14 @@ export interface StateClassification {
   reason: string;
 }
 
+export function isOpenShellProtobufSchemaMismatch(output = ""): boolean {
+  const clean = stripAnsi(output);
+  return (
+    /invalid wire type/i.test(clean) ||
+    /proto(?:buf)?(?: decode| schema| wire)/i.test(clean)
+  );
+}
+
 export function parseLiveSandboxNames(listOutput = ""): Set<string> {
   const clean = stripAnsi(listOutput);
   const names = new Set<string>();
@@ -27,6 +35,7 @@ export function parseLiveSandboxNames(listOutput = ""): Set<string> {
     if (!line) continue;
     if (/^(NAME|No sandboxes found\.?$)/i.test(line)) continue;
     if (/^Error:/i.test(line)) continue;
+    if (isOpenShellProtobufSchemaMismatch(line)) continue;
     const cols = line.split(/\s+/);
     if (cols[0]) {
       names.add(cols[0]);
@@ -46,7 +55,8 @@ export function classifySandboxLookup(output = ""): StateClassification {
   if (
     /transport error|client error|Connection reset by peer|Connection refused|No active gateway|Gateway: .*Error/i.test(
       clean,
-    )
+    ) ||
+    isOpenShellProtobufSchemaMismatch(clean)
   ) {
     return { state: "unavailable", reason: "gateway_unavailable" };
   }

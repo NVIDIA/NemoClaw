@@ -79,8 +79,11 @@ export function isCommandTimeout(result: { error?: Error }) {
   return (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
 }
 
-export function getInstalledOpenshellVersionOrNull(): string | null {
+export function getInstalledOpenshellVersionOrNull(
+  opts: { timeout?: number } = {},
+): string | null {
   return getInstalledOpenshellVersion(getOpenshellBinary(), {
     cwd: ROOT,
+    timeout: opts.timeout,
   });
 }

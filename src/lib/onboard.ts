@@ -69,6 +69,8 @@ const {
 const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
+const { isLinuxDockerDriverGatewayEnabled }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
+const { shouldInspectLegacyGatewayGpuPassthrough }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
 const {
   syncPresetSelection,
 }: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
@@ -100,6 +102,8 @@ const {
   dockerRmi,
   dockerStop,
 } = docker;
+const gatewayDrift: typeof import("./adapters/openshell/gateway-drift") = require("./adapters/openshell/gateway-drift");
+const { getGatewayClusterContainerName, getGatewayClusterImageDrift } = gatewayDrift;
 const sandboxBaseImage: typeof import("./sandbox-base-image") = require("./sandbox-base-image");
 const {
   OPENCLAW_SANDBOX_BASE_IMAGE: SANDBOX_BASE_IMAGE,
@@ -3036,33 +3040,6 @@ function getGatewayClusterContainerState(): string {
   return state || "missing";
 }
 
-function parseGatewayClusterImageVersion(imageRef: string | null | undefined): string | null {
-  const match = String(imageRef || "").match(/openshell\/cluster:([0-9]+\.[0-9]+\.[0-9]+)/);
-  return match ? match[1] : null;
-}
-
-function getGatewayClusterImageRef(): string | null {
-  const containerName = getGatewayClusterContainerName();
-  const imageRef = dockerContainerInspectFormat("{{.Config.Image}}", containerName, {
-    ignoreError: true,
-  }).trim();
-  return imageRef || null;
-}
-
-function getGatewayClusterImageDrift(): {
-  currentImage: string;
-  currentVersion: string;
-  expectedVersion: string;
-} | null {
-  const expectedVersion = getInstalledOpenshellVersion();
-  const currentImage = getGatewayClusterImageRef();
-  const currentVersion = parseGatewayClusterImageVersion(currentImage);
-  if (!expectedVersion || !currentImage || !currentVersion || currentVersion === expectedVersion) {
-    return null;
-  }
-  return { currentImage, currentVersion, expectedVersion };
-}
-
 function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
   const isArm64 = process.arch === "arm64";
   const standardCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
@@ -3081,10 +3058,6 @@ function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
     extended: useExtendedWait,
     containerState: normalizedContainerState,
   };
-}
-
-function getGatewayClusterContainerName(): string {
-  return `openshell-cluster-${GATEWAY_NAME}`;
 }
 
 function buildGatewayClusterExecArgv(script: string): string[] {
@@ -3133,12 +3106,6 @@ const {
   run,
   runCapture,
 });
-function isLinuxDockerDriverGatewayEnabled(
-  platform: NodeJS.Platform = process.platform,
-  arch: NodeJS.Architecture = process.arch,
-): boolean {
-  return platform === "linux" || (platform === "darwin" && arch === "arm64");
-}
 
 function getDockerDriverGatewayStateDir(): string {
   const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
@@ -10285,10 +10252,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
 
     const canReuseHealthyGateway = gatewayReuseState === "healthy";
 
-    // Verify the reusable gateway has GPU passthrough when needed. Runs for
-    // both fresh-reuse and resume paths so a gateway recreated without GPU
-    // between runs is caught.
-    if (canReuseHealthyGateway && gpuPassthrough) {
+    // Verify legacy reusable gateway GPU passthrough; Docker-driver gateways use live CLI health.
+    if (shouldInspectLegacyGatewayGpuPassthrough(
+      gatewayReuseState,
+      gpuPassthrough,
+      isLinuxDockerDriverGatewayEnabled(),
+      gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+    )) {
       const container = `openshell-cluster-${GATEWAY_NAME}`;
       const gpuCheck = docker.dockerInspect(
         ["--type", "container", "--format", "{{json .HostConfig.DeviceRequests}}", container],

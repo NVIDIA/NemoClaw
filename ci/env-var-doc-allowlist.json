@@ -12,6 +12,10 @@
     "reason": "Internal developer/test override for the managed Model Router virtualenv path. Production users should use the default ~/.nemoclaw/model-router-venv."
   },
   {
+    "name": "NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT",
+    "reason": "Internal Vitest-only sentinel that prevents hermetic CLI tests with fake OpenShell binaries from reading the host's real Docker gateway image. Production users should not set it."
+  },
+  {
     "name": "NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE",
     "reason": "Internal installer sentinel exported only during OpenShell gateway replacement so onboard restores the pre-upgrade sandbox backup. Not user-facing."
   },

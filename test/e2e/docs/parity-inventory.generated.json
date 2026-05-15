@@ -3161,7 +3161,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 156,
+          "line": 176,
           "text": "$description",
           "polarity": "pass",
           "normalized_id": "description",
@@ -3169,7 +3169,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 158,
+          "line": 178,
           "text": "$description (missing pattern: $pattern)",
           "polarity": "fail",
           "normalized_id": "description.missing.pattern.pattern",
@@ -3177,7 +3177,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 165,
+          "line": 185,
           "text": "$description (unexpected pattern: $pattern)",
           "polarity": "fail",
           "normalized_id": "description.unexpected.pattern.pattern",
@@ -3185,7 +3185,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 167,
+          "line": 187,
           "text": "$description",
           "polarity": "pass",
           "normalized_id": "description",
@@ -3193,7 +3193,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 175,
+          "line": 195,
           "text": "npm ci failed",
           "polarity": "fail",
           "normalized_id": "npm.ci.failed",
@@ -3201,7 +3201,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 177,
+          "line": 197,
           "text": "CLI build failed",
           "polarity": "fail",
           "normalized_id": "cli.build.failed",
@@ -3209,7 +3209,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 187,
+          "line": 208,
           "text": "backup-all exits non-zero on protobuf mismatch",
           "polarity": "pass",
           "normalized_id": "backup.all.exits.non.zero.on.protobuf.mismatch",
@@ -3217,7 +3217,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 203,
+          "line": 224,
           "text": "backup-all unexpectedly succeeded with stale patched gateway image",
           "polarity": "fail",
           "normalized_id": "backup.all.unexpectedly.succeeded.with.stale.patched.gateway.image",
@@ -3225,7 +3225,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 204,
+          "line": 225,
           "text": "backup-all exits non-zero on stale patched gateway image",
           "polarity": "pass",
           "normalized_id": "backup.all.exits.non.zero.on.stale.patched.gateway.image",
@@ -3233,7 +3233,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 209,
+          "line": 230,
           "text": "sandbox list was called despite preflight image drift",
           "polarity": "fail",
           "normalized_id": "sandbox.list.was.called.despite.preflight.image.drift",
@@ -3241,7 +3241,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 211,
+          "line": 232,
           "text": "preflight image drift blocks sandbox list",
           "polarity": "pass",
           "normalized_id": "preflight.image.drift.blocks.sandbox.list",
@@ -3249,7 +3249,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 214,
+          "line": 235,
           "text": "Gateway drift preflight regression guard completed",
           "polarity": "pass",
           "normalized_id": "gateway.drift.preflight.regression.guard.completed",
