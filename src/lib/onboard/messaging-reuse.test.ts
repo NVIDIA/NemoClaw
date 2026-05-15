@@ -11,9 +11,22 @@ import {
 const messagingChannels = [
   { name: "discord", envKey: "DISCORD_BOT_TOKEN" },
   { name: "slack", envKey: "SLACK_BOT_TOKEN" },
+  { name: "wechat", envKey: "WECHAT_BOT_TOKEN" },
 ];
 
 describe("onboard messaging reuse", () => {
+  it("maps one bridge provider for single-token messaging channels", () => {
+    expect(getMessagingProviderNamesForChannel("assistant", "discord")).toEqual([
+      "assistant-discord-bridge",
+    ]);
+    expect(getMessagingProviderNamesForChannel("assistant", "telegram")).toEqual([
+      "assistant-telegram-bridge",
+    ]);
+    expect(getMessagingProviderNamesForChannel("assistant", "wechat")).toEqual([
+      "assistant-wechat-bridge",
+    ]);
+  });
+
   it("requires both Slack providers before reusing a stored Slack channel", () => {
     expect(getMessagingProviderNamesForChannel("assistant", "slack")).toEqual([
       "assistant-slack-bridge",
@@ -50,6 +63,22 @@ describe("onboard messaging reuse", () => {
     );
 
     expect(reusedChannels).toEqual(["slack"]);
+  });
+
+  it("reuses a stored WeChat channel when its bridge provider exists", () => {
+    const reusedChannels = getNonInteractiveStoredMessagingChannels(
+      false,
+      null,
+      "assistant",
+      messagingChannels,
+      () => false,
+      () => ({ messagingChannels: ["wechat"] }),
+      () => [],
+      (provider) => provider === "assistant-wechat-bridge",
+      true,
+    );
+
+    expect(reusedChannels).toEqual(["wechat"]);
   });
 
   it("normalizes empty resume messaging channels to null", () => {

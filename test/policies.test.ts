@@ -279,9 +279,10 @@ describe("policies", () => {
       expect(warning).toContain("nemoclaw onboard");
     });
 
-    it("returns a warning for discord and slack", () => {
+    it("returns a warning for discord, slack, and wechat", () => {
       expect(policies.getMessagingPresetWarning("discord")).toContain("Discord");
       expect(policies.getMessagingPresetWarning("slack")).toContain("Slack");
+      expect(policies.getMessagingPresetWarning("wechat")).toContain("WeChat");
     });
 
     it("returns null for non-messaging presets", () => {
@@ -1437,6 +1438,16 @@ selectForRemoval(items, options)
         /Note: the 'telegram' preset only opens network egress to the Telegram API\./,
       );
       expect(result.stdout).toMatch(/re-run 'nemoclaw onboard' and select Telegram/);
+    });
+
+    it("warns the user that the wechat preset alone does not enable WeChat messaging", () => {
+      const result = runPolicyAdd("y", [], {}, "wechat");
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /Note: the 'wechat' preset only opens network egress to the WeChat API\./,
+      );
+      expect(result.stdout).toMatch(/re-run 'nemoclaw onboard' and select WeChat/);
     });
 
     it("does not warn about messaging when a non-messaging preset is selected", () => {
