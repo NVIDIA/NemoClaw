@@ -1391,259 +1391,6 @@
       ]
     },
     {
-      "script": "test/e2e/test-deployment-services.sh",
-      "assertions": [
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 202,
-          "text": "TC-STATE-02: Setup",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.setup",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 213,
-          "text": "TC-STATE-02: Backup completed successfully",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.backup.completed.successfully",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 215,
-          "text": "TC-STATE-02: Backup",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.backup",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 222,
-          "text": "TC-STATE-02: Backup dir",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.backup.dir",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 248,
-          "text": "TC-STATE-02: Destroy",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.destroy",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 251,
-          "text": "TC-STATE-02: Sandbox destroyed",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.sandbox.destroyed",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 255,
-          "text": "TC-STATE-02: Re-onboard",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.re.onboard",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 258,
-          "text": "TC-STATE-02: Sandbox re-onboarded",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.sandbox.re.onboarded",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 266,
-          "text": "TC-STATE-02: Restore completed successfully",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.restore.completed.successfully",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 268,
-          "text": "TC-STATE-02: Restore",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.restore",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 285,
-          "text": "TC-STATE-02: ${verified}/5 workspace files verified with correct content",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.verified.5.workspace.files.verified.with.correct.content",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 288,
-          "text": "TC-STATE-02: ${verified}/5 workspace files verified (partial tolerance applied)",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.verified.5.workspace.files.verified.partial.tolerance.applied",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 290,
-          "text": "TC-STATE-02: Verify",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.verify",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 296,
-          "text": "TC-STATE-02: Memory note restored correctly",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.memory.note.restored.correctly",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 329,
-          "text": "TC-DEPLOY-01a: Start",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01a.start",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 344,
-          "text": "TC-DEPLOY-01a: Tunnel URL found in status ($tunnel_url)",
-          "polarity": "pass",
-          "normalized_id": "tc.deploy.01a.tunnel.url.found.in.status.tunnel.url",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 346,
-          "text": "TC-DEPLOY-01a: Start",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01a.start",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 368,
-          "text": "TC-DEPLOY-01b: Tunnel serves OpenClaw dashboard (HTTP 200, marker matched)",
-          "polarity": "pass",
-          "normalized_id": "tc.deploy.01b.tunnel.serves.openclaw.dashboard.http.200.marker.matched",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 370,
-          "text": "TC-DEPLOY-01b",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01b",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 373,
-          "text": "TC-DEPLOY-01b",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01b",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 385,
-          "text": "TC-DEPLOY-01c: Stop command",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01c.stop.command",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 409,
-          "text": "TC-DEPLOY-01c: Stop",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01c.stop",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 411,
-          "text": "TC-DEPLOY-01c: Tunnel URL absent after stop",
-          "polarity": "pass",
-          "normalized_id": "tc.deploy.01c.tunnel.url.absent.after.stop",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 413,
-          "text": "TC-DEPLOY-01c: Stop",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01c.stop",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 448,
-          "text": "TC-DEPLOY-03: openshell binary still in PATH after uninstall",
-          "polarity": "pass",
-          "normalized_id": "tc.deploy.03.openshell.binary.still.in.path.after.uninstall",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 450,
-          "text": "TC-DEPLOY-03: openshell",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.03.openshell",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 457,
-          "text": "TC-DEPLOY-03: nemoclaw removed after uninstall",
-          "polarity": "pass",
-          "normalized_id": "tc.deploy.03.nemoclaw.removed.after.uninstall",
-          "mapping_status": "retired"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 459,
-          "text": "TC-DEPLOY-03: uninstall completed (nemoclaw in source tree is expected)",
-          "polarity": "pass",
-          "normalized_id": "tc.deploy.03.uninstall.completed.nemoclaw.in.source.tree.is.expected",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 461,
-          "text": "TC-DEPLOY-03: nemoclaw",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.03.nemoclaw",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 482,
-          "text": "$PASS${NC}",
-          "polarity": "pass",
-          "normalized_id": "pass.nc",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 483,
-          "text": "$FAIL${NC}",
-          "polarity": "fail",
-          "normalized_id": "fail.nc",
-          "mapping_status": "deferred"
-        }
-      ]
-    },
-    {
       "script": "test/e2e/test-device-auth-health.sh",
       "assertions": [
         {
@@ -14837,6 +14584,187 @@
       ]
     },
     {
+      "script": "test/e2e/test-state-backup-restore.sh",
+      "assertions": [
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 186,
+          "text": "TC-STATE-01: Setup",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.setup",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 197,
+          "text": "TC-STATE-01: Backup completed successfully",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.backup.completed.successfully",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 199,
+          "text": "TC-STATE-01: Backup",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.backup",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 207,
+          "text": "TC-STATE-01: Backup dir",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.backup.dir",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 225,
+          "text": "TC-STATE-01: BackupCaptureFiles",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.backupcapturefiles",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 228,
+          "text": "TC-STATE-01: BackupCaptureFiles — 5/5 .md files captured in host backup",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.backupcapturefiles.5.5.md.files.captured.in.host.backup",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 232,
+          "text": "TC-STATE-01: BackupCaptureDir",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.backupcapturedir",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 236,
+          "text": "TC-STATE-01: BackupCaptureDir",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.backupcapturedir",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 239,
+          "text": "TC-STATE-01: BackupCaptureDir — memory directory captured in host backup",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.backupcapturedir.memory.directory.captured.in.host.backup",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 262,
+          "text": "TC-STATE-01: Destroy",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.destroy",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 265,
+          "text": "TC-STATE-01: Sandbox destroyed",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.sandbox.destroyed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 269,
+          "text": "TC-STATE-01: Re-onboard",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.re.onboard",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 272,
+          "text": "TC-STATE-01: Sandbox re-onboarded",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.sandbox.re.onboarded",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 280,
+          "text": "TC-STATE-01: Restore completed successfully",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.restore.completed.successfully",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 282,
+          "text": "TC-STATE-01: Restore",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.restore",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 299,
+          "text": "TC-STATE-01: FilesRestore — ${files_restored}/5 workspace files restored correctly",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.filesrestore.files.restored.5.workspace.files.restored.correctly",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 301,
+          "text": "TC-STATE-01: FilesRestore",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.filesrestore",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 311,
+          "text": "TC-STATE-01: MemoryDirRestore — memory directory contents restored correctly",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.memorydirrestore.memory.directory.contents.restored.correctly",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 314,
+          "text": "TC-STATE-01: MemoryDirRestore",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.memorydirrestore",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 318,
+          "text": "TC-STATE-01: MemoryDirRestore",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.memorydirrestore",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 339,
+          "text": "$PASS${NC}",
+          "polarity": "pass",
+          "normalized_id": "pass.nc",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 340,
+          "text": "$FAIL${NC}",
+          "polarity": "fail",
+          "normalized_id": "fail.nc",
+          "mapping_status": "deferred"
+        }
+      ]
+    },
+    {
       "script": "test/e2e/test-telegram-injection.sh",
       "assertions": [
         {
@@ -15679,6 +15607,171 @@
       ]
     },
     {
+      "script": "test/e2e/test-tunnel-lifecycle.sh",
+      "assertions": [
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 244,
+          "text": "TC-DEPLOY-01a / TC-DEPLOY-01b / TC-DEPLOY-01c",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.tc.deploy.01b.tc.deploy.01c",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 260,
+          "text": "TC-DEPLOY-01a: LocalReadiness",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.localreadiness",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 264,
+          "text": "TC-DEPLOY-01a: Local dashboard reachable (pre-check passed)",
+          "polarity": "pass",
+          "normalized_id": "tc.deploy.01a.local.dashboard.reachable.pre.check.passed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 275,
+          "text": "TC-DEPLOY-01a: Start",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.start",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 289,
+          "text": "TC-DEPLOY-01a: Tunnel URL found in status ($tunnel_url)",
+          "polarity": "pass",
+          "normalized_id": "tc.deploy.01a.tunnel.url.found.in.status.tunnel.url",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 298,
+          "text": "TC-DEPLOY-01a: NoSpawn",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.nospawn",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 302,
+          "text": "TC-DEPLOY-01a: CaptureBug",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.capturebug",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 306,
+          "text": "TC-DEPLOY-01a: LocalOrigin",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.localorigin",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 310,
+          "text": "TC-DEPLOY-01a: CloudflareRegister",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.cloudflareregister",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 314,
+          "text": "TC-DEPLOY-01a: Start",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.start",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 344,
+          "text": "TC-DEPLOY-01b: LocalRegression",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01b.localregression",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 358,
+          "text": "TC-DEPLOY-01b: Tunnel serves OpenClaw dashboard (HTTP 200, marker matched)",
+          "polarity": "pass",
+          "normalized_id": "tc.deploy.01b.tunnel.serves.openclaw.dashboard.http.200.marker.matched",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 360,
+          "text": "TC-DEPLOY-01b",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01b",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 365,
+          "text": "TC-DEPLOY-01b: CloudflareEdge",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01b.cloudflareedge",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 379,
+          "text": "TC-DEPLOY-01c: Stop command",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01c.stop.command",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 403,
+          "text": "TC-DEPLOY-01c: Stop",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01c.stop",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 405,
+          "text": "TC-DEPLOY-01c: Tunnel URL absent after stop",
+          "polarity": "pass",
+          "normalized_id": "tc.deploy.01c.tunnel.url.absent.after.stop",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 407,
+          "text": "TC-DEPLOY-01c: Stop",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01c.stop",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 429,
+          "text": "$PASS${NC}",
+          "polarity": "pass",
+          "normalized_id": "pass.nc",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 430,
+          "text": "$FAIL${NC}",
+          "polarity": "fail",
+          "normalized_id": "fail.nc",
+          "mapping_status": "deferred"
+        }
+      ]
+    },
+    {
       "script": "test/e2e/test-upgrade-stale-sandbox.sh",
       "assertions": [
         {
@@ -15845,8 +15938,8 @@
     }
   ],
   "totals": {
-    "scripts": 48,
-    "assertions": 1950,
+    "scripts": 49,
+    "assertions": 1961,
     "zero_assertion_scripts": 1
   }
 }

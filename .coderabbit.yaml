@@ -245,15 +245,16 @@ reviews:
 
     - path: "src/lib/deploy/**"
       instructions: |
-        This file contains deployment lifecycle logic (start/stop,
-        cloudflared tunnel, uninstall).
+        This file contains deployment lifecycle logic (start/stop
+        cloudflared tunnel).
 
         **E2E test recommendation:**
-        - `deployment-services-e2e` — backup/restore, start/stop, uninstall
+        - `tunnel-lifecycle-e2e` — start/stop cloudflared tunnel
+        - `state-backup-restore-e2e` — backup/restore workspace state
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=deployment-services-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=tunnel-lifecycle-e2e,state-backup-restore-e2e
         ```
 
     - path: "src/lib/state/sandbox.ts"
@@ -263,12 +264,13 @@ reviews:
         lifecycle operations.
 
         **E2E test recommendation:**
+        - `state-backup-restore-e2e` — backup/restore workspace state
         - `snapshot-commands-e2e` — snapshot create/list/restore lifecycle
         - `rebuild-openclaw-e2e` — workspace state survives rebuild
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=snapshot-commands-e2e,rebuild-openclaw-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=state-backup-restore-e2e,snapshot-commands-e2e,rebuild-openclaw-e2e
         ```
 
     - path: "src/lib/shields/**"

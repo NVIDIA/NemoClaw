@@ -363,8 +363,9 @@ import type {
   ProbeResult,
   ValidationFailureLike,
 } from "./onboard/types";
-import { getChannelTokenKeys, listChannels } from "./sandbox/channels";
 import { getMessagingToken } from "./onboard/messaging-token";
+import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
+import { channelHasStaticToken, getChannelTokenKeys, listChannels } from "./sandbox/channels";
 import { streamGatewayStart } from "./onboard/gateway";
 import { reportGpuPassthroughRecovery } from "./onboard/gpu-recovery";
 import type { StreamSandboxCreateResult } from "./sandbox/create-stream";
@@ -5459,13 +5460,12 @@ async function createSandbox(
     }
 
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
-    const previousPolicies = previousEntry?.policies ?? null;
-    if (previousPolicies && previousPolicies.length > 0) {
-      onboardSession.updateSession((current: Session) => {
-        current.policyPresets = previousPolicies;
-        return current;
-      });
-    }
+    const decision = decidePolicyCarryForward(previousEntry?.policies, process.env, isNonInteractive());
+    onboardSession.updateSession((c: Session) => {
+      c.policyPresets = decision.newPresets;
+      return c;
+    });
+    if (decision.overrideNote !== null) note(decision.overrideNote);
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 

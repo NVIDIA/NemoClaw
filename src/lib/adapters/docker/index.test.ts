@@ -41,11 +41,39 @@ describe("docker helpers", () => {
 
     expect(runMock.mock.calls).toEqual([
       [["docker", "pull", "ghcr.io/example/image:latest"], {}],
-      [["docker", "build", "-f", "Dockerfile", "-t", "example:tag", "/tmp/build"], {}],
+      [
+        ["docker", "build", "-f", "Dockerfile", "-t", "example:tag", "/tmp/build"],
+        { env: { DOCKER_BUILDKIT: "1" } },
+      ],
       [["docker", "run", "-d", "--name", "example", "busybox:latest"], {}],
       [["docker", "rename", "example", "example-backup"], {}],
       [["docker", "rmi", "example:tag"], {}],
     ]);
+  });
+
+  it("forces DOCKER_BUILDKIT=1 on dockerBuild so Dockerfile.base --mount works on legacy-builder hosts (#3583)", () => {
+    dockerBuild("Dockerfile.base", "sandbox-base:latest", "/repo/root", {
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+
+    expect(runMock).toHaveBeenCalledWith(
+      ["docker", "build", "-f", "Dockerfile.base", "-t", "sandbox-base:latest", "/repo/root"],
+      {
+        stdio: ["ignore", "inherit", "inherit"],
+        env: { DOCKER_BUILDKIT: "1" },
+      },
+    );
+  });
+
+  it("preserves a caller-supplied DOCKER_BUILDKIT value rather than overriding it", () => {
+    dockerBuild("Dockerfile", "example:tag", "/tmp/build", {
+      env: { DOCKER_BUILDKIT: "0", FOO: "bar" },
+    });
+
+    expect(runMock).toHaveBeenCalledWith(
+      ["docker", "build", "-f", "Dockerfile", "-t", "example:tag", "/tmp/build"],
+      { env: { DOCKER_BUILDKIT: "0", FOO: "bar" } },
+    );
   });
 
   it("prefixes docker argv for info/inspect capture helpers", () => {

@@ -74,7 +74,7 @@ on:
           hermes-inference-switch-e2e, hermes-discord-e2e,
           hermes-slack-e2e, sandbox-operations-e2e, inference-routing-e2e,
           openclaw-inference-switch-e2e,
-          network-policy-e2e, deployment-services-e2e, diagnostics-e2e,
+          network-policy-e2e, state-backup-restore-e2e, tunnel-lifecycle-e2e, diagnostics-e2e,
           credential-migration-e2e,
           snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e,
           upgrade-stale-sandbox-e2e, rebuild-hermes-e2e,
@@ -1086,16 +1086,14 @@ jobs:
           path: test-network-policy-*.log
           if-no-files-found: ignore
 
-  # ── Deployment & Services E2E ────────────────────────────────
-  # TC-STATE-02: backup-workspace.sh lifecycle (backup → destroy → restore)
-  # TC-DEPLOY-01: nemoclaw start/stop (cloudflared tunnel)
-  # TC-DEPLOY-03: uninstall --keep-openshell (destructive, runs last in script)
-  deployment-services-e2e:
+  # ── Workspace Backup & Restore E2E ───────────────────────────
+  # TC-STATE-01: backup-workspace.sh lifecycle (backup → destroy → restore)
+  state-backup-restore-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
       (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
-       contains(format(',{0},', inputs.jobs), ',deployment-services-e2e,'))
+       contains(format(',{0},', inputs.jobs), ',state-backup-restore-e2e,'))
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -1104,20 +1102,50 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
-      - name: Run deployment services E2E test
+      - name: Run state backup/restore E2E test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-deploy-svc"
-        run: bash test/e2e/test-deployment-services.sh
+        run: bash test/e2e/test-state-backup-restore.sh
 
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: deployment-services-test-log
-          path: test-deployment-services-*.log
+          name: state-backup-restore-test-log
+          path: test-state-backup-restore-*.log
+          if-no-files-found: ignore
+
+  # ── Tunnel Lifecycle E2E ─────────────────────────────────────
+  # TC-DEPLOY-01a/b/c: nemoclaw tunnel start / probe / stop (cloudflared tunnel)
+  tunnel-lifecycle-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',tunnel-lifecycle-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run tunnel lifecycle E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash test/e2e/test-tunnel-lifecycle.sh
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tunnel-lifecycle-test-log
+          path: test-tunnel-lifecycle-*.log
           if-no-files-found: ignore
 
   # ── Diagnostics E2E ─────────────────────────────────────────
@@ -1961,7 +1989,8 @@ jobs:
         inference-routing-e2e,
         openclaw-inference-switch-e2e,
         network-policy-e2e,
-        deployment-services-e2e,
+        state-backup-restore-e2e,
+        tunnel-lifecycle-e2e,
         diagnostics-e2e,
         credential-migration-e2e,
         snapshot-commands-e2e,
@@ -2052,7 +2081,8 @@ jobs:
         inference-routing-e2e,
         openclaw-inference-switch-e2e,
         network-policy-e2e,
-        deployment-services-e2e,
+        state-backup-restore-e2e,
+        tunnel-lifecycle-e2e,
         diagnostics-e2e,
         credential-migration-e2e,
         snapshot-commands-e2e,
@@ -2200,7 +2230,8 @@ jobs:
         inference-routing-e2e,
         openclaw-inference-switch-e2e,
         network-policy-e2e,
-        deployment-services-e2e,
+        state-backup-restore-e2e,
+        tunnel-lifecycle-e2e,
         diagnostics-e2e,
         credential-migration-e2e,
         snapshot-commands-e2e,
