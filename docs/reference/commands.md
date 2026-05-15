@@ -1172,6 +1172,7 @@ These flags toggle optional behaviors during onboarding; set them before running
 | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by the Linux Docker-driver gateway. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary passed to the Linux Docker-driver gateway supervisor. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway pid file and SQLite state directory. Defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`. |
+| `NEMOCLAW_WECHAT_QUIET` | `1` to enable | Silences the `[wechat]` diagnostic lines printed during the host-side WeChat QR login (poll status, IDC redirects, swallowed gateway errors). Visible by default while the WeChat path stabilizes; set `1` once the flow is reliable in your environment. |
 
 ### Probe Timeouts
 

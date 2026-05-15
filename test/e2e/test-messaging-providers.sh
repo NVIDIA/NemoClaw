@@ -46,6 +46,11 @@
 #   SLACK_APP_TOKEN                        — defaults to fake token (xapp-fake-...)
 #   SLACK_BOT_TOKEN_REVOKED                — optional: revoked xoxb- token to test auth pre-validation (#2340)
 #   SLACK_APP_TOKEN_REVOKED                — optional: paired xapp- token for the revoked bot token
+#   WECHAT_BOT_TOKEN                       — defaults to fake token; presence skips host-side QR login
+#   WECHAT_ACCOUNT_ID                      — defaults to fake iLink account ID (seed-wechat-accounts.py key)
+#   WECHAT_BASE_URL                        — defaults to fake iLink baseUrl (per-account API host)
+#   WECHAT_USER_ID                         — defaults to fake operator wechat user ID (seeds DM allowlist)
+#   WECHAT_ALLOWED_IDS                     — optional: comma-separated DM allowlist for wechat
 #   TELEGRAM_CHAT_ID_E2E                   — optional: enables sendMessage test
 #   NEMOCLAW_OPENSHELL_BIN                 — optional OpenShell binary under test
 #   NEMOCLAW_FRESH=1                       — auto-set to discard interrupted onboard sessions
@@ -118,11 +123,26 @@ DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
 SLACK_TOKEN="${SLACK_BOT_TOKEN:-xoxb-fake-slack-token-e2e}"
 SLACK_APP="${SLACK_APP_TOKEN:-xapp-fake-slack-app-token-e2e}"
 TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
+# WeChat: pre-seeding WECHAT_BOT_TOKEN + the per-account metadata env vars lets
+# the non-interactive onboard path (src/lib/onboard.ts:8433) treat wechat as
+# "already configured" and skip the host-qr handler entirely. Fake values are
+# enough — Phase 1-3 verify placeholders/isolation; no live iLink contact is
+# made because no token exchange happens at build time.
+WECHAT_TOKEN="${WECHAT_BOT_TOKEN:-test-fake-wechat-token-e2e}"
+WECHAT_ACCOUNT="${WECHAT_ACCOUNT_ID:-e2e-fake-account-12345}"
+WECHAT_BASE="${WECHAT_BASE_URL:-https://ilinkai-fake-e2e.wechat.com}"
+WECHAT_USER="${WECHAT_USER_ID:-wxid_e2efakeoperator}"
+WECHAT_IDS="${WECHAT_ALLOWED_IDS:-${WECHAT_USER}}"
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
 export SLACK_BOT_TOKEN="$SLACK_TOKEN"
 export SLACK_APP_TOKEN="$SLACK_APP"
 export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
+export WECHAT_BOT_TOKEN="$WECHAT_TOKEN"
+export WECHAT_ACCOUNT_ID="$WECHAT_ACCOUNT"
+export WECHAT_BASE_URL="$WECHAT_BASE"
+export WECHAT_USER_ID="$WECHAT_USER"
+export WECHAT_ALLOWED_IDS="$WECHAT_IDS"
 
 # Run a command inside the sandbox via stdin (avoids exposing sensitive args in process list)
 sandbox_exec_stdin() {
@@ -192,6 +212,7 @@ info "Telegram token: ${TELEGRAM_TOKEN:0:10}... (${#TELEGRAM_TOKEN} chars)"
 info "Discord token: ${DISCORD_TOKEN:0:10}... (${#DISCORD_TOKEN} chars)"
 info "Slack bot token: configured (${#SLACK_TOKEN} chars)"
 info "Slack app token: configured (${#SLACK_APP} chars)"
+info "WeChat token: configured (${#WECHAT_TOKEN} chars), account=${WECHAT_ACCOUNT}"
 info "Sandbox name: $SANDBOX_NAME"
 
 # ══════════════════════════════════════════════════════════════════
@@ -381,6 +402,15 @@ if openshell provider get "${SANDBOX_NAME}-discord-bridge" >/dev/null 2>&1; then
   pass "M2: Provider '${SANDBOX_NAME}-discord-bridge' exists in gateway"
 else
   fail "M2: Provider '${SANDBOX_NAME}-discord-bridge' not found in gateway"
+fi
+
+# M-W1: Verify WeChat provider exists in gateway. Non-interactive onboard
+# saw WECHAT_BOT_TOKEN in env (skipping host-qr login) and registered the
+# bridge provider just like the other channels.
+if openshell provider get "${SANDBOX_NAME}-wechat-bridge" >/dev/null 2>&1; then
+  pass "M-W1: Provider '${SANDBOX_NAME}-wechat-bridge' exists in gateway"
+else
+  fail "M-W1: Provider '${SANDBOX_NAME}-wechat-bridge' not found in gateway (non-interactive QR-skip path may be broken)"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -592,6 +622,65 @@ else
   pass "M-S5g: Slack token rewriter preload absent from NODE_OPTIONS"
 fi
 
+# ── WeChat credential isolation ───────────────────────────────────
+# Mirrors M5a/M5b/M5c for WeChat. The host-side WECHAT_BOT_TOKEN must
+# never appear on any observable surface inside the sandbox — the
+# upstream @tencent-weixin/openclaw-weixin plugin reads it via the
+# placeholder in <stateDir>/openclaw-weixin/accounts/<id>.json and the
+# L7 proxy rewrites at egress.
+
+# M-W3: WECHAT_BOT_TOKEN inside the sandbox must NOT contain the host token.
+sandbox_wechat=$(sandbox_exec "printenv WECHAT_BOT_TOKEN" 2>/dev/null || true)
+if [ -z "$sandbox_wechat" ]; then
+  info "WECHAT_BOT_TOKEN not set inside sandbox (provider-only mode)"
+  WECHAT_PLACEHOLDER=""
+elif echo "$sandbox_wechat" | grep -qF "$WECHAT_TOKEN"; then
+  fail "M-W3: Real WeChat token leaked into sandbox env"
+else
+  pass "M-W3: Sandbox WECHAT_BOT_TOKEN is a placeholder (not the real token)"
+  WECHAT_PLACEHOLDER="$sandbox_wechat"
+  info "WeChat placeholder: ${WECHAT_PLACEHOLDER:0:30}..."
+fi
+
+# M-W3a: Full environment dump must not contain the real WeChat token.
+if [ -z "$sandbox_env_all" ]; then
+  skip "M-W3a: Environment variable list is empty"
+elif echo "$sandbox_env_all" | grep -qF "$WECHAT_TOKEN"; then
+  fail "M-W3a: Real WeChat token found in full sandbox environment dump"
+else
+  pass "M-W3a: Real WeChat token absent from full sandbox environment"
+fi
+
+# M-W3b: Process list must not contain the real WeChat token.
+if [ -z "$sandbox_ps" ]; then
+  skip "M-W3b: Process list is empty"
+elif echo "$sandbox_ps" | grep -qF "$WECHAT_TOKEN"; then
+  fail "M-W3b: Real WeChat token found in sandbox process list"
+else
+  pass "M-W3b: Real WeChat token absent from sandbox process list"
+fi
+
+# M-W3c: Recursive filesystem search for the real WeChat token. The seed
+# script writes the placeholder, not the token — a hit here would mean
+# something upstream is splicing the real value into account state files.
+sandbox_fs_wc=$(printf '%s' "$WECHAT_TOKEN" | sandbox_exec_stdin "grep -rFlm1 -f - /sandbox /home /etc /tmp /var 2>/dev/null || true")
+if [ -n "$sandbox_fs_wc" ]; then
+  fail "M-W3c: Real WeChat token found on sandbox filesystem: ${sandbox_fs_wc}"
+else
+  pass "M-W3c: Real WeChat token absent from sandbox filesystem"
+fi
+
+# M-W3d: WeChat placeholder must be present in the sandbox environment.
+if [ -n "$WECHAT_PLACEHOLDER" ]; then
+  if echo "$sandbox_env_all" | grep -qF "$WECHAT_PLACEHOLDER"; then
+    pass "M-W3d: WeChat placeholder confirmed present in sandbox environment"
+  else
+    fail "M-W3d: WeChat placeholder not found in sandbox environment"
+  fi
+else
+  skip "M-W3d: No WeChat placeholder to verify (provider-only mode)"
+fi
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 3: Config Patching — openclaw.json channels
 # ══════════════════════════════════════════════════════════════════
@@ -780,6 +869,63 @@ print('yes' if 'slack' in d else 'no')
     info "  NODE_OPTIONS: $node_opts"
   else
     skip "M11e: No Slack channel in config"
+  fi
+
+  # M-W8: WeChat channel registered under channels.openclaw-weixin with the
+  # configured accountId enabled. Written by seed-wechat-accounts.py during
+  # image build using NEMOCLAW_WECHAT_CONFIG_B64. Absence here means
+  # NEMOCLAW_WECHAT_CONFIG_B64 was empty or seed-wechat-accounts.py was
+  # skipped — both regressions on the non-interactive QR-skip path.
+  wechat_enabled=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+accounts = d.get('openclaw-weixin', {}).get('accounts', {})
+account = accounts.get('$WECHAT_ACCOUNT', {})
+print(account.get('enabled', False))
+" 2>/dev/null || true)
+  if [ "$wechat_enabled" = "True" ]; then
+    pass "M-W8: WeChat account '$WECHAT_ACCOUNT' is enabled in openclaw.json (channels.openclaw-weixin)"
+  else
+    skip "M-W8: WeChat account not enabled in openclaw.json (expected in non-root sandbox or seed-wechat-accounts.py was skipped)"
+  fi
+fi
+
+# M-W9: Per-account credential file holds the WECHAT_BOT_TOKEN placeholder,
+# not the real token. seed-wechat-accounts.py writes
+# <stateDir>/openclaw-weixin/accounts/<accountId>.json with
+# token = "openshell:resolve:env:WECHAT_BOT_TOKEN". A real-token hit
+# would mean someone bypassed the placeholder constant.
+wechat_account_json=$(sandbox_exec "cat /sandbox/.openclaw/openclaw-weixin/accounts/${WECHAT_ACCOUNT}.json 2>/dev/null || true" 2>/dev/null || true)
+if [ -z "$wechat_account_json" ] || echo "$wechat_account_json" | grep -qi "no such file"; then
+  skip "M-W9: WeChat per-account credential file not found (seed-wechat-accounts.py may have been skipped)"
+else
+  if echo "$wechat_account_json" | grep -qF "$WECHAT_TOKEN"; then
+    fail "M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — seed-wechat-accounts.py placeholder regression"
+  elif echo "$wechat_account_json" | grep -qF "openshell:resolve:env:WECHAT_BOT_TOKEN"; then
+    pass "M-W9: WeChat per-account credential file uses the L7-resolved placeholder"
+  else
+    fail "M-W9: WeChat per-account credential file has unexpected token shape: $(echo "$wechat_account_json" | tr -d '\n' | cut -c1-200)"
+  fi
+fi
+
+# M-W10: Accounts index lists the configured accountId. Written by
+# seed-wechat-accounts.py before the per-account file; the upstream plugin's
+# auth/accounts.ts boots accounts that appear in this index.
+wechat_index_json=$(sandbox_exec "cat /sandbox/.openclaw/openclaw-weixin/accounts.json 2>/dev/null || true" 2>/dev/null || true)
+if [ -z "$wechat_index_json" ] || echo "$wechat_index_json" | grep -qi "no such file"; then
+  skip "M-W10: WeChat accounts.json index not found"
+else
+  if echo "$wechat_index_json" | python3 -c "
+import json, sys
+try:
+    ids = json.load(sys.stdin)
+    sys.exit(0 if isinstance(ids, list) and '$WECHAT_ACCOUNT' in ids else 1)
+except Exception:
+    sys.exit(2)
+" 2>/dev/null; then
+    pass "M-W10: WeChat accounts.json index contains '$WECHAT_ACCOUNT'"
+  else
+    fail "M-W10: WeChat accounts.json missing '$WECHAT_ACCOUNT' (raw: $(echo "$wechat_index_json" | tr -d '\n' | cut -c1-200))"
   fi
 fi
 

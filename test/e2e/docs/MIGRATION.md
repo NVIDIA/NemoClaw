@@ -121,7 +121,8 @@ Legend: ⬜ not started · 🟨 in progress · ✅ migrated · 🔵 parity verif
 - ⬜ `test-runtime-overrides.sh` (272) → `sandbox/runtime-overrides/`
 - ⬜ `test-overlayfs-autofix.sh` (537) → `sandbox/overlayfs-autofix/`
 - ⬜ `test-device-auth-health.sh` (373) → `lifecycle/device-auth-health/`
-- ⬜ `test-deployment-services.sh` (514) → `lifecycle/deployment-services/`
+- ⬜ `test-state-backup-restore.sh` (378) → `lifecycle/state-backup-restore/`
+- ⬜ `test-tunnel-lifecycle.sh` (472) → `lifecycle/tunnel-lifecycle/`
 
 ### Wave 10 — platform + remote
 

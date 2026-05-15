@@ -9,7 +9,7 @@ import { createRequire } from "node:module";
 import type { Interface as ReadlineInterface } from "node:readline";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import policies from "../dist/lib/policy";
+import * as policies from "../dist/lib/policy";
 import { execTimeout } from "./helpers/timeouts";
 
 const requireForTest = createRequire(import.meta.url);
@@ -130,9 +130,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 12 presets", () => {
+    it("returns all 13 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(12);
+      expect(presets.length).toBe(13);
     });
 
     it("each preset has name and description", () => {
@@ -160,6 +160,7 @@ describe("policies", () => {
         "pypi",
         "slack",
         "telegram",
+        "wechat",
       ];
       expect(names).toEqual(expected);
     });
@@ -240,6 +241,20 @@ describe("policies", () => {
       expect(hosts).toEqual(["api.telegram.org"]);
     });
 
+    it("extracts the explicit iLink hosts from wechat preset", () => {
+      // OpenShell's SSRF engine doesn't expand `*.<tld>` wildcards at
+      // runtime, so the preset lists each known iLink IDC host explicitly.
+      // Both hosts are load-bearing today — `ilinkai.weixin.qq.com` is the
+      // bootstrap (hard-coded in src/ext/wechat/qr.ts), `ilinkai.wechat.com`
+      // is the per-account baseUrl returned after QR confirm. Additional
+      // IDC hosts may need to be added when operators observe new
+      // `DENIED ... -> <host>:443` lines in OCSF logs.
+      const content = requirePresetContent(policies.loadPreset("wechat"));
+      const hosts = policies.getPresetEndpoints(content);
+      expect(hosts).toContain("ilinkai.weixin.qq.com");
+      expect(hosts).toContain("ilinkai.wechat.com");
+    });
+
     it("every preset has at least one endpoint", () => {
       for (const p of policies.listPresets()) {
         const content = requirePresetContent(policies.loadPreset(p.name));
@@ -264,9 +279,10 @@ describe("policies", () => {
       expect(warning).toContain("nemoclaw onboard");
     });
 
-    it("returns a warning for discord and slack", () => {
+    it("returns a warning for discord, slack, and wechat", () => {
       expect(policies.getMessagingPresetWarning("discord")).toContain("Discord");
       expect(policies.getMessagingPresetWarning("slack")).toContain("Slack");
+      expect(policies.getMessagingPresetWarning("wechat")).toContain("WeChat");
     });
 
     it("returns null for non-messaging presets", () => {
@@ -1082,6 +1098,27 @@ exit 1
       expect(content).not.toMatch(/host:\s*api\.telegram\.org[\s\S]*?tls:/);
     });
 
+    it("wechat REST preset enumerates explicit iLink hosts on port 443 with allow GET/POST", () => {
+      // OpenShell's SSRF engine doesn't expand `*.<tld>` wildcards at
+      // runtime, so each iLink IDC host the upstream plugin can hit must be
+      // listed explicitly. The proxy must still see
+      // protocol/enforcement/method allowlists on each entry — dropping any
+      // of those silently widens egress past what the preset documents.
+      const content = requirePresetContent(policies.loadPreset("wechat"));
+      for (const host of ["ilinkai\\.weixin\\.qq\\.com", "ilinkai\\.wechat\\.com"]) {
+        expect(content).toMatch(
+          new RegExp(
+            `host:\\s*"?${host}"?[\\s\\S]*?port:\\s*443[\\s\\S]*?protocol:\\s*rest[\\s\\S]*?enforcement:\\s*enforce`,
+          ),
+        );
+        expect(content).toMatch(
+          new RegExp(
+            `host:\\s*"?${host}"?[\\s\\S]*?allow:\\s*\\{\\s*method:\\s*GET[\\s\\S]*?allow:\\s*\\{\\s*method:\\s*POST`,
+          ),
+        );
+      }
+    });
+
     it("pypi preset allows HEAD for pip lazy-wheel metadata checks", () => {
       // pip and uv use HEAD requests for lazy wheel downloads and
       // range-request support. GET-only would break pip install.
@@ -1401,6 +1438,16 @@ selectForRemoval(items, options)
         /Note: the 'telegram' preset only opens network egress to the Telegram API\./,
       );
       expect(result.stdout).toMatch(/re-run 'nemoclaw onboard' and select Telegram/);
+    });
+
+    it("warns the user that the wechat preset alone does not enable WeChat messaging", () => {
+      const result = runPolicyAdd("y", [], {}, "wechat");
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /Note: the 'wechat' preset only opens network egress to the WeChat API\./,
+      );
+      expect(result.stdout).toMatch(/re-run 'nemoclaw onboard' and select WeChat/);
     });
 
     it("does not warn about messaging when a non-messaging preset is selected", () => {

@@ -225,10 +225,12 @@ COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
+COPY scripts/seed-wechat-accounts.py /usr/local/lib/nemoclaw/seed-wechat-accounts.py
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /usr/local/lib/nemoclaw/generate-openclaw-config.py \
+        /usr/local/lib/nemoclaw/seed-wechat-accounts.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \
@@ -279,6 +281,12 @@ ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
 # When requireMention is true, Telegram groups get groups: {"*": {"requireMention": true}}
 # with groupPolicy: open. See #1737, #3022. Default: empty map.
 ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
+# Base64-encoded JSON WeChat config (e.g.
+# {"accountId":"…","baseUrl":"https://…","userId":"…"}).
+# Captured by the host-side iLink QR login during onboard. Non-secret per-account
+# metadata only — the bot token flows through the OpenShell provider, never
+# baked into the image. Default: empty map.
+ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
 # since terminal-based pairing is impossible in those contexts.
@@ -325,6 +333,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
     NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
+    NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
@@ -360,11 +369,32 @@ USER sandbox
 # list of env vars and derivation rules.
 RUN python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
 
-# Install NemoClaw plugin into OpenClaw. Prune non-runtime metadata from
-# staged bundled plugin dependencies before this layer is committed; deleting
-# it in a later layer would not reduce the OCI image imported by k3s.
+# TEMPORARY: install the WeChat plugin here (was moved to Dockerfile.base in
+# e23486b but the wholesale rewrite by generate-openclaw-config.py above
+# blew away plugins.installs.openclaw-weixin from base's openclaw.json,
+# leaving the plugin unloadable at runtime and taking Telegram down with it).
+# Running the install AFTER generate-openclaw-config.py merges the registry
+# entry into the freshly-written config. Seed the per-account state right
+# after so the bridge picks up the captured iLink session.
+# hadolint ignore=DL3059,DL4006
 RUN (openclaw doctor --fix > /dev/null 2>&1 || true) \
-    && (openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true) \
+    && openclaw plugins install \
+        '@tencent-weixin/openclaw-weixin@2.4.2' --pin \
+    && openclaw config set plugins.entries.openclaw-weixin.enabled true \
+    && python3 /usr/local/lib/nemoclaw/seed-wechat-accounts.py
+
+# Lock down npm: no further registry traffic in this image. Everything past
+# this point must resolve from local sources only.
+ENV NPM_CONFIG_OFFLINE=true \
+    NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false
+
+# Install NemoClaw plugin into OpenClaw (local /opt/nemoclaw, no network).
+# Prune non-runtime metadata from staged bundled plugin dependencies before
+# this layer is committed; deleting it in a later layer would not reduce the
+# OCI image imported by k3s.
+# hadolint ignore=DL3059,DL4006
+RUN (openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true) \
     && if [ -d /sandbox/.openclaw/plugin-runtime-deps ]; then \
         find /sandbox/.openclaw/plugin-runtime-deps -type f \( \
             -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o \
@@ -474,6 +504,7 @@ RUN set -eu; \
         "$config_dir/flows" \
         "$config_dir/sandbox" \
         "$config_dir/telegram" \
+        "$config_dir/wechat" \
         "$config_dir/media" \
         "$config_dir/plugin-runtime-deps"; \
     touch "$config_dir/update-check.json" "$config_dir/exec-approvals.json"; \

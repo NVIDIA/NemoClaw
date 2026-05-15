@@ -74,6 +74,14 @@ const { shouldInspectLegacyGatewayGpuPassthrough }: typeof import("./onboard/gat
 const {
   syncPresetSelection,
 }: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
+const {
+  gatherWechatConfig,
+  hasWechatConfigDrift,
+  toSessionWechatConfig,
+} = require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
+const {
+  setupSelectedMessagingChannels,
+} = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -335,8 +343,8 @@ const openshellPinFlow: typeof import("./onboard/openshell-pin") =
 const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-failure") =
   require("./onboard/sandbox-create-failure");
 
-import type { CurlProbeResult } from "./adapters/http/probe";
 import type { AgentDefinition } from "./agent/defs";
+import type { CurlProbeResult } from "./adapters/http/probe";
 import type { GatewayInference } from "./inference/config";
 import type { GpuInfo, ValidationResult } from "./inference/local";
 import type { WebSearchConfig } from "./inference/web-search";
@@ -344,7 +352,6 @@ import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
   mergeMessagingChannelConfigs,
-  normalizeMessagingChannelConfigValue,
   readMessagingChannelConfigFromEnv,
   sanitizeMessagingChannelConfig,
 } from "./messaging-channel-config";
@@ -356,6 +363,7 @@ import type {
   OpenShellInstallDeps,
   OpenShellInstallResult,
 } from "./onboard/openshell-install";
+import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
 import type { SelectionDrift } from "./onboard/selection-drift";
 import type {
   ModelCatalogFetchResult,
@@ -1973,6 +1981,7 @@ function getMessagingChannelForEnvKey(envKey: string): string | null {
   if (envKey === "DISCORD_BOT_TOKEN") return "discord";
   if (envKey === "SLACK_BOT_TOKEN") return "slack";
   if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
+  if (envKey === "WECHAT_BOT_TOKEN") return "wechat";
   return null;
 }
 
@@ -5139,6 +5148,11 @@ async function createSandbox(
       envKey: "TELEGRAM_BOT_TOKEN",
       token: getMessagingToken("TELEGRAM_BOT_TOKEN"),
     },
+    {
+      name: `${sandboxName}-wechat-bridge`,
+      envKey: "WECHAT_BOT_TOKEN",
+      token: getMessagingToken("WECHAT_BOT_TOKEN"),
+    },
   ]
     .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
@@ -5446,13 +5460,12 @@ async function createSandbox(
     }
 
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
-    const previousPolicies = previousEntry?.policies ?? null;
-    if (previousPolicies && previousPolicies.length > 0) {
-      onboardSession.updateSession((current: Session) => {
-        current.policyPresets = previousPolicies;
-        return current;
-      });
-    }
+    const decision = decidePolicyCarryForward(previousEntry?.policies, process.env, isNonInteractive());
+    onboardSession.updateSession((c: Session) => {
+      c.policyPresets = decision.newPresets;
+      return c;
+    });
+    if (decision.overrideNote !== null) note(decision.overrideNote);
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
@@ -5699,6 +5712,7 @@ async function createSandbox(
       telegramConfig.requireMention = telegramRequireMention;
     }
   }
+  const wechatConfig = gatherWechatConfig(onboardSession.loadSession());
   // Persist the effective Telegram config into the session so a later resume
   // can detect drift (TELEGRAM_REQUIRE_MENTION changed since last build) and
   // force a sandbox recreate — otherwise the old groupPolicy would stay baked
@@ -5708,6 +5722,7 @@ async function createSandbox(
       typeof telegramConfig.requireMention === "boolean"
         ? { requireMention: telegramConfig.requireMention as boolean }
         : null;
+    current.wechatConfig = toSessionWechatConfig(wechatConfig);
     current.messagingChannelConfig = messagingChannelConfig;
     return current;
   });
@@ -5760,6 +5775,7 @@ async function createSandbox(
     discordGuilds,
     resolved ? resolved.ref : null,
     telegramConfig,
+    wechatConfig as Record<string, unknown>,
     // Docker-on-Colima uses normal container ownership; keep the old VM chmod
     // compatibility path disabled unless a future VM-specific flow opts in.
     false,
@@ -8096,9 +8112,6 @@ async function checkTelegramReachability(token: string) {
 async function setupMessagingChannels(): Promise<string[]> {
   step(5, 8, "Messaging channels");
 
-  const getMessagingConfigValue = (envKey: string): string | null =>
-    normalizeMessagingChannelConfigValue(envKey, process.env[envKey]);
-
   // Non-interactive: skip prompt, tokens come from env/credentials
   if (isNonInteractive() || process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
     const found = MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name);
@@ -8223,126 +8236,7 @@ async function setupMessagingChannels(): Promise<string[]> {
     return [];
   }
 
-  // For each selected channel, prompt for token if not already set
-  for (const name of selected) {
-    const ch = MESSAGING_CHANNELS.find((c) => c.name === name);
-    if (!ch) {
-      console.log(`  Unknown channel: ${name}`);
-      continue;
-    }
-    if (!channelHasStaticToken(ch)) continue;
-    if (getMessagingToken(ch.envKey)) {
-      console.log(`  ✓ ${ch.name} — already configured`);
-    } else {
-      console.log("");
-      console.log(`  ${ch.help}`);
-      const token = normalizeCredentialValue(await prompt(`  ${ch.label}: `, { secret: true }));
-      if (token && ch.tokenFormat && !ch.tokenFormat.test(token)) {
-        console.log(
-          `  ✗ Invalid format. ${ch.tokenFormatHint || "Check the token and try again."}`,
-        );
-        console.log(`  Skipped ${ch.name} (invalid token format)`);
-        enabled.delete(ch.name);
-        continue;
-      }
-      if (token) {
-        saveCredential(ch.envKey, token);
-        process.env[ch.envKey] = token;
-        console.log(`  ✓ ${ch.name} token saved`);
-      } else {
-        console.log(`  Skipped ${ch.name} (no token entered)`);
-        enabled.delete(ch.name);
-        continue;
-      }
-    }
-    if (ch.appTokenEnvKey) {
-      const existingAppToken = getMessagingToken(ch.appTokenEnvKey);
-      if (existingAppToken) {
-        console.log(`  ✓ ${ch.name} app token — already configured`);
-      } else {
-        console.log("");
-        console.log(`  ${ch.appTokenHelp}`);
-        const appToken = normalizeCredentialValue(
-          await prompt(`  ${ch.appTokenLabel}: `, { secret: true }),
-        );
-        if (appToken && ch.appTokenFormat && !ch.appTokenFormat.test(appToken)) {
-          console.log(
-            `  ✗ Invalid format. ${ch.appTokenFormatHint || "Check the token and try again."}`,
-          );
-          console.log(`  Skipped ${ch.name} app token (invalid token format)`);
-          enabled.delete(ch.name);
-          continue;
-        }
-        if (appToken) {
-          saveCredential(ch.appTokenEnvKey, appToken);
-          process.env[ch.appTokenEnvKey] = appToken;
-          console.log(`  ✓ ${ch.name} app token saved`);
-        } else {
-          console.log(`  Skipped ${ch.name} app token (Socket Mode requires both tokens)`);
-          enabled.delete(ch.name);
-          continue;
-        }
-      }
-    }
-    if (ch.serverIdEnvKey) {
-      const existingServerIds = getMessagingConfigValue(ch.serverIdEnvKey) || "";
-      if (existingServerIds) {
-        process.env[ch.serverIdEnvKey] = existingServerIds;
-        console.log(`  ✓ ${ch.name} — server ID already set: ${existingServerIds}`);
-      } else {
-        console.log(`  ${ch.serverIdHelp}`);
-        const serverId = (await prompt(`  ${ch.serverIdLabel}: `)).trim();
-        if (serverId) {
-          process.env[ch.serverIdEnvKey] = serverId;
-          console.log(`  ✓ ${ch.name} server ID saved`);
-        } else {
-          console.log(`  Skipped ${ch.name} server ID (guild channels stay disabled)`);
-        }
-      }
-    }
-    // Mention-control prompt: fires for any channel that exposes a
-    // requireMention env key. Discord gates the prompt behind a configured
-    // server ID (mention control only makes sense in a guild). Telegram
-    // has no serverIdEnvKey because mention control applies to every group
-    // the bot is added to, so the prompt always fires there. See #1737.
-    const requireMentionKey = ch.requireMentionEnvKey;
-    if (requireMentionKey && (!ch.serverIdEnvKey || Boolean(process.env[ch.serverIdEnvKey]))) {
-      const existingRequireMention = getMessagingConfigValue(requireMentionKey);
-      if (existingRequireMention === "0" || existingRequireMention === "1") {
-        process.env[requireMentionKey] = existingRequireMention;
-        const mode = existingRequireMention === "0" ? "all messages" : "@mentions only";
-        console.log(`  ✓ ${ch.name} — reply mode already set: ${mode}`);
-      } else {
-        console.log(`  ${ch.requireMentionHelp}`);
-        const answer = (await prompt("  Reply only when @mentioned? [Y/n]: ")).trim().toLowerCase();
-        const value = answer === "n" || answer === "no" ? "0" : "1";
-        process.env[requireMentionKey] = value;
-        const mode = value === "0" ? "all messages" : "@mentions only";
-        console.log(`  ✓ ${ch.name} reply mode saved: ${mode}`);
-      }
-    }
-    // Prompt for user/sender ID when the channel supports allowlisting
-    if (ch.userIdEnvKey && (!ch.serverIdEnvKey || process.env[ch.serverIdEnvKey])) {
-      const existingIds = getMessagingConfigValue(ch.userIdEnvKey) || "";
-      if (existingIds) {
-        process.env[ch.userIdEnvKey] = existingIds;
-        console.log(`  ✓ ${ch.name} — allowed IDs already set: ${existingIds}`);
-      } else {
-        console.log(`  ${ch.userIdHelp}`);
-        const userId = (await prompt(`  ${ch.userIdLabel}: `)).trim();
-        if (userId) {
-          process.env[ch.userIdEnvKey] = userId;
-          console.log(`  ✓ ${ch.name} allowed IDs saved`);
-        } else {
-          const skippedReason =
-            ch.allowIdsMode === "guild"
-              ? "any member in the configured server can message the bot"
-              : "bot will require manual pairing";
-          console.log(`  Skipped ${ch.name} user ID (${skippedReason})`);
-        }
-      }
-    }
-  }
+  await setupSelectedMessagingChannels(selected, enabled, MESSAGING_CHANNELS);
   console.log("");
 
   // Channels where the user declined to enter a token were dropped from
@@ -8396,6 +8290,7 @@ function getSuggestedPolicyPresets({
   maybeSuggestMessagingPreset("telegram", "TELEGRAM_BOT_TOKEN");
   maybeSuggestMessagingPreset("slack", "SLACK_BOT_TOKEN");
   maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
+  maybeSuggestMessagingPreset("wechat", "WECHAT_BOT_TOKEN");
 
   if (webSearchConfig) suggestions.push("brave");
 
@@ -10536,11 +10431,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const sandboxGpuConfigChanged = sandboxName
       ? hasSandboxGpuDrift(sandboxName, sandboxGpuConfig)
       : false;
+    const wechatConfigChanged = hasWechatConfigDrift(session);
     const resumeSandbox =
       resume &&
       !webSearchConfigChanged &&
       !telegramConfigChanged &&
       !sandboxGpuConfigChanged &&
+      !wechatConfigChanged &&
       !messagingChannelConfigChanged &&
       session?.steps?.sandbox?.status === "complete" &&
       sandboxReuseState === "ready";
@@ -10564,6 +10461,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           }
         } else if (sandboxGpuConfigChanged) {
           note("  [resume] Sandbox GPU settings changed; recreating sandbox.");
+          if (sandboxName) {
+            registry.removeSandbox(sandboxName);
+          }
+        } else if (wechatConfigChanged) {
+          note("  [resume] WeChat account metadata changed; recreating sandbox.");
           if (sandboxName) {
             registry.removeSandbox(sandboxName);
           }

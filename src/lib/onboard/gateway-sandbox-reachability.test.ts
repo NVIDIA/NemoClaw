@@ -5,8 +5,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   __test,
-  isSandboxBridgeGatewayReachable,
   formatSandboxBridgeUnreachableMessage,
+  isSandboxBridgeGatewayReachable,
 } from "../../../dist/lib/onboard/gateway-sandbox-reachability";
 
 describe("gateway sandbox reachability route modeling", () => {
@@ -131,6 +131,17 @@ describe("formatSandboxBridgeUnreachableMessage", () => {
       gatewayIp: "172.19.0.1",
     });
     expect(msg).toContain("172.19.0.1:8080");
+    expect(msg).toContain("ufw allow from 172.19.0.0/16 to 172.19.0.1 port 8080");
+  });
+
+  it("falls back to a subnet-only UFW command when the gateway IP is unavailable", () => {
+    const msg = formatSandboxBridgeUnreachableMessage({
+      ok: false,
+      reason: "tcp_failed",
+      routeKind: "bridge_gateway",
+      networkName: "openshell-docker",
+      subnet: "172.19.0.0/16",
+    });
     expect(msg).toContain("ufw allow from 172.19.0.0/16 to any port 8080");
   });
 

@@ -83,6 +83,7 @@ function baseSession(overrides: Partial<Session> = {}): Session {
     migratedLegacyValueHashes: null,
     gpuPassthrough: false,
     telegramConfig: null,
+    wechatConfig: null,
     metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
     steps: {},
     ...overrides,

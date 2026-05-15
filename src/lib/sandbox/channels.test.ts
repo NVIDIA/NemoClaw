@@ -15,14 +15,32 @@ import {
 } from "./channels";
 
 describe("sandbox-channels KNOWN_CHANNELS", () => {
-  it("covers telegram, discord, and slack", () => {
-    expect(knownChannelNames()).toEqual(["telegram", "discord", "slack"]);
+  it("covers telegram, discord, slack, and wechat", () => {
+    expect(knownChannelNames()).toEqual(["telegram", "discord", "wechat", "slack"]);
   });
 
   it("exposes the primary bot-token env var for each channel", () => {
     expect(getChannelDef("telegram")?.envKey).toBe("TELEGRAM_BOT_TOKEN");
     expect(getChannelDef("discord")?.envKey).toBe("DISCORD_BOT_TOKEN");
     expect(getChannelDef("slack")?.envKey).toBe("SLACK_BOT_TOKEN");
+    expect(getChannelDef("wechat")?.envKey).toBe("WECHAT_BOT_TOKEN");
+  });
+
+  it("only wechat declares loginMethod=host-qr", () => {
+    // Other channels paste a token; WeChat captures it via a host-side QR
+    // handshake (src/ext/wechat/login.ts). Onboarding branches on this flag,
+    // so flipping it accidentally would silently route WeChat through the
+    // paste prompt and break the QR flow.
+    expect(getChannelDef("wechat")?.loginMethod).toBe("host-qr");
+    expect(getChannelDef("telegram")?.loginMethod).toBeUndefined();
+    expect(getChannelDef("discord")?.loginMethod).toBeUndefined();
+    expect(getChannelDef("slack")?.loginMethod).toBeUndefined();
+  });
+
+  it("declares wechat as DM-only with the WECHAT_ALLOWED_IDS env key", () => {
+    const wechat = getChannelDef("wechat");
+    expect(wechat?.allowIdsMode).toBe("dm");
+    expect(wechat?.userIdEnvKey).toBe("WECHAT_ALLOWED_IDS");
   });
 
   it("only slack declares a secondary app-token env var", () => {
@@ -93,7 +111,7 @@ describe("sandbox-channels token-shape helpers", () => {
 describe("sandbox-channels listChannels", () => {
   it("materialises an array with the name merged into each entry", () => {
     const list = listChannels();
-    expect(list.map((c) => c.name)).toEqual(["telegram", "discord", "slack"]);
+    expect(list.map((c) => c.name)).toEqual(["telegram", "discord", "wechat", "slack"]);
     const telegram = list.find((c) => c.name === "telegram");
     expect(telegram?.envKey).toBe("TELEGRAM_BOT_TOKEN");
     expect(telegram?.allowIdsMode).toBe("dm");

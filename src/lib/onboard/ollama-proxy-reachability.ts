@@ -15,8 +15,8 @@
  * ufw remediation before declaring onboard successful.
  */
 
-import { OLLAMA_PROXY_PORT } from "../core/ports";
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
+import { OLLAMA_PROXY_PORT } from "../core/ports";
 
 export const DEFAULT_OLLAMA_PROBE_NETWORK = "openshell-docker";
 const HOST_INTERNAL_NAME = "host.openshell.internal";
@@ -235,12 +235,15 @@ export function formatOllamaProxyUnreachableMessage(
 ): string {
   if (result.ok || result.reason !== "tcp_failed") return "";
 
-  const allowCmd = result.subnet
-    ? `      sudo ufw allow from ${result.subnet} to any port ${port} proto tcp`
-    : [
-        `      SUBNET=$(docker network inspect ${result.networkName ?? DEFAULT_OLLAMA_PROBE_NETWORK} --format '{{(index .IPAM.Config 0).Subnet}}')`,
-        `      sudo ufw allow from "$SUBNET" to any port ${port} proto tcp`,
-      ].join("\n");
+  const allowCmd =
+    result.subnet && result.gatewayIp
+      ? `      sudo ufw allow from ${result.subnet} to ${result.gatewayIp} port ${port} proto tcp`
+      : result.subnet
+        ? `      sudo ufw allow from ${result.subnet} to any port ${port} proto tcp`
+        : [
+            `      SUBNET=$(docker network inspect ${result.networkName ?? DEFAULT_OLLAMA_PROBE_NETWORK} --format '{{(index .IPAM.Config 0).Subnet}}')`,
+            `      sudo ufw allow from "$SUBNET" to any port ${port} proto tcp`,
+          ].join("\n");
 
   return [
     `  ✗ Sandbox containers cannot reach the Ollama auth proxy at ${HOST_INTERNAL_NAME}:${port}.`,

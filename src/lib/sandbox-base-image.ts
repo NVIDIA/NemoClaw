@@ -4,7 +4,7 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
-import { ROOT } from "./runner";
+import { ROOT, redact } from "./runner";
 import {
   dockerBuild,
   dockerCapture,
@@ -36,6 +36,27 @@ export type SandboxBaseImageResolution = {
   source: "override" | "source-sha" | "latest" | "local";
   glibcVersion: string | null;
 };
+
+/**
+ * Combine stderr + stdout from a captured `dockerBuild` failure and pass them
+ * through the runner's redaction so secrets in build output never reach the
+ * terminal. BuildKit splits diagnostics across both streams depending on the
+ * backend and progress mode, so taking only stderr can hide the actual reason
+ * a build failed.
+ */
+export function formatBuildFailureDiagnostics(
+  buildResult: { stderr?: unknown; stdout?: unknown },
+): string {
+  const streams = [buildResult.stderr, buildResult.stdout]
+    .map((stream) => {
+      if (stream == null) return "";
+      if (Buffer.isBuffer(stream)) return stream.toString("utf8");
+      return String(stream);
+    })
+    .map((text) => text.trim())
+    .filter((text) => text.length > 0);
+  return streams.length > 0 ? redact(streams.join("\n")) : "";
+}
 
 export function parseGlibcVersion(output: string | null | undefined): string | null {
   const text = String(output || "");
@@ -187,20 +208,38 @@ function resolveLocalCandidate(
 
   if (!localBuildAllowed(options.env)) return null;
 
+  const label = options.label || "sandbox base image";
   console.warn(
-    `  Building ${options.label || "sandbox base image"} locally because no compatible ` +
-      `published base image was found.`,
+    `  Building ${label} locally because no compatible published base image was found.`,
   );
-  dockerBuild(options.dockerfilePath, imageRef, options.rootDir || ROOT, {
-    stdio: ["ignore", "inherit", "inherit"],
+  console.warn("  This is a one-time step and can take several minutes.");
+  // Suppress the full BuildKit log (apt-get output, layer hashes, debconf
+  // warnings) on success — same approach as #3311 for the [2/8] gateway
+  // setup leak. `--quiet` collapses normal output to just the image hash;
+  // `suppressOutput` keeps captured stdio out of the user's terminal.
+  // On failure, surface the captured stderr so the user still gets a
+  // useful diagnostic.
+  const buildResult = dockerBuild(options.dockerfilePath, imageRef, options.rootDir || ROOT, {
+    quiet: true,
+    ignoreError: true,
+    suppressOutput: true,
   });
+  if (buildResult.error || buildResult.status !== 0) {
+    const diagnostics = formatBuildFailureDiagnostics(buildResult);
+    if (diagnostics) console.error(diagnostics);
+    const detail = buildResult.error
+      ? `: ${buildResult.error.message}`
+      : ` (exit ${buildResult.status ?? "unknown"})`;
+    console.error(`  Failed to build ${label}${detail}`);
+    return null;
+  }
 
   const check = options.requireOpenshellSandboxAbi
     ? imageMeetsMinimumGlibc(imageRef, options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC)
     : { ok: true, version: null };
   if (!check.ok) {
     console.error(
-      `  Local ${options.label || "sandbox base image"} ${imageRef} has glibc ` +
+      `  Local ${label} ${imageRef} has glibc ` +
         `${check.version || "unknown"}; expected >= ` +
         `${options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC}.`,
     );
