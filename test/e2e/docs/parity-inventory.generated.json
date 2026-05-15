@@ -2255,7 +2255,7 @@
       "assertions": [
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 384,
+          "line": 401,
           "text": "Pre-cleanup complete",
           "polarity": "pass",
           "normalized_id": "pre.cleanup.complete",
@@ -2263,7 +2263,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 392,
+          "line": 409,
           "text": "Docker is running",
           "polarity": "pass",
           "normalized_id": "docker.is.running",
@@ -2271,7 +2271,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 394,
+          "line": 411,
           "text": "Docker is not running — cannot continue",
           "polarity": "fail",
           "normalized_id": "docker.is.not.running.cannot.continue",
@@ -2279,7 +2279,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 399,
+          "line": 416,
           "text": "openshell CLI installed",
           "polarity": "pass",
           "normalized_id": "openshell.cli.installed",
@@ -2287,7 +2287,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 401,
+          "line": 418,
           "text": "openshell CLI not found — cannot continue",
           "polarity": "fail",
           "normalized_id": "openshell.cli.not.found.cannot.continue",
@@ -2295,7 +2295,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 406,
+          "line": 423,
           "text": "nemoclaw CLI available",
           "polarity": "pass",
           "normalized_id": "nemoclaw.cli.available",
@@ -2303,7 +2303,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 408,
+          "line": 425,
           "text": "nemoclaw CLI not found — cannot continue",
           "polarity": "fail",
           "normalized_id": "nemoclaw.cli.not.found.cannot.continue",
@@ -2311,7 +2311,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 413,
+          "line": 430,
           "text": "python3 installed",
           "polarity": "pass",
           "normalized_id": "python3.installed",
@@ -2319,7 +2319,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 415,
+          "line": 432,
           "text": "python3 not found — cannot continue",
           "polarity": "fail",
           "normalized_id": "python3.not.found.cannot.continue",
@@ -2327,7 +2327,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 420,
+          "line": 437,
           "text": "Fake OpenAI-compatible endpoint started at ${FAKE_BASE_URL}",
           "polarity": "pass",
           "normalized_id": "fake.openai.compatible.endpoint.started.at.fake.base.url",
@@ -2335,7 +2335,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 422,
+          "line": 439,
           "text": "Failed to start fake OpenAI-compatible endpoint",
           "polarity": "fail",
           "normalized_id": "failed.to.start.fake.openai.compatible.endpoint",
@@ -2343,7 +2343,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 441,
+          "line": 458,
           "text": "First onboard completed successfully",
           "polarity": "pass",
           "normalized_id": "first.onboard.completed.successfully",
@@ -2351,7 +2351,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 443,
+          "line": 460,
           "text": "First onboard timed out after ${PHASE_TIMEOUT}s (exit 124)",
           "polarity": "fail",
           "normalized_id": "first.onboard.timed.out.after.phase.timeout.s.exit.124",
@@ -2359,7 +2359,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 446,
+          "line": 463,
           "text": "First onboard exited $exit1 (expected 0)",
           "polarity": "fail",
           "normalized_id": "first.onboard.exited.exit1.expected.0",
@@ -2367,7 +2367,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 451,
+          "line": 468,
           "text": "Sandbox '$SANDBOX_A' created",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.a.created",
@@ -2375,7 +2375,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 453,
+          "line": 470,
           "text": "Sandbox '$SANDBOX_A' creation not confirmed in output",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.a.creation.not.confirmed.in.output",
@@ -2383,7 +2383,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 457,
+          "line": 474,
           "text": "Gateway is running after first onboard",
           "polarity": "pass",
           "normalized_id": "gateway.is.running.after.first.onboard",
@@ -2391,7 +2391,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 459,
+          "line": 476,
           "text": "Gateway is not running after first onboard",
           "polarity": "fail",
           "normalized_id": "gateway.is.not.running.after.first.onboard",
@@ -2399,7 +2399,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 463,
+          "line": 480,
           "text": "Sandbox '$SANDBOX_A' exists in openshell",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.a.exists.in.openshell",
@@ -2407,7 +2407,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 465,
+          "line": 482,
           "text": "Sandbox '$SANDBOX_A' not found in openshell",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.a.not.found.in.openshell",
@@ -2415,7 +2415,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 469,
+          "line": 486,
           "text": "Registry contains '$SANDBOX_A'",
           "polarity": "pass",
           "normalized_id": "registry.contains.sandbox.a",
@@ -2423,7 +2423,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 471,
+          "line": 488,
           "text": "Registry does not contain '$SANDBOX_A'",
           "polarity": "fail",
           "normalized_id": "registry.does.not.contain.sandbox.a",
@@ -2431,7 +2431,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 488,
+          "line": 505,
           "text": "Second onboard completed successfully",
           "polarity": "pass",
           "normalized_id": "second.onboard.completed.successfully",
@@ -2439,7 +2439,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 490,
+          "line": 507,
           "text": "Second onboard timed out after ${PHASE_TIMEOUT}s (exit 124)",
           "polarity": "fail",
           "normalized_id": "second.onboard.timed.out.after.phase.timeout.s.exit.124",
@@ -2447,7 +2447,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 493,
+          "line": 510,
           "text": "Second onboard exited $exit2 (expected 0)",
           "polarity": "fail",
           "normalized_id": "second.onboard.exited.exit2.expected.0",
@@ -2455,7 +2455,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 499,
+          "line": 516,
           "text": "Healthy gateway runtime reused on second onboard ($GATEWAY_ID_BEFORE)",
           "polarity": "pass",
           "normalized_id": "healthy.gateway.runtime.reused.on.second.onboard.gateway.id.before",
@@ -2463,7 +2463,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 501,
+          "line": 518,
           "text": "Gateway runtime changed on second onboard (before=$GATEWAY_ID_BEFORE after=$GATEWAY_ID_AFTER)",
           "polarity": "fail",
           "normalized_id": "gateway.runtime.changed.on.second.onboard.before.gateway.id.before.after.gateway.id.after",
@@ -2471,7 +2471,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 505,
+          "line": 522,
           "text": "Port 8080 conflict detected (regression)",
           "polarity": "fail",
           "normalized_id": "port.8080.conflict.detected.regression",
@@ -2479,7 +2479,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 507,
+          "line": 524,
           "text": "No port 8080 conflict on second onboard",
           "polarity": "pass",
           "normalized_id": "no.port.8080.conflict.on.second.onboard",
@@ -2487,7 +2487,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 511,
+          "line": 528,
           "text": "Port 18789 conflict detected on second onboard",
           "polarity": "fail",
           "normalized_id": "port.18789.conflict.detected.on.second.onboard",
@@ -2495,7 +2495,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 513,
+          "line": 530,
           "text": "No port 18789 conflict on second onboard",
           "polarity": "pass",
           "normalized_id": "no.port.18789.conflict.on.second.onboard",
@@ -2503,7 +2503,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 517,
+          "line": 534,
           "text": "Sandbox '$SANDBOX_A' still exists after recreate",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.a.still.exists.after.recreate",
@@ -2511,7 +2511,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 519,
+          "line": 536,
           "text": "Sandbox '$SANDBOX_A' missing after recreate",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.a.missing.after.recreate",
@@ -2519,7 +2519,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 537,
+          "line": 554,
           "text": "Alternate gateway alias selected before third onboard",
           "polarity": "pass",
           "normalized_id": "alternate.gateway.alias.selected.before.third.onboard",
@@ -2527,7 +2527,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 539,
+          "line": 556,
           "text": "Alternate gateway alias was not selected before third onboard (selected=${selected_gateway:-unknown})",
           "polarity": "fail",
           "normalized_id": "alternate.gateway.alias.was.not.selected.before.third.onboard.selected.selected.gateway.unknown",
@@ -2535,7 +2535,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 542,
+          "line": 559,
           "text": "Could not select alternate gateway alias before third onboard (add output=${alt_gateway_add_output:-empty})",
           "polarity": "fail",
           "normalized_id": "could.not.select.alternate.gateway.alias.before.third.onboard.add.output.alt.gateway.add.output.empty",
@@ -2543,7 +2543,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 553,
+          "line": 570,
           "text": "Third onboard completed successfully",
           "polarity": "pass",
           "normalized_id": "third.onboard.completed.successfully",
@@ -2551,7 +2551,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 555,
+          "line": 572,
           "text": "Third onboard timed out after ${PHASE_TIMEOUT}s (exit 124)",
           "polarity": "fail",
           "normalized_id": "third.onboard.timed.out.after.phase.timeout.s.exit.124",
@@ -2559,7 +2559,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 558,
+          "line": 575,
           "text": "Third onboard exited $exit3 (expected 0)",
           "polarity": "fail",
           "normalized_id": "third.onboard.exited.exit3.expected.0",
@@ -2567,7 +2567,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 564,
+          "line": 581,
           "text": "Healthy gateway runtime reused on third onboard ($GATEWAY_ID_BEFORE3)",
           "polarity": "pass",
           "normalized_id": "healthy.gateway.runtime.reused.on.third.onboard.gateway.id.before3",
@@ -2575,7 +2575,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 566,
+          "line": 583,
           "text": "Gateway runtime changed on third onboard (before=$GATEWAY_ID_BEFORE3 after=$GATEWAY_ID_AFTER3)",
           "polarity": "fail",
           "normalized_id": "gateway.runtime.changed.on.third.onboard.before.gateway.id.before3.after.gateway.id.after3",
@@ -2583,7 +2583,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 570,
+          "line": 587,
           "text": "Port 8080 conflict on third onboard",
           "polarity": "fail",
           "normalized_id": "port.8080.conflict.on.third.onboard",
@@ -2591,7 +2591,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 572,
+          "line": 589,
           "text": "No port 8080 conflict on third onboard",
           "polarity": "pass",
           "normalized_id": "no.port.8080.conflict.on.third.onboard",
@@ -2599,7 +2599,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 576,
+          "line": 593,
           "text": "Port 18789 conflict on third onboard",
           "polarity": "fail",
           "normalized_id": "port.18789.conflict.on.third.onboard",
@@ -2607,7 +2607,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 578,
+          "line": 595,
           "text": "No port 18789 conflict on third onboard",
           "polarity": "pass",
           "normalized_id": "no.port.18789.conflict.on.third.onboard",
@@ -2615,7 +2615,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 587,
+          "line": 604,
           "text": "Named gateway reselected during third onboard",
           "polarity": "pass",
           "normalized_id": "named.gateway.reselected.during.third.onboard",
@@ -2623,7 +2623,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 589,
+          "line": 606,
           "text": "Named gateway was not reselected during third onboard (selected=${selected_gateway:-unknown})",
           "polarity": "fail",
           "normalized_id": "named.gateway.was.not.reselected.during.third.onboard.selected.selected.gateway.unknown",
@@ -2631,7 +2631,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 593,
+          "line": 610,
           "text": "Sandbox '$SANDBOX_B' created",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.b.created",
@@ -2639,7 +2639,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 595,
+          "line": 612,
           "text": "Sandbox '$SANDBOX_B' was not created",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.b.was.not.created",
@@ -2647,7 +2647,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 599,
+          "line": 616,
           "text": "First sandbox '$SANDBOX_A' still exists after creating '$SANDBOX_B'",
           "polarity": "pass",
           "normalized_id": "first.sandbox.sandbox.a.still.exists.after.creating.sandbox.b",
@@ -2655,7 +2655,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 601,
+          "line": 618,
           "text": "First sandbox '$SANDBOX_A' disappeared after creating '$SANDBOX_B' (regression: #849)",
           "polarity": "fail",
           "normalized_id": "first.sandbox.sandbox.a.disappeared.after.creating.sandbox.b.regression.849",
@@ -2663,7 +2663,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 621,
+          "line": 638,
           "text": "nemoclaw list shows dashboard ports for both test sandboxes (#2174)",
           "polarity": "pass",
           "normalized_id": "nemoclaw.list.shows.dashboard.ports.for.both.test.sandboxes.2174",
@@ -2671,7 +2671,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 623,
+          "line": 640,
           "text": "nemoclaw list did not show dashboard ports for both test sandboxes (a=${port_a:-missing} b=${port_b:-missing})",
           "polarity": "fail",
           "normalized_id": "nemoclaw.list.did.not.show.dashboard.ports.for.both.test.sandboxes.a.port.a.missing.b.port.b.missing",
@@ -2679,7 +2679,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 629,
+          "line": 646,
           "text": "nemoclaw list shows distinct dashboard ports for test sandboxes (#2174)",
           "polarity": "pass",
           "normalized_id": "nemoclaw.list.shows.distinct.dashboard.ports.for.test.sandboxes.2174",
@@ -2687,7 +2687,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 631,
+          "line": 648,
           "text": "test sandboxes did not have distinct dashboard ports (#2174): ${SANDBOX_A}=${port_a:-missing} ${SANDBOX_B}=${port_b:-missing}",
           "polarity": "fail",
           "normalized_id": "test.sandboxes.did.not.have.distinct.dashboard.ports.2174.sandbox.a.port.a.missing.sandbox.b.port.b.missing",
@@ -2695,7 +2695,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 645,
+          "line": 672,
           "text": "Probe-only connect recovered '$SANDBOX_B' dashboard forward",
           "polarity": "pass",
           "normalized_id": "probe.only.connect.recovered.sandbox.b.dashboard.forward",
@@ -2703,7 +2703,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 647,
+          "line": 674,
           "text": "Probe-only connect exited $probe_exit after stopping '$SANDBOX_B' dashboard forward",
           "polarity": "fail",
           "normalized_id": "probe.only.connect.exited.probe.exit.after.stopping.sandbox.b.dashboard.forward",
@@ -2711,7 +2711,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 657,
+          "line": 685,
           "text": "Second sandbox dashboard forward restored on its recorded port",
           "polarity": "pass",
           "normalized_id": "second.sandbox.dashboard.forward.restored.on.its.recorded.port",
@@ -2719,7 +2719,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 659,
+          "line": 687,
           "text": "Second sandbox dashboard forward owner mismatch on port $port_b (owner=${owner_b:-missing})",
           "polarity": "fail",
           "normalized_id": "second.sandbox.dashboard.forward.owner.mismatch.on.port.port.b.owner.owner.b.missing",
@@ -2727,7 +2727,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 665,
+          "line": 693,
           "text": "First sandbox dashboard forward kept its recorded port",
           "polarity": "pass",
           "normalized_id": "first.sandbox.dashboard.forward.kept.its.recorded.port",
@@ -2735,7 +2735,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 667,
+          "line": 695,
           "text": "First sandbox dashboard forward owner mismatch on port $port_a (owner=${owner_a:-missing})",
           "polarity": "fail",
           "normalized_id": "first.sandbox.dashboard.forward.owner.mismatch.on.port.port.a.owner.owner.a.missing",
@@ -2743,7 +2743,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 681,
+          "line": 709,
           "text": "OpenShell reports '$SANDBOX_A' absent after direct deletion",
           "polarity": "pass",
           "normalized_id": "openshell.reports.sandbox.a.absent.after.direct.deletion",
@@ -2751,7 +2751,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 683,
+          "line": 711,
           "text": "OpenShell still reports '$SANDBOX_A' after direct deletion",
           "polarity": "fail",
           "normalized_id": "openshell.still.reports.sandbox.a.after.direct.deletion",
@@ -2759,7 +2759,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 687,
+          "line": 715,
           "text": "Registry still contains stale '$SANDBOX_A' entry",
           "polarity": "pass",
           "normalized_id": "registry.still.contains.stale.sandbox.a.entry",
@@ -2767,7 +2767,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 689,
+          "line": 717,
           "text": "Registry was unexpectedly cleaned before status reconciliation",
           "polarity": "fail",
           "normalized_id": "registry.was.unexpectedly.cleaned.before.status.reconciliation",
@@ -2775,7 +2775,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 699,
+          "line": 727,
           "text": "Stale sandbox status exited 1",
           "polarity": "pass",
           "normalized_id": "stale.sandbox.status.exited.1",
@@ -2783,7 +2783,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 701,
+          "line": 729,
           "text": "Stale sandbox status exited $status_exit (expected 1)",
           "polarity": "fail",
           "normalized_id": "stale.sandbox.status.exited.status.exit.expected.1",
@@ -2791,7 +2791,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 705,
+          "line": 733,
           "text": "Stale registry entry was reconciled during status",
           "polarity": "pass",
           "normalized_id": "stale.registry.entry.was.reconciled.during.status",
@@ -2799,7 +2799,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 707,
+          "line": 735,
           "text": "Stale registry reconciliation message missing",
           "polarity": "fail",
           "normalized_id": "stale.registry.reconciliation.message.missing",
@@ -2807,7 +2807,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 711,
+          "line": 739,
           "text": "Registry still contains '$SANDBOX_A' after status reconciliation",
           "polarity": "fail",
           "normalized_id": "registry.still.contains.sandbox.a.after.status.reconciliation",
@@ -2815,7 +2815,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 713,
+          "line": 741,
           "text": "Registry entry for '$SANDBOX_A' removed after status reconciliation",
           "polarity": "pass",
           "normalized_id": "registry.entry.for.sandbox.a.removed.after.status.reconciliation",
@@ -2823,7 +2823,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 732,
+          "line": 760,
           "text": "Post-stop status exited $gateway_status_exit",
           "polarity": "pass",
           "normalized_id": "post.stop.status.exited.gateway.status.exit",
@@ -2831,7 +2831,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 734,
+          "line": 762,
           "text": "Post-stop status exited $gateway_status_exit (expected 0 or 1)",
           "polarity": "fail",
           "normalized_id": "post.stop.status.exited.gateway.status.exit.expected.0.or.1",
@@ -2839,7 +2839,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 740,
+          "line": 768,
           "text": "Gateway lifecycle response was explicit after gateway stop",
           "polarity": "pass",
           "normalized_id": "gateway.lifecycle.response.was.explicit.after.gateway.stop",
@@ -2847,7 +2847,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 742,
+          "line": 770,
           "text": "Gateway lifecycle response was not explicit after gateway stop",
           "polarity": "fail",
           "normalized_id": "gateway.lifecycle.response.was.not.explicit.after.gateway.stop",
@@ -2855,7 +2855,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 748,
+          "line": 776,
           "text": "Registry still contains '$SANDBOX_B' after gateway stop",
           "polarity": "pass",
           "normalized_id": "registry.still.contains.sandbox.b.after.gateway.stop",
@@ -2863,7 +2863,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 750,
+          "line": 778,
           "text": "Registry is missing '$SANDBOX_B' after gateway stop",
           "polarity": "fail",
           "normalized_id": "registry.is.missing.sandbox.b.after.gateway.stop",
@@ -2871,7 +2871,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 783,
+          "line": 811,
           "text": "Sandbox '$SANDBOX_A' still exists after cleanup",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.a.still.exists.after.cleanup",
@@ -2879,7 +2879,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 785,
+          "line": 813,
           "text": "Sandbox '$SANDBOX_A' cleaned up",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.a.cleaned.up",
@@ -2887,7 +2887,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 789,
+          "line": 817,
           "text": "Sandbox '$SANDBOX_B' still exists after cleanup",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.b.still.exists.after.cleanup",
@@ -2895,7 +2895,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 791,
+          "line": 819,
           "text": "Sandbox '$SANDBOX_B' cleaned up",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.b.cleaned.up",
@@ -2903,7 +2903,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 795,
+          "line": 823,
           "text": "Registry still contains test sandbox entries",
           "polarity": "fail",
           "normalized_id": "registry.still.contains.test.sandbox.entries",
@@ -2911,7 +2911,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 797,
+          "line": 825,
           "text": "Registry cleaned up",
           "polarity": "pass",
           "normalized_id": "registry.cleaned.up",
@@ -2919,7 +2919,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 800,
+          "line": 828,
           "text": "Final cleanup complete",
           "polarity": "pass",
           "normalized_id": "final.cleanup.complete",
