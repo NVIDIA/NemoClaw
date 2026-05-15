@@ -1,7 +1,6 @@
 # Loop Phases
 
-<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
-
+<!-- markdownlint-disable MD001 MD012 MD022 MD031 MD032 MD040 MD058 -->
 
 ### Phase 0: Identify PR, Check Checkpoint, Gather State
 

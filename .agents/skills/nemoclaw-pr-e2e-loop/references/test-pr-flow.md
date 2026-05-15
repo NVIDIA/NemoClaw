@@ -1,7 +1,6 @@
 # Phase 2 — Design PR-B (the failing test) — full-auto
 
-<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
-
+<!-- markdownlint-disable MD001 MD012 MD022 MD031 MD032 MD040 MD058 -->
 
 Author the test end to end. No checkpoint until Phase 2.4.
 

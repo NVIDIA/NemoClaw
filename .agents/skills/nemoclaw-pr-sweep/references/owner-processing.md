@@ -1,7 +1,6 @@
 # Per-PR Processing: OWNER Role
 
-<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
-
+<!-- markdownlint-disable MD001 MD012 MD022 MD031 MD032 MD040 MD058 -->
 
 ### 3a: Sync with main (auto)
 

@@ -1,7 +1,6 @@
 # Step 4: Security Review
 
-<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
-
+<!-- markdownlint-disable MD001 MD012 MD022 MD031 MD032 MD040 MD058 -->
 
 NemoClaw's security model has multiple layers. Verify changes respect all of them:
 

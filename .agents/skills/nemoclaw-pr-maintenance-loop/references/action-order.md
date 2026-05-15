@@ -1,7 +1,6 @@
 # Step 5: Action Order for Selected PR
 
-<!-- markdownlint-disable MD022 MD031 MD032 MD040 MD058 -->
-
+<!-- markdownlint-disable MD001 MD012 MD022 MD031 MD032 MD040 MD058 -->
 
 Do exactly one coherent action per pass, then update state and exit.
 
