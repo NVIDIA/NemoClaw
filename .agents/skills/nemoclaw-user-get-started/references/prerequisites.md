@@ -27,6 +27,8 @@ On Linux, the installer can install Docker, start the Docker service, and add yo
 If the group change is not active in the current shell, the installer exits with `newgrp docker` guidance before it starts onboarding.
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
 On Debian and Ubuntu, NemoClaw installs `zstd` with `apt-get` if it is missing; on other Linux distributions, install `zstd` before onboarding.
+On macOS, NemoClaw uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
+You do not need to install or sign a separate OpenShell VM driver helper for standard macOS onboarding.
 
 :::{warning} OpenShell Lifecycle
 For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.

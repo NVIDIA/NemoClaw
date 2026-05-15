@@ -171,6 +171,8 @@ If your server does not require authentication, enter any non-empty string (for 
 NemoClaw validates the endpoint by sending a test inference request before continuing.
 The wizard probes `/v1/chat/completions` by default for the compatible-endpoint provider.
 If you set `NEMOCLAW_PREFERRED_API=openai-responses`, NemoClaw probes `/v1/responses` instead and only selects it when the response includes the streaming events OpenClaw requires.
+If a reasoning model returns only reasoning content before producing a final answer, NemoClaw retries the smoke request with a larger response budget.
+Route, configuration, and authentication failures still fail immediately.
 
 ### Non-Interactive Setup
 
@@ -343,6 +345,8 @@ $ nemoclaw <name> status
 ```
 
 The output shows the provider label (for example, "Local vLLM" or "Other OpenAI-compatible endpoint") and the active model.
+For Local Ollama, status also checks the authenticated proxy when a proxy token is available.
+If `Inference` is healthy but `Inference (auth proxy)` is not, rerun onboarding to repair the proxy path that sandbox requests use.
 
 ## Step 8: Switch Models at Runtime
 

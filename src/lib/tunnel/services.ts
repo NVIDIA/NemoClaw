@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execSync, spawn, spawnSync } from "node:child_process";
+import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   closeSync,
@@ -13,9 +13,9 @@ import {
   writeFileSync,
   unlinkSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
-import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME } from "../cli/branding";
+import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { renderBox } from "../cli/banner";
 import { dockerSpawnSync } from "../adapters/docker";
 import { DASHBOARD_PORT } from "../core/ports";
@@ -93,6 +93,66 @@ function isRunning(pidDir: string, name: string): boolean {
   const pid = readPid(pidDir, name);
   if (pid === null) return false;
   return isAlive(pid);
+}
+
+// ---------------------------------------------------------------------------
+// Cloudflared state — finer-grained than isRunning() so callers (status,
+// doctor) can distinguish stopped / stale-pid-file / stale-pid-process and
+// emit a targeted remediation. Issue #2604.
+// ---------------------------------------------------------------------------
+
+export type CloudflaredState =
+  | { kind: "running"; pid: number }
+  | { kind: "stopped" }
+  | { kind: "stale-pid-file" }
+  | { kind: "stale-pid-process"; pid: number };
+
+function readProcessCommandLine(pid: number): string | null {
+  if (process.platform === "win32") return null;
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, "utf-8");
+  } catch {
+    try {
+      return execFileSync("ps", ["-p", String(pid), "-o", "comm=", "-o", "args="], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 1000,
+      });
+    } catch {
+      return null;
+    }
+  }
+}
+
+function commandLineNamesCloudflared(commandLine: string): boolean {
+  return commandLine
+    .split(/\0|\s+/)
+    .filter(Boolean)
+    .some((token) => basename(token) === "cloudflared");
+}
+
+export function readCloudflaredState(pidDir: string): CloudflaredState {
+  const pidFile = join(pidDir, "cloudflared.pid");
+  if (!existsSync(pidFile)) return { kind: "stopped" };
+  let raw: string;
+  try {
+    raw = readFileSync(pidFile, "utf-8").trim();
+  } catch {
+    return { kind: "stopped" };
+  }
+  if (raw.length === 0) return { kind: "stopped" };
+  const pid = Number(raw);
+  if (!Number.isFinite(pid) || pid <= 0) return { kind: "stale-pid-file" };
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return { kind: "stale-pid-process", pid };
+  }
+  const cmdline = readProcessCommandLine(pid);
+  if (cmdline !== null && !commandLineNamesCloudflared(cmdline)) {
+    return { kind: "stale-pid-process", pid };
+  }
+  return { kind: "running", pid };
 }
 
 function writePid(pidDir: string, name: string, pid: number): void {
@@ -227,19 +287,36 @@ export function showStatus(opts: ServiceOptions = {}): void {
   ensurePidDir(pidDir);
 
   console.log("");
-  for (const svc of SERVICE_NAMES) {
-    if (isRunning(pidDir, svc)) {
-      const pid = readPid(pidDir, svc);
-      console.log(`  ${GREEN}●${NC} ${svc}  (PID ${String(pid)})`);
-    } else {
-      console.log(`  ${RED}●${NC} ${svc}  (stopped)`);
-    }
+  const state = readCloudflaredState(pidDir);
+  // #2604: distinguish stopped / stale-pid-file / stale-pid-process and
+  // surface the matching remediation. The previous "(stopped)" line was
+  // emitted in all three failure modes with no recovery hint.
+  switch (state.kind) {
+    case "running":
+      console.log(`  ${GREEN}●${NC} cloudflared  (PID ${String(state.pid)})`);
+      break;
+    case "stopped":
+      console.log(`  ${RED}●${NC} cloudflared  (stopped)`);
+      console.log(`      no cloudflared process; run \`${CLI_NAME} tunnel start\` to start it`);
+      break;
+    case "stale-pid-file":
+      console.log(`  ${YELLOW}●${NC} cloudflared  (stale PID file)`);
+      console.log(
+        `      no cloudflared process (stored PID is invalid); run \`${CLI_NAME} tunnel start\` to restart it`,
+      );
+      break;
+    case "stale-pid-process":
+      console.log(`  ${YELLOW}●${NC} cloudflared  (stale PID ${String(state.pid)})`);
+      console.log(
+        `      no cloudflared process (PID ${String(state.pid)} is dead or not cloudflared); run \`${CLI_NAME} tunnel start\` to restart it`,
+      );
+      break;
   }
   console.log("");
 
   // Only show tunnel URL if cloudflared is actually running
   const logFile = join(pidDir, "cloudflared.log");
-  if (isRunning(pidDir, "cloudflared") && existsSync(logFile)) {
+  if (state.kind === "running" && existsSync(logFile)) {
     const log = readFileSync(logFile, "utf-8");
     const match = /https:\/\/[a-z0-9-]*\.trycloudflare\.com/.exec(log);
     if (match) {

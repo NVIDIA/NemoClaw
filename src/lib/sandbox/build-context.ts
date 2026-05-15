@@ -113,12 +113,6 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "generate-openclaw-config.py"),
     path.join(stagedScriptsDir, "generate-openclaw-config.py"),
   );
-  // Dockerfile Patch 4 helper — must be present in the build context because
-  // the Dockerfile COPYs it before the patching RUN step (#2689).
-  fs.copyFileSync(
-    path.join(rootDir, "scripts", "rcf_patch.py"),
-    path.join(stagedScriptsDir, "rcf_patch.py"),
-  );
 
   return { buildCtx, stagedDockerfile };
 }

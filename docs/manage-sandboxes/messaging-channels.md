@@ -120,6 +120,8 @@ $ nemoclaw my-assistant channels add slack
 ```
 
 `channels add` prompts for missing credentials, registers the bridge with the OpenShell gateway, updates the sandbox registry, and asks whether to rebuild immediately.
+The command accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase channel name.
+If the matching built-in network policy preset exists but is not applied yet, the command prints a `policy-add <channel>` hint after it registers the channel.
 Choose the rebuild so the running sandbox image picks up the new channel.
 If the matching network policy preset (`telegram`, `discord`, `slack`, or `whatsapp`) is not yet applied to the sandbox, `channels add` prints a hint to run `nemoclaw <sandbox> policy-add <channel>` first.
 Apply the preset before the rebuild so the channel can reach its provider API; otherwise the bridge will start but its egress requests will be denied.

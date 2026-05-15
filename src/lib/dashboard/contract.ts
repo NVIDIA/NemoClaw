@@ -14,6 +14,14 @@ export interface PlatformHints {
   port?: number;
   isWsl?: boolean;
   wslHostAddress?: string | null;
+  /**
+   * Explicit operator opt-in to bind the dashboard forward on all interfaces.
+   * Only `"0.0.0.0"` enables remote bind; anything else (including
+   * `"127.0.0.1"`, empty string, or arbitrary IPs) leaves the default
+   * loopback bind in place. Surfaces through `NEMOCLAW_DASHBOARD_BIND` at the
+   * I/O boundary (`dashboard-access.ts`). (#3259)
+   */
+  bindOverride?: string;
 }
 
 export interface DashboardDeliveryChain {
@@ -69,14 +77,19 @@ export function buildChain(hints?: PlatformHints): DashboardDeliveryChain {
     accessUrl = `http://127.0.0.1:${port}`;
   }
 
-  const forwardTarget = h.isWsl || hasNonLoopbackUrl ? `0.0.0.0:${port}` : String(port);
+  // #3259 — operator opt-in via NEMOCLAW_DASHBOARD_BIND=0.0.0.0 for remote-SSH-deployed
+  // hosts (Brev, cloud workstations). Only "0.0.0.0" is honored; arbitrary IPs are
+  // rejected silently to keep the surface narrow.
+  const remoteBindOptIn = h.bindOverride === "0.0.0.0";
+  const forwardTarget =
+    h.isWsl || hasNonLoopbackUrl || remoteBindOptIn ? `0.0.0.0:${port}` : String(port);
   const bindAddress = forwardTarget.includes(":") ? "0.0.0.0" : "127.0.0.1";
   const loopbackOrigin = `http://127.0.0.1:${port}`;
   const accessOrigin = (() => { try { return new URL(accessUrl).origin; } catch { return null; } })();
   const corsOrigins = accessOrigin && accessOrigin !== loopbackOrigin
     ? [loopbackOrigin, accessOrigin] : [loopbackOrigin];
 
-  const shouldDisableDeviceAuth = hasNonLoopbackUrl || (h.isWsl ?? false);
+  const shouldDisableDeviceAuth = hasNonLoopbackUrl || (h.isWsl ?? false) || remoteBindOptIn;
 
   return { accessUrl, corsOrigins, forwardTarget, healthEndpoint: "/health", port, bindAddress, shouldDisableDeviceAuth };
 }

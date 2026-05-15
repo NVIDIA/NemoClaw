@@ -142,6 +142,48 @@ describe("docker-gpu-patch", () => {
     expect(args).not.toEqual(expect.arrayContaining(["--env", "NVIDIA_VISIBLE_DEVICES=void"]));
   });
 
+  it("adds SYS_PTRACE to the GPU clone when the baseline container lacks it", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.CapAdd = ["SYS_ADMIN", "NET_ADMIN"];
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"));
+
+    expect(args).toEqual(expect.arrayContaining(["--cap-add", "SYS_PTRACE"]));
+    // The baseline caps are preserved alongside SYS_PTRACE.
+    expect(args).toEqual(expect.arrayContaining(["--cap-add", "SYS_ADMIN"]));
+    expect(args).toEqual(expect.arrayContaining(["--cap-add", "NET_ADMIN"]));
+  });
+
+  it("does not duplicate SYS_PTRACE when the baseline container already has it", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.CapAdd = ["SYS_ADMIN", "SYS_PTRACE"];
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"));
+
+    const sysPtraceCount = args.filter((arg) => arg === "SYS_PTRACE").length;
+    expect(sysPtraceCount).toBe(1);
+  });
+
+  it("injects apparmor=unconfined when the baseline container has no apparmor profile", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.SecurityOpt = [];
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"));
+
+    expect(args).toEqual(expect.arrayContaining(["--security-opt", "apparmor=unconfined"]));
+  });
+
+  it("respects a baseline-pinned apparmor profile instead of overriding it", () => {
+    const inspect = inspectFixture();
+    inspect.HostConfig!.SecurityOpt = ["apparmor=docker-default", "no-new-privileges"];
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"));
+
+    expect(args).toEqual(expect.arrayContaining(["--security-opt", "apparmor=docker-default"]));
+    expect(args).toEqual(expect.arrayContaining(["--security-opt", "no-new-privileges"]));
+    expect(args).not.toEqual(expect.arrayContaining(["--security-opt", "apparmor=unconfined"]));
+  });
+
   it("formats sanitized network diagnostics without dumping provider secrets", () => {
     const inspect = inspectFixture();
     inspect.Config?.Env?.push("NVIDIA_API_KEY=secret");
@@ -354,7 +396,7 @@ describe("docker-gpu-patch", () => {
     );
     expect(runOpenshell).toHaveBeenCalledWith(
       ["sandbox", "exec", "-n", "alpha", "--", "true"],
-      expect.objectContaining({ ignoreError: true }),
+      expect.objectContaining({ ignoreError: true, suppressOutput: true }),
     );
     const dockerRmCalls = dockerRm.mock.calls as unknown[][];
     const backupRmCall = dockerRmCalls.findIndex((call) =>

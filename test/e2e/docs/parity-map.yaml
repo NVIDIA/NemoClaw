@@ -6548,22 +6548,22 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: macOS installer did not request the Darwin openshell-driver-vm asset
+    - legacy: macOS installer still requested the Darwin openshell-driver-vm asset
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: macOS OpenShell ${CURRENT_OPENSHELL_VERSION} incomplete install fetches Darwin gateway and VM driver assets
+    - legacy: macOS OpenShell ${CURRENT_OPENSHELL_VERSION} incomplete install fetches Darwin gateway asset
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: macOS installer did not repair missing openshell-driver-vm Hypervisor entitlement
+    - legacy: macOS installer still required openshell-driver-vm Hypervisor entitlement
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: macOS installer did not codesign openshell-driver-vm with entitlements
+    - legacy: macOS installer still codesigned openshell-driver-vm
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -6573,7 +6573,7 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: macOS OpenShell ${CURRENT_OPENSHELL_VERSION} installer repairs missing VM driver Hypervisor entitlement
+    - legacy: macOS OpenShell ${CURRENT_OPENSHELL_VERSION} installer does not require VM driver Hypervisor entitlement
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -6588,7 +6588,7 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: Docker daemon
-    - legacy: onboard does not enable macOS VM rootfs compatibility for Darwin sandbox builds
+    - legacy: onboard does not keep macOS Docker sandbox builds out of the VM rootfs compatibility path
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -6613,7 +6613,7 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: Docker daemon
-    - legacy: macOS VM sandbox builds enable OpenClaw and Hermes rootfs ownership compatibility
+    - legacy: macOS Docker sandbox builds keep VM rootfs compatibility disabled
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers

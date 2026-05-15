@@ -100,6 +100,13 @@ export interface ShowStatusCommandDeps {
   showServiceStatus: (options: { sandboxName?: string }) => void;
   getServiceStatuses?: (options: { sandboxName?: string }) => StatusServiceRow[];
   /**
+   * Active SSH-session count for a sandbox. When provided, `showStatusCommand`
+   * emits a `Connected:` line under each sandbox row. Returns null when the
+   * probe is not available (e.g. no openshell binary); the line is omitted in
+   * that case. #2604.
+   */
+  getActiveSessionCount?: (sandboxName: string) => number | null;
+  /**
    * Report whether the named NemoClaw gateway is reachable. When omitted,
    * `showStatusCommand` keeps its legacy 0-exit behaviour; when provided and
    * the gateway is unhealthy, `showStatusCommand` emits a `gateway: down`
@@ -402,11 +409,30 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
       // Prefer the live gateway model for the default sandbox so `status`
       // agrees with `openshell inference get` (#2369).
       const liveModel = isDefault && live ? live.model : null;
+      const liveProvider = isDefault && live ? live.provider : null;
       const model = liveModel || sb.model;
+      const provider = liveProvider || sb.provider;
       const portSuffix = sb.dashboardPort != null ? ` :${sb.dashboardPort}` : "";
       log(`    ${sb.name}${def}${model ? ` (${model})` : ""}${portSuffix}`);
       if (isDefault && liveModel && liveModel !== sb.model) {
         log(`      (onboarded: ${sb.model || "unknown"})`);
+      }
+      // #2604: surface the configured Inference (provider/model) and
+      // Connected (active-session count) as labeled fields. Bare
+      // `nemoclaw status` previously only had the model in parens above —
+      // users had to run `nemoclaw <name> status` to see provider and
+      // connection state.
+      if (provider || model) {
+        const parts = [provider, model].filter(Boolean).join(" / ");
+        log(`      Inference: ${parts}`);
+      }
+      if (deps.getActiveSessionCount) {
+        const count = deps.getActiveSessionCount(sb.name);
+        if (count !== null) {
+          log(
+            `      Connected: ${count > 0 ? `yes (${count} session${count > 1 ? "s" : ""})` : "no"}`,
+          );
+        }
       }
     }
     log("");

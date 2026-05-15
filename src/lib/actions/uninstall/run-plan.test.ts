@@ -582,4 +582,41 @@ describe("uninstall run plan", () => {
     expect(warnings).toContain("Failed to disable /swapfile; skipping swap cleanup.");
     expect(logs).not.toContain("Swap file removed");
   });
+
+  it("#3456 sub-bug #4: gateway destroy no-op uses the 'already removed' wording, not 'Destroyed ... skipped'", () => {
+    // When `openshell gateway destroy -g nemoclaw` returns non-zero (gateway
+    // already gone), the previous code printed `Destroyed gateway 'nemoclaw'
+    // skipped` — self-contradictory. The fix routes this branch to an onSkip
+    // message that describes the actual state.
+    const warnings: string[] = [];
+    const logs: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        commandExists: (command) => command !== "docker" && command !== "pgrep",
+        env: { HOME: "/home/test", TMPDIR: "/tmp/test" } as NodeJS.ProcessEnv,
+        error: (line) => warnings.push(line),
+        existsSync: () => false,
+        isTty: false,
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: (command, args) => {
+          // The openshell gateway destroy command no-ops when the gateway is
+          // already gone — return non-zero to exercise the onSkip branch.
+          if (command === "openshell" && args[0] === "gateway" && args[1] === "destroy") {
+            return notFound();
+          }
+          if (args[0] === "-c") return ok("/fake/bin/tool\n");
+          return ok();
+        },
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(warnings.join("\n")).toContain("Gateway 'nemoclaw' already removed or unreachable");
+    expect(`${warnings.join("\n")}\n${logs.join("\n")}`).not.toContain(
+      "Destroyed gateway 'nemoclaw' skipped",
+    );
+  });
 });
