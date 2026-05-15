@@ -142,56 +142,6 @@ preflight() {
   log "Pre-flight complete"
 }
 
-# Dump cloudflared diagnostics on TC-DEPLOY-01 failure.
-# Without this the only artifact CI has is the bare "tunnel URL did not surface"
-# / "Tunnel URL returned 502" line, which cannot distinguish cloudflared
-# crashes from a dead local dashboard from edge-side 502s. See issue #3494.
-# Defensive: every step is best-effort so a missing artifact never aborts the dump.
-dump_tunnel_diagnostics() {
-  local context="$1"
-  log "── Tunnel diagnostics (${context}) ──"
-
-  local pid_dir="/tmp/nemoclaw-services-${SANDBOX_NAME}"
-  local cf_log="${pid_dir}/cloudflared.log"
-  if [[ -f "$cf_log" ]]; then
-    log "  cloudflared.log (${cf_log}, last 100 lines):"
-    tail -n 100 "$cf_log" 2>/dev/null | sed 's/^/    /' | tee -a "$LOG_FILE"
-  else
-    log "  cloudflared.log not found at ${cf_log}"
-    local other
-    while IFS= read -r other; do
-      log "  cloudflared.log fallback (${other}, last 100 lines):"
-      tail -n 100 "$other" 2>/dev/null | sed 's/^/    /' | tee -a "$LOG_FILE"
-    done < <(find /tmp -maxdepth 3 -name 'cloudflared.log' -path '*nemoclaw-services*' 2>/dev/null)
-  fi
-
-  local cf_pid_file="${pid_dir}/cloudflared.pid"
-  if [[ -f "$cf_pid_file" ]]; then
-    local cf_pid
-    cf_pid=$(tr -d '[:space:]' <"$cf_pid_file" 2>/dev/null)
-    log "  cloudflared pid file: ${cf_pid_file} -> ${cf_pid:-<empty>}"
-    if [[ -n "$cf_pid" ]] && ps -p "$cf_pid" >/dev/null 2>&1; then
-      log "  cloudflared process state (ps -p $cf_pid):"
-      ps -p "$cf_pid" -o pid,ppid,stat,etime,args 2>&1 | sed 's/^/    /' | tee -a "$LOG_FILE"
-    else
-      log "  cloudflared process ${cf_pid:-<unknown>} is not alive"
-    fi
-  else
-    log "  cloudflared.pid not found at ${cf_pid_file}"
-  fi
-
-  log "  nemoclaw status:"
-  nemoclaw status 2>&1 | sed 's/^/    /' | tee -a "$LOG_FILE" || true
-
-  local dashboard_port
-  dashboard_port=$(nemoclaw status 2>/dev/null | grep -oE ':[0-9]{4,5}' | head -1 | tr -d ':' || true)
-  dashboard_port="${dashboard_port:-18789}"
-  log "  Origin probe: curl -sS -v --max-time 10 http://localhost:${dashboard_port}/"
-  curl -sS -v --max-time 10 "http://localhost:${dashboard_port}/" 2>&1 | sed 's/^/    /' | tee -a "$LOG_FILE" || true
-
-  log "── End tunnel diagnostics ──"
-}
-
 # Execute a command inside the sandbox via SSH.
 sandbox_exec() {
   local cmd="$1"
@@ -394,7 +344,6 @@ test_deploy_01_start_stop() {
     pass "TC-DEPLOY-01a: Tunnel URL found in status ($tunnel_url)"
   else
     fail "TC-DEPLOY-01a: Start" "Start executed but tunnel URL did not surface in status"
-    dump_tunnel_diagnostics "TC-DEPLOY-01a"
     nemoclaw tunnel stop 2>/dev/null || true
     return
   fi
@@ -419,11 +368,9 @@ test_deploy_01_start_stop() {
         pass "TC-DEPLOY-01b: Tunnel serves OpenClaw dashboard (HTTP 200, marker matched)"
       else
         fail "TC-DEPLOY-01b" "HTTP 200 but body lacks dashboard markers (first 200B: $(head -c 200 "$body_file" | tr -d '\n'))"
-        dump_tunnel_diagnostics "TC-DEPLOY-01b"
       fi
     else
       fail "TC-DEPLOY-01b" "Tunnel URL returned unexpected status: $http_code"
-      dump_tunnel_diagnostics "TC-DEPLOY-01b"
     fi
     rm -f "$body_file"
   else
