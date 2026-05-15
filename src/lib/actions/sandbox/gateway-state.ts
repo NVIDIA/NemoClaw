@@ -19,6 +19,12 @@ import * as onboardSession from "../../state/onboard-session";
 import type { Session } from "../../state/onboard-session";
 import { stripAnsi } from "../../adapters/openshell/client";
 import {
+  detectOpenShellStateRpcPreflightIssue,
+  detectOpenShellStateRpcResultIssue,
+  formatOpenShellStateRpcIssue,
+  type OpenShellStateRpcIssue,
+} from "../../adapters/openshell/gateway-drift";
+import {
   captureOpenshell,
   captureOpenshellForStatus,
   getStatusProbeTimeoutMs,
@@ -43,6 +49,14 @@ export type SandboxGatewayState = {
 type SandboxGatewayStateLookup = (
   sandboxName: string,
 ) => SandboxGatewayState | Promise<SandboxGatewayState>;
+
+function formatGatewaySchemaMismatchOutput(
+  issue: OpenShellStateRpcIssue,
+  action: string,
+  command?: string,
+): string {
+  return formatOpenShellStateRpcIssue(issue, { action, command }).join("\n");
+}
 
 export function mergeLivePolicyIntoSandboxOutput(
   output: string,
@@ -82,10 +96,29 @@ export function mergeLivePolicyIntoSandboxOutput(
 
 /** Query sandbox presence and return its output with the live enforced policy. */
 export function getSandboxGatewayState(sandboxName: string): SandboxGatewayState {
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue();
+  if (preflightIssue) {
+    return {
+      state: "gateway_schema_mismatch",
+      output: formatGatewaySchemaMismatchOutput(
+        preflightIssue,
+        `verifying sandbox '${sandboxName}' against OpenShell`,
+      ),
+    };
+  }
   const result = captureOpenshell(["sandbox", "get", sandboxName], {
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   let output = result.output;
+  const resultIssue = detectOpenShellStateRpcResultIssue(result);
+  if (resultIssue) {
+    return {
+      state: "gateway_schema_mismatch",
+      output: formatOpenShellStateRpcIssue(resultIssue, {
+        action: `verifying sandbox '${sandboxName}' against OpenShell`,
+      }).join("\n"),
+    };
+  }
   if (result.status === 0) {
     const livePolicy = captureOpenshell(["policy", "get", "--full", sandboxName], {
       ignoreError: true,
@@ -113,10 +146,31 @@ export async function getSandboxGatewayStateForStatus(
   sandboxName: string,
 ): Promise<SandboxGatewayState> {
   const timeoutMs = getStatusProbeTimeoutMs();
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue({ timeoutMs });
+  if (preflightIssue) {
+    return {
+      state: "gateway_schema_mismatch",
+      output: formatGatewaySchemaMismatchOutput(
+        preflightIssue,
+        `checking status for sandbox '${sandboxName}'`,
+        `${CLI_NAME} ${sandboxName} status`,
+      ),
+    };
+  }
   const result = await captureOpenshellForStatus(["sandbox", "get", sandboxName], {
     timeout: timeoutMs,
   });
   let output = result.output;
+  const resultIssue = detectOpenShellStateRpcResultIssue(result, { timeoutMs });
+  if (resultIssue) {
+    return {
+      state: "gateway_schema_mismatch",
+      output: formatOpenShellStateRpcIssue(resultIssue, {
+        action: `checking status for sandbox '${sandboxName}'`,
+        command: `${CLI_NAME} ${sandboxName} status`,
+      }).join("\n"),
+    };
+  }
   if (isCommandTimeout(result)) {
     return {
       state: "status_probe_timeout",
@@ -168,6 +222,9 @@ export function reconcileMissingAgainstNamedGateway(
     const retry = getSandboxGatewayState(sandboxName);
     if (retry.state === "present") {
       return { ...retry, recoveredGateway: true, recoveryVia: "select" };
+    }
+    if (retry.state === "gateway_schema_mismatch") {
+      return retry;
     }
     if (retry.state === "missing") {
       const after = getNamedGatewayLifecycleState();
@@ -347,6 +404,10 @@ export async function ensureLiveSandboxOrExit(
       process.exit(1);
     }
     return lookup;
+  }
+  if (lookup.state === "gateway_schema_mismatch") {
+    console.error(lookup.output);
+    process.exit(1);
   }
   if (lookup.state === "missing") {
     const guard = getNamedGatewayLifecycleState();

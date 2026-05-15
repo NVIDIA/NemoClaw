@@ -34,6 +34,14 @@ describe("runtime recovery helpers", () => {
     expect(Array.from(parseLiveSandboxNames("Error: something went wrong"))).toEqual([]);
   });
 
+  it("does not parse protobuf schema mismatch output as live sandbox state", () => {
+    const output =
+      'Error:   × status: Internal, message: "Sandbox.metadata: SandboxResponse.sandbox: invalid wire type value: 6"';
+
+    expect(Array.from(parseLiveSandboxNames(output))).toEqual([]);
+    expect(classifySandboxLookup(output).state).toBe("unavailable");
+  });
+
   it("handles empty input", () => {
     expect(Array.from(parseLiveSandboxNames(""))).toEqual([]);
     expect(Array.from(parseLiveSandboxNames())).toEqual([]);

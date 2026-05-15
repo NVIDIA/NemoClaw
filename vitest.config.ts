@@ -10,6 +10,9 @@ const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === 
 
 export default defineConfig({
   test: {
+    env: {
+      NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
+    },
     // CI logs are easiest to scan when test chatter stays quiet and failures
     // surface as GitHub annotations at the relevant file and line.
     reporters: isGithubActions ? ["github-actions"] : ["default"],

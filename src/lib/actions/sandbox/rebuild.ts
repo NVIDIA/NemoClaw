@@ -28,6 +28,11 @@ const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("../../onb
   REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
 };
 
+import {
+  detectOpenShellStateRpcPreflightIssue,
+  detectOpenShellStateRpcResultIssue,
+  printOpenShellStateRpcIssue,
+} from "../../adapters/openshell/gateway-drift";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import { loadAgent } from "../../agent/defs";
@@ -207,6 +212,16 @@ export async function rebuildSandbox(
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
 
+  const gatewayPreflightIssue = detectOpenShellStateRpcPreflightIssue();
+  if (gatewayPreflightIssue) {
+    printOpenShellStateRpcIssue(gatewayPreflightIssue, {
+      action: `rebuilding sandbox '${sandboxName}'`,
+      command: `${CLI_NAME} ${sandboxName} rebuild`,
+    });
+    bail("OpenShell gateway schema mismatch.");
+    return;
+  }
+
   // Version check — show what's changing
   const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
   console.log("");
@@ -343,10 +358,25 @@ export async function rebuildSandbox(
 
   // Step 1: Ensure sandbox is live for backup
   log("Checking sandbox liveness: openshell sandbox list");
-  const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  const isLive = captureOpenshell(["sandbox", "list"]);
   log(
     `openshell sandbox list exit=${isLive.status}, output=${(isLive.output || "").substring(0, 200)}`,
   );
+  const liveListIssue = detectOpenShellStateRpcResultIssue(isLive);
+  if (liveListIssue) {
+    printOpenShellStateRpcIssue(liveListIssue, {
+      action: `rebuilding sandbox '${sandboxName}'`,
+      command: `${CLI_NAME} ${sandboxName} rebuild`,
+    });
+    bail("OpenShell gateway schema mismatch.");
+    return;
+  }
+  if (isLive.status !== 0) {
+    console.error("  Failed to query running sandboxes from OpenShell.");
+    console.error("  Ensure OpenShell is running: openshell status");
+    bail("Failed to query running sandboxes from OpenShell.", isLive.status || 1);
+    return;
+  }
   const liveNames = parseLiveSandboxNames(isLive.output || "");
   log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
   if (!liveNames.has(sandboxName)) {
