@@ -190,9 +190,13 @@ Before creating the gateway, the wizard runs preflight checks.
 It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
 The preflight also enforces the OpenShell version range declared in the blueprint (`min_openshell_version` and `max_openshell_version`).
 If the installed OpenShell version falls outside this range, onboarding exits with an actionable error and a link to compatible releases.
+For fresh OpenShell installs, NemoClaw queries published OpenShell releases and asks the installer to use a release that fits the blueprint range.
+If release metadata is unavailable, the installer uses its bundled fallback pin and the post-install version gate still enforces the range.
 
 When NemoClaw finds an existing gateway to reuse, it probes the host gateway HTTP endpoint before declaring the gateway reusable.
 If the container is running but the upstream is still warming up (for example, immediately after a Docker daemon restart), NemoClaw rebuilds the gateway instead of trusting stale metadata.
+For Linux Docker-driver gateways, onboarding also checks that a helper container on the OpenShell Docker network can reach `host.openshell.internal:<gateway-port>`.
+If a host firewall blocks that sandbox path, onboarding exits with a `sudo ufw allow from <subnet> to any port <gateway-port> proto tcp` command before it reports the gateway healthy.
 Tune the wait via `NEMOCLAW_REUSE_HEALTH_POLL_COUNT` (default `6`) and `NEMOCLAW_REUSE_HEALTH_POLL_INTERVAL` (default `5` seconds).
 The poll count is clamped to a minimum of `1` so the probe always runs at least once, and the interval is clamped to a minimum of `0` (no sleep between attempts).
 
@@ -264,6 +268,8 @@ Use `--no-gpu` to opt out when you want host-side inference providers only and d
 Use `--gpu` to require GPU passthrough and fail fast if an NVIDIA GPU is not detected.
 Use `--sandbox-gpu` or `--no-sandbox-gpu` to control only direct NVIDIA GPU access inside the sandbox.
 Use `--sandbox-gpu-device <device>` to pass a specific OpenShell GPU device selector to `openshell sandbox create`.
+On Linux Docker-driver gateways, NemoClaw can create the sandbox first and then recreate the OpenShell-managed Docker container with NVIDIA GPU access when that compatibility path is needed.
+If the patch fails, onboarding keeps diagnostics and prints a manual cleanup command rather than deleting the failed sandbox automatically.
 
 Prerequisites:
 
@@ -272,6 +278,7 @@ Prerequisites:
 
 When GPU passthrough is enabled and a gateway already exists without it, onboarding exits with guidance to destroy and re-onboard.
 To add GPU to an existing sandbox, rerun with `--recreate-sandbox`.
+Set `NEMOCLAW_DOCKER_GPU_PATCH=0` only when you need to bypass the Linux Docker-driver compatibility patch during troubleshooting.
 
 ### `nemoclaw list`
 
@@ -353,7 +360,12 @@ The command probes every inference provider and reports one of three states on t
 Local providers (Ollama, vLLM) probe the host-side health endpoint.
 Remote providers (NVIDIA Endpoints, OpenAI, Anthropic, Gemini) use a lightweight reachability check; any HTTP response, including `401` or `403`, counts as reachable.
 No API keys are sent.
+
+For Local Ollama, the command also probes the authenticated proxy and prints an `Inference (auth proxy)` line when a proxy token is available.
+Use that line to distinguish a healthy backend from a broken proxy path that the sandbox uses for inference.
+
 For cloud-only providers, the output omits the NIM status line unless a NIM container is registered or an unexpected NIM container is running.
+
 If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state.
 Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.
 
@@ -589,6 +601,8 @@ $ nemoclaw my-assistant channels list
 Store credentials for a messaging channel (`telegram`, `discord`, or `slack`) and rebuild the sandbox so the image picks up the new channel.
 The command prompts for any missing token, registers it with the OpenShell gateway, then asks whether to rebuild immediately.
 Running `add` for an already-configured channel simply overwrites the stored tokens — the operation is idempotent.
+Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
+After a successful add, NemoClaw prints a `policy-add <channel>` hint when a matching built-in network policy preset exists but is not applied to the sandbox yet.
 
 ```console
 $ nemoclaw my-assistant channels add telegram
@@ -907,6 +921,7 @@ This command remains as a compatibility alias to `nemoclaw tunnel stop`.
 
 Show the sandbox list and the status of host auxiliary services (for example cloudflared).
 Pass `--json` for machine-readable output with registered sandboxes, service state, inference routes, and messaging health.
+For each listed sandbox, the text output includes the configured inference provider and model plus whether an active SSH session is connected.
 
 ```console
 $ nemoclaw status
@@ -918,6 +933,7 @@ The command suggests `openshell gateway start --name nemoclaw` or `nemoclaw onbo
 It exits with code `1` so shell scripts and CI can detect the degraded state from `$?`.
 For `--json`, the structured output includes `gatewayHealth`, and the exit code is set after the report is generated.
 A clean machine with no registered sandboxes keeps the legacy `0` exit because no gateway is expected to be configured yet.
+If cloudflared is installed but not running, the host-service section reports whether the PID file is missing, invalid, or points at a dead process, then suggests `nemoclaw tunnel start` as the recovery command.
 
 ### `nemoclaw inference get`
 

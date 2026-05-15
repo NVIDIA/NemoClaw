@@ -10,6 +10,7 @@ import {
   checkPortAvailable,
   getDockerBridgeGatewayIp,
   getMemoryInfo,
+  getNvidiaCdiSpecPath,
   ensureSwap,
   isDockerUnderProvisioned,
   MIN_RECOMMENDED_DOCKER_CPUS,
@@ -723,6 +724,14 @@ describe("assessHost — CDI device-spec gap (#3152)", () => {
   });
 });
 
+describe("getNvidiaCdiSpecPath", () => {
+  it("builds the default NVIDIA CDI spec path from Docker CDI dirs", () => {
+    expect(getNvidiaCdiSpecPath({ dockerCdiSpecDirs: ["/etc/cdi/", "/var/run/cdi"] })).toBe(
+      "/etc/cdi/nvidia.yaml",
+    );
+  });
+});
+
 describe("planHostRemediation", () => {
   it("recommends starting docker when installed but unreachable and service inactive", () => {
     const actions = planHostRemediation({
@@ -920,11 +929,12 @@ describe("planHostRemediation", () => {
     expect(action).toBeTruthy();
     expect(action?.kind).toBe("sudo");
     expect(action?.blocking).toBe(true);
-    expect(action?.commands[0]).toBe(
+    expect(action?.commands[0]).toBe("sudo mkdir -p /etc/cdi");
+    expect(action?.commands[1]).toBe(
       "sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml",
     );
-    expect(action?.commands[1]).toContain("nvidia-ctk cdi list");
-    expect(action?.commands[2]).toContain("nemoclaw onboard");
+    expect(action?.commands[2]).toContain("nvidia-ctk cdi list");
+    expect(action?.commands[3]).toContain("nemoclaw onboard");
     expect(action?.reason).toContain("nvidia.com/gpu");
   });
 });

@@ -614,6 +614,24 @@ EOF
       expect(src).toContain("lock_rc_files");
     });
 
+    it("hermes non-root fallback uses mutable-default config verification", () => {
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
+      const nonRootStart = src.indexOf('# ── Non-root fallback');
+      const rootStart = src.indexOf('# ── Root path', nonRootStart);
+      expect(nonRootStart).toBeGreaterThanOrEqual(0);
+      expect(rootStart).toBeGreaterThan(nonRootStart);
+      const nonRootBlock = src.slice(nonRootStart, rootStart);
+      const rootBlock = src.slice(rootStart);
+
+      expect(nonRootBlock).toContain('verify_config_integrity_if_locked "${HERMES_DIR}"');
+      expect(nonRootBlock).not.toContain(
+        'verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"',
+      );
+      expect(rootBlock).toContain(
+        'verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"',
+      );
+    });
+
     it("hermes start.sh rewrites configure guard rc blocks through the symlink-safe helper", () => {
       const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
       const helperFn = src.match(/rewrite_rc_marker_block\(\) \{([\s\S]*?)^}/m);

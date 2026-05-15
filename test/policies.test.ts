@@ -848,6 +848,11 @@ exit 1
           credentialRewrite: true,
         },
         {
+          preset: "discord",
+          host: "*.discord.gg",
+          credentialRewrite: true,
+        },
+        {
           preset: "slack",
           host: "wss-primary.slack.com",
           credentialRewrite: true,
@@ -944,6 +949,7 @@ exit 1
       ];
       const cases = [
         "gateway.discord.gg",
+        "*.discord.gg",
         "wss-primary.slack.com",
         "wss-backup.slack.com",
       ];
