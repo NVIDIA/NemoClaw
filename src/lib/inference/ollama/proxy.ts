@@ -86,6 +86,39 @@ function loadPersistedProxyToken(): string | null {
   return null;
 }
 
+function curlAuthHeaderConfig(token: string): string {
+  const escaped = String(token).replace(/[\r\n]/g, "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `header = "Authorization: Bearer ${escaped}"\n`;
+}
+
+function runCurlWithAuthConfig(args: string[], endpoint: string, token: string | null = null) {
+  const curlArgs = [...args];
+  const options: {
+    cwd: string;
+    encoding: "utf8";
+    env: Record<string, string>;
+    input?: string;
+  } = {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: buildSubprocessEnv(),
+  };
+  if (token) {
+    curlArgs.push("--config", "-");
+    options.input = curlAuthHeaderConfig(token);
+  }
+  curlArgs.push(endpoint);
+
+  // The only dynamic value is a 0600 local auth token for a fixed loopback proxy endpoint.
+  // codeql[js/request-forgery]
+  return spawnSync("curl", curlArgs, options);
+}
+
+function runCurlCaptureWithAuthConfig(args: string[], endpoint: string, token: string | null = null): string {
+  const result = runCurlWithAuthConfig(args, endpoint, token);
+  return result.status === 0 ? String(result.stdout || "") : "";
+}
+
 // ── PID persistence ──────────────────────────────────────────────
 
 function persistProxyPid(pid: number | null | undefined): void {
@@ -199,8 +232,7 @@ function startOllamaAuthProxy(): boolean {
  * 502 still proves the token was accepted, while 401 means token mismatch.
  */
 function probeProxyToken(token: string): "accepted" | "rejected" | "unreachable" {
-  const result = spawnSync(
-    "curl",
+  const result = runCurlWithAuthConfig(
     [
       "-sS",
       "-o",
@@ -209,11 +241,9 @@ function probeProxyToken(token: string): "accepted" | "rejected" | "unreachable"
       "%{http_code}",
       "--max-time",
       "3",
-      "-H",
-      `Authorization: Bearer ${token}`,
-      `http://localhost:${OLLAMA_PROXY_PORT}/v1/models`,
     ],
-    { encoding: "utf8" },
+    `http://localhost:${OLLAMA_PROXY_PORT}/v1/models`,
+    token,
   );
   if (result.status !== 0) return "unreachable";
 
@@ -282,18 +312,93 @@ function isProxyHealthy(): boolean {
   //    is missing or stale (e.g., after a manual restart).
   const proxyUrl = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags`;
   const token = loadPersistedProxyToken();
-  const probeCmd = token
-    ? ["curl", "-sf", "--connect-timeout", "3", "--max-time", "5",
-       "-H", `Authorization: Bearer ${token}`, proxyUrl]
-    : ["curl", "-sf", "--connect-timeout", "3", "--max-time", "5", proxyUrl];
-
-  const output = runCapture(probeCmd, { ignoreError: true });
+  const output = runCurlCaptureWithAuthConfig(
+    ["-sf", "--connect-timeout", "3", "--max-time", "5"],
+    proxyUrl,
+    token,
+  );
   if (output) return true;
 
   // HTTP probe failed — fall back to PID as a weaker signal.
   // This covers edge cases where the probe transiently fails but the
   // process is confirmed alive.
   return hasValidPid;
+}
+
+function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: string } {
+  const endpoint = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/v1/models`;
+  const token = loadPersistedProxyToken();
+  if (!token) {
+    return {
+      ok: false,
+      endpoint,
+      detail:
+        "Ollama auth proxy token is missing. Re-run NemoClaw onboarding for the Ollama-local sandbox.",
+    };
+  }
+
+  const result = runCurlWithAuthConfig(
+    [
+      "-sS",
+      "-o",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      "--connect-timeout",
+      "3",
+      "--max-time",
+      "5",
+    ],
+    endpoint,
+    token,
+  );
+
+  const status = Number(String(result.stdout || "").trim());
+  if (result.status === 0 && Number.isFinite(status) && status >= 200 && status < 300) {
+    return {
+      ok: true,
+      endpoint,
+      detail: `Ollama auth proxy is reachable on ${endpoint}.`,
+    };
+  }
+
+  if (status === 401) {
+    return {
+      ok: false,
+      endpoint,
+      detail:
+        "Ollama auth proxy rejected the persisted token. Re-run NemoClaw onboarding for the Ollama-local sandbox.",
+    };
+  }
+
+  if (Number.isFinite(status) && status >= 300 && status < 500) {
+    return {
+      ok: false,
+      endpoint,
+      detail:
+        `Ollama auth proxy is reachable on ${endpoint}, but returned HTTP ${status}. ` +
+        "Check auth, route, and proxy configuration.",
+    };
+  }
+
+  if (Number.isFinite(status) && status >= 500) {
+    return {
+      ok: false,
+      endpoint,
+      detail:
+        `Ollama auth proxy is running on ${endpoint}, but its backend returned HTTP ${status}. ` +
+        `Verify host Ollama on localhost:${OLLAMA_PORT} and retry.`,
+    };
+  }
+
+  const failure = String(result.stderr || result.error?.message || "").trim();
+  return {
+    ok: false,
+    endpoint,
+    detail: failure
+      ? `Ollama auth proxy is not reachable on ${endpoint}. (${failure})`
+      : `Ollama auth proxy is not reachable on ${endpoint}.`,
+  };
 }
 
 async function promptOllamaModel(gpu = null) {
@@ -717,10 +822,11 @@ export {
   killStaleProxy,
   persistAndProbeOllamaProxy,
   persistProxyToken,
-  startOllamaAuthProxy,
-  promptOllamaModel,
-  printOllamaExposureWarning,
-  pullOllamaModel,
   prepareOllamaModel,
+  printOllamaExposureWarning,
+  probeOllamaAuthProxyHealth,
+  promptOllamaModel,
+  pullOllamaModel,
+  startOllamaAuthProxy,
   unloadOllamaModels,
 };
