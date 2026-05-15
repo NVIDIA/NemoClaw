@@ -16,7 +16,12 @@ function writeExecutable(target: string, contents: string): void {
 
 function runPreinstallUpgradeGuard(
   env: Record<string, string> = {},
-  options: { backupSucceeds?: boolean; hasCli?: boolean; supportsBackupAll?: boolean } = {},
+  options: {
+    backupSucceeds?: boolean;
+    hasCli?: boolean;
+    openshellVersion?: string;
+    supportsBackupAll?: boolean;
+  } = {},
 ) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-upgrade-prompt-"));
   const home = path.join(tmp, "home");
@@ -30,6 +35,7 @@ function runPreinstallUpgradeGuard(
   fs.writeFileSync(path.join(home, ".nemoclaw", "sandboxes.json"), '{"sandboxes":{"alpha":{}}}');
   const supportsBackupAll = options.supportsBackupAll === false ? "0" : "1";
   const backupSucceeds = options.backupSucceeds === false ? "0" : "1";
+  const openshellVersion = options.openshellVersion ?? "0.0.36";
   writeExecutable(
     fakeCli,
     `#!/usr/bin/env bash
@@ -58,7 +64,7 @@ exit 0
     HOME="${home}"
     registered_sandbox_count() { printf '1'; }
     command_exists() { [ "$1" = "openshell" ]; }
-    installed_openshell_version() { printf '0.0.36'; }
+    installed_openshell_version() { printf '${openshellVersion}'; }
     resolve_existing_cli_runner() { ${resolveCli}; }
     openshell() { printf '%s\\n' "$*" >> "${openshellLog}"; return 0; }
     preinstall_backup_and_retire_legacy_gateway
@@ -138,6 +144,23 @@ describe("install.sh OpenShell 0.0.37 gateway upgrade prompt", () => {
     expect(result.stdout + result.stderr).toContain("Pre-upgrade backup failed");
     expect(cliLog).toContain("--help");
     expect(cliLog.split(/\r?\n/)).toContain("backup-all");
+    expect(openshellLog).toBe("");
+  });
+
+  it("aborts current-gateway upgrades when pre-upgrade backup fails", () => {
+    const { result, cliLog, openshellLog } = runPreinstallUpgradeGuard(
+      {
+        NON_INTERACTIVE: "1",
+      },
+      { backupSucceeds: false, openshellVersion: "0.0.37" },
+    );
+
+    expect(result.status).not.toBe(0);
+    expect(result.stdout + result.stderr).toContain(
+      "Fix the OpenShell gateway state, rerun 'nemoclaw backup-all', then rerun the installer.",
+    );
+    expect(cliLog.split(/\r?\n/)).toContain("backup-all");
+    expect(cliLog).not.toContain("--help");
     expect(openshellLog).toBe("");
   });
 
