@@ -17,15 +17,3 @@ export function destroyGatewayForReuse(
   console.warn(failureMessage);
   return "stale";
 }
-
-export function warnIfGatewayDestroyFails(
-  destroyGateway: DestroyGateway,
-  successMessage: string,
-  failureMessage: string,
-): void {
-  if (destroyGateway()) {
-    console.log(successMessage);
-  } else {
-    console.warn(failureMessage);
-  }
-}

@@ -14,7 +14,6 @@ import {
 } from "./adapters/docker";
 
 export const OPENCLAW_SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/sandbox-base";
-export const HERMES_SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base";
 export const SANDBOX_BASE_TAG = "latest";
 export const OPENSHELL_SANDBOX_MIN_GLIBC = "2.39";
 
@@ -284,8 +283,4 @@ export function buildLocalBaseTag(prefix: string, rootDir = ROOT, env = process.
 
 export function defaultOpenclawBaseDockerfile(rootDir = ROOT): string {
   return path.join(rootDir, "Dockerfile.base");
-}
-
-export function defaultHermesBaseDockerfile(rootDir = ROOT): string {
-  return path.join(rootDir, "agents", "hermes", "Dockerfile.base");
 }

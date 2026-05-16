@@ -252,7 +252,7 @@ function buildGuestInitPatch(initPath: string):
     };
   }
 
-  const patched = original.replace(INIT_PUBLIC_FALLBACK_BLOCK_RE, (match, indent: string) =>
+  const patched = original.replace(INIT_PUBLIC_FALLBACK_BLOCK_RE, (_match, indent: string) =>
     buildGvproxyDnsBlock(indent),
   );
   if (patched === original) {

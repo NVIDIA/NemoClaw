@@ -10,7 +10,6 @@ import {
   classifySessionState,
   getActiveSandboxSessions,
   type ForwardEntry,
-  type SessionClassification,
   type SessionDetectionDeps,
 } from "./sandbox-session";
 

@@ -10,7 +10,7 @@
 //   npx tsx scripts/validate-configs.ts --file <config> --schema <schema>  # validate one file
 
 import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv/dist/2020.js";
 import YAML from "yaml";

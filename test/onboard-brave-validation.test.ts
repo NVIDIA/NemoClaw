@@ -120,6 +120,65 @@ function restore() {
 }
 
 describe("configureWebSearch (non-interactive)", () => {
+  it("skips unsupported Hermes without prompting for Brave", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-web-search-prompt-"));
+    const scriptPath = path.join(tmpDir, "web-search-prompt-check.cjs");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
+    const agentDefsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent", "defs.js"));
+
+    const script = `
+let promptCalls = 0;
+const actualCredentials = require(${credentialsPath});
+const mockedCredentials = {
+  ...actualCredentials,
+  prompt: async () => {
+    promptCalls += 1;
+    throw new Error("prompt should not be called");
+  },
+};
+require.cache[require.resolve(${credentialsPath})] = {
+  id: require.resolve(${credentialsPath}),
+  filename: require.resolve(${credentialsPath}),
+  loaded: true,
+  exports: mockedCredentials,
+};
+process.env.BRAVE_API_KEY = "brv-test-key";
+const { configureWebSearch } = require(${onboardPath});
+const { loadAgent } = require(${agentDefsPath});
+
+(async () => {
+  const result = await configureWebSearch(null, loadAgent("hermes"));
+  console.log(JSON.stringify({ result, promptCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+        },
+      });
+      expect(result.status).toBe(0);
+      const line = result.stdout.trim().split("\n").pop();
+      expect(line).toBeTruthy();
+      const payload = JSON.parse(line || "{}");
+      expect(payload.result).toBeNull();
+      expect(payload.promptCalls).toBe(0);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("skips Brave Web Search and returns null when key validation hits HTTP 429", () => {
     const { exitCode, payload } = runConfigureWebSearch({
       status: "429",

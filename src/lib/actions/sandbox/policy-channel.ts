@@ -36,7 +36,6 @@ const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
   useColor && (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit");
 const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "";
-const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
 const YW = useColor ? "\x1b[1;33m" : "";
 
