@@ -54,6 +54,5 @@ export const channelMutationArgs = {
 };
 
 export const channelMutationFlags = {
-  help: Flags.help({ char: "h" }),
   "dry-run": Flags.boolean({ description: "Preview the change without applying it" }),
 };

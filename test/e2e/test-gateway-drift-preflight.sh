@@ -77,7 +77,7 @@ case "${1:-}" in
     exit 0
     ;;
   status)
-    printf 'Server Status\n\n  Gateway: nemoclaw\n  Status: Connected\n'
+    printf 'Server Status\n\n  Gateway: nemoclaw\n  Gateway endpoint: http://127.0.0.1:8080\n  Status: Connected\n'
     exit 0
     ;;
   gateway)
@@ -101,29 +101,43 @@ SH
 
 write_fake_docker() {
   local bin_dir="$1"
-  cat >"$bin_dir/docker" <<'SH'
+  local gateway_running="${NEMOCLAW_FAKE_GATEWAY_RUNNING:-true}"
+  local gateway_ports="${NEMOCLAW_FAKE_GATEWAY_PORTS:-}"
+  if [ -z "$gateway_ports" ]; then
+    gateway_ports='{"30051/tcp":[{"HostIp":"0.0.0.0","HostPort":"8080"}]}'
+  fi
+  local gateway_image="${NEMOCLAW_FAKE_GATEWAY_IMAGE:-ghcr.io/nvidia/openshell/cluster:0.0.37}"
+  cat >"$bin_dir/docker" <<SH
 #!/usr/bin/env bash
 set -uo pipefail
-: "${NEMOCLAW_FAKE_CASE_DIR:?}"
-printf '%s\n' "$*" >> "$NEMOCLAW_FAKE_CASE_DIR/docker-calls.log"
-if [ "${1:-}" = "inspect" ] && [ "${2:-}" = "--type" ] && [ "${3:-}" = "container" ] && [ "${4:-}" = "--format" ]; then
-  format="${5:-}"
-  case "$format" in
-    '{{.State.Running}}')
-      printf '%s\n' "${NEMOCLAW_FAKE_GATEWAY_RUNNING:-true}"
+case_dir="\${NEMOCLAW_FAKE_CASE_DIR:-\${TMPDIR:-/tmp}/nemoclaw-gateway-drift-preflight-current}"
+printf '%s\n' "\$*" >> "\$case_dir/docker-calls.log"
+format=""
+if [ "\${1:-}" = "inspect" ] || { [ "\${1:-}" = "container" ] && [ "\${2:-}" = "inspect" ]; }; then
+  while [ "\$#" -gt 0 ]; do
+    if [ "\${1:-}" = "--format" ]; then
+      shift
+      format="\${1:-}"
+      break
+    fi
+    shift
+  done
+  case "\$format" in
+    '{{.State.Running}}'|"'{{.State.Running}}'")
+      printf '%s\n' '$gateway_running'
       exit 0
       ;;
-    '{{json .NetworkSettings.Ports}}')
-      printf '%s\n' "${NEMOCLAW_FAKE_GATEWAY_PORTS:-{\"30051/tcp\":[{\"HostIp\":\"0.0.0.0\",\"HostPort\":\"8080\"}]}}"
+    '{{json .NetworkSettings.Ports}}'|"'{{json .NetworkSettings.Ports}}'")
+      printf '%s\n' '$gateway_ports'
       exit 0
       ;;
-    '{{.Config.Image}}')
-      printf '%s\n' "${NEMOCLAW_FAKE_GATEWAY_IMAGE:-ghcr.io/nvidia/openshell/cluster:0.0.37}"
+    '{{.Config.Image}}'|"'{{.Config.Image}}'")
+      printf '%s\n' '$gateway_image'
       exit 0
       ;;
   esac
 fi
-printf 'unexpected docker args: %s\n' "$*" >&2
+printf 'unexpected docker args: %s\n' "\$*" >&2
 exit 9
 SH
   chmod +x "$bin_dir/docker"
@@ -136,6 +150,7 @@ run_backup_case() {
   local home="$CASE_DIR/home"
   local bin_dir="$CASE_DIR/bin"
   mkdir -p "$home" "$bin_dir"
+  export TMPDIR="$CASE_DIR"
   : >"$CASE_DIR/openshell-calls.log"
   : >"$CASE_DIR/docker-calls.log"
   write_registry "$home"
@@ -146,6 +161,11 @@ run_backup_case() {
   HOME="$home" \
     PATH="$bin_dir:$PATH" \
     NEMOCLAW_FAKE_CASE_DIR="$CASE_DIR" \
+    TMPDIR="$CASE_DIR" \
+    NEMOCLAW_FAKE_GATEWAY_RUNNING="${NEMOCLAW_FAKE_GATEWAY_RUNNING:-}" \
+    NEMOCLAW_FAKE_GATEWAY_PORTS="${NEMOCLAW_FAKE_GATEWAY_PORTS:-}" \
+    NEMOCLAW_FAKE_GATEWAY_IMAGE="${NEMOCLAW_FAKE_GATEWAY_IMAGE:-}" \
+    NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT="${NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT:-0}" \
     "$@" >"$output" 2>&1
   return $?
 }
@@ -178,8 +198,9 @@ npm run build:cli || fail "CLI build failed"
 
 section "Protobuf mismatch from sandbox list fails closed"
 set +e
-run_backup_case protobuf-mismatch \
-  env NEMOCLAW_FAKE_GATEWAY_RUNNING=false NEMOCLAW_FAKE_GATEWAY_IMAGE=ghcr.io/nvidia/openshell/cluster:0.0.37 \
+NEMOCLAW_FAKE_GATEWAY_RUNNING=false \
+  NEMOCLAW_FAKE_GATEWAY_IMAGE=ghcr.io/nvidia/openshell/cluster:0.0.37 \
+  run_backup_case protobuf-mismatch \
   node "$REPO_ROOT/bin/nemoclaw.js" backup-all
 rc=$?
 set -e
@@ -195,8 +216,8 @@ assert_not_contains "$CASE_DIR/command.out" 'Backup complete' "backup does not p
 
 section "Patched stale gateway image fails before sandbox list"
 set +e
-run_backup_case patched-image-drift \
-  env NEMOCLAW_FAKE_GATEWAY_IMAGE=nemoclaw-cluster:0.0.36-fuse-overlayfs-aa8b8487 \
+NEMOCLAW_FAKE_GATEWAY_IMAGE=nemoclaw-cluster:0.0.36-fuse-overlayfs-aa8b8487 \
+  run_backup_case patched-image-drift \
   node "$REPO_ROOT/bin/nemoclaw.js" backup-all
 rc=$?
 set -e

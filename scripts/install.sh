@@ -51,7 +51,7 @@ resolve_installer_version() {
     return
   fi
   # Prefer git tags (works in dev clones and CI)
-  if command -v git &>/dev/null && [[ -d "${repo_root}/.git" ]]; then
+  if command -v git &>/dev/null && [[ -e "${repo_root}/.git" ]]; then
     local git_ver=""
     if git_ver="$(git -C "$repo_root" describe --tags --match 'v*' 2>/dev/null)"; then
       git_ver="${git_ver#v}"
@@ -548,6 +548,7 @@ usage() {
   printf "    NVIDIA_API_KEY                API key (skips credential prompt)\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
+  printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
@@ -1356,7 +1357,7 @@ is_source_checkout() {
     return 1
   fi
 
-  if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -d "${repo_root}/.git" ]]; then
+  if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -e "${repo_root}/.git" ]]; then
     return 0
   fi
 
@@ -1736,7 +1737,7 @@ preinstall_backup_and_retire_legacy_gateway() {
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
     fi
-    warn "Pre-upgrade backup failed (non-fatal). Continuing."
+    error "Pre-upgrade backup failed. Fix the OpenShell gateway state, rerun '${_CLI_BIN} backup-all', then rerun the installer."
   fi
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
@@ -2186,6 +2187,7 @@ maybe_offer_express_install() {
       info "Using express install for ${platform}."
       NON_INTERACTIVE=1
       export NEMOCLAW_NON_INTERACTIVE=1
+      export NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
       export NEMOCLAW_YES=1
       export NEMOCLAW_POLICY_MODE=suggested
       case "$platform" in

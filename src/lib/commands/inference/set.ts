@@ -51,7 +51,8 @@ export default class InferenceSetCommand extends NemoClawCommand {
       });
     } catch (error) {
       if (error instanceof InferenceSetError) {
-        this.error(error.message, { exit: error.exitCode });
+        this.failWithLines([error.message], error.exitCode);
+        return;
       }
       throw error;
     }

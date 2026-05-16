@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, Flags } from "@oclif/core";
+import { Flags } from "@oclif/core";
+import { NemoClawCommand } from "../../../cli/nemoclaw-oclif-command";
 
 import {
   appendCommonPolicyFlags,
@@ -10,7 +11,7 @@ import {
   policyMutationFlags,
 } from "./common";
 
-export default class PolicyAddCommand extends Command {
+export default class PolicyAddCommand extends NemoClawCommand {
   static id = "sandbox:policy:add";
   static strict = true;
   static summary = "Add a network or filesystem policy preset";

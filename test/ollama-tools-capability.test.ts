@@ -29,6 +29,8 @@ interface LocalInferenceModule {
   validateOllamaModel: (
     model: string,
     capture?: CaptureFn,
+    isSparkImpl?: () => boolean,
+    captureExImpl?: (cmd: string[]) => { stdout: string; exitCode: number | null; timedOut: boolean },
   ) => { ok: boolean; message?: string };
   setResolvedOllamaHost: (host: string) => void;
   resetOllamaHostCache: () => void;
@@ -176,7 +178,9 @@ describe("validateOllamaModel — tools-capable error mapping", () => {
         }),
       },
     ]);
-    const result = localInference.validateOllamaModel("phi4", capture);
+    const payload = JSON.stringify({ error: "registry.ollama.ai/library/phi4 does not support tools" });
+    const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+    const result = localInference.validateOllamaModel("phi4", capture, () => false, captureEx);
     expect(result.ok).toBe(false);
     expect(result.message).toBeTruthy();
     expect(result.message!).toContain("phi4");

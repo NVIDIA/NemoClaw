@@ -26,5 +26,5 @@ name="$(e2e_context_get E2E_SANDBOX_NAME)"
 route="$(e2e_context_get E2E_INFERENCE_ROUTE)"
 # CodeRabbit review item #13: capture then truncate to avoid `| head` racing
 # curl under `pipefail` and flagging a successful request as failed.
-body="$(nemoclaw shell "${name}" -- curl -fsS --max-time 10 "http://${route}/v1/models")"
+body="$(openshell sandbox exec --name "${name}" -- curl -fsS --max-time 10 "https://${route}/v1/models")"
 printf '%s\n' "${body:0:512}"

@@ -1357,7 +1357,16 @@ const { setupNim } = require(${onboardPath});
       (call: { command: string }) =>
         call.command.includes("cat") && call.command.includes("ollama.service.d/override.conf"),
     );
-    assert.equal(catCall?.opts?.suppressOutput, true);
+    assert.ok(catCall, "expected existing drop-in inspection command");
+    assert.equal(catCall.opts?.suppressOutput, true);
+    assert.ok(
+      catCall.command.includes("if [ -r"),
+      "readable drop-ins should be inspected without sudo first",
+    );
+    assert.ok(
+      catCall.command.indexOf("cat") < catCall.command.indexOf("sudo -n cat"),
+      "sudo cat should only be the unreadable-file fallback",
+    );
 
     const repairedHost = 'Environment="OLLAMA_HOST=127.0.0.1:11434"';
     const oldHost = 'Environment="OLLAMA_HOST=0.0.0.0:11434"';
@@ -1366,6 +1375,112 @@ const { setupNim } = require(${onboardPath});
       payload.installedBody.lastIndexOf(repairedHost) > payload.installedBody.lastIndexOf(oldHost),
       "loopback repair should override earlier OLLAMA_HOST settings",
     );
+  });
+
+  it("allows prompt-capable sudo in non-interactive Ollama systemd setup", { timeout: 10_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-systemd-sudo-mode-"));
+    const scriptPath = path.join(tmpDir, "ollama-systemd-sudo-mode-check.js");
+    const ollamaSystemdPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "ollama-systemd.js"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    );
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+const localInference = require(${localInferencePath});
+
+const shellCommands = [];
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  return "";
+};
+runner.runShell = (command) => {
+  shellCommands.push(command);
+  return { status: 0, stdout: "" };
+};
+platform.isWsl = () => false;
+localInference.findReachableOllamaHost = () => true;
+Object.defineProperty(process, "platform", { value: "linux" });
+
+const { ensureOllamaLoopbackSystemdOverride } = require(${ollamaSystemdPath});
+const result = ensureOllamaLoopbackSystemdOverride({ isNonInteractive: () => true });
+console.log(JSON.stringify({ result, shellCommands }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_NON_INTERACTIVE_SUDO_MODE: "prompt",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}");
+    assert.equal(payload.result, "ready");
+    assert.ok(
+      payload.shellCommands.some((command: string) => command.includes("sudo install -D -m 0644")),
+      "prompt sudo mode should use sudo without -n",
+    );
+    assert.ok(
+      !payload.shellCommands.some((command: string) =>
+        command.includes("sudo -n install -D -m 0644"),
+      ),
+      "prompt sudo mode should not use sudo -n",
+    );
+  });
+
+  it("rejects unsupported non-interactive sudo mode values", { timeout: 10_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-systemd-sudo-invalid-"));
+    const scriptPath = path.join(tmpDir, "ollama-systemd-sudo-invalid-check.js");
+    const ollamaSystemdPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "ollama-systemd.js"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  return "";
+};
+platform.isWsl = () => false;
+Object.defineProperty(process, "platform", { value: "linux" });
+
+const { ensureOllamaLoopbackSystemdOverride } = require(${ollamaSystemdPath});
+ensureOllamaLoopbackSystemdOverride({ isNonInteractive: () => true });
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_NON_INTERACTIVE_SUDO_MODE: "foo",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Unsupported NEMOCLAW_NON_INTERACTIVE_SUDO_MODE value: foo/);
   });
 
   it("repairs already-loopback systemd Ollama without starting a duplicate daemon", { timeout: 10_000 }, () => {

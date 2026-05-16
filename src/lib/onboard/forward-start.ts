@@ -37,6 +37,10 @@ function readDiagnosticFile(filePath: string): string {
   }
 }
 
+export function looksLikeForwardPortConflict(diagnostic: string): boolean {
+  return /eaddrinuse|address already in use|port .* in use|bind: .*in use/i.test(diagnostic);
+}
+
 export function runBackgroundForwardStartWithDiagnostics(
   runForwardStart: BackgroundForwardStartRunner,
   timeoutMs = 30_000,
@@ -81,4 +85,21 @@ export function runBackgroundForwardStartWithDiagnostics(
   } finally {
     cleanupTempDir(forwardDiagPath, "nemoclaw-forward-start");
   }
+}
+
+export function runBackgroundForwardStartWithPortReleaseRetries(
+  runForwardStart: BackgroundForwardStartRunner,
+  beforeRetry: () => void,
+  maxRetries = 3,
+): { result: BackgroundForwardStartResult; diagnostic: string } {
+  let attempt = runBackgroundForwardStartWithDiagnostics(runForwardStart);
+  for (
+    let retries = 0;
+    attempt.result.status !== 0 && looksLikeForwardPortConflict(attempt.diagnostic) && retries < maxRetries;
+    retries++
+  ) {
+    beforeRetry();
+    attempt = runBackgroundForwardStartWithDiagnostics(runForwardStart);
+  }
+  return attempt;
 }

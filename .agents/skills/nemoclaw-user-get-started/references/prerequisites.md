@@ -26,7 +26,9 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 On Linux, the installer can install Docker, start the Docker service, and add your user to the `docker` group.
 If the group change is not active in the current shell, the installer exits with `newgrp docker` guidance before it starts onboarding.
 If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
+
 On Debian and Ubuntu, NemoClaw installs `zstd` with `apt-get` if it is missing; on other Linux distributions, install `zstd` before onboarding.
+
 On macOS, NemoClaw uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
 You do not need to install or sign a separate OpenShell VM driver helper for standard macOS onboarding.
 

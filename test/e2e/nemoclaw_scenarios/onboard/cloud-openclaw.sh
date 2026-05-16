@@ -9,5 +9,5 @@ e2e_onboard_cloud_openclaw() {
   local sandbox_name
   sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
   : "${sandbox_name:=e2e-cloud-openclaw}"
-  nemoclaw onboard --agent openclaw --provider nvidia --sandbox "${sandbox_name}" --yes
+  NEMOCLAW_SANDBOX_NAME="${sandbox_name}" NEMOCLAW_AGENT=openclaw NEMOCLAW_PROVIDER=cloud nemoclaw onboard --non-interactive --yes
 }

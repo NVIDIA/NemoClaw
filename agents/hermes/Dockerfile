@@ -28,6 +28,19 @@ RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
     && apt-get autoremove --purge -y \
     && rm -rf /var/lib/apt/lists/*
 
+# Hermes' WeChat adapter (gateway/platforms/weixin.py:_make_ssl_connector)
+# builds aiohttp with ssl.create_default_context(cafile=certifi.where()),
+# bypassing SSL_CERT_FILE. Symlink certifi's bundle at SSL_CERT_FILE so
+# weixin TLS trusts the OpenShell L7 proxy CA. Done at image build (as
+# root, which has write perms on the venv) because at runtime root doesn't
+# see SSL_CERT_FILE and the gateway user can't write the venv.
+# The target doesn't need to exist at build time — OpenShell mounts it at
+# sandbox start; the forward-referencing symlink resolves then.
+ARG SSL_CERT_FILE=/etc/openshell-tls/ca-bundle.pem
+# hadolint ignore=DL3059
+RUN _hermes_certifi=$(/opt/hermes/.venv/bin/python -c 'import certifi; print(certifi.where())') \
+    && ln -sf "$SSL_CERT_FILE" "$_hermes_certifi"
+
 # Hermes v2026.4.13+ auto-detects HTTPS_PROXY and skips fallback-IP
 # transport when a proxy is present. OpenShell handles REST credential
 # placeholder rewriting, hostname-based policy enforcement, and native
@@ -68,6 +81,13 @@ ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
 ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
+# Captured by NemoClaw's host-side iLink QR login during onboard (see
+# src/lib/onboard/wechat-config.ts). Carries {accountId, baseUrl, userId} so
+# the Hermes WeChat adapter starts with WEIXIN_ACCOUNT_ID/WEIXIN_BASE_URL
+# already populated from .env; no in-sandbox QR re-scan. The token itself
+# is never baked here — it flows through the OpenShell L7 proxy via the
+# WECHAT_BOT_TOKEN credential slot.
+ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
 ARG NEMOCLAW_BUILD_ID=default
 ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 
@@ -79,7 +99,8 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
-    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64}
+    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
+    NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64}
 
 WORKDIR /sandbox
 USER sandbox
@@ -193,6 +214,8 @@ RUN set -eu; \
         "$config_dir/profiles" \
         "$config_dir/cache" \
         "$config_dir/pairing" \
+        "$config_dir/weixin" \
+        "$config_dir/weixin/accounts" \
         "$config_dir/runtime"; \
     if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
         echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
@@ -232,6 +255,8 @@ RUN set -eu; \
         /sandbox/.hermes/profiles \
         /sandbox/.hermes/cache \
         /sandbox/.hermes/pairing \
+        /sandbox/.hermes/weixin \
+        /sandbox/.hermes/weixin/accounts \
         /sandbox/.hermes/runtime \
     && chmod 2770 /sandbox/.hermes/runtime \
     && chmod 640 /sandbox/.hermes/config.yaml \

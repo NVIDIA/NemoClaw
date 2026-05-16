@@ -13,6 +13,10 @@ import { describe, it, expect } from "vitest";
 import YAML from "yaml";
 
 const BLUEPRINT_PATH = new URL("../nemoclaw-blueprint/blueprint.yaml", import.meta.url);
+const ROUTER_POOL_CONFIG_PATH = new URL(
+  "../nemoclaw-blueprint/router/pool-config.yaml",
+  import.meta.url,
+);
 const BASE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
   import.meta.url,
@@ -40,6 +44,16 @@ type Blueprint = {
     sandbox?: { image?: string | null };
     inference?: { profiles?: Record<string, BlueprintProfile> };
   };
+};
+
+type RouterPoolModel = {
+  name?: string;
+  litellm_model?: string;
+  api_base?: string;
+};
+
+type RouterPoolConfig = {
+  models?: RouterPoolModel[];
 };
 
 type Rule = { allow?: { method?: string; path?: string } };
@@ -161,6 +175,32 @@ describe("blueprint.yaml", () => {
       expect(declared).toContain(name);
     });
   }
+});
+
+describe("Model Router pool config", () => {
+  const pool = loadYaml<RouterPoolConfig>(ROUTER_POOL_CONFIG_PATH);
+
+  it("regression #3255: routes NVIDIA API keys to the public NVIDIA Build endpoint", () => {
+    const apiBases = new Set((pool.models ?? []).map((model) => model.api_base));
+    expect(apiBases).toEqual(new Set(["https://integrate.api.nvidia.com/v1"]));
+  });
+
+  it("regression #3255: uses valid LiteLLM NVIDIA model identifiers", () => {
+    const modelsByName = new Map(
+      (pool.models ?? []).map((model) => [model.name, model.litellm_model]),
+    );
+    expect(modelsByName.get("nemotron-3-nano-reasoning")).toBe(
+      "openai/nvidia/nemotron-3-nano-30b-a3b",
+    );
+    expect(modelsByName.get("nemotron-3-super")).toBe(
+      "openai/nvidia/nemotron-3-super-120b-a12b",
+    );
+    for (const litellmModel of modelsByName.values()) {
+      expect(litellmModel).not.toMatch(/nvidia\/nvidia\//);
+      expect(litellmModel).not.toContain("Nemotron-3-Nano-30B-A3B");
+      expect(litellmModel).not.toContain("nemotron-3-super-v3");
+    }
+  });
 });
 
 describe("base sandbox policy", () => {

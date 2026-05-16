@@ -9,5 +9,5 @@ e2e_onboard_local_ollama_openclaw() {
   local sandbox_name
   sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
   : "${sandbox_name:=e2e-local-ollama-openclaw}"
-  nemoclaw onboard --agent openclaw --provider ollama --sandbox "${sandbox_name}" --yes
+  NEMOCLAW_SANDBOX_NAME="${sandbox_name}" NEMOCLAW_AGENT=openclaw NEMOCLAW_PROVIDER=ollama nemoclaw onboard --non-interactive --yes
 }

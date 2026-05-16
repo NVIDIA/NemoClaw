@@ -38,6 +38,28 @@ expected_states:
       policy_engine: supported
       shields: supported
 
+  macos-cli-ready-docker-optional:
+    cli:
+      installed: true
+    gateway:
+      expected: optional
+      health: optional
+    sandbox:
+      expected: optional
+      status: optional
+      agent: openclaw
+    inference:
+      expected: optional
+      provider: nvidia
+      route: inference-local
+      mode: gateway-routed
+    credentials:
+      expected: optional
+      storage: gateway-managed
+    security:
+      policy_engine: supported
+      shields: supported
+
   cloud-hermes-ready:
     cli:
       installed: true

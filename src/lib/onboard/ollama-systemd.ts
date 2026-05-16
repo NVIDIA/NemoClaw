@@ -15,6 +15,7 @@ const {
 const { isWsl }: typeof import("../platform") = require("../platform");
 
 const OLLAMA_SYSTEMD_OVERRIDE_PATH = "/etc/systemd/system/ollama.service.d/override.conf";
+const NON_INTERACTIVE_SUDO_MODE_ENV = "NEMOCLAW_NON_INTERACTIVE_SUDO_MODE";
 
 export type OllamaLoopbackSystemdOverrideState = "not-applicable" | "ready" | "failed";
 
@@ -24,6 +25,20 @@ type OllamaLoopbackSystemdOverrideOptions = {
 
 function isEnvNonInteractive(): boolean {
   return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+}
+
+function getSudoPrefix(isNonInteractive: boolean): "sudo" | "sudo -n" {
+  const rawMode = String(process.env[NON_INTERACTIVE_SUDO_MODE_ENV] || "")
+    .trim()
+    .toLowerCase();
+  if (rawMode && rawMode !== "prompt") {
+    console.error(
+      `  Unsupported ${NON_INTERACTIVE_SUDO_MODE_ENV} value: ${rawMode}. Use 'prompt' or leave it unset.`,
+    );
+    process.exit(1);
+  }
+  if (isNonInteractive) return rawMode === "prompt" ? "sudo" : "sudo -n";
+  return process.stdin.isTTY ? "sudo" : "sudo -n";
 }
 
 export function ensureOllamaLoopbackSystemdOverride(
@@ -47,14 +62,24 @@ export function ensureOllamaLoopbackSystemdOverride(
       "The next steps use sudo to write the drop-in, reload systemd, and restart the service; " +
       "you may be prompted for your password.",
   );
-  const sudoPrefix =
-    (options.isNonInteractive ?? isEnvNonInteractive)() || !process.stdin.isTTY ? "sudo -n" : "sudo";
+  const sudoPrefix = getSudoPrefix((options.isNonInteractive ?? isEnvNonInteractive)());
   const existingDropInResult = runShell(
-    `if [ -e ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)} ]; then ${sudoPrefix} cat ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)}; fi`,
+    [
+      `if [ -r ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)} ]; then`,
+      `  cat ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)}`,
+      `elif [ -e ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)} ]; then`,
+      `  ${sudoPrefix} cat ${shellQuote(OLLAMA_SYSTEMD_OVERRIDE_PATH)}`,
+      "fi",
+    ].join("\n"),
     { ignoreError: true, suppressOutput: true, timeout: 30_000 },
   );
   if (existingDropInResult.error || existingDropInResult.status !== 0) {
     console.error("  Failed to inspect existing Ollama systemd override.");
+    if (sudoPrefix === "sudo -n") {
+      console.error(
+        `  Non-interactive sudo could not read the existing drop-in. Set ${NON_INTERACTIVE_SUDO_MODE_ENV}=prompt to allow a sudo password prompt when a terminal is available.`,
+      );
+    }
     console.error("  Refusing to continue because preserving existing Ollama settings is required.");
     process.exit(1);
   }

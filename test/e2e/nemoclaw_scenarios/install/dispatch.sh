@@ -41,7 +41,7 @@ e2e_install() {
     ollama)
       e2e_install_ollama
       ;;
-    launchable)
+    brev-launchable | launchable)
       e2e_install_launchable
       ;;
     *)

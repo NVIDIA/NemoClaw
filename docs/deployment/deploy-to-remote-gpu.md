@@ -127,6 +127,25 @@ When `CHAT_UI_URL` points at a non-loopback origin, NemoClaw disables OpenClaw d
 Any device that can reach the configured dashboard origin can connect without pairing, so avoid exposing that origin on internet-reachable or shared-network deployments.
 :::
 
+## First-Run Readiness Budget
+
+On a remote GPU host, the first `nemoclaw onboard` typically does the slowest work of the lifecycle: the sandbox image is built locally and uploaded into the OpenShell gateway, which can stream hundreds of MiB over the VM's link before the readiness wait even starts.
+The post-create readiness wait defaults to 180 seconds (`NEMOCLAW_SANDBOX_READY_TIMEOUT`), which is sized for warm-cache, workstation-class onboarding and can be exceeded on:
+
+- DGX Station first runs with large quantised models (70B+ parameter footprints, NVFP4 weights).
+- Cloud VMs where the local image-build cache is cold and the upload runs over the public network.
+- Hosts onboarding the Brave Web Search preset on the first run (the egress policy stack adds boot work).
+
+Raise the budget before re-running onboard:
+
+```console
+$ export NEMOCLAW_SANDBOX_READY_TIMEOUT=600
+$ nemoclaw onboard
+```
+
+If onboard ends with `Sandbox '<name>' was created but did not become ready within 180s`, onboard deletes the partially-created sandbox first, so the next attempt with the raised budget starts from a clean state.
+For the inference-probe budget that runs earlier in onboarding, see [`NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`](../inference/use-local-inference.md#timeout-configuration).
+
 ## Proxy Configuration
 
 NemoClaw routes sandbox traffic through a gateway proxy that defaults to `10.200.0.1:3128`.

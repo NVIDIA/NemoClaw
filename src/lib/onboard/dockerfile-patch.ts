@@ -47,6 +47,7 @@ export function patchStagedDockerfile(
   discordGuilds: LooseObject = {},
   baseImageRef: string | null = null,
   telegramConfig: LooseObject = {},
+  wechatConfig: LooseObject = {},
   darwinVmCompat = false,
   inferenceBaseUrlOverride: string | null = null,
 ): void {
@@ -223,6 +224,12 @@ export function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_TELEGRAM_CONFIG_B64=.*$/m,
       `ARG NEMOCLAW_TELEGRAM_CONFIG_B64=${encodeSanitizedDockerJsonArg(telegramConfig)}`,
+    );
+  }
+  if (wechatConfig && Object.keys(wechatConfig).length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_WECHAT_CONFIG_B64=.*$/m,
+      `ARG NEMOCLAW_WECHAT_CONFIG_B64=${encodeSanitizedDockerJsonArg(wechatConfig)}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);

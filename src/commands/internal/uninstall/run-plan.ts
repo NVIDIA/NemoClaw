@@ -1,12 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, Flags } from "@oclif/core";
+import { Flags } from "@oclif/core";
+import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import { runUninstallPlan } from "../../../lib/actions/uninstall/run-plan";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../../lib/cli/branding";
 
-export default class InternalUninstallRunPlanCommand extends Command {
+export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
   static hidden = true;
   static strict = true;
   static summary = `${CLI_DISPLAY_NAME} Uninstaller`;
@@ -14,7 +15,6 @@ export default class InternalUninstallRunPlanCommand extends Command {
   static usage = ["internal uninstall run-plan [--yes] [--keep-openshell] [--delete-models]"];
   static examples = [`${CLI_NAME} internal uninstall run-plan --yes`];
   static flags = {
-    help: Flags.help({ char: "h" }),
     yes: Flags.boolean({ description: "Skip the confirmation prompt" }),
     "keep-openshell": Flags.boolean({ description: "Leave the openshell binary installed" }),
     "delete-models": Flags.boolean({ description: `Remove ${CLI_DISPLAY_NAME}-pulled Ollama models` }),
@@ -29,6 +29,6 @@ export default class InternalUninstallRunPlanCommand extends Command {
       gatewayName: flags.gateway,
       keepOpenShell: flags["keep-openshell"] ?? false,
     });
-    process.exit(result.exitCode);
+    this.applyExitResult(result);
   }
 }

@@ -150,7 +150,7 @@ jobs:
       - name: Install Pi SDK
         run: |
           PI_SDK_DIR="$RUNNER_TEMP/pi-sdk"
-          npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}"
+          npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-05-14T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}"
           rm -rf "$ADVISOR_DIR/node_modules"
           ln -s "$PI_SDK_DIR/node_modules" "$ADVISOR_DIR/node_modules"
 

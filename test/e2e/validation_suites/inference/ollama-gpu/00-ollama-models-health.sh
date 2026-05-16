@@ -14,13 +14,13 @@ LIB_DIR="$(cd "${SCRIPT_DIR}/../../../runtime/lib" && pwd)"
 . "${LIB_DIR}/context.sh"
 
 echo "local-ollama-inference:ollama-models-health"
-e2e_context_require E2E_GATEWAY_URL
+e2e_context_require E2E_PROVIDER
 if e2e_env_is_dry_run; then
-  echo "[dry-run] would GET ollama /api/tags via gateway"
+  echo "[dry-run] would GET ollama /api/tags via host Ollama"
   exit 0
 fi
-url="$(e2e_context_get E2E_GATEWAY_URL)"
-# CodeRabbit review item #14: capture then truncate; avoids `| head` causing
-# curl to receive SIGPIPE mid-response under `pipefail`.
-body="$(curl -fsS --max-time 10 "${url%/}/api/tags")"
+# GPU Ollama scenarios mirror legacy test-gpu-e2e.sh: validate the host
+# Ollama daemon directly because Docker GPU host networking bypasses the
+# normal dashboard/gateway forward path.
+body="$(curl -fsS --max-time 10 "http://127.0.0.1:11434/api/tags")"
 printf '%s\n' "${body:0:512}"

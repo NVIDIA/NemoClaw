@@ -295,3 +295,30 @@ network_policies:
       - { path: /usr/local/bin/hermes }
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
+
+  # WeChat (personal) via Tencent's iLink Bot API. The Hermes adapter uses
+  # HTTP long-polling (no WebSocket). WEIXIN_TOKEN is L7-resolved at egress
+  # from WECHAT_BOT_TOKEN (same credential slot OpenClaw's bridge uses) — see
+  # agents/hermes/config/messaging-config.ts and
+  # nemoclaw-blueprint/policies/presets/wechat.yaml for the shared host set.
+  wechat_bridge:
+    name: wechat_bridge
+    endpoints:
+      - host: ilinkai.weixin.qq.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: ilinkai.wechat.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }

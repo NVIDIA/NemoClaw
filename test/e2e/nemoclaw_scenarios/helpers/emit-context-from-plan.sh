@@ -83,4 +83,7 @@ e2e_context_set E2E_INFERENCE_ROUTE "${INFERENCE_ROUTE}"
 # plumbing without live onboarding. Real onboarding helpers will overwrite
 # these via e2e_context_set in later phases.
 e2e_context_set E2E_SANDBOX_NAME "e2e-${SCENARIO_ID}"
-e2e_context_set E2E_GATEWAY_URL "http://127.0.0.1:18789"
+case "${AGENT}" in
+  hermes) e2e_context_set E2E_GATEWAY_URL "http://127.0.0.1:8642" ;;
+  *) e2e_context_set E2E_GATEWAY_URL "http://127.0.0.1:18789" ;;
+esac

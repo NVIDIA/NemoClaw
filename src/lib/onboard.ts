@@ -17,9 +17,7 @@ const {
 }: typeof import("./onboard/branding") = require("./onboard/branding");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
-const {
-  runBackgroundForwardStartWithDiagnostics,
-}: typeof import("./onboard/forward-start") = require("./onboard/forward-start");
+const { looksLikeForwardPortConflict, runBackgroundForwardStartWithPortReleaseRetries }: typeof import("./onboard/forward-start") = require("./onboard/forward-start");
 const {
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
@@ -69,9 +67,19 @@ const {
 const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
+const { isLinuxDockerDriverGatewayEnabled }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
+const { shouldInspectLegacyGatewayGpuPassthrough }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
 const {
   syncPresetSelection,
 }: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
+const {
+  gatherWechatConfig,
+  hasWechatConfigDrift,
+  toSessionWechatConfig,
+} = require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
+const {
+  setupSelectedMessagingChannels,
+} = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -100,6 +108,8 @@ const {
   dockerRmi,
   dockerStop,
 } = docker;
+const gatewayDrift: typeof import("./adapters/openshell/gateway-drift") = require("./adapters/openshell/gateway-drift");
+const { getGatewayClusterContainerName, getGatewayClusterImageDrift } = gatewayDrift;
 const sandboxBaseImage: typeof import("./sandbox-base-image") = require("./sandbox-base-image");
 const {
   OPENCLAW_SANDBOX_BASE_IMAGE: SANDBOX_BASE_IMAGE,
@@ -120,10 +130,6 @@ type RunnerOptions = {
   openshellBinary?: string;
 };
 
-function parseJson<T>(text: string): T {
-  return JSON.parse(text);
-}
-
 function requireValue<T>(value: T | null | undefined, message: string): T {
   if (value == null) {
     throw new Error(message);
@@ -141,21 +147,17 @@ const {
   VLLM_PORT,
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
-  DASHBOARD_PORT_RANGE_START,
-  DASHBOARD_PORT_RANGE_END,
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
   findReachableOllamaHost,
   resetOllamaHostCache,
   getDefaultOllamaModel,
-  getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
   getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
-  getResolvedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
   validateOllamaPortConfiguration,
   validateOllamaModel,
@@ -165,7 +167,6 @@ const {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
   isProxyHealthy,
-  killStaleProxy,
   persistAndProbeOllamaProxy,
   startOllamaAuthProxy,
 } = require("./inference/ollama/proxy");
@@ -180,8 +181,6 @@ const { detectVllmProfile, installVllm } = require("./inference/vllm");
 const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
 const {
   DEFAULT_CLOUD_MODEL,
-  INFERENCE_ROUTE_URL,
-  MANAGED_PROVIDER_ID,
   getProviderSelectionConfig,
   parseGatewayInference,
 } = inferenceConfig;
@@ -202,10 +201,8 @@ type RemoteProviderConfigEntry = {
 };
 
 const {
-  BUILD_ENDPOINT_URL,
   OPENAI_ENDPOINT_URL,
   ANTHROPIC_ENDPOINT_URL,
-  GEMINI_ENDPOINT_URL,
   REMOTE_PROVIDER_CONFIG,
   LOCAL_INFERENCE_PROVIDERS,
   OLLAMA_PROXY_CREDENTIAL_ENV,
@@ -217,10 +214,8 @@ const {
   getNonInteractiveModel,
   getSandboxInferenceConfig,
 } = onboardProviders as {
-  BUILD_ENDPOINT_URL: string;
   OPENAI_ENDPOINT_URL: string;
   ANTHROPIC_ENDPOINT_URL: string;
-  GEMINI_ENDPOINT_URL: string;
   REMOTE_PROVIDER_CONFIG: Record<string, RemoteProviderConfigEntry>;
   LOCAL_INFERENCE_PROVIDERS: string[];
   OLLAMA_PROXY_CREDENTIAL_ENV: string;
@@ -265,18 +260,15 @@ const registry: typeof import("./state/registry") = require("./state/registry");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const policies: typeof import("./policy") = require("./policy");
-const shields = require("./shields");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
+  findDashboardForwardOwner,
   getOccupiedPorts,
   isLiveForwardStatus,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
-const {
-  destroyGatewayForReuse,
-  warnIfGatewayDestroyFails,
-} = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
+const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
 const {
   gatewayCliSupportsLifecycleCommands,
 } = require("./onboard/gateway-lifecycle") as typeof import("./onboard/gateway-lifecycle");
@@ -333,41 +325,42 @@ const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-f
 
 import type { AgentDefinition } from "./agent/defs";
 import type { CurlProbeResult } from "./adapters/http/probe";
-import type { GatewayReuseState } from "./state/gateway";
-import type { GatewayInference } from "./inference/config";
-import type { GpuInfo, ValidationResult } from "./inference/local";
+import type { WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
   mergeMessagingChannelConfigs,
-  normalizeMessagingChannelConfigValue,
   readMessagingChannelConfigFromEnv,
   sanitizeMessagingChannelConfig,
 } from "./messaging-channel-config";
-import type { ContainerRuntime } from "./platform";
-import type { Session, SessionUpdates } from "./state/onboard-session";
-import type {
-  ModelCatalogFetchResult,
-  ModelValidationResult,
-  ProbeResult,
-  ValidationFailureLike,
-} from "./onboard/types";
-import { listChannels } from "./sandbox/channels";
 import { streamGatewayStart } from "./onboard/gateway";
 import { reportGpuPassthroughRecovery } from "./onboard/gpu-recovery";
-import type { StreamSandboxCreateResult } from "./sandbox/create-stream";
-import type { SandboxEntry } from "./state/registry";
-import type { BackupResult } from "./state/sandbox";
-import type { TierDefinition, TierPreset } from "./policy/tiers";
-import type { SandboxCreateFailure, ValidationClassification } from "./validation";
-import type { ProbeRecovery } from "./validation-recovery";
-import type { WebSearchConfig } from "./inference/web-search";
+import { getMessagingToken } from "./onboard/messaging-token";
 import type {
   DockerDriverBinaryOverrides,
   OpenShellInstallDeps,
   OpenShellInstallResult,
 } from "./onboard/openshell-install";
+import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
+import {
+  getResumeSandboxGpuOverrides,
+  resolveSandboxGpuConfig,
+  type SandboxGpuConfig,
+  type SandboxGpuFlag,
+} from "./onboard/sandbox-gpu-mode";
 import type { SelectionDrift } from "./onboard/selection-drift";
+import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
+import type {
+  ModelValidationResult,
+  ValidationFailureLike,
+} from "./onboard/types";
+import type { ContainerRuntime } from "./platform";
+import { getChannelTokenKeys, listChannels } from "./sandbox/channels";
+import type { GatewayReuseState } from "./state/gateway";
+import type { Session, SessionUpdates } from "./state/onboard-session";
+import type { SandboxEntry } from "./state/registry";
+import type { BackupResult } from "./state/sandbox";
+import type { ProbeRecovery } from "./validation-recovery";
 
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
 const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -424,8 +417,6 @@ const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 // See src/lib/core/json-types.ts for the canonical definitions.
 import type {
   JsonObject as LooseObject,
-  JsonScalar as LooseScalar,
-  JsonValue as LooseValue,
 } from "./core/json-types";
 
 type OnboardOptions = {
@@ -1227,79 +1218,6 @@ function shouldAllowOpenshellAboveBlueprintMax(
   return shouldUseOpenshellDevChannel(platform, env) && isOpenshellDevVersion(versionOutput);
 }
 
-type SandboxGpuMode = "auto" | "1" | "0";
-type SandboxGpuFlag = "enable" | "disable" | null;
-
-type SandboxGpuConfig = {
-  mode: SandboxGpuMode;
-  hostGpuDetected: boolean;
-  sandboxGpuEnabled: boolean;
-  sandboxGpuDevice: string | null;
-  errors: string[];
-};
-
-type ResumeSandboxGpuOverrides = {
-  flag: SandboxGpuFlag;
-  device: string | null;
-};
-
-function isNvidiaGpuDetected(gpu: ReturnType<typeof nim.detectGpu>): boolean {
-  return Boolean(gpu && gpu.type === "nvidia");
-}
-
-function normalizeSandboxGpuMode(value: string | null | undefined): SandboxGpuMode | null {
-  const raw = String(value || "")
-    .trim()
-    .toLowerCase();
-  if (!raw) return null;
-  if (raw === "auto") return "auto";
-  if (raw === "1" || raw === "true" || raw === "yes" || raw === "on") return "1";
-  if (raw === "0" || raw === "false" || raw === "no" || raw === "off") return "0";
-  return null;
-}
-
-function resolveSandboxGpuConfig(
-  gpu: ReturnType<typeof nim.detectGpu>,
-  options: {
-    flag?: SandboxGpuFlag;
-    device?: string | null;
-    env?: NodeJS.ProcessEnv;
-  } = {},
-): SandboxGpuConfig {
-  const env = options.env ?? process.env;
-  const errors: string[] = [];
-  const envModeRaw = env.NEMOCLAW_SANDBOX_GPU;
-  const envMode = normalizeSandboxGpuMode(envModeRaw);
-  if (envModeRaw !== undefined && envMode === null) {
-    errors.push("NEMOCLAW_SANDBOX_GPU must be one of: auto, 1, 0.");
-  }
-
-  let mode: SandboxGpuMode = envMode ?? "auto";
-  if (options.flag === "enable") mode = "1";
-  if (options.flag === "disable") mode = "0";
-
-  const device = (options.device ?? env.NEMOCLAW_SANDBOX_GPU_DEVICE ?? "").trim() || null;
-  if (device && mode === "0") {
-    errors.push("NEMOCLAW_SANDBOX_GPU_DEVICE cannot be used when sandbox GPU mode is 0.");
-  }
-  if (device && options.flag !== "disable" && envMode !== "0") {
-    mode = "1";
-  }
-
-  const hostGpuDetected = isNvidiaGpuDetected(gpu);
-  if (mode === "1" && !hostGpuDetected) {
-    errors.push("Sandbox GPU was requested, but no NVIDIA GPU was detected on the host.");
-  }
-
-  return {
-    mode,
-    hostGpuDetected,
-    sandboxGpuEnabled: mode === "1" || (mode === "auto" && hostGpuDetected),
-    sandboxGpuDevice: device,
-    errors,
-  };
-}
-
 function resolveSandboxGpuFlagFromOptions(
   opts: Pick<OnboardOptions, "sandboxGpu" | "gpu" | "noGpu">,
 ): SandboxGpuFlag {
@@ -1321,26 +1239,6 @@ function resolveSandboxGpuFlagFromOptions(
   if (requestedGpuPassthrough) return "enable";
   if (optedOutGpuPassthrough) return "disable";
   return null;
-}
-
-function getResumeSandboxGpuOverrides(
-  entry: Pick<SandboxEntry, "sandboxGpuMode" | "sandboxGpuDevice"> | null | undefined,
-  sessionGpuPassthrough: boolean | undefined,
-): ResumeSandboxGpuOverrides {
-  const recordedMode = normalizeSandboxGpuMode(entry?.sandboxGpuMode);
-  if (recordedMode === "1") {
-    return { flag: "enable", device: entry?.sandboxGpuDevice || null };
-  }
-  if (recordedMode === "0") {
-    return { flag: "disable", device: null };
-  }
-  if (recordedMode === "auto") {
-    return { flag: null, device: null };
-  }
-  if (sessionGpuPassthrough === true) {
-    return { flag: "enable", device: entry?.sandboxGpuDevice || null };
-  }
-  return { flag: null, device: null };
 }
 
 function sandboxGpuRemediationLines(): string[] {
@@ -1366,9 +1264,7 @@ function validateSandboxGpuPreflight(config: SandboxGpuConfig): void {
   if (cdiSpecFiles.length === 0) {
     console.error("");
     console.error("  ✗ Docker CDI GPU support was not detected.");
-    for (const line of sandboxGpuRemediationLines()) {
-      console.error(`    ${line}`);
-    }
+    for (const line of sandboxGpuRemediationLines()) console.error(`    ${line}`);
     process.exit(1);
   }
   console.log(`  ✓ Docker CDI GPU support detected (${cdiSpecFiles.join(", ")})`);
@@ -1454,31 +1350,8 @@ function getDockerDriverGatewayEndpointArg(): string {
   return safeOpenShellArgument(getDockerDriverGatewayEndpoint(), "gateway endpoint");
 }
 
-/**
- * Execute a shell command inside a sandbox for post-deployment verification.
- * Returns a structured result with status, stdout, stderr — or null if
- * the sandbox is unreachable. Uses `openshell sandbox exec` with sh -c.
- */
-function executeSandboxCommandForVerification(
-  sandboxName: string,
-  script: string,
-): { status: number; stdout: string; stderr: string } | null {
-  try {
-    const result = spawnSync(
-      getOpenshellBinary(),
-      ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-c", script],
-      { encoding: "utf-8", timeout: 15000, stdio: ["ignore", "pipe", "pipe"] },
-    );
-    if (result.error) return null;
-    return {
-      status: result.status ?? 1,
-      stdout: (result.stdout || "").trim(),
-      stderr: (result.stderr || "").trim(),
-    };
-  } catch {
-    return null;
-  }
-}
+const { executeSandboxCommandForVerification }: typeof import("./onboard/sandbox-verification-exec") =
+  require("./onboard/sandbox-verification-exec");
 
 // URL/string utilities — delegated to src/lib/core/url-utils.ts
 const {
@@ -1488,34 +1361,13 @@ const {
   formatEnvAssignment,
   parsePolicyPresetEnv,
 } = urlUtils;
-
-/**
- * Resolve a credential into `process.env[envName]` so subsequent gateway
- * upserts can read it via `--credential <ENV>`. Idempotently stages any
- * pre-fix plaintext credentials.json (non-destructively) so callers that
- * reach a credential check from outside the onboard entry point — such as
- * rebuild preflight — can still find legacy values. The file itself is
- * removed only after a full successful onboard, so an interrupted run can
- * be retried without losing the user's only copy.
- *
- * @param envName Credential env variable name, e.g. `NVIDIA_API_KEY`.
- * @returns The resolved value, or `null` if `envName` is empty/unstaged.
- */
-function hydrateCredentialEnv(envName: string | null | undefined): string | null {
-  if (!envName) return null;
-  // Thin wrapper for back-compat. resolveProviderCredential() (introduced
-  // by PR #2306 as the canonical entry point) now performs the staging
-  // dance internally — env first, then a one-time on-demand legacy stage,
-  // then write back into process.env for downstream code.
-  return resolveProviderCredential(envName);
-}
+const { hydrateCredentialEnv }: typeof import("./onboard/credential-env") =
+  require("./onboard/credential-env");
 
 const {
-  getCurlTimingArgs,
   summarizeCurlFailure,
   summarizeProbeFailure,
   runCurlProbe,
-  runStreamingEventProbe,
 } = httpProbe;
 
 function getNavigationChoice(value = ""): "back" | "exit" | null {
@@ -1670,8 +1522,6 @@ const {
   classifySandboxCreateFailure,
   validateNvidiaApiKeyValue,
   isSafeModelId,
-  isNvcfFunctionNotFoundForAccount,
-  nvcfFunctionNotFoundMessage,
   shouldSkipResponsesProbe,
   shouldForceCompletionsApi,
 } = validation;
@@ -1922,6 +1772,7 @@ function verifyDirectSandboxGpu(sandboxName: string): void {
       console.log(`  ✓ GPU proof passed: ${proof.label}`);
       continue;
     }
+    if (proof.optional === true) return;
     const diagnostic = compactText(redact(`${result.stderr || ""} ${result.stdout || ""}`));
     console.error(`  ✗ GPU proof failed: ${proof.label}`);
     if (diagnostic) console.error(`    ${diagnostic.slice(0, 300)}`);
@@ -1968,6 +1819,7 @@ function getMessagingChannelForEnvKey(envKey: string): string | null {
   if (envKey === "DISCORD_BOT_TOKEN") return "discord";
   if (envKey === "SLACK_BOT_TOKEN") return "slack";
   if (envKey === "TELEGRAM_BOT_TOKEN") return "telegram";
+  if (envKey === "WECHAT_BOT_TOKEN") return "wechat";
   return null;
 }
 
@@ -2377,15 +2229,12 @@ const {
   hasChatCompletionsToolCall,
   hasChatCompletionsToolCallLeak,
   shouldRequireResponsesToolCalling,
+  verifyOnboardInferenceSmoke,
   getProbeAuthMode,
   getValidationProbeCurlArgs,
   probeOpenAiLikeEndpoint,
   probeAnthropicEndpoint,
 } = require("./inference/onboard-probes");
-
-// shouldSkipResponsesProbe and isNvcfFunctionNotFoundForAccount /
-// nvcfFunctionNotFoundMessage — see validation import above. They live in
-// src/lib/validation.ts so they can be unit-tested independently.
 
 async function validateOpenAiLikeSelection(
   label: string,
@@ -2532,7 +2381,7 @@ async function validateCustomAnthropicSelection(
   return { ok: false, retry };
 }
 
-const { promptManualModelId, promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
+const { promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
 const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
 const nousModels: typeof import("./inference/nous-models") = require("./inference/nous-models");
 
@@ -2547,7 +2396,6 @@ const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRe
 const {
   promptOllamaModel,
   printOllamaExposureWarning,
-  pullOllamaModel,
   prepareOllamaModel,
 } = require("./inference/ollama/proxy");
 
@@ -3025,33 +2873,6 @@ function getGatewayClusterContainerState(): string {
   return state || "missing";
 }
 
-function parseGatewayClusterImageVersion(imageRef: string | null | undefined): string | null {
-  const match = String(imageRef || "").match(/openshell\/cluster:([0-9]+\.[0-9]+\.[0-9]+)/);
-  return match ? match[1] : null;
-}
-
-function getGatewayClusterImageRef(): string | null {
-  const containerName = getGatewayClusterContainerName();
-  const imageRef = dockerContainerInspectFormat("{{.Config.Image}}", containerName, {
-    ignoreError: true,
-  }).trim();
-  return imageRef || null;
-}
-
-function getGatewayClusterImageDrift(): {
-  currentImage: string;
-  currentVersion: string;
-  expectedVersion: string;
-} | null {
-  const expectedVersion = getInstalledOpenshellVersion();
-  const currentImage = getGatewayClusterImageRef();
-  const currentVersion = parseGatewayClusterImageVersion(currentImage);
-  if (!expectedVersion || !currentImage || !currentVersion || currentVersion === expectedVersion) {
-    return null;
-  }
-  return { currentImage, currentVersion, expectedVersion };
-}
-
 function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
   const isArm64 = process.arch === "arm64";
   const standardCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", isArm64 ? 30 : 12);
@@ -3070,10 +2891,6 @@ function getGatewayHealthWaitConfig(_startStatus = 0, containerState = "") {
     extended: useExtendedWait,
     containerState: normalizedContainerState,
   };
-}
-
-function getGatewayClusterContainerName(): string {
-  return `openshell-cluster-${GATEWAY_NAME}`;
 }
 
 function buildGatewayClusterExecArgv(script: string): string[] {
@@ -3122,12 +2939,6 @@ const {
   run,
   runCapture,
 });
-function isLinuxDockerDriverGatewayEnabled(
-  platform: NodeJS.Platform = process.platform,
-  arch: NodeJS.Architecture = process.arch,
-): boolean {
-  return platform === "linux" || (platform === "darwin" && arch === "arm64");
-}
 
 function getDockerDriverGatewayStateDir(): string {
   const configured = process.env.NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR;
@@ -4918,99 +4729,6 @@ async function promptValidatedSandboxName(agent: AgentDefinition | null = null) 
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
-type OnboardConfigSummary = {
-  provider: string | null;
-  model: string | null;
-  credentialEnv?: string | null;
-  hermesAuthMethod?: HermesAuthMethod | string | null;
-  webSearchConfig?: WebSearchConfig | null;
-  enabledChannels?: string[] | null;
-  sandboxName: string;
-  notes?: string[] | null;
-};
-
-/**
- * Render the configuration summary shown before the destructive sandbox build.
- * Extracted from confirmOnboardConfiguration() for direct unit testing — see #2165.
- *
- * Fields:
- * - credentialEnv:    env-var name of the API key (e.g. "NVIDIA_API_KEY").
- *                     Rendered with the fixed credentials.json location so
- *                     users can see where the key was stored.
- * - notes:            additional bullet lines shown under the summary,
- *                     such as a sandbox build-time estimate. Each note is
- *                     rendered as "Note: <text>" so it stays visually
- *                     distinct.
- */
-function formatSandboxBuildEstimateNote(host: ReturnType<typeof assessHost>): string | null {
-  if (host.isContainerRuntimeUnderProvisioned) {
-    return (
-      "Container runtime is under-provisioned; the sandbox build may take 30+ minutes " +
-      "or stall. See preflight warning above."
-    );
-  }
-  const cpus = host.dockerCpus;
-  const memBytes = host.dockerMemTotalBytes;
-  if (typeof cpus === "number" && typeof memBytes === "number") {
-    const memGiB = memBytes / 1024 ** 3;
-    if (cpus >= 8 && memGiB >= 16) {
-      return "Sandbox build typically takes 3–8 minutes on this host.";
-    }
-    return "Sandbox build typically takes 5–15 minutes on this host.";
-  }
-  return null;
-}
-
-function formatOnboardConfigSummary({
-  provider,
-  model,
-  credentialEnv = null,
-  hermesAuthMethod = null,
-  webSearchConfig = null,
-  enabledChannels = null,
-  sandboxName,
-  notes = [],
-}: OnboardConfigSummary): string {
-  const bar = `  ${"─".repeat(50)}`;
-  const messaging =
-    Array.isArray(enabledChannels) && enabledChannels.length > 0
-      ? enabledChannels.join(", ")
-      : "none";
-  const webSearch =
-    webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
-  const effectiveHermesAuthMethod =
-    normalizeHermesAuthMethod(hermesAuthMethod) ||
-    (provider === hermesProviderAuth.HERMES_PROVIDER_NAME &&
-    credentialEnv === HERMES_NOUS_API_KEY_CREDENTIAL_ENV
-      ? HERMES_AUTH_METHOD_API_KEY
-      : HERMES_AUTH_METHOD_OAUTH);
-  const apiKeyLine =
-    provider === hermesProviderAuth.HERMES_PROVIDER_NAME
-      ? effectiveHermesAuthMethod === HERMES_AUTH_METHOD_API_KEY
-        ? "  Nous API key: host-managed; sandbox receives inference placeholder only"
-        : "  Nous OAuth:    host-managed; sandbox receives inference placeholder only"
-      : credentialEnv
-        ? `  API key:       ${credentialEnv} (staged for OpenShell gateway registration)`
-        : `  API key:       (not required for ${provider ?? "this provider"})`;
-  const noteLines = (Array.isArray(notes) ? notes : [])
-    .filter((n) => typeof n === "string" && n.length > 0)
-    .map((n) => `  Note:          ${n}`);
-  return [
-    "",
-    bar,
-    "  Review configuration",
-    bar,
-    `  Provider:      ${provider ?? "(unset)"}`,
-    `  Model:         ${model ?? "(unset)"}`,
-    apiKeyLine,
-    `  Web search:    ${webSearch}`,
-    `  Messaging:     ${messaging}`,
-    `  Sandbox name:  ${sandboxName}`,
-    ...noteLines,
-    bar,
-  ].join("\n");
-}
-
 async function createSandbox(
   gpu: ReturnType<typeof nim.detectGpu>,
   model: string,
@@ -5077,8 +4795,6 @@ async function createSandbox(
   // Check whether messaging providers will be needed — this must happen before
   // the sandbox reuse decision so we can detect stale sandboxes that were created
   // without provider attachments (security: prevents legacy raw-env-var leaks).
-  const getMessagingToken = (envKey: string): string | null =>
-    getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
 
   // The UI toggle list can include channels the user toggled on but then
   // skipped the token prompt for. Only channels with a real token will have a
@@ -5087,8 +4803,8 @@ async function createSandbox(
   const conflictCheckChannels = Array.isArray(enabledChannels)
     ? enabledChannels.flatMap((name) => {
         const def = MESSAGING_CHANNELS.find((c) => c.name === name);
-        if (!def || !getMessagingToken(def.envKey)) return [];
-        const tokenEnvKeys = def.appTokenEnvKey ? [def.envKey, def.appTokenEnvKey] : [def.envKey];
+        if (!def || !def.envKey || !getMessagingToken(def.envKey)) return [];
+        const tokenEnvKeys = getChannelTokenKeys(def);
         const credentialHashes: Record<string, string> = {};
         for (const envKey of tokenEnvKeys) {
           const hash = hashCredential(getMessagingToken(envKey));
@@ -5136,7 +4852,7 @@ async function createSandbox(
     enabledChannels != null
       ? new Set(
           MESSAGING_CHANNELS.filter((c) => enabledChannels.includes(c.name)).flatMap((c) =>
-            c.appTokenEnvKey ? [c.envKey, c.appTokenEnvKey] : [c.envKey],
+            getChannelTokenKeys(c),
           ),
         )
       : null;
@@ -5145,10 +4861,10 @@ async function createSandbox(
   // Credentials stay in the keychain; the bridge simply isn't registered with
   // the gateway on the next rebuild. `channels start` removes the entry and
   // the bridge comes back.
-  const disabledChannels = registry.getDisabledChannels(sandboxName);
+  const disabledChannels = require("./onboard/channel-state").resolveDisabledChannels(sandboxName);
   const disabledEnvKeys = new Set(
     MESSAGING_CHANNELS.filter((c) => disabledChannels.includes(c.name)).flatMap((c) =>
-      c.appTokenEnvKey ? [c.envKey, c.appTokenEnvKey] : [c.envKey],
+      getChannelTokenKeys(c),
     ),
   );
 
@@ -5172,6 +4888,11 @@ async function createSandbox(
       name: `${sandboxName}-telegram-bridge`,
       envKey: "TELEGRAM_BOT_TOKEN",
       token: getMessagingToken("TELEGRAM_BOT_TOKEN"),
+    },
+    {
+      name: `${sandboxName}-wechat-bridge`,
+      envKey: "WECHAT_BOT_TOKEN",
+      token: getMessagingToken("WECHAT_BOT_TOKEN"),
     },
   ]
     .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
@@ -5480,13 +5201,12 @@ async function createSandbox(
     }
 
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
-    const previousPolicies = previousEntry?.policies ?? null;
-    if (previousPolicies && previousPolicies.length > 0) {
-      onboardSession.updateSession((current: Session) => {
-        current.policyPresets = previousPolicies;
-        return current;
-      });
-    }
+    const decision = decidePolicyCarryForward(previousEntry?.policies, process.env, isNonInteractive());
+    onboardSession.updateSession((c: Session) => {
+      c.policyPresets = decision.newPresets;
+      return c;
+    });
+    if (decision.overrideNote !== null) note(decision.overrideNote);
 
     note(`  Deleting and recreating sandbox '${sandboxName}'...`);
 
@@ -5683,6 +5403,7 @@ async function createSandbox(
   const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
   for (const ch of MESSAGING_CHANNELS) {
     if (
+      ch.envKey &&
       enabledTokenEnvKeys.has(ch.envKey) &&
       ch.userIdEnvKey &&
       process.env[ch.userIdEnvKey]
@@ -5732,6 +5453,7 @@ async function createSandbox(
       telegramConfig.requireMention = telegramRequireMention;
     }
   }
+  const wechatConfig = gatherWechatConfig(onboardSession.loadSession());
   // Persist the effective Telegram config into the session so a later resume
   // can detect drift (TELEGRAM_REQUIRE_MENTION changed since last build) and
   // force a sandbox recreate — otherwise the old groupPolicy would stay baked
@@ -5741,6 +5463,7 @@ async function createSandbox(
       typeof telegramConfig.requireMention === "boolean"
         ? { requireMention: telegramConfig.requireMention as boolean }
         : null;
+    current.wechatConfig = toSessionWechatConfig(wechatConfig);
     current.messagingChannelConfig = messagingChannelConfig;
     return current;
   });
@@ -5793,6 +5516,7 @@ async function createSandbox(
     discordGuilds,
     resolved ? resolved.ref : null,
     telegramConfig,
+    wechatConfig as Record<string, unknown>,
     // Docker-on-Colima uses normal container ownership; keep the old VM chmod
     // compatibility path disabled unless a future VM-specific flow opts in.
     false,
@@ -5994,7 +5718,6 @@ async function createSandbox(
   // Probes /health endpoint and accepts 200 or 401 (device auth) as "alive".
   // Previously used `curl -sf` which failed on 401, causing false negatives. Fixes #2342.
   console.log("  Waiting for NemoClaw dashboard to become ready...");
-  const openshellBin = getOpenshellBinary();
   for (let i = 0; i < 15; i++) {
     const readyOutput = runCaptureOpenshell(
       ["sandbox", "exec", "-n", sandboxName, "--", "curl", "-so", "/dev/null", "-w", "%{http_code}",
@@ -7749,6 +7472,7 @@ async function setupInference(
     }
 
     verifyInferenceRoute(provider, model);
+    verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
     if (sandboxName) {
       registry.updateSandbox(sandboxName, { model, provider });
     }
@@ -8024,6 +7748,7 @@ async function setupInference(
   }
 
   verifyInferenceRoute(provider, model);
+  verifyOnboardInferenceSmoke({ provider, model, endpointUrl, credentialEnv });
   if (sandboxName) {
     registry.updateSandbox(sandboxName, { model, provider });
   }
@@ -8128,12 +7853,6 @@ async function checkTelegramReachability(token: string) {
 
 async function setupMessagingChannels(): Promise<string[]> {
   step(5, 8, "Messaging channels");
-
-  const getMessagingToken = (envKey: string): string | null =>
-    getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
-
-  const getMessagingConfigValue = (envKey: string): string | null =>
-    normalizeMessagingChannelConfigValue(envKey, process.env[envKey]);
 
   // Non-interactive: skip prompt, tokens come from env/credentials
   if (isNonInteractive() || process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
@@ -8259,125 +7978,7 @@ async function setupMessagingChannels(): Promise<string[]> {
     return [];
   }
 
-  // For each selected channel, prompt for token if not already set
-  for (const name of selected) {
-    const ch = MESSAGING_CHANNELS.find((c) => c.name === name);
-    if (!ch) {
-      console.log(`  Unknown channel: ${name}`);
-      continue;
-    }
-    if (getMessagingToken(ch.envKey)) {
-      console.log(`  ✓ ${ch.name} — already configured`);
-    } else {
-      console.log("");
-      console.log(`  ${ch.help}`);
-      const token = normalizeCredentialValue(await prompt(`  ${ch.label}: `, { secret: true }));
-      if (token && ch.tokenFormat && !ch.tokenFormat.test(token)) {
-        console.log(
-          `  ✗ Invalid format. ${ch.tokenFormatHint || "Check the token and try again."}`,
-        );
-        console.log(`  Skipped ${ch.name} (invalid token format)`);
-        enabled.delete(ch.name);
-        continue;
-      }
-      if (token) {
-        saveCredential(ch.envKey, token);
-        process.env[ch.envKey] = token;
-        console.log(`  ✓ ${ch.name} token saved`);
-      } else {
-        console.log(`  Skipped ${ch.name} (no token entered)`);
-        enabled.delete(ch.name);
-        continue;
-      }
-    }
-    if (ch.appTokenEnvKey) {
-      const existingAppToken = getMessagingToken(ch.appTokenEnvKey);
-      if (existingAppToken) {
-        console.log(`  ✓ ${ch.name} app token — already configured`);
-      } else {
-        console.log("");
-        console.log(`  ${ch.appTokenHelp}`);
-        const appToken = normalizeCredentialValue(
-          await prompt(`  ${ch.appTokenLabel}: `, { secret: true }),
-        );
-        if (appToken && ch.appTokenFormat && !ch.appTokenFormat.test(appToken)) {
-          console.log(
-            `  ✗ Invalid format. ${ch.appTokenFormatHint || "Check the token and try again."}`,
-          );
-          console.log(`  Skipped ${ch.name} app token (invalid token format)`);
-          enabled.delete(ch.name);
-          continue;
-        }
-        if (appToken) {
-          saveCredential(ch.appTokenEnvKey, appToken);
-          process.env[ch.appTokenEnvKey] = appToken;
-          console.log(`  ✓ ${ch.name} app token saved`);
-        } else {
-          console.log(`  Skipped ${ch.name} app token (Socket Mode requires both tokens)`);
-          enabled.delete(ch.name);
-          continue;
-        }
-      }
-    }
-    if (ch.serverIdEnvKey) {
-      const existingServerIds = getMessagingConfigValue(ch.serverIdEnvKey) || "";
-      if (existingServerIds) {
-        process.env[ch.serverIdEnvKey] = existingServerIds;
-        console.log(`  ✓ ${ch.name} — server ID already set: ${existingServerIds}`);
-      } else {
-        console.log(`  ${ch.serverIdHelp}`);
-        const serverId = (await prompt(`  ${ch.serverIdLabel}: `)).trim();
-        if (serverId) {
-          process.env[ch.serverIdEnvKey] = serverId;
-          console.log(`  ✓ ${ch.name} server ID saved`);
-        } else {
-          console.log(`  Skipped ${ch.name} server ID (guild channels stay disabled)`);
-        }
-      }
-    }
-    // Mention-control prompt: fires for any channel that exposes a
-    // requireMention env key. Discord gates the prompt behind a configured
-    // server ID (mention control only makes sense in a guild). Telegram
-    // has no serverIdEnvKey because mention control applies to every group
-    // the bot is added to, so the prompt always fires there. See #1737.
-    const requireMentionKey = ch.requireMentionEnvKey;
-    if (requireMentionKey && (!ch.serverIdEnvKey || Boolean(process.env[ch.serverIdEnvKey]))) {
-      const existingRequireMention = getMessagingConfigValue(requireMentionKey);
-      if (existingRequireMention === "0" || existingRequireMention === "1") {
-        process.env[requireMentionKey] = existingRequireMention;
-        const mode = existingRequireMention === "0" ? "all messages" : "@mentions only";
-        console.log(`  ✓ ${ch.name} — reply mode already set: ${mode}`);
-      } else {
-        console.log(`  ${ch.requireMentionHelp}`);
-        const answer = (await prompt("  Reply only when @mentioned? [Y/n]: ")).trim().toLowerCase();
-        const value = answer === "n" || answer === "no" ? "0" : "1";
-        process.env[requireMentionKey] = value;
-        const mode = value === "0" ? "all messages" : "@mentions only";
-        console.log(`  ✓ ${ch.name} reply mode saved: ${mode}`);
-      }
-    }
-    // Prompt for user/sender ID when the channel supports allowlisting
-    if (ch.userIdEnvKey && (!ch.serverIdEnvKey || process.env[ch.serverIdEnvKey])) {
-      const existingIds = getMessagingConfigValue(ch.userIdEnvKey) || "";
-      if (existingIds) {
-        process.env[ch.userIdEnvKey] = existingIds;
-        console.log(`  ✓ ${ch.name} — allowed IDs already set: ${existingIds}`);
-      } else {
-        console.log(`  ${ch.userIdHelp}`);
-        const userId = (await prompt(`  ${ch.userIdLabel}: `)).trim();
-        if (userId) {
-          process.env[ch.userIdEnvKey] = userId;
-          console.log(`  ✓ ${ch.name} allowed IDs saved`);
-        } else {
-          const skippedReason =
-            ch.allowIdsMode === "guild"
-              ? "any member in the configured server can message the bot"
-              : "bot will require manual pairing";
-          console.log(`  Skipped ${ch.name} user ID (${skippedReason})`);
-        }
-      }
-    }
-  }
+  await setupSelectedMessagingChannels(selected, enabled, MESSAGING_CHANNELS);
   console.log("");
 
   // Channels where the user declined to enter a token were dropped from
@@ -8431,6 +8032,7 @@ function getSuggestedPolicyPresets({
   maybeSuggestMessagingPreset("telegram", "TELEGRAM_BOT_TOKEN");
   maybeSuggestMessagingPreset("slack", "SLACK_BOT_TOKEN");
   maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
+  maybeSuggestMessagingPreset("wechat", "WECHAT_BOT_TOKEN");
 
   if (webSearchConfig) suggestions.push("brave");
 
@@ -8465,133 +8067,6 @@ async function setupOpenclaw(sandboxName: string, model: string, provider: strin
 }
 
 // ── Step 7: Policy presets ───────────────────────────────────────
-
-function waitForPolicyMutation(description: string, mutate: () => boolean | void): void {
-  let lastError: Error | null = null;
-  const success = waitUntil(() => {
-    try {
-      const result = mutate();
-      if (result === false) {
-        lastError = new Error(`${description} returned false`);
-        return false;
-      }
-      return true;
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      lastError = error;
-      if (!error.message.includes("sandbox not found")) {
-        throw err;
-      }
-      return false;
-    }
-  }, 10, 2000);
-
-  if (!success) {
-    throw lastError || new Error(`${description} timed out`);
-  }
-}
-
-async function _setupPolicies(
-  sandboxName: string,
-  options: {
-    enabledChannels?: string[] | null;
-    webSearchConfig?: WebSearchConfig | null;
-    provider?: string | null;
-  } = {},
-) {
-  step(8, 8, "Policy presets");
-  const suggestions = getSuggestedPolicyPresets(options);
-
-  const allPresets = policies.listPresets();
-  const applied = policies.getAppliedPresets(sandboxName);
-
-  if (isNonInteractive()) {
-    const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
-    let selectedPresets: string[] = suggestions;
-
-    if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
-      note("  [non-interactive] Skipping policy presets.");
-      return;
-    }
-
-    if (policyMode === "custom" || policyMode === "list") {
-      selectedPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
-      if (selectedPresets.length === 0) {
-        console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
-        process.exit(1);
-      }
-    } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
-      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
-      if (envPresets.length > 0) {
-        selectedPresets = envPresets;
-      }
-    } else {
-      console.error(`  Unsupported NEMOCLAW_POLICY_MODE: ${policyMode}`);
-      console.error("  Valid values: suggested, custom, skip");
-      process.exit(1);
-    }
-
-    const knownPresets = new Set(allPresets.map((p) => p.name));
-    const invalidPresets = selectedPresets.filter((name) => !knownPresets.has(name));
-    if (invalidPresets.length > 0) {
-      console.error(`  Unknown policy preset(s): ${invalidPresets.join(", ")}`);
-      process.exit(1);
-    }
-
-    if (!waitForSandboxReady(sandboxName)) {
-      console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
-      process.exit(1);
-    }
-    note(`  [non-interactive] Applying policy presets: ${selectedPresets.join(", ")}`);
-    for (const name of selectedPresets) {
-      waitForPolicyMutation(`applyPreset(${name})`, () =>
-        policies.applyPreset(sandboxName, name),
-      );
-    }
-  } else {
-    console.log("");
-    console.log("  Available policy presets:");
-    allPresets.forEach((p) => {
-      const marker = applied.includes(p.name) || suggestions.includes(p.name) ? "●" : "○";
-      const suggested = suggestions.includes(p.name) ? " (suggested)" : "";
-      console.log(`    ${marker} ${p.name} — ${p.description}${suggested}`);
-    });
-    console.log("");
-
-    const answer = await prompt(
-      `  Apply suggested presets (${suggestions.join(", ")})? [Y/n/list]: `,
-    );
-
-    if (answer.toLowerCase() === "n") {
-      console.log("  Skipping policy presets.");
-      return;
-    }
-
-    if (!waitForSandboxReady(sandboxName)) {
-      console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
-      process.exit(1);
-    }
-
-    if (answer.toLowerCase() === "list") {
-      // Let user pick
-      const picks = await prompt("  Enter preset names (comma-separated): ");
-      const selected = picks
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      for (const name of selected) {
-        policies.applyPreset(sandboxName, name);
-      }
-    } else {
-      // Apply suggested
-      for (const name of suggestions) {
-        policies.applyPreset(sandboxName, name);
-      }
-    }
-  }
-
-  console.log("  ✓ Policies applied");
-}
 
 function arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[] = []): boolean {
   if (!Array.isArray(selectedPresets) || selectedPresets.length === 0) return false;
@@ -8630,7 +8105,7 @@ async function selectPolicyTier(): Promise<string> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.log("");
     console.log("  Policy tier — controls which network presets are enabled:");
-    allTiers.forEach((t, i) => {
+    allTiers.forEach((t) => {
       const marker = t.name === defaultTier.name ? RADIO_ON : RADIO_OFF;
       console.log(`    ${marker} ${t.label}`);
     });
@@ -9293,24 +8768,6 @@ const CONTROL_UI_PORT = DASHBOARD_PORT;
 // Dashboard helpers — delegated to src/lib/dashboard/contract.ts
 const { buildChain, buildControlUiUrls } = dashboardContract;
 
-// Parses `openshell forward list` output and returns the sandbox currently
-// owning `portToStop`, or null. Exported for unit testing — see #2169.
-// Columns: SANDBOX  BIND  PORT  PID  STATUS (whitespace-separated).
-function findDashboardForwardOwner(
-  forwardListOutput: string | null | undefined,
-  portToStop: string,
-): string | null {
-  if (!forwardListOutput) return null;
-  const portLine = forwardListOutput
-    .split("\n")
-    .map((l) => l.trim())
-    .find((l) => {
-      const parts = l.split(/\s+/);
-      return parts[2] === portToStop;
-    });
-  return portLine ? (portLine.split(/\s+/)[0] ?? null) : null;
-}
-
 function findForwardEntry(
   forwardListOutput: string | null | undefined,
   port: string,
@@ -9468,17 +8925,16 @@ function ensureDashboardForward(
   parsedUrl.port = String(actualPort);
   const actualTarget = getDashboardForwardTarget(parsedUrl.toString());
   runOpenshell(["forward", "stop", String(actualPort)], { ignoreError: true });
-  const { result: fwdResult, diagnostic: fwdDiagnostic } =
-    runBackgroundForwardStartWithDiagnostics((stdio, timeout) =>
+  const { result: fwdResult, diagnostic: fwdDiagnostic } = runBackgroundForwardStartWithPortReleaseRetries(
+    (stdio, timeout) =>
       runOpenshell(
         ["forward", "start", "--background", actualTarget, sandboxName],
         { ignoreError: true, suppressOutput: true, stdio, timeout },
       ),
-    );
+    () => { sleep(1); runOpenshell(["forward", "stop", String(actualPort)], { ignoreError: true }); },
+  );
   if (fwdResult && fwdResult.status !== 0) {
-    const looksLikePortConflict =
-      fwdDiagnostic === "" ||
-      /eaddrinuse|address already in use|port .* in use|bind: .*in use/i.test(fwdDiagnostic);
+    const looksLikePortConflict = looksLikeForwardPortConflict(fwdDiagnostic);
     if (rollbackSandboxOnFailure) {
       // The sandbox was just created, committed to actualPort via its
       // baked-in CHAT_UI_URL and NEMOCLAW_DASHBOARD_PORT env. Silently
@@ -9582,13 +9038,6 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
 
 // buildControlUiUrls — see dashboard-contract import above
 
-function buildDashboardChain(
-  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
-  options: Parameters<typeof dashboardAccess.buildDashboardChain>[1] = {},
-) {
-  return dashboardAccess.buildDashboardChain(chatUiUrl, { ...options, runCapture: options.runCapture || runCapture });
-}
-
 function getDashboardForwardPort(
   chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
   options: Parameters<typeof dashboardAccess.getDashboardForwardPort>[1] = {},
@@ -9607,21 +9056,6 @@ function getDashboardForwardTarget(
     ...options,
     runCapture: options.runCapture || runCapture,
   });
-}
-
-function getDashboardForwardStartCommand(
-  sandboxName: string,
-  options: Parameters<typeof dashboardAccess.getDashboardForwardStartCommand>[1] = {},
-): string {
-  return dashboardAccess.getDashboardForwardStartCommand(sandboxName, {
-    ...options,
-    runCapture: options.runCapture || runCapture,
-    openshellShellCommand,
-  });
-}
-
-function buildAuthenticatedDashboardUrl(baseUrl: string, token: string | null = null): string {
-  return dashboardAccess.buildAuthenticatedDashboardUrl(baseUrl, token);
 }
 
 function dashboardUrlForDisplay(url: string): string {
@@ -10200,6 +9634,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             ? "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation."
             : "  NVIDIA GPU detected; enabling OpenShell GPU passthrough. Use --no-gpu to opt out.",
       );
+    } else if (gpu?.platform === "jetson") {
+      note("  GPU sandbox passthrough disabled by default on Jetson.");
     } else if (process.platform === "linux") {
       // Hint when hardware is present but drivers are missing.
       try {
@@ -10299,10 +9735,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
 
     const canReuseHealthyGateway = gatewayReuseState === "healthy";
 
-    // Verify the reusable gateway has GPU passthrough when needed. Runs for
-    // both fresh-reuse and resume paths so a gateway recreated without GPU
-    // between runs is caught.
-    if (canReuseHealthyGateway && gpuPassthrough) {
+    // Verify legacy reusable gateway GPU passthrough; Docker-driver gateways use live CLI health.
+    if (shouldInspectLegacyGatewayGpuPassthrough(
+      gatewayReuseState,
+      gpuPassthrough,
+      isLinuxDockerDriverGatewayEnabled(),
+      gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+    )) {
       const container = `openshell-cluster-${GATEWAY_NAME}`;
       const gpuCheck = docker.dockerInspect(
         ["--type", "container", "--format", "{{json .HostConfig.DeviceRequests}}", container],
@@ -10568,11 +10007,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const sandboxGpuConfigChanged = sandboxName
       ? hasSandboxGpuDrift(sandboxName, sandboxGpuConfig)
       : false;
+    const wechatConfigChanged = hasWechatConfigDrift(session);
     const resumeSandbox =
       resume &&
       !webSearchConfigChanged &&
       !telegramConfigChanged &&
       !sandboxGpuConfigChanged &&
+      !wechatConfigChanged &&
       !messagingChannelConfigChanged &&
       session?.steps?.sandbox?.status === "complete" &&
       sandboxReuseState === "ready";
@@ -10596,6 +10037,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           }
         } else if (sandboxGpuConfigChanged) {
           note("  [resume] Sandbox GPU settings changed; recreating sandbox.");
+          if (sandboxName) {
+            registry.removeSandbox(sandboxName);
+          }
+        } else if (wechatConfigChanged) {
+          note("  [resume] WeChat account metadata changed; recreating sandbox.");
           if (sandboxName) {
             registry.removeSandbox(sandboxName);
           }
@@ -10846,12 +10292,22 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     // every target is already clean.
     cleanupStaleHostFiles();
 
+    // Step [8/8] policy-apply restarts the sandbox container; the OpenClaw
+    // gateway inside the new container is launched lazily (normally by the
+    // first `nemoclaw <name> connect`). Bring it up explicitly here so the
+    // verifyDeployment block below does not race the post-policy startup and
+    // surface a false "gateway crashed during startup" warning. The helper
+    // is a no-op when the gateway is already running. Fixes #3573.
+    const processRecovery: typeof import("./actions/sandbox/process-recovery") =
+      require("./actions/sandbox/process-recovery");
+    processRecovery.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
+
     // Post-deployment verification — confirm the full delivery chain is
     // operational before telling the user "YOUR AGENT IS LIVE". Fixes #2342.
     const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
     const _verifyChatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`;
     const verifyChain = buildChain({ chatUiUrl: _verifyChatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress() });
-    const verificationResult = verifyDeploymentModule.verifyDeployment(
+    const verificationResult = await verifyDeploymentModule.verifyDeployment(
       sandboxName,
       verifyChain,
       {
@@ -10982,8 +10438,6 @@ module.exports = {
   readRecordedProvider,
   readRecordedModel,
   readRecordedNimContainer,
-  formatOnboardConfigSummary,
-  formatSandboxBuildEstimateNote,
   isInferenceRouteReady,
   shouldRunCompatibleEndpointSandboxSmoke,
   isNonInteractive,

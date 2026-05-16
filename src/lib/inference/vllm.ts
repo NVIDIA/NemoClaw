@@ -153,8 +153,6 @@ const GENERIC_LINUX_PROFILE: VllmProfile = {
   readyMarker: SPARK_PROFILE.readyMarker,
 };
 
-export const PROFILES: VllmProfile[] = [SPARK_PROFILE, STATION_PROFILE, GENERIC_LINUX_PROFILE];
-
 export function detectVllmProfile(
   gpu:
     | {

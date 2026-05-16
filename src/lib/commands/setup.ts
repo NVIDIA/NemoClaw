@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command } from "@oclif/core";
+import { NemoClawCommand } from "../cli/nemoclaw-oclif-command";
 
 import { runSetupAction } from "../actions/global";
 import { buildOnboardFlags, type OnboardFlags, toLegacyOnboardArgs } from "./onboard/common";
 
-export default class SetupCliCommand extends Command {
+export default class SetupCliCommand extends NemoClawCommand {
   static id = "setup";
   static strict = true;
   static summary = "Deprecated alias for nemoclaw onboard";

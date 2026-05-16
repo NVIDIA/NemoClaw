@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, Flags } from "@oclif/core";
+import { Flags } from "@oclif/core";
+import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import { normalizeInstallerEnv } from "../../../lib/actions/installer/plan";
 
-export default class InternalInstallerNormalizeEnvCommand extends Command {
+export default class InternalInstallerNormalizeEnvCommand extends NemoClawCommand {
   static hidden = true;
   static strict = true;
   static summary = "Internal: normalize installer environment values";
@@ -13,7 +14,6 @@ export default class InternalInstallerNormalizeEnvCommand extends Command {
   static usage = ["internal installer normalize-env [--json]"];
   static examples = ["<%= config.bin %> internal installer normalize-env --provider cloud --json"];
   static flags = {
-    help: Flags.help({ char: "h" }),
     json: Flags.boolean({ description: "Print normalized values as JSON" }),
     "install-ref": Flags.string({ description: "NEMOCLAW_INSTALL_REF value" }),
     "install-tag": Flags.string({ description: "NEMOCLAW_INSTALL_TAG value" }),
@@ -28,7 +28,7 @@ export default class InternalInstallerNormalizeEnvCommand extends Command {
       NEMOCLAW_PROVIDER: flags.provider ?? process.env.NEMOCLAW_PROVIDER,
     });
 
-    if (flags.json) console.log(JSON.stringify(normalized, null, 2));
+    if (flags.json) this.logJson(normalized);
     else console.log(`ref=${normalized.installRef} provider=${normalized.provider.normalized ?? ""}`);
   }
 }

@@ -282,12 +282,15 @@ export function formatSandboxBridgeUnreachableMessage(
     ].join("\n");
   }
 
-  const allowCmd = result.subnet
-    ? `      sudo ufw allow from ${result.subnet} to any port ${port} proto tcp`
-    : [
-        `      SUBNET=$(docker network inspect ${result.networkName ?? DEFAULT_NETWORK_NAME} --format '{{(index .IPAM.Config 0).Subnet}}')`,
-        `      sudo ufw allow from "$SUBNET" to any port ${port} proto tcp`,
-      ].join("\n");
+  const allowCmd =
+    result.subnet && result.gatewayIp
+      ? `      sudo ufw allow from ${result.subnet} to ${result.gatewayIp} port ${port} proto tcp`
+      : result.subnet
+        ? `      sudo ufw allow from ${result.subnet} to any port ${port} proto tcp`
+        : [
+            `      SUBNET=$(docker network inspect ${result.networkName ?? DEFAULT_NETWORK_NAME} --format '{{(index .IPAM.Config 0).Subnet}}')`,
+            `      sudo ufw allow from "$SUBNET" to any port ${port} proto tcp`,
+          ].join("\n");
   const target = result.gatewayIp
     ? `${HOST_INTERNAL_NAME}:${port} (${result.gatewayIp}:${port})`
     : `${HOST_INTERNAL_NAME}:${port}`;

@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Canonical `nemoclaw shell <sandbox> -- <cmd>` wrapper.
+# Canonical `openshell sandbox exec --name <sandbox> -- <cmd>` wrapper.
 #
 # Absorbs reuse category #10 from the migration spec: 15 legacy scripts
 # each reimplement sandbox-scoped exec with subtle drift (quoting, exit-
@@ -11,7 +11,7 @@
 #
 # Functions:
 #   e2e_sandbox_exec       <sandbox> -- <cmd> [args...]
-#       Run <cmd> inside <sandbox> via `nemoclaw shell`. No stdin passed.
+#       Run <cmd> inside <sandbox> via `openshell sandbox exec`. No stdin passed.
 #       Exit code propagates from <cmd>. Honors E2E_DRY_RUN.
 #
 #   e2e_sandbox_exec_stdin <sandbox> -- <cmd> [args...]
@@ -56,11 +56,11 @@ e2e_sandbox_exec() {
     echo "[dry-run] sandbox_exec ${_E2E_SBEX_SB_NAME} -- ${_E2E_SBEX_CMD[*]} (skipped)"
     return 0
   fi
-  if ! command -v nemoclaw >/dev/null 2>&1; then
-    echo "e2e_sandbox_exec: nemoclaw CLI not on PATH" >&2
+  if ! command -v openshell >/dev/null 2>&1; then
+    echo "e2e_sandbox_exec: openshell CLI not on PATH" >&2
     return 127
   fi
-  nemoclaw shell "${_E2E_SBEX_SB_NAME}" -- "${_E2E_SBEX_CMD[@]}"
+  openshell sandbox exec --name "${_E2E_SBEX_SB_NAME}" -- "${_E2E_SBEX_CMD[@]}"
 }
 
 # e2e_sandbox_exec_stdin <sandbox> -- <cmd> [args...]
@@ -76,9 +76,9 @@ e2e_sandbox_exec_stdin() {
     echo "[dry-run] sandbox_exec_stdin ${_E2E_SBEX_SB_NAME} -- ${_E2E_SBEX_CMD[*]} (skipped)"
     return 0
   fi
-  if ! command -v nemoclaw >/dev/null 2>&1; then
-    echo "e2e_sandbox_exec_stdin: nemoclaw CLI not on PATH" >&2
+  if ! command -v openshell >/dev/null 2>&1; then
+    echo "e2e_sandbox_exec_stdin: openshell CLI not on PATH" >&2
     return 127
   fi
-  nemoclaw shell "${_E2E_SBEX_SB_NAME}" -- "${_E2E_SBEX_CMD[@]}"
+  openshell sandbox exec --name "${_E2E_SBEX_SB_NAME}" -- "${_E2E_SBEX_CMD[@]}"
 }
