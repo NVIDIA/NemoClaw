@@ -61,12 +61,18 @@ function buildGatewayYaml(presetNames: string[]): string {
 
 /**
  * Call getGatewayPresets() in a subprocess with a stubbed runCapture
- * that returns the given YAML (or throws if null).
+ * that returns the given YAML (or throws if null). Optionally include
+ * registry-recorded custom presets so the matching loop sees them.
  */
-function callGetGatewayPresets(gatewayYaml: string | null): string[] | null {
+function callGetGatewayPresets(
+  gatewayYaml: string | null,
+  customPresets: Array<{ name: string; content: string }> = [],
+): string[] | null {
   const yamlArg = gatewayYaml !== null ? JSON.stringify(gatewayYaml) : "null";
+  const customArg = JSON.stringify(customPresets);
   const { stdout } = runScript(`
     const yaml = ${yamlArg};
+    const customPresets = ${customArg};
     // Replace the closed-over runCapture by re-requiring the module cache entry
     const mod = require.cache[${JSON.stringify(POLICIES_PATH)}];
     // Stub: replace getGatewayPresets with one that uses our fake runCapture
@@ -95,21 +101,73 @@ function callGetGatewayPresets(gatewayYaml: string | null): string[] | null {
     }
     const keys = new Set(Object.keys(gp));
     const matched = [];
+    const matchContent = (content) => {
+      const e = policies.extractPresetEntries(content); if (!e) return false;
+      let pp;
+      try { pp = YAML.parse("network_policies:\\n" + e); } catch { return false; }
+      const np = pp && pp.network_policies;
+      if (!np || typeof np !== "object") return false;
+      const pk = Object.keys(np);
+      return pk.length > 0 && pk.every(k => keys.has(k));
+    };
     for (const preset of policies.listPresets()) {
       const c = policies.loadPreset(preset.name); if (!c) continue;
-      const e = policies.extractPresetEntries(c); if (!e) continue;
-      let pp;
-      try { pp = YAML.parse("network_policies:\\n" + e); } catch { continue; }
-      const np = pp && pp.network_policies;
-      if (!np || typeof np !== "object") continue;
-      const pk = Object.keys(np);
-      if (pk.length > 0 && pk.every(k => keys.has(k))) matched.push(preset.name);
+      if (matchContent(c)) matched.push(preset.name);
+    }
+    for (const entry of customPresets) {
+      if (matchContent(entry.content)) matched.push(entry.name);
     }
     process.stdout.write(JSON.stringify(matched));
     runner.runCapture = origRunCapture;
   `);
   if (stdout.trim() === "null") return null;
   return JSON.parse(stdout.trim());
+}
+
+const SLACK_FILES_UPLOAD_CUSTOM = `preset:
+  name: slack-files-upload
+  description: "Slack file upload URL access"
+
+network_policies:
+  slack-files-upload:
+    name: slack-files-upload
+    endpoints:
+      - host: files.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/upload/**" }
+`;
+
+/**
+ * Build a fake gateway YAML response that includes the given custom preset
+ * entries alongside any built-in preset names.
+ */
+function buildGatewayYamlWithCustom(
+  presetNames: string[],
+  customPresets: Array<{ name: string; content: string }>,
+): string {
+  const names = JSON.stringify(presetNames);
+  const custom = JSON.stringify(customPresets);
+  const { stdout } = runScript(`
+    const parts = ["version: 1", "", "network_policies:"];
+    for (const name of ${names}) {
+      const content = policies.loadPreset(name);
+      if (!content) continue;
+      const entries = policies.extractPresetEntries(content);
+      if (!entries) continue;
+      parts.push(entries);
+    }
+    for (const c of ${custom}) {
+      const entries = policies.extractPresetEntries(c.content);
+      if (!entries) continue;
+      parts.push(entries);
+    }
+    process.stdout.write("Version: 3\\nHash: abc123\\nUpdated: 2026-01-01\\n---\\n" + parts.join("\\n"));
+  `);
+  return stdout;
 }
 
 describe("issue #2010 — policy state inconsistency", () => {
@@ -142,23 +200,43 @@ describe("issue #2010 — policy state inconsistency", () => {
       const result = callGetGatewayPresets(yaml);
       expect(result).toEqual([]);
     });
+
+    it("includes a custom preset whose network_policies are enforced on the gateway", () => {
+      const custom = [{ name: "slack-files-upload", content: SLACK_FILES_UPLOAD_CUSTOM }];
+      const yaml = buildGatewayYamlWithCustom(["telegram"], custom);
+      const result = callGetGatewayPresets(yaml, custom);
+      expect(result).toContain("telegram");
+      expect(result).toContain("slack-files-upload");
+    });
+
+    it("does not include a custom preset whose keys are absent from the gateway", () => {
+      const custom = [{ name: "slack-files-upload", content: SLACK_FILES_UPLOAD_CUSTOM }];
+      const yaml = buildGatewayYamlWithCustom(["telegram"], []);
+      const result = callGetGatewayPresets(yaml, custom);
+      expect(result).toContain("telegram");
+      expect(result).not.toContain("slack-files-upload");
+    });
   });
 
   describe("sandboxPolicyList — CLI output via subprocess", () => {
     function runPolicyList(opts: {
       registryPresets: string[];
       gatewayPresets: string[] | null;
+      customPolicies?: Array<{ name: string; content: string }>;
     }): string {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-repro-2010-"));
       const gw =
         opts.gatewayPresets !== null
           ? `() => ${JSON.stringify(opts.gatewayPresets)}`
           : "() => null";
+      const customPolicies = JSON.stringify(opts.customPolicies ?? []);
       const script = `
 const registry = require(${JSON.stringify(REGISTRY_PATH)});
 const policies = require(${JSON.stringify(POLICIES_PATH)});
-registry.getSandbox = (name) => (name === "test-sandbox" ? { name, policies: ${JSON.stringify(opts.registryPresets)} } : null);
+const customPolicies = ${customPolicies};
+registry.getSandbox = (name) => (name === "test-sandbox" ? { name, policies: ${JSON.stringify(opts.registryPresets)}, customPolicies } : null);
 registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
+registry.getCustomPolicies = (name) => (name === "test-sandbox" ? customPolicies : []);
 policies.getAppliedPresets = () => ${JSON.stringify(opts.registryPresets)};
 policies.getGatewayPresets = ${gw};
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-list"];
@@ -201,6 +279,17 @@ require(${JSON.stringify(CLI_PATH)});
       expect(output).toMatch(/●.*telegram/);
       expect(output).toContain("Could not query gateway");
       expect(output).not.toContain("active on gateway");
+    });
+
+    it("shows ● with no suffix for a custom preset that is active on both registry and gateway", () => {
+      const output = runPolicyList({
+        registryPresets: ["slack-files-upload"],
+        gatewayPresets: ["slack-files-upload"],
+        customPolicies: [{ name: "slack-files-upload", content: SLACK_FILES_UPLOAD_CUSTOM }],
+      });
+      expect(output).toMatch(/●.*slack-files-upload/);
+      expect(output).not.toContain("recorded locally, not active on gateway");
+      expect(output).not.toContain("active on gateway, missing from local state");
     });
   });
 });

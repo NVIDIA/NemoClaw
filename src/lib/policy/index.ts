@@ -891,9 +891,36 @@ function listCustomPresets(sandboxName: string): PresetInfo[] {
 }
 
 /**
+ * A preset is considered "active on gateway" if ALL of its
+ * network_policies keys exist in the gateway's loaded policy.
+ * Works for both built-in and custom preset YAML.
+ */
+function presetMatchesGateway(
+  content: string | null,
+  gatewayPolicyNames: ReadonlySet<string>,
+): boolean {
+  const entries = extractPresetEntries(content);
+  if (!entries) return false;
+
+  let presetPolicies;
+  try {
+    const presetParsed = YAML.parse("network_policies:\n" + entries);
+    presetPolicies = presetParsed?.network_policies;
+  } catch {
+    return false;
+  }
+
+  if (!presetPolicies || typeof presetPolicies !== "object") return false;
+
+  const presetKeys = Object.keys(presetPolicies);
+  return presetKeys.length > 0 && presetKeys.every((k) => gatewayPolicyNames.has(k));
+}
+
+/**
  * Query the gateway for the currently loaded policy and determine which
  * presets are actually enforced by matching network_policies entries
- * against known preset definitions.
+ * against known preset definitions. Considers both built-in presets and
+ * sandbox-scoped custom presets recorded in the registry.
  *
  * Returns an array of preset names whose network_policies keys are all
  * found in the gateway's loaded policy, or `null` when the gateway
@@ -929,30 +956,17 @@ function getGatewayPresets(sandboxName: string): string[] | null {
   }
 
   const gatewayPolicyNames = new Set(Object.keys(gatewayPolicies));
-  const matched = [];
+  const matched: string[] = [];
 
   for (const preset of listPresets()) {
-    const content = loadPreset(preset.name);
-    if (!content) continue;
-    const entries = extractPresetEntries(content);
-    if (!entries) continue;
-
-    let presetPolicies;
-    try {
-      const wrapped = "network_policies:\n" + entries;
-      const presetParsed = YAML.parse(wrapped);
-      presetPolicies = presetParsed?.network_policies;
-    } catch {
-      continue;
-    }
-
-    if (!presetPolicies || typeof presetPolicies !== "object") continue;
-
-    // A preset is considered "active on gateway" if ALL of its
-    // network_policies keys exist in the gateway's loaded policy.
-    const presetKeys = Object.keys(presetPolicies);
-    if (presetKeys.length > 0 && presetKeys.every((k) => gatewayPolicyNames.has(k))) {
+    if (presetMatchesGateway(loadPreset(preset.name), gatewayPolicyNames)) {
       matched.push(preset.name);
+    }
+  }
+
+  for (const entry of registry.getCustomPolicies(sandboxName)) {
+    if (presetMatchesGateway(entry.content, gatewayPolicyNames)) {
+      matched.push(entry.name);
     }
   }
 
