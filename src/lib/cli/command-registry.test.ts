@@ -13,7 +13,6 @@ import {
   sandboxActionTokens,
   GROUP_ORDER,
 } from "./command-registry";
-import type { CommandDef } from "./command-registry";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {

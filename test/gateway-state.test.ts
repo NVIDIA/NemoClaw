@@ -10,6 +10,7 @@ import {
   isGatewayConnected,
   isGatewayHealthy,
   getGatewayReuseState,
+  getSandboxStateFromOutputs,
   hasStaleGateway,
   hasActiveGatewayInfo,
   getReportedGatewayName,
@@ -293,6 +294,33 @@ describe("getGatewayReuseState", () => {
 
   it("returns 'missing' when all outputs are empty", () => {
     expect(getGatewayReuseState("", "", "")).toBe("missing");
+  });
+});
+
+describe("getSandboxStateFromOutputs", () => {
+  it("classifies sandbox reuse states from openshell outputs", () => {
+    expect(
+      getSandboxStateFromOutputs(
+        "my-assistant",
+        "Name: my-assistant",
+        "my-assistant   Ready   2m ago",
+      ),
+    ).toBe("ready");
+    expect(
+      getSandboxStateFromOutputs(
+        "my-assistant",
+        "Name: my-assistant",
+        "my-assistant   NotReady   init failed",
+      ),
+    ).toBe("not_ready");
+    expect(
+      getSandboxStateFromOutputs(
+        "my-assistant",
+        "Error: NotFound: sandbox not found",
+        "other-sandbox   Ready   2m ago",
+      ),
+    ).toBe("missing");
+    expect(getSandboxStateFromOutputs("my-assistant", "", "")).toBe("missing");
   });
 });
 

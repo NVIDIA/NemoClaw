@@ -58,7 +58,7 @@ function flatten(
 }
 
 function compare(
-  key: string,
+  _key: string,
   expected: ProbeValue,
   actual: ProbeValue | undefined,
 ): boolean {

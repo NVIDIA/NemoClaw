@@ -130,10 +130,6 @@ type RunnerOptions = {
   openshellBinary?: string;
 };
 
-function parseJson<T>(text: string): T {
-  return JSON.parse(text);
-}
-
 function requireValue<T>(value: T | null | undefined, message: string): T {
   if (value == null) {
     throw new Error(message);
@@ -151,21 +147,17 @@ const {
   VLLM_PORT,
   OLLAMA_PORT,
   OLLAMA_PROXY_PORT,
-  DASHBOARD_PORT_RANGE_START,
-  DASHBOARD_PORT_RANGE_END,
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
   findReachableOllamaHost,
   resetOllamaHostCache,
   getDefaultOllamaModel,
-  getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
   getLocalProviderHealthCheck,
   getLocalProviderValidationBaseUrl,
   getOllamaModelOptions,
   getOllamaWarmupCommand,
-  getResolvedOllamaHost,
   OLLAMA_HOST_DOCKER_INTERNAL,
   validateOllamaPortConfiguration,
   validateOllamaModel,
@@ -175,7 +167,6 @@ const {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
   isProxyHealthy,
-  killStaleProxy,
   persistAndProbeOllamaProxy,
   startOllamaAuthProxy,
 } = require("./inference/ollama/proxy");
@@ -190,8 +181,6 @@ const { detectVllmProfile, installVllm } = require("./inference/vllm");
 const inferenceConfig: typeof import("./inference/config") = require("./inference/config");
 const {
   DEFAULT_CLOUD_MODEL,
-  INFERENCE_ROUTE_URL,
-  MANAGED_PROVIDER_ID,
   getProviderSelectionConfig,
   parseGatewayInference,
 } = inferenceConfig;
@@ -212,10 +201,8 @@ type RemoteProviderConfigEntry = {
 };
 
 const {
-  BUILD_ENDPOINT_URL,
   OPENAI_ENDPOINT_URL,
   ANTHROPIC_ENDPOINT_URL,
-  GEMINI_ENDPOINT_URL,
   REMOTE_PROVIDER_CONFIG,
   LOCAL_INFERENCE_PROVIDERS,
   OLLAMA_PROXY_CREDENTIAL_ENV,
@@ -227,10 +214,8 @@ const {
   getNonInteractiveModel,
   getSandboxInferenceConfig,
 } = onboardProviders as {
-  BUILD_ENDPOINT_URL: string;
   OPENAI_ENDPOINT_URL: string;
   ANTHROPIC_ENDPOINT_URL: string;
-  GEMINI_ENDPOINT_URL: string;
   REMOTE_PROVIDER_CONFIG: Record<string, RemoteProviderConfigEntry>;
   LOCAL_INFERENCE_PROVIDERS: string[];
   OLLAMA_PROXY_CREDENTIAL_ENV: string;
@@ -275,18 +260,15 @@ const registry: typeof import("./state/registry") = require("./state/registry");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const policies: typeof import("./policy") = require("./policy");
-const shields = require("./shields");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
+  findDashboardForwardOwner,
   getOccupiedPorts,
   isLiveForwardStatus,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
-const {
-  destroyGatewayForReuse,
-  warnIfGatewayDestroyFails,
-} = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
+const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
 const {
   gatewayCliSupportsLifecycleCommands,
 } = require("./onboard/gateway-lifecycle") as typeof import("./onboard/gateway-lifecycle");
@@ -343,8 +325,6 @@ const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-f
 
 import type { AgentDefinition } from "./agent/defs";
 import type { CurlProbeResult } from "./adapters/http/probe";
-import type { GatewayInference } from "./inference/config";
-import type { GpuInfo, ValidationResult } from "./inference/local";
 import type { WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
@@ -362,23 +342,24 @@ import type {
   OpenShellInstallResult,
 } from "./onboard/openshell-install";
 import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
-import { resolveSandboxGpuMode, type SandboxGpuFlag, type SandboxGpuMode } from "./onboard/sandbox-gpu-mode";
+import {
+  getResumeSandboxGpuOverrides,
+  resolveSandboxGpuConfig,
+  type SandboxGpuConfig,
+  type SandboxGpuFlag,
+} from "./onboard/sandbox-gpu-mode";
 import type { SelectionDrift } from "./onboard/selection-drift";
+import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
 import type {
-  ModelCatalogFetchResult,
   ModelValidationResult,
-  ProbeResult,
   ValidationFailureLike,
 } from "./onboard/types";
 import type { ContainerRuntime } from "./platform";
-import type { TierDefinition, TierPreset } from "./policy/tiers";
-import { channelHasStaticToken, getChannelTokenKeys, listChannels } from "./sandbox/channels";
-import type { StreamSandboxCreateResult } from "./sandbox/create-stream";
+import { getChannelTokenKeys, listChannels } from "./sandbox/channels";
 import type { GatewayReuseState } from "./state/gateway";
 import type { Session, SessionUpdates } from "./state/onboard-session";
 import type { SandboxEntry } from "./state/registry";
 import type { BackupResult } from "./state/sandbox";
-import type { SandboxCreateFailure, ValidationClassification } from "./validation";
 import type { ProbeRecovery } from "./validation-recovery";
 
 const EXPERIMENTAL = process.env.NEMOCLAW_EXPERIMENTAL === "1";
@@ -436,8 +417,6 @@ const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
 // See src/lib/core/json-types.ts for the canonical definitions.
 import type {
   JsonObject as LooseObject,
-  JsonScalar as LooseScalar,
-  JsonValue as LooseValue,
 } from "./core/json-types";
 
 type OnboardOptions = {
@@ -1239,74 +1218,6 @@ function shouldAllowOpenshellAboveBlueprintMax(
   return shouldUseOpenshellDevChannel(platform, env) && isOpenshellDevVersion(versionOutput);
 }
 
-type SandboxGpuConfig = {
-  mode: SandboxGpuMode;
-  hostGpuDetected: boolean;
-  sandboxGpuEnabled: boolean;
-  sandboxGpuDevice: string | null;
-  errors: string[];
-};
-
-type ResumeSandboxGpuOverrides = {
-  flag: SandboxGpuFlag;
-  device: string | null;
-};
-
-function isNvidiaGpuDetected(gpu: ReturnType<typeof nim.detectGpu>): boolean {
-  return Boolean(gpu && gpu.type === "nvidia");
-}
-
-function normalizeSandboxGpuMode(value: string | null | undefined): SandboxGpuMode | null {
-  const raw = String(value || "")
-    .trim()
-    .toLowerCase();
-  if (!raw) return null;
-  if (raw === "auto") return "auto";
-  if (raw === "1" || raw === "true" || raw === "yes" || raw === "on") return "1";
-  if (raw === "0" || raw === "false" || raw === "no" || raw === "off") return "0";
-  return null;
-}
-
-function resolveSandboxGpuConfig(
-  gpu: ReturnType<typeof nim.detectGpu>,
-  options: {
-    flag?: SandboxGpuFlag;
-    device?: string | null;
-    env?: NodeJS.ProcessEnv;
-  } = {},
-): SandboxGpuConfig {
-  const env = options.env ?? process.env;
-  const errors: string[] = [];
-  const envModeRaw = env.NEMOCLAW_SANDBOX_GPU;
-  const envMode = normalizeSandboxGpuMode(envModeRaw);
-  if (envModeRaw !== undefined && envMode === null) {
-    errors.push("NEMOCLAW_SANDBOX_GPU must be one of: auto, 1, 0.");
-  }
-
-  let mode = resolveSandboxGpuMode({ envMode, gpu, flag: options.flag });
-
-  const device = (options.device ?? env.NEMOCLAW_SANDBOX_GPU_DEVICE ?? "").trim() || null;
-  if (device && mode === "0") {
-    errors.push("NEMOCLAW_SANDBOX_GPU_DEVICE cannot be used when sandbox GPU mode is 0.");
-  }
-  if (device && options.flag !== "disable" && envMode !== "0") {
-    mode = "1";
-  }
-
-  const hostGpuDetected = isNvidiaGpuDetected(gpu);
-  if (mode === "1" && !hostGpuDetected) {
-    errors.push("Sandbox GPU was requested, but no NVIDIA GPU was detected on the host.");
-  }
-
-  return {
-    mode,
-    hostGpuDetected,
-    sandboxGpuEnabled: mode === "1" || (mode === "auto" && hostGpuDetected),
-    sandboxGpuDevice: device,
-    errors,
-  };
-}
-
 function resolveSandboxGpuFlagFromOptions(
   opts: Pick<OnboardOptions, "sandboxGpu" | "gpu" | "noGpu">,
 ): SandboxGpuFlag {
@@ -1328,26 +1239,6 @@ function resolveSandboxGpuFlagFromOptions(
   if (requestedGpuPassthrough) return "enable";
   if (optedOutGpuPassthrough) return "disable";
   return null;
-}
-
-function getResumeSandboxGpuOverrides(
-  entry: Pick<SandboxEntry, "sandboxGpuMode" | "sandboxGpuDevice"> | null | undefined,
-  sessionGpuPassthrough: boolean | undefined,
-): ResumeSandboxGpuOverrides {
-  const recordedMode = normalizeSandboxGpuMode(entry?.sandboxGpuMode);
-  if (recordedMode === "1") {
-    return { flag: "enable", device: entry?.sandboxGpuDevice || null };
-  }
-  if (recordedMode === "0") {
-    return { flag: "disable", device: null };
-  }
-  if (recordedMode === "auto") {
-    return { flag: null, device: null };
-  }
-  if (sessionGpuPassthrough === true) {
-    return { flag: "enable", device: entry?.sandboxGpuDevice || null };
-  }
-  return { flag: null, device: null };
 }
 
 function sandboxGpuRemediationLines(): string[] {
@@ -1470,34 +1361,13 @@ const {
   formatEnvAssignment,
   parsePolicyPresetEnv,
 } = urlUtils;
-
-/**
- * Resolve a credential into `process.env[envName]` so subsequent gateway
- * upserts can read it via `--credential <ENV>`. Idempotently stages any
- * pre-fix plaintext credentials.json (non-destructively) so callers that
- * reach a credential check from outside the onboard entry point — such as
- * rebuild preflight — can still find legacy values. The file itself is
- * removed only after a full successful onboard, so an interrupted run can
- * be retried without losing the user's only copy.
- *
- * @param envName Credential env variable name, e.g. `NVIDIA_API_KEY`.
- * @returns The resolved value, or `null` if `envName` is empty/unstaged.
- */
-function hydrateCredentialEnv(envName: string | null | undefined): string | null {
-  if (!envName) return null;
-  // Thin wrapper for back-compat. resolveProviderCredential() (introduced
-  // by PR #2306 as the canonical entry point) now performs the staging
-  // dance internally — env first, then a one-time on-demand legacy stage,
-  // then write back into process.env for downstream code.
-  return resolveProviderCredential(envName);
-}
+const { hydrateCredentialEnv }: typeof import("./onboard/credential-env") =
+  require("./onboard/credential-env");
 
 const {
-  getCurlTimingArgs,
   summarizeCurlFailure,
   summarizeProbeFailure,
   runCurlProbe,
-  runStreamingEventProbe,
 } = httpProbe;
 
 function getNavigationChoice(value = ""): "back" | "exit" | null {
@@ -1652,8 +1522,6 @@ const {
   classifySandboxCreateFailure,
   validateNvidiaApiKeyValue,
   isSafeModelId,
-  isNvcfFunctionNotFoundForAccount,
-  nvcfFunctionNotFoundMessage,
   shouldSkipResponsesProbe,
   shouldForceCompletionsApi,
 } = validation;
@@ -2513,7 +2381,7 @@ async function validateCustomAnthropicSelection(
   return { ok: false, retry };
 }
 
-const { promptManualModelId, promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
+const { promptCloudModel, promptRemoteModel, promptInputModel } = modelPrompts;
 const { validateAnthropicModel, validateOpenAiLikeModel } = providerModels;
 const nousModels: typeof import("./inference/nous-models") = require("./inference/nous-models");
 
@@ -2528,7 +2396,6 @@ const { shouldIncludeBuildContextPath, copyBuildContextDir, printSandboxCreateRe
 const {
   promptOllamaModel,
   printOllamaExposureWarning,
-  pullOllamaModel,
   prepareOllamaModel,
 } = require("./inference/ollama/proxy");
 
@@ -4862,99 +4729,6 @@ async function promptValidatedSandboxName(agent: AgentDefinition | null = null) 
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
-type OnboardConfigSummary = {
-  provider: string | null;
-  model: string | null;
-  credentialEnv?: string | null;
-  hermesAuthMethod?: HermesAuthMethod | string | null;
-  webSearchConfig?: WebSearchConfig | null;
-  enabledChannels?: string[] | null;
-  sandboxName: string;
-  notes?: string[] | null;
-};
-
-/**
- * Render the configuration summary shown before the destructive sandbox build.
- * Extracted from confirmOnboardConfiguration() for direct unit testing — see #2165.
- *
- * Fields:
- * - credentialEnv:    env-var name of the API key (e.g. "NVIDIA_API_KEY").
- *                     Rendered with the fixed credentials.json location so
- *                     users can see where the key was stored.
- * - notes:            additional bullet lines shown under the summary,
- *                     such as a sandbox build-time estimate. Each note is
- *                     rendered as "Note: <text>" so it stays visually
- *                     distinct.
- */
-function formatSandboxBuildEstimateNote(host: ReturnType<typeof assessHost>): string | null {
-  if (host.isContainerRuntimeUnderProvisioned) {
-    return (
-      "Container runtime is under-provisioned; the sandbox build may take 30+ minutes " +
-      "or stall. See preflight warning above."
-    );
-  }
-  const cpus = host.dockerCpus;
-  const memBytes = host.dockerMemTotalBytes;
-  if (typeof cpus === "number" && typeof memBytes === "number") {
-    const memGiB = memBytes / 1024 ** 3;
-    if (cpus >= 8 && memGiB >= 16) {
-      return "Sandbox build typically takes 3–8 minutes on this host.";
-    }
-    return "Sandbox build typically takes 5–15 minutes on this host.";
-  }
-  return null;
-}
-
-function formatOnboardConfigSummary({
-  provider,
-  model,
-  credentialEnv = null,
-  hermesAuthMethod = null,
-  webSearchConfig = null,
-  enabledChannels = null,
-  sandboxName,
-  notes = [],
-}: OnboardConfigSummary): string {
-  const bar = `  ${"─".repeat(50)}`;
-  const messaging =
-    Array.isArray(enabledChannels) && enabledChannels.length > 0
-      ? enabledChannels.join(", ")
-      : "none";
-  const webSearch =
-    webSearchConfig && webSearchConfig.fetchEnabled === true ? "enabled" : "disabled";
-  const effectiveHermesAuthMethod =
-    normalizeHermesAuthMethod(hermesAuthMethod) ||
-    (provider === hermesProviderAuth.HERMES_PROVIDER_NAME &&
-    credentialEnv === HERMES_NOUS_API_KEY_CREDENTIAL_ENV
-      ? HERMES_AUTH_METHOD_API_KEY
-      : HERMES_AUTH_METHOD_OAUTH);
-  const apiKeyLine =
-    provider === hermesProviderAuth.HERMES_PROVIDER_NAME
-      ? effectiveHermesAuthMethod === HERMES_AUTH_METHOD_API_KEY
-        ? "  Nous API key: host-managed; sandbox receives inference placeholder only"
-        : "  Nous OAuth:    host-managed; sandbox receives inference placeholder only"
-      : credentialEnv
-        ? `  API key:       ${credentialEnv} (staged for OpenShell gateway registration)`
-        : `  API key:       (not required for ${provider ?? "this provider"})`;
-  const noteLines = (Array.isArray(notes) ? notes : [])
-    .filter((n) => typeof n === "string" && n.length > 0)
-    .map((n) => `  Note:          ${n}`);
-  return [
-    "",
-    bar,
-    "  Review configuration",
-    bar,
-    `  Provider:      ${provider ?? "(unset)"}`,
-    `  Model:         ${model ?? "(unset)"}`,
-    apiKeyLine,
-    `  Web search:    ${webSearch}`,
-    `  Messaging:     ${messaging}`,
-    `  Sandbox name:  ${sandboxName}`,
-    ...noteLines,
-    bar,
-  ].join("\n");
-}
-
 async function createSandbox(
   gpu: ReturnType<typeof nim.detectGpu>,
   model: string,
@@ -5944,7 +5718,6 @@ async function createSandbox(
   // Probes /health endpoint and accepts 200 or 401 (device auth) as "alive".
   // Previously used `curl -sf` which failed on 401, causing false negatives. Fixes #2342.
   console.log("  Waiting for NemoClaw dashboard to become ready...");
-  const openshellBin = getOpenshellBinary();
   for (let i = 0; i < 15; i++) {
     const readyOutput = runCaptureOpenshell(
       ["sandbox", "exec", "-n", sandboxName, "--", "curl", "-so", "/dev/null", "-w", "%{http_code}",
@@ -8295,133 +8068,6 @@ async function setupOpenclaw(sandboxName: string, model: string, provider: strin
 
 // ── Step 7: Policy presets ───────────────────────────────────────
 
-function waitForPolicyMutation(description: string, mutate: () => boolean | void): void {
-  let lastError: Error | null = null;
-  const success = waitUntil(() => {
-    try {
-      const result = mutate();
-      if (result === false) {
-        lastError = new Error(`${description} returned false`);
-        return false;
-      }
-      return true;
-    } catch (err) {
-      const error = err instanceof Error ? err : new Error(String(err));
-      lastError = error;
-      if (!error.message.includes("sandbox not found")) {
-        throw err;
-      }
-      return false;
-    }
-  }, 10, 2000);
-
-  if (!success) {
-    throw lastError || new Error(`${description} timed out`);
-  }
-}
-
-async function _setupPolicies(
-  sandboxName: string,
-  options: {
-    enabledChannels?: string[] | null;
-    webSearchConfig?: WebSearchConfig | null;
-    provider?: string | null;
-  } = {},
-) {
-  step(8, 8, "Policy presets");
-  const suggestions = getSuggestedPolicyPresets(options);
-
-  const allPresets = policies.listPresets();
-  const applied = policies.getAppliedPresets(sandboxName);
-
-  if (isNonInteractive()) {
-    const policyMode = (process.env.NEMOCLAW_POLICY_MODE || "suggested").trim().toLowerCase();
-    let selectedPresets: string[] = suggestions;
-
-    if (policyMode === "skip" || policyMode === "none" || policyMode === "no") {
-      note("  [non-interactive] Skipping policy presets.");
-      return;
-    }
-
-    if (policyMode === "custom" || policyMode === "list") {
-      selectedPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
-      if (selectedPresets.length === 0) {
-        console.error("  NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom.");
-        process.exit(1);
-      }
-    } else if (policyMode === "suggested" || policyMode === "default" || policyMode === "auto") {
-      const envPresets = parsePolicyPresetEnv(process.env.NEMOCLAW_POLICY_PRESETS || "");
-      if (envPresets.length > 0) {
-        selectedPresets = envPresets;
-      }
-    } else {
-      console.error(`  Unsupported NEMOCLAW_POLICY_MODE: ${policyMode}`);
-      console.error("  Valid values: suggested, custom, skip");
-      process.exit(1);
-    }
-
-    const knownPresets = new Set(allPresets.map((p) => p.name));
-    const invalidPresets = selectedPresets.filter((name) => !knownPresets.has(name));
-    if (invalidPresets.length > 0) {
-      console.error(`  Unknown policy preset(s): ${invalidPresets.join(", ")}`);
-      process.exit(1);
-    }
-
-    if (!waitForSandboxReady(sandboxName)) {
-      console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
-      process.exit(1);
-    }
-    note(`  [non-interactive] Applying policy presets: ${selectedPresets.join(", ")}`);
-    for (const name of selectedPresets) {
-      waitForPolicyMutation(`applyPreset(${name})`, () =>
-        policies.applyPreset(sandboxName, name),
-      );
-    }
-  } else {
-    console.log("");
-    console.log("  Available policy presets:");
-    allPresets.forEach((p) => {
-      const marker = applied.includes(p.name) || suggestions.includes(p.name) ? "●" : "○";
-      const suggested = suggestions.includes(p.name) ? " (suggested)" : "";
-      console.log(`    ${marker} ${p.name} — ${p.description}${suggested}`);
-    });
-    console.log("");
-
-    const answer = await prompt(
-      `  Apply suggested presets (${suggestions.join(", ")})? [Y/n/list]: `,
-    );
-
-    if (answer.toLowerCase() === "n") {
-      console.log("  Skipping policy presets.");
-      return;
-    }
-
-    if (!waitForSandboxReady(sandboxName)) {
-      console.error(`  Sandbox '${sandboxName}' was not ready for policy application.`);
-      process.exit(1);
-    }
-
-    if (answer.toLowerCase() === "list") {
-      // Let user pick
-      const picks = await prompt("  Enter preset names (comma-separated): ");
-      const selected = picks
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      for (const name of selected) {
-        policies.applyPreset(sandboxName, name);
-      }
-    } else {
-      // Apply suggested
-      for (const name of suggestions) {
-        policies.applyPreset(sandboxName, name);
-      }
-    }
-  }
-
-  console.log("  ✓ Policies applied");
-}
-
 function arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[] = []): boolean {
   if (!Array.isArray(selectedPresets) || selectedPresets.length === 0) return false;
   const applied = new Set(policies.getAppliedPresets(sandboxName));
@@ -8459,7 +8105,7 @@ async function selectPolicyTier(): Promise<string> {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     console.log("");
     console.log("  Policy tier — controls which network presets are enabled:");
-    allTiers.forEach((t, i) => {
+    allTiers.forEach((t) => {
       const marker = t.name === defaultTier.name ? RADIO_ON : RADIO_OFF;
       console.log(`    ${marker} ${t.label}`);
     });
@@ -9122,24 +8768,6 @@ const CONTROL_UI_PORT = DASHBOARD_PORT;
 // Dashboard helpers — delegated to src/lib/dashboard/contract.ts
 const { buildChain, buildControlUiUrls } = dashboardContract;
 
-// Parses `openshell forward list` output and returns the sandbox currently
-// owning `portToStop`, or null. Exported for unit testing — see #2169.
-// Columns: SANDBOX  BIND  PORT  PID  STATUS (whitespace-separated).
-function findDashboardForwardOwner(
-  forwardListOutput: string | null | undefined,
-  portToStop: string,
-): string | null {
-  if (!forwardListOutput) return null;
-  const portLine = forwardListOutput
-    .split("\n")
-    .map((l) => l.trim())
-    .find((l) => {
-      const parts = l.split(/\s+/);
-      return parts[2] === portToStop;
-    });
-  return portLine ? (portLine.split(/\s+/)[0] ?? null) : null;
-}
-
 function findForwardEntry(
   forwardListOutput: string | null | undefined,
   port: string,
@@ -9410,13 +9038,6 @@ function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
 
 // buildControlUiUrls — see dashboard-contract import above
 
-function buildDashboardChain(
-  chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
-  options: Parameters<typeof dashboardAccess.buildDashboardChain>[1] = {},
-) {
-  return dashboardAccess.buildDashboardChain(chatUiUrl, { ...options, runCapture: options.runCapture || runCapture });
-}
-
 function getDashboardForwardPort(
   chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`,
   options: Parameters<typeof dashboardAccess.getDashboardForwardPort>[1] = {},
@@ -9435,21 +9056,6 @@ function getDashboardForwardTarget(
     ...options,
     runCapture: options.runCapture || runCapture,
   });
-}
-
-function getDashboardForwardStartCommand(
-  sandboxName: string,
-  options: Parameters<typeof dashboardAccess.getDashboardForwardStartCommand>[1] = {},
-): string {
-  return dashboardAccess.getDashboardForwardStartCommand(sandboxName, {
-    ...options,
-    runCapture: options.runCapture || runCapture,
-    openshellShellCommand,
-  });
-}
-
-function buildAuthenticatedDashboardUrl(baseUrl: string, token: string | null = null): string {
-  return dashboardAccess.buildAuthenticatedDashboardUrl(baseUrl, token);
 }
 
 function dashboardUrlForDisplay(url: string): string {
@@ -10832,8 +10438,6 @@ module.exports = {
   readRecordedProvider,
   readRecordedModel,
   readRecordedNimContainer,
-  formatOnboardConfigSummary,
-  formatSandboxBuildEstimateNote,
   isInferenceRouteReady,
   shouldRunCompatibleEndpointSandboxSmoke,
   isNonInteractive,

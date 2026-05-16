@@ -47,6 +47,12 @@ describe("normalizeProviderBaseUrl", () => {
     expect(normalizeProviderBaseUrl("https://api.anthropic.com/v1/messages", "anthropic")).toBe(
       "https://api.anthropic.com",
     );
+    expect(normalizeProviderBaseUrl("https://proxy.example.com/v1", "anthropic")).toBe(
+      "https://proxy.example.com",
+    );
+    expect(normalizeProviderBaseUrl("https://proxy.example.com/v1/messages", "anthropic")).toBe(
+      "https://proxy.example.com",
+    );
   });
 
   it("strips trailing slashes", () => {

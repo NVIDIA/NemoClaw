@@ -55,19 +55,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         python3=3.13.5-1 \
         python3-pip=25.1.1+dfsg-1 \
         python3-venv=3.13.5-1 \
-        curl=8.14.1-2+deb13u2 \
+        curl=8.14.1-2+deb13u3 \
         git=1:2.47.3-0+deb13u1 \
         gnupg=2.4.7-21+deb13u1 \
         ca-certificates=20250419 \
         iproute2=6.15.0-1 \
         iptables=1.8.11-2 \
-        libcap2-bin=1:2.75-10+b8 \
+        libcap2-bin=1:2.75-10+deb13u1+b1 \
         procps=2:4.0.4-9 \
-        e2fsprogs=1.47.2-3+b10 \
+        e2fsprogs=1.47.2-3+b11 \
         "dos2unix=7.5.2-1*" \
-        jq=1.7.1-6+deb13u1 \
+        jq=1.7.1-6+deb13u2 \
         vim-tiny=2:9.1.1230-2 \
-        openssh-sftp-server=1:10.0p1-7+deb13u2 \
+        openssh-sftp-server=1:10.0p1-7+deb13u4 \
     && rm -rf /var/lib/apt/lists/*
 
 # gosu for privilege separation (gateway vs sandbox user).

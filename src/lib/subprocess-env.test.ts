@@ -4,6 +4,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withLocalNoProxy } from "../../dist/lib/subprocess-env";
 
+const LOCAL_NO_PROXY = "localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0";
+
 describe("withLocalNoProxy", () => {
   it("does nothing when no proxy vars are present", () => {
     const env: Record<string, string> = { PATH: "/usr/bin" };
@@ -14,22 +16,22 @@ describe("withLocalNoProxy", () => {
   it("adds local host-bound names to NO_PROXY and no_proxy when HTTP_PROXY is set and NO_PROXY is absent", () => {
     const env: Record<string, string> = { HTTP_PROXY: "http://proxy:8888" };
     withLocalNoProxy(env);
-    expect(env.NO_PROXY).toBe("localhost,127.0.0.1,host.docker.internal");
-    expect(env.no_proxy).toBe("localhost,127.0.0.1,host.docker.internal");
+    expect(env.NO_PROXY).toBe(LOCAL_NO_PROXY);
+    expect(env.no_proxy).toBe(LOCAL_NO_PROXY);
   });
 
   it("adds local host-bound names when HTTPS_PROXY is set", () => {
     const env: Record<string, string> = { HTTPS_PROXY: "http://proxy:8888" };
     withLocalNoProxy(env);
-    expect(env.NO_PROXY).toBe("localhost,127.0.0.1,host.docker.internal");
-    expect(env.no_proxy).toBe("localhost,127.0.0.1,host.docker.internal");
+    expect(env.NO_PROXY).toBe(LOCAL_NO_PROXY);
+    expect(env.no_proxy).toBe(LOCAL_NO_PROXY);
   });
 
   it("adds local host-bound names when lowercase http_proxy is set", () => {
     const env: Record<string, string> = { http_proxy: "http://proxy:8888" };
     withLocalNoProxy(env);
-    expect(env.NO_PROXY).toBe("localhost,127.0.0.1,host.docker.internal");
-    expect(env.no_proxy).toBe("localhost,127.0.0.1,host.docker.internal");
+    expect(env.NO_PROXY).toBe(LOCAL_NO_PROXY);
+    expect(env.no_proxy).toBe(LOCAL_NO_PROXY);
   });
 
   it("appends only the missing local entries when NO_PROXY already has localhost", () => {
@@ -39,19 +41,19 @@ describe("withLocalNoProxy", () => {
       no_proxy: "example.com,localhost",
     };
     withLocalNoProxy(env);
-    expect(env.NO_PROXY).toBe("example.com,localhost,127.0.0.1,host.docker.internal");
-    expect(env.no_proxy).toBe("example.com,localhost,127.0.0.1,host.docker.internal");
+    expect(env.NO_PROXY).toBe("example.com,localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0");
+    expect(env.no_proxy).toBe("example.com,localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0");
   });
 
   it("does not duplicate entries when all local hosts are already present", () => {
     const env: Record<string, string> = {
       HTTP_PROXY: "http://proxy:8888",
-      NO_PROXY: "localhost,127.0.0.1,host.docker.internal,corp.internal",
-      no_proxy: "localhost,127.0.0.1,host.docker.internal,corp.internal",
+      NO_PROXY: `${LOCAL_NO_PROXY},corp.internal`,
+      no_proxy: `${LOCAL_NO_PROXY},corp.internal`,
     };
     withLocalNoProxy(env);
-    expect(env.NO_PROXY).toBe("localhost,127.0.0.1,host.docker.internal,corp.internal");
-    expect(env.no_proxy).toBe("localhost,127.0.0.1,host.docker.internal,corp.internal");
+    expect(env.NO_PROXY).toBe(`${LOCAL_NO_PROXY},corp.internal`);
+    expect(env.no_proxy).toBe(`${LOCAL_NO_PROXY},corp.internal`);
   });
 
   it("preserves existing NO_PROXY entries and adds local hosts", () => {
@@ -61,8 +63,8 @@ describe("withLocalNoProxy", () => {
       no_proxy: "corp.internal,.nvidia.com",
     };
     withLocalNoProxy(env);
-    expect(env.NO_PROXY).toBe("corp.internal,.nvidia.com,localhost,127.0.0.1,host.docker.internal");
-    expect(env.no_proxy).toBe("corp.internal,.nvidia.com,localhost,127.0.0.1,host.docker.internal");
+    expect(env.NO_PROXY).toBe(`corp.internal,.nvidia.com,${LOCAL_NO_PROXY}`);
+    expect(env.no_proxy).toBe(`corp.internal,.nvidia.com,${LOCAL_NO_PROXY}`);
   });
 });
 
@@ -85,8 +87,8 @@ describe("buildSubprocessEnv NO_PROXY injection", () => {
 
     const { buildSubprocessEnv } = await import("../../dist/lib/subprocess-env");
     const env = buildSubprocessEnv();
-    expect(env.NO_PROXY).toBe("localhost,127.0.0.1,host.docker.internal");
-    expect(env.no_proxy).toBe("localhost,127.0.0.1,host.docker.internal");
+    expect(env.NO_PROXY).toBe(LOCAL_NO_PROXY);
+    expect(env.no_proxy).toBe(LOCAL_NO_PROXY);
   });
 
   it("augments an existing NO_PROXY to add local hosts", async () => {
@@ -96,8 +98,8 @@ describe("buildSubprocessEnv NO_PROXY injection", () => {
 
     const { buildSubprocessEnv } = await import("../../dist/lib/subprocess-env");
     const env = buildSubprocessEnv();
-    expect(env.NO_PROXY).toBe("corp.internal,localhost,127.0.0.1,host.docker.internal");
-    expect(env.no_proxy).toBe("corp.internal,localhost,127.0.0.1,host.docker.internal");
+    expect(env.NO_PROXY).toBe(`corp.internal,${LOCAL_NO_PROXY}`);
+    expect(env.no_proxy).toBe(`corp.internal,${LOCAL_NO_PROXY}`);
   });
 
   it("does not add NO_PROXY when no proxy is set", async () => {
@@ -122,6 +124,6 @@ describe("buildSubprocessEnv NO_PROXY injection", () => {
     const { buildSubprocessEnv } = await import("../../dist/lib/subprocess-env");
     const env = buildSubprocessEnv({ MY_TOKEN: "abc123" });
     expect(env.MY_TOKEN).toBe("abc123");
-    expect(env.NO_PROXY).toBe("localhost,127.0.0.1,host.docker.internal");
+    expect(env.NO_PROXY).toBe(LOCAL_NO_PROXY);
   });
 });

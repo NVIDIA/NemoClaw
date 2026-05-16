@@ -203,10 +203,6 @@ export function sessionPath(): string {
   return SESSION_FILE;
 }
 
-export function lockPath(): string {
-  return LOCK_FILE;
-}
-
 function defaultSteps(): Record<string, StepState> {
   return {
     preflight: { status: "pending", startedAt: null, completedAt: null, error: null },
@@ -327,10 +323,6 @@ export function sanitizeFailure(
   const message = redactSensitiveText(input.message);
   const recordedAt = readString(input.recordedAt) ?? new Date().toISOString();
   return step || message ? { step, message, recordedAt } : null;
-}
-
-export function validateStep(step: SessionJsonValue | undefined): boolean {
-  return parseStepState(step) !== null;
 }
 
 // ── Session CRUD ─────────────────────────────────────────────────

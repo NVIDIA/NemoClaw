@@ -12,7 +12,7 @@ import path from "path";
 import { dockerBuild, dockerImageInspect } from "../adapters/docker";
 import { getAgentBranding } from "../cli/branding";
 import { getProviderSelectionConfig } from "../inference/config";
-import type { JsonObject as LooseObject, JsonValue as LooseValue } from "../core/json-types";
+import type { JsonObject as LooseObject } from "../core/json-types";
 import * as onboardSession from "../state/onboard-session";
 import { ROOT, redact, run, shellQuote } from "../runner";
 import {
@@ -178,13 +178,6 @@ export function getAgentPolicyPath(agent: AgentDefinition): string | null {
 }
 
 /**
- * Get the agent-specific permissive policy path, or null to use the global fallback.
- */
-export function getAgentPermissivePolicyPath(agent: AgentDefinition): string | null {
-  return agent.policyPermissivePath || null;
-}
-
-/**
  * Sleep for the requested number of seconds using the shared wait helper.
  */
 function sleep(seconds: number): void {
@@ -335,7 +328,6 @@ export async function handleAgentSetup(
   const {
     step,
     runCaptureOpenshell,
-    openshellShellCommand,
     openshellBinary: openshellBin,
     buildSandboxConfigSyncScript,
     writeSandboxConfigSyncFile,

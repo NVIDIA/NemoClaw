@@ -50,7 +50,7 @@ RUN set -eu; \
             apt-get install -y --no-install-recommends procps=2:4.0.4-9; \
         fi; \
         if [ "$needs_chattr" = "1" ]; then \
-            apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b10; \
+            apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b11; \
         fi; \
     fi; \
     rm -rf /var/lib/apt/lists/*; \

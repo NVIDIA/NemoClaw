@@ -58,7 +58,7 @@ function onboardUsageLines(noticeAcceptFlag: string): string[] {
     "  --from <Dockerfile> uses the Dockerfile's parent directory as the Docker build context.",
     "  --gpu enables direct NVIDIA GPU access inside the sandbox; --no-gpu forces CPU sandbox behavior.",
     "  --sandbox-gpu enables direct NVIDIA GPU access inside the sandbox; --no-sandbox-gpu forces CPU sandbox behavior.",
-    "  --sandbox-gpu-device passes a specific OpenShell GPU device selector to sandbox create.",
+    "  --sandbox-gpu-device passes a specific OpenShell GPU device selector to sandbox create; requires --sandbox-gpu.",
     "  Put files referenced by COPY/ADD next to that Dockerfile, or move the Dockerfile into",
     "  a dedicated build directory to avoid sending unrelated files to Docker.",
     "  Common large directories are skipped: node_modules, .git, .venv, __pycache__.",

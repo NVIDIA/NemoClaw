@@ -6,7 +6,7 @@
 // tests tend to couple coverage to implementation strings instead of behavior.
 
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { basename, dirname, join, relative, sep } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
 
@@ -122,7 +122,7 @@ function isProductionPathExpression(
 
 function hasDirectProductionPathHint(text: string): boolean {
   return (
-    /Dockerfile(?:\.base)?\b/.test(text) ||
+    /["'`]\.\.\/Dockerfile(?:\.base)?["'`]/.test(text) ||
     /["'`]\.\.\/bin\//.test(text) ||
     /["'`]\.\.\/scripts\//.test(text) ||
     /["'`]\.\.\/src\//.test(text) ||
@@ -321,18 +321,14 @@ function matcherName(expression: ts.Expression): string {
   return expression.getText();
 }
 
-function assertionFromCall(
+function assertionFromSubject(
   sourceFile: ts.SourceFile,
   node: ts.CallExpression,
+  subjectExpr: ts.Expression,
+  matcher: string,
   sourceVars: ReadonlySet<string>,
   productionPathVars: ReadonlySet<string>,
 ): Assertion | null {
-  const expectBase = getExpectBase(node.expression);
-  if (!expectBase || expectBase.arguments.length === 0) {
-    return null;
-  }
-
-  const subjectExpr = expectBase.arguments[0];
   const subject = subjectExpr.getText(sourceFile);
   const referencesSource = [...sourceVars].some((name) => textContainsIdentifier(subject, name));
   const directSourceRead =
@@ -349,9 +345,88 @@ function assertionFromCall(
     line: line + 1,
     column: character + 1,
     subject,
-    matcher: matcherName(node.expression),
+    matcher,
     text: node.getText(sourceFile).replace(/\s+/g, " "),
   };
+}
+
+const ASSERT_MATCHERS = new Set([
+  "doesNotMatch",
+  "doesNotReject",
+  "doesNotThrow",
+  "equal",
+  "fail",
+  "ifError",
+  "match",
+  "notDeepEqual",
+  "notDeepStrictEqual",
+  "notEqual",
+  "notStrictEqual",
+  "ok",
+  "rejects",
+  "strictEqual",
+  "throws",
+]);
+
+function assertionFromAssertCall(
+  sourceFile: ts.SourceFile,
+  node: ts.CallExpression,
+  sourceVars: ReadonlySet<string>,
+  productionPathVars: ReadonlySet<string>,
+): Assertion | null {
+  const expression = node.expression;
+  if (!ts.isPropertyAccessExpression(expression)) {
+    return null;
+  }
+  if (!ts.isIdentifier(expression.expression) || expression.expression.text !== "assert") {
+    return null;
+  }
+  const method = expression.name.text;
+  if (!ASSERT_MATCHERS.has(method) || node.arguments.length === 0) {
+    return null;
+  }
+
+  return assertionFromSubject(
+    sourceFile,
+    node,
+    node.arguments[0],
+    `assert.${method}`,
+    sourceVars,
+    productionPathVars,
+  );
+}
+
+function assertionFromExpectCall(
+  sourceFile: ts.SourceFile,
+  node: ts.CallExpression,
+  sourceVars: ReadonlySet<string>,
+  productionPathVars: ReadonlySet<string>,
+): Assertion | null {
+  const expectBase = getExpectBase(node.expression);
+  if (!expectBase || expectBase.arguments.length === 0) {
+    return null;
+  }
+
+  return assertionFromSubject(
+    sourceFile,
+    node,
+    expectBase.arguments[0],
+    matcherName(node.expression),
+    sourceVars,
+    productionPathVars,
+  );
+}
+
+function assertionFromCall(
+  sourceFile: ts.SourceFile,
+  node: ts.CallExpression,
+  sourceVars: ReadonlySet<string>,
+  productionPathVars: ReadonlySet<string>,
+): Assertion | null {
+  return (
+    assertionFromExpectCall(sourceFile, node, sourceVars, productionPathVars) ||
+    assertionFromAssertCall(sourceFile, node, sourceVars, productionPathVars)
+  );
 }
 
 function isTestCallee(expression: ts.Expression): boolean {

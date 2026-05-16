@@ -31,7 +31,7 @@ describe("startDockerDriverGateway integration (#3111)", () => {
   const content = fs.readFileSync(path.join(ROOT, "src/lib/onboard.ts"), "utf-8");
   // Scope assertions to the startDockerDriverGateway function body so other
   // occurrences of the helpers (e.g. in stale-gateway reuse paths or in
-  // module.exports) don't satisfy the source-shape checks and mask a
+  // module.exports) don't satisfy the source-text checks and mask a
   // regression inside this function.
   const fnMatch = content.match(
     /async function startDockerDriverGateway\([\s\S]*?\n\}\n/,
