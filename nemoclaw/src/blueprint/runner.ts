@@ -474,6 +474,37 @@ export interface RunPlan {
   dry_run: boolean;
 }
 
+/** Fields safe to persist and log — excludes secrets and credential references. */
+interface SanitizedPlan {
+  run_id: string;
+  profile: string;
+  sandbox_name: string;
+  inference: {
+    provider_type: string | undefined;
+    provider_name: string | undefined;
+    endpoint: string | undefined;
+    model: string | undefined;
+  };
+  policy_additions: PolicyAdditions;
+  timestamp?: string;
+}
+
+function sanitizePlan(plan: RunPlan, timestamp?: string): SanitizedPlan {
+  return {
+    run_id: plan.run_id,
+    profile: plan.profile,
+    sandbox_name: plan.sandbox.name,
+    inference: {
+      provider_type: plan.inference.provider_type,
+      provider_name: plan.inference.provider_name,
+      endpoint: plan.inference.endpoint,
+      model: plan.inference.model,
+    },
+    policy_additions: plan.policy_additions,
+    ...(timestamp ? { timestamp } : {}),
+  };
+}
+
 export async function actionPlan(
   profile: string,
   blueprint: Blueprint,
@@ -523,7 +554,7 @@ export async function actionPlan(
   };
 
   progress(100, "Plan complete");
-  log(JSON.stringify(plan, null, 2));
+  log(JSON.stringify(sanitizePlan(plan), null, 2));
   return plan;
 }
 
@@ -658,27 +689,20 @@ export async function actionApply(
   }
 
   progress(85, "Saving run state");
-  writeFileSync(
-    join(stateDir, "plan.json"),
-    JSON.stringify(
-      {
-        run_id: rid,
-        profile,
-        sandbox_name: sandboxName,
-        policy_additions: policyAdditions,
-        inference: {
-          provider_type: inferenceCfg.provider_type,
-          provider_name: inferenceCfg.provider_name,
-          endpoint: inferenceCfg.endpoint,
-          model: inferenceCfg.model,
-          // Omit credential_env and credential_default — secrets must not be persisted
-        },
-        timestamp: new Date().toISOString(),
-      },
-      null,
-      2,
-    ),
-  );
+  const safeState: SanitizedPlan = {
+    run_id: rid,
+    profile,
+    sandbox_name: sandboxName,
+    inference: {
+      provider_type: inferenceCfg.provider_type,
+      provider_name: inferenceCfg.provider_name,
+      endpoint: inferenceCfg.endpoint,
+      model: inferenceCfg.model,
+    },
+    policy_additions: policyAdditions,
+    timestamp: new Date().toISOString(),
+  };
+  writeFileSync(join(stateDir, "plan.json"), JSON.stringify(safeState, null, 2));
 
   progress(100, "Apply complete");
   log(`Sandbox '${sandboxName}' is ready.`);
@@ -725,7 +749,14 @@ export function actionStatus(rid?: string): void {
   }
 
   try {
-    log(readFileSync(join(runDir, "plan.json"), "utf-8"));
+    const raw: Record<string, unknown> = JSON.parse(
+      readFileSync(join(runDir, "plan.json"), "utf-8"),
+    );
+    const safe: Record<string, unknown> = {};
+    for (const key of ["run_id", "profile", "sandbox_name", "inference", "policy_additions", "timestamp"]) {
+      if (key in raw) safe[key] = raw[key];
+    }
+    log(JSON.stringify(safe, null, 2));
   } catch {
     const name = runDir.split("/").pop() ?? "unknown";
     log(JSON.stringify({ run_id: name, status: "unknown" }));
