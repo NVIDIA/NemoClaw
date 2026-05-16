@@ -17,6 +17,17 @@ export type TelegramConfig = {
   requireMention?: boolean;
 };
 
+// Non-secret per-account metadata captured by the host-side iLink QR login
+// during onboard (src/lib/onboard/wechat-config.ts). The bot token itself
+// stays in the OpenShell credential store; only these fields are serialized
+// into the build arg, so the in-sandbox adapter can hydrate WEIXIN_ACCOUNT_ID
+// and WEIXIN_BASE_URL without a fresh QR scan on rebuild.
+export type WechatConfig = {
+  accountId?: string;
+  baseUrl?: string;
+  userId?: string;
+};
+
 export type HermesBuildSettings = {
   model: string;
   baseUrl: string;
@@ -27,6 +38,7 @@ export type HermesBuildSettings = {
     allowedIds: MessagingAllowedIds;
     discordGuilds: DiscordGuilds;
     telegramConfig: TelegramConfig;
+    wechatConfig: WechatConfig;
   };
 };
 
@@ -54,6 +66,7 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
         "NEMOCLAW_TELEGRAM_CONFIG_B64",
         "e30=",
       ),
+      wechatConfig: readBase64Json<WechatConfig>(env, "NEMOCLAW_WECHAT_CONFIG_B64", "e30="),
     },
   };
 }

@@ -134,9 +134,11 @@ RUN printf '%s\n' \
 
 # Install Hermes Agent from the selected GitHub release.
 # The image prebakes only the extras mapped to NemoClaw-supported onboarding
-# integrations: messaging (Telegram, Discord, Slack) and web (API health/UI
-# runtime). New Hermes integrations should be installed by the agent workflow
-# when they are enabled rather than shipped in the base image by default.
+# integrations: messaging (Telegram, Discord, Slack, WeChat — the WeChat
+# adapter shares the messaging extra's aiohttp + cryptography deps) and
+# web (API health/UI runtime). New Hermes integrations should be installed
+# by the agent workflow when they are enabled rather than shipped in the
+# base image by default.
 # Root Node dependencies provide Hermes browser tooling such as agent-browser.
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
 RUN mkdir -p /opt/hermes \

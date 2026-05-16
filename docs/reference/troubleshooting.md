@@ -1079,6 +1079,12 @@ If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu
 
 On Linux Docker-driver gateways, NemoClaw may create the sandbox first and then recreate the OpenShell-managed Docker container with NVIDIA GPU flags.
 If that compatibility patch fails, onboarding leaves the failed sandbox and diagnostic bundle in place so you can inspect the OpenShell and Docker state.
+
+:::{note}
+Starting with NemoClaw v0.0.43, the standard installer handles the `/proc/<pid>/task/<tid>/comm` permission case during this patch path.
+If an older release fails direct GPU proof with that path and `Permission denied`, upgrade NemoClaw and rerun onboarding.
+:::
+
 The output includes a cleanup command such as:
 
 ```console

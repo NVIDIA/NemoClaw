@@ -115,5 +115,13 @@ export async function runRegisteredOclifCommand(
 }
 
 export async function runOclifArgv(args: string[], opts: OclifCommandRunOptions): Promise<void> {
-  await executeOclif({ args, dir: opts.rootDir });
+  const config = await OclifConfig.load(opts.rootDir);
+  applyBrandedBin(config);
+  await executeOclif({
+    args,
+    loadOptions: {
+      root: opts.rootDir,
+      pjson: config.pjson,
+    },
+  });
 }

@@ -50,6 +50,5 @@ export const hostAliasAddArgs = {
 };
 
 export const hostAliasMutationFlags = {
-  help: Flags.help({ char: "h" }),
   "dry-run": Flags.boolean({ description: "Preview the JSON patch without applying it" }),
 };

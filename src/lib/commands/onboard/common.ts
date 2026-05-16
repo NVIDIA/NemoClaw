@@ -41,7 +41,6 @@ export type OnboardFlags = {
 
 export function buildOnboardFlags(): Record<string, any> {
   return {
-    help: Flags.help({ char: "h" }),
     "non-interactive": Flags.boolean({ description: "Run without interactive prompts" }),
     resume: Flags.boolean({
       description: "Resume an interrupted onboarding session",

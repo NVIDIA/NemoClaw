@@ -5,32 +5,32 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
+import { G, R, YW } from "../../cli/terminal-style";
+import { DASHBOARD_PORT } from "../../core/ports";
 import { prompt as askPrompt } from "../../credentials/store";
 import {
   type DestroySandboxOptions,
   normalizeDestroySandboxOptions,
 } from "../../domain/lifecycle/options";
-import * as onboardSession from "../../state/onboard-session";
-import type { Session } from "../../state/onboard-session";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
-import { DASHBOARD_PORT } from "../../core/ports";
-import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
-import * as registry from "../../state/registry";
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { parseLiveSandboxNames } from "../../runtime-recovery";
-import {
-  createSystemDeps as createSessionDeps,
-  getActiveSandboxSessions,
-} from "../../state/sandbox-session";
 import {
   getSandboxDeleteOutcome,
   shouldCleanupGatewayAfterDestroy,
   shouldStopHostServicesAfterDestroy,
 } from "../../domain/sandbox/destroy";
-import { resolveNemoclawStateDir } from "../../state/paths";
+import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
+import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
-import { G, R, YW } from "../../cli/terminal-style";
+import type { Session } from "../../state/onboard-session";
+import * as onboardSession from "../../state/onboard-session";
+import { resolveNemoclawStateDir } from "../../state/paths";
+import * as registry from "../../state/registry";
+import {
+  createSystemDeps as createSessionDeps,
+  getActiveSandboxSessions,
+} from "../../state/sandbox-session";
 
 type DockerRmi = (
   tag: string,
@@ -300,6 +300,7 @@ export function cleanupSandboxServices(
     "discord-bridge",
     "slack-bridge",
     "slack-app",
+    "wechat-bridge",
   ]) {
     runOpenshell(["provider", "delete", `${sandboxName}-${suffix}`], {
       ignoreError: true,

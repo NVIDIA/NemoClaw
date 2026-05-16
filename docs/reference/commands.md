@@ -1053,7 +1053,10 @@ It prints the versioned URL of the matching `uninstall.sh` so you can download, 
 
 Uninstall also stops any orphaned `openshell` host processes left behind by previous onboard or destroy cycles, including `openshell sandbox create`, `openshell ssh-proxy`, and SSH sessions spawned by OpenShell.
 Earlier releases only stopped `openshell forward` processes, so those orphans accumulated across runs.
+
 For Local Ollama setups, uninstall also stops matching Ollama auth proxy processes before deleting `~/.nemoclaw` state so stale proxy listeners do not block a later reinstall.
+
+On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-driver gateway PID files, SQLite data, audit logs, and VM-driver state.
 
 | Flag | Effect |
 |---|---|

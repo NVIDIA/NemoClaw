@@ -7,6 +7,7 @@ type SandboxEntry = { messagingChannels?: string[] | null } | null | undefined;
 export function getMessagingProviderNamesForChannel(sandboxName: string, channel: string): string[] {
   if (channel === "discord") return [`${sandboxName}-discord-bridge`];
   if (channel === "telegram") return [`${sandboxName}-telegram-bridge`];
+  if (channel === "wechat") return [`${sandboxName}-wechat-bridge`];
   if (channel === "slack") return [`${sandboxName}-slack-bridge`, `${sandboxName}-slack-app`];
   return [];
 }

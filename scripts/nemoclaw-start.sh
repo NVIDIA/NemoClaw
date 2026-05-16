@@ -205,7 +205,7 @@ else
       exit 1
       ;;
   esac
-  if [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; then
+  if ! [ "$_DASHBOARD_PORT" -ge 1024 ] || ! [ "$_DASHBOARD_PORT" -le 65535 ]; then
     echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
     exit 1
   fi
@@ -2179,8 +2179,42 @@ if [ "$(id -u)" -ne 0 ]; then
   trap cleanup_on_signal SIGTERM SIGINT
   print_dashboard_urls
 
-  wait "$GATEWAY_PID"
-  exit $?
+  # Auto-respawn gateway on unexpected death (NVIDIA/NemoClaw#2757). Without
+  # this loop, gateway death unblocks `wait` → PID 1 exits → Docker reaps the
+  # whole sandbox container, forcing users to run `nemoclaw connect` to recover.
+  # RESPAWN_TIMES is a true sliding 60s window of crash timestamps; entries
+  # older than the cutoff are pruned each iteration so bursts spanning a
+  # window boundary still trigger the >=5 alarm.
+  RESPAWN_TIMES=()
+  while :; do
+    # `wait` must be guarded with `|| RC=$?` because errexit (set -e on
+    # line 33) would otherwise exit PID 1 the instant the gateway returns
+    # non-zero, defeating the respawn loop entirely.
+    RC=0
+    wait "$GATEWAY_PID" || RC=$?
+    if [ "$RC" -eq 0 ]; then
+      exit 0
+    fi
+    NOW=$(date +%s)
+    RESPAWN_TIMES+=("$NOW")
+    _PRUNED=()
+    for _t in "${RESPAWN_TIMES[@]+"${RESPAWN_TIMES[@]}"}"; do
+      [ $((NOW - _t)) -le 60 ] && _PRUNED+=("$_t")
+    done
+    RESPAWN_TIMES=("${_PRUNED[@]+"${_PRUNED[@]}"}")
+    RESPAWN_COUNT=${#RESPAWN_TIMES[@]}
+    if [ "$RESPAWN_COUNT" -ge 5 ]; then
+      echo "[gateway] CRITICAL: $RESPAWN_COUNT respawns in 60s window — gateway likely unstable; check /tmp/gateway.log" >&2
+    fi
+    echo "[gateway] pid $GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in 60s window) in 2s" >&2
+    sleep 2
+    nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
+    GATEWAY_PID=$!
+    # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
+    SANDBOX_WAIT_PID="$GATEWAY_PID"
+    SANDBOX_CHILD_PIDS+=("$GATEWAY_PID")
+    echo "[gateway] respawned (pid $GATEWAY_PID)" >&2
+  done
 fi
 
 # ── Root path (full privilege separation via setpriv) ──────────
@@ -2373,4 +2407,39 @@ print_dashboard_urls
 
 # Keep container running by waiting on the gateway process.
 # This script is PID 1 (ENTRYPOINT); if it exits, Docker kills all children.
-wait "$GATEWAY_PID"
+# Auto-respawn gateway on unexpected death (NVIDIA/NemoClaw#2757). Without
+# this loop, gateway death unblocks `wait` → PID 1 exits → Docker reaps the
+# whole sandbox container, forcing users to run `nemoclaw connect` to recover.
+# RESPAWN_TIMES is a true sliding 60s window of crash timestamps; entries
+# older than the cutoff are pruned each iteration so bursts spanning a
+# window boundary still trigger the >=5 alarm.
+RESPAWN_TIMES=()
+while :; do
+  # `wait` must be guarded with `|| RC=$?` because errexit (set -e on
+  # line 33) would otherwise exit PID 1 the instant the gateway returns
+  # non-zero, defeating the respawn loop entirely.
+  RC=0
+  wait "$GATEWAY_PID" || RC=$?
+  if [ "$RC" -eq 0 ]; then
+    exit 0
+  fi
+  NOW=$(date +%s)
+  RESPAWN_TIMES+=("$NOW")
+  _PRUNED=()
+  for _t in "${RESPAWN_TIMES[@]+"${RESPAWN_TIMES[@]}"}"; do
+    [ $((NOW - _t)) -le 60 ] && _PRUNED+=("$_t")
+  done
+  RESPAWN_TIMES=("${_PRUNED[@]+"${_PRUNED[@]}"}")
+  RESPAWN_COUNT=${#RESPAWN_TIMES[@]}
+  if [ "$RESPAWN_COUNT" -ge 5 ]; then
+    echo "[gateway] CRITICAL: $RESPAWN_COUNT respawns in 60s window — gateway likely unstable; check /tmp/gateway.log" >&2
+  fi
+  echo "[gateway] pid $GATEWAY_PID exited (rc=$RC); respawning (#$RESPAWN_COUNT in 60s window) in 2s" >&2
+  sleep 2
+  nohup "${STEP_DOWN_PREFIX_GATEWAY[@]}" "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >>/tmp/gateway.log 2>&1 &
+  GATEWAY_PID=$!
+  # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
+  SANDBOX_WAIT_PID="$GATEWAY_PID"
+  SANDBOX_CHILD_PIDS+=("$GATEWAY_PID")
+  echo "[gateway] respawned (pid $GATEWAY_PID)" >&2
+done

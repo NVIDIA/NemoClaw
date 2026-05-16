@@ -20,6 +20,10 @@
     "reason": "Internal installer sentinel exported only during OpenShell gateway replacement so onboard restores the pre-upgrade sandbox backup. Not user-facing."
   },
   {
+    "name": "NEMOCLAW_WECHAT_QUIET",
+    "reason": "Internal diagnostic quiet flag for the unreleased WeChat channel path. WeChat docs are intentionally suppressed until the feature is ready for public documentation."
+  },
+  {
     "name": "NEMOCLAW_TEST_NO_SLEEP",
     "reason": "Test sentinel that bypasses real-time sleep() calls in onboard inference probes. Set to '1' only by Vitest tests; never user-set."
   }

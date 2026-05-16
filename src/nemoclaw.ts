@@ -1,6 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+// Compatibility front controller for NemoClaw's public CLI surface.
+//
+// oclif owns command discovery, parsing, help rendering, and command execution
+// under src/commands/**. This module intentionally stays in front of oclif only
+// for product compatibility: the public sandbox grammar is
+// `nemoclaw <sandbox-name> <action>` while the oclif-native command IDs are
+// `sandbox:<action>` and parse as `nemoclaw sandbox <action> <sandbox-name>`.
+// Keep new command behavior in src/lib/commands/** and src/lib/actions/**; keep
+// this file limited to argv normalization, compatibility routing, suggestions,
+// and registry-aware sandbox-name checks.
 const { execFileSync, spawn, spawnSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
@@ -148,6 +158,10 @@ function suggestGlobalCommand(token: string): string | null {
   return suggestCommand(token, GLOBAL_COMMANDS);
 }
 
+function hasHelpFlag(args: readonly string[]): boolean {
+  return args.includes("--help") || args.includes("-h");
+}
+
 function findRegisteredSandboxName(tokens: string[]): string | null {
   const registered = new Set(
     registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name),
@@ -261,10 +275,30 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
     return;
   }
 
+  // Derived from command registry — single source of truth.
+  const sandboxActions = sandboxActionTokens();
+
+  // Help is parser metadata, not sandbox runtime behavior. Render sandbox-scoped
+  // legacy help before registry recovery so `nemoclaw missing channels start --help`
+  // stays side-effect free and never starts or repairs services.
+  if (
+    !normalized.connectHelpRequested &&
+    sandboxActions.includes(requestedSandboxAction) &&
+    hasHelpFlag(requestedSandboxActionArgs)
+  ) {
+    validateName(cmd, "sandbox name");
+    await runDispatchResult(
+      resolveLegacySandboxDispatch(cmd, requestedSandboxAction, requestedSandboxActionArgs),
+      {
+        sandboxName: cmd,
+        actionArgs: requestedSandboxActionArgs,
+      },
+    );
+    return;
+  }
+
   // If the registry doesn't know this name but the action is a sandbox-scoped
   // command, attempt recovery — the sandbox may still be live with a stale registry.
-  // Derived from command registry — single source of truth
-  const sandboxActions = sandboxActionTokens();
   if (!registry.getSandbox(cmd) && sandboxActions.includes(requestedSandboxAction)) {
     validateName(cmd, "sandbox name");
     await recoverRegistryEntries({ requestedSandboxName: cmd });

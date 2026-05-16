@@ -15,14 +15,36 @@ import {
 } from "./channels";
 
 describe("sandbox-channels KNOWN_CHANNELS", () => {
-  it("covers telegram, discord, slack, and whatsapp", () => {
-    expect(knownChannelNames()).toEqual(["telegram", "discord", "slack", "whatsapp"]);
+  it("covers telegram, discord, wechat, slack, and whatsapp", () => {
+    expect(knownChannelNames()).toEqual(["telegram", "discord", "wechat", "slack", "whatsapp"]);
   });
 
   it("exposes the primary bot-token env var for token-based channels", () => {
     expect(getChannelDef("telegram")?.envKey).toBe("TELEGRAM_BOT_TOKEN");
     expect(getChannelDef("discord")?.envKey).toBe("DISCORD_BOT_TOKEN");
     expect(getChannelDef("slack")?.envKey).toBe("SLACK_BOT_TOKEN");
+    expect(getChannelDef("wechat")?.envKey).toBe("WECHAT_BOT_TOKEN");
+  });
+
+  it("classifies channels by login method", () => {
+    // Token-paste is the default and stays implicit (undefined). WeChat
+    // captures a static token via a host-side QR handshake
+    // (src/ext/wechat/login.ts). WhatsApp pairs entirely inside the sandbox
+    // because the bot library owns the live Signal-style session — a
+    // host-side capture would yield a stale blob the moment the bot mutates
+    // its on-disk state. Onboarding branches on this flag, so flipping any
+    // of these silently misroutes the channel.
+    expect(getChannelDef("wechat")?.loginMethod).toBe("host-qr");
+    expect(getChannelDef("whatsapp")?.loginMethod).toBe("in-sandbox-qr");
+    expect(getChannelDef("telegram")?.loginMethod).toBeUndefined();
+    expect(getChannelDef("discord")?.loginMethod).toBeUndefined();
+    expect(getChannelDef("slack")?.loginMethod).toBeUndefined();
+  });
+
+  it("declares wechat as DM-only with the WECHAT_ALLOWED_IDS env key", () => {
+    const wechat = getChannelDef("wechat");
+    expect(wechat?.allowIdsMode).toBe("dm");
+    expect(wechat?.userIdEnvKey).toBe("WECHAT_ALLOWED_IDS");
   });
 
   it("omits envKey for QR-paired channels (whatsapp)", () => {
@@ -105,7 +127,7 @@ describe("sandbox-channels token-shape helpers", () => {
 describe("sandbox-channels listChannels", () => {
   it("materialises an array with the name merged into each entry", () => {
     const list = listChannels();
-    expect(list.map((c) => c.name)).toEqual(["telegram", "discord", "slack", "whatsapp"]);
+    expect(list.map((c) => c.name)).toEqual(["telegram", "discord", "wechat", "slack", "whatsapp"]);
     const telegram = list.find((c) => c.name === "telegram");
     expect(telegram?.envKey).toBe("TELEGRAM_BOT_TOKEN");
     expect(telegram?.allowIdsMode).toBe("dm");

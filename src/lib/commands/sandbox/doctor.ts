@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Args, Command, Flags } from "@oclif/core";
+import { Args, Flags } from "@oclif/core";
+import { NemoClawCommand } from "../../cli/nemoclaw-oclif-command";
 
 import { runSandboxDoctor } from "../../actions/sandbox/doctor";
 
-export default class SandboxDoctorCliCommand extends Command {
+export default class SandboxDoctorCliCommand extends NemoClawCommand {
   static id = "sandbox:doctor";
   static strict = true;
   static summary = "Diagnose sandbox and gateway health";
@@ -20,7 +21,6 @@ export default class SandboxDoctorCliCommand extends Command {
     }),
   };
   static flags = {
-    help: Flags.help({ char: "h" }),
     json: Flags.boolean({ description: "Emit machine-readable JSON diagnostics" }),
   };
 

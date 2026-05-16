@@ -24,6 +24,12 @@ export interface ChannelDef {
   tokenFormatHint?: string;
   appTokenFormat?: RegExp;
   appTokenFormatHint?: string;
+  // "host-qr" channels capture a static token via a host-side QR handshake
+  // (e.g. wechat/iLink). "in-sandbox-qr" channels pair entirely inside the
+  // sandbox because the bot library owns the live session state and host-side
+  // capture would yield a stale blob (e.g. WhatsApp Web's Signal-style
+  // identity). Defaults to "token-paste" when omitted.
+  loginMethod?: "token-paste" | "host-qr" | "in-sandbox-qr";
 }
 
 export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
@@ -58,6 +64,19 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     userIdLabel: "Discord User ID (optional guild allowlist)",
     allowIdsMode: "guild",
   },
+  wechat: {
+    envKey: "WECHAT_BOT_TOKEN",
+    description: "WeChat (personal) bot messaging",
+    help:
+      "Captured automatically via a host-side QR scan during onboard — pair the bot by scanning the QR with WeChat on your phone (Discover → Scan). DM-only.",
+    label: "WeChat Bot Token",
+    userIdEnvKey: "WECHAT_ALLOWED_IDS",
+    userIdHelp:
+      "Optional: restrict who can DM the bot. The WeChat user id of the operator who scanned is added automatically; supply additional ids as a comma-separated list.",
+    userIdLabel: "WeChat User ID(s) (DM allowlist)",
+    allowIdsMode: "dm",
+    loginMethod: "host-qr",
+  },
   slack: {
     envKey: "SLACK_BOT_TOKEN",
     description: "Slack bot messaging",
@@ -80,6 +99,7 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     description: "WhatsApp Web messaging (QR pairing)",
     help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, run `openshell term <sandbox>` and then `openclaw channels login --channel whatsapp` to display the QR.",
     label: "WhatsApp",
+    loginMethod: "in-sandbox-qr",
   },
 };
 

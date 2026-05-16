@@ -47,6 +47,7 @@ export function getSuggestedPolicyPresets({
   maybeSuggestMessagingPreset("telegram", "TELEGRAM_BOT_TOKEN");
   maybeSuggestMessagingPreset("slack", "SLACK_BOT_TOKEN");
   maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
+  maybeSuggestMessagingPreset("wechat", "WECHAT_BOT_TOKEN");
   maybeSuggestMessagingPreset("whatsapp", null);
 
   if (webSearchConfig) suggestions.push("brave");

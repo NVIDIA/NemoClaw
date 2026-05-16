@@ -577,6 +577,177 @@ process.exit(0);
     }
   });
 
+  it("accepts whitelisted npm symlinks under extensions/ during pre-backup audit", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["agents", "extensions", "workspace"];
+      fs.mkdirSync(binDir, { recursive: true });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
+
+      const auditLines = [
+        "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal\t../qrcode-terminal/bin/qrcode-terminal.js",
+        "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
+      ].join("\n");
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("tar -cf -")) {
+  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  process.exit(r.status || 0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(true);
+      expect(backup.backedUpDirs).toEqual(existingDirs);
+      expect(backup.error).toBeUndefined();
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("still rejects non-whitelisted symlinks alongside whitelisted ones", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-mixed-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["extensions", "workspace"];
+      fs.mkdirSync(binDir, { recursive: true });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
+
+      const auditLines = [
+        "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/usr/local/lib/node_modules/openclaw",
+        "l\t/sandbox/.openclaw/workspace/leak\t/etc/passwd",
+      ].join("\n");
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(false);
+      expect(backup.error).toMatch(/workspace\/leak/);
+      expect(backup.error).not.toMatch(/openclaw-weixin/);
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects whitelisted-path symlinks with a tampered target", () => {
+    // Source path matches the whitelist, but linkTarget points to /etc/passwd
+    // instead of the expected /usr/local/lib/node_modules/openclaw. The audit
+    // must compare both fields and reject — source-only matching would let a
+    // compromised agent repoint these symlinks at arbitrary host paths.
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-target-tampered-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["extensions"];
+      fs.mkdirSync(binDir, { recursive: true });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
+
+      const auditLines = [
+        "l\t/sandbox/.openclaw/extensions/openclaw-weixin/node_modules/openclaw\t/etc/passwd",
+      ].join("\n");
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(false);
+      expect(backup.error).toMatch(/openclaw-weixin/);
+      expect(backup.error).toMatch(/\/etc\/passwd/);
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
   it("marks non-attributed directories failed when they are missing from partial extraction", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-missing-partial-"));
     const oldPath = process.env.PATH;

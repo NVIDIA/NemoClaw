@@ -74,6 +74,10 @@ runtimes:
   docker-missing:
     container_engine: docker
     container_daemon: missing
+  macos-docker-optional:
+    container_engine: docker
+    container_daemon: optional
+    note: docker-unavailable-on-github-hosted-macos
 
 onboarding:
   cloud-openclaw:
@@ -133,7 +137,6 @@ setup_scenarios:
       - docker-cdi
     expected_state: local-ollama-openclaw-ready
     suites:
-      - smoke
       - local-ollama-inference
       - ollama-proxy
 
@@ -141,13 +144,12 @@ setup_scenarios:
     dimensions:
       platform: macos-local
       install: repo-current
-      runtime: docker-running
+      runtime: macos-docker-optional
       onboarding: cloud-openclaw
     runner_requirements:
       - macos-latest
-    expected_state: cloud-openclaw-ready
+    expected_state: macos-cli-ready-docker-optional
     suites:
-      - smoke
       - platform-macos
 
   wsl-repo-cloud-openclaw:

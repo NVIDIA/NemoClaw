@@ -3,22 +3,18 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # =============================================================================
-# test-deployment-services.sh
-# NemoClaw Deployment & Services E2E Tests
+# test-tunnel-lifecycle.sh
+# NemoClaw Tunnel Lifecycle E2E Tests
 #
 # Covers:
-#   TC-STATE-02: backup-workspace.sh backup → destroy → recreate → restore
 #   TC-DEPLOY-01a: nemoclaw tunnel start (cloudflared tunnel)
 #   TC-DEPLOY-01b: tunnel URL serves the OpenClaw dashboard
 #   TC-DEPLOY-01c: nemoclaw tunnel stop removes URL from status
-#   TC-DEPLOY-03: nemoclaw uninstall --keep-openshell --yes
 #
 # Prerequisites:
 #   - Docker running
 #   - NVIDIA_API_KEY set
 #   - Network access to integrate.api.nvidia.com
-#
-# TC-DEPLOY-03 is DESTRUCTIVE — it uninstalls NemoClaw. Runs last.
 # =============================================================================
 
 set -euo pipefail
@@ -65,8 +61,10 @@ skip() {
 }
 
 # ── Config ───────────────────────────────────────────────────────────────────
-SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-deploy-svc}"
-LOG_FILE="test-deployment-services-$(date +%Y%m%d-%H%M%S).log"
+SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-tunnel-lifecycle}"
+LOG_FILE="test-tunnel-lifecycle-$(date +%Y%m%d-%H%M%S).log"
+# Local dashboard port mirrors nemoclaw/src/lib/ports.ts DASHBOARD_PORT default.
+LOCAL_DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
 
 # ── Resolve repo root ────────────────────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -116,25 +114,22 @@ preflight() {
   install_nemoclaw
 
   if ! command -v cloudflared >/dev/null 2>&1; then
-    log "Installing cloudflared..."
-    local arch
-    arch=$(uname -m)
-    case "$arch" in
-      x86_64) arch="amd64" ;;
-      aarch64 | arm64) arch="arm64" ;;
-      *)
-        log "WARNING: Unsupported arch $arch for cloudflared — skipping install"
-        return 0
-        ;;
-    esac
-    local cf_url="${CLOUDFLARED_DOWNLOAD_URL:-https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${arch}}"
-    if curl -fsSL "$cf_url" -o /tmp/cloudflared \
-      && chmod +x /tmp/cloudflared \
-      && sudo mv /tmp/cloudflared /usr/local/bin/cloudflared 2>/dev/null; then
-      log "cloudflared installed"
-    else
-      log "WARNING: Could not install cloudflared"
-    fi
+    # Install via Cloudflare's GPG-signed APT repo — trust anchor for secret-bearing
+    # CI; APT verifies GPG-signed Release → package SHA256 (no per-version SHA pin).
+    local cf_version="${CLOUDFLARED_VERSION:-2026.5.0}"
+    log "Installing cloudflared ${cf_version} via Cloudflare APT repo..."
+    sudo mkdir -p --mode=0755 /usr/share/keyrings
+    curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
+      | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
+    echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" \
+      | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null
+    sudo apt-get update -qq
+    sudo apt-get install -y "cloudflared=${cf_version}*" \
+      || {
+        log "ERROR: cloudflared ${cf_version} not available in Cloudflare APT repo"
+        exit 1
+      }
+    log "cloudflared ${cf_version} installed (GPG verified via Cloudflare APT repo)"
   fi
 
   log "nemoclaw: $(nemoclaw --version 2>/dev/null || echo unknown)"
@@ -142,31 +137,10 @@ preflight() {
   log "Pre-flight complete"
 }
 
-# Execute a command inside the sandbox via SSH.
-sandbox_exec() {
-  local cmd="$1"
-  local ssh_cfg
-  ssh_cfg="$(mktemp)"
-  if ! openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_cfg" 2>/dev/null; then
-    rm -f "$ssh_cfg"
-    echo ""
-    return 1
-  fi
-  local result ssh_exit=0
-  result=$(run_with_timeout 120 ssh -F "$ssh_cfg" \
-    -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=10 -o LogLevel=ERROR \
-    "openshell-${SANDBOX_NAME}" "$cmd" 2>&1) || ssh_exit=$?
-  rm -f "$ssh_cfg"
-  echo "$result"
-  return $ssh_exit
-}
-
 # ── Onboard helper ───────────────────────────────────────────────────────────
 onboard_sandbox() {
   local name="$1"
   log "  Onboarding sandbox '$name'..."
-  rm -f "$HOME/.nemoclaw/onboard.lock" 2>/dev/null || true
   NEMOCLAW_SANDBOX_NAME="$name" \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
@@ -179,125 +153,82 @@ onboard_sandbox() {
   log "  Sandbox '$name' onboarded"
 }
 
-# =============================================================================
-# TC-STATE-02: backup-workspace.sh lifecycle
-# =============================================================================
-test_state_02_backup_restore() {
-  log "=== TC-STATE-02: Backup-Workspace Lifecycle ==="
+# Resolve /tmp/nemoclaw-services-<SANDBOX>/cloudflared.log; fall back to the
+# most recently modified one if SANDBOX_NAME wasn't propagated to NemoClaw.
+get_cloudflared_log_path() {
+  local log="/tmp/nemoclaw-services-${SANDBOX_NAME}/cloudflared.log"
+  if [[ -f "$log" ]]; then
+    printf '%s\n' "$log"
+    return 0
+  fi
+  # shellcheck disable=SC2012
+  log="$(ls -t /tmp/nemoclaw-services-*/cloudflared.log 2>/dev/null | head -1 || true)"
+  if [[ -n "$log" && -f "$log" ]]; then
+    printf '%s\n' "$log"
+  fi
+  return 0
+}
 
-  local workspace_path="/sandbox/.openclaw/workspace"
-  local marker_content
-  marker_content="E2E_BACKUP_TEST_$(date +%s)"
+# Classify failure cause from cloudflared.log. Echoes one of:
+#   nemoclaw_no_spawn / nemoclaw_capture_bug / nemoclaw_local / cloudflare / unknown
+classify_cloudflared_log() {
+  local cf_log
+  cf_log=$(get_cloudflared_log_path)
+  if [[ -z "$cf_log" ]]; then
+    echo "nemoclaw_no_spawn"
+    return
+  fi
+  if grep -qE 'https://[a-z0-9-]+\.trycloudflare\.com' "$cf_log" 2>/dev/null; then
+    echo "nemoclaw_capture_bug"
+    return
+  fi
+  if grep -qiE 'unable to reach the origin|connection refused.*127\.0\.0\.1|connection refused.*localhost|dial tcp.*127\.0\.0\.1.*refused' "$cf_log" 2>/dev/null; then
+    echo "nemoclaw_local"
+    return
+  fi
+  if grep -qiE 'failed to (dial|register)|quick tunnels (are )?(temporarily )?disabled|tunnel server.*error|i/o timeout|EOF.*tunnel|couldn.?t start tunnel|tunnel creation failed' "$cf_log" 2>/dev/null; then
+    echo "cloudflare"
+    return
+  fi
+  echo "unknown"
+}
 
-  log "  Step 1: Writing marker content into workspace files..."
-  local files_written=0
-  for f in SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md; do
-    if sandbox_exec "mkdir -p $workspace_path && echo '${marker_content}_${f}' > ${workspace_path}/${f}" 2>/dev/null; then
-      files_written=$((files_written + 1))
+# Print the tail of cloudflared.log to the test log for human triage.
+show_cloudflared_log() {
+  local cf_log tail_lines=40
+  cf_log=$(get_cloudflared_log_path)
+  if [[ -z "$cf_log" ]]; then
+    log "  (no cloudflared.log found under /tmp/nemoclaw-services-*/)"
+    return
+  fi
+  log "  --- cloudflared.log ($cf_log, last ${tail_lines} lines) ---"
+  tail -n "$tail_lines" "$cf_log" 2>/dev/null | sed 's/^/    /' | tee -a "$LOG_FILE" || true
+  log "  --- end cloudflared.log ---"
+}
+
+# Probe local dashboard: any HTTP response (incl. 401/403) = up; "000" = down.
+# Mirrors src/lib/verify-deployment.ts:128.
+probe_local_dashboard() {
+  local code
+  code="$(curl -sS -o /dev/null -w '%{http_code}' \
+    --max-time 5 "http://localhost:${LOCAL_DASHBOARD_PORT}/" 2>/dev/null || true)"
+  [[ -z "$code" ]] && code="000"
+  [[ "$code" != "000" ]]
+}
+
+# Wait up to N seconds for local dashboard to become reachable.
+# Returns 0 if reachable within timeout, 1 if not.
+wait_local_dashboard_ready() {
+  local max_tries="${1:-30}"
+  for i in $(seq 1 "$max_tries"); do
+    if probe_local_dashboard; then
+      log "  ✓ Local dashboard reachable on localhost:${LOCAL_DASHBOARD_PORT} after ${i}s"
+      return 0
     fi
+    [[ $((i % 5)) -eq 0 ]] && log "  ... still waiting for localhost:${LOCAL_DASHBOARD_PORT} (${i}/${max_tries}s)"
+    sleep 1
   done
-  sandbox_exec "mkdir -p ${workspace_path}/memory && echo '${marker_content}_daily' > ${workspace_path}/memory/2026-04-20.md" 2>/dev/null || true
-
-  if [[ $files_written -eq 0 ]]; then
-    fail "TC-STATE-02: Setup" "Could not write any workspace files"
-    return
-  fi
-  log "  Wrote $files_written workspace files + memory note"
-
-  log "  Step 2: Running backup-workspace.sh backup..."
-  local backup_output
-  backup_output=$(bash "$REPO_ROOT/scripts/backup-workspace.sh" backup "$SANDBOX_NAME" 2>&1) || true
-  log "  Backup output: ${backup_output:0:300}"
-
-  if echo "$backup_output" | grep -q "Backup saved"; then
-    pass "TC-STATE-02: Backup completed successfully"
-  else
-    fail "TC-STATE-02: Backup" "backup-workspace.sh did not report success"
-    return
-  fi
-
-  local backup_dir
-  backup_dir=$(find "$HOME/.nemoclaw/backups" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r | head -1)
-  if [[ -z "$backup_dir" || ! -d "$backup_dir" ]]; then
-    fail "TC-STATE-02: Backup dir" "No backup directory found"
-    return
-  fi
-  log "  Backup dir: $backup_dir"
-
-  log "  Step 3: Destroying sandbox..."
-  local destroy_ok=0
-  for destroy_attempt in 1 2 3; do
-    nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tee -a "$LOG_FILE" || true
-    local list_output list_rc=0
-    list_output=$(nemoclaw list 2>&1) || list_rc=$?
-    if [[ $list_rc -eq 0 ]]; then
-      if ! printf '%s\n' "$list_output" | grep -Fq -- "$SANDBOX_NAME"; then
-        destroy_ok=1
-        break
-      fi
-    else
-      log "  Destroy attempt $destroy_attempt: unable to read sandbox list (exit $list_rc), retrying..."
-    fi
-    if [[ $destroy_attempt -lt 3 ]]; then
-      log "  Destroy attempt $destroy_attempt failed (sandbox still listed), retrying in 10s..."
-      sleep 10
-    fi
-  done
-
-  if [[ $destroy_ok -eq 0 ]]; then
-    fail "TC-STATE-02: Destroy" "Sandbox still exists after 3 destroy attempts"
-    return
-  fi
-  pass "TC-STATE-02: Sandbox destroyed"
-
-  log "  Step 4: Re-onboarding sandbox..."
-  if ! onboard_sandbox "$SANDBOX_NAME"; then
-    fail "TC-STATE-02: Re-onboard" "Could not recreate sandbox"
-    return
-  fi
-  pass "TC-STATE-02: Sandbox re-onboarded"
-
-  log "  Step 5: Running backup-workspace.sh restore..."
-  local restore_output
-  restore_output=$(bash "$REPO_ROOT/scripts/backup-workspace.sh" restore "$SANDBOX_NAME" 2>&1) || true
-  log "  Restore output: ${restore_output:0:300}"
-
-  if echo "$restore_output" | grep -q "Restored"; then
-    pass "TC-STATE-02: Restore completed successfully"
-  else
-    fail "TC-STATE-02: Restore" "backup-workspace.sh restore did not report success"
-    return
-  fi
-
-  log "  Step 6: Verifying workspace files restored..."
-  local verified=0
-  for f in SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md; do
-    local content
-    content=$(sandbox_exec "cat ${workspace_path}/${f} 2>/dev/null") || true
-    if echo "$content" | grep -q "${marker_content}_${f}"; then
-      verified=$((verified + 1))
-    else
-      log "  WARNING: ${f} content mismatch: ${content:0:100}"
-    fi
-  done
-
-  if [[ $verified -eq 5 ]]; then
-    pass "TC-STATE-02: ${verified}/5 workspace files verified with correct content"
-  elif [[ $verified -ge 4 ]]; then
-    log "  WARNING: Only ${verified}/5 files verified — check logs above for mismatched file"
-    pass "TC-STATE-02: ${verified}/5 workspace files verified (partial tolerance applied)"
-  else
-    fail "TC-STATE-02: Verify" "Only ${verified}/5 workspace files matched expected content"
-  fi
-
-  local memory_content
-  memory_content=$(sandbox_exec "cat ${workspace_path}/memory/2026-04-20.md 2>/dev/null") || true
-  if echo "$memory_content" | grep -q "${marker_content}_daily"; then
-    pass "TC-STATE-02: Memory note restored correctly"
-  else
-    log "  Memory note content: ${memory_content:0:100}"
-    skip "TC-STATE-02: Memory note" "Memory directory restore may not be supported"
-  fi
+  return 1
 }
 
 # =============================================================================
@@ -305,28 +236,43 @@ test_state_02_backup_restore() {
 # TC-DEPLOY-01b: tunnel URL serves the OpenClaw dashboard
 # TC-DEPLOY-01c: nemoclaw tunnel stop removes tunnel URL from status
 # =============================================================================
-test_deploy_01_start_stop() {
+test_tunnel_lifecycle() {
   log "=== TC-DEPLOY-01a/b/c: Start / Probe / Stop ==="
 
+  # Fail closed: skip would let a broken install path silently pass.
   if ! command -v cloudflared >/dev/null 2>&1; then
-    skip "TC-DEPLOY-01a / TC-DEPLOY-01b / TC-DEPLOY-01c" "cloudflared not installed"
+    fail "TC-DEPLOY-01a / TC-DEPLOY-01b / TC-DEPLOY-01c" \
+      "cloudflared not available — required for tunnel validation. Preflight install should have run; check earlier log."
     return
   fi
 
-  # Cascade guard: skip if a prior TC (e.g. TC-STATE-02) left the sandbox missing.
+  # Cascade guard: skip if a prior step left the sandbox missing.
   if ! nemoclaw list 2>/dev/null | grep -Fq -- "$SANDBOX_NAME"; then
     skip "TC-DEPLOY-01a / TC-DEPLOY-01b / TC-DEPLOY-01c" \
       "Sandbox '$SANDBOX_NAME' not present"
     return
   fi
 
+  # ── Local dashboard pre-check (BEFORE tunnel start) ───────────────────────
+  # Catch local-not-ready before tunnel start to avoid 502s blamed on Cloudflare.
+  log "  Pre-check: Waiting for local dashboard at localhost:${LOCAL_DASHBOARD_PORT}..."
+  if ! wait_local_dashboard_ready 30; then
+    fail "TC-DEPLOY-01a: LocalReadiness" \
+      "[NemoClaw fault] Local OpenClaw dashboard not reachable on localhost:${LOCAL_DASHBOARD_PORT} after 30s. Tunnel cannot proxy a dead origin — this is NOT a Cloudflare issue."
+    return
+  fi
+  pass "TC-DEPLOY-01a: Local dashboard reachable (pre-check passed)"
+
   # ── TC-DEPLOY-01a: Start tunnel + verify URL surfaces ───────────────────────────────────
   log "  Step 1: Running nemoclaw tunnel start..."
   local start_output start_rc=0
   start_output=$(nemoclaw tunnel start 2>&1) || start_rc=$?
-  log "  Start output: ${start_output}"
+  log "  Start output:"
+  log "  ---"
+  log "$start_output"
+  log "  ---"
   if [[ $start_rc -ne 0 ]]; then
-    fail "TC-DEPLOY-01a: Start" "nemoclaw tunnel start failed (exit $start_rc)"
+    fail "TC-DEPLOY-01a: Start" "[NemoClaw fault] 'nemoclaw tunnel start' exited with code $start_rc — start command itself failed."
     return
   fi
 
@@ -338,39 +284,86 @@ test_deploy_01_start_stop() {
     [[ -n "$tunnel_url" ]] && break
     sleep 1
   done
-  log "  Status output:     ${status_output//$'\n'/$'\n'    }"
 
   if [[ -n "$tunnel_url" ]]; then
     pass "TC-DEPLOY-01a: Tunnel URL found in status ($tunnel_url)"
   else
-    fail "TC-DEPLOY-01a: Start" "Start executed but tunnel URL did not surface in status"
+    # Classify failure cause from cloudflared.log to attribute fault accurately.
+    # Print log tail first so the diagnostic is visible above the fail line in CI logs.
+    show_cloudflared_log
+    local cf_class
+    cf_class=$(classify_cloudflared_log)
+    case "$cf_class" in
+      nemoclaw_no_spawn)
+        fail "TC-DEPLOY-01a: NoSpawn" \
+          "[NemoClaw fault] cloudflared.log missing — NemoClaw failed to spawn the cloudflared process. Check tunnel start impl."
+        ;;
+      nemoclaw_capture_bug)
+        fail "TC-DEPLOY-01a: CaptureBug" \
+          "[NemoClaw fault] cloudflared.log HAS trycloudflare URL but 'nemoclaw status' did not surface it. Status capture bug in NemoClaw."
+        ;;
+      nemoclaw_local)
+        fail "TC-DEPLOY-01a: LocalOrigin" \
+          "[NemoClaw fault] cloudflared log reports it cannot reach localhost:${LOCAL_DASHBOARD_PORT} (origin not serving). Pre-check should have caught this — review pre-check timeout."
+        ;;
+      cloudflare)
+        fail "TC-DEPLOY-01a: CloudflareRegister" \
+          "[Cloudflare fault] cloudflared failed to register with Cloudflare."
+        ;;
+      *)
+        fail "TC-DEPLOY-01a: Start" \
+          "[Unclassified] Tunnel URL did not surface and cloudflared.log did not match any known pattern. See log tail above."
+        ;;
+    esac
+    # Stop the tunnel even no tunnel URL was found
+    log "  Stopping tunnel..."
     nemoclaw tunnel stop 2>/dev/null || true
+    log "  Tunnel stopped"
     return
   fi
 
   # ── TC-DEPLOY-01b: Tunnel serves the OpenClaw dashboard ────────────────────────
   if [[ -n "$tunnel_url" ]]; then
-    log "  Step 3: Probing tunnel URL (HTTP + content)..."
-    local http_code="000" body_file
+    log "  Step 3: Probing tunnel URL (exponential backoff + local re-verify)..."
+    local http_code="000" body_file backoff=2 max_retries=15
     body_file=$(mktemp)
-    for i in $(seq 1 10); do
+    for i in $(seq 1 "$max_retries"); do
+      # curl -w '%{http_code}' always writes the 3-char status (writes "000" on
+      # connection failure), so do NOT chain `|| echo "000"` — that would append
+      # a second "000" to whatever curl already wrote, producing "000000".
       http_code=$(curl -sS -o "$body_file" -w '%{http_code}' \
-        --max-time 30 "$tunnel_url" 2>/dev/null || echo "000")
+        --max-time 30 "$tunnel_url" 2>/dev/null) || true
+      [[ -z "$http_code" ]] && http_code="000"
       if [[ "$http_code" == "200" ]]; then
         break
       fi
-      log "  [$i] Tunnel URL returned '$http_code', retrying in 5s..."
-      sleep 5
+
+      # Re-verify local BEFORE attributing the failure to Cloudflare — fact-find
+      # first so the log message reflects truth at this moment (avoid lying logs).
+      if ! probe_local_dashboard; then
+        fail "TC-DEPLOY-01b: LocalRegression" \
+          "[NemoClaw fault] Tunnel returned $http_code AND local dashboard regressed during retry loop (was healthy at pre-check). Likely sandbox/dashboard crash — NOT a Cloudflare issue."
+        rm -f "$body_file"
+        return
+      fi
+
+      log "  [$i/$max_retries] Tunnel not yet reachable ('$http_code'); LOCAL is healthy → Cloudflare quick-tunnel not ready (DNS propagation or edge instability); backoff ${backoff}s..."
+      sleep "$backoff"
+      backoff=$((backoff * 2))
+      ((backoff > 30)) && backoff=30
     done
 
     if [[ "$http_code" == "200" ]]; then
       if grep -qE '<title>OpenClaw Control</title>|<openclaw-app' "$body_file"; then
         pass "TC-DEPLOY-01b: Tunnel serves OpenClaw dashboard (HTTP 200, marker matched)"
       else
-        fail "TC-DEPLOY-01b" "HTTP 200 but body lacks dashboard markers (first 200B: $(head -c 200 "$body_file" | tr -d '\n'))"
+        fail "TC-DEPLOY-01b" "[NemoClaw fault] HTTP 200 but body lacks OpenClaw dashboard markers — dashboard may be serving wrong content on port (first 200B: $(head -c 200 "$body_file" | tr -d '\n'))"
       fi
     else
-      fail "TC-DEPLOY-01b" "Tunnel URL returned unexpected status: $http_code"
+      # If we get here, every retry re-checked local and found it healthy
+      # → attribute the failure to Cloudflare quick-tunnel (third-party).
+      fail "TC-DEPLOY-01b: CloudflareEdge" \
+        "[Cloudflare fault] Tunnel URL never became reachable after $max_retries retries (last status '$http_code') while local stayed healthy throughout — Cloudflare quick-tunnel did not become reachable in time (slow DNS propagation or edge instability)."
     fi
     rm -f "$body_file"
   else
@@ -380,7 +373,8 @@ test_deploy_01_start_stop() {
   log "  Step 4: Running nemoclaw tunnel stop..."
   local stop_output stop_rc=0
   stop_output=$(nemoclaw tunnel stop 2>&1) || stop_rc=$?
-  log "  Tunnel stop output:     ${stop_output//$'\n'/$'\n'    }"
+  log "  Tunnel stop output:"
+  printf '%s\n' "$stop_output" | sed 's/^/    /' | tee -a "$LOG_FILE" || true
   if [[ $stop_rc -ne 0 ]]; then
     fail "TC-DEPLOY-01c: Stop command" "nemoclaw tunnel stop failed (exit $stop_rc)"
     return
@@ -415,53 +409,6 @@ test_deploy_01_start_stop() {
   fi
 }
 
-# =============================================================================
-# TC-DEPLOY-03: uninstall --keep-openshell (DESTRUCTIVE — runs last)
-# =============================================================================
-test_deploy_03_uninstall_keep_openshell() {
-  log "=== TC-DEPLOY-03: Uninstall --keep-openshell ==="
-
-  if ! command -v openshell >/dev/null 2>&1; then
-    skip "TC-DEPLOY-03" "openshell not installed"
-    return
-  fi
-
-  local openshell_path
-  openshell_path=$(command -v openshell)
-  log "  openshell before uninstall: $openshell_path"
-
-  log "  Step 1: Destroying sandbox before uninstall..."
-  nemoclaw "$SANDBOX_NAME" destroy --yes 2>&1 | tee -a "$LOG_FILE" || true
-
-  log "  Step 2: Running uninstall --keep-openshell --yes..."
-  local uninstall_output
-  if [[ -f "$REPO_ROOT/uninstall.sh" ]]; then
-    uninstall_output=$(bash "$REPO_ROOT/uninstall.sh" --keep-openshell --yes 2>&1) || true
-  else
-    uninstall_output=$(nemoclaw uninstall --keep-openshell --yes 2>&1) || true
-  fi
-  hash -r 2>/dev/null || true
-  log "  Uninstall output: ${uninstall_output:0:400}"
-
-  log "  Step 3: Verifying openshell still present..."
-  if command -v openshell >/dev/null 2>&1; then
-    pass "TC-DEPLOY-03: openshell binary still in PATH after uninstall"
-  else
-    fail "TC-DEPLOY-03: openshell" "openshell not found after uninstall --keep-openshell"
-  fi
-
-  log "  Step 4: Verifying nemoclaw removed..."
-  local nemoclaw_path
-  nemoclaw_path=$(command -v nemoclaw 2>/dev/null || true)
-  if [[ -z "$nemoclaw_path" || ! -e "$nemoclaw_path" ]]; then
-    pass "TC-DEPLOY-03: nemoclaw removed after uninstall"
-  elif [[ "$nemoclaw_path" == "$REPO_ROOT"* ]]; then
-    pass "TC-DEPLOY-03: uninstall completed (nemoclaw in source tree is expected)"
-  else
-    fail "TC-DEPLOY-03: nemoclaw" "nemoclaw still found at $nemoclaw_path"
-  fi
-}
-
 # Clean up sandbox and services on exit.
 teardown() {
   # Do not unlink ~/.nemoclaw/onboard.lock: see rationale in
@@ -477,7 +424,7 @@ teardown() {
 summary() {
   echo ""
   echo "============================================================"
-  echo "  Deployment & Services E2E Results"
+  echo "  Tunnel Lifecycle E2E Results"
   echo "============================================================"
   echo -e "  ${GREEN}PASS: $PASS${NC}"
   echo -e "  ${RED}FAIL: $FAIL${NC}"
@@ -498,7 +445,7 @@ summary() {
 main() {
   echo ""
   echo "============================================================"
-  echo "  NemoClaw Deployment & Services E2E Tests"
+  echo "  NemoClaw Tunnel Lifecycle E2E Tests"
   echo "  $(date)"
   echo "============================================================"
   echo ""
@@ -511,15 +458,7 @@ main() {
     exit 1
   fi
 
-  test_state_02_backup_restore
-  test_deploy_01_start_stop
-
-  # TC-DEPLOY-03 is destructive — always runs last
-  if [[ "${SKIP_UNINSTALL:-}" == "1" ]]; then
-    skip "TC-DEPLOY-03" "SKIP_UNINSTALL=1 set"
-  else
-    test_deploy_03_uninstall_keep_openshell
-  fi
+  test_tunnel_lifecycle
 
   teardown
   trap - EXIT

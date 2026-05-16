@@ -42,6 +42,7 @@ export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "DISCORD_BOT_TOKEN",
   "SLACK_BOT_TOKEN",
   "SLACK_APP_TOKEN",
+  "WECHAT_BOT_TOKEN",
 ];
 
 // Hard upper bound on the legacy credentials.json size we are willing to

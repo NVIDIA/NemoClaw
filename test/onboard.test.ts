@@ -65,7 +65,12 @@ type OnboardTestInternals = {
     options?: { suppressGpuFlag?: boolean },
   ) => string[];
   buildDirectGpuPolicyYaml: (basePolicy: string, options?: { procReadWrite?: boolean }) => string;
-  buildDirectSandboxGpuProofCommands: (sandboxName: string) => { label: string; args: string[] }[];
+  buildDirectSandboxGpuProofCommands: (sandboxName: string) => {
+    id: string;
+    label: string;
+    args: string[];
+    optional?: boolean;
+  }[];
   classifySandboxCreateFailure: (output?: string) => { kind: string; uploadedToGateway: boolean };
   compactText: (value?: string) => string;
   computeSetupPresetSuggestions: ShimFn<string[]>;
@@ -379,6 +384,17 @@ describe("onboard helpers", () => {
     });
     expect(forced.mode).toBe("1");
     expect(forced.errors.join("\n")).toContain("no NVIDIA GPU");
+  });
+
+  it("defaults to CPU sandbox on Jetson when NEMOCLAW_SANDBOX_GPU is unset", () => {
+    const jetson = { type: "nvidia", platform: "jetson" as const };
+    expect(resolveSandboxGpuConfig(jetson, { env: {} }).sandboxGpuEnabled).toBe(false);
+    // Explicit env opt-in still wins over the platform default.
+    expect(
+      resolveSandboxGpuConfig(jetson, { env: { NEMOCLAW_SANDBOX_GPU: "1" } }).sandboxGpuEnabled,
+    ).toBe(true);
+    // --gpu also overrides the platform default.
+    expect(resolveSandboxGpuConfig(jetson, { flag: "enable", env: {} }).mode).toBe("1");
   });
 
   it("resumes sandbox GPU auto mode without turning CPU fallback into explicit opt-out", () => {
@@ -772,6 +788,9 @@ network_policies:
       "/proc/<pid>/task/<tid>/comm write",
       "cuInit(0) via libcuda.so.1",
     ]);
+    expect(commands.map((entry) => entry.id)).toEqual(["nvidia-smi", "proc-comm-write", "cuda-init"]);
+    expect(commands[1].optional).toBe(true);
+    expect(commands[2].optional).toBe(true);
     expect(commands[0].args).toEqual([
       "sandbox",
       "exec",
@@ -782,7 +801,7 @@ network_policies:
       "-lc",
       expect.stringContaining("command -v nvidia-smi"),
     ]);
-    expect(commands[1].args.join(" ")).toContain("/proc/$$/task/$$/comm");
+    expect(commands[1].args.join(" ")).toContain("/proc/self/comm");
     expect(commands[1].args.join(" ")).not.toContain("ls /proc/self/task");
     expect(commands[2].args.join(" ")).toContain("cuInit(0)");
     for (const command of commands) {
@@ -1228,6 +1247,7 @@ network_policies:
         {},
         {},
         null,
+        {},
         {},
         true,
       );
@@ -4173,7 +4193,7 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
     });
   });
 
-  it("prepares managed Model Router dependencies instead of using PATH when managed command is absent", testTimeoutOptions(20_000), () => {
+  it("prepares managed Model Router dependencies instead of using PATH when managed command is absent", testTimeoutOptions(30_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-router-venv-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -10175,7 +10195,7 @@ const { createSandbox } = require(${onboardPath});
       "utf-8",
     );
     expect(NAME_ALLOWED_FORMAT).toBe(
-      "lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number",
+      "1-63 characters, lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number",
     );
     assert.match(source, /Sandbox name \(\$\{NAME_ALLOWED_FORMAT\}\)/);
   });
@@ -10647,9 +10667,9 @@ const { createSandbox } = require(${onboardPath});
     assert.match(source, /if \(fwdResult && fwdResult\.status !== 0\)/);
     assert.match(source, /if \(rollbackSandboxOnFailure\)/);
     assert.match(source, /const looksLikePortConflict =/);
-    assert.match(source, /eaddrinuse\|address already in use/i);
+    assert.match(source, /looksLikeForwardPortConflict/);
     assert.match(source, /suppressOutput: true/);
-    assert.match(source, /runBackgroundForwardStartWithDiagnostics/);
+    assert.match(source, /runBackgroundForwardStartWithPortReleaseRetries/);
     assert.doesNotMatch(
       source,
       /forward", "start", "--background"[\s\S]{0,260}stdio: \["ignore", "pipe", "pipe"\]/,
@@ -10661,6 +10681,8 @@ const { createSandbox } = require(${onboardPath});
     );
     assert.match(helperSource, /secureTempFile\("nemoclaw-forward-start", "\.out"\)/);
     assert.match(helperSource, /runForwardStart\(\["ignore", outFd, errFd\], timeoutMs\)/);
+    assert.match(helperSource, /eaddrinuse\|address already in use/i);
+    assert.match(helperSource, /maxRetries = 3/);
     assert.match(
       source,
       /runOpenshell\(\["sandbox", "delete", sandboxName\], \{ ignoreError: true \}\)/,

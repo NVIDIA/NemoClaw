@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, Flags } from "@oclif/core";
+import { NemoClawCommand } from "../../../cli/nemoclaw-oclif-command";
 
 import { getSnapshotRuntimeBridge, sandboxNameArg } from "./common";
 
-export default class SnapshotListCommand extends Command {
+export default class SnapshotListCommand extends NemoClawCommand {
   static id = "sandbox:snapshot:list";
   static strict = true;
   static summary = "List available snapshots";
@@ -16,7 +16,6 @@ export default class SnapshotListCommand extends Command {
     sandboxName: sandboxNameArg,
   };
   static flags = {
-    help: Flags.help({ char: "h" }),
   };
 
   public async run(): Promise<void> {

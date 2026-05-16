@@ -22,6 +22,24 @@ e2e_install_launchable() {
     echo "[dry-run] install-launchable (skipped)"
     return 0
   fi
+
+  # Match nightly launchable-smoke-e2e: exercise the launchable bootstrap
+  # script on the current runner instead of assuming a pre-provisioned Brev VM.
+  # The script has no Brev API dependency; it installs Docker/OpenShell/NemoClaw
+  # from the checked-out repo/ref and leaves the CLI on PATH.
+  local repo_root
+  repo_root="$(cd "${_E2E_INST_LNCH_DIR}/../../../.." && pwd)"
+  local clone_dir="${E2E_LAUNCHABLE_CLONE_DIR:-${HOME}/NemoClaw-launchable-scenario}"
+  export NEMOCLAW_CLONE_DIR="${clone_dir}"
+  export NEMOCLAW_REF="${NEMOCLAW_REF:-$(git -C "${repo_root}" rev-parse --abbrev-ref HEAD 2>/dev/null || echo HEAD)}"
+  rm -rf "${clone_dir}"
+  mkdir -p "${clone_dir}"
+  rsync -a --delete \
+    --exclude '/node_modules/' \
+    --exclude '/nemoclaw/node_modules/' \
+    --exclude '/nemoclaw-blueprint/.venv/' \
+    "${repo_root}/" "${clone_dir}/"
+  sudo -E bash "${repo_root}/scripts/brev-launchable-ci-cpu.sh"
   nemoclaw_refresh_install_env
   if ! command -v nemoclaw >/dev/null 2>&1; then
     echo "e2e_install_launchable: nemoclaw not on PATH after launchable boot" >&2

@@ -18,6 +18,7 @@ const BASE_ENV: Record<string, string> = {
   NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({}),
   NEMOCLAW_DISCORD_GUILDS_B64: encodeJson({}),
   NEMOCLAW_TELEGRAM_CONFIG_B64: encodeJson({}),
+  NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({}),
 };
 
 let tmpDir: string;
@@ -214,6 +215,58 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN\n");
     expect(envFile).not.toContain("SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN\n");
     expect(envFile).toContain("SLACK_ALLOWED_USERS=U0123456789,U09ABCDEFGH\n");
+  });
+
+  it("bridges captured WeChat metadata to Hermes' WEIXIN_* env contract", () => {
+    // Hermes' adapter reads WEIXIN_TOKEN + WEIXIN_ACCOUNT_ID (plus optional
+    // WEIXIN_BASE_URL, WEIXIN_ALLOWED_USERS) per
+    // https://hermes-agent.nousresearch.com/docs/user-guide/messaging/weixin.
+    // NemoClaw's host-side iLink QR login captures the secret under
+    // WECHAT_BOT_TOKEN in the OpenShell credential store; the placeholder
+    // must reference that name so L7 egress can resolve it without a
+    // host-side credential rename.
+    const { config, envFile } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["wechat"]),
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
+        wechat: ["bot_other_friend"],
+      }),
+      NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
+        accountId: "test_account_42",
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "operator_self_id",
+      }),
+    });
+
+    // Hermes has no top-level "wechat:" config block — the adapter reads
+    // env vars and writes its own state under ~/.hermes/weixin/.
+    expect(config.wechat).toBeUndefined();
+    expect(config.platforms.wechat).toBeUndefined();
+
+    // The bot token placeholder references the OpenShell credential slot
+    // (WECHAT_BOT_TOKEN), NOT a fresh WEIXIN_TOKEN slot — that's the L7
+    // resolution contract shared with OpenClaw's bridge.
+    expect(envFile).toContain("WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN\n");
+    expect(envFile).not.toContain("WEIXIN_TOKEN=openshell:resolve:env:WEIXIN_TOKEN\n");
+
+    expect(envFile).toContain("WEIXIN_ACCOUNT_ID=test_account_42\n");
+    expect(envFile).toContain("WEIXIN_BASE_URL=https://ilinkai.wechat.com\n");
+    // Operator's own WeChat user id from the QR login is prepended to the
+    // allowlist so the bot can DM them back without an extra prompt.
+    expect(envFile).toContain("WEIXIN_ALLOWED_USERS=operator_self_id,bot_other_friend\n");
+  });
+
+  it("fails fast when WeChat is enabled without captured account metadata", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["wechat"]),
+      NEMOCLAW_WECHAT_CONFIG_B64: encodeJson({
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "operator_self_id",
+      }),
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("wechat is enabled but wechatConfig.accountId is missing");
+    expect(fs.existsSync(path.join(tmpDir, ".hermes", ".env"))).toBe(false);
   });
 
   it("omits Telegram behavior config when requireMention is not boolean", () => {

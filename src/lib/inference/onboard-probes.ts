@@ -5,7 +5,7 @@
 // Inference endpoint probes — validate that a provider's API responds
 // before committing the onboard wizard to a model selection.
 
-const { normalizeCredentialValue } = require("../credentials/store");
+const { getCredential, normalizeCredentialValue, resolveProviderCredential } = require("../credentials/store");
 const { isWsl } = require("../platform");
 const httpProbe = require("../adapters/http/probe");
 const {
@@ -804,3 +804,44 @@ module.exports = {
   probeAnthropicEndpoint,
   RETRIABLE_HTTP_PROBE_STATUSES,
 };
+
+function shouldSmokeOpenAiLikeOnboardRoute(provider) {
+  const { REMOTE_PROVIDER_CONFIG } = require("../onboard/providers");
+  if (provider === "nvidia-nim" || provider === "nvidia-router") return true;
+  return Object.values(REMOTE_PROVIDER_CONFIG).some(
+    (entry) => entry.providerName === provider && entry.providerType === "openai",
+  );
+}
+
+function verifyOnboardInferenceSmoke(options) {
+  if (!shouldSmokeOpenAiLikeOnboardRoute(options.provider)) return;
+  if (process.env.VITEST === "true") return;
+
+  const endpointUrl = options.endpointUrl || require("./config").INFERENCE_ROUTE_URL;
+  const credentialEnv = options.credentialEnv || null;
+  const apiKey = credentialEnv
+    ? resolveProviderCredential(credentialEnv) || getCredential(credentialEnv) || ""
+    : "";
+  const probe = probeOpenAiLikeEndpoint(endpointUrl, options.model, apiKey, {
+    authMode: getProbeAuthMode(options.provider),
+    skipResponsesProbe: true,
+  });
+
+  if (probe.ok) {
+    console.log(`  ✓ Inference smoke passed: ${options.provider} / ${options.model}`);
+    return;
+  }
+
+  const { compactText } = require("../core/url-utils");
+  const { redact } = require("../runner");
+  console.error("  Onboard inference smoke check failed.");
+  console.error(`  Provider: ${options.provider}`);
+  console.error(`  Model: ${options.model}`);
+  console.error(`  API base: ${endpointUrl}`);
+  if (credentialEnv) console.error("  Credential env: configured");
+  console.error(`  Upstream error: ${compactText(redact(probe.message || "unknown inference failure"))}`);
+  process.exit(1);
+}
+
+module.exports.shouldSmokeOpenAiLikeOnboardRoute = shouldSmokeOpenAiLikeOnboardRoute;
+module.exports.verifyOnboardInferenceSmoke = verifyOnboardInferenceSmoke;

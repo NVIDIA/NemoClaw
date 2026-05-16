@@ -90,6 +90,7 @@ describe("dockerfile patch helpers", () => {
       { discord: ["456"] },
       "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:abc",
       { requireMention: true },
+      {},
       true,
     );
 
@@ -170,6 +171,7 @@ describe("dockerfile patch helpers", () => {
       {},
       {},
       null,
+      {},
       {},
       false,
       "http://127.0.0.1:11434/v1",

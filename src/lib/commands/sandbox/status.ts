@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, Flags } from "@oclif/core";
+import { NemoClawCommand } from "../../cli/nemoclaw-oclif-command";
 
 import { showSandboxStatus } from "../../actions/sandbox/status";
 import { sandboxNameArg } from "./common";
 
-export default class SandboxStatusCommand extends Command {
+export default class SandboxStatusCommand extends NemoClawCommand {
   static id = "sandbox:status";
   static strict = true;
   static summary = "Sandbox health and NIM status";
@@ -17,7 +17,6 @@ export default class SandboxStatusCommand extends Command {
     sandboxName: sandboxNameArg,
   };
   static flags = {
-    help: Flags.help({ char: "h" }),
   };
 
   public async run(): Promise<void> {

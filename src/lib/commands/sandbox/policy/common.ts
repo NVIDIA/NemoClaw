@@ -50,7 +50,6 @@ export function appendCommonPolicyFlags(
 export const policyMutationArgs = { sandboxName: sandboxNameArg, preset: presetArg };
 
 export const policyMutationFlags = {
-  help: Flags.help({ char: "h" }),
   yes: Flags.boolean({ char: "y", description: "Skip the confirmation prompt" }),
   force: Flags.boolean({ description: "Skip the confirmation prompt" }),
   "dry-run": Flags.boolean({ description: "Preview without applying" }),

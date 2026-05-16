@@ -310,6 +310,19 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
         if (stat.isSymbolicLink()) {
           const linkTarget = readlinkSync(fullPath);
 
+          // Whitelisted npm symlinks baked into the base image at build time
+          // (see AUDIT_SYMLINK_WHITELIST). Accepting them here matches the
+          // pre-backup audit so legitimate plugin installs in extensions/
+          // can survive a rebuild without tripping the post-extraction check.
+          // Match both the source path AND the link target — a whitelisted
+          // path with a tampered target falls through to the normal
+          // containment check.
+          const relFromDir = path.relative(dirPath, fullPath).split(path.sep).join("/");
+          const expectedTarget = AUDIT_SYMLINK_WHITELIST.get(relFromDir);
+          if (expectedTarget !== undefined && expectedTarget === linkTarget) {
+            continue;
+          }
+
           // Resolve relative to the symlink's containing directory (standard).
           const resolvedRelative = path.resolve(path.dirname(fullPath), linkTarget);
 
@@ -551,6 +564,28 @@ function sanitizeBackupDirectory(dirPath: string): void {
 // ── Logging ────────────────────────────────────────────────────────
 
 const _verbose = () => process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
+
+// Symlinks baked into the base image at build time (Dockerfile.base) by
+// `openclaw plugins install`. npm creates these as part of its standard
+// install layout — peer-dependency links and .bin shortcuts — and the
+// pre-backup audit would otherwise treat them as agent-planted exfil
+// attempts. Source paths are relative to the agent state-dir root (e.g.
+// for OpenClaw, /sandbox/.openclaw); targets are matched exactly against
+// the value of `readlink(source)`. Source-only matching is unsafe: a
+// compromised agent could repoint one of these to /etc/passwd and the
+// audit would still let it through. Keep in lockstep with
+// WECHAT_PLUGIN_VERSION in Dockerfile.base — bump together if the plugin
+// install layout changes.
+const AUDIT_SYMLINK_WHITELIST: ReadonlyMap<string, string> = new Map([
+  [
+    "extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal",
+    "../qrcode-terminal/bin/qrcode-terminal.js",
+  ],
+  [
+    "extensions/openclaw-weixin/node_modules/openclaw",
+    "/usr/local/lib/node_modules/openclaw",
+  ],
+]);
 function _log(msg: string): void {
   if (_verbose()) console.error(`  [sandbox-state ${new Date().toISOString()}] ${msg}`);
 }
@@ -976,10 +1011,15 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // NC-2227-04: Pre-backup audit — reject symlinks, hardlinks, and special
         // files inside state dirs. A compromised agent could plant a symlink like
         // workspace/copy -> ../openclaw.json to exfiltrate config via backup.
+        //
+        // The printf format emits "<type>\t<absPath>\t<linkTarget>" — %l is
+        // empty for non-symlinks but always present, so the field count is
+        // stable. Tab separator assumes state-dir paths don't contain tabs,
+        // matching the wider convention in this file.
         const auditCmd = existingDirs
           .map(
             (d) =>
-              `find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y %p\\n" 2>/dev/null`,
+              `find ${shellQuote(`${dir}/${d}`)} \\( -type l -o \\( -type f -a -links +1 \\) -o \\( ! -type f -a ! -type d \\) \\) -printf "%y\\t%p\\t%l\\n" 2>/dev/null`,
           )
           .join(" && ");
         _log(`Pre-backup audit: checking for symlinks, hard links, and special files`);
@@ -1005,22 +1045,50 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         }
         const auditOutput = (auditResult.stdout || "").trim();
         if (auditOutput.length > 0) {
-          // Found symlinks or special files — log them and reject the backup
-          const violations = auditOutput.split("\n").filter((l) => l.length > 0);
-          _log(
-            `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
-          );
-          return {
-            success: false,
-            manifest,
-            backedUpDirs,
-            failedDirs: [...existingDirs],
-            backedUpFiles,
-            failedFiles: stateFiles.map((f) => f.path),
-            error: `Pre-backup audit rejected: symlinks, hard links, or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
-          };
+          const allEntries = auditOutput.split("\n").filter((l) => l.length > 0);
+          const whitelisted: string[] = [];
+          const violations: string[] = [];
+          const dirPrefix = `${dir}/`;
+          for (const entry of allEntries) {
+            // find -printf "%y\t%p\t%l\n" → "<type>\t<absPath>\t<linkTarget>"
+            // (linkTarget is empty for non-symlinks).
+            const parts = entry.split("\t");
+            const type = parts[0] || "";
+            const absPath = parts[1] || entry;
+            const linkTarget = parts[2] || "";
+            const relPath = absPath.startsWith(dirPrefix)
+              ? absPath.slice(dirPrefix.length)
+              : absPath;
+            const expectedTarget =
+              type === "l" ? AUDIT_SYMLINK_WHITELIST.get(relPath) : undefined;
+            if (expectedTarget !== undefined && expectedTarget === linkTarget) {
+              whitelisted.push(entry);
+            } else {
+              violations.push(entry);
+            }
+          }
+          if (whitelisted.length > 0) {
+            _log(
+              `Pre-backup audit whitelisted ${whitelisted.length} entries (base-image npm symlinks): ${whitelisted.slice(0, 5).join("; ")}`,
+            );
+          }
+          if (violations.length > 0) {
+            // Non-whitelisted symlinks / hard links / special files — reject
+            _log(
+              `SECURITY: Pre-backup audit found ${violations.length} unsafe entries: ${violations.slice(0, 5).join("; ")}`,
+            );
+            return {
+              success: false,
+              manifest,
+              backedUpDirs,
+              failedDirs: [...existingDirs],
+              backedUpFiles,
+              failedFiles: stateFiles.map((f) => f.path),
+              error: `Pre-backup audit rejected: symlinks, hard links, or special files found in state dirs: ${violations.slice(0, 3).join("; ")}`,
+            };
+          }
         }
-        _log("Pre-backup audit passed — no symlinks, hard links, or special files found");
+        _log("Pre-backup audit passed — no unsafe symlinks, hard links, or special files found");
 
         // Download via SSH+tar
         // NC-2227-04: Removed -h flag (was following symlinks). State dirs are
