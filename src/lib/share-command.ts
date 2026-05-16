@@ -64,6 +64,34 @@ export function resolveLinuxUnmount(): string | null {
   return null;
 }
 
+/**
+ * Verify that `localMount` exists and is writable so FUSE can mount onto it.
+ * Creates the directory (recursive) if missing, and reports the specific
+ * failure reason (read-only filesystem, permission denied, etc.) when the
+ * mount target is unusable. Returning a structured result instead of
+ * throwing keeps the helper unit-testable; the caller decides how to surface
+ * the error to the user.
+ */
+export function checkLocalMountWritable(localMount: string): { writable: boolean; reason?: string } {
+  try {
+    fs.mkdirSync(localMount, { recursive: true });
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "EROFS") return { writable: false, reason: "parent filesystem is read-only" };
+    if (code === "EACCES") return { writable: false, reason: "permission denied creating the directory" };
+    return { writable: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+  try {
+    fs.accessSync(localMount, fs.constants.W_OK);
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "EROFS") return { writable: false, reason: "filesystem is read-only" };
+    if (code === "EACCES") return { writable: false, reason: "directory is not writable" };
+    return { writable: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+  return { writable: true };
+}
+
 export type ShareMountOptions = {
   sandboxName: string;
   remotePath?: string;
@@ -126,7 +154,23 @@ export async function runShareMount(
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sshfs-"));
   const tmpFile = path.join(tmpDir, `${sandboxName}.conf`);
   fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600, flag: "wx" });
-  fs.mkdirSync(localMount, { recursive: true });
+
+  const writable = checkLocalMountWritable(localMount);
+  if (!writable.writable) {
+    console.error(`  Local mount path '${localMount}' is not usable: ${writable.reason}.`);
+    console.error("  share mount projects sandbox files onto a host directory via SSHFS,");
+    console.error("  so the local target must be on a writable filesystem.");
+    console.error(
+      `  Pick a writable directory: ${deps.cliName} ${sandboxName} share mount ${remotePath} <writable-path>`,
+    );
+    try {
+      fs.unlinkSync(tmpFile);
+      fs.rmdirSync(tmpDir);
+    } catch {
+      /* ignore */
+    }
+    process.exit(1);
+  }
 
   let mountFailed = false;
   try {
