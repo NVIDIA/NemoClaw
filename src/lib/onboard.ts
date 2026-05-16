@@ -350,7 +350,6 @@ import {
   hydrateMessagingChannelConfig,
   type MessagingChannelConfig,
   mergeMessagingChannelConfigs,
-  normalizeMessagingChannelConfigValue,
   readMessagingChannelConfigFromEnv,
   sanitizeMessagingChannelConfig,
 } from "./messaging-channel-config";
@@ -8098,8 +8097,6 @@ async function setupMessagingChannels(
   step(5, 8, "Messaging channels");
 
   const availableChannels = getAvailableMessagingChannelsForAgent(MESSAGING_CHANNELS, agent);
-  const getMessagingConfigValue = (envKey: string): string | null =>
-    normalizeMessagingChannelConfigValue(envKey, process.env[envKey]);
   const seedFromState = (): string[] => [
     ...availableChannels.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name),
     ...(existingChannels ?? []).filter((n) => availableChannels.some((c) => c.name === n)),
