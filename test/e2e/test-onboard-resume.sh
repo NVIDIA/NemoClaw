@@ -22,20 +22,10 @@
 
 set -uo pipefail
 
-if [ "${NEMOCLAW_E2E_NO_TIMEOUT:-0}" != "1" ]; then
-  TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-600}"
-  TIMEOUT_BIN=""
-  if command -v timeout >/dev/null 2>&1; then
-    TIMEOUT_BIN="timeout"
-  elif command -v gtimeout >/dev/null 2>&1; then
-    TIMEOUT_BIN="gtimeout"
-  fi
-
-  if [ -n "$TIMEOUT_BIN" ]; then
-    export NEMOCLAW_E2E_NO_TIMEOUT=1
-    exec "$TIMEOUT_BIN" -s TERM "$TIMEOUT_SECONDS" "$0" "$@"
-  fi
-fi
+export NEMOCLAW_E2E_DEFAULT_TIMEOUT=600
+SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+# shellcheck source=test/e2e/e2e-timeout.sh
+source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 
 PASS=0
 FAIL=0
@@ -77,6 +67,18 @@ run_nemoclaw() {
 }
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-resume}"
+
+# Shim so the teardown helper's trap can call `nemoclaw destroy` even when
+# this repo-local test run has no globally-installed `nemoclaw` on PATH (it
+# drives the CLI via `node "$REPO/bin/nemoclaw.js"` via run_nemoclaw).
+if ! command -v nemoclaw >/dev/null 2>&1; then
+  nemoclaw() { node "$REPO/bin/nemoclaw.js" "$@"; }
+fi
+
+# shellcheck source=test/e2e/lib/sandbox-teardown.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
+register_sandbox_for_teardown "$SANDBOX_NAME"
+
 SESSION_FILE="$HOME/.nemoclaw/onboard-session.json"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 RESTORE_API_KEY="${NVIDIA_API_KEY:-}"
@@ -133,24 +135,29 @@ else
   exit 1
 fi
 
-node -e '
-const { saveCredential } = require(process.argv[1]);
-saveCredential("NVIDIA_API_KEY", process.argv[2]);
-' "$REPO/dist/lib/credentials.js" "$RESTORE_API_KEY"
-pass "Stored NVIDIA_API_KEY in ~/.nemoclaw/credentials.json for resume hydration"
+export NVIDIA_API_KEY="$RESTORE_API_KEY"
+pass "Exported NVIDIA_API_KEY for the resume run (host writes nothing to disk; OpenShell gateway is the system of record)"
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 2: First onboard (forced failure after sandbox creation)
 # ══════════════════════════════════════════════════════════════════
 section "Phase 2: First onboard (interrupted)"
-info "Running onboard with an invalid policy mode to create resumable state..."
+info "Running onboard with POLICY_MODE=custom but no POLICY_PRESETS to force a policy-step failure..."
 
+# Use NEMOCLAW_POLICY_MODE=custom without NEMOCLAW_POLICY_PRESETS — this is a
+# real validation path that exits 1 at the policy step after the sandbox is
+# already created, leaving resumable session state.
+#
+# Note: the previous approach (NEMOCLAW_POLICY_MODE=invalid) stopped working
+# after PR #2434 changed invalid modes from process.exit(1) to a graceful
+# fallback with console.warn(). See #2573 for details.
 FIRST_LOG="$(mktemp)"
 NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_RECREATE_SANDBOX=1 \
-  NEMOCLAW_POLICY_MODE=invalid \
+  NEMOCLAW_POLICY_MODE=custom \
+  NEMOCLAW_POLICY_PRESETS="" \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$FIRST_LOG" 2>&1
 first_exit=$?
 first_output="$(cat "$FIRST_LOG")"
@@ -170,7 +177,7 @@ else
   fail "Sandbox creation not confirmed in first run output"
 fi
 
-if echo "$first_output" | grep -q "Unsupported NEMOCLAW_POLICY_MODE: invalid"; then
+if echo "$first_output" | grep -q "NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom"; then
   pass "First run failed at policy setup as intended"
 else
   fail "First run did not fail at the expected policy step"
@@ -262,10 +269,15 @@ else
   pass "Resume did not rerun sandbox creation"
 fi
 
+# The first onboard completed through openclaw (step 7) before failing at
+# policies (step 8). Inference was already configured during that run, so
+# the resume path detects it is ready (isInferenceRouteReady) and skips it.
 if echo "$resume_output" | grep -q "\[4/7\] Setting up inference provider"; then
-  pass "Resume continued with inference setup"
+  pass "Resume re-ran inference setup"
+elif echo "$resume_output" | grep -q "\[resume\] Skipping inference\|\[reuse\] Skipping inference"; then
+  pass "Resume skipped inference (already configured)"
 else
-  fail "Resume did not continue with inference setup"
+  fail "Resume neither ran nor skipped inference setup"
 fi
 
 if run_nemoclaw "$SANDBOX_NAME" status >/dev/null 2>&1; then
@@ -304,7 +316,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 4: Final cleanup"
 
-run_nemoclaw "$SANDBOX_NAME" destroy 2>/dev/null || true
+[[ "${NEMOCLAW_E2E_KEEP_SANDBOX:-}" = "1" ]] || run_nemoclaw "$SANDBOX_NAME" destroy 2>/dev/null || true
 openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 openshell forward stop 18789 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true

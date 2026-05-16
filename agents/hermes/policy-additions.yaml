@@ -3,7 +3,7 @@
 #
 # Sandbox policy for the Hermes Agent.
 # Based on the OpenClaw policy with agent-specific adjustments:
-#   - .hermes / .hermes-data instead of .openclaw / .openclaw-data
+#   - .hermes instead of .openclaw (single config/state directory)
 #   - Nous Research phone-home endpoints instead of OpenClaw/ClawHub
 #   - PyPI instead of npm registry
 #   - /usr/local/bin/hermes and python3 binary restrictions
@@ -17,17 +17,17 @@ filesystem_policy:
   read_only:
     - /usr
     - /lib
+    - /opt/hermes
     - /proc
     - /dev/urandom
     - /app
     - /etc
     - /var/log
-    - /sandbox/.hermes              # Immutable config (Landlock enforced)
   read_write:
     - /sandbox
     - /tmp
     - /dev/null
-    - /sandbox/.hermes-data         # Writable agent state (symlinked from .hermes)
+    - /sandbox/.hermes              # Agent config (lockable via shields up)
 
 landlock:
   compatibility: best_effort
@@ -37,37 +37,6 @@ process:
   run_as_group: sandbox
 
 network_policies:
-  claude_code:
-    name: claude_code
-    endpoints:
-      - host: api.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: POST, path: "/v1/messages" }
-          - allow: { method: POST, path: "/v1/messages/batches" }
-          - allow: { method: GET, path: "/v1/messages/batches/**" }
-          - allow: { method: POST, path: "/v1/complete" }
-      - host: statsig.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: POST, path: "/**" }
-      - host: sentry.io
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: POST, path: "/api/*/envelope/**" }
-          - allow: { method: POST, path: "/api/*/store/**" }
-    binaries:
-      - { path: /usr/local/bin/claude }
-
   nvidia:
     name: nvidia
     endpoints:
@@ -75,7 +44,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
           - allow: { method: POST, path: "/v1/completions" }
@@ -86,7 +54,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
           - allow: { method: POST, path: "/v1/completions" }
@@ -94,9 +61,9 @@ network_policies:
           - allow: { method: GET, path: "/v1/models" }
           - allow: { method: GET, path: "/v1/models/**" }
     binaries:
-      - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/hermes }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
 
   github:
     name: github
@@ -108,8 +75,11 @@ network_policies:
         port: 443
         access: full
     binaries:
-      - { path: /usr/bin/gh }
+      # `gh` was historically whitelisted here, but the Hermes sandbox base
+      # image (agents/hermes/Dockerfile.base) only apt-installs `git`, not
+      # `gh`, so the entry was a phantom — see #2179.
       - { path: /usr/bin/git }
+      - { path: /opt/hermes/.venv/bin/python }
 
   # ── Nous Research — Hermes auth, updates, portal ──────────────
   nous_research:
@@ -119,7 +89,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -127,21 +96,69 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
-      - host: api.nousresearch.com
+      - host: inference-api.nousresearch.com
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: portal.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: browser-use-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: modal-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: openai-audio-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: fal-queue-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: firecrawl-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: tool-gateway.nousresearch.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
 
   # ── PyPI — needed for pip install (skill/plugin deps) ─────────
   pypi:
@@ -151,19 +168,18 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
       - host: files.pythonhosted.org
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/pip3 }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
 
   # ── Messaging — pre-allowed for agent notifications ───────────
   telegram:
@@ -173,14 +189,14 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/bot*/**" }
           - allow: { method: POST, path: "/bot*/**" }
           - allow: { method: GET, path: "/file/bot*/**" }
     binaries:
       - { path: /usr/local/bin/node }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
 
   discord:
     name: discord
@@ -189,20 +205,120 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+          - allow: { method: GET, path: "/gateway*" }
+          - allow: { method: GET, path: "/api/v*/gateway/bot" }
+          - allow: { method: GET, path: "/api/v*/applications/@me" }
+          - allow: { method: PUT, path: "/api/v*/applications/*/commands" }
+          - allow: { method: PUT, path: "/api/v*/channels/*/messages/*/reactions/*/@me" }
+          - allow: { method: PATCH, path: "/api/v*/applications/*" }
+          - allow: { method: PATCH, path: "/api/v*/applications/*/commands/*" }
+          - allow: { method: PATCH, path: "/api/v*/channels/*/messages/*" }
+          - allow: { method: PATCH, path: "/api/v*/webhooks/*/*/messages/*" }
+          - allow: { method: DELETE, path: "/api/v*/applications/*/commands/*" }
+          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*" }
+          - allow: { method: DELETE, path: "/api/v*/channels/*/messages/*/reactions/*/*" }
+          - allow: { method: DELETE, path: "/api/v*/webhooks/*/*/messages/*" }
       - host: gateway.discord.gg
         port: 443
-        access: full
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+      - host: "*.discord.gg"
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
       - host: cdn.discordapp.com
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/node }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
+
+  slack:
+    name: slack
+    endpoints:
+      - host: slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: api.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: hooks.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        request_body_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: wss-primary.slack.com
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+      - host: wss-backup.slack.com
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
+
+  # WeChat (personal) via Tencent's iLink Bot API. The Hermes adapter uses
+  # HTTP long-polling (no WebSocket). WEIXIN_TOKEN is L7-resolved at egress
+  # from WECHAT_BOT_TOKEN (same credential slot OpenClaw's bridge uses) — see
+  # agents/hermes/config/messaging-config.ts and
+  # nemoclaw-blueprint/policies/presets/wechat.yaml for the shared host set.
+  wechat_bridge:
+    name: wechat_bridge
+    endpoints:
+      - host: ilinkai.weixin.qq.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: ilinkai.wechat.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }

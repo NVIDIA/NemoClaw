@@ -38,6 +38,12 @@ runs:
       shell: bash
       run: npm run build:cli
 
+    - name: Typecheck CLI + tests (strict)
+      # Explicit CI gate that complements the pre-push tsc-cli hook. CI runs it
+      # unconditionally so type drift is caught even when a local hook is skipped.
+      shell: bash
+      run: npm run typecheck:cli
+
     - name: Validate config schemas
       shell: bash
       run: npm run validate:configs

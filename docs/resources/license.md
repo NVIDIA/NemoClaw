@@ -4,7 +4,7 @@ title:
   nav: "License"
 description:
   main: "Apache 2.0 license for the NemoClaw project."
-  agent: "Contains the Apache 2.0 license for the NemoClaw project. Use when checking the project license or reviewing license terms."
+  agent: "Includes the Apache 2.0 license that covers the NemoClaw project."
 keywords: ["nemoclaw license", "nemoclaw apache 2.0"]
 topics: ["generative_ai"]
 tags: ["nemoclaw", "licensing"]

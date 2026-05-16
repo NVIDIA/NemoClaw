@@ -12,7 +12,7 @@ Update documentation when your change:
 - Fixes a bug that the docs describe incorrectly.
 - Changes an API, protocol, or policy schema.
 
-## Update Docs with Agent Skills
+## Update Docs with Contributor Skills
 
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that automates doc work.
 Use it before writing from scratch.
@@ -20,39 +20,52 @@ Use it before writing from scratch.
 The skill scans recent commits for user-facing changes and drafts doc updates.
 Run it after landing features, before a release, or to find doc gaps.
 For example, ask your agent to "catch up the docs for the changes I made in this PR".
+During release prep, run the skill first, make doc version bumps, regenerate user skills, then open the docs refresh PR.
 
 The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
 
 ## Doc-to-Skills Pipeline
 
+User skills are generated agent-skill packages, prefixed with `nemoclaw-user-*`, that help AI agents guide end users through NemoClaw workflows.
 The `docs/` directory is the source of truth for user-facing documentation.
-The script `scripts/docs-to-skills.py` converts doc pages into agent skills under `.agents/skills/`.
-These generated skills let AI agents walk users through NemoClaw tasks (installation, inference configuration, policy management, monitoring, and more) without reading raw doc pages.
+The script `scripts/docs-to-skills.py` converts doc pages into user skills under `.agents/skills/`.
+These generated skills identically cover the same tasks as the doc pages they were generated from, while reformatting the doc files to match the agent-skill specification in markdown and organizing sibling pages into progressive disclosure for reference files.
 
-Always edit pages in `docs/`.
+Always make doc updates in `docs/`.
 Never edit generated skill files under `.agents/skills/nemoclaw-user-*/`. Your changes will be overwritten on the next run.
 
-### Generated skills
+### Generated NemoClaw User Skills
 
 The current generated skills and their source pages are:
 
 | Skill | Source docs |
 |---|---|
 | `nemoclaw-user-overview` | `docs/about/overview.md`, `docs/about/ecosystem.md`, `docs/about/how-it-works.md`, `docs/about/release-notes.md` |
-| `nemoclaw-user-get-started` | `docs/get-started/quickstart.md` |
-| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md` |
-| `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/approve-network-requests.md` |
+| `nemoclaw-user-agent-skills` | `docs/resources/agent-skills.md` |
+| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.md`, `docs/deployment/install-openclaw-plugins.md`, `docs/deployment/sandbox-hardening.md` |
+| `nemoclaw-user-get-started` | `docs/get-started/prerequisites.md`, `docs/get-started/quickstart.md`, `docs/get-started/quickstart-hermes.md`, `docs/get-started/windows-preparation.md` |
+| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md`, `docs/inference/set-up-sub-agent.md` |
+| `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.md`, `docs/manage-sandboxes/messaging-channels.md`, `docs/manage-sandboxes/workspace-files.md`, `docs/manage-sandboxes/backup-restore.md` |
 | `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.md` |
-| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.md`, `docs/deployment/set-up-telegram-bridge.md` |
-| `nemoclaw-user-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
+| `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/integration-policy-examples.md`, `docs/network-policy/approve-network-requests.md` |
+| `nemoclaw-user-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/cli-selection-guide.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
+| `nemoclaw-user-configure-security` | `docs/security/best-practices.md`, `docs/security/credential-storage.md`, `docs/security/openclaw-controls.md` |
 
-### Regenerating skills after doc changes
+### Regenerating NemoClaw User Skills after Doc Changes
 
-A pre-commit hook regenerates skills automatically whenever you commit changes to `docs/**/*.md` files.
-The hook runs `scripts/docs-to-skills.py` and stages the updated skills so they are included in the same commit.
-No manual step is needed for normal workflows.
+Most contributor pull requests that change docs should include only the source pages under `docs/`.
+Local hooks run the docs-to-skills conversion in dry-run mode so contributors can verify that generated user skills still build, without adding generated `.agents/skills/nemoclaw-user-*` output to every docs PR.
 
-To regenerate skills manually (for example, after rebasing or outside of a commit), run from the repo root:
+NemoClaw maintainers refresh the generated user skills once per release during release prep.
+
+For daily release prep, the NemoClaw maintainers use this sequence:
+
+1. Run the `nemoclaw-contributor-update-docs` skill for the day's release prep.
+2. Make doc version bumps by updating `versions1.json` and `project.json` in the `docs/` directory.
+3. Run `python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user`.
+4. Create the PR with both docs and generated user skills.
+
+To regenerate skills manually during release prep, run from the repo root:
 
 ```bash
 python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
@@ -77,9 +90,8 @@ Other useful flags:
 ### How the Script Works
 
 The script reads YAML frontmatter from each doc page to determine its content type (`how_to`, `concept`, `reference`, `get_started`), then groups pages into skills using the `smart` strategy by default.
-Procedure pages (`how_to`, `get_started`) become the main body of the skill.
-Concept pages become a `## Context` section.
-Reference pages go into a `references/` subdirectory for progressive disclosure, keeping the `SKILL.md` concise (under 500 lines).
+Within each group, the procedure page (`how_to`, `get_started`, or `tutorial`) with the lowest `skill.priority` becomes the main body of the skill.
+Sibling procedure pages, concept pages, and reference pages go into a `references/` subdirectory for progressive disclosure, keeping `SKILL.md` concise while preserving access to the full docs.
 
 Cross-references between doc pages are rewritten as skill-to-skill pointers so agents can navigate between skills.
 MyST/Sphinx directives are converted to standard markdown.
@@ -101,6 +113,19 @@ To serve the docs locally and automatically rebuild on changes, run:
 ```bash
 make docs-live
 ```
+
+## Doc-Only PR Verification
+
+Doc-only pull requests do not need the full test suite by default.
+Before opening a doc-only PR, run:
+
+```bash
+npx prek run --all-files
+make docs
+```
+
+Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
+Run the full tests only when the change also touches code, generated behavior, or runtime behavior.
 
 ## Writing Conventions
 
@@ -134,9 +159,15 @@ content:
   type: concept | how_to | get_started | tutorial | reference
   difficulty: technical_beginner | technical_intermediate | technical_advanced
   audience: ["developer", "engineer"]
+skill:
+  priority: 100
 status: published
 ---
 ```
+
+Use `skill.priority` to choose the lead procedure page when multiple how-to pages generate the same skill.
+Lower numbers win.
+For example, set the OpenClaw quickstart to `10` and the Hermes quickstart to `20` so `nemoclaw-user-get-started/SKILL.md` leads with the OpenClaw procedure and folds Hermes into `references/`.
 
 ### Page Structure
 

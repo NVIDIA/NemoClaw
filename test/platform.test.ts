@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -52,6 +51,10 @@ describe("platform helpers", () => {
         getPodmanSocketCandidates({ platform: "linux", home: "/tmp/test-home", uid: 1001 }),
       ).toEqual(["/run/user/1001/podman/podman.sock", "/run/podman/podman.sock"]);
     });
+
+    it("returns no Podman socket paths on unsupported platforms", () => {
+      expect(getPodmanSocketCandidates({ platform: "win32", home: "C:/Users/test" })).toEqual([]);
+    });
   });
 
   describe("getDockerSocketCandidates", () => {
@@ -60,6 +63,7 @@ describe("platform helpers", () => {
       expect(getDockerSocketCandidates({ platform: "darwin", home })).toEqual([
         path.join(home, ".colima/default/docker.sock"),
         path.join(home, ".config/colima/default/docker.sock"),
+        path.join(home, ".colima/docker.sock"),
         path.join(home, ".local/share/containers/podman/machine/podman.sock"),
         "/var/run/docker.sock",
         path.join(home, ".docker/run/docker.sock"),
@@ -82,7 +86,7 @@ describe("platform helpers", () => {
     it("finds the first available Colima socket", () => {
       const home = "/tmp/test-home";
       const sockets = new Set([path.join(home, ".config/colima/default/docker.sock")]);
-      const existsSync = (socketPath) => sockets.has(socketPath);
+      const existsSync = (socketPath: string) => sockets.has(socketPath);
 
       expect(findColimaDockerSocket({ home, existsSync })).toBe(
         path.join(home, ".config/colima/default/docker.sock"),
@@ -112,7 +116,7 @@ describe("platform helpers", () => {
         path.join(home, ".colima/default/docker.sock"),
         path.join(home, ".docker/run/docker.sock"),
       ]);
-      const existsSync = (socketPath) => sockets.has(socketPath);
+      const existsSync = (socketPath: string) => sockets.has(socketPath);
 
       expect(detectDockerHost({ env: {}, platform: "darwin", home, existsSync })).toEqual({
         dockerHost: `unix://${path.join(home, ".colima/default/docker.sock")}`,
@@ -124,7 +128,7 @@ describe("platform helpers", () => {
     it("detects Docker Desktop when Colima is absent", () => {
       const home = "/tmp/test-home";
       const socketPath = path.join(home, ".docker/run/docker.sock");
-      const existsSync = (candidate) => candidate === socketPath;
+      const existsSync = (candidate: string) => candidate === socketPath;
 
       expect(detectDockerHost({ env: {}, platform: "darwin", home, existsSync })).toEqual({
         dockerHost: `unix://${socketPath}`,
@@ -183,7 +187,7 @@ describe("platform helpers", () => {
     it("detects Podman socket on macOS when Colima is absent", () => {
       const home = "/tmp/test-home";
       const podmanSocket = path.join(home, ".local/share/containers/podman/machine/podman.sock");
-      const existsSync = (candidate) => candidate === podmanSocket;
+      const existsSync = (candidate: string) => candidate === podmanSocket;
 
       expect(detectDockerHost({ env: {}, platform: "darwin", home, existsSync })).toEqual({
         dockerHost: `unix://${podmanSocket}`,
@@ -197,12 +201,28 @@ describe("platform helpers", () => {
       const colimaSocket = path.join(home, ".colima/default/docker.sock");
       const podmanSocket = path.join(home, ".local/share/containers/podman/machine/podman.sock");
       const sockets = new Set([colimaSocket, podmanSocket]);
-      const existsSync = (candidate) => sockets.has(candidate);
+      const existsSync = (candidate: string) => sockets.has(candidate);
 
       expect(detectDockerHost({ env: {}, platform: "darwin", home, existsSync })).toEqual({
         dockerHost: `unix://${colimaSocket}`,
         source: "socket",
         socketPath: colimaSocket,
+      });
+    });
+
+    it("discovers the bare ~/.colima/docker.sock layout (regression for #3503)", () => {
+      // The reporter's Colima setup puts the socket at the top-level
+      // ~/.colima/docker.sock rather than under ~/.colima/default/. Before
+      // this fix, detection returned null and the gateway fell back to
+      // /var/run/docker.sock, breaking onboard.
+      const home = "/tmp/test-home";
+      const bareColimaSocket = path.join(home, ".colima/docker.sock");
+      const existsSync = (candidate: string) => candidate === bareColimaSocket;
+
+      expect(detectDockerHost({ env: {}, platform: "darwin", home, existsSync })).toEqual({
+        dockerHost: `unix://${bareColimaSocket}`,
+        source: "socket",
+        socketPath: bareColimaSocket,
       });
     });
   });

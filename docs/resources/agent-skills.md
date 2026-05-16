@@ -1,6 +1,6 @@
 ---
 title:
-  page: "Agent Skills for AI Coding Assistants"
+  page: "NemoClaw Agent Skills for Your AI Coding Assistant"
   nav: "Agent Skills"
 description:
   main: "NemoClaw ships agent skills that let AI coding assistants guide you through installation, configuration, and operation."
@@ -20,7 +20,7 @@ status: published
   SPDX-License-Identifier: Apache-2.0
 -->
 
-# NemoClaw Agent Skills for AI Coding Assistants
+# NemoClaw Agent Skills for Your AI Coding Assistant
 
 NemoClaw ships agent skills that are generated directly from this documentation.
 Each skill is a converted version of one or more doc pages, structured so AI coding assistants can consume it as context.
@@ -81,7 +81,7 @@ Examples of questions your assistant can answer with these skills:
 | "Show me the sandbox logs." | `nemoclaw-user-monitor-sandbox` |
 | "How do I deploy NemoClaw to a remote GPU?" | `nemoclaw-user-deploy-remote` |
 | "What security controls can I configure?" | `nemoclaw-user-configure-security` |
-| "Back up my agent workspace files." | `nemoclaw-user-workspace` |
+| "Back up my agent workspace files." | `nemoclaw-user-manage-sandboxes` |
 | "What CLI commands are available?" | `nemoclaw-user-reference` |
 
 You can also reference a skill directly by name if you know which one you need.

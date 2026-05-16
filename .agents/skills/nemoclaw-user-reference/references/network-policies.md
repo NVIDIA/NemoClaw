@@ -10,6 +10,8 @@ Any request to an unlisted destination is intercepted by OpenShell, and the oper
 
 The baseline policy is defined in `nemoclaw-blueprint/policies/openclaw-sandbox.yaml`.
 
+> **Note:** Hermes sandboxes use an agent-specific baseline policy in `agents/hermes/policy-additions.yaml` so Hermes runtime binaries can reach the service endpoints they need while keeping the same deny-by-default model.
+
 ### Filesystem
 
 | Path | Access |
@@ -33,14 +35,9 @@ The following endpoint groups are allowed by default:
   - Binaries
   - Rules
 
-* - `claude_code`
-  - `api.anthropic.com:443`, `statsig.anthropic.com:443`, `sentry.io:443`
-  - `/usr/local/bin/claude`
-  - POST to inference paths on `api.anthropic.com`, POST on `statsig.anthropic.com`, GET only on `sentry.io`
-
 * - `nvidia`
   - `integrate.api.nvidia.com:443`, `inference-api.nvidia.com:443`
-  - `/usr/local/bin/claude`, `/usr/local/bin/openclaw`
+  - `/usr/local/bin/openclaw`
   - POST to inference and embedding paths, GET to model listings
 
 * - `clawhub`
@@ -69,7 +66,10 @@ All endpoints use TLS termination and are enforced at port 443.
 
 > **Note:** GitHub access (`github.com`, `api.github.com`) is not included in the baseline policy.
 > Apply the `github` preset during onboarding if your agent needs GitHub access.
-> See Customize the Network Policy (see the `nemoclaw-user-manage-policy` skill).
+> See Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill).
+>
+> Messaging endpoints for Telegram, Discord, and Slack are not included in the baseline policy.
+> Enable the channel during onboarding or apply the matching messaging preset so the sandbox can reach that platform.
 
 (policy-tiers)=
 
@@ -81,11 +81,13 @@ The baseline policy is always applied regardless of the selected tier.
 | Tier | Presets included | Description |
 |------|------------------|-------------|
 | Restricted | None | Base sandbox only. No third-party network access beyond inference and core agent tooling. |
-| Balanced (default) | npm, pypi, huggingface, brew, brave | Full dev tooling and web search. No messaging platform access. |
-| Open | npm, pypi, huggingface, brew, brave, slack, discord, telegram, jira, outlook | Broad access across third-party services including messaging and productivity. |
+| Balanced (default) | npm, pypi, huggingface, brew, brave when supported | Full dev tooling and web search for agents that support web search. No messaging platform access. |
+| Open | npm, pypi, huggingface, brew, brave when supported, slack, discord, telegram, jira, outlook | Broad access across third-party services including messaging and productivity. |
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
 Tier-default presets are pre-selected; additional presets can be added from the full list.
+NemoClaw filters tier defaults by the active agent's supported integrations.
+For example, Hermes onboarding omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration.
 
 Tier definitions are stored in `nemoclaw-blueprint/policies/tiers.yaml`.
 
@@ -133,6 +135,12 @@ $ nemoclaw onboard
 ### Dynamic Changes
 
 Apply policy updates to a running sandbox without restarting:
+
+```console
+$ openshell policy update <sandbox-name> --add-endpoint api.example.com:443:read-only:rest:enforce
+```
+
+To replace the live policy with a complete raw policy file, use `openshell policy set`:
 
 ```console
 $ openshell policy set --policy <policy-file> <sandbox-name>

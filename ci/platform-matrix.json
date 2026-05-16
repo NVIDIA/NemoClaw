@@ -33,7 +33,7 @@
       "status": "tested",
       "prd_priority": "P1",
       "ci_tested": true,
-      "notes": "Use the standard installer and `nemoclaw onboard`."
+      "notes": "Use the standard installer and `nemoclaw onboard`. For an end-to-end walkthrough with local Ollama inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw)."
     },
     {
       "name": "Windows WSL2",
@@ -114,6 +114,12 @@
       "status": "tested",
       "endpoint_type": "OpenAI-compatible",
       "notes": "Uses Google's OpenAI-compatible endpoint"
+    },
+    {
+      "name": "Hermes Provider",
+      "status": "hermes only",
+      "endpoint_type": "OpenAI-compatible route",
+      "notes": "Available when onboarding Hermes Agent through `nemohermes`"
     },
     {
       "name": "Local Ollama",

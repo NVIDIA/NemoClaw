@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-let configDir = join(process.env.HOME ?? tmpdir(), ".nemoclaw");
+let configDir = join(homedir(), ".nemoclaw");
 
 export type EndpointType =
   | "build"
@@ -30,12 +30,75 @@ export interface NemoClawOnboardConfig {
   onboardedAt: string;
 }
 
+type OnboardConfigSource = {
+  endpointType?: string | null;
+  endpointUrl?: string;
+  ncpPartner?: string | null;
+  model?: string;
+  profile?: string;
+  credentialEnv?: string;
+  provider?: string;
+  providerLabel?: string;
+  onboardedAt?: string;
+};
+
+function isRecord(value: object | null): value is OnboardConfigSource {
+  return value !== null && !Array.isArray(value);
+}
+
+function isEndpointType(value: string | null | undefined): value is EndpointType {
+  return (
+    value === "build" ||
+    value === "openai" ||
+    value === "anthropic" ||
+    value === "gemini" ||
+    value === "ncp" ||
+    value === "nim-local" ||
+    value === "vllm" ||
+    value === "ollama" ||
+    value === "custom"
+  );
+}
+
+function isOptionalString(value: string | null | undefined): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function isOnboardConfig(value: OnboardConfigSource | null): value is NemoClawOnboardConfig {
+  return (
+    isRecord(value) &&
+    isEndpointType(value.endpointType) &&
+    typeof value.endpointUrl === "string" &&
+    (value.ncpPartner === null || typeof value.ncpPartner === "string") &&
+    typeof value.model === "string" &&
+    typeof value.profile === "string" &&
+    typeof value.credentialEnv === "string" &&
+    isOptionalString(value.providerLabel) &&
+    isOptionalString(value.provider) &&
+    typeof value.onboardedAt === "string"
+  );
+}
+
 export function describeOnboardEndpoint(config: NemoClawOnboardConfig): string {
   if (config.endpointUrl === "https://inference.local/v1") {
     return "Managed Inference Route (inference.local)";
   }
 
-  return `${config.endpointType} (${config.endpointUrl})`;
+  let safeUrl = config.endpointUrl;
+  try {
+    const parsed = new URL(config.endpointUrl);
+    if (parsed.password) parsed.password = "****";
+    if (parsed.username) parsed.username = "****";
+    for (const key of [...parsed.searchParams.keys()]) {
+      if (/(token|key|secret|auth|sig|credential|password)/i.test(key)) {
+        parsed.searchParams.set(key, "****");
+      }
+    }
+    safeUrl = parsed.toString();
+  } catch {
+    // Not a valid URL — show as-is
+  }
+  return `${config.endpointType} (${safeUrl})`;
 }
 
 export function describeOnboardProvider(config: NemoClawOnboardConfig): string {
@@ -94,7 +157,9 @@ export function loadOnboardConfig(): NemoClawOnboardConfig | null {
   if (!existsSync(path)) {
     return null;
   }
-  return JSON.parse(readFileSync(path, "utf-8")) as NemoClawOnboardConfig;
+  const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+  const parsedObject = typeof parsed === "object" && parsed !== null ? parsed : null;
+  return isOnboardConfig(parsedObject) ? parsedObject : null;
 }
 
 export function saveOnboardConfig(config: NemoClawOnboardConfig): void {

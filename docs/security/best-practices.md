@@ -109,7 +109,7 @@ flowchart TB
 * - Filesystem
   - System binary tampering, credential theft, config manipulation.
   - Landlock LSM + container mounts
-  - No. Requires sandbox re-creation.
+  - Landlock layout: no. Requires sandbox re-creation. Config lockdown posture: yes, with host-side shields commands.
 
 * - Process
   - Privilege escalation, fork bombs, syscall abuse.
@@ -119,7 +119,7 @@ flowchart TB
 * - Inference
   - Credential exposure, unauthorized model access, cost overruns.
   - OpenShell gateway
-  - Yes. Use `openshell inference set`.
+  - Yes. Use `nemoclaw inference set`.
 
 :::
 
@@ -150,7 +150,7 @@ If someone replaces a binary while the sandbox runs, the hash mismatch triggers 
 
 | Aspect | Detail |
 |---|---|
-| Default | Each endpoint restricts access to specific binaries. For example, the `github` preset restricts access so only `/usr/bin/gh` and `/usr/bin/git` can reach `github.com`. Binary paths support glob patterns (`*` matches one path component, `**` matches recursively). |
+| Default | Each endpoint restricts access to specific binaries. For example, the `github` preset restricts access so only `/usr/bin/git` can reach `github.com`. Binary paths support glob patterns (`*` matches one path component, `**` matches recursively). |
 | What you can change | Add binaries to an endpoint entry, or omit the `binaries` field to allow any executable. |
 | Risk if relaxed | Removing binary restrictions lets any process in the sandbox reach the endpoint. An agent could use `curl`, `wget`, or a Python script to exfiltrate data to an allowed host, bypassing the intended usage pattern. |
 | Recommendation | Always scope endpoints to the binaries that need them. If the agent needs a host from a new binary, add that binary explicitly rather than removing the restriction. |
@@ -161,7 +161,7 @@ Endpoint rules restrict allowed HTTP methods and URL paths.
 
 | Aspect | Detail |
 |---|---|
-| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes (for example, `api.anthropic.com` allows POST only to inference paths). Read-only endpoints such as `docs.openclaw.ai` and `sentry.io` allow GET only. The `npm_registry` baseline entry and the `npm`/`pypi` presets are GET-only (plus HEAD for PyPI). |
+| Default | Some endpoints allow GET and POST on `/**` (for example, `clawhub.ai`). Others restrict methods and paths to specific API routes (for example, `integrate.api.nvidia.com` allows POST only to inference and embedding paths and GET to model listings). Read-only endpoints such as `docs.openclaw.ai`, the `npm_registry` baseline entry, and the `pypi` preset allow GET only (PyPI also allows HEAD). The `npm` preset is an intentional exception: npm/Yarn registry traffic uses L4 pass-through for Node 22 undici CONNECT compatibility. |
 | What you can change | Add methods (PUT, DELETE, PATCH) or restrict paths to specific prefixes. |
 | Risk if relaxed | Allowing all methods on an API endpoint gives the agent write and delete access. For example, allowing DELETE on `api.github.com` lets the agent delete repositories. |
 | Recommendation | Use GET-only rules for endpoints that the agent only reads. Add write methods only for endpoints where the agent must create or modify resources. Restrict paths to specific API routes when possible. |
@@ -176,7 +176,7 @@ The `protocol` field on an endpoint controls whether the proxy also inspects ind
 | Default | Endpoints without a `protocol` field use L4-only enforcement: the proxy checks host, port, and binary identity, then relays the TCP stream without inspecting payloads. Setting `protocol: rest` enables L7 inspection: the proxy auto-detects and terminates TLS, then evaluates each HTTP request's method and path against the endpoint's `rules` or `access` preset. |
 | What you can change | Add `protocol: rest` to an endpoint to enable per-request HTTP inspection. Use the `access` preset (`full`, `read-only`, `read-write`) or explicit `rules` to control allowed methods and paths. |
 | Risk if relaxed | L4-only endpoints (no `protocol` field) allow the agent to send any data through the tunnel after the initial connection is permitted. The proxy cannot see or filter the HTTP method, path, or body. The `access: full` preset with `protocol: rest` enables inspection but allows all methods and paths, so it does not restrict what the agent can do at the HTTP level. |
-| Recommendation | Use `protocol: rest` with specific `rules` for REST APIs where you want method and path control. Use `protocol: rest` with `access: read-only` for read-only endpoints. Omit `protocol` only for non-HTTP protocols (WebSocket, gRPC streaming) or endpoints that do not need HTTP inspection. |
+| Recommendation | Use `protocol: rest` with specific `rules` for REST APIs where you want method and path control. Use `protocol: rest` with `access: read-only` for read-only endpoints. Omit `protocol` only for non-HTTP protocols (WebSocket, gRPC streaming), endpoints that do not need HTTP inspection, or documented compatibility exceptions that require a client-managed CONNECT tunnel. |
 
 ### Operator Approval Flow
 
@@ -198,10 +198,11 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 | `brave` | Brave Search API. | Agent can issue search queries. |
 | `brew` | Homebrew (Linuxbrew) package manager. | Allows installing arbitrary Homebrew packages, which may contain malicious code. |
 | `discord` | Discord REST API, WebSocket gateway, CDN. | CDN endpoint (`cdn.discordapp.com`) allows GET to any path. WebSocket uses `access: full` (no inspection). |
-| `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `gh` and `git`. |
+| `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `git`. |
 | `huggingface` | Hugging Face Hub (download-only) and inference router. | Allows downloading arbitrary models and datasets. POST is restricted to the inference router only. |
 | `jira` | Atlassian Jira API. | Gives agent read/write access to project issues and comments. |
-| `npm` | npm and Yarn registries (GET-only). | Allows installing arbitrary npm packages, which may contain malicious code. Publishing is blocked. |
+| `local-inference` | Local Ollama and vLLM through the host gateway. | Allows sandbox access to host-side local inference ports covered by the preset. |
+| `npm` | npm and Yarn registries via L4 pass-through. | Allows installing arbitrary npm packages, which may contain malicious code. OpenShell still gates by host, port, and binary, but does not inspect HTTP method, path, or body for this preset. |
 | `outlook` | Microsoft 365, Outlook. | Gives agent access to email. |
 | `pypi` | Python Package Index (GET and HEAD only). | Allows installing arbitrary Python packages, which may contain malicious code. Publishing is blocked. |
 | `slack` | Slack API, Socket Mode, webhooks. | WebSocket uses `access: full`. Agent can post to any channel the bot token has access to. |
@@ -227,24 +228,27 @@ The container mounts system directories read-only to prevent the agent from modi
 | Risk if relaxed | Making `/usr` or `/lib` writable lets the agent replace system binaries (such as `curl` or `node`) with trojanized versions. Making `/etc` writable lets the agent modify DNS resolution, TLS trust stores, or user accounts. |
 | Recommendation | Never make system paths writable. If the agent needs a writable location for generated files, use a subdirectory of `/sandbox`. |
 
-### Read-Only `.openclaw` Config
+### Agent Config Directory
 
-The `/sandbox/.openclaw` directory contains the OpenClaw gateway configuration, including auth tokens and CORS settings.
-The container mounts it read-only while writable agent state (plugins, agent data) lives in `/sandbox/.openclaw-data` through symlinks.
+The `/sandbox/.openclaw` directory contains the OpenClaw gateway configuration (model routing, CORS settings, channel config).
+The current entrypoint reads the gateway auth token from OpenClaw config when present, exports it as `OPENCLAW_GATEWAY_TOKEN`, and writes it to `/tmp/nemoclaw-proxy-env.sh` so interactive sandbox sessions can reach the gateway through the static `/sandbox/.bashrc` and `/sandbox/.profile` source shims.
+In root mode, the gateway process still runs as the separate `gateway` user, but the token is intentionally available to sandbox shells for local gateway access.
 
-Multiple defense layers protect this directory:
+Writable agent state such as plugins, skills, hooks, and workspace metadata lives directly under `/sandbox/.openclaw`.
 
-- **DAC permissions.** Root owns the directory and `openclaw.json` with `chmod 444`, so the sandbox user cannot write to them.
-- **Immutable flag.** The entrypoint applies `chattr +i` to the directory and all symlinks, preventing modification even if other controls fail.
-- **Symlink validation.** At startup, the entrypoint verifies every symlink in `.openclaw` points to the expected `.openclaw-data` target. If any symlink points elsewhere, the container refuses to start.
-- **Config integrity hash.** The build process pins a SHA256 hash of `openclaw.json`. The entrypoint verifies it at startup and refuses to start if the hash does not match.
+By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
+For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so config and writable state entry points cannot be changed by the sandbox user.
+
+- **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `700` and `openclaw.json` with mode `600`, so the agent can read and write config directly.
+- **Config integrity hash.** The image includes a SHA256 hash of `openclaw.json`. In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash. When the hash is root-owned and read-only, startup enforces it and refuses to start if the hash does not match.
+- **Gateway token environment.** The gateway exports `OPENCLAW_GATEWAY_TOKEN` and writes it to `/tmp/nemoclaw-proxy-env.sh` for interactive sandbox sessions. Keep this in mind when deciding whether a workload should run with mutable config or an immutable config posture.
 
 | Aspect | Detail |
 |---|---|
-| Default | The container mounts `/sandbox/.openclaw` as read-only, root-owned, immutable, and integrity-verified at startup. `/sandbox/.openclaw-data` remains writable. |
-| What you can change | Move `/sandbox/.openclaw` from `read_only` to `read_write` in the policy file. |
-| Risk if relaxed | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS, changing auth tokens, or redirecting inference to an attacker-controlled endpoint. This is the single most dangerous filesystem change. |
-| Recommendation | Never make `/sandbox/.openclaw` writable. |
+| Default | The sandbox keeps `/sandbox/.openclaw` writable (`700 sandbox:sandbox`), sets `openclaw.json` to `600 sandbox:sandbox`, lets the agent manage state directly, and has the gateway place `OPENCLAW_GATEWAY_TOKEN` in `/tmp/nemoclaw-proxy-env.sh` for interactive shells. |
+| What you can change | Apply a reviewed host-side immutability workflow to lock config and state directories with DAC permissions and the immutable flag where available. |
+| Risk of default | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. |
+| Recommendation | For always-on assistants handling sensitive workloads, lock config after initial setup. For development workflows, the writable default is appropriate. |
 
 ### Writable Paths
 
@@ -279,19 +283,21 @@ See the [Process Controls](https://docs.nvidia.com/openshell/latest/security/bes
 
 The entrypoint drops dangerous Linux capabilities from the bounding set at startup using `capsh`.
 This limits what capabilities any child process (gateway, sandbox, agent) can ever acquire.
+When the entrypoint switches from root to the `sandbox` and `gateway` users, it uses `setpriv` when available to remove the remaining privilege-separation capabilities from the child process at the same time as the user change.
 
-The entrypoint drops these capabilities: `cap_net_raw`, `cap_dac_override`, `cap_sys_chroot`, `cap_fsetid`, `cap_setfcap`, `cap_mknod`, `cap_audit_write`, `cap_net_bind_service`.
-The entrypoint keeps these because it needs them for privilege separation using gosu: `cap_chown`, `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_kill`.
+The initial entrypoint drop removes `cap_sys_admin`, `cap_sys_ptrace`, `cap_net_raw`, `cap_dac_override`, `cap_sys_chroot`, `cap_fsetid`, `cap_setfcap`, `cap_mknod`, `cap_audit_write`, and `cap_net_bind_service`.
+During `setpriv` step-down, the child process also loses `cap_setuid`, `cap_setgid`, `cap_fowner`, `cap_chown`, and `cap_kill`.
 
 This is best-effort: if `capsh` is not available or `CAP_SETPCAP` is not in the bounding set, the entrypoint logs a warning and continues with the default capability set.
+If `setpriv` is unavailable, the entrypoint falls back to `gosu` and logs a warning that the remaining bounding-set capabilities were retained for the child process.
 For additional protection, pass `--cap-drop=ALL` with `docker run` or Compose (see [Sandbox Hardening](../deployment/sandbox-hardening.md)).
 
 | Aspect | Detail |
 |---|---|
-| Default | The entrypoint drops dangerous capabilities at startup using `capsh`. Best-effort. |
+| Default | The entrypoint drops dangerous capabilities at startup using `capsh`, then uses `setpriv` during user step-down when possible. Best-effort. |
 | What you can change | When launching with `docker run` directly, pass `--cap-drop=ALL --cap-add=NET_BIND_SERVICE` for stricter enforcement. In the standard NemoClaw flow (with `nemoclaw onboard`), the entrypoint handles capability dropping automatically. |
-| Risk if relaxed | `CAP_NET_RAW` allows raw socket access for network sniffing. `CAP_DAC_OVERRIDE` bypasses filesystem permission checks. Attackers can use `CAP_SYS_CHROOT` in container escape chains. If `capsh` is unavailable, the container runs with the default Docker capability set. |
-| Recommendation | Run on an image that includes `capsh` (the NemoClaw image includes it through `libcap2-bin`). For defense-in-depth, also pass `--cap-drop=ALL` at the container runtime level. |
+| Risk if relaxed | `CAP_SYS_ADMIN` and `CAP_SYS_PTRACE` expand kernel and process attack surface. `CAP_NET_RAW` allows raw socket access for network sniffing. `CAP_DAC_OVERRIDE` bypasses filesystem permission checks. If `capsh` or `setpriv` cannot run, the container retains more of the runtime-provided capability set. |
+| Recommendation | Run on an image that includes `capsh` and `setpriv` (the NemoClaw image includes them). For defense-in-depth, also pass `--cap-drop=ALL` at the container runtime level. |
 
 ### Gateway Process Isolation
 
@@ -402,6 +408,17 @@ Device authentication requires each connecting device to go through a pairing fl
 | Risk if relaxed | Disabling device auth allows any device on the network to connect to the gateway without proving identity. This is dangerous when combined with LAN-bind changes or cloudflared tunnels in remote deployments, resulting in an unauthenticated, publicly reachable dashboard. |
 | Recommendation | Keep device auth enabled (the default). Only disable it for headless or development environments where no untrusted devices can reach the gateway. |
 
+### Gateway Bind Address
+
+NemoClaw binds the OpenShell gateway to loopback by default.
+
+| Aspect | Detail |
+|---|---|
+| Default | `NEMOCLAW_GATEWAY_BIND_ADDRESS=127.0.0.1`. |
+| What you can change | Set `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` before onboarding to listen on all IPv4 interfaces. |
+| Risk if relaxed | Other hosts on the network may be able to reach the OpenShell gateway. |
+| Recommendation | Keep the loopback default unless the gateway must be reachable from another host. |
+
 ### Insecure Auth Derivation
 
 The `allowInsecureAuth` setting controls whether the gateway permits non-HTTPS authentication.
@@ -443,7 +460,7 @@ The scanner intercepts Write, Edit, and similar tool calls targeting memory and 
 | Aspect | Detail |
 |---|---|
 | Default | Enabled. The plugin registers a `before_tool_call` hook that scans for 14 high-confidence secret patterns. |
-| What it covers | `.openclaw-data/memory/`, `workspace/`, `agents/`, `skills/`, `hooks/`, and `MEMORY.md`. |
+| What it covers | Examples include `.openclaw/memory/`, `.openclaw/workspace/`, `.openclaw/agents/`, `.openclaw/skills/`, `.openclaw/hooks/`, `.openclaw/credentials/`, `.openclaw/openclaw.json`, `.nemoclaw/`, and `MEMORY.md`; the exact coverage is defined by `MEMORY_PATH_SEGMENTS` and enforced through `isMemoryPath()`. |
 | What you can change | This is not a user-facing knob. The plugin enforces it automatically. |
 | Risk if relaxed | Without scanning, the agent could persist API keys or tokens in memory files that survive across sessions and backups. |
 | Recommendation | No action needed. If a write is blocked, the agent receives an actionable error listing the detected patterns. |
@@ -529,10 +546,10 @@ The following patterns weaken security without providing meaningful benefit.
 
 | Mistake | Why it matters | What to do instead |
 |---------|---------------|-------------------|
-| Omitting `protocol: rest` on REST API endpoints | Endpoints without a `protocol` field use L4-only enforcement. The proxy allows the TCP stream through after checking host, port, and binary, but cannot see or filter individual HTTP requests. | Add `protocol: rest` with explicit `rules` to enable per-request method and path control on REST APIs. |
+| Omitting `protocol: rest` on REST API endpoints without a compatibility reason | Endpoints without a `protocol` field use L4-only enforcement. The proxy allows the TCP stream through after checking host, port, and binary, but cannot see or filter individual HTTP requests. | Add `protocol: rest` with explicit `rules` to enable per-request method and path control on REST APIs. Use L4 pass-through only for documented cases such as npm/Yarn on Node 22, where the client requires a CONNECT tunnel that L7 inspection would break. |
 | Adding endpoints to the baseline policy for one-off requests | Adding an endpoint to the baseline policy makes it permanently reachable across all sandbox instances. | Use operator approval. Approved endpoints persist within the sandbox instance but reset when you destroy and recreate the sandbox. |
 | Relying solely on the entrypoint for capability drops | The entrypoint drops dangerous capabilities using `capsh`, but this is best-effort. If `capsh` is unavailable or `CAP_SETPCAP` is not in the bounding set, the container runs with the default capability set. | Pass `--cap-drop=ALL` at the container runtime level as defense-in-depth. |
-| Granting write access to `/sandbox/.openclaw` | This directory contains the OpenClaw gateway configuration. A writable `.openclaw` lets the agent modify auth tokens, disable CORS, or redirect inference routing. | Store agent-writable state in `/sandbox/.openclaw-data`. |
+| Leaving `/sandbox/.openclaw` writable on sensitive workloads | This directory contains the OpenClaw gateway configuration. A writable `.openclaw` lets the agent disable CORS, redirect inference routing, or weaken gateway protections. | Lock config for always-on assistants handling sensitive data. |
 | Adding inference provider hosts to the network policy | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. |
 | Disabling device auth for remote deployments | Without device auth, any device on the network can connect to the gateway without pairing. Combined with a cloudflared tunnel, this makes the dashboard publicly accessible and unauthenticated. | Keep `NEMOCLAW_DISABLE_DEVICE_AUTH` at its default (`0`). Only set it to `1` for local headless or development environments. |
 

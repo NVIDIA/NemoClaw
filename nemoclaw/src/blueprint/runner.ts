@@ -26,6 +26,233 @@ import { DASHBOARD_PORT } from "../lib/ports.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
+type RollbackPlanSource = { sandbox_name?: string };
+type UnknownRecord = { [key: string]: unknown };
+type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
+type RestProtocol = "rest";
+type EndpointEnforcement = "enforce" | "audit";
+type EndpointTls = "terminate" | "passthrough" | "skip";
+
+interface PolicyRule {
+  allow: {
+    method: HttpMethod;
+    path: string;
+  };
+}
+
+interface PolicyEndpoint {
+  host: string;
+  port: number;
+  protocol?: RestProtocol;
+  enforcement?: EndpointEnforcement;
+  tls?: EndpointTls;
+  access?: "full";
+  rules?: PolicyRule[];
+}
+
+interface PolicyAddition {
+  name: string;
+  endpoints: PolicyEndpoint[];
+}
+
+type PolicyAdditions = { [name: string]: PolicyAddition };
+
+const HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+const REST_PROTOCOLS = new Set(["rest"]);
+const ENDPOINT_ENFORCEMENT_MODES = new Set(["enforce", "audit"]);
+const ENDPOINT_TLS_MODES = new Set(["terminate", "passthrough", "skip"]);
+
+function isAction(value: string | undefined): value is Action {
+  return value === "plan" || value === "apply" || value === "status" || value === "rollback";
+}
+
+function isObjectLike(value: unknown): value is UnknownRecord {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+  return Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null;
+}
+
+function isOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === "string";
+}
+
+function isOptionalFiniteNumber(value: unknown): value is number | undefined {
+  return value === undefined || (typeof value === "number" && Number.isFinite(value));
+}
+
+function isOptionalBoolean(value: unknown): value is boolean | undefined {
+  return value === undefined || typeof value === "boolean";
+}
+
+function isValidPort(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 65535;
+}
+
+function isOptionalPortList(value: unknown): value is number[] | undefined {
+  return (
+    value === undefined || (Array.isArray(value) && value.every((entry) => isValidPort(entry)))
+  );
+}
+
+function hasOnlyKeys(value: UnknownRecord, allowed: readonly string[]): boolean {
+  return Object.keys(value).every((key) => allowed.includes(key));
+}
+
+function isPolicyRule(value: unknown): value is PolicyRule {
+  if (!isObjectLike(value) || !hasOnlyKeys(value, ["allow"])) {
+    return false;
+  }
+  const allow = value.allow;
+  if (!isObjectLike(allow) || !hasOnlyKeys(allow, ["method", "path"])) {
+    return false;
+  }
+  return (
+    typeof allow.method === "string" &&
+    HTTP_METHODS.has(allow.method) &&
+    typeof allow.path === "string" &&
+    allow.path.startsWith("/")
+  );
+}
+
+function isPolicyEndpoint(value: unknown): value is PolicyEndpoint {
+  if (
+    !isObjectLike(value) ||
+    !hasOnlyKeys(value, ["host", "port", "protocol", "enforcement", "tls", "access", "rules"])
+  ) {
+    return false;
+  }
+
+  const protocol = value.protocol;
+  const enforcement = value.enforcement;
+  const tls = value.tls;
+  const access = value.access;
+  const rules = value.rules;
+
+  return (
+    typeof value.host === "string" &&
+    isValidPort(value.port) &&
+    (protocol === undefined || (typeof protocol === "string" && REST_PROTOCOLS.has(protocol))) &&
+    (enforcement === undefined ||
+      (typeof enforcement === "string" && ENDPOINT_ENFORCEMENT_MODES.has(enforcement))) &&
+    (tls === undefined || (typeof tls === "string" && ENDPOINT_TLS_MODES.has(tls))) &&
+    (access === undefined || access === "full") &&
+    (rules === undefined ||
+      (Array.isArray(rules) && rules.length > 0 && rules.every((entry) => isPolicyRule(entry)))) &&
+    (protocol !== "rest" || rules !== undefined)
+  );
+}
+
+function isPolicyAddition(value: unknown): value is PolicyAddition {
+  if (!isObjectLike(value) || !hasOnlyKeys(value, ["name", "endpoints"])) {
+    return false;
+  }
+  return (
+    typeof value.name === "string" &&
+    Array.isArray(value.endpoints) &&
+    value.endpoints.length > 0 &&
+    value.endpoints.every((entry) => isPolicyEndpoint(entry))
+  );
+}
+
+function isPolicyAdditions(value: unknown): value is PolicyAdditions {
+  return isObjectLike(value) && Object.values(value).every((entry) => isPolicyAddition(entry));
+}
+
+function isInferenceProfile(value: unknown): value is InferenceProfile {
+  if (!isObjectLike(value)) {
+    return false;
+  }
+
+  return (
+    isOptionalString(value.provider_type) &&
+    isOptionalString(value.provider_name) &&
+    isOptionalString(value.endpoint) &&
+    isOptionalString(value.model) &&
+    isOptionalString(value.credential_env) &&
+    isOptionalString(value.credential_default) &&
+    isOptionalFiniteNumber(value.timeout_secs)
+  );
+}
+
+function isBlueprint(value: unknown): value is Blueprint {
+  if (!isObjectLike(value)) {
+    return false;
+  }
+
+  const version = value.version;
+  if (!isOptionalString(version)) {
+    return false;
+  }
+
+  const components = value.components;
+  if (components === undefined) {
+    return true;
+  }
+  if (!isObjectLike(components)) {
+    return false;
+  }
+
+  const inference = components.inference;
+  if (inference !== undefined) {
+    if (!isObjectLike(inference)) {
+      return false;
+    }
+    const profiles = inference.profiles;
+    if (profiles !== undefined) {
+      if (
+        !isObjectLike(profiles) ||
+        !Object.values(profiles).every((entry) => isInferenceProfile(entry))
+      ) {
+        return false;
+      }
+    }
+  }
+
+  const sandbox = components.sandbox;
+  if (sandbox !== undefined) {
+    if (!isObjectLike(sandbox)) {
+      return false;
+    }
+    if (
+      !isOptionalString(sandbox.image) ||
+      !isOptionalString(sandbox.name) ||
+      !isOptionalPortList(sandbox.forward_ports)
+    ) {
+      return false;
+    }
+  }
+
+  const router = components.router;
+  if (router !== undefined) {
+    if (!isObjectLike(router)) {
+      return false;
+    }
+    if (
+      !isOptionalBoolean(router.enabled) ||
+      !(router.port === undefined || isValidPort(router.port)) ||
+      !isOptionalString(router.pool_config_path)
+    ) {
+      return false;
+    }
+  }
+
+  const policy = components.policy;
+  if (policy !== undefined) {
+    if (!isObjectLike(policy)) {
+      return false;
+    }
+    const additions = policy.additions;
+    if (additions !== undefined) {
+      if (!isPolicyAdditions(additions)) {
+        return false;
+      }
+    }
+  }
+
+  return true;
+}
+
 // ── Logging helpers ─────────────────────────────────────────────
 
 function log(msg: string): void {
@@ -34,6 +261,10 @@ function log(msg: string): void {
 
 function progress(pct: number, label: string): void {
   process.stdout.write(`PROGRESS:${String(pct)}:${label}\n`);
+}
+
+function readRollbackSandboxName(value: RollbackPlanSource | null): string {
+  return value && typeof value.sandbox_name === "string" ? value.sandbox_name : "openclaw";
 }
 
 // ── Utilities ───────────────────────────────────────────────────
@@ -50,15 +281,18 @@ export function emitRunId(): string {
   return rid;
 }
 
+type InferenceProfileMap = { [profileName: string]: InferenceProfile };
+
 interface Blueprint {
   version?: string;
   components?: {
     inference?: {
-      profiles?: Record<string, InferenceProfile>;
+      profiles?: InferenceProfileMap;
     };
     sandbox?: SandboxConfig;
+    router?: RouterConfig;
     policy?: {
-      additions?: Record<string, unknown>;
+      additions?: PolicyAdditions;
     };
   };
 }
@@ -79,6 +313,60 @@ interface SandboxConfig {
   forward_ports?: number[];
 }
 
+interface RouterConfig {
+  enabled?: boolean;
+  port?: number;
+  pool_config_path?: string;
+}
+
+const DEFAULT_ROUTER_PORT = 4000;
+
+function parseCurrentPolicy(raw: string): UnknownRecord {
+  const sepIndex = raw.indexOf("---");
+  const yaml = (sepIndex >= 0 ? raw.slice(sepIndex + 3) : raw).trim();
+  if (!yaml) return {};
+
+  let parsed: unknown;
+  try {
+    parsed = YAML.parse(yaml);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Current policy from openshell policy get --full is not valid YAML: ${detail}`);
+  }
+
+  if (!isObjectLike(parsed)) {
+    throw new Error("Current policy from openshell policy get --full must be a YAML mapping");
+  }
+  if (sepIndex < 0 && !("version" in parsed) && !("network_policies" in parsed)) {
+    throw new Error(
+      "Current policy from openshell policy get --full does not contain a policy YAML document",
+    );
+  }
+  return parsed;
+}
+
+function mergePolicyAdditions(currentPolicyRaw: string, additions: PolicyAdditions): string {
+  const current = parseCurrentPolicy(currentPolicyRaw);
+  if (current.network_policies !== undefined && !isObjectLike(current.network_policies)) {
+    throw new Error("Current policy network_policies must be a YAML mapping");
+  }
+  const existingNetworkPolicies = isObjectLike(current.network_policies)
+    ? current.network_policies
+    : {};
+  const output: UnknownRecord = {};
+
+  for (const [key, value] of Object.entries(current)) {
+    if (key !== "version" && key !== "network_policies") {
+      output[key] = value;
+    }
+  }
+
+  output.version =
+    typeof current.version === "number" && Number.isFinite(current.version) ? current.version : 1;
+  output.network_policies = { ...existingNetworkPolicies, ...additions };
+  return YAML.stringify(output);
+}
+
 export function loadBlueprint(): Blueprint {
   const blueprintPath = process.env.NEMOCLAW_BLUEPRINT_PATH ?? ".";
   const bpFile = join(blueprintPath, "blueprint.yaml");
@@ -88,7 +376,13 @@ export function loadBlueprint(): Blueprint {
   } catch {
     throw new Error(`blueprint.yaml not found at ${bpFile}`);
   }
-  return YAML.parse(content) as Blueprint;
+  const parsed: unknown = YAML.parse(content);
+  if (!isBlueprint(parsed)) {
+    throw new Error(
+      `blueprint.yaml at ${bpFile} must contain a YAML mapping with valid nested component shapes`,
+    );
+  }
+  return parsed;
 }
 
 async function runCmd(
@@ -121,9 +415,10 @@ async function resolveRunConfig(
   blueprint: Blueprint,
   endpointUrl?: string,
 ): Promise<{
-  inferenceProfiles: Record<string, InferenceProfile>;
+  inferenceProfiles: InferenceProfileMap;
   inferenceCfg: InferenceProfile;
   sandboxCfg: SandboxConfig;
+  routerCfg: RouterConfig;
 }> {
   const inferenceProfiles = blueprint.components?.inference?.profiles ?? {};
   if (!(profile in inferenceProfiles)) {
@@ -133,17 +428,24 @@ async function resolveRunConfig(
 
   let inferenceCfg = { ...inferenceProfiles[profile] };
   if (endpointUrl) {
-    await validateEndpointUrl(endpointUrl);
-    inferenceCfg = { ...inferenceCfg, endpoint: endpointUrl };
+    const validated = await validateEndpointUrl(endpointUrl);
+    // Use DNS-pinned URL for HTTP (full SSRF/rebinding protection). For HTTPS,
+    // keep the original hostname — TLS certificate validation prevents rebinding
+    // since the attacker cannot present a valid cert for the target.
+    const safe = endpointUrl.startsWith("https:") ? validated.url : validated.pinnedUrl;
+    inferenceCfg = { ...inferenceCfg, endpoint: safe };
   }
 
   // Validate the final endpoint (whether from CLI override or blueprint profile)
   if (inferenceCfg.endpoint) {
-    await validateEndpointUrl(inferenceCfg.endpoint);
+    const validated = await validateEndpointUrl(inferenceCfg.endpoint);
+    const safe = inferenceCfg.endpoint.startsWith("https:") ? validated.url : validated.pinnedUrl;
+    inferenceCfg = { ...inferenceCfg, endpoint: safe };
   }
 
   const sandboxCfg = blueprint.components?.sandbox ?? {};
-  return { inferenceProfiles, inferenceCfg, sandboxCfg };
+  const routerCfg = blueprint.components?.router ?? {};
+  return { inferenceProfiles, inferenceCfg, sandboxCfg, routerCfg };
 }
 
 // ── Actions ─────────────────────────────────────────────────────
@@ -163,7 +465,12 @@ export interface RunPlan {
     model: string | undefined;
     credential_env: string | undefined;
   };
-  policy_additions: Record<string, unknown>;
+  router: {
+    enabled: boolean;
+    port: number;
+    pool_config_path: string | undefined;
+  };
+  policy_additions: PolicyAdditions;
   dry_run: boolean;
 }
 
@@ -175,7 +482,7 @@ export async function actionPlan(
   const rid = emitRunId();
   progress(10, "Validating blueprint");
 
-  const { inferenceCfg, sandboxCfg } = await resolveRunConfig(
+  const { inferenceCfg, sandboxCfg, routerCfg } = await resolveRunConfig(
     profile,
     blueprint,
     options?.endpointUrl,
@@ -187,6 +494,9 @@ export async function actionPlan(
       "openshell CLI not found. Install OpenShell first.\n  See: https://github.com/NVIDIA/OpenShell",
     );
   }
+
+  const routerEnabled = routerCfg.enabled === true;
+  const routerPort = routerCfg.port ?? DEFAULT_ROUTER_PORT;
 
   const plan: RunPlan = {
     run_id: rid,
@@ -202,6 +512,11 @@ export async function actionPlan(
       endpoint: inferenceCfg.endpoint,
       model: inferenceCfg.model,
       credential_env: inferenceCfg.credential_env,
+    },
+    router: {
+      enabled: routerEnabled,
+      port: routerPort,
+      pool_config_path: routerCfg.pool_config_path,
     },
     policy_additions: blueprint.components?.policy?.additions ?? {},
     dry_run: options?.dryRun ?? false,
@@ -234,6 +549,9 @@ export async function actionApply(
   const sandboxName = sandboxCfg.name ?? "openclaw";
   const sandboxImage = sandboxCfg.image ?? "openclaw";
   const forwardPorts = sandboxCfg.forward_ports ?? [DASHBOARD_PORT];
+  const policyAdditions = blueprint.components?.policy?.additions ?? {};
+  const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
+  mkdirSync(stateDir, { recursive: true });
 
   progress(20, "Creating OpenClaw sandbox");
   const createArgs = [
@@ -313,9 +631,33 @@ export async function actionApply(
   }
   await runCmd(inferenceArgs, { reject: false });
 
+  if (Object.keys(policyAdditions).length > 0) {
+    progress(78, "Applying policy additions");
+    const currentPolicy = await runCmd(["openshell", "policy", "get", "--full", sandboxName], {
+      reject: false,
+    });
+    if (currentPolicy.exitCode !== 0) {
+      throw new Error(
+        `Failed to read current policy before applying additions: ${currentPolicy.stderr}`,
+      );
+    }
+
+    const mergedPolicyFile = join(stateDir, "merged-policy.yaml");
+    writeFileSync(mergedPolicyFile, mergePolicyAdditions(currentPolicy.stdout, policyAdditions), {
+      encoding: "utf-8",
+      mode: 0o600,
+    });
+
+    const policySet = await runCmd(
+      ["openshell", "policy", "set", "--policy", mergedPolicyFile, "--wait", sandboxName],
+      { reject: false },
+    );
+    if (policySet.exitCode !== 0) {
+      throw new Error(`Failed to apply policy additions: ${policySet.stderr}`);
+    }
+  }
+
   progress(85, "Saving run state");
-  const stateDir = join(homedir(), ".nemoclaw", "state", "runs", rid);
-  mkdirSync(stateDir, { recursive: true });
   writeFileSync(
     join(stateDir, "plan.json"),
     JSON.stringify(
@@ -323,6 +665,7 @@ export async function actionApply(
         run_id: rid,
         profile,
         sandbox_name: sandboxName,
+        policy_additions: policyAdditions,
         inference: {
           provider_type: inferenceCfg.provider_type,
           provider_name: inferenceCfg.provider_name,
@@ -403,8 +746,12 @@ export async function actionRollback(rid: string): Promise<void> {
   const planFile = join(stateDir, "plan.json");
   try {
     const planData = readFileSync(planFile, "utf-8");
-    const plan = JSON.parse(planData) as { sandbox_name?: string };
-    const sandboxName = plan.sandbox_name ?? "openclaw";
+    const parsedPlan: unknown = JSON.parse(planData);
+    const rollbackPlan: RollbackPlanSource | null =
+      typeof parsedPlan === "object" && parsedPlan !== null && !Array.isArray(parsedPlan)
+        ? parsedPlan
+        : null;
+    const sandboxName = readRollbackSandboxName(rollbackPlan);
 
     progress(30, `Stopping sandbox ${sandboxName}`);
     await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
@@ -424,7 +771,8 @@ export async function actionRollback(rid: string): Promise<void> {
 // ── CLI ─────────────────────────────────────────────────────────
 
 export async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
-  const action = argv[0] as Action | undefined;
+  const rawAction = argv.at(0);
+  const action = isAction(rawAction) ? rawAction : undefined;
   let profile = "default";
   let planPath: string | undefined;
   let runId: string | undefined;
@@ -434,6 +782,12 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
   function requireValue(flag: string, i: number): string {
     if (i >= argv.length) throw new Error(`${flag} requires a value`);
     return argv[i];
+  }
+
+  if (!action) {
+    throw new Error(
+      `Unknown action '${rawAction ?? "(missing)"}'. Use: plan, apply, status, rollback`,
+    );
   }
 
   for (let i = 1; i < argv.length; i++) {
@@ -456,15 +810,17 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
     }
   }
 
-  const blueprint = loadBlueprint();
-
   switch (action) {
-    case "plan":
+    case "plan": {
+      const blueprint = loadBlueprint();
       await actionPlan(profile, blueprint, { dryRun, endpointUrl });
       break;
-    case "apply":
+    }
+    case "apply": {
+      const blueprint = loadBlueprint();
       await actionApply(profile, blueprint, { planPath, endpointUrl });
       break;
+    }
     case "status":
       actionStatus(runId);
       break;
@@ -474,8 +830,5 @@ export async function main(argv: string[] = process.argv.slice(2)): Promise<void
       }
       await actionRollback(runId);
       break;
-    case undefined:
-    default:
-      throw new Error(`Unknown action '${String(action)}'. Use: plan, apply, status, rollback`);
   }
 }

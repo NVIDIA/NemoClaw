@@ -1,0 +1,119 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+
+import {
+  KNOWN_CHANNELS,
+  channelHasStaticToken,
+  channelUsesQrPairing,
+  getChannelDef,
+  getChannelTokenKeys,
+  knownChannelNames,
+  listChannels,
+  type ChannelDef,
+} from "./channels";
+
+describe("sandbox-channels KNOWN_CHANNELS", () => {
+  it("covers telegram, discord, slack, and wechat", () => {
+    expect(knownChannelNames()).toEqual(["telegram", "discord", "wechat", "slack"]);
+  });
+
+  it("exposes the primary bot-token env var for each channel", () => {
+    expect(getChannelDef("telegram")?.envKey).toBe("TELEGRAM_BOT_TOKEN");
+    expect(getChannelDef("discord")?.envKey).toBe("DISCORD_BOT_TOKEN");
+    expect(getChannelDef("slack")?.envKey).toBe("SLACK_BOT_TOKEN");
+    expect(getChannelDef("wechat")?.envKey).toBe("WECHAT_BOT_TOKEN");
+  });
+
+  it("only wechat declares loginMethod=host-qr", () => {
+    // Other channels paste a token; WeChat captures it via a host-side QR
+    // handshake (src/ext/wechat/login.ts). Onboarding branches on this flag,
+    // so flipping it accidentally would silently route WeChat through the
+    // paste prompt and break the QR flow.
+    expect(getChannelDef("wechat")?.loginMethod).toBe("host-qr");
+    expect(getChannelDef("telegram")?.loginMethod).toBeUndefined();
+    expect(getChannelDef("discord")?.loginMethod).toBeUndefined();
+    expect(getChannelDef("slack")?.loginMethod).toBeUndefined();
+  });
+
+  it("declares wechat as DM-only with the WECHAT_ALLOWED_IDS env key", () => {
+    const wechat = getChannelDef("wechat");
+    expect(wechat?.allowIdsMode).toBe("dm");
+    expect(wechat?.userIdEnvKey).toBe("WECHAT_ALLOWED_IDS");
+  });
+
+  it("only slack declares a secondary app-token env var", () => {
+    expect(getChannelDef("telegram")?.appTokenEnvKey).toBeUndefined();
+    expect(getChannelDef("discord")?.appTokenEnvKey).toBeUndefined();
+    expect(getChannelDef("slack")?.appTokenEnvKey).toBe("SLACK_APP_TOKEN");
+  });
+
+  it("asks for Slack human member IDs as a comma-separated allowlist", () => {
+    const slack = getChannelDef("slack");
+    expect(slack?.userIdEnvKey).toBe("SLACK_ALLOWED_USERS");
+    expect(slack?.userIdLabel).toBe("Slack Member IDs (comma-separated allowlist)");
+    expect(slack?.userIdHelp).toContain("comma-separated member IDs");
+    expect(slack?.userIdHelp).toContain("not the app or bot user ID");
+    expect(slack?.allowIdsMode).toBe("dm");
+  });
+
+  it("normalises case and whitespace when resolving a channel name", () => {
+    expect(getChannelDef("  Telegram  ")).toBe(KNOWN_CHANNELS.telegram);
+    expect(getChannelDef("DISCORD")).toBe(KNOWN_CHANNELS.discord);
+  });
+
+  it("returns undefined for unknown channel names", () => {
+    expect(getChannelDef("mattermost")).toBeUndefined();
+    expect(getChannelDef("")).toBeUndefined();
+  });
+});
+
+describe("sandbox-channels getChannelTokenKeys", () => {
+  it("returns just the primary token key for single-token channels", () => {
+    expect(getChannelTokenKeys(KNOWN_CHANNELS.telegram)).toEqual(["TELEGRAM_BOT_TOKEN"]);
+    expect(getChannelTokenKeys(KNOWN_CHANNELS.discord)).toEqual(["DISCORD_BOT_TOKEN"]);
+  });
+
+  it("returns primary then app token for slack", () => {
+    expect(getChannelTokenKeys(KNOWN_CHANNELS.slack)).toEqual([
+      "SLACK_BOT_TOKEN",
+      "SLACK_APP_TOKEN",
+    ]);
+  });
+
+  it("returns an empty list when the channel has no static envKey", () => {
+    const tokenless: ChannelDef = { description: "", help: "", label: "" };
+    expect(getChannelTokenKeys(tokenless)).toEqual([]);
+  });
+});
+
+describe("sandbox-channels token-shape helpers", () => {
+  it("channelUsesQrPairing flags channels without an envKey", () => {
+    const qr: ChannelDef = { description: "", help: "", label: "" };
+    expect(channelUsesQrPairing(qr)).toBe(true);
+    expect(channelUsesQrPairing(KNOWN_CHANNELS.telegram)).toBe(false);
+    expect(channelUsesQrPairing(KNOWN_CHANNELS.slack)).toBe(false);
+  });
+
+  it("channelHasStaticToken narrows to ChannelDef with a defined envKey", () => {
+    const qr: ChannelDef = { description: "", help: "", label: "" };
+    expect(channelHasStaticToken(qr)).toBe(false);
+    expect(channelHasStaticToken(KNOWN_CHANNELS.telegram)).toBe(true);
+    if (channelHasStaticToken(KNOWN_CHANNELS.telegram)) {
+      // Type-narrowed: envKey is `string`, no longer `string | undefined`.
+      const envKey: string = KNOWN_CHANNELS.telegram.envKey;
+      expect(envKey).toBe("TELEGRAM_BOT_TOKEN");
+    }
+  });
+});
+
+describe("sandbox-channels listChannels", () => {
+  it("materialises an array with the name merged into each entry", () => {
+    const list = listChannels();
+    expect(list.map((c) => c.name)).toEqual(["telegram", "discord", "wechat", "slack"]);
+    const telegram = list.find((c) => c.name === "telegram");
+    expect(telegram?.envKey).toBe("TELEGRAM_BOT_TOKEN");
+    expect(telegram?.allowIdsMode).toBe("dm");
+  });
+});

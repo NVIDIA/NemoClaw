@@ -5,5 +5,5 @@
 # Test inference.local routing through OpenShell provider (local vLLM)
 TMPFILE=$(mktemp)
 trap 'rm -f "$TMPFILE"' EXIT
-echo '{"model":"nvidia/nemotron-3-nano-30b-a3b","messages":[{"role":"user","content":"say hello"}]}' >"$TMPFILE"
+echo '{"model":"nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-FP8","messages":[{"role":"user","content":"say hello"}]}' >"$TMPFILE"
 curl -s https://inference.local/v1/chat/completions -H "Content-Type: application/json" -d @"$TMPFILE"
