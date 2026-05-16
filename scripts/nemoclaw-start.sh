@@ -1621,17 +1621,24 @@ openclaw() {
       esac
       ;;
     channels)
+      # `login` and `status` are intentionally allowed: `login` drives the
+      # in-sandbox QR pairing for QR-paired channels (e.g. WhatsApp) and
+      # `status` is read-only diagnostics. Persistent mutations (add/remove)
+      # stay blocked — they must go through the host CLI so the rebuild
+      # captures them.
       case "$2" in
-        list | "" | -h | --help) ;;
+        list | login | status | "" | -h | --help) ;;
         *)
           echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
           echo "Changes inside the sandbox do not persist across rebuilds." >&2
           echo "" >&2
           echo "To add or remove messaging channels, exit the sandbox and run:" >&2
-          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack>" >&2
-          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack>" >&2
+          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>" >&2
+          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>" >&2
           echo "" >&2
           echo "These stage the change and rebuild the sandbox to apply it." >&2
+          echo "QR-paired channels (wechat, whatsapp) complete pairing in-sandbox via" >&2
+          echo "  openclaw channels login --channel <name>" >&2
           return 1
           ;;
       esac

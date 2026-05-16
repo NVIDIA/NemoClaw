@@ -52,6 +52,7 @@ state_dirs:
   - memory
   - telegram
   - wechat
+  - whatsapp
   - credentials
 
 # ── Authentication ──────────────────────────────────────────────

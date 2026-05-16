@@ -764,7 +764,7 @@ describe("nemoclaw-start configure guard behavior", () => {
   it("#2592: blocks every (channel × op) mutating combo and surfaces the host-side hint", () => {
     const setup = writeProxyEnvWithGuard();
     try {
-      const channels = ["slack", "telegram", "discord"];
+      const channels = ["slack", "telegram", "discord", "wechat", "whatsapp"];
       const ops = ["add", "remove"];
       for (const op of ops) {
         for (const channel of channels) {
@@ -774,6 +774,31 @@ describe("nemoclaw-start configure guard behavior", () => {
           expect(result.stderr).toContain(`nemoclaw <sandbox> channels ${op}`);
         }
       }
+    } finally {
+      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // QR-paired channels (wechat, whatsapp) complete pairing in-sandbox via
+  // `openclaw channels login --channel <name>`. The guard must allow that
+  // path or the entire QR-pair flow is dead-on-arrival inside the sandbox.
+  // `status` is read-only diagnostics and is similarly safe to allow.
+  it("allows `channels login` and `channels status` inside the sandbox", () => {
+    const setup = writeProxyEnvWithGuard();
+    try {
+      const allowed = [
+        ["channels", "login", "--channel", "whatsapp"],
+        ["channels", "login", "--channel", "wechat"],
+        ["channels", "status", "--channel", "whatsapp"],
+        ["channels", "status"],
+      ];
+      for (const argv of allowed) {
+        const result = runGuardedOpenclaw(setup, argv);
+        expect(result.status, `${argv.join(" ")} should pass the guard`).toBe(0);
+      }
+      const log = fs.readFileSync(setup.commandLog, "utf-8");
+      expect(log).toContain("channels login --channel whatsapp");
+      expect(log).toContain("channels status");
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
