@@ -314,7 +314,7 @@ The command runs as the sandbox user with `HOME=/sandbox`, so in-sandbox tooling
 This is the supported substitute for `docker exec` on the sandbox container; raw `docker exec` runs as root and lands on `HOME=/root`, where the agent config is not present and `openclaw agent` falls back to its built-in defaults.
 
 ```console
-$ nemoclaw my-assistant exec -- openclaw agent --agent main -m "What is 2+2?"
+$ nemoclaw my-assistant exec -- openclaw agent -m "What is 2+2?"
 $ nemoclaw my-assistant exec --workdir /sandbox/workspace -- ls -la
 ```
 
