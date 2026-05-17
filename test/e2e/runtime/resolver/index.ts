@@ -221,10 +221,11 @@ function main(): number {
           }
           return s as ExpectedFailureSideEffect;
         });
-      let log = "";
-      if (parsed.logPath) {
-        log = fs.readFileSync(parsed.logPath, "utf8");
+      if (!parsed.logPath) {
+        process.stderr.write("resolver: match-failure requires --log\n");
+        return 2;
       }
+      const log = fs.readFileSync(parsed.logPath, "utf8");
       const observed: ObservedFailure = {
         phase: parsed.observedPhase as ExpectedFailurePhase,
         error_class: observedErrorClass,

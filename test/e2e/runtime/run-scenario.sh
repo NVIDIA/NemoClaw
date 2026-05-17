@@ -236,6 +236,23 @@ if [[ -n "${EXPECTED_FAILURE_PHASE}" ]]; then
   negative_log="${E2E_CONTEXT_DIR}/negative-${EXPECTED_FAILURE_PHASE}.log"
   sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
 
+  # Snapshot the side-effect baseline BEFORE forcing the failure so we only
+  # report effects newly introduced by this scenario. A pre-existing gateway
+  # or credentials file from an earlier run would otherwise look like a fresh
+  # side effect and falsely fail negative scenarios in dirty environments.
+  baseline_sandbox=0
+  if [[ -n "${sandbox_name}" ]] && openshell sandbox list 2>/dev/null | grep -Fq "${sandbox_name}"; then
+    baseline_sandbox=1
+  fi
+  baseline_gateway=0
+  if nemoclaw gateway status >/dev/null 2>&1; then
+    baseline_gateway=1
+  fi
+  baseline_credentials=0
+  if [[ -s "${HOME}/.nemoclaw/credentials.json" ]]; then
+    baseline_credentials=1
+  fi
+
   # Force the failure mode declared by the scenario. Only `preflight` /
   # `docker-missing` is implemented here; other phases are accepted by the
   # schema but their forcing logic lands alongside the first consumer.
@@ -254,31 +271,30 @@ if [[ -n "${EXPECTED_FAILURE_PHASE}" ]]; then
       ;;
   esac
 
-  # Gather observed side effects. Each helper emits the side-effect token
-  # iff the effect is present; the resolver compares the resulting CSV
-  # against `forbidden_side_effects`.
+  # Compute the side-effect delta: only count effects that were absent in the
+  # baseline and present after the forced failure.
   observed_side_effects=""
-  if [[ -n "${sandbox_name}" ]] && openshell sandbox list 2>/dev/null | grep -Fq "${sandbox_name}"; then
+  if [[ "${baseline_sandbox}" -eq 0 ]] && [[ -n "${sandbox_name}" ]] \
+    && openshell sandbox list 2>/dev/null | grep -Fq "${sandbox_name}"; then
     observed_side_effects="${observed_side_effects:+${observed_side_effects},}sandbox-created"
   fi
-  if nemoclaw gateway status >/dev/null 2>&1; then
+  if [[ "${baseline_gateway}" -eq 0 ]] && nemoclaw gateway status >/dev/null 2>&1; then
     observed_side_effects="${observed_side_effects:+${observed_side_effects},}gateway-started"
   fi
-  if [[ -s "${HOME}/.nemoclaw/credentials.json" ]] 2>/dev/null; then
+  if [[ "${baseline_credentials}" -eq 0 ]] && [[ -s "${HOME}/.nemoclaw/credentials.json" ]]; then
     observed_side_effects="${observed_side_effects:+${observed_side_effects},}credentials-written"
   fi
 
+  # `--observed-error-class` is intentionally omitted: the runner does not yet
+  # derive a structured error class from the actual failure output, and
+  # reporting the planned class back to the matcher would make the check
+  # tautological. The matcher logs this as a skipped check.
   match_args=(
     match-failure "${SCENARIO_ID}"
     --context-dir "${E2E_CONTEXT_DIR}"
     --log "${negative_log}"
     --observed-phase "${EXPECTED_FAILURE_PHASE}"
   )
-  if [[ -n "${expected_error_class}" ]]; then
-    # The runner forced this exact class above, so report it back as the
-    # observed class. Future phases without a forced class would omit this.
-    match_args+=(--observed-error-class "${expected_error_class}")
-  fi
   if [[ -n "${observed_side_effects}" ]]; then
     match_args+=(--observed-side-effects "${observed_side_effects}")
   fi
