@@ -21,6 +21,21 @@ function createBuildContextDir(tmpDir: string = os.tmpdir()): string {
   return fs.mkdtempSync(path.join(tmpDir, "nemoclaw-build-"));
 }
 
+function normalizeReadModesForDockerCopy(rootDir: string): void {
+  const stat = fs.lstatSync(rootDir);
+  if (stat.isDirectory()) {
+    fs.chmodSync(rootDir, (stat.mode & 0o777) | 0o555);
+    for (const entry of fs.readdirSync(rootDir)) {
+      normalizeReadModesForDockerCopy(path.join(rootDir, entry));
+    }
+    return;
+  }
+
+  if (stat.isFile()) {
+    fs.chmodSync(rootDir, (stat.mode & 0o777) | 0o444);
+  }
+}
+
 function stageLegacySandboxBuildContext(
   rootDir: string,
   tmpDir: string = os.tmpdir(),
@@ -31,6 +46,7 @@ function stageLegacySandboxBuildContext(
   fs.cpSync(path.join(rootDir, "nemoclaw-blueprint"), path.join(buildCtx, "nemoclaw-blueprint"), {
     recursive: true,
   });
+  normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw-blueprint"));
   fs.cpSync(path.join(rootDir, "scripts"), path.join(buildCtx, "scripts"), { recursive: true });
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), { recursive: true, force: true });
 
@@ -92,6 +108,7 @@ function stageOptimizedSandboxBuildContext(
       recursive: true,
     },
   );
+  normalizeReadModesForDockerCopy(stagedBlueprintDir);
 
   fs.mkdirSync(stagedScriptsDir, { recursive: true });
   fs.copyFileSync(

@@ -252,6 +252,35 @@ describe("sandbox provisioning: base runtime tools", () => {
 });
 
 describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () => {
+  it("normalizes copied blueprint permissions before non-root config generation", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-mode-"));
+    const blueprintRoot = path.join(tmp, "opt", "nemoclaw-blueprint");
+    const manifestDir = path.join(blueprintRoot, "model-specific-setup", "openclaw");
+    const manifestPath = path.join(manifestDir, "kimi-k2.6-managed-inference.json");
+
+    try {
+      fs.mkdirSync(manifestDir, { recursive: true });
+      fs.writeFileSync(manifestPath, "{}\n", { mode: 0o600 });
+      fs.chmodSync(path.join(blueprintRoot, "model-specific-setup"), 0o700);
+      fs.chmodSync(manifestDir, 0o700);
+      fs.chmodSync(manifestPath, 0o600);
+
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# Copy built plugin and blueprint",
+        "# Install runtime dependencies only",
+      ).replaceAll("/opt/nemoclaw-blueprint", blueprintRoot);
+      const { result } = runLoggedDockerShell(command, tmp);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect((fs.statSync(manifestDir).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(manifestPath).mode & 0o777).toString(8)).toBe("644");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("normalizes the config generator mode after Docker COPY preserves a restrictive source mode", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-helper-mode-"));
