@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: dockerhub-login
+description: >-
+  Authenticate to Docker Hub when CI credentials are available. Used by
+  nightly E2E jobs that may pull or build images derived from
+  `node:22-trixie-slim` on Docker Hub, where anonymous pulls regularly hit
+  the unauthenticated rate limit. The action is a no-op when either input
+  is empty, so callers can safely withhold credentials for untrusted
+  `target_ref` dispatches (see #3629).
+
+inputs:
+  username:
+    description: Docker Hub username (passed in by the caller from secrets).
+    required: false
+    default: ''
+  token:
+    description: Docker Hub access token (passed in by the caller from secrets).
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Log in to Docker Hub
+      if: ${{ inputs.username != '' && inputs.token != '' }}
+      uses: docker/login-action@v3
+      with:
+        registry: docker.io
+        username: ${{ inputs.username }}
+        password: ${{ inputs.token }}
+
+    - name: Skip Docker Hub login (no credentials)
+      if: ${{ inputs.username == '' || inputs.token == '' }}
+      shell: bash
+      run: |
+        echo "::notice::Docker Hub credentials not provided; continuing with anonymous pulls."
+        echo "  This is expected for workflow_dispatch runs against an external target_ref,"
+        echo "  or in forks without DOCKERHUB_USERNAME / DOCKERHUB_TOKEN configured."
