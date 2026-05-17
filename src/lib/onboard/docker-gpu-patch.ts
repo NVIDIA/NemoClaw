@@ -64,6 +64,7 @@ export type DockerGpuPatchDeps = {
   sleep?: (seconds: number) => void;
   homedir?: () => string;
   now?: () => Date;
+  detectSandboxFallbackDns?: () => string | null;
 };
 
 export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi";
@@ -101,6 +102,7 @@ export type DockerGpuPatchResult = {
 export type DockerGpuCloneRunOptions = {
   networkMode?: string | null;
   openshellEndpoint?: string | null;
+  sandboxFallbackDns?: string | null;
 };
 
 export type DockerGpuPatchDiagnostics = {
@@ -149,6 +151,8 @@ export type DockerContainerInspect = {
     Dns?: string[] | null;
     DnsSearch?: string[] | null;
     ShmSize?: number;
+    ReadonlyPaths?: string[] | null;
+    MaskedPaths?: string[] | null;
   } | null;
   NetworkSettings?: {
     Networks?: Record<
@@ -175,6 +179,7 @@ function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
     | "sleep"
     | "homedir"
     | "now"
+    | "detectSandboxFallbackDns"
   >
 > &
   DockerGpuPatchDeps {
@@ -191,6 +196,7 @@ function depsWithDefaults(deps: DockerGpuPatchDeps): Required<
     },
     homedir: os.homedir,
     now: () => new Date(),
+    detectSandboxFallbackDns: () => detectSandboxFallbackDns(),
     ...deps,
   };
 }
@@ -352,13 +358,50 @@ export function buildDockerGpuCloneRunOptions(
   return { networkMode: "host", openshellEndpoint: hostEndpoint };
 }
 
+function parseResolvConfNameservers(content: string): string[] {
+  return content
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith("nameserver"))
+    .map((line) => line.split(/\s+/)[1])
+    .filter((ip): ip is string => Boolean(ip));
+}
+
+// #3579: when the host's /etc/resolv.conf points only at 127.0.0.x (e.g.
+// 127.0.0.53 from systemd-resolved), a sandbox in its own network namespace
+// can't reach that resolver — systemd-resolved listens in the host namespace
+// only. Return the first non-loopback nameserver from
+// /run/systemd/resolve/resolv.conf so the caller can inject it via --dns
+// rather than relying on inherited /etc/resolv.conf.
+export function detectSandboxFallbackDns(
+  deps: { readFile?: (path: string) => string | null } = {},
+): string | null {
+  const readFile =
+    deps.readFile ??
+    ((p: string): string | null => {
+      try {
+        return fs.readFileSync(p, "utf-8");
+      } catch {
+        return null;
+      }
+    });
+  const resolvConf = readFile("/etc/resolv.conf");
+  if (!resolvConf) return null;
+  const nameservers = parseResolvConfNameservers(resolvConf);
+  if (nameservers.length === 0) return null;
+  if (!nameservers.every((ip) => /^127\./.test(ip))) return null;
+  const upstreamFile = readFile("/run/systemd/resolve/resolv.conf");
+  if (!upstreamFile) return null;
+  return parseResolvConfNameservers(upstreamFile).find((ip) => !/^127\./.test(ip)) ?? null;
+}
+
 export function getDockerGpuPatchNetworkMode(
   env: Record<string, string | undefined> = process.env,
 ): "host" | "preserve" {
   const networkOverride = String(env[DOCKER_GPU_PATCH_NETWORK_ENV] || "").trim().toLowerCase();
+  if (networkOverride === "host") return "host";
   if (networkOverride === "preserve" || networkOverride === "bridge") return "preserve";
-  if (networkOverride && networkOverride !== "host") return "preserve";
-  return "host";
+  return "preserve";
 }
 
 function dockerNetworkAliases(
@@ -426,16 +469,43 @@ export function buildDockerGpuCloneRunArgs(
     args.push("--restart", value);
   }
 
-  for (const cap of stringArray(host.CapAdd)) args.push("--cap-add", cap);
+  // GPU bring-up requires writing to /proc/<pid>/task/<tid>/comm (see
+  // PROC_COMM_WRITE_PROBE in initial-policy.ts).  On some Docker/distro
+  // baselines, the OpenShell-created container that we inspect here lacks
+  // SYS_PTRACE and/or apparmor=unconfined, which the kernel/LSM combination
+  // requires for that write.  Augment the recreate flags to make the
+  // GPU-capable container self-sufficient for the operations the GPU proof
+  // checks, regardless of what the non-GPU baseline happened to set (#3511).
+  const capAdd = new Set(stringArray(host.CapAdd));
+  capAdd.add("SYS_PTRACE");
+  for (const cap of capAdd) args.push("--cap-add", cap);
   for (const cap of stringArray(host.CapDrop)) args.push("--cap-drop", cap);
-  for (const opt of stringArray(host.SecurityOpt)) args.push("--security-opt", opt);
-  if (networkMode !== "host") {
-    for (const hostEntry of stringArray(host.ExtraHosts)) args.push("--add-host", hostEntry);
+  const securityOpt = new Set(stringArray(host.SecurityOpt));
+  // Only inject apparmor=unconfined when the baseline did not pin a specific
+  // apparmor profile.  Docker rejects multiple `--security-opt apparmor=...`
+  // entries, and a baseline that explicitly chose `apparmor=docker-default`
+  // (or similar) should be respected — we are scoped to the GPU recreate
+  // path, not to overriding deliberate operator choices.
+  if (![...securityOpt].some((entry) => entry.startsWith("apparmor"))) {
+    securityOpt.add("apparmor=unconfined");
   }
+  for (const opt of securityOpt) args.push("--security-opt", opt);
+  // --add-host writes to the container's /etc/hosts (mount namespace), not
+  // the network stack, so OpenShell's host.openshell.internal mapping must
+  // survive even when the caller explicitly opts into --network=host via
+  // NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host (#3562, #3568).
+  for (const hostEntry of stringArray(host.ExtraHosts)) args.push("--add-host", hostEntry);
   for (const group of stringArray(host.GroupAdd)) args.push("--group-add", group);
   if (networkMode !== "host") {
-    for (const dns of stringArray(host.Dns)) args.push("--dns", dns);
+    const dnsServers = stringArray(host.Dns);
+    for (const dns of dnsServers) args.push("--dns", dns);
     for (const dnsSearch of stringArray(host.DnsSearch)) args.push("--dns-search", dnsSearch);
+    // #3579: when the host has only a loopback resolver (systemd-resolved),
+    // inject the real upstream so the sandbox doesn't inherit an unreachable
+    // 127.0.0.53. Only kicks in if OpenShell didn't already set --dns.
+    if (dnsServers.length === 0 && options.sandboxFallbackDns) {
+      args.push("--dns", options.sandboxFallbackDns);
+    }
   }
 
   pushNumberFlag(args, "--memory", host.Memory);
@@ -640,7 +710,7 @@ function waitForOpenShellSandboxExec(
   while (Date.now() <= deadline) {
     const result = deps.runOpenshell(
       ["sandbox", "exec", "-n", sandboxName, "--", "true"],
-      { ignoreError: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
+      { ignoreError: true, suppressOutput: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
     );
     if (isZeroStatus(result)) return true;
     d.sleep(2);
@@ -741,6 +811,8 @@ export function recreateOpenShellDockerSandboxWithGpu(
     }
 
     const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
+    const sandboxFallbackDns = d.detectSandboxFallbackDns();
+    if (sandboxFallbackDns) cloneOptions.sandboxFallbackDns = sandboxFallbackDns;
     const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode, cloneOptions);
     const runResult = d.dockerRunDetached(cloneArgs, {
       ignoreError: true,

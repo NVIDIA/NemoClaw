@@ -52,8 +52,8 @@ describe("Hermes share mount package parity (#2947)", () => {
       expect(calls).toContain("apt-get update");
       expect(calls).toContain("gnupg=2.4.7-21+deb13u1");
       expect(calls).toContain("procps=2:4.0.4-9");
-      expect(calls).toContain("e2fsprogs=1.47.2-3+b10");
-      expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u2");
+      expect(calls).toContain("e2fsprogs=1.47.2-3+b11");
+      expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u4");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -18,6 +18,10 @@ import {
   captureOpenshellForStatus,
   isCommandTimeout,
 } from "../../adapters/openshell/runtime";
+import {
+  detectOpenShellStateRpcResultIssue,
+  printOpenShellStateRpcIssue,
+} from "../../adapters/openshell/gateway-drift";
 import * as registry from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import type { SandboxGatewayState } from "./gateway-state";
@@ -107,11 +111,19 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
   if (lookup.state === "present") {
     try {
-      liveResult = await captureOpenshellForStatus(["inference", "get"], {
-        ignoreError: true,
-      });
+      liveResult = await captureOpenshellForStatus(["inference", "get"]);
     } catch {
       liveResult = null;
+    }
+  }
+  if (liveResult) {
+    const inferenceIssue = detectOpenShellStateRpcResultIssue(liveResult);
+    if (inferenceIssue) {
+      printOpenShellStateRpcIssue(inferenceIssue, {
+        action: `checking inference status for sandbox '${sandboxName}'`,
+        command: `${CLI_NAME} ${sandboxName} status`,
+      });
+      process.exit(1);
     }
   }
   const live =
@@ -239,6 +251,9 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
         : undefined;
     console.log("");
     printWrongGatewayActiveGuidance(sandboxName, activeGateway, console.log);
+    process.exit(1);
+  } else if (lookup.state === "gateway_schema_mismatch") {
+    console.log(lookup.output);
     process.exit(1);
   } else if (lookup.state === "missing") {
     // Belt-and-suspenders: only destroy registry state if the nemoclaw gateway

@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # platform-macos step: macos-smoke
-# Placeholder that asserts basic macOS-specific expectations post-onboarding
-# (launchd helper present, no systemd leaks, Homebrew paths survive PATH
-# refresh). Real probes land as macos-e2e coverage migrates.
+# Assert basic macOS-specific expectations. GitHub-hosted macOS does not
+# provide a usable Docker daemon, so this step intentionally stays below
+# sandbox/onboarding coverage and mirrors legacy macos-e2e skip semantics.
 
 set -euo pipefail
 
@@ -17,7 +17,7 @@ LIB_DIR="$(cd "${SCRIPT_DIR}/../../../runtime/lib" && pwd)"
 . "${LIB_DIR}/context.sh"
 
 echo "platform-macos:macos-smoke"
-e2e_context_require E2E_PLATFORM_OS E2E_SANDBOX_NAME
+e2e_context_require E2E_PLATFORM_OS
 
 if e2e_env_is_dry_run; then
   echo "[dry-run] would run macOS-specific smoke checks"

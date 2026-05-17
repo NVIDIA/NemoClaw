@@ -1,14 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command, Flags } from "@oclif/core";
+import { NemoClawCommand } from "../../cli/nemoclaw-oclif-command";
 
 import { CLI_NAME } from "../../cli/branding";
 import { startAll } from "../../tunnel/services";
 import { runStartCommand } from "../../tunnel/service-command";
 import { serviceDeps } from "../tunnel/common";
 
-export default class DeprecatedStartCommand extends Command {
+export default class DeprecatedStartCommand extends NemoClawCommand {
   static id = "start";
   static strict = true;
   static summary = "Deprecated alias for 'tunnel start'";
@@ -16,7 +16,6 @@ export default class DeprecatedStartCommand extends Command {
   static usage = ["start"];
   static examples = ["<%= config.bin %> start"];
   static flags = {
-    help: Flags.help({ char: "h" }),
   };
 
   public async run(): Promise<void> {

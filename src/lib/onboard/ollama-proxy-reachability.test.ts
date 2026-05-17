@@ -16,10 +16,10 @@ vi.mock("../adapters/docker/run", () => ({
 
 import { OLLAMA_PROXY_PORT } from "../core/ports";
 import {
+  __test,
   DEFAULT_OLLAMA_PROBE_NETWORK,
   formatOllamaProxyUnreachableMessage,
   probeOllamaProxySandboxReachability,
-  __test,
 } from "./ollama-proxy-reachability";
 
 const { parseNetworkIpamConfig } = __test;
@@ -274,18 +274,31 @@ describe("formatOllamaProxyUnreachableMessage", () => {
     ).toBe("");
   });
 
-  it("includes subnet-specific ufw command when subnet is known", () => {
+  it("includes gateway-specific ufw command when subnet and gateway are known", () => {
+    const msg = formatOllamaProxyUnreachableMessage({
+      ok: false,
+      reason: "tcp_failed",
+      networkName: "openshell-docker",
+      subnet: "172.20.0.0/16",
+      gatewayIp: "172.20.0.1",
+    });
+    expect(msg).toContain("172.20.0.0/16");
+    expect(msg).toContain("172.20.0.1");
+    expect(msg).toContain("ufw allow from 172.20.0.0/16 to 172.20.0.1 port 11435");
+    expect(msg).toContain(String(OLLAMA_PROXY_PORT));
+    expect(msg).toContain("sudo ufw allow");
+    expect(msg).toContain("host.openshell.internal");
+    expect(msg).toContain("nemoclaw onboard");
+  });
+
+  it("falls back to a subnet-only UFW command when the gateway IP is unavailable", () => {
     const msg = formatOllamaProxyUnreachableMessage({
       ok: false,
       reason: "tcp_failed",
       networkName: "openshell-docker",
       subnet: "172.20.0.0/16",
     });
-    expect(msg).toContain("172.20.0.0/16");
-    expect(msg).toContain(String(OLLAMA_PROXY_PORT));
-    expect(msg).toContain("sudo ufw allow");
-    expect(msg).toContain("host.openshell.internal");
-    expect(msg).toContain("nemoclaw onboard");
+    expect(msg).toContain("ufw allow from 172.20.0.0/16 to any port 11435");
   });
 
   it("includes dynamic SUBNET= fallback when subnet is unknown", () => {

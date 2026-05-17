@@ -15,18 +15,17 @@ LIB_DIR="$(cd "${SCRIPT_DIR}/../../../runtime/lib" && pwd)"
 . "${LIB_DIR}/context.sh"
 
 echo "inference:models-health"
-e2e_context_require E2E_GATEWAY_URL
+e2e_context_require E2E_SANDBOX_NAME
 
 if e2e_env_is_dry_run; then
-  echo "[dry-run] would GET \${E2E_GATEWAY_URL}/models"
+  echo "[dry-run] would GET inference.local/v1/models from inside the sandbox"
   exit 0
 fi
 
-url="$(e2e_context_get E2E_GATEWAY_URL)"
-body="$(curl -fsS --max-time 10 "${url%/}/v1/models" 2>/dev/null || curl -fsS --max-time 10 "${url%/}/models")"
+name="$(e2e_context_get E2E_SANDBOX_NAME)"
+body="$(openshell sandbox exec --name "${name}" -- curl -fsS --max-time 30 "https://inference.local/v1/models")"
 if [[ -z "${body}" ]]; then
   echo "inference:models-health: no response from models endpoint" >&2
   exit 1
 fi
-echo "${body}" | head -c 512
-echo
+printf '%s\n' "${body:0:512}"

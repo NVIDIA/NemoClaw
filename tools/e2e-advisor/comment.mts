@@ -29,6 +29,7 @@ type DispatchResult = {
   jobs?: string[];
   workflow?: string;
   targetRef?: string;
+  runUrl?: string;
   reason?: string;
 };
 
@@ -45,7 +46,7 @@ type GitHubRequestOptions = {
 const args = parseArgs(process.argv.slice(2));
 const repo = args.repo || process.env.GITHUB_REPOSITORY;
 const pr = args.pr || process.env.PR_NUMBER;
-const summaryPath = args.summary || "artifacts/e2e-advisor/e2e-advisor-pi-summary.md";
+const summaryPath = args.summary || "artifacts/e2e-advisor/e2e-advisor-summary.md";
 const resultPath = args.result || "artifacts/e2e-advisor/e2e-advisor-final-result.json";
 const dispatchPath = args.dispatch || "artifacts/e2e-advisor/e2e-advisor-dispatch-result.json";
 const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
@@ -176,7 +177,8 @@ function renderAutoDispatch(dispatch: DispatchResult | undefined): string {
       : "_unknown_";
     const workflow = dispatch.workflow ? ` via \`${dispatch.workflow}\`` : "";
     const target = dispatch.targetRef ? ` at \`${dispatch.targetRef}\`` : "";
-    return `\n\n**Auto-dispatched E2E:** ${jobs}${workflow}${target}`;
+    const run = dispatch.runUrl ? ` — [nightly run](${dispatch.runUrl})` : "";
+    return `\n\n**Auto-dispatched E2E:** ${jobs}${workflow}${target}${run}`;
   }
   if (dispatch.status === "failed") {
     return `\n\n**Auto-dispatch:** failed — ${dispatch.reason || "unknown error"}`;

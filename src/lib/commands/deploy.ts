@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Args, Command, Flags } from "@oclif/core";
+import { Args } from "@oclif/core";
+import { NemoClawCommand } from "../cli/nemoclaw-oclif-command";
 
 import { runDeployAction } from "../actions/global";
 
-export default class DeployCliCommand extends Command {
+export default class DeployCliCommand extends NemoClawCommand {
   static id = "deploy";
   static strict = true;
   static summary = "Deprecated Brev-specific bootstrap path";
@@ -20,7 +21,6 @@ export default class DeployCliCommand extends Command {
     }),
   };
   static flags = {
-    help: Flags.help({ char: "h" }),
   };
 
   public async run(): Promise<void> {

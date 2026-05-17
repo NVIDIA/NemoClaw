@@ -14,10 +14,6 @@ let runtimeBridgeFactory = (): HostsRuntimeBridge => {
   return actions;
 };
 
-export function setHostsRuntimeBridgeFactoryForTest(factory: () => HostsRuntimeBridge): void {
-  runtimeBridgeFactory = factory;
-}
-
 export function getHostsRuntimeBridge(): HostsRuntimeBridge {
   return runtimeBridgeFactory();
 }
@@ -50,6 +46,5 @@ export const hostAliasAddArgs = {
 };
 
 export const hostAliasMutationFlags = {
-  help: Flags.help({ char: "h" }),
   "dry-run": Flags.boolean({ description: "Preview the JSON patch without applying it" }),
 };

@@ -329,9 +329,6 @@ describe("local inference helpers", () => {
     const result = probeLocalProviderHealth("ollama-local", {
       loadOllamaProxyTokenImpl: () => "test-token",
       runCurlProbeImpl: (argv: string[]) => {
-        const isProxy = argv.some(
-          (a) => typeof a === "string" && a.includes("11435"),
-        );
         responses.push({ args: argv, status: 200 });
         return {
           ok: true,
@@ -520,15 +517,67 @@ describe("local inference helpers", () => {
   it("falls back to bootstrap model options when no Ollama models are installed", () => {
     expect(getBootstrapOllamaModelOptions(null)).toEqual(["qwen2.5:7b"]);
     expect(
-      getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB - 1 }),
+      getBootstrapOllamaModelOptions({
+        type: "nvidia",
+        totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB - 1,
+      }),
     ).toEqual(["qwen2.5:7b"]);
-    expect(getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB })).toEqual(
-      ["qwen2.5:7b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL],
+    expect(
+      getBootstrapOllamaModelOptions({
+        type: "nvidia",
+        totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB,
+      }),
+    ).toEqual(["qwen2.5:7b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL]);
+    expect(getDefaultOllamaModel({ type: "nvidia", totalMemoryMB: 16384 }, () => "")).toBe(
+      "qwen2.5:7b",
     );
-    expect(getDefaultOllamaModel({ totalMemoryMB: 16384 }, () => "")).toBe("qwen2.5:7b");
+    expect(
+      getDefaultOllamaModel(
+        { type: "nvidia", totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB },
+        () => "",
+      ),
+    ).toBe(QWEN3_6_OLLAMA_MODEL);
+  });
+
+  it("offers the large Ollama model on Apple Silicon with sufficient unified memory", () => {
+    expect(
+      getBootstrapOllamaModelOptions({
+        type: "apple",
+        totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB,
+      }),
+    ).toEqual(["qwen2.5:7b", DEFAULT_OLLAMA_MODEL, QWEN3_6_OLLAMA_MODEL]);
+    expect(
+      getDefaultOllamaModel(
+        { type: "apple", totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB },
+        () => "",
+      ),
+    ).toBe(QWEN3_6_OLLAMA_MODEL);
+  });
+
+  it("downgrades the default Ollama model when the GPU type is unrecognised (#3510)", () => {
+    // Defensive guard: even with sufficient memory, an unknown/missing
+    // `type` field must not promote a host to the 22 GB model.  The
+    // failure mode this guards against is a partial-detection regression
+    // where totalMemoryMB is set but the device type is "generic" or
+    // unspecified.
+    expect(
+      getBootstrapOllamaModelOptions({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB }),
+    ).toEqual(["qwen2.5:7b"]);
     expect(
       getDefaultOllamaModel({ totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB }, () => ""),
-    ).toBe(QWEN3_6_OLLAMA_MODEL);
+    ).toBe("qwen2.5:7b");
+    expect(
+      getBootstrapOllamaModelOptions({
+        type: "generic",
+        totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB * 4,
+      }),
+    ).toEqual(["qwen2.5:7b"]);
+    expect(
+      getDefaultOllamaModel(
+        { type: "generic", totalMemoryMB: LARGE_OLLAMA_MIN_MEMORY_MB * 4 },
+        () => "",
+      ),
+    ).toBe("qwen2.5:7b");
   });
 
   it("builds a background warmup command for ollama models", () => {
@@ -561,27 +610,139 @@ describe("local inference helpers", () => {
   });
 
   it("fails ollama model validation when the probe times out or returns nothing", () => {
-    const result = validateOllamaModel("nemotron-3-nano:30b", () => "");
+    // The probe inside validateOllamaModel uses runCaptureEx (4th arg), not
+    // runCapture (2nd arg). Mocking only runCapture leaves the real probe
+    // running against the host, which makes the test environment-dependent
+    // (passes on CI where no ollama is installed, fails locally when one is).
+    // Mock both so the empty-output branch is exercised deterministically.
+    const captureEx = () => ({ stdout: "", exitCode: 0, timedOut: false });
+    const result = validateOllamaModel("nemotron-3-nano:30b", () => "", undefined, captureEx);
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/did not answer the local probe in time/);
   });
 
   it("fails ollama model validation when Ollama returns an error payload", () => {
-    const result = validateOllamaModel("gabegoodhart/minimax-m2.1:latest", () =>
-      JSON.stringify({ error: "model requires more system memory" }),
-    );
+    const payload = JSON.stringify({ error: "model requires more system memory" });
+    const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+    const result = validateOllamaModel("gabegoodhart/minimax-m2.1:latest", () => payload, undefined, captureEx);
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/requires more system memory/);
   });
 
   it("passes ollama model validation when the probe returns a normal payload", () => {
-    const result = validateOllamaModel("nemotron-3-nano:30b", () =>
-      JSON.stringify({ model: "nemotron-3-nano:30b", response: "hello", done: true }),
-    );
+    const payload = JSON.stringify({ model: "nemotron-3-nano:30b", response: "hello", done: true });
+    const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+    const result = validateOllamaModel("nemotron-3-nano:30b", () => payload, undefined, captureEx);
     expect(result).toEqual({ ok: true });
   });
 
   it("treats non-JSON probe output as success once the model responds", () => {
-    expect(validateOllamaModel("nemotron-3-nano:30b", () => "ok")).toEqual({ ok: true });
+    const captureEx = () => ({ stdout: "ok", exitCode: 0, timedOut: false });
+    expect(validateOllamaModel("nemotron-3-nano:30b", () => "ok", undefined, captureEx)).toEqual({ ok: true });
   });
+
+  it("passes ollama memory validation when total RAM covers the model on unified-memory hosts", () => {
+    // Simulate Spark: Ollama returns available-RAM OOM error, but total RAM is 128 GB.
+    const freeOutput = "               total        used        free\nMem:          131072       120000       1000";
+    const oomPayload = JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
+    const captureEx = () => ({ stdout: oomPayload, exitCode: 0, timedOut: false });
+    const capture = (cmd: string | string[]) => {
+      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      if (c.includes("free")) return freeOutput;
+      return oomPayload;
+    };
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => true, captureEx);
+    expect(result.ok).toBe(true);
+  });
+
+  it("fails ollama memory validation when total RAM is also insufficient", () => {
+    const freeOutput = "               total        used        free\nMem:           16384        15000        100";
+    const oomPayload = JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
+    const captureEx = () => ({ stdout: oomPayload, exitCode: 0, timedOut: false });
+    const capture = (cmd: string | string[]) => {
+      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      if (c.includes("free")) return freeOutput;
+      return oomPayload;
+    };
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => true, captureEx);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/failed the local probe/);
+  });
+
+  it("does not bypass OOM error on non-Spark hosts even with large total RAM", () => {
+    const freeOutput = "               total        used        free\nMem:          262144       250000       1000";
+    const oomPayload = JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
+    const captureEx = () => ({ stdout: oomPayload, exitCode: 0, timedOut: false });
+    const capture = (cmd: string | string[]) => {
+      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      if (c.includes("free")) return freeOutput;
+      return oomPayload;
+    };
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => false, captureEx);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/failed the local probe/);
+  });
+
+  it("retries with extended timeout when first probe returns empty (slow model load on unified-memory host)", () => {
+    // Simulate Spark: first probe times out (curl exit 28), retry with 300s timeout succeeds.
+    const commands: string[] = [];
+    let captureExCallCount = 0;
+    const captureEx = (cmd: string[]) => {
+      captureExCallCount++;
+      commands.push(cmd.join(" "));
+      // First call: initial probe times out; second call: 300s retry succeeds.
+      if (captureExCallCount === 1) return { stdout: "", exitCode: 28, timedOut: true };
+      return { stdout: JSON.stringify({ response: "Hi" }), exitCode: 0, timedOut: false };
+    };
+    const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => true, captureEx);
+    expect(result.ok).toBe(true);
+    expect(captureExCallCount).toBe(2);
+    expect(commands[1]).toMatch(/--max-time.*300|300.*--max-time/);
+  });
+
+  it("does not retry on non-Spark hosts when first probe returns empty", () => {
+    let callCount = 0;
+    const captureEx = () => { callCount++; return { stdout: "", exitCode: 7, timedOut: false }; };
+    const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => false, captureEx);
+    expect(result.ok).toBe(false);
+    expect(callCount).toBe(1);
+  });
+
+  it("does not retry on Spark when probe fails fast (connection refused, not a timeout)", () => {
+    // exit code 7 = curl connection refused — should surface immediately, not stall 300s.
+    let callCount = 0;
+    const captureEx = () => { callCount++; return { stdout: "", exitCode: 7, timedOut: false }; };
+    const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => true, captureEx);
+    expect(result.ok).toBe(false);
+    expect(callCount).toBe(1);
+    expect(result.message).toMatch(/did not answer the local probe in time/);
+  });
+
+  it("fails when both probe attempts return empty (model truly unhealthy or too slow)", () => {
+    const captureEx = () => ({ stdout: "", exitCode: 28, timedOut: true });
+    const result = validateOllamaModel("nemotron-3-nano:30b", () => "", () => true, captureEx);
+    expect(result.ok).toBe(false);
+    expect(result.message).toMatch(/did not answer the local probe in time/);
+  });
+
+  it("passes when first probe times out then retry returns OOM error but total RAM is sufficient", () => {
+    // Composite: mode 2 (first probe timeout) + mode 1 (retry returns OOM error).
+    const freeOutput = "               total        used        free\nMem:          131072       120000       1000";
+    const oomPayload = JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
+    let captureExCallCount = 0;
+    const captureEx = (_cmd: string[]) => {
+      captureExCallCount++;
+      // First call: initial probe times out; second call: 300s retry returns OOM error.
+      if (captureExCallCount === 1) return { stdout: "", exitCode: 28, timedOut: true };
+      return { stdout: oomPayload, exitCode: 0, timedOut: false };
+    };
+    const capture = (cmd: string | string[]) => {
+      const c = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      if (c.includes("free")) return freeOutput;
+      return "";
+    };
+    const result = validateOllamaModel("nemotron-3-nano:30b", capture, () => true, captureEx);
+    expect(result.ok).toBe(true);
+  });
+
 });

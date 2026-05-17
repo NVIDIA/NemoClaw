@@ -46,18 +46,30 @@ vi.mock("../actions/global", () => ({
 
 vi.mock("../actions/inference-set", () => ({
   InferenceSetError: class InferenceSetError extends Error {
-    exitCode = 1;
+    exitCode: number;
+
+    constructor(message: string, exitCode = 1) {
+      super(message);
+      this.exitCode = exitCode;
+    }
   },
   runInferenceSet: mocks.runInferenceSet,
 }));
 
 vi.mock("../actions/inference-get", () => ({
   InferenceGetError: class InferenceGetError extends Error {
-    exitCode = 1;
+    exitCode: number;
+
+    constructor(message: string, exitCode = 1) {
+      super(message);
+      this.exitCode = exitCode;
+    }
   },
   runInferenceGet: mocks.runInferenceGet,
 }));
 
+import { InferenceGetError } from "../actions/inference-get";
+import { InferenceSetError } from "../actions/inference-set";
 import InferenceGetCommand from "./inference/get";
 import InferenceSetCommand from "./inference/set";
 import ListCommand from "./list";
@@ -166,5 +178,27 @@ describe("global oclif command adapters", () => {
     await InferenceGetCommand.run(["--json"], rootDir);
 
     expect(mocks.runInferenceGet).toHaveBeenCalledWith({ json: true });
+  });
+
+  it("records inference action failures without throwing oclif ExitError", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const previousExitCode = process.exitCode;
+    process.exitCode = undefined;
+    try {
+      mocks.runInferenceGet.mockRejectedValueOnce(new InferenceGetError("route missing", 3));
+      mocks.runInferenceSet.mockRejectedValueOnce(new InferenceSetError("route rejected", 4));
+
+      await expect(InferenceGetCommand.run([], rootDir)).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(3);
+      expect(error).toHaveBeenCalledWith("route missing");
+
+      await expect(
+        InferenceSetCommand.run(["--provider", "nvidia-prod", "--model", "nvidia/model-a"], rootDir),
+      ).resolves.toBeUndefined();
+      expect(process.exitCode).toBe(4);
+      expect(error).toHaveBeenCalledWith("route rejected");
+    } finally {
+      process.exitCode = previousExitCode;
+    }
   });
 });

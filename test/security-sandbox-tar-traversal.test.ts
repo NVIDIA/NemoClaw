@@ -438,6 +438,83 @@ describe("Fix: safeTarExtract blocks malicious archives and extracts safe ones",
     }
   });
 
+  it("allows whitelisted npm symlinks baked into base image (extensions/openclaw-weixin/node_modules/openclaw)", async () => {
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-extract-"));
+    try {
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      // The WeChat plugin install symlinks `node_modules/openclaw` to the
+      // global npm install. Target escapes both the archive and /sandbox/,
+      // so it would be rejected without the whitelist.
+      const tar = buildTar([
+        {
+          path: "extensions/openclaw-weixin/node_modules/openclaw",
+          type: "2",
+          linkTarget: "/usr/local/lib/node_modules/openclaw",
+        },
+      ]);
+
+      const result = safeTarExtract(tar, targetDir);
+      expect(result.success).toBe(true);
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects whitelisted source path when the symlink target is tampered", async () => {
+    // The path matches AUDIT_SYMLINK_WHITELIST, but the linkTarget points to
+    // /etc/passwd instead of the expected /usr/local/lib/node_modules/openclaw.
+    // Source-only matching would let a compromised sandbox repoint a known npm
+    // symlink at arbitrary host paths; the post-extraction audit must compare
+    // both fields.
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-target-tampered-"));
+    try {
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      const tar = buildTar([
+        {
+          path: "extensions/openclaw-weixin/node_modules/openclaw",
+          type: "2",
+          linkTarget: "/etc/passwd",
+        },
+      ]);
+
+      const result = safeTarExtract(tar, targetDir);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("symlink");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
+  it("still rejects an absolute /usr/local symlink at a non-whitelisted path", async () => {
+    const { safeTarExtract } = await loadSandboxState();
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-whitelist-block-"));
+    try {
+      const targetDir = path.join(workDir, "backup");
+      fs.mkdirSync(targetDir, { recursive: true });
+
+      // Same target, but the symlink path is NOT in the whitelist.
+      const tar = buildTar([
+        {
+          path: "workspace/sneaky-openclaw",
+          type: "2",
+          linkTarget: "/usr/local/lib/node_modules/openclaw",
+        },
+      ]);
+
+      const result = safeTarExtract(tar, targetDir);
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("symlink");
+    } finally {
+      fs.rmSync(workDir, { recursive: true, force: true });
+    }
+  });
+
   it("regression #2317: blocks path traversal within allowed prefix (/sandbox/.openclaw-data/../../etc/passwd)", async () => {
     const { safeTarExtract } = await loadSandboxState();
     const workDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2317-traversal-"));

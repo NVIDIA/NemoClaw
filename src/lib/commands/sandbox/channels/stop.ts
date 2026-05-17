@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command } from "@oclif/core";
+import { NemoClawCommand } from "../../../cli/nemoclaw-oclif-command";
 
 import {
   buildChannelArgs,
@@ -10,7 +10,7 @@ import {
   getChannelsRuntimeBridge,
 } from "./common";
 
-export default class ChannelsStopCommand extends Command {
+export default class ChannelsStopCommand extends NemoClawCommand {
   static id = "sandbox:channels:stop";
   static strict = true;
   static summary = "Disable channel without wiping credentials";

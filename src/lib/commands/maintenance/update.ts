@@ -41,8 +41,6 @@ export default class UpdateCommand extends NemoClawCommand {
         rootDir: this.config.root,
       },
     );
-    if (result.status !== 0) {
-      this.exit(result.status);
-    }
+    this.applyExitResult(result);
   }
 }

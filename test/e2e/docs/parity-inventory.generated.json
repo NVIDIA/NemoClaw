@@ -230,6 +230,379 @@
       ]
     },
     {
+      "script": "test/e2e/test-channels-stop-start.sh",
+      "assertions": [
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 154,
+          "text": "C0: NVIDIA_API_KEY is required",
+          "polarity": "fail",
+          "normalized_id": "c0.nvidia.api.key.is.required",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 157,
+          "text": "C0: NVIDIA_API_KEY is set",
+          "polarity": "pass",
+          "normalized_id": "c0.nvidia.api.key.is.set",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 160,
+          "text": "C0: NEMOCLAW_NON_INTERACTIVE=1 is required",
+          "polarity": "fail",
+          "normalized_id": "c0.nemoclaw.non.interactive.1.is.required",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 163,
+          "text": "C0: NEMOCLAW_NON_INTERACTIVE=1 is set",
+          "polarity": "pass",
+          "normalized_id": "c0.nemoclaw.non.interactive.1.is.set",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 181,
+          "text": "C1a: Pre-cleanup complete",
+          "polarity": "pass",
+          "normalized_id": "c1a.pre.cleanup.complete",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 223,
+          "text": "C1b: install.sh + onboard completed (exit 0)",
+          "polarity": "pass",
+          "normalized_id": "c1b.install.sh.onboard.completed.exit.0",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 225,
+          "text": "C1b: install.sh failed (exit $install_exit)",
+          "polarity": "fail",
+          "normalized_id": "c1b.install.sh.failed.exit.install.exit",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 231,
+          "text": "C1c: openshell not on PATH after install",
+          "polarity": "fail",
+          "normalized_id": "c1c.openshell.not.on.path.after.install",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 234,
+          "text": "C1c: openshell installed",
+          "polarity": "pass",
+          "normalized_id": "c1c.openshell.installed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 237,
+          "text": "C1d: nemoclaw not on PATH after install",
+          "polarity": "fail",
+          "normalized_id": "c1d.nemoclaw.not.on.path.after.install",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 240,
+          "text": "C1d: nemoclaw installed",
+          "polarity": "pass",
+          "normalized_id": "c1d.nemoclaw.installed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 243,
+          "text": "C1e: Sandbox '${SANDBOX_NAME}' is Ready",
+          "polarity": "pass",
+          "normalized_id": "c1e.sandbox.sandbox.name.is.ready",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 245,
+          "text": "C1e: Sandbox '${SANDBOX_NAME}' not Ready",
+          "polarity": "fail",
+          "normalized_id": "c1e.sandbox.sandbox.name.not.ready",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 255,
+          "text": "C2a: Provider '${SANDBOX_NAME}-telegram-bridge' exists in gateway",
+          "polarity": "pass",
+          "normalized_id": "c2a.provider.sandbox.name.telegram.bridge.exists.in.gateway",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 257,
+          "text": "C2a: Provider '${SANDBOX_NAME}-telegram-bridge' missing in gateway",
+          "polarity": "fail",
+          "normalized_id": "c2a.provider.sandbox.name.telegram.bridge.missing.in.gateway",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 261,
+          "text": "C2b: openclaw.json contains 'telegram' channel block",
+          "polarity": "pass",
+          "normalized_id": "c2b.openclaw.json.contains.telegram.channel.block",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 265,
+          "text": "C2b: could not read openclaw.json inside sandbox",
+          "polarity": "fail",
+          "normalized_id": "c2b.could.not.read.openclaw.json.inside.sandbox",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 267,
+          "text": "C2b: openclaw.json missing 'telegram' channel before stop (precondition failed)",
+          "polarity": "fail",
+          "normalized_id": "c2b.openclaw.json.missing.telegram.channel.before.stop.precondition.failed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 273,
+          "text": "C2c: registry.messagingChannels contains telegram (${baseline_messaging})",
+          "polarity": "pass",
+          "normalized_id": "c2c.registry.messagingchannels.contains.telegram.baseline.messaging",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 275,
+          "text": "C2c: registry.messagingChannels missing telegram (got: ${baseline_messaging})",
+          "polarity": "fail",
+          "normalized_id": "c2c.registry.messagingchannels.missing.telegram.got.baseline.messaging",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 280,
+          "text": "C2d: registry.disabledChannels empty at baseline",
+          "polarity": "pass",
+          "normalized_id": "c2d.registry.disabledchannels.empty.at.baseline",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 281,
+          "text": "C2d: registry.disabledChannels unexpectedly non-empty at baseline (got: ${baseline_disabled})",
+          "polarity": "fail",
+          "normalized_id": "c2d.registry.disabledchannels.unexpectedly.non.empty.at.baseline.got.baseline.disabled",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 296,
+          "text": "C3a: channels stop telegram registered the change",
+          "polarity": "pass",
+          "normalized_id": "c3a.channels.stop.telegram.registered.the.change",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 298,
+          "text": "C3a: channels stop telegram did not register",
+          "polarity": "fail",
+          "normalized_id": "c3a.channels.stop.telegram.did.not.register",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 304,
+          "text": "C3b: rebuild (post-stop) completed",
+          "polarity": "pass",
+          "normalized_id": "c3b.rebuild.post.stop.completed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 306,
+          "text": "C3b: rebuild (post-stop) failed",
+          "polarity": "fail",
+          "normalized_id": "c3b.rebuild.post.stop.failed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 321,
+          "text": "C4a: REGRESSION — openclaw.json still contains 'telegram' after stop+rebuild (#3453)",
+          "polarity": "fail",
+          "normalized_id": "c4a.regression.openclaw.json.still.contains.telegram.after.stop.rebuild.3453",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 327,
+          "text": "C4a: could not read openclaw.json inside sandbox post-stop",
+          "polarity": "fail",
+          "normalized_id": "c4a.could.not.read.openclaw.json.inside.sandbox.post.stop",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 329,
+          "text": "C4a: openclaw.json excludes 'telegram' after stop+rebuild (#3453 fixed)",
+          "polarity": "pass",
+          "normalized_id": "c4a.openclaw.json.excludes.telegram.after.stop.rebuild.3453.fixed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 337,
+          "text": "C4b: registry.messagingChannels still contains telegram (${post_stop_messaging})",
+          "polarity": "pass",
+          "normalized_id": "c4b.registry.messagingchannels.still.contains.telegram.post.stop.messaging",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 339,
+          "text": "C4b: registry.messagingChannels lost telegram after stop (got: ${post_stop_messaging})",
+          "polarity": "fail",
+          "normalized_id": "c4b.registry.messagingchannels.lost.telegram.after.stop.got.post.stop.messaging",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 345,
+          "text": "C4c: registry.disabledChannels contains telegram (${post_stop_disabled})",
+          "polarity": "pass",
+          "normalized_id": "c4c.registry.disabledchannels.contains.telegram.post.stop.disabled",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 347,
+          "text": "C4c: registry.disabledChannels missing telegram (got: ${post_stop_disabled})",
+          "polarity": "fail",
+          "normalized_id": "c4c.registry.disabledchannels.missing.telegram.got.post.stop.disabled",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 356,
+          "text": "C4d: telegram-bridge provider not attached to rebuilt sandbox",
+          "polarity": "pass",
+          "normalized_id": "c4d.telegram.bridge.provider.not.attached.to.rebuilt.sandbox",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 358,
+          "text": "C4d: telegram-bridge provider still attached after stop+rebuild (${attached})",
+          "polarity": "fail",
+          "normalized_id": "c4d.telegram.bridge.provider.still.attached.after.stop.rebuild.attached",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 373,
+          "text": "C5a: channels start telegram registered the change",
+          "polarity": "pass",
+          "normalized_id": "c5a.channels.start.telegram.registered.the.change",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 375,
+          "text": "C5a: channels start telegram did not register",
+          "polarity": "fail",
+          "normalized_id": "c5a.channels.start.telegram.did.not.register",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 381,
+          "text": "C5b: rebuild (post-start) completed",
+          "polarity": "pass",
+          "normalized_id": "c5b.rebuild.post.start.completed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 383,
+          "text": "C5b: rebuild (post-start) failed",
+          "polarity": "fail",
+          "normalized_id": "c5b.rebuild.post.start.failed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 397,
+          "text": "C6a: openclaw.json contains 'telegram' again after start+rebuild (#3381 fixed)",
+          "polarity": "pass",
+          "normalized_id": "c6a.openclaw.json.contains.telegram.again.after.start.rebuild.3381.fixed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 401,
+          "text": "C6a: could not read openclaw.json inside sandbox post-start",
+          "polarity": "fail",
+          "normalized_id": "c6a.could.not.read.openclaw.json.inside.sandbox.post.start",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 403,
+          "text": "C6a: openclaw.json missing 'telegram' after start+rebuild (#3381 regression)",
+          "polarity": "fail",
+          "normalized_id": "c6a.openclaw.json.missing.telegram.after.start.rebuild.3381.regression",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 410,
+          "text": "C6b: registry.disabledChannels cleared (${post_start_disabled})",
+          "polarity": "pass",
+          "normalized_id": "c6b.registry.disabledchannels.cleared.post.start.disabled",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 411,
+          "text": "C6b: registry.disabledChannels still set after start (got: ${post_start_disabled})",
+          "polarity": "fail",
+          "normalized_id": "c6b.registry.disabledchannels.still.set.after.start.got.post.start.disabled",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 416,
+          "text": "C6c: telegram-bridge provider record present in gateway (cached token reused)",
+          "polarity": "pass",
+          "normalized_id": "c6c.telegram.bridge.provider.record.present.in.gateway.cached.token.reused",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-channels-stop-start.sh",
+          "line": 418,
+          "text": "C6c: telegram-bridge provider record missing in gateway after start",
+          "polarity": "fail",
+          "normalized_id": "c6c.telegram.bridge.provider.record.missing.in.gateway.after.start",
+          "mapping_status": "deferred"
+        }
+      ]
+    },
+    {
       "script": "test/e2e/test-cloud-inference-e2e.sh",
       "assertions": [
         {
@@ -1391,259 +1764,6 @@
       ]
     },
     {
-      "script": "test/e2e/test-deployment-services.sh",
-      "assertions": [
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 202,
-          "text": "TC-STATE-02: Setup",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.setup",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 213,
-          "text": "TC-STATE-02: Backup completed successfully",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.backup.completed.successfully",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 215,
-          "text": "TC-STATE-02: Backup",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.backup",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 222,
-          "text": "TC-STATE-02: Backup dir",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.backup.dir",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 248,
-          "text": "TC-STATE-02: Destroy",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.destroy",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 251,
-          "text": "TC-STATE-02: Sandbox destroyed",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.sandbox.destroyed",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 255,
-          "text": "TC-STATE-02: Re-onboard",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.re.onboard",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 258,
-          "text": "TC-STATE-02: Sandbox re-onboarded",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.sandbox.re.onboarded",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 266,
-          "text": "TC-STATE-02: Restore completed successfully",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.restore.completed.successfully",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 268,
-          "text": "TC-STATE-02: Restore",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.restore",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 285,
-          "text": "TC-STATE-02: ${verified}/5 workspace files verified with correct content",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.verified.5.workspace.files.verified.with.correct.content",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 288,
-          "text": "TC-STATE-02: ${verified}/5 workspace files verified (partial tolerance applied)",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.verified.5.workspace.files.verified.partial.tolerance.applied",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 290,
-          "text": "TC-STATE-02: Verify",
-          "polarity": "fail",
-          "normalized_id": "tc.state.02.verify",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 296,
-          "text": "TC-STATE-02: Memory note restored correctly",
-          "polarity": "pass",
-          "normalized_id": "tc.state.02.memory.note.restored.correctly",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 329,
-          "text": "TC-DEPLOY-01a: Start",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01a.start",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 344,
-          "text": "TC-DEPLOY-01a: Tunnel URL found in status ($tunnel_url)",
-          "polarity": "pass",
-          "normalized_id": "tc.deploy.01a.tunnel.url.found.in.status.tunnel.url",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 346,
-          "text": "TC-DEPLOY-01a: Start",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01a.start",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 368,
-          "text": "TC-DEPLOY-01b: Tunnel serves OpenClaw dashboard (HTTP 200, marker matched)",
-          "polarity": "pass",
-          "normalized_id": "tc.deploy.01b.tunnel.serves.openclaw.dashboard.http.200.marker.matched",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 370,
-          "text": "TC-DEPLOY-01b",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01b",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 373,
-          "text": "TC-DEPLOY-01b",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01b",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 385,
-          "text": "TC-DEPLOY-01c: Stop command",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01c.stop.command",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 409,
-          "text": "TC-DEPLOY-01c: Stop",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01c.stop",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 411,
-          "text": "TC-DEPLOY-01c: Tunnel URL absent after stop",
-          "polarity": "pass",
-          "normalized_id": "tc.deploy.01c.tunnel.url.absent.after.stop",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 413,
-          "text": "TC-DEPLOY-01c: Stop",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.01c.stop",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 448,
-          "text": "TC-DEPLOY-03: openshell binary still in PATH after uninstall",
-          "polarity": "pass",
-          "normalized_id": "tc.deploy.03.openshell.binary.still.in.path.after.uninstall",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 450,
-          "text": "TC-DEPLOY-03: openshell",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.03.openshell",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 457,
-          "text": "TC-DEPLOY-03: nemoclaw removed after uninstall",
-          "polarity": "pass",
-          "normalized_id": "tc.deploy.03.nemoclaw.removed.after.uninstall",
-          "mapping_status": "retired"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 459,
-          "text": "TC-DEPLOY-03: uninstall completed (nemoclaw in source tree is expected)",
-          "polarity": "pass",
-          "normalized_id": "tc.deploy.03.uninstall.completed.nemoclaw.in.source.tree.is.expected",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 461,
-          "text": "TC-DEPLOY-03: nemoclaw",
-          "polarity": "fail",
-          "normalized_id": "tc.deploy.03.nemoclaw",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 482,
-          "text": "$PASS${NC}",
-          "polarity": "pass",
-          "normalized_id": "pass.nc",
-          "mapping_status": "deferred"
-        },
-        {
-          "script": "test/e2e/test-deployment-services.sh",
-          "line": 483,
-          "text": "$FAIL${NC}",
-          "polarity": "fail",
-          "normalized_id": "fail.nc",
-          "mapping_status": "deferred"
-        }
-      ]
-    },
-    {
       "script": "test/e2e/test-device-auth-health.sh",
       "assertions": [
         {
@@ -2135,7 +2255,7 @@
       "assertions": [
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 384,
+          "line": 401,
           "text": "Pre-cleanup complete",
           "polarity": "pass",
           "normalized_id": "pre.cleanup.complete",
@@ -2143,7 +2263,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 392,
+          "line": 409,
           "text": "Docker is running",
           "polarity": "pass",
           "normalized_id": "docker.is.running",
@@ -2151,7 +2271,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 394,
+          "line": 411,
           "text": "Docker is not running — cannot continue",
           "polarity": "fail",
           "normalized_id": "docker.is.not.running.cannot.continue",
@@ -2159,7 +2279,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 399,
+          "line": 416,
           "text": "openshell CLI installed",
           "polarity": "pass",
           "normalized_id": "openshell.cli.installed",
@@ -2167,7 +2287,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 401,
+          "line": 418,
           "text": "openshell CLI not found — cannot continue",
           "polarity": "fail",
           "normalized_id": "openshell.cli.not.found.cannot.continue",
@@ -2175,7 +2295,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 406,
+          "line": 423,
           "text": "nemoclaw CLI available",
           "polarity": "pass",
           "normalized_id": "nemoclaw.cli.available",
@@ -2183,7 +2303,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 408,
+          "line": 425,
           "text": "nemoclaw CLI not found — cannot continue",
           "polarity": "fail",
           "normalized_id": "nemoclaw.cli.not.found.cannot.continue",
@@ -2191,7 +2311,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 413,
+          "line": 430,
           "text": "python3 installed",
           "polarity": "pass",
           "normalized_id": "python3.installed",
@@ -2199,7 +2319,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 415,
+          "line": 432,
           "text": "python3 not found — cannot continue",
           "polarity": "fail",
           "normalized_id": "python3.not.found.cannot.continue",
@@ -2207,7 +2327,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 420,
+          "line": 437,
           "text": "Fake OpenAI-compatible endpoint started at ${FAKE_BASE_URL}",
           "polarity": "pass",
           "normalized_id": "fake.openai.compatible.endpoint.started.at.fake.base.url",
@@ -2215,7 +2335,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 422,
+          "line": 439,
           "text": "Failed to start fake OpenAI-compatible endpoint",
           "polarity": "fail",
           "normalized_id": "failed.to.start.fake.openai.compatible.endpoint",
@@ -2223,7 +2343,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 441,
+          "line": 458,
           "text": "First onboard completed successfully",
           "polarity": "pass",
           "normalized_id": "first.onboard.completed.successfully",
@@ -2231,7 +2351,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 443,
+          "line": 460,
           "text": "First onboard timed out after ${PHASE_TIMEOUT}s (exit 124)",
           "polarity": "fail",
           "normalized_id": "first.onboard.timed.out.after.phase.timeout.s.exit.124",
@@ -2239,7 +2359,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 446,
+          "line": 463,
           "text": "First onboard exited $exit1 (expected 0)",
           "polarity": "fail",
           "normalized_id": "first.onboard.exited.exit1.expected.0",
@@ -2247,7 +2367,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 451,
+          "line": 468,
           "text": "Sandbox '$SANDBOX_A' created",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.a.created",
@@ -2255,7 +2375,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 453,
+          "line": 470,
           "text": "Sandbox '$SANDBOX_A' creation not confirmed in output",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.a.creation.not.confirmed.in.output",
@@ -2263,7 +2383,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 457,
+          "line": 474,
           "text": "Gateway is running after first onboard",
           "polarity": "pass",
           "normalized_id": "gateway.is.running.after.first.onboard",
@@ -2271,7 +2391,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 459,
+          "line": 476,
           "text": "Gateway is not running after first onboard",
           "polarity": "fail",
           "normalized_id": "gateway.is.not.running.after.first.onboard",
@@ -2279,7 +2399,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 463,
+          "line": 480,
           "text": "Sandbox '$SANDBOX_A' exists in openshell",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.a.exists.in.openshell",
@@ -2287,7 +2407,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 465,
+          "line": 482,
           "text": "Sandbox '$SANDBOX_A' not found in openshell",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.a.not.found.in.openshell",
@@ -2295,7 +2415,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 469,
+          "line": 486,
           "text": "Registry contains '$SANDBOX_A'",
           "polarity": "pass",
           "normalized_id": "registry.contains.sandbox.a",
@@ -2303,7 +2423,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 471,
+          "line": 488,
           "text": "Registry does not contain '$SANDBOX_A'",
           "polarity": "fail",
           "normalized_id": "registry.does.not.contain.sandbox.a",
@@ -2311,7 +2431,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 488,
+          "line": 505,
           "text": "Second onboard completed successfully",
           "polarity": "pass",
           "normalized_id": "second.onboard.completed.successfully",
@@ -2319,7 +2439,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 490,
+          "line": 507,
           "text": "Second onboard timed out after ${PHASE_TIMEOUT}s (exit 124)",
           "polarity": "fail",
           "normalized_id": "second.onboard.timed.out.after.phase.timeout.s.exit.124",
@@ -2327,7 +2447,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 493,
+          "line": 510,
           "text": "Second onboard exited $exit2 (expected 0)",
           "polarity": "fail",
           "normalized_id": "second.onboard.exited.exit2.expected.0",
@@ -2335,7 +2455,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 499,
+          "line": 516,
           "text": "Healthy gateway runtime reused on second onboard ($GATEWAY_ID_BEFORE)",
           "polarity": "pass",
           "normalized_id": "healthy.gateway.runtime.reused.on.second.onboard.gateway.id.before",
@@ -2343,7 +2463,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 501,
+          "line": 518,
           "text": "Gateway runtime changed on second onboard (before=$GATEWAY_ID_BEFORE after=$GATEWAY_ID_AFTER)",
           "polarity": "fail",
           "normalized_id": "gateway.runtime.changed.on.second.onboard.before.gateway.id.before.after.gateway.id.after",
@@ -2351,7 +2471,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 505,
+          "line": 522,
           "text": "Port 8080 conflict detected (regression)",
           "polarity": "fail",
           "normalized_id": "port.8080.conflict.detected.regression",
@@ -2359,7 +2479,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 507,
+          "line": 524,
           "text": "No port 8080 conflict on second onboard",
           "polarity": "pass",
           "normalized_id": "no.port.8080.conflict.on.second.onboard",
@@ -2367,7 +2487,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 511,
+          "line": 528,
           "text": "Port 18789 conflict detected on second onboard",
           "polarity": "fail",
           "normalized_id": "port.18789.conflict.detected.on.second.onboard",
@@ -2375,7 +2495,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 513,
+          "line": 530,
           "text": "No port 18789 conflict on second onboard",
           "polarity": "pass",
           "normalized_id": "no.port.18789.conflict.on.second.onboard",
@@ -2383,7 +2503,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 517,
+          "line": 534,
           "text": "Sandbox '$SANDBOX_A' still exists after recreate",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.a.still.exists.after.recreate",
@@ -2391,7 +2511,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 519,
+          "line": 536,
           "text": "Sandbox '$SANDBOX_A' missing after recreate",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.a.missing.after.recreate",
@@ -2399,7 +2519,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 537,
+          "line": 554,
           "text": "Alternate gateway alias selected before third onboard",
           "polarity": "pass",
           "normalized_id": "alternate.gateway.alias.selected.before.third.onboard",
@@ -2407,7 +2527,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 539,
+          "line": 556,
           "text": "Alternate gateway alias was not selected before third onboard (selected=${selected_gateway:-unknown})",
           "polarity": "fail",
           "normalized_id": "alternate.gateway.alias.was.not.selected.before.third.onboard.selected.selected.gateway.unknown",
@@ -2415,7 +2535,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 542,
+          "line": 559,
           "text": "Could not select alternate gateway alias before third onboard (add output=${alt_gateway_add_output:-empty})",
           "polarity": "fail",
           "normalized_id": "could.not.select.alternate.gateway.alias.before.third.onboard.add.output.alt.gateway.add.output.empty",
@@ -2423,7 +2543,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 553,
+          "line": 570,
           "text": "Third onboard completed successfully",
           "polarity": "pass",
           "normalized_id": "third.onboard.completed.successfully",
@@ -2431,7 +2551,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 555,
+          "line": 572,
           "text": "Third onboard timed out after ${PHASE_TIMEOUT}s (exit 124)",
           "polarity": "fail",
           "normalized_id": "third.onboard.timed.out.after.phase.timeout.s.exit.124",
@@ -2439,7 +2559,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 558,
+          "line": 575,
           "text": "Third onboard exited $exit3 (expected 0)",
           "polarity": "fail",
           "normalized_id": "third.onboard.exited.exit3.expected.0",
@@ -2447,7 +2567,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 564,
+          "line": 581,
           "text": "Healthy gateway runtime reused on third onboard ($GATEWAY_ID_BEFORE3)",
           "polarity": "pass",
           "normalized_id": "healthy.gateway.runtime.reused.on.third.onboard.gateway.id.before3",
@@ -2455,7 +2575,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 566,
+          "line": 583,
           "text": "Gateway runtime changed on third onboard (before=$GATEWAY_ID_BEFORE3 after=$GATEWAY_ID_AFTER3)",
           "polarity": "fail",
           "normalized_id": "gateway.runtime.changed.on.third.onboard.before.gateway.id.before3.after.gateway.id.after3",
@@ -2463,7 +2583,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 570,
+          "line": 587,
           "text": "Port 8080 conflict on third onboard",
           "polarity": "fail",
           "normalized_id": "port.8080.conflict.on.third.onboard",
@@ -2471,7 +2591,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 572,
+          "line": 589,
           "text": "No port 8080 conflict on third onboard",
           "polarity": "pass",
           "normalized_id": "no.port.8080.conflict.on.third.onboard",
@@ -2479,7 +2599,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 576,
+          "line": 593,
           "text": "Port 18789 conflict on third onboard",
           "polarity": "fail",
           "normalized_id": "port.18789.conflict.on.third.onboard",
@@ -2487,7 +2607,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 578,
+          "line": 595,
           "text": "No port 18789 conflict on third onboard",
           "polarity": "pass",
           "normalized_id": "no.port.18789.conflict.on.third.onboard",
@@ -2495,7 +2615,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 587,
+          "line": 604,
           "text": "Named gateway reselected during third onboard",
           "polarity": "pass",
           "normalized_id": "named.gateway.reselected.during.third.onboard",
@@ -2503,7 +2623,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 589,
+          "line": 606,
           "text": "Named gateway was not reselected during third onboard (selected=${selected_gateway:-unknown})",
           "polarity": "fail",
           "normalized_id": "named.gateway.was.not.reselected.during.third.onboard.selected.selected.gateway.unknown",
@@ -2511,7 +2631,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 593,
+          "line": 610,
           "text": "Sandbox '$SANDBOX_B' created",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.b.created",
@@ -2519,7 +2639,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 595,
+          "line": 612,
           "text": "Sandbox '$SANDBOX_B' was not created",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.b.was.not.created",
@@ -2527,7 +2647,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 599,
+          "line": 616,
           "text": "First sandbox '$SANDBOX_A' still exists after creating '$SANDBOX_B'",
           "polarity": "pass",
           "normalized_id": "first.sandbox.sandbox.a.still.exists.after.creating.sandbox.b",
@@ -2535,7 +2655,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 601,
+          "line": 618,
           "text": "First sandbox '$SANDBOX_A' disappeared after creating '$SANDBOX_B' (regression: #849)",
           "polarity": "fail",
           "normalized_id": "first.sandbox.sandbox.a.disappeared.after.creating.sandbox.b.regression.849",
@@ -2543,7 +2663,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 621,
+          "line": 638,
           "text": "nemoclaw list shows dashboard ports for both test sandboxes (#2174)",
           "polarity": "pass",
           "normalized_id": "nemoclaw.list.shows.dashboard.ports.for.both.test.sandboxes.2174",
@@ -2551,7 +2671,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 623,
+          "line": 640,
           "text": "nemoclaw list did not show dashboard ports for both test sandboxes (a=${port_a:-missing} b=${port_b:-missing})",
           "polarity": "fail",
           "normalized_id": "nemoclaw.list.did.not.show.dashboard.ports.for.both.test.sandboxes.a.port.a.missing.b.port.b.missing",
@@ -2559,7 +2679,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 629,
+          "line": 646,
           "text": "nemoclaw list shows distinct dashboard ports for test sandboxes (#2174)",
           "polarity": "pass",
           "normalized_id": "nemoclaw.list.shows.distinct.dashboard.ports.for.test.sandboxes.2174",
@@ -2567,7 +2687,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 631,
+          "line": 648,
           "text": "test sandboxes did not have distinct dashboard ports (#2174): ${SANDBOX_A}=${port_a:-missing} ${SANDBOX_B}=${port_b:-missing}",
           "polarity": "fail",
           "normalized_id": "test.sandboxes.did.not.have.distinct.dashboard.ports.2174.sandbox.a.port.a.missing.sandbox.b.port.b.missing",
@@ -2575,7 +2695,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 645,
+          "line": 672,
           "text": "Probe-only connect recovered '$SANDBOX_B' dashboard forward",
           "polarity": "pass",
           "normalized_id": "probe.only.connect.recovered.sandbox.b.dashboard.forward",
@@ -2583,7 +2703,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 647,
+          "line": 674,
           "text": "Probe-only connect exited $probe_exit after stopping '$SANDBOX_B' dashboard forward",
           "polarity": "fail",
           "normalized_id": "probe.only.connect.exited.probe.exit.after.stopping.sandbox.b.dashboard.forward",
@@ -2591,7 +2711,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 657,
+          "line": 685,
           "text": "Second sandbox dashboard forward restored on its recorded port",
           "polarity": "pass",
           "normalized_id": "second.sandbox.dashboard.forward.restored.on.its.recorded.port",
@@ -2599,7 +2719,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 659,
+          "line": 687,
           "text": "Second sandbox dashboard forward owner mismatch on port $port_b (owner=${owner_b:-missing})",
           "polarity": "fail",
           "normalized_id": "second.sandbox.dashboard.forward.owner.mismatch.on.port.port.b.owner.owner.b.missing",
@@ -2607,7 +2727,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 665,
+          "line": 693,
           "text": "First sandbox dashboard forward kept its recorded port",
           "polarity": "pass",
           "normalized_id": "first.sandbox.dashboard.forward.kept.its.recorded.port",
@@ -2615,7 +2735,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 667,
+          "line": 695,
           "text": "First sandbox dashboard forward owner mismatch on port $port_a (owner=${owner_a:-missing})",
           "polarity": "fail",
           "normalized_id": "first.sandbox.dashboard.forward.owner.mismatch.on.port.port.a.owner.owner.a.missing",
@@ -2623,7 +2743,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 681,
+          "line": 709,
           "text": "OpenShell reports '$SANDBOX_A' absent after direct deletion",
           "polarity": "pass",
           "normalized_id": "openshell.reports.sandbox.a.absent.after.direct.deletion",
@@ -2631,7 +2751,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 683,
+          "line": 711,
           "text": "OpenShell still reports '$SANDBOX_A' after direct deletion",
           "polarity": "fail",
           "normalized_id": "openshell.still.reports.sandbox.a.after.direct.deletion",
@@ -2639,7 +2759,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 687,
+          "line": 715,
           "text": "Registry still contains stale '$SANDBOX_A' entry",
           "polarity": "pass",
           "normalized_id": "registry.still.contains.stale.sandbox.a.entry",
@@ -2647,7 +2767,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 689,
+          "line": 717,
           "text": "Registry was unexpectedly cleaned before status reconciliation",
           "polarity": "fail",
           "normalized_id": "registry.was.unexpectedly.cleaned.before.status.reconciliation",
@@ -2655,7 +2775,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 699,
+          "line": 727,
           "text": "Stale sandbox status exited 1",
           "polarity": "pass",
           "normalized_id": "stale.sandbox.status.exited.1",
@@ -2663,7 +2783,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 701,
+          "line": 729,
           "text": "Stale sandbox status exited $status_exit (expected 1)",
           "polarity": "fail",
           "normalized_id": "stale.sandbox.status.exited.status.exit.expected.1",
@@ -2671,7 +2791,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 705,
+          "line": 733,
           "text": "Stale registry entry was reconciled during status",
           "polarity": "pass",
           "normalized_id": "stale.registry.entry.was.reconciled.during.status",
@@ -2679,7 +2799,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 707,
+          "line": 735,
           "text": "Stale registry reconciliation message missing",
           "polarity": "fail",
           "normalized_id": "stale.registry.reconciliation.message.missing",
@@ -2687,7 +2807,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 711,
+          "line": 739,
           "text": "Registry still contains '$SANDBOX_A' after status reconciliation",
           "polarity": "fail",
           "normalized_id": "registry.still.contains.sandbox.a.after.status.reconciliation",
@@ -2695,7 +2815,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 713,
+          "line": 741,
           "text": "Registry entry for '$SANDBOX_A' removed after status reconciliation",
           "polarity": "pass",
           "normalized_id": "registry.entry.for.sandbox.a.removed.after.status.reconciliation",
@@ -2703,7 +2823,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 732,
+          "line": 760,
           "text": "Post-stop status exited $gateway_status_exit",
           "polarity": "pass",
           "normalized_id": "post.stop.status.exited.gateway.status.exit",
@@ -2711,7 +2831,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 734,
+          "line": 762,
           "text": "Post-stop status exited $gateway_status_exit (expected 0 or 1)",
           "polarity": "fail",
           "normalized_id": "post.stop.status.exited.gateway.status.exit.expected.0.or.1",
@@ -2719,7 +2839,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 740,
+          "line": 768,
           "text": "Gateway lifecycle response was explicit after gateway stop",
           "polarity": "pass",
           "normalized_id": "gateway.lifecycle.response.was.explicit.after.gateway.stop",
@@ -2727,7 +2847,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 742,
+          "line": 770,
           "text": "Gateway lifecycle response was not explicit after gateway stop",
           "polarity": "fail",
           "normalized_id": "gateway.lifecycle.response.was.not.explicit.after.gateway.stop",
@@ -2735,7 +2855,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 748,
+          "line": 776,
           "text": "Registry still contains '$SANDBOX_B' after gateway stop",
           "polarity": "pass",
           "normalized_id": "registry.still.contains.sandbox.b.after.gateway.stop",
@@ -2743,7 +2863,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 750,
+          "line": 778,
           "text": "Registry is missing '$SANDBOX_B' after gateway stop",
           "polarity": "fail",
           "normalized_id": "registry.is.missing.sandbox.b.after.gateway.stop",
@@ -2751,7 +2871,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 783,
+          "line": 811,
           "text": "Sandbox '$SANDBOX_A' still exists after cleanup",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.a.still.exists.after.cleanup",
@@ -2759,7 +2879,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 785,
+          "line": 813,
           "text": "Sandbox '$SANDBOX_A' cleaned up",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.a.cleaned.up",
@@ -2767,7 +2887,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 789,
+          "line": 817,
           "text": "Sandbox '$SANDBOX_B' still exists after cleanup",
           "polarity": "fail",
           "normalized_id": "sandbox.sandbox.b.still.exists.after.cleanup",
@@ -2775,7 +2895,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 791,
+          "line": 819,
           "text": "Sandbox '$SANDBOX_B' cleaned up",
           "polarity": "pass",
           "normalized_id": "sandbox.sandbox.b.cleaned.up",
@@ -2783,7 +2903,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 795,
+          "line": 823,
           "text": "Registry still contains test sandbox entries",
           "polarity": "fail",
           "normalized_id": "registry.still.contains.test.sandbox.entries",
@@ -2791,7 +2911,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 797,
+          "line": 825,
           "text": "Registry cleaned up",
           "polarity": "pass",
           "normalized_id": "registry.cleaned.up",
@@ -2799,7 +2919,7 @@
         },
         {
           "script": "test/e2e/test-double-onboard.sh",
-          "line": 800,
+          "line": 828,
           "text": "Final cleanup complete",
           "polarity": "pass",
           "normalized_id": "final.cleanup.complete",
@@ -3161,7 +3281,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 156,
+          "line": 176,
           "text": "$description",
           "polarity": "pass",
           "normalized_id": "description",
@@ -3169,7 +3289,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 158,
+          "line": 178,
           "text": "$description (missing pattern: $pattern)",
           "polarity": "fail",
           "normalized_id": "description.missing.pattern.pattern",
@@ -3177,7 +3297,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 165,
+          "line": 185,
           "text": "$description (unexpected pattern: $pattern)",
           "polarity": "fail",
           "normalized_id": "description.unexpected.pattern.pattern",
@@ -3185,7 +3305,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 167,
+          "line": 187,
           "text": "$description",
           "polarity": "pass",
           "normalized_id": "description",
@@ -3193,7 +3313,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 175,
+          "line": 195,
           "text": "npm ci failed",
           "polarity": "fail",
           "normalized_id": "npm.ci.failed",
@@ -3201,7 +3321,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 177,
+          "line": 197,
           "text": "CLI build failed",
           "polarity": "fail",
           "normalized_id": "cli.build.failed",
@@ -3209,7 +3329,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 187,
+          "line": 208,
           "text": "backup-all exits non-zero on protobuf mismatch",
           "polarity": "pass",
           "normalized_id": "backup.all.exits.non.zero.on.protobuf.mismatch",
@@ -3217,7 +3337,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 203,
+          "line": 224,
           "text": "backup-all unexpectedly succeeded with stale patched gateway image",
           "polarity": "fail",
           "normalized_id": "backup.all.unexpectedly.succeeded.with.stale.patched.gateway.image",
@@ -3225,7 +3345,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 204,
+          "line": 225,
           "text": "backup-all exits non-zero on stale patched gateway image",
           "polarity": "pass",
           "normalized_id": "backup.all.exits.non.zero.on.stale.patched.gateway.image",
@@ -3233,7 +3353,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 209,
+          "line": 230,
           "text": "sandbox list was called despite preflight image drift",
           "polarity": "fail",
           "normalized_id": "sandbox.list.was.called.despite.preflight.image.drift",
@@ -3241,7 +3361,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 211,
+          "line": 232,
           "text": "preflight image drift blocks sandbox list",
           "polarity": "pass",
           "normalized_id": "preflight.image.drift.blocks.sandbox.list",
@@ -3249,7 +3369,7 @@
         },
         {
           "script": "test/e2e/test-gateway-drift-preflight.sh",
-          "line": 214,
+          "line": 235,
           "text": "Gateway drift preflight regression guard completed",
           "polarity": "pass",
           "normalized_id": "gateway.drift.preflight.regression.guard.completed",
@@ -7650,7 +7770,7 @@
       "assertions": [
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 180,
+          "line": 202,
           "text": "NVIDIA_API_KEY not set",
           "polarity": "fail",
           "normalized_id": "nvidia.api.key.not.set",
@@ -7658,7 +7778,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 183,
+          "line": 205,
           "text": "NVIDIA_API_KEY is set",
           "polarity": "pass",
           "normalized_id": "nvidia.api.key.is.set",
@@ -7666,7 +7786,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 186,
+          "line": 208,
           "text": "Docker is not running",
           "polarity": "fail",
           "normalized_id": "docker.is.not.running",
@@ -7674,7 +7794,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 189,
+          "line": 211,
           "text": "Docker is running",
           "polarity": "pass",
           "normalized_id": "docker.is.running",
@@ -7682,7 +7802,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 213,
+          "line": 236,
           "text": "Pre-cleanup complete",
           "polarity": "pass",
           "normalized_id": "pre.cleanup.complete",
@@ -7690,7 +7810,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 293,
+          "line": 316,
           "text": "Failed to append Slack policy to base sandbox policy",
           "polarity": "fail",
           "normalized_id": "failed.to.append.slack.policy.to.base.sandbox.policy",
@@ -7698,7 +7818,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 296,
+          "line": 319,
           "text": "Slack network policy pre-merged into base policy",
           "polarity": "pass",
           "normalized_id": "slack.network.policy.pre.merged.into.base.policy",
@@ -7706,7 +7826,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 301,
+          "line": 324,
           "text": "Cannot pre-merge Slack policy: missing base policy or preset file",
           "polarity": "fail",
           "normalized_id": "cannot.pre.merge.slack.policy.missing.base.policy.or.preset.file",
@@ -7714,7 +7834,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 342,
+          "line": 365,
           "text": "M0: install.sh completed (exit 0)",
           "polarity": "pass",
           "normalized_id": "m0.install.sh.completed.exit.0",
@@ -7722,7 +7842,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 344,
+          "line": 367,
           "text": "M0: install.sh failed (exit $install_exit)",
           "polarity": "fail",
           "normalized_id": "m0.install.sh.failed.exit.install.exit",
@@ -7730,7 +7850,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 352,
+          "line": 375,
           "text": "openshell not found on PATH after install",
           "polarity": "fail",
           "normalized_id": "openshell.not.found.on.path.after.install",
@@ -7738,7 +7858,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 355,
+          "line": 378,
           "text": "openshell installed ($(openshell --version 2>&1 || echo unknown))",
           "polarity": "pass",
           "normalized_id": "openshell.installed.openshell.version.2.1.echo.unknown",
@@ -7746,7 +7866,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 358,
+          "line": 381,
           "text": "nemoclaw not found on PATH after install",
           "polarity": "fail",
           "normalized_id": "nemoclaw.not.found.on.path.after.install",
@@ -7754,7 +7874,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 361,
+          "line": 384,
           "text": "nemoclaw installed at $(command -v nemoclaw)",
           "polarity": "pass",
           "normalized_id": "nemoclaw.installed.at.command.v.nemoclaw",
@@ -7762,7 +7882,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 366,
+          "line": 389,
           "text": "M0b: Sandbox '$SANDBOX_NAME' is Ready",
           "polarity": "pass",
           "normalized_id": "m0b.sandbox.sandbox.name.is.ready",
@@ -7770,7 +7890,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 368,
+          "line": 391,
           "text": "M0b: Sandbox '$SANDBOX_NAME' not Ready (list: ${sandbox_list:0:200})",
           "polarity": "fail",
           "normalized_id": "m0b.sandbox.sandbox.name.not.ready.list.sandbox.list.0.200",
@@ -7778,7 +7898,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 374,
+          "line": 397,
           "text": "M1: Provider '${SANDBOX_NAME}-telegram-bridge' exists in gateway",
           "polarity": "pass",
           "normalized_id": "m1.provider.sandbox.name.telegram.bridge.exists.in.gateway",
@@ -7786,7 +7906,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 376,
+          "line": 399,
           "text": "M1: Provider '${SANDBOX_NAME}-telegram-bridge' not found in gateway",
           "polarity": "fail",
           "normalized_id": "m1.provider.sandbox.name.telegram.bridge.not.found.in.gateway",
@@ -7794,7 +7914,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 381,
+          "line": 404,
           "text": "M2: Provider '${SANDBOX_NAME}-discord-bridge' exists in gateway",
           "polarity": "pass",
           "normalized_id": "m2.provider.sandbox.name.discord.bridge.exists.in.gateway",
@@ -7802,7 +7922,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 383,
+          "line": 406,
           "text": "M2: Provider '${SANDBOX_NAME}-discord-bridge' not found in gateway",
           "polarity": "fail",
           "normalized_id": "m2.provider.sandbox.name.discord.bridge.not.found.in.gateway",
@@ -7810,7 +7930,23 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 397,
+          "line": 413,
+          "text": "M-W1: Provider '${SANDBOX_NAME}-wechat-bridge' exists in gateway",
+          "polarity": "pass",
+          "normalized_id": "m.w1.provider.sandbox.name.wechat.bridge.exists.in.gateway",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 415,
+          "text": "M-W1: Provider '${SANDBOX_NAME}-wechat-bridge' not found in gateway (non-interactive QR-skip path may be broken)",
+          "polarity": "fail",
+          "normalized_id": "m.w1.provider.sandbox.name.wechat.bridge.not.found.in.gateway.non.interactive.qr.skip.path.may.be.broken",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 429,
           "text": "M3: Real Telegram token leaked into sandbox env",
           "polarity": "fail",
           "normalized_id": "m3.real.telegram.token.leaked.into.sandbox.env",
@@ -7818,7 +7954,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 399,
+          "line": 431,
           "text": "M3: Sandbox TELEGRAM_BOT_TOKEN is a placeholder (not the real token)",
           "polarity": "pass",
           "normalized_id": "m3.sandbox.telegram.bot.token.is.a.placeholder.not.the.real.token",
@@ -7826,7 +7962,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 410,
+          "line": 442,
           "text": "M4: Real Discord token leaked into sandbox env",
           "polarity": "fail",
           "normalized_id": "m4.real.discord.token.leaked.into.sandbox.env",
@@ -7834,7 +7970,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 412,
+          "line": 444,
           "text": "M4: Sandbox DISCORD_BOT_TOKEN is a placeholder (not the real token)",
           "polarity": "pass",
           "normalized_id": "m4.sandbox.discord.bot.token.is.a.placeholder.not.the.real.token",
@@ -7842,7 +7978,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 419,
+          "line": 451,
           "text": "M5: At least one messaging placeholder detected in sandbox",
           "polarity": "pass",
           "normalized_id": "m5.at.least.one.messaging.placeholder.detected.in.sandbox",
@@ -7850,7 +7986,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 444,
+          "line": 476,
           "text": "M5a: Real Telegram token found in full sandbox environment dump",
           "polarity": "fail",
           "normalized_id": "m5a.real.telegram.token.found.in.full.sandbox.environment.dump",
@@ -7858,7 +7994,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 446,
+          "line": 478,
           "text": "M5a: Real Telegram token absent from full sandbox environment",
           "polarity": "pass",
           "normalized_id": "m5a.real.telegram.token.absent.from.full.sandbox.environment",
@@ -7866,7 +8002,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 453,
+          "line": 485,
           "text": "M5b: Real Telegram token found in sandbox process list",
           "polarity": "fail",
           "normalized_id": "m5b.real.telegram.token.found.in.sandbox.process.list",
@@ -7874,7 +8010,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 455,
+          "line": 487,
           "text": "M5b: Real Telegram token absent from sandbox process list",
           "polarity": "pass",
           "normalized_id": "m5b.real.telegram.token.absent.from.sandbox.process.list",
@@ -7882,7 +8018,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 462,
+          "line": 494,
           "text": "M5c: Real Telegram token found on sandbox filesystem: ${sandbox_fs_tg}",
           "polarity": "fail",
           "normalized_id": "m5c.real.telegram.token.found.on.sandbox.filesystem.sandbox.fs.tg",
@@ -7890,7 +8026,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 464,
+          "line": 496,
           "text": "M5c: Real Telegram token absent from sandbox filesystem",
           "polarity": "pass",
           "normalized_id": "m5c.real.telegram.token.absent.from.sandbox.filesystem",
@@ -7898,7 +8034,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 470,
+          "line": 502,
           "text": "M5d: Telegram placeholder confirmed present in sandbox environment",
           "polarity": "pass",
           "normalized_id": "m5d.telegram.placeholder.confirmed.present.in.sandbox.environment",
@@ -7906,7 +8042,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 472,
+          "line": 504,
           "text": "M5d: Telegram placeholder not found in sandbox environment",
           "polarity": "fail",
           "normalized_id": "m5d.telegram.placeholder.not.found.in.sandbox.environment",
@@ -7914,7 +8050,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 482,
+          "line": 514,
           "text": "M5e: Real Discord token found in full sandbox environment dump",
           "polarity": "fail",
           "normalized_id": "m5e.real.discord.token.found.in.full.sandbox.environment.dump",
@@ -7922,7 +8058,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 484,
+          "line": 516,
           "text": "M5e: Real Discord token absent from full sandbox environment",
           "polarity": "pass",
           "normalized_id": "m5e.real.discord.token.absent.from.full.sandbox.environment",
@@ -7930,7 +8066,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 491,
+          "line": 523,
           "text": "M5f: Real Discord token found in sandbox process list",
           "polarity": "fail",
           "normalized_id": "m5f.real.discord.token.found.in.sandbox.process.list",
@@ -7938,7 +8074,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 493,
+          "line": 525,
           "text": "M5f: Real Discord token absent from sandbox process list",
           "polarity": "pass",
           "normalized_id": "m5f.real.discord.token.absent.from.sandbox.process.list",
@@ -7946,7 +8082,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 499,
+          "line": 531,
           "text": "M5g: Real Discord token found on sandbox filesystem: ${sandbox_fs_dc}",
           "polarity": "fail",
           "normalized_id": "m5g.real.discord.token.found.on.sandbox.filesystem.sandbox.fs.dc",
@@ -7954,7 +8090,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 501,
+          "line": 533,
           "text": "M5g: Real Discord token absent from sandbox filesystem",
           "polarity": "pass",
           "normalized_id": "m5g.real.discord.token.absent.from.sandbox.filesystem",
@@ -7962,7 +8098,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 507,
+          "line": 539,
           "text": "M5h: Discord placeholder confirmed present in sandbox environment",
           "polarity": "pass",
           "normalized_id": "m5h.discord.placeholder.confirmed.present.in.sandbox.environment",
@@ -7970,7 +8106,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 509,
+          "line": 541,
           "text": "M5h: Discord placeholder not found in sandbox environment",
           "polarity": "fail",
           "normalized_id": "m5h.discord.placeholder.not.found.in.sandbox.environment",
@@ -7978,7 +8114,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 524,
+          "line": 556,
           "text": "M-S5a: Real Slack bot token found in full sandbox environment dump",
           "polarity": "fail",
           "normalized_id": "m.s5a.real.slack.bot.token.found.in.full.sandbox.environment.dump",
@@ -7986,7 +8122,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 526,
+          "line": 558,
           "text": "M-S5a: Real Slack bot token absent from full sandbox environment",
           "polarity": "pass",
           "normalized_id": "m.s5a.real.slack.bot.token.absent.from.full.sandbox.environment",
@@ -7994,7 +8130,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 533,
+          "line": 565,
           "text": "M-S5b: Real Slack bot token found in sandbox process list",
           "polarity": "fail",
           "normalized_id": "m.s5b.real.slack.bot.token.found.in.sandbox.process.list",
@@ -8002,7 +8138,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 535,
+          "line": 567,
           "text": "M-S5b: Real Slack bot token absent from sandbox process list",
           "polarity": "pass",
           "normalized_id": "m.s5b.real.slack.bot.token.absent.from.sandbox.process.list",
@@ -8010,7 +8146,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 541,
+          "line": 573,
           "text": "M-S5c: Real Slack bot token found on sandbox filesystem: ${sandbox_fs_sl}",
           "polarity": "fail",
           "normalized_id": "m.s5c.real.slack.bot.token.found.on.sandbox.filesystem.sandbox.fs.sl",
@@ -8018,7 +8154,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 543,
+          "line": 575,
           "text": "M-S5c: Real Slack bot token absent from sandbox filesystem",
           "polarity": "pass",
           "normalized_id": "m.s5c.real.slack.bot.token.absent.from.sandbox.filesystem",
@@ -8026,7 +8162,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 551,
+          "line": 583,
           "text": "M-S5d: Real Slack app token found in full sandbox environment dump",
           "polarity": "fail",
           "normalized_id": "m.s5d.real.slack.app.token.found.in.full.sandbox.environment.dump",
@@ -8034,7 +8170,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 553,
+          "line": 585,
           "text": "M-S5d: Real Slack app token absent from sandbox environment",
           "polarity": "pass",
           "normalized_id": "m.s5d.real.slack.app.token.absent.from.sandbox.environment",
@@ -8042,7 +8178,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 558,
+          "line": 590,
           "text": "M-S5d2: Real Slack app token found in sandbox process list",
           "polarity": "fail",
           "normalized_id": "m.s5d2.real.slack.app.token.found.in.sandbox.process.list",
@@ -8050,7 +8186,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 560,
+          "line": 592,
           "text": "M-S5d2: Real Slack app token absent from sandbox process list",
           "polarity": "pass",
           "normalized_id": "m.s5d2.real.slack.app.token.absent.from.sandbox.process.list",
@@ -8058,7 +8194,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 564,
+          "line": 596,
           "text": "M-S5e: Real Slack app token found on sandbox filesystem: ${sandbox_fs_sapp}",
           "polarity": "fail",
           "normalized_id": "m.s5e.real.slack.app.token.found.on.sandbox.filesystem.sandbox.fs.sapp",
@@ -8066,7 +8202,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 566,
+          "line": 598,
           "text": "M-S5e: Real Slack app token absent from sandbox filesystem",
           "polarity": "pass",
           "normalized_id": "m.s5e.real.slack.app.token.absent.from.sandbox.filesystem",
@@ -8074,7 +8210,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 577,
+          "line": 609,
           "text": "M-S5f: Real Slack bot/app token spliced into openclaw.json — apply_slack_token_override regression?",
           "polarity": "fail",
           "normalized_id": "m.s5f.real.slack.bot.app.token.spliced.into.openclaw.json.apply.slack.token.override.regression",
@@ -8082,7 +8218,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 581,
+          "line": 613,
           "text": "M-S5f: openclaw.json holds both Bolt-shape Slack placeholders (no real token on disk)",
           "polarity": "pass",
           "normalized_id": "m.s5f.openclaw.json.holds.both.bolt.shape.slack.placeholders.no.real.token.on.disk",
@@ -8090,7 +8226,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 590,
+          "line": 622,
           "text": "M-S5g: removed Slack token rewriter preload still present in NODE_OPTIONS",
           "polarity": "fail",
           "normalized_id": "m.s5g.removed.slack.token.rewriter.preload.still.present.in.node.options",
@@ -8098,7 +8234,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 592,
+          "line": 624,
           "text": "M-S5g: Slack token rewriter preload absent from NODE_OPTIONS",
           "polarity": "pass",
           "normalized_id": "m.s5g.slack.token.rewriter.preload.absent.from.node.options",
@@ -8106,7 +8242,87 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 612,
+          "line": 640,
+          "text": "M-W3: Real WeChat token leaked into sandbox env",
+          "polarity": "fail",
+          "normalized_id": "m.w3.real.wechat.token.leaked.into.sandbox.env",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 642,
+          "text": "M-W3: Sandbox WECHAT_BOT_TOKEN is a placeholder (not the real token)",
+          "polarity": "pass",
+          "normalized_id": "m.w3.sandbox.wechat.bot.token.is.a.placeholder.not.the.real.token",
+          "mapping_status": "retired"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 651,
+          "text": "M-W3a: Real WeChat token found in full sandbox environment dump",
+          "polarity": "fail",
+          "normalized_id": "m.w3a.real.wechat.token.found.in.full.sandbox.environment.dump",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 653,
+          "text": "M-W3a: Real WeChat token absent from full sandbox environment",
+          "polarity": "pass",
+          "normalized_id": "m.w3a.real.wechat.token.absent.from.full.sandbox.environment",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 660,
+          "text": "M-W3b: Real WeChat token found in sandbox process list",
+          "polarity": "fail",
+          "normalized_id": "m.w3b.real.wechat.token.found.in.sandbox.process.list",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 662,
+          "text": "M-W3b: Real WeChat token absent from sandbox process list",
+          "polarity": "pass",
+          "normalized_id": "m.w3b.real.wechat.token.absent.from.sandbox.process.list",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 670,
+          "text": "M-W3c: Real WeChat token found on sandbox filesystem: ${sandbox_fs_wc}",
+          "polarity": "fail",
+          "normalized_id": "m.w3c.real.wechat.token.found.on.sandbox.filesystem.sandbox.fs.wc",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 672,
+          "text": "M-W3c: Real WeChat token absent from sandbox filesystem",
+          "polarity": "pass",
+          "normalized_id": "m.w3c.real.wechat.token.absent.from.sandbox.filesystem",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 678,
+          "text": "M-W3d: WeChat placeholder confirmed present in sandbox environment",
+          "polarity": "pass",
+          "normalized_id": "m.w3d.wechat.placeholder.confirmed.present.in.sandbox.environment",
+          "mapping_status": "retired"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 680,
+          "text": "M-W3d: WeChat placeholder not found in sandbox environment",
+          "polarity": "fail",
+          "normalized_id": "m.w3d.wechat.placeholder.not.found.in.sandbox.environment",
+          "mapping_status": "retired"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 703,
           "text": "M6: Could not read openclaw.json channels (${channel_json:0:200})",
           "polarity": "fail",
           "normalized_id": "m6.could.not.read.openclaw.json.channels.channel.json.0.200",
@@ -8114,7 +8330,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 629,
+          "line": 720,
           "text": "M6: Telegram channel botToken present in openclaw.json",
           "polarity": "pass",
           "normalized_id": "m6.telegram.channel.bottoken.present.in.openclaw.json",
@@ -8122,7 +8338,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 636,
+          "line": 727,
           "text": "M7: Telegram botToken is not the host-side token (placeholder confirmed)",
           "polarity": "pass",
           "normalized_id": "m7.telegram.bottoken.is.not.the.host.side.token.placeholder.confirmed",
@@ -8130,7 +8346,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 638,
+          "line": 729,
           "text": "M7: Telegram botToken matches host-side token — credential leaked into config!",
           "polarity": "fail",
           "normalized_id": "m7.telegram.bottoken.matches.host.side.token.credential.leaked.into.config",
@@ -8138,7 +8354,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 653,
+          "line": 744,
           "text": "M8: Discord channel token present in openclaw.json",
           "polarity": "pass",
           "normalized_id": "m8.discord.channel.token.present.in.openclaw.json",
@@ -8146,7 +8362,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 660,
+          "line": 751,
           "text": "M9: Discord token is not the host-side token (placeholder confirmed)",
           "polarity": "pass",
           "normalized_id": "m9.discord.token.is.not.the.host.side.token.placeholder.confirmed",
@@ -8154,7 +8370,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 662,
+          "line": 753,
           "text": "M9: Discord token matches host-side token — credential leaked into config!",
           "polarity": "fail",
           "normalized_id": "m9.discord.token.matches.host.side.token.credential.leaked.into.config",
@@ -8162,7 +8378,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 677,
+          "line": 768,
           "text": "M10: Telegram channel is enabled",
           "polarity": "pass",
           "normalized_id": "m10.telegram.channel.is.enabled",
@@ -8170,7 +8386,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 692,
+          "line": 783,
           "text": "M11: Discord channel is enabled",
           "polarity": "pass",
           "normalized_id": "m11.discord.channel.is.enabled",
@@ -8178,7 +8394,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 707,
+          "line": 798,
           "text": "M11b: Telegram dmPolicy is 'allowlist'",
           "polarity": "pass",
           "normalized_id": "m11b.telegram.dmpolicy.is.allowlist",
@@ -8186,7 +8402,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 709,
+          "line": 800,
           "text": "M11b: Telegram dmPolicy is '$tg_dm_policy' (expected 'allowlist')",
           "polarity": "fail",
           "normalized_id": "m11b.telegram.dmpolicy.is.tg.dm.policy.expected.allowlist",
@@ -8194,7 +8410,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 737,
+          "line": 828,
           "text": "M11c: Telegram allowFrom contains all expected user IDs: $tg_allow_from",
           "polarity": "pass",
           "normalized_id": "m11c.telegram.allowfrom.contains.all.expected.user.ids.tg.allow.from",
@@ -8202,7 +8418,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 739,
+          "line": 830,
           "text": "M11c: Telegram allowFrom ($tg_allow_from) is missing IDs: ${missing_ids[*]} (expected all of: $TELEGRAM_IDS)",
           "polarity": "fail",
           "normalized_id": "m11c.telegram.allowfrom.tg.allow.from.is.missing.ids.missing.ids.expected.all.of.telegram.ids",
@@ -8210,7 +8426,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 755,
+          "line": 846,
           "text": "M11d: Telegram groupPolicy is 'open'",
           "polarity": "pass",
           "normalized_id": "m11d.telegram.grouppolicy.is.open",
@@ -8218,7 +8434,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 757,
+          "line": 848,
           "text": "M11d: Telegram groupPolicy is '$tg_group_policy' (expected 'open')",
           "polarity": "fail",
           "normalized_id": "m11d.telegram.grouppolicy.is.tg.group.policy.expected.open",
@@ -8226,7 +8442,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 773,
+          "line": 864,
           "text": "M11e: Slack channel configured with placeholder tokens (guard needed)",
           "polarity": "pass",
           "normalized_id": "m11e.slack.channel.configured.with.placeholder.tokens.guard.needed",
@@ -8234,7 +8450,55 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 803,
+          "line": 889,
+          "text": "M-W8: WeChat account '$WECHAT_ACCOUNT' is enabled in openclaw.json (channels.openclaw-weixin)",
+          "polarity": "pass",
+          "normalized_id": "m.w8.wechat.account.wechat.account.is.enabled.in.openclaw.json.channels.openclaw.weixin",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 905,
+          "text": "M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — seed-wechat-accounts.py placeholder regression",
+          "polarity": "fail",
+          "normalized_id": "m.w9.real.wechat.token.spliced.into.accounts.wechat.account.json.seed.wechat.accounts.py.placeholder.regression",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 907,
+          "text": "M-W9: WeChat per-account credential file uses the L7-resolved placeholder",
+          "polarity": "pass",
+          "normalized_id": "m.w9.wechat.per.account.credential.file.uses.the.l7.resolved.placeholder",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 909,
+          "text": "M-W9: WeChat per-account credential file has unexpected token shape: $(echo ",
+          "polarity": "fail",
+          "normalized_id": "m.w9.wechat.per.account.credential.file.has.unexpected.token.shape.echo",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 928,
+          "text": "M-W10: WeChat accounts.json index contains '$WECHAT_ACCOUNT'",
+          "polarity": "pass",
+          "normalized_id": "m.w10.wechat.accounts.json.index.contains.wechat.account",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 930,
+          "text": "M-W10: WeChat accounts.json missing '$WECHAT_ACCOUNT' (raw: $(echo ",
+          "polarity": "fail",
+          "normalized_id": "m.w10.wechat.accounts.json.missing.wechat.account.raw.echo",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 951,
           "text": "M12: Node.js reached api.telegram.org (${tg_reach})",
           "polarity": "pass",
           "normalized_id": "m12.node.js.reached.api.telegram.org.tg.reach",
@@ -8242,7 +8506,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 809,
+          "line": 957,
           "text": "M12: Node.js could not reach api.telegram.org (${tg_reach:0:200})",
           "polarity": "fail",
           "normalized_id": "m12.node.js.could.not.reach.api.telegram.org.tg.reach.0.200",
@@ -8250,23 +8514,151 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 824,
-          "text": "M13: Node.js reached discord.com (${dc_reach})",
+          "line": 965,
+          "text": "M13-policy: Live policy contains Discord endpoints and Node binaries",
           "polarity": "pass",
-          "normalized_id": "m13.node.js.reached.discord.com.dc.reach",
+          "normalized_id": "m13.policy.live.policy.contains.discord.endpoints.and.node.binaries",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 828,
-          "text": "M13: Node.js could not reach discord.com (${dc_reach:0:200})",
+          "line": 967,
+          "text": "M13-policy: Live policy is missing expected Discord preset endpoint/binary entries",
           "polarity": "fail",
-          "normalized_id": "m13.node.js.could.not.reach.discord.com.dc.reach.0.200",
+          "normalized_id": "m13.policy.live.policy.is.missing.expected.discord.preset.endpoint.binary.entries",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 835,
+          "line": 973,
+          "text": "M13-proxy: Sandbox uses the OpenShell gateway proxy",
+          "polarity": "pass",
+          "normalized_id": "m13.proxy.sandbox.uses.the.openshell.gateway.proxy",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 975,
+          "text": "M13-proxy: Sandbox proxy env does not point at OpenShell gateway: ${live_proxy_env:0:200}",
+          "polarity": "fail",
+          "normalized_id": "m13.proxy.sandbox.proxy.env.does.not.point.at.openshell.gateway.live.proxy.env.0.200",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 996,
+          "text": "M13-curl: curl unexpectedly established a tunnel to Discord; binary whitelist may be too broad",
+          "polarity": "fail",
+          "normalized_id": "m13.curl.curl.unexpectedly.established.a.tunnel.to.discord.binary.whitelist.may.be.too.broad",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1039,
+          "text": "M13: Node.js reached Discord API and CDN through the same proxy (${dc_reach//$'\\n'/ })",
+          "polarity": "pass",
+          "normalized_id": "m13.node.js.reached.discord.api.and.cdn.through.the.same.proxy.dc.reach.n",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1041,
+          "text": "M13: Node.js was denied by the proxy despite the Discord preset being applied: ${dc_reach:0:300}",
+          "polarity": "fail",
+          "normalized_id": "m13.node.js.was.denied.by.the.proxy.despite.the.discord.preset.being.applied.dc.reach.0.300",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1045,
+          "text": "M13: Node.js could not reach Discord API/CDN (${dc_reach:0:200})",
+          "polarity": "fail",
+          "normalized_id": "m13.node.js.could.not.reach.discord.api.cdn.dc.reach.0.200",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1052,
+          "text": "M13-rest-a: Hermetic fake Discord REST API started on host port ${FAKE_DISCORD_REST_PORT}",
+          "polarity": "pass",
+          "normalized_id": "m13.rest.a.hermetic.fake.discord.rest.api.started.on.host.port.fake.discord.rest.port",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1061,
+          "text": "M13-rest-b: Applied Node-only HTTPS policy for fake Discord REST API",
+          "polarity": "pass",
+          "normalized_id": "m13.rest.b.applied.node.only.https.policy.for.fake.discord.rest.api",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1063,
+          "text": "M13-rest-b: Failed to apply fake Discord REST policy: $(tail -20 /tmp/nemoclaw-fake-discord-rest-policy.log 2>/dev/null | tr '\\n' ' ' | cut -c1-300)",
+          "polarity": "fail",
+          "normalized_id": "m13.rest.b.failed.to.apply.fake.discord.rest.policy.tail.20.tmp.nemoclaw.fake.discord.rest.policy.log.2.dev.null.tr.n.cut.c1.300",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1077,
+          "text": "M13-rest-c: Node reached the fake Discord REST API through OpenShell",
+          "polarity": "pass",
+          "normalized_id": "m13.rest.c.node.reached.the.fake.discord.rest.api.through.openshell",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1079,
+          "text": "M13-rest-c: Node failed to reach fake Discord REST API: ${fake_rest_node:0:300}",
+          "polarity": "fail",
+          "normalized_id": "m13.rest.c.node.failed.to.reach.fake.discord.rest.api.fake.rest.node.0.300",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1091,
+          "text": "M13-rest-d: curl was denied before reaching the fake Discord REST API",
+          "polarity": "pass",
+          "normalized_id": "m13.rest.d.curl.was.denied.before.reaching.the.fake.discord.rest.api",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1093,
+          "text": "M13-rest-d: curl unexpectedly established a tunnel to the fake Discord REST API",
+          "polarity": "fail",
+          "normalized_id": "m13.rest.d.curl.unexpectedly.established.a.tunnel.to.the.fake.discord.rest.api",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1095,
+          "text": "M13-rest-d: Fake Discord REST curl denial had unexpected shape: ${fake_rest_curl:0:300}",
+          "polarity": "fail",
+          "normalized_id": "m13.rest.d.fake.discord.rest.curl.denial.had.unexpected.shape.fake.rest.curl.0.300",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1107,
+          "text": "M13-rest-e: Fake server saw Node but no curl request",
+          "polarity": "pass",
+          "normalized_id": "m13.rest.e.fake.server.saw.node.but.no.curl.request",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1109,
+          "text": "M13-rest-e: Unexpected fake Discord REST capture counts: ${fake_rest_capture}",
+          "polarity": "fail",
+          "normalized_id": "m13.rest.e.unexpected.fake.discord.rest.capture.counts.fake.rest.capture",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1116,
           "text": "M13b: Hermetic fake Discord Gateway started on host port ${FAKE_DISCORD_GATEWAY_PORT}",
           "polarity": "pass",
           "normalized_id": "m13b.hermetic.fake.discord.gateway.started.on.host.port.fake.discord.gateway.port",
@@ -8274,7 +8666,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 837,
+          "line": 1118,
           "text": "M13b: Failed to start hermetic fake Discord Gateway",
           "polarity": "fail",
           "normalized_id": "m13b.failed.to.start.hermetic.fake.discord.gateway",
@@ -8282,7 +8674,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 842,
+          "line": 1123,
           "text": "M13c: Applied native WebSocket policy with credential rewrite for fake Discord Gateway",
           "polarity": "pass",
           "normalized_id": "m13c.applied.native.websocket.policy.with.credential.rewrite.for.fake.discord.gateway",
@@ -8290,7 +8682,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 844,
+          "line": 1125,
           "text": "M13c: Failed to apply fake Discord Gateway policy: $(tail -20 /tmp/nemoclaw-fake-discord-policy.log 2>/dev/null | tr '\\n' ' ' | cut -c1-300)",
           "polarity": "fail",
           "normalized_id": "m13c.failed.to.apply.fake.discord.gateway.policy.tail.20.tmp.nemoclaw.fake.discord.policy.log.2.dev.null.tr.n.cut.c1.300",
@@ -8298,7 +8690,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 854,
+          "line": 1135,
           "text": "M13d: Native WebSocket upgrade reached fake Discord Gateway through OpenShell",
           "polarity": "pass",
           "normalized_id": "m13d.native.websocket.upgrade.reached.fake.discord.gateway.through.openshell",
@@ -8306,7 +8698,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 856,
+          "line": 1137,
           "text": "M13d: Native WebSocket upgrade failed: ${dc_ws_native:0:300}",
           "polarity": "fail",
           "normalized_id": "m13d.native.websocket.upgrade.failed.dc.ws.native.0.300",
@@ -8314,7 +8706,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 863,
+          "line": 1144,
           "text": "M13e: Discord HELLO, placeholder IDENTIFY, READY, and heartbeat ACK completed",
           "polarity": "pass",
           "normalized_id": "m13e.discord.hello.placeholder.identify.ready.and.heartbeat.ack.completed",
@@ -8322,7 +8714,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 865,
+          "line": 1146,
           "text": "M13e: Discord Gateway protocol proof incomplete: ${dc_ws_native:0:400}",
           "polarity": "fail",
           "normalized_id": "m13e.discord.gateway.protocol.proof.incomplete.dc.ws.native.0.400",
@@ -8330,7 +8722,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 871,
+          "line": 1152,
           "text": "M13f: Fake Gateway received host-side Discord token; sandbox-visible IDENTIFY used only the placeholder",
           "polarity": "pass",
           "normalized_id": "m13f.fake.gateway.received.host.side.discord.token.sandbox.visible.identify.used.only.the.placeholder",
@@ -8338,7 +8730,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 876,
+          "line": 1157,
           "text": "M13f: Fake Gateway did not prove placeholder-to-token rewrite at the relay boundary",
           "polarity": "fail",
           "normalized_id": "m13f.fake.gateway.did.not.prove.placeholder.to.token.rewrite.at.the.relay.boundary",
@@ -8346,7 +8738,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 892,
+          "line": 1173,
           "text": "M13g: Unregistered Discord WebSocket placeholder is rejected before upstream token exposure",
           "polarity": "pass",
           "normalized_id": "m13g.unregistered.discord.websocket.placeholder.is.rejected.before.upstream.token.exposure",
@@ -8354,7 +8746,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 894,
+          "line": 1175,
           "text": "M13g: Unregistered Discord WebSocket placeholder reached READY or leaked upstream",
           "polarity": "fail",
           "normalized_id": "m13g.unregistered.discord.websocket.placeholder.reached.ready.or.leaked.upstream",
@@ -8362,7 +8754,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 900,
+          "line": 1181,
           "text": "M14: curl to api.telegram.org blocked (binary restriction enforced)",
           "polarity": "pass",
           "normalized_id": "m14.curl.to.api.telegram.org.blocked.binary.restriction.enforced",
@@ -8370,7 +8762,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 902,
+          "line": 1183,
           "text": "M14: curl returned empty (likely blocked by policy)",
           "polarity": "pass",
           "normalized_id": "m14.curl.returned.empty.likely.blocked.by.policy",
@@ -8378,7 +8770,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 906,
+          "line": 1187,
           "text": "M14: curl not available in sandbox (defense in depth)",
           "polarity": "pass",
           "normalized_id": "m14.curl.not.available.in.sandbox.defense.in.depth",
@@ -8386,7 +8778,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 940,
+          "line": 1221,
           "text": "M15: Telegram getMe returned 200 — real token verified!",
           "polarity": "pass",
           "normalized_id": "m15.telegram.getme.returned.200.real.token.verified",
@@ -8394,7 +8786,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 945,
+          "line": 1226,
           "text": "M15: Telegram getMe returned $tg_status — L7 proxy rewrote placeholder (fake token rejected by API)",
           "polarity": "pass",
           "normalized_id": "m15.telegram.getme.returned.tg.status.l7.proxy.rewrote.placeholder.fake.token.rejected.by.api",
@@ -8402,7 +8794,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 946,
+          "line": 1227,
           "text": "M16: Full chain verified: sandbox → proxy → token rewrite → Telegram API",
           "polarity": "pass",
           "normalized_id": "m16.full.chain.verified.sandbox.proxy.token.rewrite.telegram.api",
@@ -8410,7 +8802,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 952,
+          "line": 1233,
           "text": "M15: Telegram API call failed with error: ${tg_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m15.telegram.api.call.failed.with.error.tg.api.0.200",
@@ -8418,7 +8810,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 954,
+          "line": 1235,
           "text": "M15: Unexpected Telegram response (status=$tg_status): ${tg_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m15.unexpected.telegram.response.status.tg.status.tg.api.0.200",
@@ -8426,7 +8818,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 981,
+          "line": 1262,
           "text": "M17: Discord users/@me returned 200 — real token verified!",
           "polarity": "pass",
           "normalized_id": "m17.discord.users.me.returned.200.real.token.verified",
@@ -8434,7 +8826,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 983,
+          "line": 1264,
           "text": "M17: Discord users/@me returned 401 — L7 proxy rewrote placeholder (fake token rejected by API)",
           "polarity": "pass",
           "normalized_id": "m17.discord.users.me.returned.401.l7.proxy.rewrote.placeholder.fake.token.rejected.by.api",
@@ -8442,7 +8834,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 987,
+          "line": 1268,
           "text": "M17: Discord API call failed with error: ${dc_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m17.discord.api.call.failed.with.error.dc.api.0.200",
@@ -8450,7 +8842,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 989,
+          "line": 1270,
           "text": "M17: Unexpected Discord response (status=$dc_status): ${dc_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m17.unexpected.discord.response.status.dc.status.dc.api.0.200",
@@ -8458,7 +8850,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1001,
+          "line": 1282,
           "text": "M-S14a: Hermetic fake Slack API started on host port ${FAKE_SLACK_API_PORT}",
           "polarity": "pass",
           "normalized_id": "m.s14a.hermetic.fake.slack.api.started.on.host.port.fake.slack.api.port",
@@ -8466,7 +8858,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1003,
+          "line": 1284,
           "text": "M-S14a: Failed to start hermetic fake Slack API",
           "polarity": "fail",
           "normalized_id": "m.s14a.failed.to.start.hermetic.fake.slack.api",
@@ -8474,7 +8866,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1008,
+          "line": 1289,
           "text": "M-S14b: Applied REST policy for hermetic fake Slack API",
           "polarity": "pass",
           "normalized_id": "m.s14b.applied.rest.policy.for.hermetic.fake.slack.api",
@@ -8482,7 +8874,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1010,
+          "line": 1291,
           "text": "M-S14b: Failed to apply fake Slack API policy: $(tail -20 /tmp/nemoclaw-fake-slack-policy.log 2>/dev/null | tr '\\n' ' ' | cut -c1-300)",
           "polarity": "fail",
           "normalized_id": "m.s14b.failed.to.apply.fake.slack.api.policy.tail.20.tmp.nemoclaw.fake.slack.policy.log.2.dev.null.tr.n.cut.c1.300",
@@ -8490,7 +8882,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1061,
+          "line": 1342,
           "text": "M-S15: Slack auth.test returned ok:true — real token round-trip verified!",
           "polarity": "pass",
           "normalized_id": "m.s15.slack.auth.test.returned.ok.true.real.token.round.trip.verified",
@@ -8498,7 +8890,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1063,
+          "line": 1344,
           "text": "M-S15: Slack auth.test returned invalid_auth — full chain verified (OpenShell alias rewrite → fake Slack)",
           "polarity": "pass",
           "normalized_id": "m.s15.slack.auth.test.returned.invalid.auth.full.chain.verified.openshell.alias.rewrite.fake.slack",
@@ -8506,7 +8898,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1066,
+          "line": 1347,
           "text": "M-S15a: fake Slack saw host-side bot token in header and urlencoded body",
           "polarity": "pass",
           "normalized_id": "m.s15a.fake.slack.saw.host.side.bot.token.in.header.and.urlencoded.body",
@@ -8514,7 +8906,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1068,
+          "line": 1349,
           "text": "M-S15a: fake Slack capture did not prove bot header/body rewrite: ${sl_capture:0:300}",
           "polarity": "fail",
           "normalized_id": "m.s15a.fake.slack.capture.did.not.prove.bot.header.body.rewrite.sl.capture.0.300",
@@ -8522,7 +8914,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1073,
+          "line": 1354,
           "text": "M-S15: Slack API call failed with error: ${sl_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m.s15.slack.api.call.failed.with.error.sl.api.0.200",
@@ -8530,7 +8922,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1075,
+          "line": 1356,
           "text": "M-S15: OpenShell did not resolve the Bolt-shape alias",
           "polarity": "fail",
           "normalized_id": "m.s15.openshell.did.not.resolve.the.bolt.shape.alias",
@@ -8538,7 +8930,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1077,
+          "line": 1358,
           "text": "M-S15: L7 proxy did not substitute the canonical placeholder — substitution chain broken",
           "polarity": "fail",
           "normalized_id": "m.s15.l7.proxy.did.not.substitute.the.canonical.placeholder.substitution.chain.broken",
@@ -8546,7 +8938,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1079,
+          "line": 1360,
           "text": "M-S15: Unexpected Slack response (status=$sl_status): ${sl_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m.s15.unexpected.slack.response.status.sl.status.sl.api.0.200",
@@ -8554,7 +8946,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1100,
+          "line": 1381,
           "text": "M-S15b: L7 proxy substitutes openshell:resolve:env:SLACK_BOT_TOKEN at egress (parallels Telegram M15 / Discord M17)",
           "polarity": "pass",
           "normalized_id": "m.s15b.l7.proxy.substitutes.openshell.resolve.env.slack.bot.token.at.egress.parallels.telegram.m15.discord.m17",
@@ -8562,7 +8954,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1104,
+          "line": 1385,
           "text": "M-S15b: L7 proxy passed canonical placeholder through unchanged — substitution not happening for SLACK_BOT_TOKEN",
           "polarity": "fail",
           "normalized_id": "m.s15b.l7.proxy.passed.canonical.placeholder.through.unchanged.substitution.not.happening.for.slack.bot.token",
@@ -8570,7 +8962,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1106,
+          "line": 1387,
           "text": "M-S15b: Unexpected response (status=$sl_canon_status): ${sl_canonical:0:200}",
           "polarity": "fail",
           "normalized_id": "m.s15b.unexpected.response.status.sl.canon.status.sl.canonical.0.200",
@@ -8578,7 +8970,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1127,
+          "line": 1408,
           "text": "M-S15c: unset-var failed closed before upstream exposure",
           "polarity": "pass",
           "normalized_id": "m.s15c.unset.var.failed.closed.before.upstream.exposure",
@@ -8586,7 +8978,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1129,
+          "line": 1410,
           "text": "M-S15c: unset-var triggered connection-level failure — proxy refuses to forward unsubstituted placeholder",
           "polarity": "pass",
           "normalized_id": "m.s15c.unset.var.triggered.connection.level.failure.proxy.refuses.to.forward.unsubstituted.placeholder",
@@ -8594,7 +8986,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1131,
+          "line": 1412,
           "text": "M-S15c: unset-var returned HTTP 200 — proxy passed canonical placeholder through unchanged for unset env (substitution may be a no-op)",
           "polarity": "fail",
           "normalized_id": "m.s15c.unset.var.returned.http.200.proxy.passed.canonical.placeholder.through.unchanged.for.unset.env.substitution.may.be.a.no.op",
@@ -8602,7 +8994,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1133,
+          "line": 1414,
           "text": "M-S15c: unset-var request reached fake Slack — unresolved placeholder escaped the proxy boundary",
           "polarity": "fail",
           "normalized_id": "m.s15c.unset.var.request.reached.fake.slack.unresolved.placeholder.escaped.the.proxy.boundary",
@@ -8610,7 +9002,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1154,
+          "line": 1435,
           "text": "M-S16: apps.connections.open returned ok:true — real xapp token round-trip verified!",
           "polarity": "pass",
           "normalized_id": "m.s16.apps.connections.open.returned.ok.true.real.xapp.token.round.trip.verified",
@@ -8618,7 +9010,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1156,
+          "line": 1437,
           "text": "M-S16: apps.connections.open auth-rejected — Socket Mode HTTPS leg verified (OpenShell alias rewrite → fake Slack)",
           "polarity": "pass",
           "normalized_id": "m.s16.apps.connections.open.auth.rejected.socket.mode.https.leg.verified.openshell.alias.rewrite.fake.slack",
@@ -8626,7 +9018,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1159,
+          "line": 1440,
           "text": "M-S16a: fake Slack saw host-side app token in header and urlencoded body",
           "polarity": "pass",
           "normalized_id": "m.s16a.fake.slack.saw.host.side.app.token.in.header.and.urlencoded.body",
@@ -8634,7 +9026,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1161,
+          "line": 1442,
           "text": "M-S16a: fake Slack capture did not prove app header/body rewrite: ${sl_app_capture:0:300}",
           "polarity": "fail",
           "normalized_id": "m.s16a.fake.slack.capture.did.not.prove.app.header.body.rewrite.sl.app.capture.0.300",
@@ -8642,7 +9034,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1166,
+          "line": 1447,
           "text": "M-S16: OpenShell did not resolve the xapp- alias for Socket Mode path",
           "polarity": "fail",
           "normalized_id": "m.s16.openshell.did.not.resolve.the.xapp.alias.for.socket.mode.path",
@@ -8650,7 +9042,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1168,
+          "line": 1449,
           "text": "M-S16: Unexpected apps.connections.open response (status=$sl_app_status): ${sl_app_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m.s16.unexpected.apps.connections.open.response.status.sl.app.status.sl.app.api.0.200",
@@ -8658,7 +9050,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1192,
+          "line": 1473,
           "text": "M-S16b: unset app-token failed closed before upstream exposure",
           "polarity": "pass",
           "normalized_id": "m.s16b.unset.app.token.failed.closed.before.upstream.exposure",
@@ -8666,7 +9058,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1194,
+          "line": 1475,
           "text": "M-S16b: L7 proxy substitutes openshell:resolve:env:SLACK_APP_TOKEN at egress (unset-var control diverged)",
           "polarity": "pass",
           "normalized_id": "m.s16b.l7.proxy.substitutes.openshell.resolve.env.slack.app.token.at.egress.unset.var.control.diverged",
@@ -8674,7 +9066,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1196,
+          "line": 1477,
           "text": "M-S16b: unset app-token env returned HTTP 200 — proxy may be passing canonical placeholders through unchanged",
           "polarity": "fail",
           "normalized_id": "m.s16b.unset.app.token.env.returned.http.200.proxy.may.be.passing.canonical.placeholders.through.unchanged",
@@ -8682,7 +9074,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1198,
+          "line": 1479,
           "text": "M-S16b: unset app-token request reached fake Slack — unresolved placeholder escaped the proxy boundary",
           "polarity": "fail",
           "normalized_id": "m.s16b.unset.app.token.request.reached.fake.slack.unresolved.placeholder.escaped.the.proxy.boundary",
@@ -8690,7 +9082,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1207,
+          "line": 1488,
           "text": "M-S16b: L7 proxy passed canonical placeholder through unchanged for SLACK_APP_TOKEN",
           "polarity": "fail",
           "normalized_id": "m.s16b.l7.proxy.passed.canonical.placeholder.through.unchanged.for.slack.app.token",
@@ -8698,7 +9090,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1209,
+          "line": 1490,
           "text": "M-S16b: Unexpected response (status=$sl_app_canon_status): ${sl_app_canonical:0:200}",
           "polarity": "fail",
           "normalized_id": "m.s16b.unexpected.response.status.sl.app.canon.status.sl.app.canonical.0.200",
@@ -8706,7 +9098,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1224,
+          "line": 1505,
           "text": "M18: Telegram getMe returned 200 with real token",
           "polarity": "pass",
           "normalized_id": "m18.telegram.getme.returned.200.with.real.token",
@@ -8714,7 +9106,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1226,
+          "line": 1507,
           "text": "M18b: Telegram response contains ok:true",
           "polarity": "pass",
           "normalized_id": "m18b.telegram.response.contains.ok.true",
@@ -8722,7 +9114,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1229,
+          "line": 1510,
           "text": "M18: Expected Telegram getMe 200 with real token, got: $tg_status",
           "polarity": "fail",
           "normalized_id": "m18.expected.telegram.getme.200.with.real.token.got.tg.status",
@@ -8730,7 +9122,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1259,
+          "line": 1540,
           "text": "M19: Telegram sendMessage succeeded",
           "polarity": "pass",
           "normalized_id": "m19.telegram.sendmessage.succeeded",
@@ -8738,7 +9130,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1261,
+          "line": 1542,
           "text": "M19: Telegram sendMessage failed: ${send_result:0:200}",
           "polarity": "fail",
           "normalized_id": "m19.telegram.sendmessage.failed.send.result.0.200",
@@ -8746,7 +9138,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1273,
+          "line": 1554,
           "text": "M20: Discord users/@me returned 200 with real token",
           "polarity": "pass",
           "normalized_id": "m20.discord.users.me.returned.200.with.real.token",
@@ -8754,7 +9146,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1275,
+          "line": 1556,
           "text": "M20: Expected Discord users/@me 200 with real token, got: $dc_status",
           "polarity": "fail",
           "normalized_id": "m20.expected.discord.users.me.200.with.real.token.got.dc.status",
@@ -8762,7 +9154,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1307,
+          "line": 1588,
           "text": "S1: Gateway is serving on port 18789 — Slack auth failure did not crash it",
           "polarity": "pass",
           "normalized_id": "s1.gateway.is.serving.on.port.18789.slack.auth.failure.did.not.crash.it",
@@ -8770,7 +9162,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1309,
+          "line": 1590,
           "text": "S1: Gateway is not serving on port 18789 (${gw_port:0:200})",
           "polarity": "fail",
           "normalized_id": "s1.gateway.is.not.serving.on.port.18789.gw.port.0.200",
@@ -8778,7 +9170,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1335,
+          "line": 1616,
           "text": "S2: Gateway log shows Slack rejection was caught by channel guard",
           "polarity": "pass",
           "normalized_id": "s2.gateway.log.shows.slack.rejection.was.caught.by.channel.guard",
@@ -8786,7 +9178,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1360,
+          "line": 1641,
           "text": "Cleanup: Sandbox '$SANDBOX_NAME' intentionally kept",
           "polarity": "pass",
           "normalized_id": "cleanup.sandbox.sandbox.name.intentionally.kept",
@@ -8794,7 +9186,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1362,
+          "line": 1643,
           "text": "Cleanup: Sandbox '$SANDBOX_NAME' still present after cleanup",
           "polarity": "fail",
           "normalized_id": "cleanup.sandbox.sandbox.name.still.present.after.cleanup",
@@ -8802,11 +9194,120 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1364,
+          "line": 1645,
           "text": "Cleanup: Sandbox '$SANDBOX_NAME' removed",
           "polarity": "pass",
           "normalized_id": "cleanup.sandbox.sandbox.name.removed",
           "mapping_status": "retired"
+        }
+      ]
+    },
+    {
+      "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+      "assertions": [
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 94,
+          "text": "Docker is running",
+          "polarity": "pass",
+          "normalized_id": "docker.is.running",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 96,
+          "text": "Docker is not running",
+          "polarity": "fail",
+          "normalized_id": "docker.is.not.running",
+          "mapping_status": "retired"
+        },
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 101,
+          "text": "NVIDIA_API_KEY is set",
+          "polarity": "pass",
+          "normalized_id": "nvidia.api.key.is.set",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 103,
+          "text": "NVIDIA_API_KEY is required and must start with nvapi-",
+          "polarity": "fail",
+          "normalized_id": "nvidia.api.key.is.required.and.must.start.with.nvapi",
+          "mapping_status": "retired"
+        },
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 116,
+          "text": "nemoclaw is available: $(nemoclaw --version 2>/dev/null || echo unknown)",
+          "polarity": "pass",
+          "normalized_id": "nemoclaw.is.available.nemoclaw.version.2.dev.null.echo.unknown",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 118,
+          "text": "nemoclaw not found after install",
+          "polarity": "fail",
+          "normalized_id": "nemoclaw.not.found.after.install",
+          "mapping_status": "retired"
+        },
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 139,
+          "text": "Model Router onboard completed",
+          "polarity": "pass",
+          "normalized_id": "model.router.onboard.completed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 141,
+          "text": "Model Router onboard failed (exit ${onboard_rc}); see ${ONBOARD_LOG}",
+          "polarity": "fail",
+          "normalized_id": "model.router.onboard.failed.exit.onboard.rc.see.onboard.log",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 152,
+          "text": "model-router reports at least one healthy endpoint",
+          "polarity": "pass",
+          "normalized_id": "model.router.reports.at.least.one.healthy.endpoint",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 158,
+          "text": "model-router has no healthy endpoints; expected #3255 main-equivalent failure",
+          "polarity": "fail",
+          "normalized_id": "model.router.has.no.healthy.endpoints.expected.3255.main.equivalent.failure",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 174,
+          "text": "inference.local returned a routed Model Router completion",
+          "polarity": "pass",
+          "normalized_id": "inference.local.returned.a.routed.model.router.completion",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 186,
+          "text": "Model Router inference.local did not return a routed completion; expected #3255 main-equivalent failure",
+          "polarity": "fail",
+          "normalized_id": "model.router.inference.local.did.not.return.a.routed.completion.expected.3255.main.equivalent.failure",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-model-router-provider-routed-inference.sh",
+          "line": 193,
+          "text": "Model Router provider-routed inference guard passed",
+          "polarity": "pass",
+          "normalized_id": "model.router.provider.routed.inference.guard.passed",
+          "mapping_status": "deferred"
         }
       ]
     },
@@ -9576,6 +10077,43 @@
           "text": "Token divergence: skipped (no prior token)",
           "polarity": "pass",
           "normalized_id": "token.divergence.skipped.no.prior.token",
+          "mapping_status": "deferred"
+        }
+      ]
+    },
+    {
+      "script": "test/e2e/test-onboard-inference-smoke.sh",
+      "assertions": [
+        {
+          "script": "test/e2e/test-onboard-inference-smoke.sh",
+          "line": 156,
+          "text": "setupInference() accepted a configured route without proving the chat/completions path; onboard would later print Installation complete while the first real request returns HTTP 503 (#3253)",
+          "polarity": "fail",
+          "normalized_id": "setupinference.accepted.a.configured.route.without.proving.the.chat.completions.path.onboard.would.later.print.installation.complete.while.the.first.real.request.returns.http.503.3253",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-onboard-inference-smoke.sh",
+          "line": 158,
+          "text": "setupInference() did not accept a runtime-broken inference route",
+          "polarity": "pass",
+          "normalized_id": "setupinference.did.not.accept.a.runtime.broken.inference.route",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-onboard-inference-smoke.sh",
+          "line": 161,
+          "text": "onboard did not surface actionable inference smoke diagnostics (expected provider/model/api_base/credential env/upstream 503)",
+          "polarity": "fail",
+          "normalized_id": "onboard.did.not.surface.actionable.inference.smoke.diagnostics.expected.provider.model.api.base.credential.env.upstream.503",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-onboard-inference-smoke.sh",
+          "line": 163,
+          "text": "onboard surfaced actionable inference smoke diagnostics for the broken route",
+          "polarity": "pass",
+          "normalized_id": "onboard.surfaced.actionable.inference.smoke.diagnostics.for.the.broken.route",
           "mapping_status": "deferred"
         }
       ]
@@ -10713,33 +11251,33 @@
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 207,
-          "text": "macOS installer did not request the Darwin openshell-driver-vm asset",
+          "text": "macOS installer still requested the Darwin openshell-driver-vm asset",
           "polarity": "fail",
-          "normalized_id": "macos.installer.did.not.request.the.darwin.openshell.driver.vm.asset",
+          "normalized_id": "macos.installer.still.requested.the.darwin.openshell.driver.vm.asset",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 211,
-          "text": "macOS OpenShell ${CURRENT_OPENSHELL_VERSION} incomplete install fetches Darwin gateway and VM driver assets",
+          "text": "macOS OpenShell ${CURRENT_OPENSHELL_VERSION} incomplete install fetches Darwin gateway asset",
           "polarity": "pass",
-          "normalized_id": "macos.openshell.current.openshell.version.incomplete.install.fetches.darwin.gateway.and.vm.driver.assets",
+          "normalized_id": "macos.openshell.current.openshell.version.incomplete.install.fetches.darwin.gateway.asset",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 280,
-          "text": "macOS installer did not repair missing openshell-driver-vm Hypervisor entitlement",
+          "text": "macOS installer still required openshell-driver-vm Hypervisor entitlement",
           "polarity": "fail",
-          "normalized_id": "macos.installer.did.not.repair.missing.openshell.driver.vm.hypervisor.entitlement",
+          "normalized_id": "macos.installer.still.required.openshell.driver.vm.hypervisor.entitlement",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 287,
-          "text": "macOS installer did not codesign openshell-driver-vm with entitlements",
+          "text": "macOS installer still codesigned openshell-driver-vm",
           "polarity": "fail",
-          "normalized_id": "macos.installer.did.not.codesign.openshell.driver.vm.with.entitlements",
+          "normalized_id": "macos.installer.still.codesigned.openshell.driver.vm",
           "mapping_status": "deferred"
         },
         {
@@ -10753,9 +11291,9 @@
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 298,
-          "text": "macOS OpenShell ${CURRENT_OPENSHELL_VERSION} installer repairs missing VM driver Hypervisor entitlement",
+          "text": "macOS OpenShell ${CURRENT_OPENSHELL_VERSION} installer does not require VM driver Hypervisor entitlement",
           "polarity": "pass",
-          "normalized_id": "macos.openshell.current.openshell.version.installer.repairs.missing.vm.driver.hypervisor.entitlement",
+          "normalized_id": "macos.openshell.current.openshell.version.installer.does.not.require.vm.driver.hypervisor.entitlement",
           "mapping_status": "deferred"
         },
         {
@@ -10777,9 +11315,9 @@
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 307,
-          "text": "onboard does not enable macOS VM rootfs compatibility for Darwin sandbox builds",
+          "text": "onboard does not keep macOS Docker sandbox builds out of the VM rootfs compatibility path",
           "polarity": "fail",
-          "normalized_id": "onboard.does.not.enable.macos.vm.rootfs.compatibility.for.darwin.sandbox.builds",
+          "normalized_id": "onboard.does.not.keep.macos.docker.sandbox.builds.out.of.the.vm.rootfs.compatibility.path",
           "mapping_status": "deferred"
         },
         {
@@ -10817,9 +11355,9 @@
         {
           "script": "test/e2e/test-openshell-gateway-upgrade.sh",
           "line": 316,
-          "text": "macOS VM sandbox builds enable OpenClaw and Hermes rootfs ownership compatibility",
+          "text": "macOS Docker sandbox builds keep VM rootfs compatibility disabled",
           "polarity": "pass",
-          "normalized_id": "macos.vm.sandbox.builds.enable.openclaw.and.hermes.rootfs.ownership.compatibility",
+          "normalized_id": "macos.docker.sandbox.builds.keep.vm.rootfs.compatibility.disabled",
           "mapping_status": "deferred"
         },
         {
@@ -14495,7 +15033,7 @@
         },
         {
           "script": "test/e2e/test-snapshot-commands.sh",
-          "line": 253,
+          "line": 260,
           "text": "No credentials in snapshot directories",
           "polarity": "pass",
           "normalized_id": "no.credentials.in.snapshot.directories",
@@ -14503,7 +15041,7 @@
         },
         {
           "script": "test/e2e/test-snapshot-commands.sh",
-          "line": 255,
+          "line": 262,
           "text": "Credentials found: $CRED_LEAKS",
           "polarity": "fail",
           "normalized_id": "credentials.found.cred.leaks",
@@ -14511,7 +15049,7 @@
         },
         {
           "script": "test/e2e/test-snapshot-commands.sh",
-          "line": 258,
+          "line": 265,
           "text": "Backup directory missing: $BACKUP_DIR",
           "polarity": "fail",
           "normalized_id": "backup.directory.missing.backup.dir",
@@ -14519,7 +15057,7 @@
         },
         {
           "script": "test/e2e/test-snapshot-commands.sh",
-          "line": 266,
+          "line": 273,
           "text": "snapshot help exited with code $_CAPTURE_RC: ${HELP_OUTPUT}",
           "polarity": "fail",
           "normalized_id": "snapshot.help.exited.with.code.capture.rc.help.output",
@@ -14527,7 +15065,7 @@
         },
         {
           "script": "test/e2e/test-snapshot-commands.sh",
-          "line": 271,
+          "line": 278,
           "text": "snapshot help shows create/list/restore",
           "polarity": "pass",
           "normalized_id": "snapshot.help.shows.create.list.restore",
@@ -14535,7 +15073,7 @@
         },
         {
           "script": "test/e2e/test-snapshot-commands.sh",
-          "line": 273,
+          "line": 280,
           "text": "snapshot help incomplete: ${HELP_OUTPUT}",
           "polarity": "fail",
           "normalized_id": "snapshot.help.incomplete.help.output",
@@ -14688,6 +15226,187 @@
           "text": "nemoclaw --help failed",
           "polarity": "fail",
           "normalized_id": "nemoclaw.help.failed",
+          "mapping_status": "deferred"
+        }
+      ]
+    },
+    {
+      "script": "test/e2e/test-state-backup-restore.sh",
+      "assertions": [
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 186,
+          "text": "TC-STATE-01: Setup",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.setup",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 197,
+          "text": "TC-STATE-01: Backup completed successfully",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.backup.completed.successfully",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 199,
+          "text": "TC-STATE-01: Backup",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.backup",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 207,
+          "text": "TC-STATE-01: Backup dir",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.backup.dir",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 225,
+          "text": "TC-STATE-01: BackupCaptureFiles",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.backupcapturefiles",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 228,
+          "text": "TC-STATE-01: BackupCaptureFiles — 5/5 .md files captured in host backup",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.backupcapturefiles.5.5.md.files.captured.in.host.backup",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 232,
+          "text": "TC-STATE-01: BackupCaptureDir",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.backupcapturedir",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 236,
+          "text": "TC-STATE-01: BackupCaptureDir",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.backupcapturedir",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 239,
+          "text": "TC-STATE-01: BackupCaptureDir — memory directory captured in host backup",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.backupcapturedir.memory.directory.captured.in.host.backup",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 262,
+          "text": "TC-STATE-01: Destroy",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.destroy",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 265,
+          "text": "TC-STATE-01: Sandbox destroyed",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.sandbox.destroyed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 269,
+          "text": "TC-STATE-01: Re-onboard",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.re.onboard",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 272,
+          "text": "TC-STATE-01: Sandbox re-onboarded",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.sandbox.re.onboarded",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 280,
+          "text": "TC-STATE-01: Restore completed successfully",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.restore.completed.successfully",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 282,
+          "text": "TC-STATE-01: Restore",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.restore",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 299,
+          "text": "TC-STATE-01: FilesRestore — ${files_restored}/5 workspace files restored correctly",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.filesrestore.files.restored.5.workspace.files.restored.correctly",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 301,
+          "text": "TC-STATE-01: FilesRestore",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.filesrestore",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 311,
+          "text": "TC-STATE-01: MemoryDirRestore — memory directory contents restored correctly",
+          "polarity": "pass",
+          "normalized_id": "tc.state.01.memorydirrestore.memory.directory.contents.restored.correctly",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 314,
+          "text": "TC-STATE-01: MemoryDirRestore",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.memorydirrestore",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 318,
+          "text": "TC-STATE-01: MemoryDirRestore",
+          "polarity": "fail",
+          "normalized_id": "tc.state.01.memorydirrestore",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 339,
+          "text": "$PASS${NC}",
+          "polarity": "pass",
+          "normalized_id": "pass.nc",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-state-backup-restore.sh",
+          "line": 340,
+          "text": "$FAIL${NC}",
+          "polarity": "fail",
+          "normalized_id": "fail.nc",
           "mapping_status": "deferred"
         }
       ]
@@ -15535,6 +16254,171 @@
       ]
     },
     {
+      "script": "test/e2e/test-tunnel-lifecycle.sh",
+      "assertions": [
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 244,
+          "text": "TC-DEPLOY-01a / TC-DEPLOY-01b / TC-DEPLOY-01c",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.tc.deploy.01b.tc.deploy.01c",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 260,
+          "text": "TC-DEPLOY-01a: LocalReadiness",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.localreadiness",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 264,
+          "text": "TC-DEPLOY-01a: Local dashboard reachable (pre-check passed)",
+          "polarity": "pass",
+          "normalized_id": "tc.deploy.01a.local.dashboard.reachable.pre.check.passed",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 275,
+          "text": "TC-DEPLOY-01a: Start",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.start",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 289,
+          "text": "TC-DEPLOY-01a: Tunnel URL found in status ($tunnel_url)",
+          "polarity": "pass",
+          "normalized_id": "tc.deploy.01a.tunnel.url.found.in.status.tunnel.url",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 298,
+          "text": "TC-DEPLOY-01a: NoSpawn",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.nospawn",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 302,
+          "text": "TC-DEPLOY-01a: CaptureBug",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.capturebug",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 306,
+          "text": "TC-DEPLOY-01a: LocalOrigin",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.localorigin",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 310,
+          "text": "TC-DEPLOY-01a: CloudflareRegister",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.cloudflareregister",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 314,
+          "text": "TC-DEPLOY-01a: Start",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01a.start",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 344,
+          "text": "TC-DEPLOY-01b: LocalRegression",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01b.localregression",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 358,
+          "text": "TC-DEPLOY-01b: Tunnel serves OpenClaw dashboard (HTTP 200, marker matched)",
+          "polarity": "pass",
+          "normalized_id": "tc.deploy.01b.tunnel.serves.openclaw.dashboard.http.200.marker.matched",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 360,
+          "text": "TC-DEPLOY-01b",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01b",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 365,
+          "text": "TC-DEPLOY-01b: CloudflareEdge",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01b.cloudflareedge",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 379,
+          "text": "TC-DEPLOY-01c: Stop command",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01c.stop.command",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 403,
+          "text": "TC-DEPLOY-01c: Stop",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01c.stop",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 405,
+          "text": "TC-DEPLOY-01c: Tunnel URL absent after stop",
+          "polarity": "pass",
+          "normalized_id": "tc.deploy.01c.tunnel.url.absent.after.stop",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 407,
+          "text": "TC-DEPLOY-01c: Stop",
+          "polarity": "fail",
+          "normalized_id": "tc.deploy.01c.stop",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 429,
+          "text": "$PASS${NC}",
+          "polarity": "pass",
+          "normalized_id": "pass.nc",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-tunnel-lifecycle.sh",
+          "line": 430,
+          "text": "$FAIL${NC}",
+          "polarity": "fail",
+          "normalized_id": "fail.nc",
+          "mapping_status": "deferred"
+        }
+      ]
+    },
+    {
       "script": "test/e2e/test-upgrade-stale-sandbox.sh",
       "assertions": [
         {
@@ -15701,8 +16585,8 @@
     }
   ],
   "totals": {
-    "scripts": 48,
-    "assertions": 1932,
+    "scripts": 52,
+    "assertions": 2040,
     "zero_assertion_scripts": 1
   }
 }

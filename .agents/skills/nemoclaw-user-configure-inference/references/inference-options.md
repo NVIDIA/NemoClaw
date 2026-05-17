@@ -31,7 +31,7 @@ NemoClaw uses provider-specific local tokens for those routes, and rebuilds of l
 | Hermes Provider | Hermes only | OpenAI-compatible route | Available when onboarding Hermes Agent through `nemohermes` |
 | Local Ollama | Caveated | Local Ollama API | Available when Ollama is installed or running on the host |
 | Local NVIDIA NIM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable GPU |
-| Local vLLM | Experimental | Local OpenAI-compatible | Appears when a vLLM server is already running on `localhost:8000`; managed install/start requires `NEMOCLAW_EXPERIMENTAL=1` |
+| Local vLLM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a server already running on `localhost:8000` |
 <!-- provider-status:end -->
 
 ## Provider Options

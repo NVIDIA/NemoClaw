@@ -51,7 +51,7 @@ resolve_installer_version() {
     return
   fi
   # Prefer git tags (works in dev clones and CI)
-  if command -v git &>/dev/null && [[ -d "${repo_root}/.git" ]]; then
+  if command -v git &>/dev/null && [[ -e "${repo_root}/.git" ]]; then
     local git_ver=""
     if git_ver="$(git -C "$repo_root" describe --tags --match 'v*' 2>/dev/null)"; then
       git_ver="${git_ver#v}"
@@ -548,6 +548,7 @@ usage() {
   printf "    NVIDIA_API_KEY                API key (skips credential prompt)\n"
   printf "    NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 Same as --yes-i-accept-third-party-software\n"
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
+  printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
@@ -1356,7 +1357,7 @@ is_source_checkout() {
     return 1
   fi
 
-  if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -d "${repo_root}/.git" ]]; then
+  if [[ -n "${NEMOCLAW_REPO_ROOT:-}" || -e "${repo_root}/.git" ]]; then
     return 0
   fi
 
@@ -1736,7 +1737,7 @@ preinstall_backup_and_retire_legacy_gateway() {
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
     fi
-    warn "Pre-upgrade backup failed (non-fatal). Continuing."
+    error "Pre-upgrade backup failed. Fix the OpenShell gateway state, rerun '${_CLI_BIN} backup-all', then rerun the installer."
   fi
   export NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE=1
 
@@ -1754,11 +1755,90 @@ preinstall_backup_and_retire_legacy_gateway() {
 # ---------------------------------------------------------------------------
 # 5. Onboard
 # ---------------------------------------------------------------------------
+repair_installer_nvidia_cdi_spec() {
+  local preflight_module="$1"
+  local spec_path=""
+
+  spec_path="$(
+    # shellcheck disable=SC2016
+    node -e '
+      const preflightPath = process.argv[1];
+      try {
+        const { assessHost, getNvidiaCdiSpecPath } = require(preflightPath);
+        const host = assessHost();
+        if (host && host.cdiNvidiaGpuSpecMissing) {
+          process.stdout.write(getNvidiaCdiSpecPath(host));
+        }
+      } catch {
+        process.exit(0);
+      }
+    ' "$preflight_module" 2>/dev/null || true
+  )"
+
+  if [[ -z "$spec_path" ]]; then
+    return 0
+  fi
+  if ! command_exists nvidia-ctk; then
+    return 0
+  fi
+
+  local spec_dir="${spec_path%/*}"
+  if [[ -z "$spec_dir" || "$spec_dir" == "$spec_path" ]]; then
+    spec_dir="/etc/cdi"
+    spec_path="${spec_dir}/nvidia.yaml"
+  fi
+
+  local sudo_cmd=()
+  info "Generating missing NVIDIA CDI device spec at ${spec_path}."
+  if [[ "$(id -u)" -ne 0 ]]; then
+    sudo_cmd=(sudo)
+    info "This host is missing NVIDIA CDI device specs. The next steps use sudo to repair them."
+    if ! sudo -v; then
+      warn "Could not obtain sudo credentials for NVIDIA CDI device spec generation."
+      return 0
+    fi
+  fi
+
+  local cdi_list_output=""
+  if command_exists systemctl; then
+    info "Trying NVIDIA CDI refresh service (auto-generates GPU CDI specs)."
+    if "${sudo_cmd[@]}" systemctl enable --now nvidia-cdi-refresh.path nvidia-cdi-refresh.service >/dev/null 2>&1 \
+      && cdi_list_output="$(nvidia-ctk cdi list 2>/dev/null)" \
+      && grep -q 'nvidia\.com/gpu' <<<"$cdi_list_output"; then
+      ok "Enabled NVIDIA CDI refresh service and generated NVIDIA CDI device spec."
+      return 0
+    fi
+    warn "NVIDIA CDI refresh service did not produce nvidia.com/gpu; falling back to direct generation."
+  fi
+
+  local cdi_generate_output=""
+  if "${sudo_cmd[@]}" mkdir -p "$spec_dir" && cdi_generate_output="$("${sudo_cmd[@]}" nvidia-ctk cdi generate --output="$spec_path" 2>&1)"; then
+    if cdi_list_output="$(nvidia-ctk cdi list 2>/dev/null)"; then
+      if grep -q 'nvidia\.com/gpu' <<<"$cdi_list_output"; then
+        ok "Generated NVIDIA CDI device spec."
+      else
+        warn "Generated NVIDIA CDI device spec, but nvidia-ctk cdi list did not show nvidia.com/gpu."
+      fi
+    else
+      ok "Generated NVIDIA CDI device spec."
+      warn "Could not verify it with nvidia-ctk cdi list."
+    fi
+  else
+    warn "Could not generate the NVIDIA CDI device spec automatically."
+    if [[ -n "$cdi_generate_output" ]]; then
+      warn "nvidia-ctk cdi generate output:"
+      printf "%s\n" "$cdi_generate_output" | tail -40 | sed 's/^/  /'
+    fi
+  fi
+}
+
 run_installer_host_preflight() {
   local preflight_module="${NEMOCLAW_SOURCE_ROOT}/dist/lib/onboard/preflight.js"
   if ! command_exists node || [[ ! -f "$preflight_module" ]]; then
     return 0
   fi
+
+  repair_installer_nvidia_cdi_spec "$preflight_module"
 
   local output status
   if output="$(
@@ -2107,6 +2187,7 @@ maybe_offer_express_install() {
       info "Using express install for ${platform}."
       NON_INTERACTIVE=1
       export NEMOCLAW_NON_INTERACTIVE=1
+      export NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt
       export NEMOCLAW_YES=1
       export NEMOCLAW_POLICY_MODE=suggested
       case "$platform" in

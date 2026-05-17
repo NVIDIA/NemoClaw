@@ -106,12 +106,16 @@ function getPresetEndpoints(content: string): string[] {
  * having enabled the channel opens the firewall but leaves the sandbox
  * without a running bridge. See #1691.
  */
-const MESSAGING_PRESET_NAMES = new Set(["telegram", "discord", "slack"]);
+const MESSAGING_PRESET_LABELS: Record<string, string> = {
+  telegram: "Telegram",
+  discord: "Discord",
+  slack: "Slack",
+  wechat: "WeChat",
+};
 
 function getMessagingPresetWarning(presetName: string): string | null {
-  if (!MESSAGING_PRESET_NAMES.has(presetName)) return null;
-  const label =
-    presetName === "telegram" ? "Telegram" : presetName === "discord" ? "Discord" : "Slack";
+  const label = MESSAGING_PRESET_LABELS[presetName];
+  if (!label) return null;
   return [
     `Note: the '${presetName}' preset only opens network egress to the ${label} API.`,
     `To actually enable ${label} messaging, re-run 'nemoclaw onboard' and select ${label}`,
@@ -669,6 +673,95 @@ function applyPreset(
 }
 
 /**
+ * Apply multiple built-in presets to a running sandbox with a single gateway
+ * policy mutation. This preserves final policy/registry state from applying
+ * presets one-by-one, while avoiding one `openshell policy set --wait` per
+ * preset during onboarding.
+ */
+function applyPresets(sandboxName: string, presetNames: string[]): boolean {
+  const isRfc1123Label = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?$/.test(sandboxName);
+  if (!sandboxName || sandboxName.length > 63 || !isRfc1123Label) {
+    throw new Error(
+      `Invalid or truncated sandbox name: '${sandboxName}'. ` +
+        `Names must be 1-63 chars, lowercase alphanumeric, with optional internal hyphens.`,
+    );
+  }
+
+  const uniquePresetNames = [...new Set(presetNames)].filter(Boolean);
+  if (uniquePresetNames.length === 0) return true;
+
+  let rawPolicy = "";
+  try {
+    rawPolicy = runCapture(buildPolicyGetCommand(sandboxName), { ignoreError: true });
+  } catch {
+    /* ignored */
+  }
+
+  let merged = parseCurrentPolicy(rawPolicy);
+  const endpointLogs: string[][] = [];
+
+  for (const presetName of uniquePresetNames) {
+    const presetContent = loadPreset(presetName);
+    if (!presetContent) {
+      console.error(`  Cannot load preset: ${presetName}`);
+      return false;
+    }
+
+    const presetEntries = extractPresetEntries(presetContent);
+    if (!presetEntries) {
+      console.error(`  Preset ${presetName} has no network_policies section.`);
+      return false;
+    }
+
+    const endpoints = getPresetEndpoints(presetContent);
+    endpointLogs.push(endpoints);
+    merged = mergePresetIntoPolicy(merged, presetEntries);
+  }
+
+  for (const endpoints of endpointLogs) {
+    if (endpoints.length > 0) {
+      console.log(`  Widening sandbox egress — adding: ${endpoints.join(", ")}`);
+    }
+  }
+
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-"));
+  const tmpFile = path.join(tmpDir, "policy.yaml");
+  fs.writeFileSync(tmpFile, merged, { encoding: "utf-8", mode: 0o600 });
+
+  try {
+    run(buildPolicySetCommand(tmpFile, sandboxName));
+
+    for (const presetName of uniquePresetNames) {
+      console.log(`  Applied preset: ${presetName}`);
+    }
+  } finally {
+    try {
+      fs.unlinkSync(tmpFile);
+    } catch {
+      /* ignored */
+    }
+    try {
+      fs.rmdirSync(tmpDir);
+    } catch {
+      /* ignored */
+    }
+  }
+
+  const sandbox = registry.getSandbox(sandboxName);
+  if (sandbox) {
+    const pols = sandbox.policies || [];
+    for (const presetName of uniquePresetNames) {
+      if (!pols.includes(presetName)) {
+        pols.push(presetName);
+      }
+    }
+    registry.updateSandbox(sandboxName, { policies: pols });
+  }
+
+  return true;
+}
+
+/**
  * Load a user-authored preset YAML from an arbitrary path on disk, validate
  * its shape, and return `{ presetName, content }` for use with
  * `applyPresetContent`. Returns `null` (and logs a specific error) for any
@@ -992,6 +1085,7 @@ export {
   mergePresetNamesIntoPolicy,
   removePresetFromPolicy,
   applyPreset,
+  applyPresets,
   applyPresetContent,
   loadPresetFromFile,
   removePreset,

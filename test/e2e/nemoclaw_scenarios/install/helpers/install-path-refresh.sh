@@ -26,6 +26,7 @@ nemoclaw_ensure_local_bin_on_path() {
   if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
     export PATH="$HOME/.local/bin:$PATH"
   fi
+  return 0
 }
 
 # Source ~/.bashrc (best-effort) and then ensure ~/.local/bin is on PATH.
@@ -33,9 +34,10 @@ nemoclaw_ensure_local_bin_on_path() {
 # PATH from scratch and can drop the directory where install.sh places the
 # openshell/nemoclaw binaries.
 nemoclaw_refresh_install_env() {
-  if [ -f "$HOME/.bashrc" ]; then
-    # shellcheck source=/dev/null
-    source "$HOME/.bashrc" 2>/dev/null || true
-  fi
+  # Avoid sourcing interactive shell profiles in CI scenario runners: user
+  # profile scripts can call `exit`/`return` or otherwise trip `errexit` before
+  # the install helper gets to verify the freshly linked CLI. The scenario
+  # installer only needs the deterministic install location on PATH.
   nemoclaw_ensure_local_bin_on_path
+  return 0
 }

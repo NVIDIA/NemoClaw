@@ -21,6 +21,7 @@ e2e_env_apply_noninteractive() {
   export NEMOCLAW_NON_INTERACTIVE=1
   export DEBIAN_FRONTEND=noninteractive
   export NEMOCLAW_ACCEPT_THIRD_PARTY_TERMS=1
+  export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
   export NEMOCLAW_ACCEPT_LICENSES=1
   export NEMOCLAW_DISABLE_UPDATE_CHECK=1
   # CI is usually already set, but ensure downstream tools see it.

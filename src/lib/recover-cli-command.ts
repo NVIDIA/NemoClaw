@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-
-import { Args, Command, Flags } from "@oclif/core";
+import { Args } from "@oclif/core";
 
 import { connectSandbox } from "./actions/sandbox/connect";
+import { NemoClawCommand } from "./cli/nemoclaw-oclif-command";
 
-export default class RecoverCliCommand extends Command {
+export default class RecoverCliCommand extends NemoClawCommand {
   static id = "sandbox:recover";
   static strict = true;
   static summary = "Restart the sandbox gateway and dashboard port-forward";
@@ -18,7 +18,6 @@ export default class RecoverCliCommand extends Command {
     sandboxName: Args.string({ name: "sandbox", description: "Sandbox name", required: true }),
   };
   static flags = {
-    help: Flags.help({ char: "h" }),
   };
 
   public async run(): Promise<void> {

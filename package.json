@@ -32,9 +32,6 @@
     "build:cli": "tsc -p tsconfig.src.json && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.ts",
-    "ts-migration:assist": "tsx scripts/ts-migration-assist.ts",
-    "ts-migration:bulk-fix-prs": "tsx scripts/ts-migration-bulk-fix-prs.ts",
-    "ts-migration:guard": "tsx scripts/check-legacy-migrated-paths.ts",
     "type-safety:hotspots": "tsx scripts/type-safety-hotspots.ts",
     "source-shape:scan": "tsx scripts/find-source-shape-tests.ts --metrics",
     "source-shape:check": "tsx scripts/find-source-shape-tests.ts --check",
@@ -50,6 +47,7 @@
     "@oclif/core": "^4.10.5",
     "js-yaml": "^4.1.1",
     "p-retry": "^4.6.2",
+    "qrcode-terminal": "^0.12.0",
     "yaml": "^2.8.3"
   },
   "bundleDependencies": [
@@ -78,11 +76,11 @@
     "@biomejs/biome": "^2.4.14",
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
+    "@earendil-works/pi-coding-agent": "0.74.0",
     "@j178/prek": "^0.3.6",
     "@types/node": "^25.5.2",
     "@vitest/coverage-v8": "^4.1.0",
     "ajv": "^8.17.0",
-    "execa": "^9.6.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.0"

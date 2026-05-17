@@ -77,6 +77,8 @@ describe("E2E advisor auto-dispatch planning", () => {
       env: {
         GITHUB_EVENT_NAME: "pull_request",
         GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        GITHUB_RUN_ID: "456789",
+        GITHUB_RUN_ATTEMPT: "2",
       },
     });
 
@@ -86,7 +88,36 @@ describe("E2E advisor auto-dispatch planning", () => {
       jobs: "network-policy-e2e",
       target_ref: "abc123def456",
       pr_number: "123",
+      advisor_dispatch_id: "advisor-123-456789-2",
     });
+    expect(plan.advisorDispatchId).toBe("advisor-123-456789-2");
+  });
+
+  it("dispatches all required jobs without applying the retired max-jobs cap", () => {
+    const workflowText = fs.readFileSync(
+      path.join(ROOT, ".github/workflows/nightly-e2e.yaml"),
+      "utf8",
+    );
+    const plan = planAutoDispatch({
+      result: {
+        confidence: "high",
+        requiredTests: [
+          { id: "network-policy-e2e", workflow: "nightly-e2e.yaml" },
+          { id: "cloud-e2e", workflow: "nightly-e2e.yaml" },
+        ],
+      },
+      workflowText,
+      event: pullRequest("MEMBER"),
+      env: {
+        GITHUB_EVENT_NAME: "pull_request",
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        E2E_ADVISOR_AUTO_DISPATCH_MAX_JOBS: "1",
+      },
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.jobs).toEqual(["network-policy-e2e", "cloud-e2e"]);
+    expect(plan.inputs?.jobs).toBe("network-policy-e2e,cloud-e2e");
   });
 
   it("plans dispatch for allowlisted authors whose private org membership appears as contributor", () => {
@@ -187,11 +218,13 @@ describe("E2E advisor auto-dispatch planning", () => {
         jobs: "network-policy-e2e,cloud_e2e",
         target_ref: "abc123def456",
         pr_number: "123",
+        advisor_dispatch_id: "advisor-123-456789",
       }),
     ).toEqual({
       jobs: "network-policy-e2e,cloud_e2e",
       target_ref: "abc123def456",
       pr_number: "123",
+      advisor_dispatch_id: "advisor-123-456789",
     });
   });
 
@@ -237,6 +270,12 @@ describe("E2E advisor auto-dispatch planning", () => {
       jobs: "network-policy-e2e",
       target_ref: "abc123def456",
       pr_number: "123abc",
+    },
+    {
+      jobs: "network-policy-e2e",
+      target_ref: "abc123def456",
+      pr_number: "123",
+      advisor_dispatch_id: "advisor/123",
     },
   ])("rejects unsafe dispatch inputs %#", (inputs) => {
     expect(() => validateDispatchInputs(inputs)).toThrow(/Refusing to dispatch unsafe/);

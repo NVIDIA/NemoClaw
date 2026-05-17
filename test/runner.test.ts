@@ -283,6 +283,14 @@ describe("validateName", () => {
     expect(() => validateName("a".repeat(64))).toThrow(/too long/);
   });
 
+  it("rejects excessively long valid-looking names before spawning OpenShell", () => {
+    const { validateName } = require(runnerPath);
+    expect(validateName("a".repeat(63))).toBe("a".repeat(63));
+    expect(() => validateName("a".repeat(64 * 1024), "sandbox name")).toThrow(
+      /sandbox name too long \(max 63 chars\)/,
+    );
+  });
+
   it("rejects uppercase and special characters", () => {
     const { validateName } = require(runnerPath);
     expect(() => validateName("1sandbox")).toThrow(/Invalid/);

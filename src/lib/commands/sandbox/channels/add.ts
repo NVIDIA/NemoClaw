@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command } from "@oclif/core";
+import { NemoClawCommand } from "../../../cli/nemoclaw-oclif-command";
 
 import {
   buildChannelArgs,
@@ -10,7 +10,7 @@ import {
   getChannelsRuntimeBridge,
 } from "./common";
 
-export default class ChannelsAddCommand extends Command {
+export default class ChannelsAddCommand extends NemoClawCommand {
   static id = "sandbox:channels:add";
   static strict = true;
   static summary = "Save messaging channel credentials and rebuild";

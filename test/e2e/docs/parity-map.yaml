@@ -5,6 +5,31 @@ scripts:
     bucket: final-security-policy-platform-misc
     retirement_evidence: no PASS/FAIL legacy assertions extracted; reviewed 2026-05-13
     assertions: []
+  test-onboard-inference-smoke.sh:
+    scenario: ''
+    status: deferred
+    bucket: inference-onboard-smoke
+    assertions:
+    - legacy: setupInference() accepted a configured route without proving the chat/completions path; onboard would later print Installation complete while the first real request returns HTTP 503 (#3253)
+      status: deferred
+      reason: regression guard validates fix PR #3594 before migration to scenario framework
+      owner: e2e-maintainers
+      runner_requirement: local CLI build with mocked OpenShell runner
+    - legacy: setupInference() did not accept a runtime-broken inference route
+      status: deferred
+      reason: regression guard validates fix PR #3594 before migration to scenario framework
+      owner: e2e-maintainers
+      runner_requirement: local CLI build with mocked OpenShell runner
+    - legacy: onboard did not surface actionable inference smoke diagnostics (expected provider/model/api_base/credential env/upstream 503)
+      status: deferred
+      reason: regression guard validates fix PR #3594 before migration to scenario framework
+      owner: e2e-maintainers
+      runner_requirement: local CLI build with mocked OpenShell runner
+    - legacy: onboard surfaced actionable inference smoke diagnostics for the broken route
+      status: deferred
+      reason: regression guard validates fix PR #3594 before migration to scenario framework
+      owner: e2e-maintainers
+      runner_requirement: local CLI build with mocked OpenShell runner
   test-brave-search-e2e.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
@@ -385,6 +410,241 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       secret_requirement: NVIDIA_API_KEY secret and network egress
+  test-channels-stop-start.sh:
+    scenario: ubuntu-repo-cloud-openclaw
+    status: not-started
+    bucket: providers-messaging
+    assertions:
+    - legacy: 'C0: NVIDIA_API_KEY is required'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NVIDIA_API_KEY is set'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NEMOCLAW_NON_INTERACTIVE=1 is required'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NEMOCLAW_NON_INTERACTIVE=1 is set'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1a: Pre-cleanup complete'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1b: install.sh + onboard completed (exit 0)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1b: install.sh failed (exit $install_exit)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1c: openshell not on PATH after install'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1c: openshell installed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1d: nemoclaw not on PATH after install'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1d: nemoclaw installed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1e: Sandbox ''${SANDBOX_NAME}'' is Ready'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1e: Sandbox ''${SANDBOX_NAME}'' not Ready'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2a: Provider ''${SANDBOX_NAME}-telegram-bridge'' exists in gateway'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2a: Provider ''${SANDBOX_NAME}-telegram-bridge'' missing in gateway'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2b: openclaw.json contains ''telegram'' channel block'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2b: could not read openclaw.json inside sandbox'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2b: openclaw.json missing ''telegram'' channel before stop (precondition failed)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2c: registry.messagingChannels contains telegram (${baseline_messaging})'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2c: registry.messagingChannels missing telegram (got: ${baseline_messaging})'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2d: registry.disabledChannels empty at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2d: registry.disabledChannels unexpectedly non-empty at baseline (got: ${baseline_disabled})'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C3a: channels stop telegram registered the change'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C3a: channels stop telegram did not register'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C3b: rebuild (post-stop) completed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C3b: rebuild (post-stop) failed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4a: REGRESSION — openclaw.json still contains ''telegram'' after stop+rebuild (#3453)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4a: could not read openclaw.json inside sandbox post-stop'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4a: openclaw.json excludes ''telegram'' after stop+rebuild (#3453 fixed)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4b: registry.messagingChannels still contains telegram (${post_stop_messaging})'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4b: registry.messagingChannels lost telegram after stop (got: ${post_stop_messaging})'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4c: registry.disabledChannels contains telegram (${post_stop_disabled})'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4c: registry.disabledChannels missing telegram (got: ${post_stop_disabled})'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4d: telegram-bridge provider not attached to rebuilt sandbox'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4d: telegram-bridge provider still attached after stop+rebuild (${attached})'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C5a: channels start telegram registered the change'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C5a: channels start telegram did not register'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C5b: rebuild (post-start) completed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C5b: rebuild (post-start) failed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6a: openclaw.json contains ''telegram'' again after start+rebuild (#3381 fixed)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6a: could not read openclaw.json inside sandbox post-start'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6a: openclaw.json missing ''telegram'' after start+rebuild (#3381 regression)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6b: registry.disabledChannels cleared (${post_start_disabled})'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6b: registry.disabledChannels still set after start (got: ${post_start_disabled})'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6c: telegram-bridge provider record present in gateway (cached token reused)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6c: telegram-bridge provider record missing in gateway after start'
+      status: deferred
+      reason: new regression test (issue #3462 Test 1); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
   test-credential-migration.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
@@ -834,77 +1094,127 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-  test-deployment-services.sh:
+  test-state-backup-restore.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
     bucket: rebuild-runtime
     assertions:
-    - legacy: 'TC-STATE-02: Setup'
+    - legacy: 'TC-STATE-01: Setup'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: Backup completed successfully'
+    - legacy: 'TC-STATE-01: Backup completed successfully'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: Backup'
+    - legacy: 'TC-STATE-01: Backup'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: Backup dir'
+    - legacy: 'TC-STATE-01: Backup dir'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: Destroy'
+    - legacy: 'TC-STATE-01: BackupCaptureFiles'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: Sandbox destroyed'
+    - legacy: 'TC-STATE-01: BackupCaptureFiles — 5/5 .md files captured in host backup'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: Re-onboard'
+    - legacy: 'TC-STATE-01: BackupCaptureDir'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: Sandbox re-onboarded'
+    - legacy: 'TC-STATE-01: BackupCaptureDir — memory directory captured in host backup'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: Restore completed successfully'
+    - legacy: 'TC-STATE-01: Destroy'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: Restore'
+    - legacy: 'TC-STATE-01: Sandbox destroyed'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: ${verified}/5 workspace files verified with correct content'
+    - legacy: 'TC-STATE-01: Re-onboard'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: ${verified}/5 workspace files verified (partial tolerance applied)'
+    - legacy: 'TC-STATE-01: Sandbox re-onboarded'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: Verify'
+    - legacy: 'TC-STATE-01: Restore completed successfully'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-STATE-02: Memory note restored correctly'
+    - legacy: 'TC-STATE-01: Restore'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-STATE-01: FilesRestore — ${files_restored}/5 workspace files restored correctly'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-STATE-01: FilesRestore'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-STATE-01: MemoryDirRestore — memory directory contents restored correctly'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-STATE-01: MemoryDirRestore'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: $PASS${NC}
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: $FAIL${NC}
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+  test-tunnel-lifecycle.sh:
+    scenario: ubuntu-repo-cloud-openclaw
+    status: migrated
+    bucket: rebuild-runtime
+    assertions:
+    - legacy: 'TC-DEPLOY-01a / TC-DEPLOY-01b / TC-DEPLOY-01c'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-DEPLOY-01a: LocalReadiness'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-DEPLOY-01a: Local dashboard reachable (pre-check passed)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -919,7 +1229,27 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-DEPLOY-01a: Start'
+    - legacy: 'TC-DEPLOY-01a: NoSpawn'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-DEPLOY-01a: CaptureBug'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-DEPLOY-01a: LocalOrigin'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-DEPLOY-01a: CloudflareRegister'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'TC-DEPLOY-01b: LocalRegression'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -934,7 +1264,7 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: TC-DEPLOY-01b
+    - legacy: 'TC-DEPLOY-01b: CloudflareEdge'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -950,36 +1280,6 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-DEPLOY-01c: Tunnel URL absent after stop'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-DEPLOY-01c: Stop'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-DEPLOY-03: openshell binary still in PATH after uninstall'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-DEPLOY-03: openshell'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-DEPLOY-03: nemoclaw removed after uninstall'
-      status: retired
-      reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
-      reviewer: e2e-maintainers
-      approved_at: '2026-05-13'
-    - legacy: 'TC-DEPLOY-03: uninstall completed (nemoclaw in source tree is expected)'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: 'TC-DEPLOY-03: nemoclaw'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -5002,16 +5302,97 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       secret_requirement: Telegram test credentials
-    - legacy: 'M13: Node.js reached discord.com (${dc_reach})'
+    - legacy: 'M13-policy: Live policy contains Discord endpoints and Node binaries'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-policy: Live policy is missing expected Discord preset endpoint/binary entries'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-proxy: Sandbox uses the OpenShell gateway proxy'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-proxy: Sandbox proxy env does not point at OpenShell gateway: ${live_proxy_env:0:200}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-curl: curl unexpectedly established a tunnel to Discord; binary whitelist may be too broad'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13: Node.js reached Discord API and CDN through the same proxy (${dc_reach//$''\n''/ })'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       secret_requirement: Discord test credentials
-    - legacy: 'M13: Node.js could not reach discord.com (${dc_reach:0:200})'
+    - legacy: 'M13: Node.js was denied by the proxy despite the Discord preset being applied: ${dc_reach:0:300}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       secret_requirement: Discord test credentials
+    - legacy: 'M13: Node.js could not reach Discord API/CDN (${dc_reach:0:200})'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: Discord test credentials
+    - legacy: 'M13-rest-a: Hermetic fake Discord REST API started on host port ${FAKE_DISCORD_REST_PORT}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-rest-b: Applied Node-only HTTPS policy for fake Discord REST API'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-rest-b: Failed to apply fake Discord REST policy: $(tail -20 /tmp/nemoclaw-fake-discord-rest-policy.log 2>/dev/null
+        | tr ''\n'' '' '' | cut -c1-300)'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-rest-c: Node reached the fake Discord REST API through OpenShell'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-rest-c: Node failed to reach fake Discord REST API: ${fake_rest_node:0:300}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-rest-d: curl was denied before reaching the fake Discord REST API'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-rest-d: curl unexpectedly established a tunnel to the fake Discord REST API'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-rest-d: Fake Discord REST curl denial had unexpected shape: ${fake_rest_curl:0:300}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-rest-e: Fake server saw Node but no curl request'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M13-rest-e: Unexpected fake Discord REST capture counts: ${fake_rest_capture}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'M13b: Hermetic fake Discord Gateway started on host port ${FAKE_DISCORD_GATEWAY_PORT}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -5358,6 +5739,96 @@ scripts:
       reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
       reviewer: e2e-maintainers
       approved_at: '2026-05-13'
+    - legacy: 'M-W1: Provider ''${SANDBOX_NAME}-wechat-bridge'' exists in gateway'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W1: Provider ''${SANDBOX_NAME}-wechat-bridge'' not found in gateway (non-interactive QR-skip path may be broken)'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3: Real WeChat token leaked into sandbox env'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3: Sandbox WECHAT_BOT_TOKEN is a placeholder (not the real token)'
+      status: retired
+      reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
+      reviewer: e2e-maintainers
+      approved_at: '2026-05-15'
+    - legacy: 'M-W3a: Real WeChat token found in full sandbox environment dump'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3a: Real WeChat token absent from full sandbox environment'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3b: Real WeChat token found in sandbox process list'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3b: Real WeChat token absent from sandbox process list'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3c: Real WeChat token found on sandbox filesystem: ${sandbox_fs_wc}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3c: Real WeChat token absent from sandbox filesystem'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W3d: WeChat placeholder confirmed present in sandbox environment'
+      status: retired
+      reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
+      reviewer: e2e-maintainers
+      approved_at: '2026-05-15'
+    - legacy: 'M-W3d: WeChat placeholder not found in sandbox environment'
+      status: retired
+      reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
+      reviewer: e2e-maintainers
+      approved_at: '2026-05-15'
+    - legacy: 'M-W8: WeChat account ''$WECHAT_ACCOUNT'' is enabled in openclaw.json (channels.openclaw-weixin)'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — seed-wechat-accounts.py placeholder regression'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W9: WeChat per-account credential file uses the L7-resolved placeholder'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W9: WeChat per-account credential file has unexpected token shape: $(echo '
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W10: WeChat accounts.json index contains ''$WECHAT_ACCOUNT'''
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
+    - legacy: 'M-W10: WeChat accounts.json missing ''$WECHAT_ACCOUNT'' (raw: $(echo '
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      secret_requirement: WeChat test credentials
   test-network-policy.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
@@ -6548,22 +7019,22 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: macOS installer did not request the Darwin openshell-driver-vm asset
+    - legacy: macOS installer still requested the Darwin openshell-driver-vm asset
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: macOS OpenShell ${CURRENT_OPENSHELL_VERSION} incomplete install fetches Darwin gateway and VM driver assets
+    - legacy: macOS OpenShell ${CURRENT_OPENSHELL_VERSION} incomplete install fetches Darwin gateway asset
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: macOS installer did not repair missing openshell-driver-vm Hypervisor entitlement
+    - legacy: macOS installer still required openshell-driver-vm Hypervisor entitlement
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: macOS installer did not codesign openshell-driver-vm with entitlements
+    - legacy: macOS installer still codesigned openshell-driver-vm
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -6573,7 +7044,7 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
-    - legacy: macOS OpenShell ${CURRENT_OPENSHELL_VERSION} installer repairs missing VM driver Hypervisor entitlement
+    - legacy: macOS OpenShell ${CURRENT_OPENSHELL_VERSION} installer does not require VM driver Hypervisor entitlement
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -6588,7 +7059,7 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: Docker daemon
-    - legacy: onboard does not enable macOS VM rootfs compatibility for Darwin sandbox builds
+    - legacy: onboard does not keep macOS Docker sandbox builds out of the VM rootfs compatibility path
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -6613,7 +7084,7 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: Docker daemon
-    - legacy: macOS VM sandbox builds enable OpenClaw and Hermes rootfs ownership compatibility
+    - legacy: macOS Docker sandbox builds keep VM rootfs compatibility disabled
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
@@ -9547,6 +10018,76 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+  test-model-router-provider-routed-inference.sh:
+    scenario: ubuntu-repo-cloud-openclaw
+    status: migrated
+    bucket: providers-messaging
+    assertions:
+    - legacy: Docker is running
+      status: deferred
+      reason: live regression guard requires Docker and external Model Router credentials; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: Docker is not running
+      status: retired
+      reason: prerequisite failure path; not product behavior coverage
+      reviewer: e2e-maintainers
+      approved_at: '2026-05-15'
+    - legacy: NVIDIA_API_KEY is set
+      status: deferred
+      reason: live regression guard requires external Model Router credentials; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NVIDIA_API_KEY
+    - legacy: NVIDIA_API_KEY is required and must start with nvapi-
+      status: retired
+      reason: prerequisite failure path; not product behavior coverage
+      reviewer: e2e-maintainers
+      approved_at: '2026-05-15'
+    - legacy: 'nemoclaw is available: $(nemoclaw --version 2>/dev/null || echo unknown)'
+      status: deferred
+      reason: live install behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: nemoclaw not found after install
+      status: retired
+      reason: prerequisite failure path; not product behavior coverage
+      reviewer: e2e-maintainers
+      approved_at: '2026-05-15'
+    - legacy: Model Router onboard completed
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: Model Router onboard failed (exit ${onboard_rc}); see ${ONBOARD_LOG}
+      status: deferred
+      reason: live regression guard failure evidence for #3255 path; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: model-router reports at least one healthy endpoint
+      status: deferred
+      reason: live regression guard requires external Model Router health; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NVIDIA_API_KEY
+    - legacy: "model-router has no healthy endpoints; expected #3255 main-equivalent failure"
+      status: deferred
+      reason: live regression guard failure evidence for #3255; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NVIDIA_API_KEY
+    - legacy: inference.local returned a routed Model Router completion
+      status: deferred
+      reason: live regression guard assertion for #3255 routed inference; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: "Model Router inference.local did not return a routed completion; expected #3255 main-equivalent failure"
+      status: deferred
+      reason: live regression guard failure evidence for #3255; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: Model Router provider-routed inference guard passed
+      status: deferred
+      reason: live regression guard success assertion for #3255; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
   test-openshell-version-pin.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated

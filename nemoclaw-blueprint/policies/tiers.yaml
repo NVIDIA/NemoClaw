@@ -39,5 +39,6 @@ tiers:
       - { name: slack,        access: read-write }
       - { name: discord,      access: read-write }
       - { name: telegram,     access: read-write }
+      - { name: wechat,       access: read-write }
       - { name: jira,         access: read-write }
       - { name: outlook,      access: read-write }

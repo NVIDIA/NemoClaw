@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
-import { Args, Command, Flags } from "@oclif/core";
+import { Args, Flags } from "@oclif/core";
+import { NemoClawCommand } from "../../../cli/nemoclaw-oclif-command";
 
 import * as sandboxConfig from "../../../sandbox/config";
 
@@ -12,7 +13,7 @@ const sandboxNameArg = Args.string({
   required: true,
 });
 
-export default class SandboxConfigSetCommand extends Command {
+export default class SandboxConfigSetCommand extends NemoClawCommand {
   static id = "sandbox:config:set";
   static strict = true;
   static summary = "Set sandbox configuration";
@@ -26,7 +27,6 @@ export default class SandboxConfigSetCommand extends Command {
     sandboxName: sandboxNameArg,
   };
   static flags = {
-    help: Flags.help({ char: "h" }),
     key: Flags.string({ description: "Dotpath to update in the config" }),
     value: Flags.string({ description: "Value to write; JSON values are parsed when possible" }),
     restart: Flags.boolean({ description: "Signal the sandbox agent process to reload after writing" }),

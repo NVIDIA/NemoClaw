@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,7 +8,7 @@ import { createRequire } from "node:module";
 import type { Interface as ReadlineInterface } from "node:readline";
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
-import policies from "../dist/lib/policy";
+import * as policies from "../dist/lib/policy";
 import { execTimeout } from "./helpers/timeouts";
 
 const requireForTest = createRequire(import.meta.url);
@@ -130,9 +129,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 12 presets", () => {
+    it("returns all 13 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(12);
+      expect(presets.length).toBe(13);
     });
 
     it("each preset has name and description", () => {
@@ -160,6 +159,7 @@ describe("policies", () => {
         "pypi",
         "slack",
         "telegram",
+        "wechat",
       ];
       expect(names).toEqual(expected);
     });
@@ -240,6 +240,20 @@ describe("policies", () => {
       expect(hosts).toEqual(["api.telegram.org"]);
     });
 
+    it("extracts the explicit iLink hosts from wechat preset", () => {
+      // OpenShell's SSRF engine doesn't expand `*.<tld>` wildcards at
+      // runtime, so the preset lists each known iLink IDC host explicitly.
+      // Both hosts are load-bearing today — `ilinkai.weixin.qq.com` is the
+      // bootstrap (hard-coded in src/ext/wechat/qr.ts), `ilinkai.wechat.com`
+      // is the per-account baseUrl returned after QR confirm. Additional
+      // IDC hosts may need to be added when operators observe new
+      // `DENIED ... -> <host>:443` lines in OCSF logs.
+      const content = requirePresetContent(policies.loadPreset("wechat"));
+      const hosts = policies.getPresetEndpoints(content);
+      expect(hosts).toContain("ilinkai.weixin.qq.com");
+      expect(hosts).toContain("ilinkai.wechat.com");
+    });
+
     it("every preset has at least one endpoint", () => {
       for (const p of policies.listPresets()) {
         const content = requirePresetContent(policies.loadPreset(p.name));
@@ -264,9 +278,10 @@ describe("policies", () => {
       expect(warning).toContain("nemoclaw onboard");
     });
 
-    it("returns a warning for discord and slack", () => {
+    it("returns a warning for discord, slack, and wechat", () => {
       expect(policies.getMessagingPresetWarning("discord")).toContain("Discord");
       expect(policies.getMessagingPresetWarning("slack")).toContain("Slack");
+      expect(policies.getMessagingPresetWarning("wechat")).toContain("WeChat");
     });
 
     it("returns null for non-messaging presets", () => {
@@ -279,6 +294,82 @@ describe("policies", () => {
     it("returns null for unknown preset names", () => {
       expect(policies.getMessagingPresetWarning("")).toBeNull();
       expect(policies.getMessagingPresetWarning("nonexistent")).toBeNull();
+    });
+  });
+
+  describe("applyPresets", () => {
+    it("merges built-in presets and submits one policy update", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-batch-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      const callsPath = path.join(tmpDir, "calls.log");
+      const policyOut = path.join(tmpDir, "policy.yaml");
+      const script = String.raw`
+const fs = require("node:fs");
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({ name: "test-sandbox", policies: [] });
+const result = policies.applyPresets("test-sandbox", ["npm", "pypi"]);
+process.stdout.write("\n__RESULT__" + JSON.stringify({
+  result,
+  calls: fs.readFileSync(process.env.CALLS_PATH, "utf-8").trim().split("\n").filter(Boolean),
+  policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
+  registry: registry.getSandbox("test-sandbox"),
+}));
+`;
+      fs.writeFileSync(
+        fakeOpenshell,
+        `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n' "$*" >> ${JSON.stringify(callsPath)}
+if [ "$1 $2" = "policy get" ]; then
+  printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  exit 0
+fi
+if [ "$1 $2" = "policy set" ]; then
+  policy_file=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      policy_file="$2"
+      break
+    fi
+    shift
+  done
+  cp "$policy_file" ${JSON.stringify(policyOut)}
+  printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
+  exit 0
+fi
+exit 1
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const result = spawnSync(process.execPath, ["-e", script], {
+          cwd: REPO_ROOT,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
+            CALLS_PATH: callsPath,
+            POLICY_OUT: policyOut,
+          },
+        });
+
+        expect(result.status).toBe(0);
+        const marker = "__RESULT__";
+        const markerIndex = result.stdout.indexOf(marker);
+        expect(markerIndex).toBeGreaterThanOrEqual(0);
+        const payload = JSON.parse(result.stdout.slice(markerIndex + marker.length));
+        expect(payload.result).toBe(true);
+        expect(payload.calls.filter((call: string) => call.startsWith("policy get "))).toHaveLength(1);
+        expect(payload.calls.filter((call: string) => call.startsWith("policy set "))).toHaveLength(1);
+        expect(payload.policy).toContain("npm_yarn:");
+        expect(payload.policy).toContain("pypi:");
+        expect(payload.registry.policies).toEqual(["npm", "pypi"]);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
     });
   });
 
@@ -757,6 +848,11 @@ describe("policies", () => {
           credentialRewrite: true,
         },
         {
+          preset: "discord",
+          host: "*.discord.gg",
+          credentialRewrite: true,
+        },
+        {
           preset: "slack",
           host: "wss-primary.slack.com",
           credentialRewrite: true,
@@ -853,6 +949,7 @@ describe("policies", () => {
       ];
       const cases = [
         "gateway.discord.gg",
+        "*.discord.gg",
         "wss-primary.slack.com",
         "wss-backup.slack.com",
       ];
@@ -998,6 +1095,27 @@ describe("policies", () => {
         /host:\s*api\.telegram\.org[\s\S]*?protocol:\s*rest[\s\S]*?enforcement:\s*enforce/,
       );
       expect(content).not.toMatch(/host:\s*api\.telegram\.org[\s\S]*?tls:/);
+    });
+
+    it("wechat REST preset enumerates explicit iLink hosts on port 443 with allow GET/POST", () => {
+      // OpenShell's SSRF engine doesn't expand `*.<tld>` wildcards at
+      // runtime, so each iLink IDC host the upstream plugin can hit must be
+      // listed explicitly. The proxy must still see
+      // protocol/enforcement/method allowlists on each entry — dropping any
+      // of those silently widens egress past what the preset documents.
+      const content = requirePresetContent(policies.loadPreset("wechat"));
+      for (const host of ["ilinkai\\.weixin\\.qq\\.com", "ilinkai\\.wechat\\.com"]) {
+        expect(content).toMatch(
+          new RegExp(
+            `host:\\s*"?${host}"?[\\s\\S]*?port:\\s*443[\\s\\S]*?protocol:\\s*rest[\\s\\S]*?enforcement:\\s*enforce`,
+          ),
+        );
+        expect(content).toMatch(
+          new RegExp(
+            `host:\\s*"?${host}"?[\\s\\S]*?allow:\\s*\\{\\s*method:\\s*GET[\\s\\S]*?allow:\\s*\\{\\s*method:\\s*POST`,
+          ),
+        );
+      }
     });
 
     it("pypi preset allows HEAD for pip lazy-wheel metadata checks", () => {
@@ -1319,6 +1437,16 @@ selectForRemoval(items, options)
         /Note: the 'telegram' preset only opens network egress to the Telegram API\./,
       );
       expect(result.stdout).toMatch(/re-run 'nemoclaw onboard' and select Telegram/);
+    });
+
+    it("warns the user that the wechat preset alone does not enable WeChat messaging", () => {
+      const result = runPolicyAdd("y", [], {}, "wechat");
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /Note: the 'wechat' preset only opens network egress to the WeChat API\./,
+      );
+      expect(result.stdout).toMatch(/re-run 'nemoclaw onboard' and select WeChat/);
     });
 
     it("does not warn about messaging when a non-messaging preset is selected", () => {

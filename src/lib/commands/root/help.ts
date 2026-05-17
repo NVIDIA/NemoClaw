@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command } from "@oclif/core";
-
 import { showRootHelp } from "../../actions/global";
+import { NemoClawCommand } from "../../cli/nemoclaw-oclif-command";
 
-export default class RootHelpCommand extends Command {
+export default class RootHelpCommand extends NemoClawCommand {
   static id = "root:help";
   static hidden = true;
   static strict = false;

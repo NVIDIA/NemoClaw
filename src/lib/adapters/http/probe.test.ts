@@ -27,6 +27,8 @@ describe("http-probe helpers", () => {
     expect(summarizeCurlFailure(7, "", " connection refused ")).toBe(
       "curl failed (exit 7): connection refused",
     );
+    expect(summarizeCurlFailure(28, "", "")).toBe("curl failed (exit 28)");
+    expect(summarizeCurlFailure(0, "", "")).toBe("curl failed (exit 0)");
   });
 
   it("summarizes JSON and text HTTP probe failures", () => {
@@ -36,6 +38,14 @@ describe("http-probe helpers", () => {
     ).toBe('HTTP 401: {"reason":"bad key","retry":false}');
     expect(summarizeProbeError(" plain  text   body ", 500)).toBe("HTTP 500: plain text body");
     expect(summarizeProbeFailure("", 0, 28, "timeout")).toBe("curl failed (exit 28): timeout");
+    expect(summarizeProbeFailure("body", 500, 7, "Connection refused")).toBe(
+      "curl failed (exit 7): Connection refused",
+    );
+    expect(summarizeProbeFailure("Not Found", 404, 0, "")).toBe("HTTP 404: Not Found");
+    expect(summarizeProbeFailure("", 0, 0, "")).toBe("HTTP 0 with no response body");
+    expect(summarizeProbeFailure("  Service  Unavailable  ", 503, 0, "")).toBe(
+      "HTTP 503: Service Unavailable",
+    );
   });
 
   it("captures successful curl output and cleans up the temp file", () => {
