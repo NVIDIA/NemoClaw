@@ -50,6 +50,8 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Python Package Index | `pypi` |
 | Slack messaging | `slack` |
 | Telegram Bot API | `telegram` |
+| WeChat messaging | `wechat` |
+| WhatsApp Web messaging | `whatsapp` |
 
 Preview the endpoints before applying:
 

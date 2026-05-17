@@ -97,7 +97,7 @@ $ nemoclaw my-assistant channels add discord
 $ nemoclaw my-assistant channels add slack
 ```
 
-`channels add` prompts for missing credentials (or drives the QR flow for `wechat`, or registers a tokenless bridge for `whatsapp`), registers the bridge with the OpenShell gateway, updates the sandbox registry, and asks whether to rebuild immediately.
+`channels add` collects whatever each channel needs (token prompts for Telegram, Discord, and Slack; a host-side QR scan for WeChat; nothing for WhatsApp because pairing happens in-sandbox after rebuild), registers a bridge provider with the OpenShell gateway when a token was captured, records the channel in the sandbox registry, and asks whether to rebuild immediately.
 The command accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase channel name.
 If a matching built-in network policy preset exists, `channels add` applies it to the sandbox automatically before the rebuild so the bridge has egress to its upstream API; if applying the preset fails, NemoClaw warns and tells you to re-apply manually with `nemoclaw <sandbox> policy-add <channel>` after the rebuild.
 Choose the rebuild so the running sandbox image picks up the new channel.
