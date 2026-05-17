@@ -14,10 +14,6 @@ let runtimeBridgeFactory = (): HostsRuntimeBridge => {
   return actions;
 };
 
-export function setHostsRuntimeBridgeFactoryForTest(factory: () => HostsRuntimeBridge): void {
-  runtimeBridgeFactory = factory;
-}
-
 export function getHostsRuntimeBridge(): HostsRuntimeBridge {
   return runtimeBridgeFactory();
 }

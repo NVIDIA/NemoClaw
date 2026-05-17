@@ -11,88 +11,23 @@
 // Keep new command behavior in src/lib/commands/** and src/lib/actions/**; keep
 // this file limited to argv normalization, compatibility routing, suggestions,
 // and registry-aware sandbox-name checks.
-const { execFileSync, spawn, spawnSync } = require("child_process");
-const path = require("path");
-const fs = require("fs");
-const { DASHBOARD_PORT, GATEWAY_PORT, OLLAMA_PORT } = require("./lib/core/ports");
-
-// ---------------------------------------------------------------------------
-// Color / style — respects NO_COLOR and non-TTY environments.
-// Uses exact NVIDIA green #76B900 on truecolor terminals; 256-color otherwise.
-// ---------------------------------------------------------------------------
-const _useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
-const _tc =
-  _useColor && (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit");
-const G = _useColor ? (_tc ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "";
-const B = _useColor ? "\x1b[1m" : "";
-const D = _useColor ? "\x1b[2m" : "";
-const R = _useColor ? "\x1b[0m" : "";
-const _RD = _useColor ? "\x1b[1;31m" : "";
-const YW = _useColor ? "\x1b[1;33m" : "";
-
-const { ROOT, run, runInteractive, validateName } = require("./lib/runner");
-
-// ---------------------------------------------------------------------------
-// Agent branding — derived from NEMOCLAW_AGENT when an alias launcher sets it;
-// otherwise the branding module falls back to the OpenClaw defaults.
-// ---------------------------------------------------------------------------
-const { CLI_NAME, CLI_DISPLAY_NAME } = require("./lib/cli/branding");
-
-const {
-  dockerCapture,
-  dockerInspect,
-  dockerRemoveVolumesByPrefix,
-  dockerRmi,
-} = require("./lib/adapters/docker");
-const { resolveOpenshell } = require("./lib/adapters/openshell/resolve");
-const { hydrateCredentialEnv, isNonInteractive } = require("./lib/onboard");
+const { ROOT, validateName } = require("./lib/runner");
+const { CLI_NAME } = require("./lib/cli/branding");
 const registry = require("./lib/state/registry");
-import type { SandboxEntry } from "./lib/state/registry";
-const nim = require("./lib/inference/nim");
-const shields = require("./lib/shields");
-const { parseGatewayInference } = require("./lib/inference/config");
-const { probeProviderHealth } = require("./lib/inference/health");
-const { buildStatusCommandDeps } = require("./lib/status-command-deps");
-const { help, version } = require("./lib/actions/root-help");
-const onboardSession = require("./lib/state/onboard-session");
-import type { Session } from "./lib/state/onboard-session";
-const { stripAnsi } = require("./lib/adapters/openshell/client");
-const {
-  getInstalledOpenshellVersionOrNull,
-  runOpenshell,
-} = require("./lib/adapters/openshell/runtime");
-const {
-  recoverNamedGatewayRuntime,
-} = require("./lib/gateway-runtime-action");
+const { help } = require("./lib/actions/root-help");
 const { recoverRegistryEntries } = require("./lib/registry-recovery-action");
 const {
   isSandboxConnectFlag,
   parseSandboxConnectArgs,
   printSandboxConnectHelp,
 } = require("./lib/actions/sandbox/connect");
-const {
-  executeSandboxCommand,
-} = require("./lib/actions/sandbox/process-recovery");
-const {
-  getSandboxDeleteOutcome,
-} = require("./lib/actions/sandbox/destroy");
 const { runOclifArgv, runRegisteredOclifCommand } = require("./lib/cli/oclif-runner");
-const { isErrnoException }: typeof import("./lib/core/errno") = require("./lib/core/errno");
-const agentRuntime = require("../bin/lib/agent-runtime");
-const sandboxState = require("./lib/state/sandbox");
-const { parseRestoreArgs } = sandboxState;
-const {
-  getActiveSandboxSessions,
-  createSystemDeps: createSessionDeps,
-  parseForwardList,
-} = require("./lib/state/sandbox-session");
 const {
   canonicalUsageList,
   globalCommandTokens,
   sandboxActionTokens,
 } = require("./lib/cli/command-registry");
 import { normalizeArgv, suggestCommand } from "./lib/cli/argv-normalizer";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./lib/adapters/openshell/timeouts";
 import { renderPublicOclifHelp } from "./lib/cli/public-oclif-help";
 import {
   resolveGlobalOclifDispatch,
@@ -103,40 +38,6 @@ import {
 // ── Global commands (derived from command registry) ──────────────
 
 const GLOBAL_COMMANDS = globalCommandTokens();
-
-type SpawnLikeResult = {
-  status: number | null;
-  stdout?: string;
-  stderr?: string;
-  output?: string;
-  error?: Error;
-  signal?: NodeJS.Signals | null;
-};
-
-type RecoveredSandboxMetadata = Partial<
-  Pick<SandboxEntry, "model" | "provider" | "gpuEnabled" | "policies" | "nimContainer" | "agent">
-> & {
-  policyPresets?: string[] | null;
-};
-
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
-const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
-const DEFAULT_LOGS_PROBE_TIMEOUT_MS = 5000;
-const LOGS_PROBE_TIMEOUT_ENV = "NEMOCLAW_LOGS_PROBE_TIMEOUT_MS";
-
-/** Print user-facing guidance when OpenShell is too old to support `openshell logs`. */
-function printOldLogsCompatibilityGuidance(installedVersion = null) {
-  const versionText = installedVersion ? ` (${installedVersion})` : "";
-  console.error(
-    `  Installed OpenShell${versionText} is too old or incompatible with \`${CLI_NAME} logs\`.`,
-  );
-  console.error(
-    `  ${CLI_DISPLAY_NAME} expects \`openshell logs <name>\` and live streaming via \`--tail\`.`,
-  );
-  console.error(
-    `  Upgrade OpenShell by rerunning \`${CLI_NAME} onboard\`, or reinstall the OpenShell CLI and try again.`,
-  );
-}
 
 // ── Commands ─────────────────────────────────────────────────────
 

@@ -261,7 +261,6 @@ export async function executeDeploy(opts: DeployExecutionOptions): Promise<void>
     run,
     runInteractive,
     execFileSync,
-    spawnSync,
     log,
     error,
     stdoutWrite,

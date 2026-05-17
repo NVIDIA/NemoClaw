@@ -48,6 +48,36 @@ export function defaultShareMountDir(sandboxName: string): string {
 }
 
 /**
+ * Pre-flight: confirm the remote source path actually exists inside the
+ * sandbox. sshfs exits non-zero with empty stderr when the remote path is
+ * missing (e.g. a typo), and the bare "SSHFS mount failed." line we used to
+ * emit left the user with nothing actionable. Returns normally when the path
+ * can be verified; emits a structured error and exits the process non-zero
+ * when it cannot. The success path has no return value.
+ * Exported so the behavior is testable without driving the full sshfs
+ * lifecycle. See #3414.
+ */
+export function assertSandboxPathExistsOrExit(
+  deps: ShareCommandDeps,
+  sandboxName: string,
+  remotePath: string,
+): void {
+  if (deps.checkSandboxPathExists(sandboxName, remotePath)) return;
+  // The probe returns false for both "path is missing" and "exec itself
+  // failed" (transient gRPC, sandbox just restarted, etc.), so phrase the
+  // headline as a verification failure rather than a definitive claim that
+  // the path is missing.
+  console.error(
+    `  Could not verify sandbox path '${remotePath}' in sandbox '${sandboxName}' (missing path or probe failure).`,
+  );
+  console.error(
+    `  Verify the path with: ${deps.cliName} ${sandboxName} connect, then ls ${remotePath}`,
+  );
+  console.error(`  The default is /sandbox; check for typos in any custom path you passed.`);
+  process.exit(1);
+}
+
+/**
  * Resolve the fusermount binary for Linux. FUSE 3 ships `fusermount3`;
  * older FUSE 2 ships `fusermount`. Probe both, preferring v3.
  */
@@ -62,6 +92,34 @@ export function resolveLinuxUnmount(): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Verify that `localMount` exists and is writable so FUSE can mount onto it.
+ * Creates the directory (recursive) if missing, and reports the specific
+ * failure reason (read-only filesystem, permission denied, etc.) when the
+ * mount target is unusable. Returning a structured result instead of
+ * throwing keeps the helper unit-testable; the caller decides how to surface
+ * the error to the user.
+ */
+export function checkLocalMountWritable(localMount: string): { writable: boolean; reason?: string } {
+  try {
+    fs.mkdirSync(localMount, { recursive: true });
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "EROFS") return { writable: false, reason: "parent filesystem is read-only" };
+    if (code === "EACCES") return { writable: false, reason: "permission denied creating the directory" };
+    return { writable: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+  try {
+    fs.accessSync(localMount, fs.constants.W_OK);
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "EROFS") return { writable: false, reason: "filesystem is read-only" };
+    if (code === "EACCES") return { writable: false, reason: "directory is not writable" };
+    return { writable: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+  return { writable: true };
 }
 
 export type ShareMountOptions = {
@@ -115,6 +173,9 @@ export async function runShareMount(
   // Verify sandbox is running
   await deps.ensureLive(sandboxName);
 
+  // Pre-flight: confirm the remote source path actually exists. See #3414.
+  assertSandboxPathExistsOrExit(deps, sandboxName, remotePath);
+
   // Get SSH config
   const sshConfigResult = deps.getSshConfig(sandboxName);
   if (sshConfigResult.status !== 0) {
@@ -126,7 +187,23 @@ export async function runShareMount(
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sshfs-"));
   const tmpFile = path.join(tmpDir, `${sandboxName}.conf`);
   fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600, flag: "wx" });
-  fs.mkdirSync(localMount, { recursive: true });
+
+  const writable = checkLocalMountWritable(localMount);
+  if (!writable.writable) {
+    console.error(`  Local mount path '${localMount}' is not usable: ${writable.reason}.`);
+    console.error("  share mount projects sandbox files onto a host directory via SSHFS,");
+    console.error("  so the local target must be on a writable filesystem.");
+    console.error(
+      `  Pick a writable directory: ${deps.cliName} ${sandboxName} share mount ${remotePath} <writable-path>`,
+    );
+    try {
+      fs.unlinkSync(tmpFile);
+      fs.rmdirSync(tmpDir);
+    } catch {
+      /* ignore */
+    }
+    process.exit(1);
+  }
 
   let mountFailed = false;
   try {
