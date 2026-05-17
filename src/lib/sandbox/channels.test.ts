@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   KNOWN_CHANNELS,
   channelHasStaticToken,
-  channelUsesQrPairing,
+  channelUsesInSandboxQrPairing,
   getChannelDef,
   getChannelTokenKeys,
   knownChannelNames,
@@ -47,10 +47,11 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(wechat?.userIdEnvKey).toBe("WECHAT_ALLOWED_IDS");
   });
 
-  it("omits envKey for QR-paired channels (whatsapp)", () => {
+  it("omits envKey for in-sandbox QR-paired channels (whatsapp)", () => {
     expect(getChannelDef("whatsapp")?.envKey).toBeUndefined();
-    expect(channelUsesQrPairing(KNOWN_CHANNELS.whatsapp)).toBe(true);
-    expect(channelUsesQrPairing(KNOWN_CHANNELS.slack)).toBe(false);
+    expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.whatsapp)).toBe(true);
+    expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.wechat)).toBe(false);
+    expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.slack)).toBe(false);
   });
 
   it("only slack declares a secondary app-token env var", () => {
@@ -105,11 +106,13 @@ describe("sandbox-channels getChannelTokenKeys", () => {
 });
 
 describe("sandbox-channels token-shape helpers", () => {
-  it("channelUsesQrPairing flags channels without an envKey", () => {
-    const qr: ChannelDef = { description: "", help: "", label: "" };
-    expect(channelUsesQrPairing(qr)).toBe(true);
-    expect(channelUsesQrPairing(KNOWN_CHANNELS.telegram)).toBe(false);
-    expect(channelUsesQrPairing(KNOWN_CHANNELS.slack)).toBe(false);
+  it("channelUsesInSandboxQrPairing flags channels whose loginMethod is in-sandbox-qr", () => {
+    const tokenless: ChannelDef = { description: "", help: "", label: "" };
+    expect(channelUsesInSandboxQrPairing(tokenless)).toBe(false);
+    expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.whatsapp)).toBe(true);
+    expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.wechat)).toBe(false);
+    expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.telegram)).toBe(false);
+    expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.slack)).toBe(false);
   });
 
   it("channelHasStaticToken narrows to ChannelDef with a defined envKey", () => {

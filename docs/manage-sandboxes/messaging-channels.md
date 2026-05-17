@@ -70,7 +70,7 @@ Use `SLACK_BOT_TOKEN` for the bot user OAuth token (`xoxb-...`) and `SLACK_APP_T
 WhatsApp Web does not use a host-side token.
 Pairing happens inside the sandbox after the rebuild completes.
 Run `openshell term <sandbox>` and then `openclaw channels login --channel whatsapp` to render the QR code in the terminal, and scan it with your phone.
-Session credentials are generated and stored inside the sandbox image.
+Session credentials are generated and stored inside the running sandbox under the durable `whatsapp` state directory, so they survive rebuilds without re-pairing.
 NemoClaw cannot detect cross-sandbox WhatsApp conflicts the way it does for token-based channels.
 Pair only one sandbox per WhatsApp account at a time.
 
@@ -119,12 +119,10 @@ $ nemoclaw my-assistant channels add discord
 $ nemoclaw my-assistant channels add slack
 ```
 
-`channels add` prompts for missing credentials, registers the bridge with the OpenShell gateway, updates the sandbox registry, and asks whether to rebuild immediately.
+`channels add` prompts for missing credentials (or drives the QR flow for `wechat`, or registers a tokenless bridge for `whatsapp`), registers the bridge with the OpenShell gateway, updates the sandbox registry, and asks whether to rebuild immediately.
 The command accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase channel name.
-If the matching built-in network policy preset exists but is not applied yet, the command prints a `policy-add <channel>` hint after it registers the channel.
+If a matching built-in network policy preset exists, `channels add` applies it to the sandbox automatically before the rebuild so the bridge has egress to its upstream API; if applying the preset fails, NemoClaw warns and tells you to re-apply manually with `nemoclaw <sandbox> policy-add <channel>` after the rebuild.
 Choose the rebuild so the running sandbox image picks up the new channel.
-If the matching network policy preset (`telegram`, `discord`, `slack`, or `whatsapp`) is not yet applied to the sandbox, `channels add` prints a hint to run `nemoclaw <sandbox> policy-add <channel>` first.
-Apply the preset before the rebuild so the channel can reach its provider API; otherwise the bridge will start but its egress requests will be denied.
 If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, or `DISCORD_REQUIRE_MENTION`, export them before the rebuild starts.
 If you defer the rebuild, apply the change later:
 

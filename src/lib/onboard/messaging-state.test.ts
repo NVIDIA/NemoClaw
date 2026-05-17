@@ -58,16 +58,30 @@ describe("getAvailableMessagingChannelsForAgent", () => {
 describe("resolveQrSelectedChannels", () => {
   const channels = [
     { name: "telegram", envKey: "TELEGRAM_BOT_TOKEN", description: "", help: "", label: "" },
-    { name: "whatsapp", description: "", help: "", label: "" },
+    {
+      name: "wechat",
+      envKey: "WECHAT_BOT_TOKEN",
+      description: "",
+      help: "",
+      label: "",
+      loginMethod: "host-qr" as const,
+    },
+    {
+      name: "whatsapp",
+      description: "",
+      help: "",
+      label: "",
+      loginMethod: "in-sandbox-qr" as const,
+    },
   ];
 
-  it("returns only QR-paired channels from the enabled list", () => {
-    expect(resolveQrSelectedChannels(channels, ["telegram", "whatsapp"], new Set())).toEqual([
-      "whatsapp",
-    ]);
+  it("returns only in-sandbox QR-paired channels from the enabled list", () => {
+    expect(
+      resolveQrSelectedChannels(channels, ["telegram", "wechat", "whatsapp"], new Set()),
+    ).toEqual(["whatsapp"]);
   });
 
-  it("drops QR channels that are also in the disabled set", () => {
+  it("drops in-sandbox QR channels that are also in the disabled set", () => {
     expect(
       resolveQrSelectedChannels(channels, ["whatsapp"], new Set(["whatsapp"])),
     ).toEqual([]);

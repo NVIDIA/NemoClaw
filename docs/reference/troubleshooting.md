@@ -750,7 +750,8 @@ $ nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
 `channels add` registers credentials with the OpenShell gateway and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
 
-For QR-paired channels (`wechat`, `whatsapp`), `openclaw channels login --channel <name>` is allowed inside the sandbox and is the supported way to complete pairing after the channel has been added on the host.
+WhatsApp pairs entirely inside the sandbox, so `openclaw channels login --channel whatsapp` is allowed inside the sandbox and is the supported way to complete pairing after the channel has been added on the host.
+WeChat captures its token via a host-side QR during the host-side `nemoclaw <sandbox> channels add wechat` flow, so it does not need an in-sandbox `channels login` step.
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 

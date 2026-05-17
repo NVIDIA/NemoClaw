@@ -598,11 +598,17 @@ $ nemoclaw my-assistant channels list
 
 ### `nemoclaw <name> channels add <channel>`
 
-Store credentials for a messaging channel (`telegram`, `discord`, or `slack`) and rebuild the sandbox so the image picks up the new channel.
-The command prompts for any missing token, registers it with the OpenShell gateway, then asks whether to rebuild immediately.
-Running `add` for an already-configured channel simply overwrites the stored tokens — the operation is idempotent.
+Register a messaging channel with the sandbox and rebuild so the image picks up the new channel.
+Channels fall into three login modes:
+
+- **Token paste** (`telegram`, `discord`, `slack`): the command prompts for any missing token and registers it with the OpenShell gateway.
+- **Host-side QR** (`wechat`): the command runs an interactive host-side QR scan to capture a static session token, then registers it with the gateway.
+- **In-sandbox QR** (`whatsapp`): the command registers a tokenless bridge with the gateway; you complete pairing from inside the sandbox after the rebuild by running `openclaw channels login --channel whatsapp`.
+
+After registering the channel, NemoClaw asks whether to rebuild immediately.
+Running `add` for an already-configured channel simply overwrites the stored credentials where applicable — the operation is idempotent.
 Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
-After a successful add, NemoClaw prints a `policy-add <channel>` hint when a matching built-in network policy preset exists but is not applied to the sandbox yet.
+If a matching built-in network policy preset exists, NemoClaw applies it to the sandbox before the rebuild so the bridge has egress to its upstream API; if applying the preset fails, NemoClaw warns and tells you to re-apply manually with `nemoclaw <sandbox> policy-add <channel>`.
 
 ```console
 $ nemoclaw my-assistant channels add telegram

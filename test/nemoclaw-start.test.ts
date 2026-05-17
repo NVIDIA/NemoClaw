@@ -779,9 +779,11 @@ describe("nemoclaw-start configure guard behavior", () => {
     }
   });
 
-  // QR-paired channels (wechat, whatsapp) complete pairing in-sandbox via
-  // `openclaw channels login --channel <name>`. The guard must allow that
-  // path or the entire QR-pair flow is dead-on-arrival inside the sandbox.
+  // WhatsApp pairs entirely inside the sandbox via `openclaw channels login
+  // --channel whatsapp`, so the guard must allow `channels login` or that
+  // flow is dead-on-arrival. WeChat completes pairing host-side, but the
+  // guard is permissive (it doesn't whitelist by channel name) — openclaw
+  // itself is responsible for whether the subcommand is valid per channel.
   // `status` is read-only diagnostics and is similarly safe to allow.
   it("allows `channels login` and `channels status` inside the sandbox", () => {
     const setup = writeProxyEnvWithGuard();

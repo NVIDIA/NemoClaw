@@ -25,7 +25,7 @@ import { rebuildSandbox } from "./rebuild";
 import {
   type ChannelDef,
   KNOWN_CHANNELS,
-  channelUsesQrPairing,
+  channelUsesInSandboxQrPairing,
   clearChannelTokens,
   getChannelDef,
   getChannelTokenKeys,
@@ -614,7 +614,7 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
   // QR-paired channels that own their session inside the sandbox have no
   // host-side credential to acquire; register the bridge now and let the
   // operator complete pairing after rebuild.
-  if (channel.loginMethod === "in-sandbox-qr" || channelUsesQrPairing(channel)) {
+  if (channelUsesInSandboxQrPairing(channel)) {
     await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
     console.log("");
     console.log(`  ${channel.help}`);

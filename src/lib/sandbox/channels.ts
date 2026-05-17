@@ -120,8 +120,8 @@ export function getChannelTokenKeys(channel: ChannelDef): string[] {
   return channel.appTokenEnvKey ? [channel.envKey, channel.appTokenEnvKey] : [channel.envKey];
 }
 
-export function channelUsesQrPairing(channel: ChannelDef): boolean {
-  return !channel.envKey;
+export function channelUsesInSandboxQrPairing(channel: ChannelDef): boolean {
+  return channel.loginMethod === "in-sandbox-qr";
 }
 
 export function channelHasStaticToken(

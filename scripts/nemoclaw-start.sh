@@ -1637,8 +1637,10 @@ openclaw() {
           echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>" >&2
           echo "" >&2
           echo "These stage the change and rebuild the sandbox to apply it." >&2
-          echo "QR-paired channels (wechat, whatsapp) complete pairing in-sandbox via" >&2
-          echo "  openclaw channels login --channel <name>" >&2
+          echo "WhatsApp pairs entirely inside the sandbox; complete pairing via:" >&2
+          echo "  openclaw channels login --channel whatsapp" >&2
+          echo "WeChat captures its token via a host-side QR during the host-side" >&2
+          echo "'channels add wechat' flow — no in-sandbox login step." >&2
           return 1
           ;;
       esac

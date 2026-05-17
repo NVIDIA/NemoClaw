@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
-import { channelUsesQrPairing, type ChannelDef } from "../sandbox/channels";
+import { channelUsesInSandboxQrPairing, type ChannelDef } from "../sandbox/channels";
 
 export type MessagingChannel = { name: string } & ChannelDef;
 
@@ -26,7 +26,7 @@ export function resolveQrSelectedChannels(
   return enabledChannels.filter((name) => {
     if (disabledChannelNames.has(name)) return false;
     const ch = channels.find((c) => c.name === name);
-    return !!ch && channelUsesQrPairing(ch);
+    return !!ch && channelUsesInSandboxQrPairing(ch);
   });
 }
 
