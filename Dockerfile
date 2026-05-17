@@ -405,7 +405,7 @@ ENV NPM_CONFIG_OFFLINE=true \
 # this layer is committed; deleting it in a later layer would not reduce the
 # OCI image imported by k3s.
 # hadolint ignore=DL3059,DL4006
-RUN (openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true) \
+RUN openclaw plugins install /opt/nemoclaw --dangerously-force-unsafe-install > /tmp/nemoclaw-plugin-install.log 2>&1 \
     && if [ -d /sandbox/.openclaw/plugin-runtime-deps ]; then \
         find /sandbox/.openclaw/plugin-runtime-deps -type f \( \
             -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o \

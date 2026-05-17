@@ -601,3 +601,57 @@ describe("sandbox operations E2E harness", () => {
     expect(src).toContain("nemoclaw onboard --resume --non-interactive");
   });
 });
+
+describe("sandbox provisioning: NemoClaw plugin install (#2021)", () => {
+  it("fails the image build if the NemoClaw plugin cannot be installed", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-plugin-install-fail-"));
+    const localBin = path.join(tmp, "bin");
+    const sandboxRoot = path.join(tmp, "sandbox");
+    const callLog = path.join(tmp, "openclaw.log");
+    const pluginLog = path.join(tmp, "plugin-install.log");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.mkdirSync(sandboxRoot, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openclaw"),
+      [
+        "#!/bin/sh",
+        `printf '%s\n' "$*" > ${JSON.stringify(callLog)}`,
+        "echo plugin install failed >&2",
+        "exit 42",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "# Install NemoClaw plugin into OpenClaw",
+      "# SECURITY: Clear any gateway auth token",
+    )
+      .replaceAll("/tmp/nemoclaw-plugin-install.log", pluginLog)
+      .replaceAll("/sandbox", sandboxRoot);
+
+    try {
+      const result = spawnSync("bash", ["-c", command], {
+        encoding: "utf-8",
+        env: { ...process.env, PATH: `${localBin}:${process.env.PATH ?? ""}` },
+        timeout: 5000,
+      });
+
+      expect(result.status).toBe(42);
+      expect(fs.readFileSync(callLog, "utf-8")).toBe(
+        "plugins install /opt/nemoclaw --dangerously-force-unsafe-install\n",
+      );
+      expect(fs.readFileSync(pluginLog, "utf-8")).toContain("plugin install failed");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the e2e plugin install check strict", () => {
+    const e2e = fs.readFileSync(path.join(ROOT, "test", "e2e-test.sh"), "utf-8");
+    expect(e2e).toContain("openclaw plugins install /opt/nemoclaw --dangerously-force-unsafe-install");
+    expect(e2e).toContain('fail "Plugin install failed"');
+    expect(e2e).not.toContain("Plugin built successfully (dist/index.js exists)");
+  });
+});

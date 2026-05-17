@@ -31,15 +31,10 @@ fi
 # -------------------------------------------------------
 info "2. Verify plugin can be installed"
 # -------------------------------------------------------
-if openclaw plugins install /opt/nemoclaw 2>&1; then
+if openclaw plugins install /opt/nemoclaw --dangerously-force-unsafe-install 2>&1; then
   pass "Plugin installed"
 else
-  # If plugins install isn't available, verify the built artifacts exist
-  if [ -f /opt/nemoclaw/dist/index.js ]; then
-    pass "Plugin built successfully (dist/index.js exists)"
-  else
-    fail "Plugin build artifacts missing"
-  fi
+  fail "Plugin install failed"
 fi
 
 # -------------------------------------------------------
