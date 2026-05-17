@@ -32,9 +32,6 @@
     "build:cli": "tsc -p tsconfig.src.json && if find nemoclaw-blueprint/scripts -name '*.ts' -print -quit | grep -q .; then tsc -p nemoclaw-blueprint/tsconfig.json; fi",
     "typecheck:cli": "tsc -p tsconfig.cli.json",
     "validate:configs": "tsx scripts/validate-configs.ts",
-    "ts-migration:assist": "tsx scripts/ts-migration-assist.ts",
-    "ts-migration:bulk-fix-prs": "tsx scripts/ts-migration-bulk-fix-prs.ts",
-    "ts-migration:guard": "tsx scripts/check-legacy-migrated-paths.ts",
     "type-safety:hotspots": "tsx scripts/type-safety-hotspots.ts",
     "source-shape:scan": "tsx scripts/find-source-shape-tests.ts --metrics",
     "source-shape:check": "tsx scripts/find-source-shape-tests.ts --check",
@@ -84,7 +81,6 @@
     "@types/node": "^25.5.2",
     "@vitest/coverage-v8": "^4.1.0",
     "ajv": "^8.17.0",
-    "execa": "^9.6.1",
     "tsx": "^4.21.0",
     "typescript": "^6.0.2",
     "vitest": "^4.1.0"

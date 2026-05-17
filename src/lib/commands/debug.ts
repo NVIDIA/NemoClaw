@@ -62,12 +62,6 @@ function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
   return {
     getDefaultSandbox,
     runDebug,
-    log: console.log,
-    error: console.error,
-    exit: (code: number): never => {
-      process.exitCode = code;
-      return undefined as never;
-    },
   };
 }
 

@@ -7,9 +7,3 @@ export function isLinuxDockerDriverGatewayEnabled(
 ): boolean {
   return platform === "linux" || (platform === "darwin" && arch === "arm64");
 }
-
-export function isLinuxDockerDriverGatewayPlatform(
-  platform: NodeJS.Platform = process.platform,
-): boolean {
-  return platform === "linux";
-}

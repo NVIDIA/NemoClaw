@@ -329,9 +329,6 @@ describe("local inference helpers", () => {
     const result = probeLocalProviderHealth("ollama-local", {
       loadOllamaProxyTokenImpl: () => "test-token",
       runCurlProbeImpl: (argv: string[]) => {
-        const isProxy = argv.some(
-          (a) => typeof a === "string" && a.includes("11435"),
-        );
         responses.push({ args: argv, status: 200 });
         return {
           ok: true,
@@ -733,7 +730,7 @@ describe("local inference helpers", () => {
     const freeOutput = "               total        used        free\nMem:          131072       120000       1000";
     const oomPayload = JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
     let captureExCallCount = 0;
-    const captureEx = (cmd: string[]) => {
+    const captureEx = (_cmd: string[]) => {
       captureExCallCount++;
       // First call: initial probe times out; second call: 300s retry returns OOM error.
       if (captureExCallCount === 1) return { stdout: "", exitCode: 28, timedOut: true };
