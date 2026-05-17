@@ -134,11 +134,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run cloud E2E test
         env:
@@ -176,11 +190,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run cloud onboard E2E test
         env:
@@ -220,11 +248,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run cloud inference E2E test
         env:
@@ -260,11 +302,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run skill agent E2E test
         env:
@@ -300,11 +356,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Install NemoClaw
         env:
@@ -343,11 +413,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run messaging providers E2E test
         env:
@@ -389,11 +473,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run messaging compatible endpoint E2E test
         env:
@@ -508,11 +606,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run Brave Search E2E test
         env:
@@ -556,11 +668,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run Kimi inference compatibility E2E test
         env:
@@ -614,11 +740,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run token rotation E2E test
         env:
@@ -660,11 +800,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run sandbox survival E2E test
         env:
@@ -701,11 +855,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run #2478 crash-loop recovery E2E test
         env:
@@ -742,11 +910,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run Hermes Agent E2E test
         env:
@@ -785,11 +967,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run Hermes inference switch E2E test
         env:
@@ -828,11 +1024,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run Hermes Discord E2E test
         env:
@@ -876,11 +1086,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run Hermes Slack E2E test
         env:
@@ -922,11 +1146,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Start gateway log streamer (background)
         run: |
@@ -1176,11 +1414,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run inference error classification E2E test
         env:
@@ -1216,11 +1468,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run OpenClaw inference switch E2E test
         env:
@@ -1257,11 +1523,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run network policy E2E test
         env:
@@ -1296,11 +1576,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run state backup/restore E2E test
         env:
@@ -1333,11 +1627,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run tunnel lifecycle E2E test
         env:
@@ -1372,11 +1680,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run diagnostics E2E test
         env:
@@ -1414,11 +1736,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run credential migration E2E test
         env:
@@ -1455,11 +1791,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run snapshot commands E2E test
         env:
@@ -1495,11 +1845,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run shields & config E2E test
         env:
@@ -1535,11 +1899,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run OpenClaw rebuild upgrade E2E test
         env:
@@ -1576,11 +1954,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run upgrade stale sandbox E2E test
         env:
@@ -1619,11 +2011,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -1668,11 +2074,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run Hermes rebuild upgrade E2E test
         env:
@@ -1709,11 +2129,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run Hermes stale base-image rebuild E2E test
         env:
@@ -1749,11 +2183,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1794,11 +2242,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1839,11 +2301,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1884,11 +2360,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1930,11 +2420,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
       - name: Install NemoClaw and onboard sandbox
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1979,11 +2483,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
       - name: Install NemoClaw and onboard sandbox
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -2031,11 +2549,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run overlayfs auto-fix E2E test
         env:
@@ -2077,11 +2609,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run device auth health E2E
         env:
@@ -2121,11 +2667,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Run launchable install-flow smoke test
         env:
@@ -2186,11 +2746,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Verify GPU availability
         run: |
@@ -2247,11 +2821,25 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      # Authenticate Docker Hub pulls (issue #3629) when CI credentials are
+      # configured. No-ops when secrets are missing (forks) and withholds them
+      # for workflow_dispatch runs with a non-empty target_ref so an untrusted
+      # PR head SHA never sees them. Inlined rather than calling a local
+      # composite action because local actions are resolved from the
+      # checked-out target ref above, which may not contain a new action.
       - name: Authenticate to Docker Hub
-        uses: ./.github/actions/dockerhub-login
-        with:
-          username: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_USERNAME || '' }}
-          token: ${{ (github.event_name != 'workflow_dispatch' || inputs.target_ref == '') && secrets.DOCKERHUB_TOKEN || '' }}
+        if: github.event_name != 'workflow_dispatch' || inputs.target_ref == ''
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "${DOCKERHUB_USERNAME}" || -z "${DOCKERHUB_TOKEN}" ]]; then
+            echo "::notice::Docker Hub credentials not configured; continuing with anonymous pulls."
+            exit 0
+          fi
+          echo "${DOCKERHUB_TOKEN}" | docker login docker.io --username "${DOCKERHUB_USERNAME}" --password-stdin
 
       - name: Verify GPU availability
         run: |
