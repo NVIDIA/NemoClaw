@@ -976,7 +976,7 @@ describe("Brev deploy input validation", () => {
     expect(output).toContain("Invalid sandbox name: 'bad name'");
     expect(output).toContain("Sandbox names cannot contain spaces.");
     expect(output).toContain(
-      "Allowed format: lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number.",
+      "Allowed format: 1-63 characters, lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number.",
     );
     expect(output).not.toContain("brev CLI not found");
     expect(output).not.toContain("Creating Brev instance");

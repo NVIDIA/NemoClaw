@@ -241,7 +241,7 @@ describe("executeDeploy", () => {
     expect(errorText).toContain("Invalid sandbox name: 'bad name'");
     expect(errorText).toContain("Sandbox names cannot contain spaces.");
     expect(errorText).toContain(
-      "Allowed format: lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number.",
+      "Allowed format: 1-63 characters, lowercase, starts with a letter, letters/numbers/internal hyphens only, ends with letter/number.",
     );
     expect(errorText).toContain(
       "Brev deploy is non-interactive and cannot prompt for a corrected sandbox name.",

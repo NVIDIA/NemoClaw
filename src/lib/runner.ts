@@ -6,7 +6,7 @@ import type {
   SpawnSyncOptionsWithStringEncoding,
   SpawnSyncReturns,
 } from "node:child_process";
-import { NAME_ALLOWED_FORMAT } from "./name-validation";
+import { NAME_ALLOWED_FORMAT, NAME_MAX_LENGTH } from "./name-validation";
 
 const { spawnSync } = require("child_process");
 const path = require("path");
@@ -318,9 +318,9 @@ function validateName(name: string, label = "name"): string {
   if (!name || typeof name !== "string") {
     throw new Error(`${label} is required. Allowed format: ${NAME_ALLOWED_FORMAT}.`);
   }
-  if (name.length > 63) {
+  if (name.length > NAME_MAX_LENGTH) {
     throw new Error(
-      `${label} too long (max 63 chars): '${name.slice(0, 20)}...'. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
+      `${label} too long (max ${NAME_MAX_LENGTH} chars): '${name.slice(0, 20)}...'. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
   }
   if (!/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
@@ -333,15 +333,15 @@ function validateName(name: string, label = "name"): string {
 
 export {
   ROOT,
-  SCRIPTS,
   redact,
   run,
-  runShell,
   runCapture,
   runCaptureEx,
   runFile,
   runInteractive,
   runInteractiveShell,
+  runShell,
+  SCRIPTS,
   shellQuote,
   validateName,
 };

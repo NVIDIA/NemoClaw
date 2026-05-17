@@ -30,7 +30,6 @@
     "clean": "rm -rf dist/"
   },
   "dependencies": {
-    "commander": "^13.1.0",
     "execa": "^9.6.1",
     "json5": "^2.2.3",
     "tar": "^7.0.0",

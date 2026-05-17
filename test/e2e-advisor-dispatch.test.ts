@@ -93,6 +93,33 @@ describe("E2E advisor auto-dispatch planning", () => {
     expect(plan.advisorDispatchId).toBe("advisor-123-456789-2");
   });
 
+  it("dispatches all required jobs without applying the retired max-jobs cap", () => {
+    const workflowText = fs.readFileSync(
+      path.join(ROOT, ".github/workflows/nightly-e2e.yaml"),
+      "utf8",
+    );
+    const plan = planAutoDispatch({
+      result: {
+        confidence: "high",
+        requiredTests: [
+          { id: "network-policy-e2e", workflow: "nightly-e2e.yaml" },
+          { id: "cloud-e2e", workflow: "nightly-e2e.yaml" },
+        ],
+      },
+      workflowText,
+      event: pullRequest("MEMBER"),
+      env: {
+        GITHUB_EVENT_NAME: "pull_request",
+        GITHUB_REPOSITORY: "NVIDIA/NemoClaw",
+        E2E_ADVISOR_AUTO_DISPATCH_MAX_JOBS: "1",
+      },
+    });
+
+    expect(plan.status).toBe("ready");
+    expect(plan.jobs).toEqual(["network-policy-e2e", "cloud-e2e"]);
+    expect(plan.inputs?.jobs).toBe("network-policy-e2e,cloud-e2e");
+  });
+
   it("plans dispatch for allowlisted authors whose private org membership appears as contributor", () => {
     const workflowText = fs.readFileSync(
       path.join(ROOT, ".github/workflows/nightly-e2e.yaml"),

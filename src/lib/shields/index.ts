@@ -14,7 +14,7 @@ const fs = require("fs");
 const path = require("path");
 const { fork } = require("child_process");
 const { randomBytes } = require("crypto");
-const { run, runCapture, validateName, shellQuote } = require("../runner");
+const { run, runCapture, validateName } = require("../runner");
 const { dockerExecFileSync } = require("../adapters/docker/exec");
 const { dockerCapture } = require("../adapters/docker/run");
 const registry = require("../state/registry") as {
@@ -235,12 +235,6 @@ function isObjectRecord(value: unknown): value is UnknownRecord {
 
 function isOptionalBoolean(value: unknown): value is boolean | undefined {
   return value === undefined || typeof value === "boolean";
-}
-
-function isOptionalNumber(value: unknown): value is number | undefined {
-  return (
-    value === undefined || (typeof value === "number" && Number.isFinite(value))
-  );
 }
 
 function isOptionalString(value: unknown): value is string | undefined {

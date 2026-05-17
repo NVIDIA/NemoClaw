@@ -68,7 +68,7 @@ export function buildOnboardFlags(): Record<string, any> {
       description: "Force CPU sandbox behavior",
     }),
     "sandbox-gpu-device": Flags.string({
-      description: "OpenShell GPU device selector to pass to sandbox create",
+      description: "OpenShell GPU device selector to pass to sandbox create; requires --sandbox-gpu",
     }),
     agent: Flags.string({ description: "Agent runtime to onboard" }),
     "control-ui-port": Flags.integer({

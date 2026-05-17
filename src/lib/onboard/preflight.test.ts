@@ -21,6 +21,7 @@ import {
   parseDockerStorageDriver,
   parseDockerUsesContainerdSnapshotter,
   planHostRemediation,
+  dnsProbeName,
   probeContainerDns,
 } from "../../../dist/lib/onboard/preflight";
 
@@ -1170,13 +1171,35 @@ describe("probeContainerDns", () => {
     expect(result.reason).toBe("image_pull_failed");
   });
 
-  it("flags resolution_failed for NXDOMAIN-style failures (resolver OK, name unknown)", () => {
+  it("returns ok on NXDOMAIN — resolver reachable, name does not resolve (#3630)", () => {
+    // The default probe queries a random `.invalid` subdomain (RFC 6761),
+    // which any compliant resolver answers with NXDOMAIN. NXDOMAIN proves
+    // the resolver was reached even though the name doesn't resolve, which
+    // is the only invariant we need to prove DNS works. Crucially, this
+    // path does NOT depend on a real A record (e.g., `registry.npmjs.org`)
+    // being reachable from the container, so a Docker-embedded-DNS cache
+    // hit cannot mask a host-side egress block. See #3630.
     const result = probeContainerDns({
       outputOverride:
         "Server:\t\t1.1.1.1\n" +
         "Address:\t1.1.1.1:53\n" +
         "\n" +
-        "** server can't find registry.npmjs.org: NXDOMAIN\n",
+        "** server can't find nemoclaw-dns-probe-abc123def456.invalid: NXDOMAIN\n",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBeUndefined();
+  });
+
+  it("flags resolution_failed for malformed responses with neither Address nor NXDOMAIN", () => {
+    // Resolver answered with something we don't recognize (e.g., SERVFAIL,
+    // unexpected format). Surface as resolution_failed rather than masking
+    // it as success.
+    const result = probeContainerDns({
+      outputOverride:
+        "Server:\t\t1.1.1.1\n" +
+        "Address:\t1.1.1.1:53\n" +
+        "\n" +
+        ";; reply from unexpected source: 8.8.8.8#53, expected 1.1.1.1#53\n",
     });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("resolution_failed");
@@ -1216,7 +1239,9 @@ describe("probeContainerDns", () => {
     const script = captured[0][2];
     expect(script).toContain("docker run --rm");
     expect(script).toContain("busybox:latest");
-    expect(script).toContain("registry.npmjs.org");
+    // Probe queries a random `.invalid` subdomain (#3630), not a real
+    // domain — cache-bypass guarantee. Stable prefix is asserted instead.
+    expect(script).toMatch(/nslookup nemoclaw-dns-probe-[0-9a-f]+\.invalid /);
     expect(script).toContain("2>&1");
   });
 
@@ -1232,7 +1257,33 @@ describe("probeContainerDns", () => {
     expect(seen).toEqual(["echo", "OVERRIDDEN"]);
   });
 
-  it("treats thrown runCapture errors as error reason", () => {
+  it("uses a random .invalid probe per call to bypass Docker embedded DNS cache (#3630)", () => {
+    // Before #3630 the probe queried `registry.npmjs.org`, whose answer
+    // Docker's embedded DNS resolver could serve from cache even when
+    // host-side egress to UDP/TCP port 53 was fully blocked. The fix
+    // is a random subdomain of the RFC 6761 reserved `.invalid` TLD so
+    // the query is never cached anywhere and always exercises real
+    // upstream DNS reachability.
+    const name1 = dnsProbeName();
+    const name2 = dnsProbeName();
+    expect(name1).toMatch(/^nemoclaw-dns-probe-[0-9a-f]{16}\.invalid$/);
+    expect(name2).toMatch(/^nemoclaw-dns-probe-[0-9a-f]{16}\.invalid$/);
+    expect(name1).not.toBe(name2);
+  });
+
+  it("honors a pinned probeName override for stable test assertions", () => {
+    let seenScript = "";
+    probeContainerDns({
+      probeName: "pinned-test.invalid",
+      runCaptureImpl: (command) => {
+        seenScript = command[2] ?? "";
+        return "Server:\t1.1.1.1\nAddress:\t1.1.1.1:53\n** server can't find pinned-test.invalid: NXDOMAIN\n";
+      },
+    });
+    expect(seenScript).toContain("nslookup pinned-test.invalid");
+  });
+
+    it("treats thrown runCapture errors as error reason", () => {
     const result = probeContainerDns({
       runCaptureImpl: () => {
         throw new Error("docker daemon unreachable");

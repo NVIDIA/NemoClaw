@@ -1,6 +1,10 @@
 [
   {
     "preferred": true,
+    "version": "0.0.44",
+    "url": "https://docs.nvidia.com/nemoclaw/0.0.44/"
+  },
+  {
     "version": "0.0.43",
     "url": "https://docs.nvidia.com/nemoclaw/0.0.43/"
   },
