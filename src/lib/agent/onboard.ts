@@ -298,7 +298,7 @@ function failAgentSetup(sandboxName: string, agent: AgentDefinition, message: st
 /**
  * Interpret an agent health-probe response as healthy or unhealthy.
  */
-function isHealthProbeOk(result: string | null | undefined): boolean {
+export function isHealthProbeOk(result: string | null | undefined): boolean {
   const body = (result ?? "").trim();
   if (body === "ok") {
     return true;
