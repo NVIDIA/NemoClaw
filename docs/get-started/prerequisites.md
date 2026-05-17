@@ -32,7 +32,7 @@ Before getting started, check the prerequisites to ensure you have the necessary
 | RAM      | 8 GB           | 16 GB            |
 | Disk     | 20 GB free     | 40 GB free       |
 
-The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline. The pipeline buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer. If you cannot add memory, configuring at least 8 GB of swap can work around the issue at the cost of slower performance.
+The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, OpenShell gateway runtime, and, on legacy k3s paths, the embedded k3s cluster run alongside the export pipeline. The pipeline buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer. If you cannot add memory, configuring at least 8 GB of swap can work around the issue at the cost of slower performance.
 
 ## Software
 
@@ -49,8 +49,8 @@ If you choose the native Linux Ollama install path, the onboard wizard also requ
 
 On Debian and Ubuntu, NemoClaw installs `zstd` with `apt-get` if it is missing; on other Linux distributions, install `zstd` before onboarding.
 
-On macOS, NemoClaw uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
-You do not need to install or sign a separate OpenShell VM driver helper for standard macOS onboarding.
+On Apple Silicon macOS, NemoClaw uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
+You do not need to install or sign a separate OpenShell VM driver helper for standard Apple Silicon macOS onboarding.
 
 :::{warning} OpenShell Lifecycle
 For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
@@ -58,7 +58,7 @@ Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway sta
 :::
 
 :::{note} Docker storage driver
-On Linux hosts running Docker 26 or later with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) enabled (the install-time default for fresh `docker-ce` installations on Ubuntu 24.04 and similar distros), `nemoclaw onboard` transparently builds a `fuse-overlayfs`-enabled cluster image to bypass a kernel-level nested-overlay limitation in k3s.
+On Linux hosts running Docker 26 or later with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) enabled (the install-time default for fresh `docker-ce` installations on Ubuntu 24.04 and similar distros), `nemoclaw onboard` transparently builds a `fuse-overlayfs`-enabled cluster image to bypass a kernel-level nested-overlay limitation in the legacy OpenShell k3s gateway image when that path is used.
 No manual setup is required.
 See the [troubleshooting guide](../reference/troubleshooting.md) for the override knobs and a manual `daemon.json` alternative.
 :::

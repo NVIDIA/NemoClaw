@@ -57,12 +57,12 @@ On Linux, the installer checks Docker before it installs NemoClaw.
 If Docker is missing, the installer downloads the official Docker convenience script, asks for `sudo`, installs Docker, and starts the Docker service when systemd is available.
 If Docker is installed but your current shell cannot use the Docker socket yet, the installer adds your user to the `docker` group when needed and exits with a recovery command.
 
-On macOS, the installer uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
-
 ```console
 $ newgrp docker
 $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
+
+On Apple Silicon macOS, the installer uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
 
 On DGX Spark and DGX Station, an interactive installer can offer express install after you accept the third-party software notice.
 Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, applies the suggested security policy, and selects the managed local inference path for that platform.
