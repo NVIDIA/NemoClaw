@@ -14,6 +14,83 @@ import {
 } from "../dist/lib/sandbox/build-context";
 
 describe("sandbox build context staging", () => {
+  function writeBuildContextFixture(sourceRoot: string) {
+    const blueprintManifestDir = path.join(
+      sourceRoot,
+      "nemoclaw-blueprint",
+      "model-specific-setup",
+      "openclaw",
+    );
+
+    function writeFixture(relativePath: string, content = "fixture\n", mode = 0o644) {
+      const target = path.join(sourceRoot, relativePath);
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, content, { mode });
+      fs.chmodSync(target, mode);
+    }
+
+    writeFixture("Dockerfile");
+    for (const fileName of [
+      "package.json",
+      "package-lock.json",
+      "tsconfig.json",
+      "openclaw.plugin.json",
+    ]) {
+      writeFixture(path.join("nemoclaw", fileName), "{}\n");
+    }
+    writeFixture(path.join("nemoclaw", "src", "index.ts"));
+    writeFixture(path.join("nemoclaw-blueprint", "blueprint.yaml"));
+    writeFixture(path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"));
+    writeFixture(path.join("nemoclaw-blueprint", "scripts", "http-proxy-fix.js"));
+    writeFixture(
+      path.join(
+        "nemoclaw-blueprint",
+        "openclaw-plugins",
+        "kimi-inference-compat",
+        "openclaw.plugin.json",
+      ),
+      "{}\n",
+    );
+    writeFixture(
+      path.join("nemoclaw-blueprint", "openclaw-plugins", "kimi-inference-compat", "index.js"),
+      "fixture\n",
+      0o600,
+    );
+    writeFixture(
+      path.join(
+        "nemoclaw-blueprint",
+        "model-specific-setup",
+        "openclaw",
+        "kimi-k2.6-managed-inference.json",
+      ),
+      "{}\n",
+      0o600,
+    );
+    fs.chmodSync(path.join(sourceRoot, "nemoclaw-blueprint", "model-specific-setup"), 0o700);
+    fs.chmodSync(blueprintManifestDir, 0o700);
+    writeFixture(path.join("scripts", "nemoclaw-start.sh"));
+    writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
+    writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
+    writeFixture(path.join("scripts", "generate-openclaw-config.py"));
+    writeFixture(path.join("scripts", "seed-wechat-accounts.py"));
+  }
+
+  function expectStagedBlueprintModes(buildCtx: string) {
+    const stagedBlueprint = path.join(buildCtx, "nemoclaw-blueprint");
+    const stagedManifestDir = path.join(stagedBlueprint, "model-specific-setup", "openclaw");
+    const stagedManifest = path.join(stagedManifestDir, "kimi-k2.6-managed-inference.json");
+    const stagedPlugin = path.join(
+      stagedBlueprint,
+      "openclaw-plugins",
+      "kimi-inference-compat",
+      "index.js",
+    );
+
+    expect((fs.statSync(stagedManifestDir).mode & 0o777).toString(8)).toBe("755");
+    expect((fs.statSync(stagedManifest).mode & 0o777).toString(8)).toBe("644");
+    expect((fs.statSync(stagedPlugin).mode & 0o777).toString(8)).toBe("644");
+  }
+
   it("normalizes copied blueprint modes with chmod a+rX semantics", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-unit-"));
     const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
@@ -49,90 +126,25 @@ describe("sandbox build context staging", () => {
   it("optimized staging makes copied blueprint manifests world-readable", () => {
     const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-mode-"));
-    const blueprintManifestDir = path.join(
-      sourceRoot,
-      "nemoclaw-blueprint",
-      "model-specific-setup",
-      "openclaw",
-    );
-    const blueprintManifest = path.join(blueprintManifestDir, "kimi-k2.6-managed-inference.json");
-
-    function writeFixture(relativePath: string, content = "fixture\n", mode = 0o644) {
-      const target = path.join(sourceRoot, relativePath);
-      fs.mkdirSync(path.dirname(target), { recursive: true });
-      fs.writeFileSync(target, content, { mode });
-      fs.chmodSync(target, mode);
-    }
 
     try {
-      writeFixture("Dockerfile");
-      for (const fileName of [
-        "package.json",
-        "package-lock.json",
-        "tsconfig.json",
-        "openclaw.plugin.json",
-      ]) {
-        writeFixture(path.join("nemoclaw", fileName), "{}\n");
-      }
-      writeFixture(path.join("nemoclaw", "src", "index.ts"));
-      writeFixture(path.join("nemoclaw-blueprint", "blueprint.yaml"));
-      writeFixture(path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"));
-      writeFixture(path.join("nemoclaw-blueprint", "scripts", "http-proxy-fix.js"));
-      writeFixture(
-        path.join(
-          "nemoclaw-blueprint",
-          "openclaw-plugins",
-          "kimi-inference-compat",
-          "openclaw.plugin.json",
-        ),
-        "{}\n",
-      );
-      writeFixture(
-        path.join(
-          "nemoclaw-blueprint",
-          "openclaw-plugins",
-          "kimi-inference-compat",
-          "index.js",
-        ),
-        "fixture\n",
-        0o600,
-      );
-      writeFixture(
-        path.join(
-          "nemoclaw-blueprint",
-          "model-specific-setup",
-          "openclaw",
-          "kimi-k2.6-managed-inference.json",
-        ),
-        "{}\n",
-        0o600,
-      );
-      fs.chmodSync(path.join(sourceRoot, "nemoclaw-blueprint", "model-specific-setup"), 0o700);
-      fs.chmodSync(blueprintManifestDir, 0o700);
-      writeFixture(path.join("scripts", "nemoclaw-start.sh"));
-      writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
-      writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
-      writeFixture(path.join("scripts", "generate-openclaw-config.py"));
-      writeFixture(path.join("scripts", "seed-wechat-accounts.py"));
-
+      writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
-      const stagedBlueprint = path.join(buildCtx, "nemoclaw-blueprint");
-      const stagedManifestDir = path.join(
-        stagedBlueprint,
-        "model-specific-setup",
-        "openclaw",
-      );
-      const stagedManifest = path.join(stagedManifestDir, "kimi-k2.6-managed-inference.json");
-      const stagedPlugin = path.join(
-        stagedBlueprint,
-        "openclaw-plugins",
-        "kimi-inference-compat",
-        "index.js",
-      );
+      expectStagedBlueprintModes(buildCtx);
+    } finally {
+      fs.rmSync(sourceRoot, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
 
-      expect((fs.statSync(stagedManifestDir).mode & 0o777).toString(8)).toBe("755");
-      expect((fs.statSync(stagedManifest).mode & 0o777).toString(8)).toBe("644");
-      expect((fs.statSync(stagedPlugin).mode & 0o777).toString(8)).toBe("644");
+  it("legacy staging makes copied blueprint manifests world-readable", () => {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-legacy-mode-"));
+
+    try {
+      writeBuildContextFixture(sourceRoot);
+      const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedBlueprintModes(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
       fs.rmSync(tmpDir, { recursive: true, force: true });
