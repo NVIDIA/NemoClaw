@@ -20,7 +20,9 @@ import type { ResolverInput } from "./load.ts";
 import type {
   ResolvedPlan,
   ResolvedSuite,
+  SetupScenario,
   SuiteDefinition,
+  ExpectedFailure,
   ExpectedStateConfig,
 } from "./schema.ts";
 
@@ -52,6 +54,42 @@ function getByDottedPath(obj: unknown, dotted: string): unknown {
     cur = (cur as Record<string, unknown>)[p];
   }
   return cur;
+}
+
+/**
+ * Merge a state-level `expected_failure` with an optional scenario-level
+ * override and return a fully-formed `ExpectedFailure`, or `undefined` if
+ * neither side declares one. Scenario-level fields win over state-level.
+ *
+ * After merge, every required field MUST be present. The loader already
+ * enforces this for state-level blocks; an override-only declaration on a
+ * positive expected state is rejected here.
+ */
+function resolveExpectedFailure(
+  scenario: SetupScenario,
+  stateConfig: ExpectedStateConfig,
+  scenarioId: string,
+): ExpectedFailure | undefined {
+  const stateBlock = (stateConfig as { expected_failure?: unknown }).expected_failure as
+    | Partial<ExpectedFailure>
+    | undefined;
+  const scenarioBlock = scenario.expected_failure;
+  if (!stateBlock && !scenarioBlock) return undefined;
+  if (!stateBlock && scenarioBlock) {
+    throw new Error(
+      `scenario '${scenarioId}' declares expected_failure but expected_state '${scenario.expected_state}' does not - declare the base contract on the state first`,
+    );
+  }
+  const merged: Partial<ExpectedFailure> = { ...(stateBlock ?? {}), ...(scenarioBlock ?? {}) };
+  if (scenarioBlock?.forbidden_side_effects !== undefined) {
+    merged.forbidden_side_effects = scenarioBlock.forbidden_side_effects;
+  }
+  if (!merged.phase || !merged.error_class) {
+    throw new Error(
+      `scenario '${scenarioId}' expected_failure resolves with missing required fields (phase, error_class) after merge`,
+    );
+  }
+  return merged as ExpectedFailure;
 }
 
 function validateSuiteAgainstState(
@@ -132,6 +170,7 @@ export function resolveScenario(scenarioId: string, meta: ResolverInput): Resolv
       steps: def.steps.map((s) => ({ id: s.id, script: s.script })),
     });
   }
+  const expectedFailure = resolveExpectedFailure(sc, stateConfig, scenarioId);
   return {
     scenario_id: scenarioId,
     dimensions: {
@@ -144,6 +183,7 @@ export function resolveScenario(scenarioId: string, meta: ResolverInput): Resolv
     suites: resolvedSuites,
     overrides: sc.overrides,
     runner_requirements: sc.runner_requirements,
+    ...(expectedFailure ? { expected_failure: expectedFailure } : {}),
   };
 }
 
@@ -172,6 +212,17 @@ export function formatPlan(plan: ResolvedPlan): string {
   if (plan.overrides) {
     lines.push("Overrides:");
     lines.push(`  ${JSON.stringify(plan.overrides)}`);
+  }
+  if (plan.expected_failure) {
+    lines.push("Expected failure:");
+    lines.push(`  phase=${plan.expected_failure.phase}`);
+    lines.push(`  error_class=${plan.expected_failure.error_class}`);
+    if (plan.expected_failure.message_pattern) {
+      lines.push(`  message_pattern=${plan.expected_failure.message_pattern}`);
+    }
+    if (plan.expected_failure.forbidden_side_effects?.length) {
+      lines.push(`  forbidden_side_effects=${plan.expected_failure.forbidden_side_effects.join(",")}`);
+    }
   }
   return lines.join("\n");
 }
