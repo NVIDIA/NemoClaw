@@ -50,6 +50,20 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+      # Baileys calls `fetchLatestBaileysVersion()` at session creation,
+      # fetching the current WhatsApp Web protocol version from the
+      # WhiskeySockets/Baileys master branch. Without this rule the fetch
+      # fails closed and Baileys advertises its bundled (stale) constant,
+      # which Meta now rejects with `<failure reason="405"/>` on pair.
+      # Scope is pinned to the single file the fetch reads, GET only.
+      - host: raw.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow:
+              method: GET
+              path: "/WhiskeySockets/Baileys/master/src/Defaults/index.ts"
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }

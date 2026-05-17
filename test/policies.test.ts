@@ -260,6 +260,41 @@ describe("policies", () => {
       }
     });
 
+    it("whatsapp preset narrowly allows the Baileys version-discovery file on raw.githubusercontent.com", () => {
+      // Baileys' fetchLatestBaileysVersion() reads one file from the
+      // WhiskeySockets/Baileys master branch to refresh the WA protocol
+      // constant at session creation. Without this allow rule the fetch
+      // fails closed and Baileys advertises a stale bundled constant
+      // which Meta now rejects on pair. Scope is pinned to that single
+      // file path with GET only so the rule does not turn into a general
+      // raw.githubusercontent.com escape hatch.
+      const presetPath = path.join(
+        import.meta.dirname,
+        "..",
+        "nemoclaw-blueprint",
+        "policies",
+        "presets",
+        "whatsapp.yaml",
+      );
+      const parsed = YAML.parse(fs.readFileSync(presetPath, "utf-8"));
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.whatsapp?.endpoints ?? [];
+
+      const entry = endpoints.find((item) => item.host === "raw.githubusercontent.com");
+      if (!entry) throw new Error("expected raw.githubusercontent.com endpoint");
+      expect(entry.port).toBe(443);
+      expect(entry.protocol).toBe("rest");
+      expect(entry.enforcement).toBe("enforce");
+      expect(entry.rules).toEqual([
+        {
+          allow: {
+            method: "GET",
+            path: "/WhiskeySockets/Baileys/master/src/Defaults/index.ts",
+          },
+        },
+      ]);
+    });
+
     it("local-inference preset targets host.openshell.internal on Ollama, proxy, and vLLM ports", () => {
       const content = requirePresetContent(policies.loadPreset("local-inference"));
       expect(content).toContain("host.openshell.internal");
