@@ -7,29 +7,49 @@ network_policies:
   whatsapp:
     name: whatsapp
     endpoints:
-      # WhatsApp Web Noise-over-WebSocket — pure L4 CONNECT tunnel. The
-      # /ws/chat upgrade requires HTTP/1.1; h2 has no 101 Switching
-      # Protocols and the proxy negotiates h2 by default on REST hosts
-      # (NVIDIA/NemoClaw#513). OpenShell v0.0.15+ also auto-terminates
-      # TLS unconditionally (NVIDIA/OpenShell#544), which breaks the
-      # Noise handshake — tls: skip restores pre-v0.0.15 pass-through.
+      # WhatsApp Web Noise-over-WebSocket. The /ws/chat upgrade requires
+      # HTTP/1.1; OpenShell's proxy negotiates h2 ALPN by default when it
+      # terminates TLS, and Meta's edge returns HTTP/2 405/400 because
+      # there is no 101 Switching Protocols flow over h2. OpenShell
+      # v0.0.15+ also auto-terminates TLS unconditionally on REST hosts,
+      # which would break the Noise handshake even if h1 were negotiated.
+      # Declaring the endpoint as a raw L4 CONNECT tunnel (`access: full,
+      # tls: skip`) tells the proxy to pass the encrypted bytes through
+      # unmodified, so Baileys negotiates h1 ALPN directly with Meta
+      # inside TLS and the Noise frames survive untouched. Falls back to
+      # numbered nodes (w1.web.whatsapp.com, w2.web.whatsapp.com, ...)
+      # when the primary connection drops; the wildcard covers them with
+      # the same shape.
       - host: web.whatsapp.com
         port: 443
         access: full
         tls: skip
-      - host: mmg.whatsapp.net
+      - host: "*.web.whatsapp.com"
+        port: 443
+        access: full
+        tls: skip
+      # Baileys hits a handful of *.whatsapp.net subdomains during pairing
+      # and steady-state: mmg (media gateway), static (location maps and
+      # other static assets), cdn (CDN), pps (profile pictures), v
+      # (variants), e1/f/s (encrypted/file/signal media routes). All are
+      # Meta-controlled, so a wildcard keeps the preset future-proof without
+      # expanding trust beyond WhatsApp infrastructure. Follows the
+      # `*.atlassian.net` precedent in the jira preset. The apex is listed
+      # separately because OpenShell's wildcard matcher does not cover it.
+      - host: whatsapp.net
         port: 443
         protocol: rest
         enforcement: enforce
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
-      - host: static.whatsapp.net
+      - host: "*.whatsapp.net"
         port: 443
         protocol: rest
         enforcement: enforce
         rules:
           - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }

@@ -190,7 +190,15 @@ describe("policies", () => {
       }
     });
 
-    it("whatsapp preset routes web.whatsapp.com as an L4 CONNECT tunnel with TLS pass-through", () => {
+    it("whatsapp preset routes web.whatsapp.com as a raw L4 tunnel with TLS pass-through", () => {
+      // The /ws/chat upgrade is HTTP/1.1-only; if the proxy terminates TLS it
+      // negotiates h2 ALPN with Meta's edge and the WS upgrade fails (Meta
+      // returns 405/400 because there is no 101 Switching Protocols flow
+      // over h2). `access: full` + `tls: skip` keeps OpenShell out of the
+      // bytes so Baileys does the TLS handshake end-to-end and gets h1.
+      // Apex and *.web.whatsapp.com (fallback nodes w1.web.whatsapp.com,
+      // w2.web.whatsapp.com, ...) share the same shape so reconnects do
+      // not surprise the operator.
       const presetPath = path.join(
         import.meta.dirname,
         "..",
@@ -203,17 +211,27 @@ describe("policies", () => {
       const endpoints: Array<Record<string, unknown>> =
         parsed?.network_policies?.whatsapp?.endpoints ?? [];
 
-      const webEndpoint = endpoints.find((item) => item.host === "web.whatsapp.com");
-      if (!webEndpoint) throw new Error("expected web.whatsapp.com endpoint");
-      expect(webEndpoint.port).toBe(443);
-      expect(webEndpoint.access).toBe("full");
-      expect(webEndpoint.tls).toBe("skip");
-      // L4 tunnels cannot enforce REST rules; the preset must not pretend to.
-      expect(webEndpoint.protocol).toBeUndefined();
-      expect(webEndpoint.rules).toBeUndefined();
+      for (const host of ["web.whatsapp.com", "*.web.whatsapp.com"]) {
+        const entry = endpoints.find((item) => item.host === host);
+        if (!entry) throw new Error(`expected ${host} endpoint`);
+        expect(entry.port).toBe(443);
+        expect(entry.access).toBe("full");
+        expect(entry.tls).toBe("skip");
+        // L4 tunnels cannot enforce REST/WebSocket rules; declaring either
+        // would coerce the proxy into a TLS-terminating path that breaks
+        // the WS upgrade.
+        expect(entry.protocol).toBeUndefined();
+        expect(entry.rules).toBeUndefined();
+      }
     });
 
-    it("whatsapp media and static hosts stay constrained to expected REST methods", () => {
+    it("whatsapp REST traffic is constrained to *.whatsapp.net with GET + POST", () => {
+      // Baileys touches several whatsapp.net subdomains during pairing and
+      // steady-state (mmg, static, cdn, pps, v, e1, f, s). Earlier the preset
+      // listed mmg and static individually; consolidating to a *.whatsapp.net
+      // wildcard keeps the preset future-proof without expanding trust
+      // beyond Meta-controlled infrastructure. Mirrors the jira preset's
+      // *.atlassian.net wildcard.
       const presetPath = path.join(
         import.meta.dirname,
         "..",
@@ -226,25 +244,21 @@ describe("policies", () => {
       const endpoints: Array<Record<string, unknown>> =
         parsed?.network_policies?.whatsapp?.endpoints ?? [];
 
-      const mmg = endpoints.find((item) => item.host === "mmg.whatsapp.net");
-      if (!mmg) throw new Error("expected mmg.whatsapp.net endpoint");
-      expect(mmg.port).toBe(443);
-      expect(mmg.protocol).toBe("rest");
-      expect(mmg.enforcement).toBe("enforce");
-      const mmgRules = Array.isArray(mmg.rules) ? mmg.rules : [];
-      const mmgMethods = mmgRules.map((rule: { allow?: { method?: string } }) => rule.allow?.method);
-      expect(mmgMethods.sort()).toEqual(["GET", "POST"]);
-
-      const staticHost = endpoints.find((item) => item.host === "static.whatsapp.net");
-      if (!staticHost) throw new Error("expected static.whatsapp.net endpoint");
-      expect(staticHost.port).toBe(443);
-      expect(staticHost.protocol).toBe("rest");
-      expect(staticHost.enforcement).toBe("enforce");
-      const staticRules = Array.isArray(staticHost.rules) ? staticHost.rules : [];
-      const staticMethods = staticRules.map(
-        (rule: { allow?: { method?: string } }) => rule.allow?.method,
-      );
-      expect(staticMethods).toEqual(["GET"]);
+      // Apex listed separately so the matcher (which does not cover the
+      // bare apex via `*.whatsapp.net`) still allows it if Baileys or a
+      // future plugin ever resolves the apex.
+      for (const host of ["whatsapp.net", "*.whatsapp.net"]) {
+        const entry = endpoints.find((item) => item.host === host);
+        if (!entry) throw new Error(`expected ${host} endpoint`);
+        expect(entry.port).toBe(443);
+        expect(entry.protocol).toBe("rest");
+        expect(entry.enforcement).toBe("enforce");
+        const rules = Array.isArray(entry.rules) ? entry.rules : [];
+        const methods = rules
+          .map((rule: { allow?: { method?: string } }) => rule.allow?.method)
+          .sort();
+        expect(methods).toEqual(["GET", "POST"]);
+      }
     });
 
     it("local-inference preset targets host.openshell.internal on Ollama, proxy, and vLLM ports", () => {
