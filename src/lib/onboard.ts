@@ -6239,7 +6239,7 @@ async function setupNim(
       console.log("");
     }
   }
-  const requestedProvider = isNonInteractive() ? getNonInteractiveProvider() : null;
+  const requestedProvider = getNonInteractiveProvider();
   const requestedModel = isNonInteractive()
     ? getNonInteractiveModel(requestedProvider || "build")
     : null;
@@ -6363,7 +6363,7 @@ async function setupNim(
       let recoveredModel: string | null = null;
       hermesAuthMethod = null;
 
-      if (isNonInteractive()) {
+      if (isNonInteractive() || requestedProvider) {
         let providerKey = requestedProvider;
         if (!providerKey) {
           const recordedProvider = readRecordedProvider(sandboxName);
