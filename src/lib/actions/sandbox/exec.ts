@@ -13,6 +13,7 @@ export type SandboxExecOptions = {
 type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
+  error?: Error;
 };
 
 export function buildOpenshellExecArgs(
@@ -32,6 +33,11 @@ export function buildOpenshellExecArgs(
 }
 
 function exitWithSpawnResult(result: SpawnLikeResult): never {
+  if (result.error) {
+    console.error(`  Failed to invoke openshell: ${result.error.message}`);
+    console.error("  Ensure 'openshell' is installed and on PATH.");
+    process.exit(1);
+  }
   if (result.status !== null) process.exit(result.status);
   if (result.signal) {
     const signalNumber = os.constants.signals[result.signal];
