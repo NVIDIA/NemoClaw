@@ -8,11 +8,44 @@ import { describe, expect, it } from "vitest";
 
 import {
   collectBuildContextStats,
+  normalizeReadModesForDockerCopy,
   stageLegacySandboxBuildContext,
   stageOptimizedSandboxBuildContext,
 } from "../dist/lib/sandbox/build-context";
 
 describe("sandbox build context staging", () => {
+  it("normalizes copied blueprint modes with chmod a+rX semantics", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-unit-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    const manifestDir = path.join(blueprintDir, "model-specific-setup", "openclaw");
+    const manifestPath = path.join(manifestDir, "kimi-k2.6-managed-inference.json");
+    const executablePath = path.join(blueprintDir, "scripts", "helper.sh");
+    const symlinkPath = path.join(blueprintDir, "manifest-link.json");
+
+    try {
+      fs.mkdirSync(manifestDir, { recursive: true });
+      fs.mkdirSync(path.dirname(executablePath), { recursive: true });
+      fs.writeFileSync(manifestPath, "{}\n", { mode: 0o600 });
+      fs.writeFileSync(executablePath, "#!/bin/sh\n", { mode: 0o700 });
+      fs.symlinkSync(manifestPath, symlinkPath);
+      fs.chmodSync(blueprintDir, 0o700);
+      fs.chmodSync(path.join(blueprintDir, "model-specific-setup"), 0o700);
+      fs.chmodSync(manifestDir, 0o700);
+      fs.chmodSync(manifestPath, 0o600);
+      fs.chmodSync(executablePath, 0o700);
+
+      normalizeReadModesForDockerCopy(blueprintDir);
+
+      expect((fs.statSync(blueprintDir).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(manifestDir).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(manifestPath).mode & 0o777).toString(8)).toBe("644");
+      expect((fs.statSync(executablePath).mode & 0o777).toString(8)).toBe("755");
+      expect(fs.lstatSync(symlinkPath).isSymbolicLink()).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("optimized staging makes copied blueprint manifests world-readable", () => {
     const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-mode-"));

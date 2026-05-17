@@ -32,7 +32,8 @@ function normalizeReadModesForDockerCopy(rootDir: string): void {
   }
 
   if (stat.isFile()) {
-    fs.chmodSync(rootDir, (stat.mode & 0o777) | 0o444);
+    const mode = stat.mode & 0o777;
+    fs.chmodSync(rootDir, mode | 0o444 | (mode & 0o111 ? 0o111 : 0));
   }
 }
 
@@ -171,6 +172,7 @@ function collectBuildContextStats(
 
 export {
   collectBuildContextStats,
+  normalizeReadModesForDockerCopy,
   stageLegacySandboxBuildContext,
   stageOptimizedSandboxBuildContext,
 };
