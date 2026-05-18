@@ -135,6 +135,22 @@ describe("expected_failure: loader validation", () => {
     );
   });
 
+  it("rejects a non-mapping expected_states section", () => {
+    expect(() =>
+      loadMetadataFromObjects({
+        scenarios: {
+          platforms: { p: {} },
+          installs: { i: {} },
+          runtimes: { r: {} },
+          onboarding: { o: { agent: "openclaw", provider: "nvidia" } },
+          setup_scenarios: {},
+        },
+        expectedStates: { expected_states: [] },
+        suites: { suites: {} },
+      }),
+    ).toThrow(/expected_states' must be a mapping/);
+  });
+
   it("rejects scenario-level expected_failure when state has none", () => {
     expect(() =>
       resolveScenario(

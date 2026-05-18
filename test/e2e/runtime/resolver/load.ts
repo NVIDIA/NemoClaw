@@ -225,7 +225,11 @@ function validateExpectedStates(
   file: string,
 ): ExpectedStatesFile {
   requireSections(doc, file, ["expected_states"]);
-  const states = doc.expected_states as Record<string, unknown>;
+  const rawStates = doc.expected_states;
+  if (!rawStates || typeof rawStates !== "object" || Array.isArray(rawStates)) {
+    throw new Error(`metadata file ${file} section 'expected_states' must be a mapping`);
+  }
+  const states = rawStates as Record<string, unknown>;
   for (const [id, entry] of Object.entries(states)) {
     if (!entry || typeof entry !== "object") {
       throw new Error(`expected_state ${id} must be a mapping`);
