@@ -32,18 +32,28 @@ export function buildOpenshellExecArgs(
   return argv;
 }
 
-function exitWithSpawnResult(result: SpawnLikeResult): never {
+export function computeExitCode(result: SpawnLikeResult): {
+  code: number;
+  errorMessage?: string;
+} {
   if (result.error) {
-    console.error(`  Failed to invoke openshell: ${result.error.message}`);
-    console.error("  Ensure 'openshell' is installed and on PATH.");
-    process.exit(1);
+    return { code: 1, errorMessage: result.error.message };
   }
-  if (result.status !== null) process.exit(result.status);
+  if (result.status !== null) return { code: result.status };
   if (result.signal) {
     const signalNumber = os.constants.signals[result.signal];
-    process.exit(signalNumber ? 128 + signalNumber : 1);
+    return { code: signalNumber ? 128 + signalNumber : 1 };
   }
-  process.exit(1);
+  return { code: 1 };
+}
+
+function exitWithSpawnResult(result: SpawnLikeResult): never {
+  const { code, errorMessage } = computeExitCode(result);
+  if (errorMessage) {
+    console.error(`  Failed to invoke openshell: ${errorMessage}`);
+    console.error("  Ensure 'openshell' is installed and on PATH.");
+  }
+  process.exit(code);
 }
 
 export async function execSandbox(

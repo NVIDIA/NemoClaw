@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { buildOpenshellExecArgs } from "./exec";
+import { buildOpenshellExecArgs, computeExitCode } from "./exec";
 
 describe("buildOpenshellExecArgs", () => {
   it("targets the sandbox by name and forwards the user command after --", () => {
@@ -90,5 +90,36 @@ describe("buildOpenshellExecArgs", () => {
       "echo",
       "ok",
     ]);
+  });
+});
+
+describe("computeExitCode", () => {
+  it("returns the remote command's status when it exits normally", () => {
+    expect(computeExitCode({ status: 0 })).toEqual({ code: 0 });
+    expect(computeExitCode({ status: 42 })).toEqual({ code: 42 });
+  });
+
+  it("translates a terminating signal into 128 + signal number", () => {
+    expect(computeExitCode({ status: null, signal: "SIGTERM" })).toEqual({ code: 128 + 15 });
+    expect(computeExitCode({ status: null, signal: "SIGKILL" })).toEqual({ code: 128 + 9 });
+  });
+
+  it("falls back to 1 when the signal is unknown to os.constants.signals", () => {
+    expect(
+      computeExitCode({ status: null, signal: "SIGBOGUS" as NodeJS.Signals }),
+    ).toEqual({ code: 1 });
+  });
+
+  it("falls back to 1 when neither status nor signal is set", () => {
+    expect(computeExitCode({ status: null })).toEqual({ code: 1 });
+    expect(computeExitCode({ status: null, signal: null })).toEqual({ code: 1 });
+  });
+
+  it("surfaces spawn transport errors with the error message and code 1", () => {
+    const error = new Error("openshell: command not found");
+    expect(computeExitCode({ status: null, error })).toEqual({
+      code: 1,
+      errorMessage: "openshell: command not found",
+    });
   });
 });
