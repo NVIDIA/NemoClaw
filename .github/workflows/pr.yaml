@@ -51,6 +51,36 @@ jobs:
       - name: Verify platform matrix is in sync
         run: python3 scripts/generate-platform-docs.py --check
 
+  benchmark-vitest-ubuntu:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          cd nemoclaw
+          npm ci --ignore-scripts
+
+      - name: Build CLI and plugin
+        run: |
+          npm run build:cli
+          cd nemoclaw
+          npm run build
+
+      - name: Benchmark full Vitest suite on ubuntu-latest
+        run: time npx vitest run --testTimeout 60000
+
   test-e2e-ollama-proxy:
     needs: [checks, changes]
     if: needs.changes.outputs.code == 'true'
