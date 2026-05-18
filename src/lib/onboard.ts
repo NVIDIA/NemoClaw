@@ -342,7 +342,6 @@ import {
   sanitizeMessagingChannelConfig,
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
-import { reportGpuPassthroughRecovery } from "./onboard/gpu-recovery";
 import {
   filterEnabledChannelsByAgent,
   getAvailableMessagingChannelsForAgent,
