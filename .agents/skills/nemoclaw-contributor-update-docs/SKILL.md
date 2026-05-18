@@ -166,7 +166,7 @@ If the user invoked this skill for release prep, finish the release-specific doc
 3. Refresh the NemoClaw user skills:
 
    ```bash
-   python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
+   python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
    ```
 
 ## Step 9: Build and Verify
@@ -214,7 +214,7 @@ User says: "Catch up the docs for everything merged since v0.1.0."
 4. Read the commit diffs and current doc pages.
 5. Draft doc updates reflecting the source code changes in the commits following the style guide.
 6. **Release prep only:** Apply release-prep version bumps if the user requested release prep.
-7. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user`.
+7. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
 8. Present the summary.
 9. Build with `make docs` to verify.
 10. **Release prep only:** Commit changes and open a pull request with the `documentation` label and the corresponding `vX.Y.Z` release label. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:

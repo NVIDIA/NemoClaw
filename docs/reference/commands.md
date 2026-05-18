@@ -159,7 +159,7 @@ If Brave Search key validation fails in non-interactive mode, onboarding prints 
 After fixing the key, re-enable web search with `nemoclaw config web-search`.
 
 The wizard prompts for a sandbox name.
-Names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 Uppercase letters are automatically lowercased.
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
 Use `--agent <name>` to target a specific installed agent profile during onboarding.
@@ -240,7 +240,7 @@ If a `--resume` is attempted with a different `--from` path than the original se
 #### `--name <sandbox>`
 
 Set the sandbox name without going through the interactive prompt.
-The same name format and reserved-name rules that the wizard enforces apply here too. Names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+The same name format and reserved-name rules that the wizard enforces apply here too. Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 Names that match a NemoClaw CLI command (`status`, `list`, `debug`, etc.) are rejected up front.
 
 ```console
@@ -276,7 +276,9 @@ Prerequisites:
 - NVIDIA GPU drivers installed and working (`nvidia-smi` must succeed).
 - NVIDIA Container Toolkit configured for Docker.
 
-When GPU passthrough is enabled and a gateway already exists without it, onboarding exits with guidance to destroy and re-onboard.
+When GPU passthrough is enabled and a gateway already exists without it, onboarding first checks whether replacing the CPU-only gateway is safe.
+If no other registered sandbox depends on that gateway, or if `--recreate-sandbox` is recreating the only registered sandbox with the same name, onboarding cleans up the stale gateway and continues.
+If other sandboxes depend on the gateway or Docker state is unclear, onboarding exits without cleanup and prints targeted destroy or gateway-removal guidance.
 To add GPU to an existing sandbox, rerun with `--recreate-sandbox`.
 Set `NEMOCLAW_DOCKER_GPU_PATCH=0` only when you need to bypass the Linux Docker-driver compatibility patch during troubleshooting.
 
@@ -619,6 +621,8 @@ When `NEMOCLAW_NON_INTERACTIVE=1` is set, any missing token fails fast and no re
 
 Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel.
 Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt.
+When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway.
+If the matching built-in policy preset is applied, such as `telegram`, `discord`, or `slack`, NemoClaw also removes that preset so the upstream API is no longer allow-listed after the channel is gone.
 
 ```console
 $ nemoclaw my-assistant channels remove telegram
@@ -837,6 +841,7 @@ Prerequisites:
 
 - `sshfs` must be installed on the host (`sudo apt-get install sshfs` on Linux, `brew install macfuse && brew install sshfs` on macOS).
 - The sandbox must be running.
+- The remote sandbox path must exist. NemoClaw verifies it before invoking `sshfs` and prints a `connect`, then `ls <path>` check when the probe fails.
 - Sandboxes created before the `openssh-sftp-server` base image update must be rebuilt with `nemoclaw <name> rebuild`.
 - The local mount path must be on a writable filesystem; FUSE creates the mount on the host side.
   If the default `~/.nemoclaw/mounts/<name>` lives on a read-only filesystem, pass an explicit writable path as the second positional argument.
