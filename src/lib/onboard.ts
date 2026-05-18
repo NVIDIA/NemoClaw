@@ -344,6 +344,7 @@ import { reportGpuPassthroughRecovery } from "./onboard/gpu-recovery";
 import {
   filterEnabledChannelsByAgent,
   getAvailableMessagingChannelsForAgent,
+  resolveMessagingChannelSeed,
   resolveQrSelectedChannels,
 } from "./onboard/messaging-state";
 import { getMessagingToken } from "./onboard/messaging-token";
@@ -7819,14 +7820,17 @@ async function setupMessagingChannels(
   step(5, 8, "Messaging channels");
 
   const availableChannels = getAvailableMessagingChannelsForAgent(MESSAGING_CHANNELS, agent);
-  const seedFromState = (): string[] => [
-    ...availableChannels.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name),
-    ...(existingChannels ?? []).filter((n) => availableChannels.some((c) => c.name === n)),
-  ];
+  const seedFromState = (includeAllExisting = false): string[] =>
+    resolveMessagingChannelSeed(
+      availableChannels,
+      existingChannels,
+      (channel) => Boolean(getMessagingToken(channel.envKey)),
+      { includeAllExisting },
+    );
 
   // Non-interactive: skip prompt, tokens come from env/credentials
   if (isNonInteractive() || process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
-    const found = Array.from(new Set(seedFromState()));
+    const found = Array.from(new Set(seedFromState(false)));
     if (found.length > 0) {
       note(`  [non-interactive] Messaging tokens detected: ${found.join(", ")}`);
       if (found.includes("telegram")) {
@@ -7844,7 +7848,7 @@ async function setupMessagingChannels(
   // Single-keypress toggle selector — pre-select channels that already have tokens
   // or were recorded for this sandbox (so a rebuild does not silently drop QR-only
   // channels that have no host token).
-  const enabled = new Set(seedFromState());
+  const enabled = new Set(seedFromState(true));
 
   const output = process.stderr;
   // Lines above the prompt: 1 blank + 1 header + N channels + 1 blank = N + 3

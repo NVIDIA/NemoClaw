@@ -780,17 +780,16 @@ describe("nemoclaw-start configure guard behavior", () => {
   });
 
   // WhatsApp pairs entirely inside the sandbox via `openclaw channels login
-  // --channel whatsapp`, so the guard must allow `channels login` or that
-  // flow is dead-on-arrival. WeChat completes pairing host-side, but the
-  // guard is permissive (it doesn't whitelist by channel name) — openclaw
-  // itself is responsible for whether the subcommand is valid per channel.
+  // --channel whatsapp`, so the guard must allow that exact in-sandbox login
+  // path. WeChat completes pairing host-side and must stay blocked here so it
+  // cannot bypass NemoClaw's host-side registry/provider/rebuild path.
   // `status` is read-only diagnostics and is similarly safe to allow.
-  it("allows `channels login` and `channels status` inside the sandbox", () => {
+  it("allows only WhatsApp `channels login` and read-only `channels status` inside the sandbox", () => {
     const setup = writeProxyEnvWithGuard();
     try {
       const allowed = [
         ["channels", "login", "--channel", "whatsapp"],
-        ["channels", "login", "--channel", "wechat"],
+        ["channels", "login", "--channel=whatsapp"],
         ["channels", "status", "--channel", "whatsapp"],
         ["channels", "status"],
       ];
@@ -798,9 +797,23 @@ describe("nemoclaw-start configure guard behavior", () => {
         const result = runGuardedOpenclaw(setup, argv);
         expect(result.status, `${argv.join(" ")} should pass the guard`).toBe(0);
       }
+
+      const blocked = [
+        ["channels", "login"],
+        ["channels", "login", "--channel", "wechat"],
+        ["channels", "login", "--channel=telegram"],
+      ];
+      for (const argv of blocked) {
+        const result = runGuardedOpenclaw(setup, argv);
+        expect(result.status, `${argv.join(" ")} should be blocked`).toBe(1);
+        expect(result.stderr).toContain("only supported inside the sandbox for WhatsApp");
+      }
+
       const log = fs.readFileSync(setup.commandLog, "utf-8");
       expect(log).toContain("channels login --channel whatsapp");
+      expect(log).toContain("channels login --channel=whatsapp");
       expect(log).toContain("channels status");
+      expect(log).not.toContain("channels login --channel wechat");
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }

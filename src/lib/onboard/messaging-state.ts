@@ -30,6 +30,26 @@ export function resolveQrSelectedChannels(
   });
 }
 
+export function resolveMessagingChannelSeed(
+  channels: MessagingChannel[],
+  existingChannels: string[] | null | undefined,
+  hasChannelToken: (channel: MessagingChannel) => boolean,
+  { includeAllExisting = false }: { includeAllExisting?: boolean } = {},
+): string[] {
+  const seeded = new Set(channels.filter(hasChannelToken).map((channel) => channel.name));
+  if (!Array.isArray(existingChannels)) return Array.from(seeded);
+
+  const channelByName = new Map(channels.map((channel) => [channel.name, channel]));
+  for (const name of existingChannels) {
+    const channel = channelByName.get(name);
+    if (!channel) continue;
+    if (includeAllExisting || channelUsesInSandboxQrPairing(channel)) {
+      seeded.add(name);
+    }
+  }
+  return Array.from(seeded);
+}
+
 export function filterEnabledChannelsByAgent<T extends string[] | null | undefined>(
   enabledChannels: T,
   agent: AgentDefinition | null,

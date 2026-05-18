@@ -7,6 +7,7 @@ import type { AgentDefinition } from "../agent/defs";
 import {
   filterEnabledChannelsByAgent,
   getAvailableMessagingChannelsForAgent,
+  resolveMessagingChannelSeed,
   resolveQrSelectedChannels,
 } from "./messaging-state";
 
@@ -55,39 +56,73 @@ describe("getAvailableMessagingChannelsForAgent", () => {
   });
 });
 
+const messagingChannels = [
+  { name: "telegram", envKey: "TELEGRAM_BOT_TOKEN", description: "", help: "", label: "" },
+  {
+    name: "wechat",
+    envKey: "WECHAT_BOT_TOKEN",
+    description: "",
+    help: "",
+    label: "",
+    loginMethod: "host-qr" as const,
+  },
+  {
+    name: "whatsapp",
+    description: "",
+    help: "",
+    label: "",
+    loginMethod: "in-sandbox-qr" as const,
+  },
+];
+
+describe("resolveMessagingChannelSeed", () => {
+  it("always seeds channels with host-side tokens", () => {
+    expect(
+      resolveMessagingChannelSeed(
+        messagingChannels,
+        null,
+        (channel) => channel.name === "telegram",
+      ),
+    ).toEqual(["telegram"]);
+  });
+
+  it("carries forward only in-sandbox QR channels by default", () => {
+    expect(
+      resolveMessagingChannelSeed(
+        messagingChannels,
+        ["telegram", "wechat", "whatsapp"],
+        () => false,
+      ),
+    ).toEqual(["whatsapp"]);
+  });
+
+  it("can carry forward all existing channels for interactive preselection", () => {
+    expect(
+      resolveMessagingChannelSeed(
+        messagingChannels,
+        ["telegram", "wechat", "whatsapp"],
+        () => false,
+        { includeAllExisting: true },
+      ),
+    ).toEqual(["telegram", "wechat", "whatsapp"]);
+  });
+});
+
 describe("resolveQrSelectedChannels", () => {
-  const channels = [
-    { name: "telegram", envKey: "TELEGRAM_BOT_TOKEN", description: "", help: "", label: "" },
-    {
-      name: "wechat",
-      envKey: "WECHAT_BOT_TOKEN",
-      description: "",
-      help: "",
-      label: "",
-      loginMethod: "host-qr" as const,
-    },
-    {
-      name: "whatsapp",
-      description: "",
-      help: "",
-      label: "",
-      loginMethod: "in-sandbox-qr" as const,
-    },
-  ];
 
   it("returns only in-sandbox QR-paired channels from the enabled list", () => {
     expect(
-      resolveQrSelectedChannels(channels, ["telegram", "wechat", "whatsapp"], new Set()),
+      resolveQrSelectedChannels(messagingChannels, ["telegram", "wechat", "whatsapp"], new Set()),
     ).toEqual(["whatsapp"]);
   });
 
   it("drops in-sandbox QR channels that are also in the disabled set", () => {
     expect(
-      resolveQrSelectedChannels(channels, ["whatsapp"], new Set(["whatsapp"])),
+      resolveQrSelectedChannels(messagingChannels, ["whatsapp"], new Set(["whatsapp"])),
     ).toEqual([]);
   });
 
   it("returns an empty list when no channels are enabled", () => {
-    expect(resolveQrSelectedChannels(channels, null, new Set())).toEqual([]);
+    expect(resolveQrSelectedChannels(messagingChannels, null, new Set())).toEqual([]);
   });
 });
