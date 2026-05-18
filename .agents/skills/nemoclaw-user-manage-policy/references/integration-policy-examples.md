@@ -50,8 +50,6 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Python Package Index | `pypi` |
 | Slack messaging | `slack` |
 | Telegram Bot API | `telegram` |
-| WeChat messaging | `wechat` |
-| WhatsApp Web messaging | `whatsapp` |
 
 Preview the endpoints before applying:
 
@@ -111,7 +109,7 @@ If delivery fails, open the TUI and send a test message to the bot:
 $ openshell term
 ```
 
-The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, `slack`, `wechat`, or `whatsapp`).
+The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, or `slack`).
 
 ## Slack or Discord Messaging
 

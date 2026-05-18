@@ -713,15 +713,12 @@ Run the equivalent host-side command instead:
 
 ```console
 $ nemoclaw <sandbox> channels list
-$ nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>
-$ nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
+$ nemoclaw <sandbox> channels add <telegram|discord|slack>
+$ nemoclaw <sandbox> channels remove <telegram|discord|slack>
 ```
 
 `channels add` registers credentials with the OpenShell gateway and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
-
-WhatsApp pairs entirely inside the sandbox, so `openclaw channels login --channel whatsapp` is allowed inside the sandbox and is the supported way to complete pairing after the channel has been added on the host.
-WeChat captures its token via a host-side QR during the host-side `nemoclaw <sandbox> channels add wechat` flow, so it does not need an in-sandbox `channels login` step.
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
@@ -1173,7 +1170,7 @@ Skills are blocked for one of three reasons.
 Skills that require macOS-only binaries cannot be enabled on Brev.
 Skills that require additional CLI binaries require a custom sandbox image rebuild.
 
-For credentials, use the supported host-side setup flow. Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack|wechat|whatsapp>` for messaging channels.
+For credentials, use the supported host-side setup flow. Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack>` for messaging channels.
 To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
 
 ```console
