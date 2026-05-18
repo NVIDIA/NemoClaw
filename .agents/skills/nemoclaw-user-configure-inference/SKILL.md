@@ -286,6 +286,35 @@ $ NEMOCLAW_EXPERIMENTAL=1 \
 NemoClaw records the model returned by vLLM's `/v1/models` endpoint.
 Start vLLM with the model you want before onboarding if you manage the server yourself.
 
+### Override the Managed-vLLM Model
+
+Managed vLLM serves the profile default unless you select a different registry entry.
+Export `NEMOCLAW_VLLM_MODEL=<slug>` before invoking the installer to choose a different model from the registry.
+NemoClaw uses the matching `vllm serve` flags, including the reasoning parser, tool-call parser, and `--max-model-len`.
+Recognised slugs:
+
+| Slug | Hugging Face model | Notes |
+|---|---|---|
+| `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Default on DGX Spark and DGX Station profiles |
+| `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | Default on the generic Linux + NVIDIA GPU profile |
+| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated. Requires Hugging Face license acceptance |
+
+The slug is case-insensitive; the full Hugging Face id is also accepted.
+An unrecognised value fails fast with a list of valid slugs.
+
+Gated models require a Hugging Face token; export it before onboarding so NemoClaw can forward it into the managed vLLM container:
+
+```console
+$ export HF_TOKEN=<your-hf-token>
+$ NEMOCLAW_EXPERIMENTAL=1 \
+  NEMOCLAW_PROVIDER=install-vllm \
+  NEMOCLAW_VLLM_MODEL=deepseek-r1-distill-70b \
+  nemoclaw onboard --non-interactive
+```
+
+`HUGGING_FACE_HUB_TOKEN` is accepted as an alternative.
+The token check runs on the host before any docker pull, so a missing or empty token aborts onboarding before bandwidth is spent on a 401.
+
 ## Step 5: NVIDIA NIM (Experimental)
 
 NemoClaw can pull, start, and manage a NIM container on hosts with a NIM-capable NVIDIA GPU.
