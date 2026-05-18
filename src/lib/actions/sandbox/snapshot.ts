@@ -4,16 +4,15 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-import { CLI_NAME } from "../../cli/branding";
 import { dockerCapture, dockerInspect } from "../../adapters/docker";
-import { stripAnsi } from "../../adapters/openshell/client";
-import { parseLiveSandboxNames } from "../../runtime-recovery";
-import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { captureOpenshell, getOpenshellBinary } from "../../adapters/openshell/runtime";
+import { CLI_NAME } from "../../cli/branding";
 import * as policies from "../../policy";
-import * as registry from "../../state/registry";
+import { ROOT, run, shellQuote, validateName } from "../../runner";
+import { parseLiveSandboxNames } from "../../runtime-recovery";
+import { isGatewayHealthy } from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
+import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 
 const { parseRestoreArgs } = sandboxState;
@@ -202,18 +201,32 @@ async function autoCreateSandboxFromSource(
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
 }
 
-// Returns true only when the gateway Docker container is confirmed running.
-// `openshell sandbox list` reads a local registry and exits 0 even when the
-// gateway is stopped (#2673), so we probe the container directly instead.
+// Docker/VM-driver sandboxes do not expose the legacy cluster container, so
+// verify gateway health through OpenShell metadata instead.
 function probeDockerDriverGatewayRunning(): boolean {
   const status = captureOpenshell(["status"], { ignoreError: true, timeout: 10000 });
-  const clean = stripAnsi(status.output || "");
-  return status.status === 0 && /^\s*Status:\s*Connected\b/im.test(clean);
+  const namedGatewayInfo = captureOpenshell(["gateway", "info", "-g", NEMOCLAW_GATEWAY_NAME], {
+    ignoreError: true,
+    timeout: 10000,
+  });
+  const activeGatewayInfo = captureOpenshell(["gateway", "info"], {
+    ignoreError: true,
+    timeout: 10000,
+  });
+  return isGatewayHealthy(
+    status.output || "",
+    namedGatewayInfo.output || "",
+    activeGatewayInfo.output || "",
+  );
+}
+
+function usesGatewayMetadataProbe(driver: string | null | undefined): boolean {
+  return driver === "docker" || driver === "vm";
 }
 
 function probeGatewayRunning(sandboxName?: string): boolean {
   const entry = sandboxName ? registry.getSandbox(sandboxName) : null;
-  if (entry?.openshellDriver === "docker") {
+  if (usesGatewayMetadataProbe(entry?.openshellDriver)) {
     return probeDockerDriverGatewayRunning();
   }
   const container = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;

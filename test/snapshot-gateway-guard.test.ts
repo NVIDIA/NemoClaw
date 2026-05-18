@@ -51,6 +51,36 @@ function runCli(args: string, env: Record<string, string | undefined> = {}): Cli
  * This setup reproduces the exact failure mode from #2673: openshell returns
  * exit 0 with stale data, so the old isLive.status guard never fires.
  */
+function writeExecutable(filePath: string, lines: string[]): void {
+  fs.writeFileSync(filePath, ["#!/bin/sh", ...lines].join("\n"), { mode: 0o755 });
+}
+
+function writeSandboxRegistry(
+  home: string,
+  sandboxName: string,
+  entry: Record<string, unknown> = {},
+): void {
+  const registryDir = path.join(home, ".nemoclaw");
+  fs.mkdirSync(registryDir, { recursive: true });
+  fs.writeFileSync(
+    path.join(registryDir, "sandboxes.json"),
+    JSON.stringify({
+      sandboxes: {
+        [sandboxName]: {
+          name: sandboxName,
+          model: "test-model",
+          provider: "nvidia-prod",
+          gpuEnabled: false,
+          policies: [],
+          ...entry,
+        },
+      },
+      defaultSandbox: sandboxName,
+    }),
+    { mode: 0o600 },
+  );
+}
+
 function makeStoppedGatewayEnv(prefix: string): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
@@ -110,6 +140,36 @@ function makeStoppedGatewayEnv(prefix: string): Record<string, string> {
   };
 }
 
+function makeHealthyVmGatewayEnv(prefix: string): Record<string, string> {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const localBin = path.join(home, "bin");
+  fs.mkdirSync(localBin, { recursive: true });
+  writeSandboxRegistry(home, "alpha", { openshellDriver: "vm" });
+
+  // VM-driver snapshots should trust gateway metadata, not the legacy cluster
+  // container probe.
+  writeExecutable(path.join(localBin, "openshell"), [
+    'case "$1 $2" in',
+    '  "gateway info") printf "Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"; exit 0 ;;',
+    '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+    '  "sandbox ssh-config") printf "Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n"; exit 0 ;;',
+    "esac",
+    'if [ "$1" = "status" ]; then exit 0; fi',
+    "exit 0",
+  ]);
+
+  writeExecutable(path.join(localBin, "ssh"), ["exit 0"]);
+  writeExecutable(path.join(localBin, "docker"), [
+    'if [ "$1" = "inspect" ]; then echo "false"; exit 0; fi',
+    "exit 0",
+  ]);
+
+  return {
+    HOME: home,
+    PATH: `${localBin}:${process.env.PATH ?? ""}`,
+  };
+}
+
 describe("snapshot gateway guard (#2673)", () => {
   it("snapshot restore rejects when gateway container is stopped", () => {
     const env = makeStoppedGatewayEnv("nemoclaw-snap-gw-restore-");
@@ -123,5 +183,15 @@ describe("snapshot gateway guard (#2673)", () => {
     const r = runCli("alpha snapshot create", env);
     expect(r.code).toBe(1);
     expect(r.out).toContain("Failed to query live sandbox state");
+  });
+});
+
+describe("snapshot Docker-driver gateway guard", () => {
+  it("snapshot create accepts healthy macOS VM-driver gateways without legacy cluster container", () => {
+    const env = makeHealthyVmGatewayEnv("nemoclaw-snap-vm-gw-create-");
+    const r = runCli("alpha snapshot create --name baseline", env);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Snapshot v1 name=baseline created");
+    expect(r.out).not.toContain("Failed to query live sandbox state");
   });
 });
