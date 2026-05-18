@@ -691,10 +691,82 @@ function Write-DockerDesktopNotice {
     Write-Status -Level WARN 'Docker Desktop was not detected. The standard installer/onboard flow will need Docker available from WSL.'
 }
 
+function Escape-BashArgument {
+    param([Parameter(Mandatory)] [AllowEmptyString()] [string]$Value)
+
+    $singleQuote = "'"
+    $escapedSingleQuote = "'\''"
+    return $singleQuote + $Value.Replace($singleQuote, $escapedSingleQuote) + $singleQuote
+}
+
+function Split-InstallerArgumentString {
+    param([Parameter(Mandatory)] [string]$Value)
+
+    $tokens = @()
+    $current = [System.Text.StringBuilder]::new()
+    $quote = [char]0
+
+    for ($i = 0; $i -lt $Value.Length; $i++) {
+        $char = $Value[$i]
+        if ($quote -ne [char]0) {
+            if ($char -eq $quote) {
+                $quote = [char]0
+            } else {
+                [void]$current.Append($char)
+            }
+            continue
+        }
+
+        if ($char -eq "'" -or $char -eq '"') {
+            $quote = $char
+            continue
+        }
+
+        if ([char]::IsWhiteSpace($char)) {
+            if ($current.Length -gt 0) {
+                $tokens += $current.ToString()
+                [void]$current.Clear()
+            }
+            continue
+        }
+
+        [void]$current.Append($char)
+    }
+
+    if ($quote -ne [char]0) {
+        throw 'InstallerArgs contains an unterminated quote.'
+    }
+    if ($current.Length -gt 0) {
+        $tokens += $current.ToString()
+    }
+
+    return $tokens
+}
+
+function Assert-InstallerUrl {
+    param([Parameter(Mandatory)] [string]$Url)
+
+    if (-not [System.Uri]::IsWellFormedUriString($Url, [System.UriKind]::Absolute)) {
+        throw "InstallerUrl is not a valid absolute URL: $Url"
+    }
+
+    $uri = [System.Uri]::new($Url)
+    if ($uri.Scheme -notin @('http', 'https')) {
+        throw "InstallerUrl must use http or https: $Url"
+    }
+}
+
 function Get-NemoClawInstallerCommand {
-    $installerCommand = "curl -fsSL $InstallerUrl | bash"
+    Assert-InstallerUrl -Url $InstallerUrl
+
+    $escapedUrl = Escape-BashArgument -Value $InstallerUrl
+    $installerCommand = "curl -fsSL $escapedUrl | bash"
     if (-not [string]::IsNullOrWhiteSpace($InstallerArgs)) {
-        $installerCommand += " -s -- $InstallerArgs"
+        $escapedArgs = Split-InstallerArgumentString -Value $InstallerArgs |
+            ForEach-Object { Escape-BashArgument -Value $_ }
+        if ($escapedArgs.Count -gt 0) {
+            $installerCommand += " -s -- $($escapedArgs -join ' ')"
+        }
     }
     return $installerCommand
 }
