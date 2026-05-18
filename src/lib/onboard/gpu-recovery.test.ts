@@ -21,19 +21,23 @@ describe("gpuPassthroughRecoveryLines", () => {
     }
   });
 
-  it("suggests `nemoclaw uninstall` when no sandboxes are registered (null input)", () => {
+  it("suggests targeted gateway cleanup when no sandboxes are registered (null input)", () => {
     const lines = gpuPassthroughRecoveryLines(null);
     const joined = lines.join("\n");
     expect(joined).toContain("Existing gateway was started without GPU passthrough");
-    expect(joined).toContain("nemoclaw uninstall");
+    expect(joined).toContain("attempted safe gateway replacement automatically");
+    expect(joined).toContain("openshell gateway remove nemoclaw");
+    expect(joined).toContain("openshell gateway destroy -g nemoclaw");
     expect(joined).toContain("nemoclaw onboard --gpu");
+    expect(joined).not.toContain("nemoclaw uninstall");
     // Must NOT suggest the destroy form — there is nothing to destroy.
     expect(joined).not.toMatch(/nemoclaw [a-z-]+ destroy/);
   });
 
-  it("suggests `nemoclaw uninstall` when no sandboxes are registered (empty array)", () => {
+  it("suggests targeted gateway cleanup when no sandboxes are registered (empty array)", () => {
     const lines = gpuPassthroughRecoveryLines([]);
-    expect(lines.join("\n")).toContain("nemoclaw uninstall");
+    expect(lines.join("\n")).toContain("openshell gateway remove nemoclaw");
+    expect(lines.join("\n")).not.toContain("nemoclaw uninstall");
     expect(lines.join("\n")).not.toMatch(/nemoclaw [a-z-]+ destroy/);
   });
 
@@ -78,7 +82,8 @@ describe("reportGpuPassthroughRecovery", () => {
     const emit = vi.fn();
     reportGpuPassthroughRecovery(emit, () => []);
     const joined = emit.mock.calls.map((c) => c[0]).join("\n");
-    expect(joined).toContain("nemoclaw uninstall");
+    expect(joined).toContain("openshell gateway remove nemoclaw");
+    expect(joined).not.toContain("nemoclaw uninstall");
     expect(joined).not.toMatch(/<name>/);
   });
 
