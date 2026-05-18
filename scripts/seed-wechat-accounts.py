@@ -19,11 +19,8 @@
 # is registered. Without channels.openclaw-weixin.accounts.<id>.enabled=true
 # in openclaw.json, the plugin's auth/accounts.ts considers the account
 # disabled and the bridge won't start, even if the per-account state files
-# above exist. We mutate openclaw.json HERE (post-install) rather than in
-# generate-openclaw-config.py because writing channels.openclaw-weixin
-# upfront races with `openclaw plugins install`, which fails with "unknown
-# channel id: openclaw-weixin" if the channel block exists before the plugin
-# has registered it.
+# above exist. generate-openclaw-config.py invokes this only after
+# plugins.installs.openclaw-weixin has been preserved from the base image.
 #
 # State dir resolution mirrors the upstream's resolveStateDir():
 #   $OPENCLAW_STATE_DIR || $CLAWDBOT_STATE_DIR || ~/.openclaw
