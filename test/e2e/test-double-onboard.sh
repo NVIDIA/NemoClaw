@@ -67,8 +67,25 @@ dump_diagnostics() {
   openshell status 2>&1 | sed 's/^/    /' || true
   info "openshell sandbox list:"
   openshell sandbox list 2>&1 | sed 's/^/    /' || true
+  info "openshell forward list:"
+  openshell forward list 2>&1 | sed 's/^/    /' || true
+  for sandbox_name in "${SANDBOX_A:-}" "${SANDBOX_B:-}"; do
+    [ -n "$sandbox_name" ] || continue
+    info "${sandbox_name} /etc/resolv.conf:"
+    openshell sandbox exec --name "$sandbox_name" -- cat /etc/resolv.conf 2>&1 | sed 's/^/    /' || true
+    info "${sandbox_name} inference.local /v1/models probe:"
+    openshell sandbox exec --name "$sandbox_name" -- sh -c 'curl -sk -o /tmp/nemoclaw-e2e-models.out -w "%{http_code}" --connect-timeout 3 --max-time 8 https://inference.local/v1/models; printf "\\n"; head -c 300 /tmp/nemoclaw-e2e-models.out 2>/dev/null; printf "\\n"' 2>&1 | sed 's/^/    /' || true
+  done
   info "docker ps:"
   docker ps 2>&1 | sed 's/^/    /' || true
+  info "Docker DNS proxy/gateway logs:"
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -Ei 'dns|proxy|gateway|nemoclaw' | while read -r container_name; do
+    [ -n "$container_name" ] || continue
+    info "docker logs ${container_name}:"
+    docker logs --tail 80 "$container_name" 2>&1 | sed 's/^/    /' || true
+  done
+  info "OpenShell inference route:"
+  openshell inference get 2>&1 | sed 's/^/    /' || true
   info "=== End diagnostics ==="
 }
 
@@ -636,9 +653,19 @@ if [ -n "$port_a" ] && [ -n "$port_b" ] && [ "$port_a" != "$port_b" ]; then
   openshell forward stop "$port_b" 2>/dev/null || true
 
   PROBE_LOG="$(mktemp)"
-  run_nemoclaw "$SANDBOX_B" connect --probe-only >"$PROBE_LOG" 2>&1
-  probe_exit=$?
-  probe_output="$(cat "$PROBE_LOG")"
+  PROBE_ATTEMPTS="${NEMOCLAW_E2E_PROBE_ATTEMPTS:-3}"
+  PROBE_DELAY_SECONDS="${NEMOCLAW_E2E_PROBE_DELAY_SECONDS:-3}"
+  PROBE_TIMEOUT_SECONDS="${NEMOCLAW_E2E_PROBE_TIMEOUT_SECONDS:-30}"
+  probe_exit=1
+  probe_output=""
+  for attempt in $(seq 1 "$PROBE_ATTEMPTS"); do
+    info "Probe-only connect attempt ${attempt}/${PROBE_ATTEMPTS} for '$SANDBOX_B'..."
+    run_with_timeout "$PROBE_TIMEOUT_SECONDS" "${NEMOCLAW_CMD[@]}" "$SANDBOX_B" connect --probe-only >"$PROBE_LOG" 2>&1
+    probe_exit=$?
+    probe_output="$(cat "$PROBE_LOG")"
+    [ "$probe_exit" -eq 0 ] && break
+    [ "$attempt" -lt "$PROBE_ATTEMPTS" ] && sleep "$PROBE_DELAY_SECONDS"
+  done
   rm -f "$PROBE_LOG"
 
   if [ "$probe_exit" -eq 0 ]; then
@@ -647,6 +674,7 @@ if [ -n "$port_a" ] && [ -n "$port_b" ] && [ "$port_a" != "$port_b" ]; then
     fail "Probe-only connect exited $probe_exit after stopping '$SANDBOX_B' dashboard forward"
     info "Observed probe output:"
     printf '%s\n' "$probe_output" | sed 's/^/    /'
+    dump_diagnostics "probe-only dashboard forward recovery"
   fi
 
   forward_output="$(openshell forward list 2>&1 || true)"

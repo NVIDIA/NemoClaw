@@ -5,7 +5,6 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { spawnSync as realSpawnSync } from "node:child_process";
 
 // ---------------------------------------------------------------------------
 // We test stopSandboxChannels / stopAll by temporarily replacing the

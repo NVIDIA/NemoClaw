@@ -7,6 +7,7 @@
  * step-level progress tracking and file-based locking.
  */
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -203,10 +204,6 @@ export function sessionPath(): string {
   return SESSION_FILE;
 }
 
-export function lockPath(): string {
-  return LOCK_FILE;
-}
-
 function defaultSteps(): Record<string, StepState> {
   return {
     preflight: { status: "pending", startedAt: null, completedAt: null, error: null },
@@ -329,17 +326,13 @@ export function sanitizeFailure(
   return step || message ? { step, message, recordedAt } : null;
 }
 
-export function validateStep(step: SessionJsonValue | undefined): boolean {
-  return parseStepState(step) !== null;
-}
-
 // ── Session CRUD ─────────────────────────────────────────────────
 
 export function createSession(overrides: Partial<Session> = {}): Session {
   const now = new Date().toISOString();
   return {
     version: SESSION_VERSION,
-    sessionId: overrides.sessionId ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    sessionId: overrides.sessionId ?? `${Date.now()}-${randomUUID()}`,
     resumable: true,
     status: "in_progress",
     mode: overrides.mode ?? "interactive",
@@ -448,7 +441,7 @@ export function saveSession(session: Session): Session {
   ensureSessionDir();
   const tmpFile = path.join(
     SESSION_DIR,
-    `.onboard-session.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`,
+    `.onboard-session.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
   );
   fs.writeFileSync(tmpFile, JSON.stringify(normalized, null, 2), { mode: 0o600 });
   fs.renameSync(tmpFile, SESSION_FILE);

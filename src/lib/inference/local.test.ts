@@ -329,9 +329,6 @@ describe("local inference helpers", () => {
     const result = probeLocalProviderHealth("ollama-local", {
       loadOllamaProxyTokenImpl: () => "test-token",
       runCurlProbeImpl: (argv: string[]) => {
-        const isProxy = argv.some(
-          (a) => typeof a === "string" && a.includes("11435"),
-        );
         responses.push({ args: argv, status: 200 });
         return {
           ok: true,
@@ -613,7 +610,13 @@ describe("local inference helpers", () => {
   });
 
   it("fails ollama model validation when the probe times out or returns nothing", () => {
-    const result = validateOllamaModel("nemotron-3-nano:30b", () => "");
+    // The probe inside validateOllamaModel uses runCaptureEx (4th arg), not
+    // runCapture (2nd arg). Mocking only runCapture leaves the real probe
+    // running against the host, which makes the test environment-dependent
+    // (passes on CI where no ollama is installed, fails locally when one is).
+    // Mock both so the empty-output branch is exercised deterministically.
+    const captureEx = () => ({ stdout: "", exitCode: 0, timedOut: false });
+    const result = validateOllamaModel("nemotron-3-nano:30b", () => "", undefined, captureEx);
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(/did not answer the local probe in time/);
   });
@@ -727,7 +730,7 @@ describe("local inference helpers", () => {
     const freeOutput = "               total        used        free\nMem:          131072       120000       1000";
     const oomPayload = JSON.stringify({ error: "model requires more system memory (21.2 GiB) than is available (5.6 GiB)" });
     let captureExCallCount = 0;
-    const captureEx = (cmd: string[]) => {
+    const captureEx = (_cmd: string[]) => {
       captureExCallCount++;
       // First call: initial probe times out; second call: 300s retry returns OOM error.
       if (captureExCallCount === 1) return { stdout: "", exitCode: 28, timedOut: true };

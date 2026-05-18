@@ -15,7 +15,11 @@ ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
-    NPM_CONFIG_UPDATE_NOTIFIER=false
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
+    NPM_CONFIG_FETCH_TIMEOUT=300000
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
 COPY nemoclaw/src/ /opt/nemoclaw/src/
 WORKDIR /opt/nemoclaw
@@ -46,7 +50,7 @@ RUN set -eu; \
             apt-get install -y --no-install-recommends procps=2:4.0.4-9; \
         fi; \
         if [ "$needs_chattr" = "1" ]; then \
-            apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b10; \
+            apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b11; \
         fi; \
     fi; \
     rm -rf /var/lib/apt/lists/*; \
@@ -59,9 +63,17 @@ COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
 COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
+RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 
 # Install runtime dependencies only (no devDependencies, no build step)
 WORKDIR /opt/nemoclaw
+ENV NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
+    NPM_CONFIG_FETCH_TIMEOUT=300000
 RUN npm ci --omit=dev
 
 # Upgrade OpenClaw if the base image is stale.

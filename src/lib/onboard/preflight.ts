@@ -9,6 +9,7 @@
  * tests can run without real I/O.
  */
 
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import net from "node:net";
 import os from "node:os";
@@ -1166,6 +1167,8 @@ export interface ProbeContainerDnsOpts {
   outputOverride?: string | null;
   /** Override runCapture. */
   runCaptureImpl?: NullableRunCaptureFn;
+  /** Override the probe name (test seam; pinned name for stable assertions). */
+  probeName?: string;
 }
 
 /**
@@ -1175,6 +1178,22 @@ export interface ProbeContainerDnsOpts {
  * letting a wedged docker daemon stall preflight forever.
  */
 const PROBE_TIMEOUT_MS = 20_000;
+
+/**
+ * Random subdomain of the RFC 6761 reserved .invalid TLD. Every compliant
+ * resolver returns NXDOMAIN immediately for any .invalid name, so the
+ * probe round-trips through the upstream DNS server without depending on
+ * any specific A record being reachable from the container. The random
+ * suffix prevents the answer from being served from Docker's embedded
+ * DNS cache (or any upstream cache), which is what masked host-side
+ * egress blocks for the previous `registry.npmjs.org` query in #3630.
+ *
+ * Exported so tests can pin the probe-name pattern; production callers
+ * never need to override this.
+ */
+export function dnsProbeName(): string {
+  return `nemoclaw-dns-probe-${randomBytes(8).toString("hex")}.invalid`;
+}
 
 /**
  * Discover the IPv4 gateway address of docker's default bridge network.
@@ -1245,10 +1264,11 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
   // signatures the parser below depends on (`Error response from daemon`,
   // `no servers could be reached`) to stderr. Every token in the script
   // is a fixed constant, so no shell injection surface.
+  const probeName = opts.probeName ?? dnsProbeName();
   const command = opts.command ?? [
     "sh",
     "-c",
-    "docker run --rm --pull=missing busybox:latest nslookup registry.npmjs.org 2>&1",
+    `docker run --rm --pull=missing busybox:latest nslookup ${probeName} 2>&1`,
   ];
 
   let output: string | null | undefined = opts.outputOverride;
@@ -1285,8 +1305,42 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
     };
   }
 
-  // Success: busybox nslookup prints "Name:" and "Address:" lines.
-  if (/\bName:\s*registry\.npmjs\.org\b/.test(output) && /\bAddress:\s*\d/.test(output)) {
+  // Success: the resolver answered the probe. Two shapes count as success:
+  //   1. busybox nslookup prints "Name:" + "Address:" lines for a normal
+  //      resolution (kept for back-compat with custom probe names that do
+  //      resolve to a real A record).
+  //   2. busybox nslookup prints "Server: ..." + "** server can't find
+  //      ...: NXDOMAIN" for the .invalid probe we send by default. NXDOMAIN
+  //      proves the resolver was reached even though the name does not
+  //      resolve, which is the only invariant we need to prove DNS works.
+  //      Before #3630 we only accepted the Address shape and used
+  //      `registry.npmjs.org`, so a Docker-embedded-DNS cache hit could
+  //      mask a host-side egress block. The .invalid probe is never cached
+  //      anywhere, so reaching the resolver is genuine round-trip evidence.
+  // The resolver identification block — every busybox nslookup response
+  // begins with `Server: ... / Address: <ip>:53` — proves only that we
+  // reached *something* claiming to be a resolver, not that we got an
+  // answer. Real success requires either an actual `Name:`+`Address:`
+  // resolution pair OR an NXDOMAIN response body. Keep this line-based so
+  // CodeQL does not treat partial host regexes as URL validation.
+  const outputLines = output.split(/\r?\n/).map((line) => line.trim());
+  const hasResolverHeader = outputLines.some((line) => {
+    const fields = line.split(/\s+/);
+    return fields[0] === "Server:" && Boolean(fields[1]);
+  });
+  const hasResolvedName = outputLines.some((line) => {
+    const fields = line.split(/\s+/);
+    return fields[0] === "Name:" && Boolean(fields[1]);
+  });
+  const hasAddress = outputLines.some((line) => {
+    const fields = line.split(/\s+/);
+    return fields[0] === "Address:" && /^\d/.test(fields[1] ?? "");
+  });
+  const hasNxdomainAnswer = outputLines.some((line) => {
+    const lower = line.toLowerCase();
+    return lower.includes("server can't find") && lower.includes("nxdomain");
+  });
+  if (hasResolverHeader && ((hasResolvedName && hasAddress) || hasNxdomainAnswer)) {
     return { ok: true };
   }
 

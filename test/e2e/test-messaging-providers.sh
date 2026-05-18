@@ -188,6 +188,8 @@ sandbox_exec() {
 
 # shellcheck source=test/e2e/lib/discord-gateway-proof.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/discord-gateway-proof.sh"
+# shellcheck source=test/e2e/lib/discord-rest-policy-proof.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/discord-rest-policy-proof.sh"
 # shellcheck source=test/e2e/lib/slack-api-proof.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/slack-api-proof.sh"
 
@@ -955,23 +957,156 @@ else
   fail "M12: Node.js could not reach api.telegram.org (${tg_reach:0:200})"
 fi
 
-# M13: Node.js can reach discord.com through the proxy
-dc_reach=$(sandbox_exec 'node -e "
-const https = require(\"https\");
-const req = https.get(\"https://discord.com/api/v10/gateway\", (res) => {
-  console.log(\"HTTP_\" + res.statusCode);
-  res.resume();
-});
-req.on(\"error\", (e) => console.log(\"ERROR: \" + e.message));
-req.setTimeout(15000, () => { req.destroy(); console.log(\"TIMEOUT\"); });
-"' 2>/dev/null || true)
-
-if echo "$dc_reach" | grep -q "HTTP_"; then
-  pass "M13: Node.js reached discord.com (${dc_reach})"
-elif echo "$dc_reach" | grep -q "TIMEOUT"; then
-  skip "M13: discord.com timed out (network may be slow)"
+# M13: Node.js can reach Discord API/CDN through the proxy
+live_discord_policy=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)
+if echo "$live_discord_policy" | grep -q "discord.com" \
+  && echo "$live_discord_policy" | grep -q "cdn.discordapp.com" \
+  && { echo "$live_discord_policy" | grep -q "/usr/local/bin/node" || echo "$live_discord_policy" | grep -q "/usr/bin/node"; }; then
+  pass "M13-policy: Live policy contains Discord endpoints and Node binaries"
 else
-  fail "M13: Node.js could not reach discord.com (${dc_reach:0:200})"
+  fail "M13-policy: Live policy is missing expected Discord preset endpoint/binary entries"
+fi
+
+live_proxy_env=$(sandbox_exec 'printf "HTTPS_PROXY=%s\nhttps_proxy=%s\nNO_PROXY=%s\nno_proxy=%s\n" "$HTTPS_PROXY" "$https_proxy" "$NO_PROXY" "$no_proxy"' 2>/dev/null || true)
+info "Sandbox proxy env: ${live_proxy_env//$'\n'/ }"
+if echo "$live_proxy_env" | grep -qE "https?_proxy=.*10\.200\.0\.1:3128|HTTPS_PROXY=.*10\.200\.0\.1:3128"; then
+  pass "M13-proxy: Sandbox uses the OpenShell gateway proxy"
+else
+  fail "M13-proxy: Sandbox proxy env does not point at OpenShell gateway: ${live_proxy_env:0:200}"
+fi
+
+# Regression context for #3477: curl is intentionally not in the Discord
+# preset's binary whitelist, but a live curl CONNECT 403 is ambiguous because
+# an upstream network policy can produce the same symptom. Treat the live probe
+# as diagnostics only; M13-rest-d/e below provide the hermetic whitelist proof.
+live_dc_curl=$(sandbox_exec 'set +e
+rm -f /tmp/nemoclaw-discord-curl.err /tmp/nemoclaw-discord-curl.body
+curl -v --max-time 10 https://discord.com/ \
+  -o /tmp/nemoclaw-discord-curl.body \
+  2>/tmp/nemoclaw-discord-curl.err
+rc=$?
+printf "RC=%s\n" "$rc"
+grep -E "Uses proxy|CONNECT discord.com:443|HTTP/1\\.[01] 403|CONNECT tunnel failed|Connection established|policy_denied|Forbidden" /tmp/nemoclaw-discord-curl.err /tmp/nemoclaw-discord-curl.body 2>/dev/null || true
+' 2>/dev/null || true)
+info "Discord curl probe: ${live_dc_curl:0:500}"
+if echo "$live_dc_curl" | grep -qiE "CONNECT tunnel failed.*403|CONNECT discord\.com:443|HTTP/1\.[01] 403|policy_denied|Forbidden" \
+  && ! echo "$live_dc_curl" | grep -qiE "Connection established|200 Connection"; then
+  info "M13-curl: ambiguous live CONNECT 403 may be upstream or local; hermetic M13-rest-d/e prove whitelist behavior; output: ${live_dc_curl:0:300}"
+elif echo "$live_dc_curl" | grep -qiE "Connection established|200 Connection"; then
+  fail "M13-curl: curl unexpectedly established a tunnel to Discord; binary whitelist may be too broad"
+else
+  info "M13-curl: live curl probe inconclusive; hermetic M13-rest-d/e prove whitelist behavior; output: ${live_dc_curl:0:200}"
+fi
+
+dc_reach=$(sandbox_exec 'node - <<'"'"'NODE'"'"'
+const https = require("https");
+const targets = [
+  ["api", "https://discord.com/api/v10/gateway"],
+  ["cdn", "https://cdn.discordapp.com/"],
+];
+let pending = targets.length;
+let failed = false;
+
+function done() {
+  pending -= 1;
+  if (pending === 0) process.exit(failed ? 1 : 0);
+}
+
+for (const [name, url] of targets) {
+  const req = https.get(url, (res) => {
+    console.log(`${name}:HTTP_${res.statusCode}`);
+    res.resume();
+    done();
+  });
+  req.on("error", (error) => {
+    failed = true;
+    console.log(`${name}:ERROR_${error.message}`);
+    done();
+  });
+  req.setTimeout(15000, () => {
+    failed = true;
+    req.destroy();
+    console.log(`${name}:TIMEOUT`);
+    done();
+  });
+}
+NODE
+' 2>/dev/null || true)
+
+info "Discord Node probe: ${dc_reach:0:500}"
+if echo "$dc_reach" | grep -q "api:HTTP_" \
+  && echo "$dc_reach" | grep -q "cdn:HTTP_"; then
+  pass "M13: Node.js reached Discord API and CDN through the same proxy (${dc_reach//$'\n'/ })"
+elif echo "$dc_reach" | grep -qiE "CONNECT.*403|policy_denied|forbidden"; then
+  fail "M13: Node.js was denied by the proxy despite the Discord preset being applied: ${dc_reach:0:300}"
+elif echo "$dc_reach" | grep -qiE "TIMEOUT|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ECONNRESET|socket hang up|network"; then
+  skip "M13: Live Discord unreachable from this network (${dc_reach:0:200})"
+else
+  fail "M13: Node.js could not reach Discord API/CDN (${dc_reach:0:200})"
+fi
+
+# M13-rest-a-M13-rest-e: Hermetic Discord-shaped HTTPS REST binary whitelist proof.
+fake_rest_ready=0
+if start_fake_discord_rest_api; then
+  fake_rest_ready=1
+  pass "M13-rest-a: Hermetic fake Discord REST API started on host port ${FAKE_DISCORD_REST_PORT}"
+else
+  skip "M13-rest-a: Could not start hermetic fake Discord REST API"
+fi
+
+fake_rest_policy_ready=0
+if [ "$fake_rest_ready" = "1" ]; then
+  if apply_fake_discord_rest_policy "$SANDBOX_NAME" "$FAKE_DISCORD_REST_PORT" >/tmp/nemoclaw-fake-discord-rest-policy.log 2>&1; then
+    fake_rest_policy_ready=1
+    pass "M13-rest-b: Applied Node-only HTTPS policy for fake Discord REST API"
+  else
+    fail "M13-rest-b: Failed to apply fake Discord REST policy: $(tail -20 /tmp/nemoclaw-fake-discord-rest-policy.log 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
+  fi
+else
+  skip "M13-rest-b: Fake Discord REST API unavailable; skipping policy apply"
+fi
+
+fake_rest_node=""
+if [ "$fake_rest_policy_ready" = "1" ]; then
+  fake_rest_node=$(run_fake_discord_rest_node_request "$FAKE_DISCORD_REST_PORT" "/api/v10/gateway" || true)
+fi
+info "Fake Discord REST Node probe: ${fake_rest_node:0:300}"
+if [ "$fake_rest_policy_ready" != "1" ]; then
+  skip "M13-rest-c: Fake Discord REST policy unavailable; skipping Node proof"
+elif echo "$fake_rest_node" | grep -q "^200 "; then
+  pass "M13-rest-c: Node reached the fake Discord REST API through OpenShell"
+else
+  fail "M13-rest-c: Node failed to reach fake Discord REST API: ${fake_rest_node:0:300}"
+fi
+
+fake_rest_curl=""
+if [ "$fake_rest_policy_ready" = "1" ]; then
+  fake_rest_curl=$(run_fake_discord_rest_curl_request "$FAKE_DISCORD_REST_PORT" || true)
+fi
+info "Fake Discord REST curl probe: ${fake_rest_curl:0:500}"
+if [ "$fake_rest_policy_ready" != "1" ]; then
+  skip "M13-rest-d: Fake Discord REST policy unavailable; skipping curl denial proof"
+elif echo "$fake_rest_curl" | grep -qiE "CONNECT tunnel failed.*403|HTTP/1\.[01] 403|policy_denied|Forbidden" \
+  && ! echo "$fake_rest_curl" | grep -qiE "Connection established|200 Connection"; then
+  pass "M13-rest-d: curl was denied before reaching the fake Discord REST API"
+elif echo "$fake_rest_curl" | grep -qiE "Connection established|200 Connection"; then
+  fail "M13-rest-d: curl unexpectedly established a tunnel to the fake Discord REST API"
+else
+  fail "M13-rest-d: Fake Discord REST curl denial had unexpected shape: ${fake_rest_curl:0:300}"
+fi
+
+fake_rest_capture=""
+if [ "$fake_rest_policy_ready" = "1" ]; then
+  fake_rest_capture=$(fake_discord_rest_capture_counts || true)
+fi
+info "Fake Discord REST capture counts: ${fake_rest_capture}"
+if [ "$fake_rest_policy_ready" != "1" ]; then
+  skip "M13-rest-e: Fake Discord REST policy unavailable; skipping capture proof"
+elif echo "$fake_rest_capture" | grep -q "node=1" \
+  && echo "$fake_rest_capture" | grep -q "curl=0"; then
+  pass "M13-rest-e: Fake server saw Node but no curl request"
+else
+  fail "M13-rest-e: Unexpected fake Discord REST capture counts: ${fake_rest_capture}"
 fi
 
 # M13b-M13f: Hermetic Discord Gateway over OpenShell's native WebSocket L7 path.

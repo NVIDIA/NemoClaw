@@ -43,6 +43,7 @@ import * as nim from "../../inference/nim";
 import * as policies from "../../policy";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
+import { redact } from "../../security/redact";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
@@ -60,7 +61,7 @@ const agentRuntime = require("../../../../bin/lib/agent-runtime");
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
  */
 function _rebuildLog(msg: string) {
-  console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${msg}${R}`);
+  console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${redact(msg)}${R}`);
 }
 
 /**
@@ -122,7 +123,7 @@ function preflightHermesProviderCredentials(
       nonEmptyString(process.env[hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV]) ||
       nonEmptyString(process.env.NEMOCLAW_PROVIDER_KEY);
     log(
-      `Hermes Provider rebuild preflight: OpenShell provider missing; ${hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV} env=${envKey ? "present" : "missing"}`,
+      `Hermes Provider rebuild preflight: OpenShell provider missing; API key env=${envKey ? "present" : "missing"}`,
     );
     if (envKey) {
       try {
@@ -145,7 +146,7 @@ function preflightHermesProviderCredentials(
   console.error("  Hermes Provider credentials must be stored in OpenShell, not host-side files.");
   if (authMethod === "api_key") {
     console.error(
-      `  Export ${hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV} and rerun rebuild, or re-run ${CLI_NAME} onboard to register it.`,
+      `  Export the Hermes Provider API key and rerun rebuild, or re-run ${CLI_NAME} onboard to register it.`,
     );
   } else {
     console.error(`  Re-run ${CLI_NAME} onboard interactively to authorize Hermes Provider and register it with OpenShell.`);

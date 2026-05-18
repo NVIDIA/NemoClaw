@@ -36,19 +36,21 @@ export default class CredentialsResetCommand extends NemoClawCommand {
     const key = args.provider;
 
     if (!key || key.startsWith("-")) {
-      console.error(`  Usage: ${CLI_NAME} credentials reset <PROVIDER> [--yes]`);
-      console.error(`  PROVIDER is an OpenShell provider name. Run '${CLI_NAME} credentials list' first.`);
-      process.exit(1);
+      this.failWithLines([
+        `  Usage: ${CLI_NAME} credentials reset <PROVIDER> [--yes]`,
+        `  PROVIDER is an OpenShell provider name. Run '${CLI_NAME} credentials list' first.`,
+      ]);
+      return;
     }
 
     if (isBridgeProviderName(key)) {
-      console.error(`  '${key}' is a per-sandbox messaging bridge, not a credential.`);
-      console.error(
+      this.failWithLines([
+        `  '${key}' is a per-sandbox messaging bridge, not a credential.`,
         `  Use \`${CLI_NAME} <sandbox> channels remove <telegram|discord|slack>\` to retire`,
-      );
-      console.error("  the integration (it tears down the bridge provider and rebuilds the sandbox),");
-      console.error(`  or \`${CLI_NAME} <sandbox> channels stop <…>\` to pause it without clearing tokens.`);
-      process.exit(1);
+        "  the integration (it tears down the bridge provider and rebuilds the sandbox),",
+        `  or \`${CLI_NAME} <sandbox> channels stop <…>\` to pause it without clearing tokens.`,
+      ]);
+      return;
     }
 
     if (!flags.yes) {
@@ -61,7 +63,7 @@ export default class CredentialsResetCommand extends NemoClawCommand {
       }
     }
 
-    await recoverGatewayOrExit("reach");
+    if (!(await recoverGatewayOrExit("reach", (lines) => this.failWithLines(lines)))) return;
 
     const result = runOpenshellProviderCommand(["provider", "delete", key], {
       ignoreError: true,
@@ -74,16 +76,18 @@ export default class CredentialsResetCommand extends NemoClawCommand {
       return;
     }
 
-    console.error(`  Could not remove provider '${key}'.`);
+    const lines = [`  Could not remove provider '${key}'.`];
     if (/^[A-Z][A-Z0-9_]+$/.test(key)) {
-      console.error("");
-      console.error(`  '${key}' looks like a credential env variable name.`);
-      console.error("  As of this release, 'credentials reset' takes an OpenShell");
-      console.error(`  provider name. Run '${CLI_NAME} credentials list' to see the`);
-      console.error("  registered providers, then retry with one of those names.");
+      lines.push(
+        "",
+        `  '${key}' looks like a credential env variable name.`,
+        "  As of this release, 'credentials reset' takes an OpenShell",
+        `  provider name. Run '${CLI_NAME} credentials list' to see the`,
+        "  registered providers, then retry with one of those names.",
+      );
     }
     const stderr = String(result.stderr || "").trim();
-    if (stderr) console.error(`  ${stderr}`);
-    process.exit(1);
+    if (stderr) lines.push(`  ${stderr}`);
+    this.failWithLines(lines);
   }
 }

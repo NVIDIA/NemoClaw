@@ -75,13 +75,12 @@ export function versionGte(left = "0.0.0", right = "0.0.0"): boolean {
 }
 
 function handleSpawnError(
-  binary: string,
-  args: string[],
+  _binary: string,
+  _args: string[],
   error: Error,
   opts: OpenshellSpawnOptions,
 ): never {
-  const command = [binary, ...args].join(" ");
-  (opts.errorLine ?? console.error)(`  Failed to start ${command}: ${error.message}`);
+  (opts.errorLine ?? console.error)(`  Failed to start OpenShell command: ${error.message}`);
   return (opts.exit ?? ((code) => process.exit(code)))(1);
 }
 
@@ -135,7 +134,7 @@ export function runOpenshellCommand(
   }
   if (result.status !== 0 && !opts.ignoreError) {
     (opts.errorLine ?? console.error)(
-      `  Command failed (exit ${result.status}): openshell ${args.join(" ")}`,
+      `  OpenShell command failed (exit ${result.status})`,
     );
     return (opts.exit ?? ((code) => process.exit(code)))(result.status || 1);
   }

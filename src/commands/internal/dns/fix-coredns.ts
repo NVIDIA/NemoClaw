@@ -22,12 +22,6 @@ export default class InternalDnsFixCoreDnsCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args } = await this.parse(InternalDnsFixCoreDnsCommand);
     const result = runFixCoreDns({ gatewayName: args.gatewayName });
-    if (result.exitCode !== 0) {
-      if (result.message) {
-        this.error(result.message, { exit: result.exitCode });
-      } else {
-        this.exit(result.exitCode);
-      }
-    }
+    this.applyExitResult(result);
   }
 }

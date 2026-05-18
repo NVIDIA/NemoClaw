@@ -68,7 +68,7 @@ export default class GatewayTokenCliCommand extends NemoClawCommand {
     // (e.g. `... | head -c 0`). The token has already been written.
     process.stdout.once("error", (err: NodeJS.ErrnoException) => {
       if (err.code === "EPIPE") {
-        process.exit(0);
+        this.setExitCode(0);
         return;
       }
       throw err;
@@ -83,12 +83,10 @@ export default class GatewayTokenCliCommand extends NemoClawCommand {
         getSandboxAgent: runtime.getSandboxAgent,
       },
     );
-    // NCQ #3180: avoid this.exit(code), which throws @oclif/core ExitError.
-    // The legacy `nemoclaw <name> gateway-token` dispatch did not catch the
-    // throw, leaking a raw JS stack trace to the user. Always assigning
-    // process.exitCode keeps the diagnostic output clean and prevents a
-    // stale non-zero code from a prior run() in the same process from
-    // bleeding through on a successful invocation.
-    process.exitCode = exitCode;
+    // NCQ #3180: avoid throwing ExitError. The legacy
+    // `nemoclaw <name> gateway-token` dispatch historically leaked raw JS
+    // stacks for thrown exits; the shared helper records the status without
+    // throwing and clears stale non-zero codes on success.
+    this.setExitCode(exitCode);
   }
 }

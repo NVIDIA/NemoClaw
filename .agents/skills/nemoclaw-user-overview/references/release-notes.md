@@ -4,6 +4,18 @@
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
+## v0.0.44
+
+NemoClaw v0.0.44 improves onboarding reliability, GPU sandbox networking, local inference verification, messaging recovery, and remote dashboard access:
+
+- `nemoclaw onboard` handles DGX Spark and Jetson hosts more conservatively. Unified-memory GPU detection works for Spark, Jetson defaults to CPU-only sandbox passthrough unless you opt in, and local Ollama validation tolerates slow unified-memory model loads that still fit host memory.
+- Linux Docker-driver GPU sandboxes preserve `host.openshell.internal` during recreation and inject a reachable DNS resolver when the host uses a systemd-resolved loopback nameserver, which keeps local inference and external DNS working after GPU patching.
+- Onboarding and sandbox builds fail less often on first run. Preflight can guide missing NVIDIA Container Toolkit setup, Docker builds force BuildKit for Dockerfile bind mounts, npm installs retry transient registry resets, and compatible-endpoint onboarding runs a final inference smoke check before reporting success.
+- `nemoclaw <name> connect` repairs stale `inference.local` routes before opening the shell, reports local Ollama backend and auth-proxy diagnostics when repair fails, and `--probe-only` keeps dashboard and process recovery from failing just because inference repair needs follow-up.
+- `nemoclaw <name> channels add <channel>` applies the matching built-in network policy preset before rebuild, and rebuilds preserve paused channel state so stopped messaging channels stay disabled after destroy and recreate.
+- Remote hosts can opt into dashboard forwarding on all interfaces with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0`, and gateway drift checks now stop backup, status, rebuild, recover, and upgrade flows before they trust stale OpenShell state.
+- Workspace restore uploads backed-up directories file by file, dashboard forwards retry while stopped ports are still releasing, and the in-sandbox OpenClaw gateway respawns after unexpected exits.
+
 ## v0.0.43
 
 NemoClaw v0.0.43 improves GPU onboarding and uninstall cleanup on Linux Docker-driver hosts:

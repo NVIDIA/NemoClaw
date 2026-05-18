@@ -20,6 +20,6 @@ export default class InternalDevNpmLinkOrShimCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { flags } = await this.parse(InternalDevNpmLinkOrShimCommand);
     const result = runNpmLinkOrShim({ repoRoot: flags["repo-root"] ?? this.config.root });
-    if (result.status !== 0) process.exit(result.status);
+    this.applyExitResult(result);
   }
 }

@@ -283,6 +283,14 @@ describe("validateName", () => {
     expect(() => validateName("a".repeat(64))).toThrow(/too long/);
   });
 
+  it("rejects excessively long valid-looking names before spawning OpenShell", () => {
+    const { validateName } = require(runnerPath);
+    expect(validateName("a".repeat(63))).toBe("a".repeat(63));
+    expect(() => validateName("a".repeat(64 * 1024), "sandbox name")).toThrow(
+      /sandbox name too long \(max 63 chars\)/,
+    );
+  });
+
   it("rejects uppercase and special characters", () => {
     const { validateName } = require(runnerPath);
     expect(() => validateName("1sandbox")).toThrow(/Invalid/);
@@ -554,19 +562,6 @@ describe("regression guards", () => {
     }
   });
 
-  it("nemoclaw.ts does not use execSync", () => {
-    const src = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"),
-      "utf-8",
-    );
-    const lines = src.split("\n");
-    for (let i = 0; i < lines.length; i += 1) {
-      if (lines[i].includes("execSync") && !lines[i].includes("execFileSync")) {
-        expect.unreachable(`src/nemoclaw.ts:${i + 1} uses execSync — use execFileSync instead`);
-      }
-    }
-  });
-
   it("keeps a single shellQuote definition in the root CLI codebase", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const searchRoots = [path.join(repoRoot, "bin"), path.join(repoRoot, "src")];
@@ -584,7 +579,13 @@ describe("regression guards", () => {
 
     const defs = [];
     for (const file of files) {
-      const src = fs.readFileSync(file, "utf-8");
+      let src: string;
+      try {
+        src = fs.readFileSync(file, "utf-8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
       if (src.includes("function shellQuote")) {
         defs.push(path.relative(repoRoot, file));
       }

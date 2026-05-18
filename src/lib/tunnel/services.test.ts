@@ -3,7 +3,7 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import childProcess, { type SpawnSyncReturns } from "node:child_process";
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -12,6 +12,7 @@ import {
   getServiceStatuses,
   readCloudflaredState,
   showStatus,
+  startAll,
   stopAll,
 } from "../../../dist/lib/tunnel/services";
 
@@ -166,6 +167,61 @@ describe("showStatus", () => {
     expect(output).toContain("PID 999999999 is dead or not cloudflared");
     expect(output).toContain("nemoclaw tunnel start");
     logSpy.mockRestore();
+  });
+});
+
+describe("startAll", () => {
+  let tmpDir: string;
+  let pidDir: string;
+  let originalPath: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-start-test-"));
+    pidDir = join(tmpDir, "pids");
+    originalPath = process.env.PATH;
+  });
+
+  afterEach(() => {
+    process.env.PATH = originalPath;
+    const pid = readCloudflaredState(pidDir);
+    if (pid.kind === "running") {
+      try {
+        process.kill(pid.pid, "SIGTERM");
+      } catch {
+        // Process may have already exited.
+      }
+    }
+    rmSync(tmpDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it("writes a private PID file and surfaces only real trycloudflare hosts", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      [
+        "#!/usr/bin/env sh",
+        "echo 'https://attacker.trycloudflare.com.evil.test'",
+        "echo 'https://good.trycloudflare.com/route#secret-fragment'",
+        "sleep 20",
+      ].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 12345 });
+
+    const pidFile = join(pidDir, "cloudflared.pid");
+    expect(readFileSync(pidFile, "utf-8")).toMatch(/^\d+$/);
+    expect(statSync(pidFile).mode & 0o777).toBe(0o600);
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("https://good.trycloudflare.com/route");
+    expect(output).not.toContain("evil.test");
+    expect(output).not.toContain("secret-fragment");
   });
 });
 

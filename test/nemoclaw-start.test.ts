@@ -1201,14 +1201,31 @@ const cases = [
   new Error('token_revoked'),
   Object.assign(new Error('stack path'), { stack: 'at @slack/web-api' }),
   new Error('CONNECT failed for slack.com'),
+  new Error('CONNECT failed for https://hooks.slack.com/services/T/B/C'),
 ];
 for (const err of cases) process.emit('unhandledRejection', err, {});
 setImmediate(function () { console.log('cases=' + cases.length); });
 `);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("cases=4");
-    expect((result.stderr.match(/provider failed to start/g) || []).length).toBe(4);
+    expect(result.stdout).toContain("cases=5");
+    expect((result.stderr.match(/provider failed to start/g) || []).length).toBe(5);
     expect(result.stderr).toContain("caught by safety net, gateway continues");
+  });
+
+  it("does not classify arbitrary hosts containing slack.com as Slack errors", () => {
+    const result = runSlackGuardHarness(`
+let downstreamCalled = false;
+process.on('unhandledRejection', function () {
+  downstreamCalled = true;
+});
+process.emit('unhandledRejection', new Error('CONNECT failed for https://slack.com.evil.example'), {});
+setImmediate(function () {
+  console.log('downstream=' + downstreamCalled);
+});
+`);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("downstream=true");
+    expect(result.stderr).not.toContain("provider failed to start");
   });
 });
 

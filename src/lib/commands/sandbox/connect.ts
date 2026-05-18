@@ -28,9 +28,11 @@ export default class ConnectCliCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(ConnectCliCommand);
     if (flags["dangerously-skip-permissions"]) {
-      console.error("  --dangerously-skip-permissions was removed; use shields commands instead.");
-      console.error(`  Usage: ${CLI_NAME} <name> connect [--probe-only]`);
-      process.exit(1);
+      this.failWithLines([
+        "  --dangerously-skip-permissions was removed; use shields commands instead.",
+        `  Usage: ${CLI_NAME} <name> connect [--probe-only]`,
+      ]);
+      return;
     }
     await connectSandbox(args.sandboxName, {
       probeOnly: Boolean(flags["probe-only"]),

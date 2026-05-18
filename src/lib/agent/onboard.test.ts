@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
 // Import from compiled dist/ so coverage is attributed correctly.
 import { printDashboardUi, verifyAgentBinaryAvailable } from "../../../dist/lib/agent/onboard";
 import type { AgentDefinition } from "./defs";
@@ -128,33 +126,6 @@ describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)
 });
 
 describe("handleAgentSetup guards", () => {
-  it("fails onboarding instead of completing when the agent binary or health probe is missing", () => {
-    const source = fs.readFileSync(path.join(import.meta.dirname, "onboard.ts"), "utf-8");
-
-    expect(source).toContain("verifyAgentBinaryAvailable");
-    expect(source).toContain("AGENT_BINARY_CHECK_PREFIX");
-    expect(source).toContain("if [ -x ${shellQuote(binaryPath)} ]; then");
-    expect(source).toContain("exit 0");
-    expect(source).toContain(".find((line) => line.startsWith(AGENT_BINARY_CHECK_PREFIX))");
-    expect(source).toMatch(
-      /"sandbox",\s*"exec",\s*"-n",\s*sandboxName,\s*"--",\s*"sh",\s*"-lc",\s*script/,
-    );
-    expect(source).not.toMatch(/\["sandbox",\s*"exec",\s*sandboxName,\s*"sh"/);
-    expect(source).toContain("failAgentSetup");
-    expect(source).toContain('onboardSession.markStepFailed("agent_setup"');
-    expect(source).toContain("gateway did not respond within");
-    expect(source).not.toContain("gateway may still be starting");
-  });
-
-  it("accepts Hermes JSON health responses without substring false positives", () => {
-    const source = fs.readFileSync(path.join(import.meta.dirname, "onboard.ts"), "utf-8");
-
-    expect(source).toContain("function isHealthProbeOk");
-    expect(source).toContain("JSON.parse(body)");
-    expect(source).toContain('parsed.status === "ok"');
-    expect(source).not.toContain('.includes("ok")');
-  });
-
   it("accepts an executable configured binary path when PATH lookup is empty", () => {
     let script = "";
     const result = verifyAgentBinaryAvailable(

@@ -187,7 +187,7 @@ jobs:
           echo "RESOLVED_BRANCH=$BRANCH" >> "$GITHUB_ENV"
 
       - name: Checkout target branch
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ env.RESOLVED_BRANCH || inputs.branch || 'main' }}
 

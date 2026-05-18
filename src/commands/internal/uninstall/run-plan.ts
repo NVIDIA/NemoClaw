@@ -29,6 +29,6 @@ export default class InternalUninstallRunPlanCommand extends NemoClawCommand {
       gatewayName: flags.gateway,
       keepOpenShell: flags["keep-openshell"] ?? false,
     });
-    process.exit(result.exitCode);
+    this.applyExitResult(result);
   }
 }

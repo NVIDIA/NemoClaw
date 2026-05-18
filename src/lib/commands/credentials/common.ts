@@ -30,15 +30,21 @@ export function printCredentialsUsage(log: (message?: string) => void = console.
   log("");
 }
 
-export async function recoverGatewayOrExit(kind: "query" | "reach"): Promise<void> {
-  const recovery = await recoverNamedGatewayRuntime();
-  if (recovery.recovered) return;
+export function credentialsGatewayRecoveryFailureLines(kind: "query" | "reach"): string[] {
+  const action = kind === "query" ? "query" : "reach";
+  return [
+    `  Could not ${action} the ${CLI_DISPLAY_NAME} OpenShell gateway. Is it running?`,
+    `  Run 'openshell gateway start --name nemoclaw' or '${CLI_NAME} onboard' first.`,
+  ];
+}
 
-  if (kind === "query") {
-    console.error(`  Could not query the ${CLI_DISPLAY_NAME} OpenShell gateway. Is it running?`);
-  } else {
-    console.error(`  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Is it running?`);
-  }
-  console.error(`  Run 'openshell gateway start --name nemoclaw' or '${CLI_NAME} onboard' first.`);
-  process.exit(1);
+export async function recoverGatewayOrExit(
+  kind: "query" | "reach",
+  reportFailure: (lines: readonly string[]) => void = (lines) => lines.forEach((line) => console.error(line)),
+): Promise<boolean> {
+  const recovery = await recoverNamedGatewayRuntime();
+  if (recovery.recovered) return true;
+
+  reportFailure(credentialsGatewayRecoveryFailureLines(kind));
+  return false;
 }

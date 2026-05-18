@@ -23,9 +23,6 @@ export default class InternalDnsSetupProxyCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args } = await this.parse(InternalDnsSetupProxyCommand);
     const result = runSetupDnsProxy({ gatewayName: args.gatewayName, sandboxName: args.sandboxName });
-    if (result.exitCode !== 0) {
-      if (result.message) console.error(result.message);
-      process.exit(result.exitCode);
-    }
+    this.applyExitResult(result);
   }
 }

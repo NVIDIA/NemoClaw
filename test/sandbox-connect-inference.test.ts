@@ -72,13 +72,24 @@ function setupFixture(
     { mode: 0o600 },
   );
 
-  if (sandboxEntry.provider === "ollama-local" && options.writeOllamaProxyState !== false) {
-    fs.writeFileSync(path.join(registryDir, "ollama-proxy-token"), "test-token\n", {
-      mode: 0o600,
-    });
-    fs.writeFileSync(path.join(registryDir, "ollama-auth-proxy.pid"), "12345\n", {
-      mode: 0o600,
-    });
+  if (
+    sandboxEntry.provider === "ollama-local" &&
+    options.writeOllamaProxyState !== false
+  ) {
+    fs.writeFileSync(
+      path.join(registryDir, "ollama-proxy-token"),
+      "test-token\n",
+      {
+        mode: 0o600,
+      },
+    );
+    fs.writeFileSync(
+      path.join(registryDir, "ollama-auth-proxy.pid"),
+      "12345\n",
+      {
+        mode: 0o600,
+      },
+    );
   }
 
   // Build the Gateway inference section for `openshell inference get`
@@ -143,7 +154,9 @@ if (args[0] === "sandbox" && args[1] === "exec") {
     process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\nRUNNING\\n");
     process.exit(0);
   }
-  const response = state.inferenceProbeResponses.shift() || "OK 200";
+  const response = state.inferenceProbeResponses.length
+    ? state.inferenceProbeResponses.shift()
+    : 'BROKEN 503 {"error":"missing mocked inference probe response"}';
   const exitStatus = Number(state.inferenceProbeExitStatuses.shift() || 0);
   fs.writeFileSync(stateFile, JSON.stringify(state));
   process.stdout.write(response);
@@ -344,7 +357,12 @@ function runConnect(
   const repoRoot = path.join(import.meta.dirname, "..");
   return spawnSync(
     process.execPath,
-    [path.join(repoRoot, "bin", "nemoclaw.js"), sandboxName, "connect", ...connectArgs],
+    [
+      path.join(repoRoot, "bin", "nemoclaw.js"),
+      sandboxName,
+      "connect",
+      ...connectArgs,
+    ],
     {
       cwd: repoRoot,
       encoding: "utf-8",
@@ -475,16 +493,27 @@ describe("sandbox connect inference route swap (#1248)", () => {
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       const dockerCalls = state.dockerCalls as string[][];
-      const inferenceExecCalls = state.sandboxExecCalls.filter((call: string[]) =>
-        JSON.stringify(call).includes("inference.local/v1/models"),
+      const inferenceExecCalls = state.sandboxExecCalls.filter(
+        (call: string[]) =>
+          JSON.stringify(call).includes("inference.local/v1/models"),
       );
       expect(state.inferenceSetCalls.length).toBe(0);
       expect(inferenceExecCalls.length).toBe(2);
-      expect(dockerCalls.some((call) => call.join(" ").includes("get service kube-dns"))).toBe(true);
-      expect(dockerCalls.some((call) => call.join(" ").includes("get endpoints kube-dns"))).toBe(false);
+      expect(
+        dockerCalls.some((call) =>
+          call.join(" ").includes("get service kube-dns"),
+        ),
+      ).toBe(true);
+      expect(
+        dockerCalls.some((call) =>
+          call.join(" ").includes("get endpoints kube-dns"),
+        ),
+      ).toBe(false);
 
       const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).toContain("inference.local is unavailable inside 'stale-dns-sandbox'");
+      expect(combined).toContain(
+        "inference.local is unavailable inside 'stale-dns-sandbox'",
+      );
       expect(combined).toContain("inference.local route repaired");
     },
   );
@@ -509,6 +538,10 @@ describe("sandbox connect inference route swap (#1248)", () => {
             'BROKEN 503 {"error":"inference service unavailable"}',
             'BROKEN 503 {"error":"inference service unavailable"}',
             'BROKEN 503 {"error":"inference service unavailable"}',
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            'BROKEN 503 {"error":"inference service unavailable"}',
           ],
         },
       );
@@ -527,7 +560,9 @@ describe("sandbox connect inference route swap (#1248)", () => {
       expect(combined).toContain("OpenShell VM DNS monkeypatch did not apply");
       expect(combined).toContain("Reapplying OpenShell inference route");
       expect(combined).toContain("OpenShell vm gateway path");
-      expect(combined).toContain("Connect is stopping because the sandbox inference route is known to be broken");
+      expect(combined).toContain(
+        "Connect is stopping because the sandbox inference route is known to be broken",
+      );
     },
   );
 
@@ -563,12 +598,15 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       expect(state.inferenceSetCalls.length).toBe(0);
       expect(state.dockerCalls.length).toBe(0);
-      expect(fs.readFileSync(path.join(rootfs, "etc", "resolv.conf"), "utf-8")).toBe(
-        "nameserver 192.168.127.1\n",
-      );
       expect(
-        fs.readFileSync(path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh"), "utf-8"),
-      ).toContain('nameserver ${GVPROXY_GATEWAY_IP}');
+        fs.readFileSync(path.join(rootfs, "etc", "resolv.conf"), "utf-8"),
+      ).toBe("nameserver 192.168.127.1\n");
+      expect(
+        fs.readFileSync(
+          path.join(rootfs, "srv", "openshell-vm-sandbox-init.sh"),
+          "utf-8",
+        ),
+      ).toContain("nameserver ${GVPROXY_GATEWAY_IP}");
 
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain("Applying OpenShell VM DNS monkeypatch");
@@ -597,6 +635,8 @@ describe("sandbox connect inference route swap (#1248)", () => {
           inferenceProbeResponses: [
             'BROKEN 503 {"error":"inference service unavailable"}',
             'BROKEN 503 {"error":"inference service unavailable"}',
+            'BROKEN 503 {"error":"inference service unavailable"}',
+            'BROKEN 503 {"error":"inference service unavailable"}',
             "OK 200",
           ],
         },
@@ -611,9 +651,9 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       expect(state.inferenceSetCalls.length).toBe(1);
       expect(state.dockerCalls.length).toBe(0);
-      expect(fs.readFileSync(path.join(rootfs, "etc", "resolv.conf"), "utf-8")).toBe(
-        "nameserver 192.168.127.1\n",
-      );
+      expect(
+        fs.readFileSync(path.join(rootfs, "etc", "resolv.conf"), "utf-8"),
+      ).toBe("nameserver 192.168.127.1\n");
 
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain("Applying OpenShell VM DNS monkeypatch");
@@ -699,15 +739,22 @@ describe("sandbox connect inference route swap (#1248)", () => {
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       const dockerCalls = state.dockerCalls as string[][];
-      const inferenceExecCalls = state.sandboxExecCalls.filter((call: string[]) =>
-        JSON.stringify(call).includes("inference.local/v1/models"),
+      const inferenceExecCalls = state.sandboxExecCalls.filter(
+        (call: string[]) =>
+          JSON.stringify(call).includes("inference.local/v1/models"),
       );
       expect(state.inferenceSetCalls.length).toBe(0);
       expect(inferenceExecCalls.length).toBe(2);
-      expect(dockerCalls.some((call) => call.join(" ").includes("get service kube-dns"))).toBe(true);
+      expect(
+        dockerCalls.some((call) =>
+          call.join(" ").includes("get service kube-dns"),
+        ),
+      ).toBe(true);
 
       const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).toContain("inference.local is unavailable inside 'dns-000-sandbox'");
+      expect(combined).toContain(
+        "inference.local is unavailable inside 'dns-000-sandbox'",
+      );
       expect(combined).toContain("inference.local route repaired");
     },
   );
@@ -730,12 +777,17 @@ describe("sandbox connect inference route swap (#1248)", () => {
           inferenceProbeResponses: [
             'BROKEN 503 {"error":"upstream unavailable"}',
             'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
             "OK 200",
           ],
         },
       );
 
-      const nonWslPlatformPreload = path.join(tmpDir, "force-non-wsl-platform.cjs");
+      const nonWslPlatformPreload = path.join(
+        tmpDir,
+        "force-non-wsl-platform.cjs",
+      );
       fs.writeFileSync(
         nonWslPlatformPreload,
         [
@@ -752,14 +804,17 @@ describe("sandbox connect inference route swap (#1248)", () => {
         tmpDir,
         sandboxName,
         {
-          NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --require=${nonWslPlatformPreload}`.trim(),
+          NODE_OPTIONS:
+            `${process.env.NODE_OPTIONS ?? ""} --require=${nonWslPlatformPreload}`.trim(),
         },
         ["--probe-only"],
       );
       expect(result.status).toBe(0);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-      const endpoints = (state.curlCalls as string[][]).map((call) => call[call.length - 1]);
+      const endpoints = (state.curlCalls as string[][]).map(
+        (call) => call[call.length - 1],
+      );
       const backendIndexes = endpoints
         .map((endpoint, index) =>
           endpoint.includes("127.0.0.1:11434/api/tags") ? index : -1,
@@ -794,6 +849,8 @@ describe("sandbox connect inference route swap (#1248)", () => {
           inferenceProbeResponses: [
             'BROKEN 503 {"error":"upstream unavailable"}',
             'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
             "OK 200",
           ],
         },
@@ -811,8 +868,9 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
       const curlCalls = state.curlCalls as string[][];
       const curlEnvs = state.curlEnvs as Record<string, string>[];
-      const inferenceExecCalls = state.sandboxExecCalls.filter((call: string[]) =>
-        JSON.stringify(call).includes("inference.local/v1/models"),
+      const inferenceExecCalls = state.sandboxExecCalls.filter(
+        (call: string[]) =>
+          JSON.stringify(call).includes("inference.local/v1/models"),
       );
       expect(state.inferenceSetCalls).toEqual([
         [
@@ -825,16 +883,19 @@ describe("sandbox connect inference route swap (#1248)", () => {
           "321",
         ],
       ]);
-      expect(inferenceExecCalls.length).toBe(3);
+      expect(inferenceExecCalls.length).toBe(5);
       if (!isHostWsl()) {
         expect(
-          curlCalls.some((call) => call.join(" ").includes("127.0.0.1:11435/v1/models")),
+          curlCalls.some((call) =>
+            call.join(" ").includes("127.0.0.1:11435/v1/models"),
+          ),
         ).toBe(true);
       }
       expect(curlCalls.flat().join(" ")).not.toContain("Authorization: Bearer");
       for (const [index, call] of curlCalls.entries()) {
         const endpoint = call[call.length - 1];
-        if (!endpoint.includes("127.0.0.1") && !endpoint.includes("localhost")) continue;
+        if (!endpoint.includes("127.0.0.1") && !endpoint.includes("localhost"))
+          continue;
         const proxyBypass = `${curlEnvs[index]?.NO_PROXY || ""},${curlEnvs[index]?.no_proxy || ""}`;
         expect(proxyBypass).toContain("127.0.0.1");
         expect(proxyBypass).toContain("localhost");
@@ -842,7 +903,9 @@ describe("sandbox connect inference route swap (#1248)", () => {
       }
 
       const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).toContain("Resetting inference route to ollama-local/qwen3:0.6b");
+      expect(combined).toContain(
+        "Resetting inference route to ollama-local/qwen3:0.6b",
+      );
       expect(combined).toContain("inference.local route repaired");
     },
   );
@@ -866,6 +929,8 @@ describe("sandbox connect inference route swap (#1248)", () => {
           inferenceProbeResponses: [
             'BROKEN 503 {"error":"upstream unavailable"}',
             'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
             "OK 200",
           ],
           inferenceSetStatus: 1,
@@ -876,8 +941,9 @@ describe("sandbox connect inference route swap (#1248)", () => {
       expect(result.status).toBe(0);
 
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-      const inferenceExecCalls = state.sandboxExecCalls.filter((call: string[]) =>
-        JSON.stringify(call).includes("inference.local/v1/models"),
+      const inferenceExecCalls = state.sandboxExecCalls.filter(
+        (call: string[]) =>
+          JSON.stringify(call).includes("inference.local/v1/models"),
       );
       expect(state.inferenceSetCalls).toEqual([
         [
@@ -888,15 +954,19 @@ describe("sandbox connect inference route swap (#1248)", () => {
           "--no-verify",
         ],
       ]);
-      expect(inferenceExecCalls.length).toBe(3);
-      expect(state.sandboxConnectCalls).toEqual([["sandbox", "connect", sandboxName]]);
+      expect(inferenceExecCalls.length).toBe(5);
+      expect(state.sandboxConnectCalls).toEqual([
+        ["sandbox", "connect", sandboxName],
+      ]);
 
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain(
         "Resetting inference route to nvidia-prod/nvidia/nemotron-3-super-120b-a12b",
       );
       expect(combined).toContain("inference.local route repaired");
-      expect(combined).not.toContain("failed to reset the OpenShell inference route");
+      expect(combined).not.toContain(
+        "failed to reset the OpenShell inference route",
+      );
     },
   );
 
@@ -916,6 +986,10 @@ describe("sandbox connect inference route swap (#1248)", () => {
         "nvidia/nemotron-3-super-120b-a12b",
         {
           inferenceProbeResponses: [
+            'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
             'BROKEN 503 {"error":"upstream unavailable"}',
             'BROKEN 503 {"error":"upstream unavailable"}',
             'BROKEN 503 {"error":"upstream unavailable"}',
@@ -940,7 +1014,9 @@ describe("sandbox connect inference route swap (#1248)", () => {
 
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain("inference.local is still unavailable");
-      expect(combined).toContain("Connect is stopping because the sandbox inference route is known to be broken");
+      expect(combined).toContain(
+        "Connect is stopping because the sandbox inference route is known to be broken",
+      );
     },
   );
 
@@ -965,6 +1041,8 @@ describe("sandbox connect inference route swap (#1248)", () => {
           inferenceProbeResponses: [
             'BROKEN 503 {"error":"upstream unavailable"}',
             'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
           ],
           writeOllamaProxyState: false,
         },
@@ -980,7 +1058,9 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const combined = (result.stdout || "") + (result.stderr || "");
       expect(combined).toContain("Local Ollama is selected for inference");
       expect(combined).toContain("Start Ollama and retry");
-      expect(combined).toContain("Connect is stopping because the sandbox inference route is known to be broken");
+      expect(combined).toContain(
+        "Connect is stopping because the sandbox inference route is known to be broken",
+      );
     },
   );
 
@@ -1002,6 +1082,8 @@ describe("sandbox connect inference route swap (#1248)", () => {
           inferenceProbeResponses: [
             'BROKEN 503 {"error":"upstream unavailable"}',
             'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
+            'BROKEN 503 {"error":"upstream unavailable"}',
             "OK 200",
           ],
           writeOllamaProxyState: false,
@@ -1017,7 +1099,8 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const result = runConnect(tmpDir, sandboxName, {
         ALL_PROXY: "http://127.0.0.1:9",
         HTTP_PROXY: "http://127.0.0.1:9",
-        NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --require=${wslPlatformPreload}`.trim(),
+        NODE_OPTIONS:
+          `${process.env.NODE_OPTIONS ?? ""} --require=${wslPlatformPreload}`.trim(),
         NO_PROXY: "",
         OPENSHELL_TEST_FAIL_LOCALHOST_OLLAMA: "1",
         WSL_DISTRO_NAME: "Ubuntu",
@@ -1029,7 +1112,9 @@ describe("sandbox connect inference route swap (#1248)", () => {
       const curlCalls = state.curlCalls as string[][];
       const curlEnvs = state.curlEnvs as Record<string, string>[];
       const windowsHostIndexes = curlCalls
-        .map((call, index) => (call.join(" ").includes("host.docker.internal:11434") ? index : -1))
+        .map((call, index) =>
+          call.join(" ").includes("host.docker.internal:11434") ? index : -1,
+        )
         .filter((index) => index >= 0);
       expect(state.inferenceSetCalls).toEqual([
         [
@@ -1048,10 +1133,14 @@ describe("sandbox connect inference route swap (#1248)", () => {
         expect(proxyBypass).toContain("host.docker.internal");
         expect(curlEnvs[index]?.ALL_PROXY || "").toBe("");
       }
-      expect(state.sandboxConnectCalls).toEqual([["sandbox", "connect", sandboxName]]);
+      expect(state.sandboxConnectCalls).toEqual([
+        ["sandbox", "connect", sandboxName],
+      ]);
 
       const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).toContain("Resetting inference route to ollama-local/qwen3:0.6b");
+      expect(combined).toContain(
+        "Resetting inference route to ollama-local/qwen3:0.6b",
+      );
       expect(combined).toContain("inference.local route repaired");
       expect(combined).not.toContain("Ollama auth proxy token is missing");
     },

@@ -30,6 +30,12 @@ afterEach(() => {
 });
 
 describe("agentSupportsWebSearch", () => {
+  it("detects default, OpenClaw, and Hermes agent support", () => {
+    expect(agentSupportsWebSearch(null)).toBe(true);
+    expect(agentSupportsWebSearch({ name: "openclaw" })).toBe(true);
+    expect(agentSupportsWebSearch({ name: "hermes" })).toBe(false);
+  });
+
   it("returns false for Hermes regardless of Dockerfile support", () => {
     const root = tmpRoot();
     const dockerfile = writeDockerfile(root, "ARG NEMOCLAW_WEB_SEARCH_ENABLED=1\n");

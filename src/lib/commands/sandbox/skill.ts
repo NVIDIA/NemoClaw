@@ -13,9 +13,11 @@ export default class SkillCliCommand extends NemoClawCommand {
   static examples = ["<%= config.bin %> sandbox skill install alpha ./my-skill"];
 
   public async run(): Promise<void> {
+    this.parsed = true;
     const [sandboxName, ...actionArgs] = this.argv;
     if (!sandboxName || sandboxName.trim() === "") {
-      this.error("Missing required sandboxName for skill.", { exit: 2 });
+      this.failWithLines(["Missing required sandboxName for skill."], 2);
+      return;
     }
     await getSkillInstallRuntimeBridge().sandboxSkillInstall(sandboxName, actionArgs);
   }

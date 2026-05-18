@@ -64,14 +64,6 @@ function writeExecutable(target: string, contents: string) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-function requireMatch(match: RegExpMatchArray | null, message: string): RegExpMatchArray {
-  expect(match).not.toBeNull();
-  if (!match) {
-    throw new Error(message);
-  }
-  return match;
-}
-
 // ---------------------------------------------------------------------------
 // Helpers shared across suites
 // ---------------------------------------------------------------------------

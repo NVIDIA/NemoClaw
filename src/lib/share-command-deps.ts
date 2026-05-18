@@ -10,6 +10,15 @@ export interface ShareCommandDeps {
   getSshConfig: (sandboxName: string) => { status: number | null; output: string };
   /** Ensure the sandbox is live, exit process if not. */
   ensureLive: (sandboxName: string) => Promise<void>;
+  /**
+   * Check whether `remotePath` exists inside the sandbox via
+   * `openshell sandbox exec <name> -- test -e <remotePath>`. Returns true when
+   * the path exists; false when it is missing, when the sandbox is unreachable,
+   * or when the exec itself fails. Used by `share mount` as a pre-flight
+   * before invoking `sshfs`, which exits non-zero with empty stderr on a
+   * missing remote path and leaves the user with nothing actionable. See #3414.
+   */
+  checkSandboxPathExists: (sandboxName: string, remotePath: string) => boolean;
   /** NVIDIA-green ANSI code (empty string if color disabled). */
   colorGreen: string;
   /** ANSI reset code (empty string if color disabled). */
@@ -37,6 +46,13 @@ export function buildShareCommandDeps(): ShareCommandDeps {
       }),
     ensureLive: async (sandboxName: string) => {
       await ensureLiveSandboxOrExit(sandboxName);
+    },
+    checkSandboxPathExists: (sandboxName: string, remotePath: string) => {
+      const result = captureOpenshell(
+        ["sandbox", "exec", sandboxName, "--", "test", "-e", remotePath],
+        { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
+      );
+      return result.status === 0;
     },
     colorGreen: G,
     colorReset: R,

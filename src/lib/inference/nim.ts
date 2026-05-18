@@ -484,16 +484,6 @@ export interface NimStartOptions {
   ngcApiKey?: string;
 }
 
-export function startNimContainer(
-  sandboxName: string,
-  model: string,
-  port = VLLM_PORT,
-  opts: NimStartOptions = {},
-): string {
-  const name = containerName(sandboxName);
-  return startNimContainerByName(name, model, port, opts);
-}
-
 export function startNimContainerByName(
   name: string,
   model: string,

@@ -209,5 +209,3 @@ export function resolveLegacySandboxDispatch(
 
   return { kind: "unknownAction", action };
 }
-
-export const resolveSandboxOclifDispatch = resolveLegacySandboxDispatch;
