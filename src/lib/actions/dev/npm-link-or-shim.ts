@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { randomUUID } from "node:crypto";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
@@ -116,7 +117,7 @@ export function runNpmLinkOrShim(
     ((dir: string) =>
       path.join(
         dir,
-        `nemoclaw.tmp.${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`,
+        `nemoclaw.tmp.${process.pid}.${Date.now()}.${randomUUID()}`,
       ));
   const run = deps.run ?? defaultRun;
   const commandPath = deps.commandPath ?? defaultCommandPath;
@@ -124,7 +125,7 @@ export function runNpmLinkOrShim(
   if (env.NEMOCLAW_INSTALLING) return { status: 0 };
 
   if (!isExecutable(binPath)) {
-    logError(`[nemoclaw] cannot expose CLI: ${binPath} is missing or not executable`);
+    logError("[nemoclaw] cannot expose CLI: launcher is missing or not executable");
     return { status: 0 };
   }
 

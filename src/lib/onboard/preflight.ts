@@ -1321,12 +1321,26 @@ export function probeContainerDns(opts: ProbeContainerDnsOpts = {}): DnsProbeRes
   // begins with `Server: ... / Address: <ip>:53` — proves only that we
   // reached *something* claiming to be a resolver, not that we got an
   // answer. Real success requires either an actual `Name:`+`Address:`
-  // resolution pair OR an NXDOMAIN response body.
-  const probeAnswered =
-    /^Server:\s*\S/im.test(output) &&
-    ((/\bName:\s*\S/i.test(output) && /\bAddress:\s*\d/.test(output)) ||
-      /server can't find\b.*NXDOMAIN/i.test(output));
-  if (probeAnswered) {
+  // resolution pair OR an NXDOMAIN response body. Keep this line-based so
+  // CodeQL does not treat partial host regexes as URL validation.
+  const outputLines = output.split(/\r?\n/).map((line) => line.trim());
+  const hasResolverHeader = outputLines.some((line) => {
+    const fields = line.split(/\s+/);
+    return fields[0] === "Server:" && Boolean(fields[1]);
+  });
+  const hasResolvedName = outputLines.some((line) => {
+    const fields = line.split(/\s+/);
+    return fields[0] === "Name:" && Boolean(fields[1]);
+  });
+  const hasAddress = outputLines.some((line) => {
+    const fields = line.split(/\s+/);
+    return fields[0] === "Address:" && /^\d/.test(fields[1] ?? "");
+  });
+  const hasNxdomainAnswer = outputLines.some((line) => {
+    const lower = line.toLowerCase();
+    return lower.includes("server can't find") && lower.includes("nxdomain");
+  });
+  if (hasResolverHeader && ((hasResolvedName && hasAddress) || hasNxdomainAnswer)) {
     return { ok: true };
   }
 

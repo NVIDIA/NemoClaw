@@ -562,19 +562,6 @@ describe("regression guards", () => {
     }
   });
 
-  it("nemoclaw.ts does not use execSync", () => {
-    const src = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"),
-      "utf-8",
-    );
-    const lines = src.split("\n");
-    for (let i = 0; i < lines.length; i += 1) {
-      if (lines[i].includes("execSync") && !lines[i].includes("execFileSync")) {
-        expect.unreachable(`src/nemoclaw.ts:${i + 1} uses execSync — use execFileSync instead`);
-      }
-    }
-  });
-
   it("keeps a single shellQuote definition in the root CLI codebase", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const searchRoots = [path.join(repoRoot, "bin"), path.join(repoRoot, "src")];

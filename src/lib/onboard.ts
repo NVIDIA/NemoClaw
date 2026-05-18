@@ -257,6 +257,8 @@ const {
   cleanupStaleHostFiles,
 }: typeof import("./host-artifact-cleanup") = require("./host-artifact-cleanup");
 const registry: typeof import("./state/registry") = require("./state/registry");
+const { resolveSandboxImageTagFromCreateOutput } =
+  require("./domain/sandbox/image-tag") as typeof import("./domain/sandbox/image-tag");
 const nim: typeof import("./inference/nim") = require("./inference/nim");
 const onboardSession: typeof import("./state/onboard-session") = require("./state/onboard-session");
 const policies: typeof import("./policy") = require("./policy");
@@ -269,6 +271,10 @@ const {
   isLiveForwardStatus,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
+const { verifyGatewayContainerRunning } =
+  require("./onboard/gateway-container-running") as typeof import("./onboard/gateway-container-running");
+const { destroyGatewayWithVolumeCleanup } =
+  require("./onboard/gateway-destroy") as typeof import("./onboard/gateway-destroy");
 const {
   gatewayCliSupportsLifecycleCommands,
 } = require("./onboard/gateway-lifecycle") as typeof import("./onboard/gateway-lifecycle");
@@ -382,39 +388,6 @@ const HERMES_NOUS_API_KEY_CREDENTIAL_ENV =
   hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV || "NOUS_API_KEY";
 const HERMES_NOUS_API_KEY_HELP_URL = "https://portal.nousresearch.com/manage-subscription";
 
-/**
- * Probe whether the gateway Docker container is actually running.
- * openshell CLI metadata can be stale after a manual `docker rm`, so this
- * verifies the container is live before trusting a "healthy" reuse state.
- *
- * Returns "running" | "missing" | "unknown".
- * - "running"  — container exists and State.Running is true
- * - "missing"  — container was removed or exists but is stopped (not reusable)
- * - "unknown"  — any other failure (daemon down, timeout, etc.)
- *
- * Callers should only trigger stale-metadata cleanup on "missing", not on
- * "unknown", to avoid destroying a healthy gateway when Docker is temporarily
- * unavailable.  See #2020.
- */
-function verifyGatewayContainerRunning() {
-  const containerName = `openshell-cluster-${GATEWAY_NAME}`;
-  const result = dockerInspect(
-    ["--type", "container", "--format", "{{.State.Running}}", containerName],
-    { ignoreError: true, suppressOutput: true },
-  );
-  if (result.status === 0 && String(result.stdout || "").trim() === "true") {
-    return "running";
-  }
-  // Container exists but is stopped (exit 0, Running !== "true")
-  if (result.status === 0) {
-    return "missing";
-  }
-  const stderr = (result.stderr || "").toString();
-  if (stderr.includes("No such object") || stderr.includes("No such container")) {
-    return "missing";
-  }
-  return "unknown";
-}
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
@@ -1560,7 +1533,7 @@ async function replaceNamedCredential(
     saveCredential(envName, key);
     process.env[envName] = key;
     console.log("");
-    console.log(`  ${envName} staged. Onboarding will register it with the OpenShell gateway.`);
+    console.log("  Credential staged. Onboarding will register it with the OpenShell gateway.");
     console.log("");
     return key;
   }
@@ -1971,7 +1944,7 @@ function verifyCompatibleEndpointSandboxSmoke(options: {
     !providerDetails.includes(options.credentialEnv)
   ) {
     console.warn(
-      `  ⚠ Gateway provider '${options.provider}' did not report ${options.credentialEnv}.`,
+      `  ⚠ Gateway provider '${options.provider}' did not report the selected credential binding.`,
     );
   }
 
@@ -2776,32 +2749,16 @@ async function refreshDockerDriverGatewayReuseState(
 }
 
 function destroyGateway(): boolean {
-  const dockerDriver = isLinuxDockerDriverGatewayEnabled();
-  if (dockerDriver) {
-    stopDockerDriverGatewayProcess();
-  }
-
-  const hasLifecycleCommands = gatewayCliSupportsLifecycleCommands(runCaptureOpenshell);
-  const gatewayRemoved = dockerDriver
-    ? removeDockerDriverGatewayRegistration()
-    : hasLifecycleCommands
-      ? runOpenshell(["gateway", "destroy", "-g", GATEWAY_NAME], {
-        ignoreError: true,
-        }).status === 0
-      : runOpenshell(["gateway", "remove", GATEWAY_NAME], {
-        ignoreError: true,
-        }).status === 0;
-
-  // Clear the local registry so `nemoclaw list` stays consistent with OpenShell state. (#532)
-  if (gatewayRemoved) {
-    registry.clearAll();
-  }
-  if (gatewayRemoved && (dockerDriver || hasLifecycleCommands)) {
-    // Legacy OpenShell gateway cleanup doesn't remove Docker volumes, which
-    // leaves corrupted cluster state that breaks the next gateway start.
-    dockerRemoveVolumesByPrefix(`openshell-cluster-${GATEWAY_NAME}`, { ignoreError: true });
-  }
-  return gatewayRemoved;
+  return destroyGatewayWithVolumeCleanup({
+    clearRegistry: registry.clearAll,
+    dockerRemoveVolumesByPrefix,
+    gatewayName: GATEWAY_NAME,
+    hasLifecycleCommands: () => gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled,
+    removeDockerDriverGatewayRegistration,
+    runOpenshell,
+    stopDockerDriverGatewayProcess,
+  });
 }
 
 type FinalGatewayStartFailureOptions = {
@@ -3687,7 +3644,7 @@ async function preflight(
   // package-managed OpenShell gateways do not have an openshell-cluster-*
   // Docker container, so the live CLI health check is the source of truth.
   if (gatewayReuseState === "healthy" && gatewayCliSupportsLifecycleCommands(runCaptureOpenshell)) {
-    const containerState = verifyGatewayContainerRunning();
+    const containerState = verifyGatewayContainerRunning(GATEWAY_NAME);
     if (containerState === "missing") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
       runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
@@ -5439,12 +5396,12 @@ async function createSandbox(
       .filter(Boolean);
     for (const serverId of serverIds) {
       if (!DISCORD_SNOWFLAKE_RE.test(serverId)) {
-        console.warn(`  Warning: Discord server ID '${serverId}' does not look like a snowflake.`);
+        console.warn("  Warning: configured Discord server ID does not look like a snowflake.");
       }
     }
     for (const userId of userIds) {
       if (!DISCORD_SNOWFLAKE_RE.test(userId)) {
-        console.warn(`  Warning: Discord user ID '${userId}' does not look like a snowflake.`);
+        console.warn("  Warning: configured Discord user ID does not look like a snowflake.");
       }
     }
     const requireMention = process.env.DISCORD_REQUIRE_MENTION !== "0";
@@ -5802,15 +5759,7 @@ async function createSandbox(
     }
   }
   // openshell tags images with seconds; buildId is ms. Parse actual tag from output. Fixes #2672.
-  const builtImageMatch = createResult.output.match(/Built image (openshell\/sandbox-from:\d+)/);
-  if (!builtImageMatch) {
-    console.warn(
-      "  Warning: could not parse image tag from build output; imageTag may be stale. Run 'nemoclaw gc' if destroy fails.",
-    );
-  }
-  const resolvedImageTag = builtImageMatch
-    ? builtImageMatch[1]
-    : `openshell/sandbox-from:${buildId}`;
+  const resolvedImageTag = resolveSandboxImageTagFromCreateOutput(createResult.output, buildId);
 
   const sandboxRuntimeFields = getSandboxRuntimeRegistryFields(effectiveSandboxGpuConfig);
   registry.registerSandbox({
@@ -6584,7 +6533,7 @@ async function setupNim(
             if (isNonInteractive()) {
               if (!resolveHermesNousApiKey()) {
                 console.error(
-                  `  ${HERMES_NOUS_API_KEY_CREDENTIAL_ENV} (or NEMOCLAW_PROVIDER_KEY) is required for Hermes Provider Nous API Key in non-interactive mode.`,
+                  "  Hermes Provider Nous API Key is required in non-interactive mode.",
                 );
                 process.exit(1);
               }
@@ -9617,13 +9566,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       );
     } else if (gpu?.platform === "jetson") {
       note("  GPU sandbox passthrough disabled by default on Jetson.");
-    } else if (process.platform === "linux") {
-      // Hint when hardware is present but drivers are missing.
+    } else if (process.platform === "linux" && !opts.noGpu) {
       try {
         const lspci = spawnSync("lspci", { encoding: "utf-8", timeout: 5000 });
         if (lspci.status === 0 && /nvidia/i.test(lspci.stdout || "")) {
-          note("  NVIDIA GPU hardware detected but nvidia-smi is not available.");
-          note("  Install NVIDIA drivers and the Container Toolkit for default GPU passthrough.");
+          const smi = spawnSync("nvidia-smi", ["--query-gpu=name", "--format=csv,noheader,nounits"], { encoding: "utf-8", timeout: 5000 });
+          note(smi.status === 0 && smi.stdout?.trim() ? "  NVIDIA GPU detected with working drivers, but GPU passthrough was not enabled.\n  If Docker GPU support is needed, install nvidia-container-toolkit and run:\n  sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker" : "  NVIDIA GPU hardware detected but nvidia-smi is not available.\n  Install NVIDIA drivers and the Container Toolkit for default GPU passthrough.");
         }
       } catch {
         /* lspci not available — skip hint */
@@ -9650,7 +9598,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     // package-managed OpenShell gateways do not have an openshell-cluster-*
     // Docker container, so the live CLI health check is the source of truth.
     if (gatewayReuseState === "healthy" && gatewayCliSupportsLifecycleCommands(runCaptureOpenshell)) {
-      const containerState = verifyGatewayContainerRunning();
+      const containerState = verifyGatewayContainerRunning(GATEWAY_NAME);
       if (containerState === "missing") {
         console.log("  Gateway metadata is stale (container not running). Cleaning up...");
         runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });

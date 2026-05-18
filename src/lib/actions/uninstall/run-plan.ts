@@ -582,6 +582,7 @@ function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: Uninst
         commandExists: runtime.commandExists,
       });
       stopOrphanedOpenShell(runtime);
+      stopMatchingPids("openshell-gateway", runtime, "host openshell-gateway processes");
       stopOllamaAuthProxy(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);

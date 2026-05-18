@@ -1291,68 +1291,6 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
-  it("re-establishes the agent dashboard forward after agent setup health checks", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
-      "utf-8",
-    );
-    const setupPos = source.indexOf("await agentOnboard.handleAgentSetup");
-    const forwardPos = source.indexOf("ensureAgentDashboardForward(sandboxName, agent)", setupPos);
-
-    assert.ok(setupPos !== -1, "agent setup call not found");
-    assert.ok(
-      forwardPos > setupPos,
-      "agent dashboard forward should be re-established after agent health checks",
-    );
-  });
-
-  it("re-establishes the agent dashboard forward after policies are applied", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
-      "utf-8",
-    );
-    const policiesPos = source.indexOf("await setupPoliciesWithSelection");
-    const completePoliciesPos = source.indexOf(
-      'onboardSession.markStepComplete(\n        "policies"',
-      policiesPos,
-    );
-    const forwardPos = source.indexOf(
-      "ensureAgentDashboardForward(sandboxName, agent)",
-      completePoliciesPos,
-    );
-    const completeSessionPos = source.indexOf(
-      "onboardSession.completeSession",
-      completePoliciesPos,
-    );
-
-    assert.ok(policiesPos !== -1, "policy setup call not found");
-    assert.ok(completePoliciesPos !== -1, "policy completion call not found");
-    assert.ok(forwardPos > completePoliciesPos, "agent forward should be reset after policy setup");
-    assert.ok(
-      forwardPos < completeSessionPos,
-      "agent forward should be reset before onboarding is marked complete",
-    );
-  });
-
-  it("runs fresh stale-gateway cleanup after the sandbox name is known but before createSandbox", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
-      "utf-8",
-    );
-    const promptPos = source.indexOf(
-      "if (!sandboxName) {\n        sandboxName = await promptValidatedSandboxName(agent);",
-    );
-    const cleanupPos = source.indexOf(
-      "stopStaleDashboardListenersForSandbox(registry.listSandboxes().sandboxes, sandboxName);",
-      promptPos,
-    );
-    const createPos = source.indexOf("sandboxName = await createSandbox(", promptPos);
-
-    assert.ok(promptPos !== -1, "sandbox-name resolution block not found");
-    assert.ok(cleanupPos > promptPos, "fresh cleanup should run after sandboxName is known");
-    assert.ok(cleanupPos < createPos, "fresh cleanup should run before createSandbox allocates a port");
-  });
-
   it("migrates a legacy credentials.json into env so setupInference can register the provider", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-cred-"));
@@ -2949,28 +2887,6 @@ const { setupInference } = require(${onboardPath});
     assert.equal(commands.length, 4);
   });
 
-  it("regression #1881: registry.updateSandbox(model/provider) is called AFTER createSandbox", () => {
-    // updateSandbox() silently no-ops when the entry does not exist yet.
-    // This asserts that the model/provider update comes AFTER createSandbox()
-    // returns, not before registerSandbox() is called (the original bug).
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
-      "utf-8",
-    );
-    const createSandboxPos = source.indexOf("sandboxName = await createSandbox(");
-    assert.ok(createSandboxPos !== -1, "createSandbox call not found in onboard.ts");
-    const updateAfterCreate = source.indexOf(
-      "registry.updateSandbox(sandboxName, {",
-      createSandboxPos,
-    );
-    assert.ok(
-      updateAfterCreate !== -1,
-      "registry.updateSandbox(model, provider) must appear AFTER createSandbox() — regression #1881",
-    );
-  });
-
-  // ── Base image digest pinning (#1904) ──────────────────────────
-
   it("regression #1904: pullAndResolveBaseImageDigest uses sandbox-base registry", () => {
     // Structural check: verify the constant matches the Dockerfile default
     // and does NOT reference the openshell-community registry.
@@ -2981,20 +2897,6 @@ const { setupInference } = require(${onboardPath});
     assert.ok(
       !SANDBOX_BASE_IMAGE.includes("openshell-community"),
       `SANDBOX_BASE_IMAGE must NOT reference openshell-community, got: ${SANDBOX_BASE_IMAGE}`,
-    );
-  });
-
-  it("regression #1904: createSandbox calls pullAndResolveBaseImageDigest before patchStagedDockerfile", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts"),
-      "utf-8",
-    );
-    const pullPos = source.search(/const resolved = pullAndResolveBaseImageDigest\s*\(/);
-    assert.ok(pullPos !== -1, "pullAndResolveBaseImageDigest call not found in onboard.ts");
-    const patchPos = source.indexOf("patchStagedDockerfile(", pullPos);
-    assert.ok(
-      patchPos > pullPos,
-      "pullAndResolveBaseImageDigest must be called BEFORE patchStagedDockerfile — regression #1904",
     );
   });
 

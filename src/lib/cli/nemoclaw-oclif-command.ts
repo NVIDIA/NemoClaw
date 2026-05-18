@@ -3,6 +3,8 @@
 
 import { Command, Flags } from "@oclif/core";
 
+import { redactForLog } from "../security/redact";
+
 export type CommandExitResult = {
   exitCode?: number | null;
   message?: string | null;
@@ -21,7 +23,7 @@ export abstract class NemoClawCommand extends Command {
   };
 
   protected logJson(json: unknown): void {
-    console.log(JSON.stringify(json, null, 2));
+    console.log(JSON.stringify(redactForLog(json), null, 2));
   }
 
   protected setExitCode(code: number): void {

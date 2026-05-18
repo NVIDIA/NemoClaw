@@ -5,6 +5,7 @@ import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   closeSync,
+  constants,
   existsSync,
   fchmodSync,
   mkdirSync,
@@ -131,6 +132,23 @@ function commandLineNamesCloudflared(commandLine: string): boolean {
     .some((token) => basename(token) === "cloudflared");
 }
 
+function extractTryCloudflareUrl(log: string): string | null {
+  for (const rawToken of log.split(/\s+/)) {
+    const candidate = rawToken.replace(/^[<("']+|[>),."']+$/g, "");
+    try {
+      const url = new URL(candidate);
+      if (url.protocol !== "https:") continue;
+      if (url.hostname === "trycloudflare.com" || url.hostname.endsWith(".trycloudflare.com")) {
+        url.hash = "";
+        return url.toString();
+      }
+    } catch {
+      // Not a URL token.
+    }
+  }
+  return null;
+}
+
 export function readCloudflaredState(pidDir: string): CloudflaredState {
   const pidFile = join(pidDir, "cloudflared.pid");
   if (!existsSync(pidFile)) return { kind: "stopped" };
@@ -156,7 +174,15 @@ export function readCloudflaredState(pidDir: string): CloudflaredState {
 }
 
 function writePid(pidDir: string, name: string, pid: number): void {
-  writeFileSync(join(pidDir, `${name}.pid`), String(pid));
+  const pidFile = join(pidDir, `${name}.pid`);
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0);
+  const fd = openSync(pidFile, flags, 0o600);
+  try {
+    fchmodSync(fd, 0o600);
+    writeFileSync(fd, String(pid));
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function removePid(pidDir: string, name: string): void {
@@ -318,9 +344,9 @@ export function showStatus(opts: ServiceOptions = {}): void {
   const logFile = join(pidDir, "cloudflared.log");
   if (state.kind === "running" && existsSync(logFile)) {
     const log = readFileSync(logFile, "utf-8");
-    const match = /https:\/\/[a-z0-9-]*\.trycloudflare\.com/.exec(log);
-    if (match) {
-      info(`Public URL: ${match[0]}`);
+    const publicUrl = extractTryCloudflareUrl(log);
+    if (publicUrl) {
+      info(`Public URL: ${publicUrl}`);
     }
   }
 }
@@ -549,7 +575,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
     for (let i = 0; i < 15; i++) {
       if (existsSync(logFile)) {
         const log = readFileSync(logFile, "utf-8");
-        if (/https:\/\/[a-z0-9-]*\.trycloudflare\.com/.test(log)) {
+        if (extractTryCloudflareUrl(log)) {
           break;
         }
       }
@@ -563,10 +589,7 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   const cfLogFile = join(pidDir, "cloudflared.log");
   if (isRunning(pidDir, "cloudflared") && existsSync(cfLogFile)) {
     const log = readFileSync(cfLogFile, "utf-8");
-    const match = /https:\/\/[a-z0-9-]*\.trycloudflare\.com/.exec(log);
-    if (match) {
-      tunnelUrl = match[0];
-    }
+    tunnelUrl = extractTryCloudflareUrl(log) ?? "";
   }
 
   const bannerLines = [

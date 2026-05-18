@@ -7770,7 +7770,7 @@
       "assertions": [
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 200,
+          "line": 202,
           "text": "NVIDIA_API_KEY not set",
           "polarity": "fail",
           "normalized_id": "nvidia.api.key.not.set",
@@ -7778,7 +7778,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 203,
+          "line": 205,
           "text": "NVIDIA_API_KEY is set",
           "polarity": "pass",
           "normalized_id": "nvidia.api.key.is.set",
@@ -7786,7 +7786,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 206,
+          "line": 208,
           "text": "Docker is not running",
           "polarity": "fail",
           "normalized_id": "docker.is.not.running",
@@ -7794,7 +7794,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 209,
+          "line": 211,
           "text": "Docker is running",
           "polarity": "pass",
           "normalized_id": "docker.is.running",
@@ -7802,7 +7802,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 234,
+          "line": 236,
           "text": "Pre-cleanup complete",
           "polarity": "pass",
           "normalized_id": "pre.cleanup.complete",
@@ -7810,7 +7810,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 314,
+          "line": 316,
           "text": "Failed to append Slack policy to base sandbox policy",
           "polarity": "fail",
           "normalized_id": "failed.to.append.slack.policy.to.base.sandbox.policy",
@@ -7818,7 +7818,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 317,
+          "line": 319,
           "text": "Slack network policy pre-merged into base policy",
           "polarity": "pass",
           "normalized_id": "slack.network.policy.pre.merged.into.base.policy",
@@ -7826,7 +7826,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 322,
+          "line": 324,
           "text": "Cannot pre-merge Slack policy: missing base policy or preset file",
           "polarity": "fail",
           "normalized_id": "cannot.pre.merge.slack.policy.missing.base.policy.or.preset.file",
@@ -7834,7 +7834,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 363,
+          "line": 365,
           "text": "M0: install.sh completed (exit 0)",
           "polarity": "pass",
           "normalized_id": "m0.install.sh.completed.exit.0",
@@ -7842,7 +7842,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 365,
+          "line": 367,
           "text": "M0: install.sh failed (exit $install_exit)",
           "polarity": "fail",
           "normalized_id": "m0.install.sh.failed.exit.install.exit",
@@ -7850,7 +7850,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 373,
+          "line": 375,
           "text": "openshell not found on PATH after install",
           "polarity": "fail",
           "normalized_id": "openshell.not.found.on.path.after.install",
@@ -7858,7 +7858,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 376,
+          "line": 378,
           "text": "openshell installed ($(openshell --version 2>&1 || echo unknown))",
           "polarity": "pass",
           "normalized_id": "openshell.installed.openshell.version.2.1.echo.unknown",
@@ -7866,7 +7866,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 379,
+          "line": 381,
           "text": "nemoclaw not found on PATH after install",
           "polarity": "fail",
           "normalized_id": "nemoclaw.not.found.on.path.after.install",
@@ -7874,7 +7874,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 382,
+          "line": 384,
           "text": "nemoclaw installed at $(command -v nemoclaw)",
           "polarity": "pass",
           "normalized_id": "nemoclaw.installed.at.command.v.nemoclaw",
@@ -7882,7 +7882,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 387,
+          "line": 389,
           "text": "M0b: Sandbox '$SANDBOX_NAME' is Ready",
           "polarity": "pass",
           "normalized_id": "m0b.sandbox.sandbox.name.is.ready",
@@ -7890,7 +7890,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 389,
+          "line": 391,
           "text": "M0b: Sandbox '$SANDBOX_NAME' not Ready (list: ${sandbox_list:0:200})",
           "polarity": "fail",
           "normalized_id": "m0b.sandbox.sandbox.name.not.ready.list.sandbox.list.0.200",
@@ -7898,7 +7898,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 395,
+          "line": 397,
           "text": "M1: Provider '${SANDBOX_NAME}-telegram-bridge' exists in gateway",
           "polarity": "pass",
           "normalized_id": "m1.provider.sandbox.name.telegram.bridge.exists.in.gateway",
@@ -7906,7 +7906,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 397,
+          "line": 399,
           "text": "M1: Provider '${SANDBOX_NAME}-telegram-bridge' not found in gateway",
           "polarity": "fail",
           "normalized_id": "m1.provider.sandbox.name.telegram.bridge.not.found.in.gateway",
@@ -7914,7 +7914,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 402,
+          "line": 404,
           "text": "M2: Provider '${SANDBOX_NAME}-discord-bridge' exists in gateway",
           "polarity": "pass",
           "normalized_id": "m2.provider.sandbox.name.discord.bridge.exists.in.gateway",
@@ -7922,7 +7922,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 404,
+          "line": 406,
           "text": "M2: Provider '${SANDBOX_NAME}-discord-bridge' not found in gateway",
           "polarity": "fail",
           "normalized_id": "m2.provider.sandbox.name.discord.bridge.not.found.in.gateway",
@@ -7930,7 +7930,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 411,
+          "line": 413,
           "text": "M-W1: Provider '${SANDBOX_NAME}-wechat-bridge' exists in gateway",
           "polarity": "pass",
           "normalized_id": "m.w1.provider.sandbox.name.wechat.bridge.exists.in.gateway",
@@ -7938,7 +7938,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 413,
+          "line": 415,
           "text": "M-W1: Provider '${SANDBOX_NAME}-wechat-bridge' not found in gateway (non-interactive QR-skip path may be broken)",
           "polarity": "fail",
           "normalized_id": "m.w1.provider.sandbox.name.wechat.bridge.not.found.in.gateway.non.interactive.qr.skip.path.may.be.broken",
@@ -7946,7 +7946,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 427,
+          "line": 429,
           "text": "M3: Real Telegram token leaked into sandbox env",
           "polarity": "fail",
           "normalized_id": "m3.real.telegram.token.leaked.into.sandbox.env",
@@ -7954,7 +7954,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 429,
+          "line": 431,
           "text": "M3: Sandbox TELEGRAM_BOT_TOKEN is a placeholder (not the real token)",
           "polarity": "pass",
           "normalized_id": "m3.sandbox.telegram.bot.token.is.a.placeholder.not.the.real.token",
@@ -7962,7 +7962,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 440,
+          "line": 442,
           "text": "M4: Real Discord token leaked into sandbox env",
           "polarity": "fail",
           "normalized_id": "m4.real.discord.token.leaked.into.sandbox.env",
@@ -7970,7 +7970,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 442,
+          "line": 444,
           "text": "M4: Sandbox DISCORD_BOT_TOKEN is a placeholder (not the real token)",
           "polarity": "pass",
           "normalized_id": "m4.sandbox.discord.bot.token.is.a.placeholder.not.the.real.token",
@@ -7978,7 +7978,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 449,
+          "line": 451,
           "text": "M5: At least one messaging placeholder detected in sandbox",
           "polarity": "pass",
           "normalized_id": "m5.at.least.one.messaging.placeholder.detected.in.sandbox",
@@ -7986,7 +7986,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 474,
+          "line": 476,
           "text": "M5a: Real Telegram token found in full sandbox environment dump",
           "polarity": "fail",
           "normalized_id": "m5a.real.telegram.token.found.in.full.sandbox.environment.dump",
@@ -7994,7 +7994,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 476,
+          "line": 478,
           "text": "M5a: Real Telegram token absent from full sandbox environment",
           "polarity": "pass",
           "normalized_id": "m5a.real.telegram.token.absent.from.full.sandbox.environment",
@@ -8002,7 +8002,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 483,
+          "line": 485,
           "text": "M5b: Real Telegram token found in sandbox process list",
           "polarity": "fail",
           "normalized_id": "m5b.real.telegram.token.found.in.sandbox.process.list",
@@ -8010,7 +8010,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 485,
+          "line": 487,
           "text": "M5b: Real Telegram token absent from sandbox process list",
           "polarity": "pass",
           "normalized_id": "m5b.real.telegram.token.absent.from.sandbox.process.list",
@@ -8018,7 +8018,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 492,
+          "line": 494,
           "text": "M5c: Real Telegram token found on sandbox filesystem: ${sandbox_fs_tg}",
           "polarity": "fail",
           "normalized_id": "m5c.real.telegram.token.found.on.sandbox.filesystem.sandbox.fs.tg",
@@ -8026,7 +8026,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 494,
+          "line": 496,
           "text": "M5c: Real Telegram token absent from sandbox filesystem",
           "polarity": "pass",
           "normalized_id": "m5c.real.telegram.token.absent.from.sandbox.filesystem",
@@ -8034,7 +8034,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 500,
+          "line": 502,
           "text": "M5d: Telegram placeholder confirmed present in sandbox environment",
           "polarity": "pass",
           "normalized_id": "m5d.telegram.placeholder.confirmed.present.in.sandbox.environment",
@@ -8042,7 +8042,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 502,
+          "line": 504,
           "text": "M5d: Telegram placeholder not found in sandbox environment",
           "polarity": "fail",
           "normalized_id": "m5d.telegram.placeholder.not.found.in.sandbox.environment",
@@ -8050,7 +8050,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 512,
+          "line": 514,
           "text": "M5e: Real Discord token found in full sandbox environment dump",
           "polarity": "fail",
           "normalized_id": "m5e.real.discord.token.found.in.full.sandbox.environment.dump",
@@ -8058,7 +8058,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 514,
+          "line": 516,
           "text": "M5e: Real Discord token absent from full sandbox environment",
           "polarity": "pass",
           "normalized_id": "m5e.real.discord.token.absent.from.full.sandbox.environment",
@@ -8066,7 +8066,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 521,
+          "line": 523,
           "text": "M5f: Real Discord token found in sandbox process list",
           "polarity": "fail",
           "normalized_id": "m5f.real.discord.token.found.in.sandbox.process.list",
@@ -8074,7 +8074,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 523,
+          "line": 525,
           "text": "M5f: Real Discord token absent from sandbox process list",
           "polarity": "pass",
           "normalized_id": "m5f.real.discord.token.absent.from.sandbox.process.list",
@@ -8082,7 +8082,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 529,
+          "line": 531,
           "text": "M5g: Real Discord token found on sandbox filesystem: ${sandbox_fs_dc}",
           "polarity": "fail",
           "normalized_id": "m5g.real.discord.token.found.on.sandbox.filesystem.sandbox.fs.dc",
@@ -8090,7 +8090,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 531,
+          "line": 533,
           "text": "M5g: Real Discord token absent from sandbox filesystem",
           "polarity": "pass",
           "normalized_id": "m5g.real.discord.token.absent.from.sandbox.filesystem",
@@ -8098,7 +8098,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 537,
+          "line": 539,
           "text": "M5h: Discord placeholder confirmed present in sandbox environment",
           "polarity": "pass",
           "normalized_id": "m5h.discord.placeholder.confirmed.present.in.sandbox.environment",
@@ -8106,7 +8106,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 539,
+          "line": 541,
           "text": "M5h: Discord placeholder not found in sandbox environment",
           "polarity": "fail",
           "normalized_id": "m5h.discord.placeholder.not.found.in.sandbox.environment",
@@ -8114,7 +8114,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 554,
+          "line": 556,
           "text": "M-S5a: Real Slack bot token found in full sandbox environment dump",
           "polarity": "fail",
           "normalized_id": "m.s5a.real.slack.bot.token.found.in.full.sandbox.environment.dump",
@@ -8122,7 +8122,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 556,
+          "line": 558,
           "text": "M-S5a: Real Slack bot token absent from full sandbox environment",
           "polarity": "pass",
           "normalized_id": "m.s5a.real.slack.bot.token.absent.from.full.sandbox.environment",
@@ -8130,7 +8130,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 563,
+          "line": 565,
           "text": "M-S5b: Real Slack bot token found in sandbox process list",
           "polarity": "fail",
           "normalized_id": "m.s5b.real.slack.bot.token.found.in.sandbox.process.list",
@@ -8138,7 +8138,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 565,
+          "line": 567,
           "text": "M-S5b: Real Slack bot token absent from sandbox process list",
           "polarity": "pass",
           "normalized_id": "m.s5b.real.slack.bot.token.absent.from.sandbox.process.list",
@@ -8146,7 +8146,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 571,
+          "line": 573,
           "text": "M-S5c: Real Slack bot token found on sandbox filesystem: ${sandbox_fs_sl}",
           "polarity": "fail",
           "normalized_id": "m.s5c.real.slack.bot.token.found.on.sandbox.filesystem.sandbox.fs.sl",
@@ -8154,7 +8154,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 573,
+          "line": 575,
           "text": "M-S5c: Real Slack bot token absent from sandbox filesystem",
           "polarity": "pass",
           "normalized_id": "m.s5c.real.slack.bot.token.absent.from.sandbox.filesystem",
@@ -8162,7 +8162,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 581,
+          "line": 583,
           "text": "M-S5d: Real Slack app token found in full sandbox environment dump",
           "polarity": "fail",
           "normalized_id": "m.s5d.real.slack.app.token.found.in.full.sandbox.environment.dump",
@@ -8170,7 +8170,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 583,
+          "line": 585,
           "text": "M-S5d: Real Slack app token absent from sandbox environment",
           "polarity": "pass",
           "normalized_id": "m.s5d.real.slack.app.token.absent.from.sandbox.environment",
@@ -8178,7 +8178,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 588,
+          "line": 590,
           "text": "M-S5d2: Real Slack app token found in sandbox process list",
           "polarity": "fail",
           "normalized_id": "m.s5d2.real.slack.app.token.found.in.sandbox.process.list",
@@ -8186,7 +8186,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 590,
+          "line": 592,
           "text": "M-S5d2: Real Slack app token absent from sandbox process list",
           "polarity": "pass",
           "normalized_id": "m.s5d2.real.slack.app.token.absent.from.sandbox.process.list",
@@ -8194,7 +8194,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 594,
+          "line": 596,
           "text": "M-S5e: Real Slack app token found on sandbox filesystem: ${sandbox_fs_sapp}",
           "polarity": "fail",
           "normalized_id": "m.s5e.real.slack.app.token.found.on.sandbox.filesystem.sandbox.fs.sapp",
@@ -8202,7 +8202,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 596,
+          "line": 598,
           "text": "M-S5e: Real Slack app token absent from sandbox filesystem",
           "polarity": "pass",
           "normalized_id": "m.s5e.real.slack.app.token.absent.from.sandbox.filesystem",
@@ -8210,7 +8210,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 607,
+          "line": 609,
           "text": "M-S5f: Real Slack bot/app token spliced into openclaw.json — apply_slack_token_override regression?",
           "polarity": "fail",
           "normalized_id": "m.s5f.real.slack.bot.app.token.spliced.into.openclaw.json.apply.slack.token.override.regression",
@@ -8218,7 +8218,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 611,
+          "line": 613,
           "text": "M-S5f: openclaw.json holds both Bolt-shape Slack placeholders (no real token on disk)",
           "polarity": "pass",
           "normalized_id": "m.s5f.openclaw.json.holds.both.bolt.shape.slack.placeholders.no.real.token.on.disk",
@@ -8226,7 +8226,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 620,
+          "line": 622,
           "text": "M-S5g: removed Slack token rewriter preload still present in NODE_OPTIONS",
           "polarity": "fail",
           "normalized_id": "m.s5g.removed.slack.token.rewriter.preload.still.present.in.node.options",
@@ -8234,7 +8234,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 622,
+          "line": 624,
           "text": "M-S5g: Slack token rewriter preload absent from NODE_OPTIONS",
           "polarity": "pass",
           "normalized_id": "m.s5g.slack.token.rewriter.preload.absent.from.node.options",
@@ -8242,7 +8242,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 638,
+          "line": 640,
           "text": "M-W3: Real WeChat token leaked into sandbox env",
           "polarity": "fail",
           "normalized_id": "m.w3.real.wechat.token.leaked.into.sandbox.env",
@@ -8250,7 +8250,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 640,
+          "line": 642,
           "text": "M-W3: Sandbox WECHAT_BOT_TOKEN is a placeholder (not the real token)",
           "polarity": "pass",
           "normalized_id": "m.w3.sandbox.wechat.bot.token.is.a.placeholder.not.the.real.token",
@@ -8258,7 +8258,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 649,
+          "line": 651,
           "text": "M-W3a: Real WeChat token found in full sandbox environment dump",
           "polarity": "fail",
           "normalized_id": "m.w3a.real.wechat.token.found.in.full.sandbox.environment.dump",
@@ -8266,7 +8266,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 651,
+          "line": 653,
           "text": "M-W3a: Real WeChat token absent from full sandbox environment",
           "polarity": "pass",
           "normalized_id": "m.w3a.real.wechat.token.absent.from.full.sandbox.environment",
@@ -8274,7 +8274,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 658,
+          "line": 660,
           "text": "M-W3b: Real WeChat token found in sandbox process list",
           "polarity": "fail",
           "normalized_id": "m.w3b.real.wechat.token.found.in.sandbox.process.list",
@@ -8282,7 +8282,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 660,
+          "line": 662,
           "text": "M-W3b: Real WeChat token absent from sandbox process list",
           "polarity": "pass",
           "normalized_id": "m.w3b.real.wechat.token.absent.from.sandbox.process.list",
@@ -8290,7 +8290,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 668,
+          "line": 670,
           "text": "M-W3c: Real WeChat token found on sandbox filesystem: ${sandbox_fs_wc}",
           "polarity": "fail",
           "normalized_id": "m.w3c.real.wechat.token.found.on.sandbox.filesystem.sandbox.fs.wc",
@@ -8298,7 +8298,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 670,
+          "line": 672,
           "text": "M-W3c: Real WeChat token absent from sandbox filesystem",
           "polarity": "pass",
           "normalized_id": "m.w3c.real.wechat.token.absent.from.sandbox.filesystem",
@@ -8306,7 +8306,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 676,
+          "line": 678,
           "text": "M-W3d: WeChat placeholder confirmed present in sandbox environment",
           "polarity": "pass",
           "normalized_id": "m.w3d.wechat.placeholder.confirmed.present.in.sandbox.environment",
@@ -8314,7 +8314,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 678,
+          "line": 680,
           "text": "M-W3d: WeChat placeholder not found in sandbox environment",
           "polarity": "fail",
           "normalized_id": "m.w3d.wechat.placeholder.not.found.in.sandbox.environment",
@@ -8322,7 +8322,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 701,
+          "line": 703,
           "text": "M6: Could not read openclaw.json channels (${channel_json:0:200})",
           "polarity": "fail",
           "normalized_id": "m6.could.not.read.openclaw.json.channels.channel.json.0.200",
@@ -8330,7 +8330,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 718,
+          "line": 720,
           "text": "M6: Telegram channel botToken present in openclaw.json",
           "polarity": "pass",
           "normalized_id": "m6.telegram.channel.bottoken.present.in.openclaw.json",
@@ -8338,7 +8338,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 725,
+          "line": 727,
           "text": "M7: Telegram botToken is not the host-side token (placeholder confirmed)",
           "polarity": "pass",
           "normalized_id": "m7.telegram.bottoken.is.not.the.host.side.token.placeholder.confirmed",
@@ -8346,7 +8346,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 727,
+          "line": 729,
           "text": "M7: Telegram botToken matches host-side token — credential leaked into config!",
           "polarity": "fail",
           "normalized_id": "m7.telegram.bottoken.matches.host.side.token.credential.leaked.into.config",
@@ -8354,7 +8354,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 742,
+          "line": 744,
           "text": "M8: Discord channel token present in openclaw.json",
           "polarity": "pass",
           "normalized_id": "m8.discord.channel.token.present.in.openclaw.json",
@@ -8362,7 +8362,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 749,
+          "line": 751,
           "text": "M9: Discord token is not the host-side token (placeholder confirmed)",
           "polarity": "pass",
           "normalized_id": "m9.discord.token.is.not.the.host.side.token.placeholder.confirmed",
@@ -8370,7 +8370,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 751,
+          "line": 753,
           "text": "M9: Discord token matches host-side token — credential leaked into config!",
           "polarity": "fail",
           "normalized_id": "m9.discord.token.matches.host.side.token.credential.leaked.into.config",
@@ -8378,7 +8378,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 766,
+          "line": 768,
           "text": "M10: Telegram channel is enabled",
           "polarity": "pass",
           "normalized_id": "m10.telegram.channel.is.enabled",
@@ -8386,7 +8386,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 781,
+          "line": 783,
           "text": "M11: Discord channel is enabled",
           "polarity": "pass",
           "normalized_id": "m11.discord.channel.is.enabled",
@@ -8394,7 +8394,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 796,
+          "line": 798,
           "text": "M11b: Telegram dmPolicy is 'allowlist'",
           "polarity": "pass",
           "normalized_id": "m11b.telegram.dmpolicy.is.allowlist",
@@ -8402,7 +8402,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 798,
+          "line": 800,
           "text": "M11b: Telegram dmPolicy is '$tg_dm_policy' (expected 'allowlist')",
           "polarity": "fail",
           "normalized_id": "m11b.telegram.dmpolicy.is.tg.dm.policy.expected.allowlist",
@@ -8410,7 +8410,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 826,
+          "line": 828,
           "text": "M11c: Telegram allowFrom contains all expected user IDs: $tg_allow_from",
           "polarity": "pass",
           "normalized_id": "m11c.telegram.allowfrom.contains.all.expected.user.ids.tg.allow.from",
@@ -8418,7 +8418,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 828,
+          "line": 830,
           "text": "M11c: Telegram allowFrom ($tg_allow_from) is missing IDs: ${missing_ids[*]} (expected all of: $TELEGRAM_IDS)",
           "polarity": "fail",
           "normalized_id": "m11c.telegram.allowfrom.tg.allow.from.is.missing.ids.missing.ids.expected.all.of.telegram.ids",
@@ -8426,7 +8426,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 844,
+          "line": 846,
           "text": "M11d: Telegram groupPolicy is 'open'",
           "polarity": "pass",
           "normalized_id": "m11d.telegram.grouppolicy.is.open",
@@ -8434,7 +8434,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 846,
+          "line": 848,
           "text": "M11d: Telegram groupPolicy is '$tg_group_policy' (expected 'open')",
           "polarity": "fail",
           "normalized_id": "m11d.telegram.grouppolicy.is.tg.group.policy.expected.open",
@@ -8442,7 +8442,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 862,
+          "line": 864,
           "text": "M11e: Slack channel configured with placeholder tokens (guard needed)",
           "polarity": "pass",
           "normalized_id": "m11e.slack.channel.configured.with.placeholder.tokens.guard.needed",
@@ -8450,7 +8450,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 887,
+          "line": 889,
           "text": "M-W8: WeChat account '$WECHAT_ACCOUNT' is enabled in openclaw.json (channels.openclaw-weixin)",
           "polarity": "pass",
           "normalized_id": "m.w8.wechat.account.wechat.account.is.enabled.in.openclaw.json.channels.openclaw.weixin",
@@ -8458,7 +8458,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 903,
+          "line": 905,
           "text": "M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — seed-wechat-accounts.py placeholder regression",
           "polarity": "fail",
           "normalized_id": "m.w9.real.wechat.token.spliced.into.accounts.wechat.account.json.seed.wechat.accounts.py.placeholder.regression",
@@ -8466,7 +8466,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 905,
+          "line": 907,
           "text": "M-W9: WeChat per-account credential file uses the L7-resolved placeholder",
           "polarity": "pass",
           "normalized_id": "m.w9.wechat.per.account.credential.file.uses.the.l7.resolved.placeholder",
@@ -8474,7 +8474,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 907,
+          "line": 909,
           "text": "M-W9: WeChat per-account credential file has unexpected token shape: $(echo ",
           "polarity": "fail",
           "normalized_id": "m.w9.wechat.per.account.credential.file.has.unexpected.token.shape.echo",
@@ -8482,7 +8482,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 926,
+          "line": 928,
           "text": "M-W10: WeChat accounts.json index contains '$WECHAT_ACCOUNT'",
           "polarity": "pass",
           "normalized_id": "m.w10.wechat.accounts.json.index.contains.wechat.account",
@@ -8490,7 +8490,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 928,
+          "line": 930,
           "text": "M-W10: WeChat accounts.json missing '$WECHAT_ACCOUNT' (raw: $(echo ",
           "polarity": "fail",
           "normalized_id": "m.w10.wechat.accounts.json.missing.wechat.account.raw.echo",
@@ -8498,7 +8498,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 949,
+          "line": 951,
           "text": "M12: Node.js reached api.telegram.org (${tg_reach})",
           "polarity": "pass",
           "normalized_id": "m12.node.js.reached.api.telegram.org.tg.reach",
@@ -8506,7 +8506,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 955,
+          "line": 957,
           "text": "M12: Node.js could not reach api.telegram.org (${tg_reach:0:200})",
           "polarity": "fail",
           "normalized_id": "m12.node.js.could.not.reach.api.telegram.org.tg.reach.0.200",
@@ -8514,23 +8514,151 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 970,
-          "text": "M13: Node.js reached discord.com (${dc_reach})",
+          "line": 965,
+          "text": "M13-policy: Live policy contains Discord endpoints and Node binaries",
           "polarity": "pass",
-          "normalized_id": "m13.node.js.reached.discord.com.dc.reach",
+          "normalized_id": "m13.policy.live.policy.contains.discord.endpoints.and.node.binaries",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 974,
-          "text": "M13: Node.js could not reach discord.com (${dc_reach:0:200})",
+          "line": 967,
+          "text": "M13-policy: Live policy is missing expected Discord preset endpoint/binary entries",
           "polarity": "fail",
-          "normalized_id": "m13.node.js.could.not.reach.discord.com.dc.reach.0.200",
+          "normalized_id": "m13.policy.live.policy.is.missing.expected.discord.preset.endpoint.binary.entries",
           "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 981,
+          "line": 973,
+          "text": "M13-proxy: Sandbox uses the OpenShell gateway proxy",
+          "polarity": "pass",
+          "normalized_id": "m13.proxy.sandbox.uses.the.openshell.gateway.proxy",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 975,
+          "text": "M13-proxy: Sandbox proxy env does not point at OpenShell gateway: ${live_proxy_env:0:200}",
+          "polarity": "fail",
+          "normalized_id": "m13.proxy.sandbox.proxy.env.does.not.point.at.openshell.gateway.live.proxy.env.0.200",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 996,
+          "text": "M13-curl: curl unexpectedly established a tunnel to Discord; binary whitelist may be too broad",
+          "polarity": "fail",
+          "normalized_id": "m13.curl.curl.unexpectedly.established.a.tunnel.to.discord.binary.whitelist.may.be.too.broad",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1039,
+          "text": "M13: Node.js reached Discord API and CDN through the same proxy (${dc_reach//$'\\n'/ })",
+          "polarity": "pass",
+          "normalized_id": "m13.node.js.reached.discord.api.and.cdn.through.the.same.proxy.dc.reach.n",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1041,
+          "text": "M13: Node.js was denied by the proxy despite the Discord preset being applied: ${dc_reach:0:300}",
+          "polarity": "fail",
+          "normalized_id": "m13.node.js.was.denied.by.the.proxy.despite.the.discord.preset.being.applied.dc.reach.0.300",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1045,
+          "text": "M13: Node.js could not reach Discord API/CDN (${dc_reach:0:200})",
+          "polarity": "fail",
+          "normalized_id": "m13.node.js.could.not.reach.discord.api.cdn.dc.reach.0.200",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1052,
+          "text": "M13-rest-a: Hermetic fake Discord REST API started on host port ${FAKE_DISCORD_REST_PORT}",
+          "polarity": "pass",
+          "normalized_id": "m13.rest.a.hermetic.fake.discord.rest.api.started.on.host.port.fake.discord.rest.port",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1061,
+          "text": "M13-rest-b: Applied Node-only HTTPS policy for fake Discord REST API",
+          "polarity": "pass",
+          "normalized_id": "m13.rest.b.applied.node.only.https.policy.for.fake.discord.rest.api",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1063,
+          "text": "M13-rest-b: Failed to apply fake Discord REST policy: $(tail -20 /tmp/nemoclaw-fake-discord-rest-policy.log 2>/dev/null | tr '\\n' ' ' | cut -c1-300)",
+          "polarity": "fail",
+          "normalized_id": "m13.rest.b.failed.to.apply.fake.discord.rest.policy.tail.20.tmp.nemoclaw.fake.discord.rest.policy.log.2.dev.null.tr.n.cut.c1.300",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1077,
+          "text": "M13-rest-c: Node reached the fake Discord REST API through OpenShell",
+          "polarity": "pass",
+          "normalized_id": "m13.rest.c.node.reached.the.fake.discord.rest.api.through.openshell",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1079,
+          "text": "M13-rest-c: Node failed to reach fake Discord REST API: ${fake_rest_node:0:300}",
+          "polarity": "fail",
+          "normalized_id": "m13.rest.c.node.failed.to.reach.fake.discord.rest.api.fake.rest.node.0.300",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1091,
+          "text": "M13-rest-d: curl was denied before reaching the fake Discord REST API",
+          "polarity": "pass",
+          "normalized_id": "m13.rest.d.curl.was.denied.before.reaching.the.fake.discord.rest.api",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1093,
+          "text": "M13-rest-d: curl unexpectedly established a tunnel to the fake Discord REST API",
+          "polarity": "fail",
+          "normalized_id": "m13.rest.d.curl.unexpectedly.established.a.tunnel.to.the.fake.discord.rest.api",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1095,
+          "text": "M13-rest-d: Fake Discord REST curl denial had unexpected shape: ${fake_rest_curl:0:300}",
+          "polarity": "fail",
+          "normalized_id": "m13.rest.d.fake.discord.rest.curl.denial.had.unexpected.shape.fake.rest.curl.0.300",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1107,
+          "text": "M13-rest-e: Fake server saw Node but no curl request",
+          "polarity": "pass",
+          "normalized_id": "m13.rest.e.fake.server.saw.node.but.no.curl.request",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1109,
+          "text": "M13-rest-e: Unexpected fake Discord REST capture counts: ${fake_rest_capture}",
+          "polarity": "fail",
+          "normalized_id": "m13.rest.e.unexpected.fake.discord.rest.capture.counts.fake.rest.capture",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1116,
           "text": "M13b: Hermetic fake Discord Gateway started on host port ${FAKE_DISCORD_GATEWAY_PORT}",
           "polarity": "pass",
           "normalized_id": "m13b.hermetic.fake.discord.gateway.started.on.host.port.fake.discord.gateway.port",
@@ -8538,7 +8666,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 983,
+          "line": 1118,
           "text": "M13b: Failed to start hermetic fake Discord Gateway",
           "polarity": "fail",
           "normalized_id": "m13b.failed.to.start.hermetic.fake.discord.gateway",
@@ -8546,7 +8674,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 988,
+          "line": 1123,
           "text": "M13c: Applied native WebSocket policy with credential rewrite for fake Discord Gateway",
           "polarity": "pass",
           "normalized_id": "m13c.applied.native.websocket.policy.with.credential.rewrite.for.fake.discord.gateway",
@@ -8554,7 +8682,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 990,
+          "line": 1125,
           "text": "M13c: Failed to apply fake Discord Gateway policy: $(tail -20 /tmp/nemoclaw-fake-discord-policy.log 2>/dev/null | tr '\\n' ' ' | cut -c1-300)",
           "polarity": "fail",
           "normalized_id": "m13c.failed.to.apply.fake.discord.gateway.policy.tail.20.tmp.nemoclaw.fake.discord.policy.log.2.dev.null.tr.n.cut.c1.300",
@@ -8562,7 +8690,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1000,
+          "line": 1135,
           "text": "M13d: Native WebSocket upgrade reached fake Discord Gateway through OpenShell",
           "polarity": "pass",
           "normalized_id": "m13d.native.websocket.upgrade.reached.fake.discord.gateway.through.openshell",
@@ -8570,7 +8698,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1002,
+          "line": 1137,
           "text": "M13d: Native WebSocket upgrade failed: ${dc_ws_native:0:300}",
           "polarity": "fail",
           "normalized_id": "m13d.native.websocket.upgrade.failed.dc.ws.native.0.300",
@@ -8578,7 +8706,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1009,
+          "line": 1144,
           "text": "M13e: Discord HELLO, placeholder IDENTIFY, READY, and heartbeat ACK completed",
           "polarity": "pass",
           "normalized_id": "m13e.discord.hello.placeholder.identify.ready.and.heartbeat.ack.completed",
@@ -8586,7 +8714,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1011,
+          "line": 1146,
           "text": "M13e: Discord Gateway protocol proof incomplete: ${dc_ws_native:0:400}",
           "polarity": "fail",
           "normalized_id": "m13e.discord.gateway.protocol.proof.incomplete.dc.ws.native.0.400",
@@ -8594,7 +8722,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1017,
+          "line": 1152,
           "text": "M13f: Fake Gateway received host-side Discord token; sandbox-visible IDENTIFY used only the placeholder",
           "polarity": "pass",
           "normalized_id": "m13f.fake.gateway.received.host.side.discord.token.sandbox.visible.identify.used.only.the.placeholder",
@@ -8602,7 +8730,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1022,
+          "line": 1157,
           "text": "M13f: Fake Gateway did not prove placeholder-to-token rewrite at the relay boundary",
           "polarity": "fail",
           "normalized_id": "m13f.fake.gateway.did.not.prove.placeholder.to.token.rewrite.at.the.relay.boundary",
@@ -8610,7 +8738,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1038,
+          "line": 1173,
           "text": "M13g: Unregistered Discord WebSocket placeholder is rejected before upstream token exposure",
           "polarity": "pass",
           "normalized_id": "m13g.unregistered.discord.websocket.placeholder.is.rejected.before.upstream.token.exposure",
@@ -8618,7 +8746,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1040,
+          "line": 1175,
           "text": "M13g: Unregistered Discord WebSocket placeholder reached READY or leaked upstream",
           "polarity": "fail",
           "normalized_id": "m13g.unregistered.discord.websocket.placeholder.reached.ready.or.leaked.upstream",
@@ -8626,7 +8754,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1046,
+          "line": 1181,
           "text": "M14: curl to api.telegram.org blocked (binary restriction enforced)",
           "polarity": "pass",
           "normalized_id": "m14.curl.to.api.telegram.org.blocked.binary.restriction.enforced",
@@ -8634,7 +8762,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1048,
+          "line": 1183,
           "text": "M14: curl returned empty (likely blocked by policy)",
           "polarity": "pass",
           "normalized_id": "m14.curl.returned.empty.likely.blocked.by.policy",
@@ -8642,7 +8770,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1052,
+          "line": 1187,
           "text": "M14: curl not available in sandbox (defense in depth)",
           "polarity": "pass",
           "normalized_id": "m14.curl.not.available.in.sandbox.defense.in.depth",
@@ -8650,7 +8778,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1086,
+          "line": 1221,
           "text": "M15: Telegram getMe returned 200 — real token verified!",
           "polarity": "pass",
           "normalized_id": "m15.telegram.getme.returned.200.real.token.verified",
@@ -8658,7 +8786,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1091,
+          "line": 1226,
           "text": "M15: Telegram getMe returned $tg_status — L7 proxy rewrote placeholder (fake token rejected by API)",
           "polarity": "pass",
           "normalized_id": "m15.telegram.getme.returned.tg.status.l7.proxy.rewrote.placeholder.fake.token.rejected.by.api",
@@ -8666,7 +8794,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1092,
+          "line": 1227,
           "text": "M16: Full chain verified: sandbox → proxy → token rewrite → Telegram API",
           "polarity": "pass",
           "normalized_id": "m16.full.chain.verified.sandbox.proxy.token.rewrite.telegram.api",
@@ -8674,7 +8802,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1098,
+          "line": 1233,
           "text": "M15: Telegram API call failed with error: ${tg_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m15.telegram.api.call.failed.with.error.tg.api.0.200",
@@ -8682,7 +8810,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1100,
+          "line": 1235,
           "text": "M15: Unexpected Telegram response (status=$tg_status): ${tg_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m15.unexpected.telegram.response.status.tg.status.tg.api.0.200",
@@ -8690,7 +8818,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1127,
+          "line": 1262,
           "text": "M17: Discord users/@me returned 200 — real token verified!",
           "polarity": "pass",
           "normalized_id": "m17.discord.users.me.returned.200.real.token.verified",
@@ -8698,7 +8826,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1129,
+          "line": 1264,
           "text": "M17: Discord users/@me returned 401 — L7 proxy rewrote placeholder (fake token rejected by API)",
           "polarity": "pass",
           "normalized_id": "m17.discord.users.me.returned.401.l7.proxy.rewrote.placeholder.fake.token.rejected.by.api",
@@ -8706,7 +8834,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1133,
+          "line": 1268,
           "text": "M17: Discord API call failed with error: ${dc_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m17.discord.api.call.failed.with.error.dc.api.0.200",
@@ -8714,7 +8842,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1135,
+          "line": 1270,
           "text": "M17: Unexpected Discord response (status=$dc_status): ${dc_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m17.unexpected.discord.response.status.dc.status.dc.api.0.200",
@@ -8722,7 +8850,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1147,
+          "line": 1282,
           "text": "M-S14a: Hermetic fake Slack API started on host port ${FAKE_SLACK_API_PORT}",
           "polarity": "pass",
           "normalized_id": "m.s14a.hermetic.fake.slack.api.started.on.host.port.fake.slack.api.port",
@@ -8730,7 +8858,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1149,
+          "line": 1284,
           "text": "M-S14a: Failed to start hermetic fake Slack API",
           "polarity": "fail",
           "normalized_id": "m.s14a.failed.to.start.hermetic.fake.slack.api",
@@ -8738,7 +8866,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1154,
+          "line": 1289,
           "text": "M-S14b: Applied REST policy for hermetic fake Slack API",
           "polarity": "pass",
           "normalized_id": "m.s14b.applied.rest.policy.for.hermetic.fake.slack.api",
@@ -8746,7 +8874,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1156,
+          "line": 1291,
           "text": "M-S14b: Failed to apply fake Slack API policy: $(tail -20 /tmp/nemoclaw-fake-slack-policy.log 2>/dev/null | tr '\\n' ' ' | cut -c1-300)",
           "polarity": "fail",
           "normalized_id": "m.s14b.failed.to.apply.fake.slack.api.policy.tail.20.tmp.nemoclaw.fake.slack.policy.log.2.dev.null.tr.n.cut.c1.300",
@@ -8754,7 +8882,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1207,
+          "line": 1342,
           "text": "M-S15: Slack auth.test returned ok:true — real token round-trip verified!",
           "polarity": "pass",
           "normalized_id": "m.s15.slack.auth.test.returned.ok.true.real.token.round.trip.verified",
@@ -8762,7 +8890,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1209,
+          "line": 1344,
           "text": "M-S15: Slack auth.test returned invalid_auth — full chain verified (OpenShell alias rewrite → fake Slack)",
           "polarity": "pass",
           "normalized_id": "m.s15.slack.auth.test.returned.invalid.auth.full.chain.verified.openshell.alias.rewrite.fake.slack",
@@ -8770,7 +8898,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1212,
+          "line": 1347,
           "text": "M-S15a: fake Slack saw host-side bot token in header and urlencoded body",
           "polarity": "pass",
           "normalized_id": "m.s15a.fake.slack.saw.host.side.bot.token.in.header.and.urlencoded.body",
@@ -8778,7 +8906,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1214,
+          "line": 1349,
           "text": "M-S15a: fake Slack capture did not prove bot header/body rewrite: ${sl_capture:0:300}",
           "polarity": "fail",
           "normalized_id": "m.s15a.fake.slack.capture.did.not.prove.bot.header.body.rewrite.sl.capture.0.300",
@@ -8786,7 +8914,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1219,
+          "line": 1354,
           "text": "M-S15: Slack API call failed with error: ${sl_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m.s15.slack.api.call.failed.with.error.sl.api.0.200",
@@ -8794,7 +8922,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1221,
+          "line": 1356,
           "text": "M-S15: OpenShell did not resolve the Bolt-shape alias",
           "polarity": "fail",
           "normalized_id": "m.s15.openshell.did.not.resolve.the.bolt.shape.alias",
@@ -8802,7 +8930,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1223,
+          "line": 1358,
           "text": "M-S15: L7 proxy did not substitute the canonical placeholder — substitution chain broken",
           "polarity": "fail",
           "normalized_id": "m.s15.l7.proxy.did.not.substitute.the.canonical.placeholder.substitution.chain.broken",
@@ -8810,7 +8938,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1225,
+          "line": 1360,
           "text": "M-S15: Unexpected Slack response (status=$sl_status): ${sl_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m.s15.unexpected.slack.response.status.sl.status.sl.api.0.200",
@@ -8818,7 +8946,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1246,
+          "line": 1381,
           "text": "M-S15b: L7 proxy substitutes openshell:resolve:env:SLACK_BOT_TOKEN at egress (parallels Telegram M15 / Discord M17)",
           "polarity": "pass",
           "normalized_id": "m.s15b.l7.proxy.substitutes.openshell.resolve.env.slack.bot.token.at.egress.parallels.telegram.m15.discord.m17",
@@ -8826,7 +8954,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1250,
+          "line": 1385,
           "text": "M-S15b: L7 proxy passed canonical placeholder through unchanged — substitution not happening for SLACK_BOT_TOKEN",
           "polarity": "fail",
           "normalized_id": "m.s15b.l7.proxy.passed.canonical.placeholder.through.unchanged.substitution.not.happening.for.slack.bot.token",
@@ -8834,7 +8962,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1252,
+          "line": 1387,
           "text": "M-S15b: Unexpected response (status=$sl_canon_status): ${sl_canonical:0:200}",
           "polarity": "fail",
           "normalized_id": "m.s15b.unexpected.response.status.sl.canon.status.sl.canonical.0.200",
@@ -8842,7 +8970,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1273,
+          "line": 1408,
           "text": "M-S15c: unset-var failed closed before upstream exposure",
           "polarity": "pass",
           "normalized_id": "m.s15c.unset.var.failed.closed.before.upstream.exposure",
@@ -8850,7 +8978,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1275,
+          "line": 1410,
           "text": "M-S15c: unset-var triggered connection-level failure — proxy refuses to forward unsubstituted placeholder",
           "polarity": "pass",
           "normalized_id": "m.s15c.unset.var.triggered.connection.level.failure.proxy.refuses.to.forward.unsubstituted.placeholder",
@@ -8858,7 +8986,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1277,
+          "line": 1412,
           "text": "M-S15c: unset-var returned HTTP 200 — proxy passed canonical placeholder through unchanged for unset env (substitution may be a no-op)",
           "polarity": "fail",
           "normalized_id": "m.s15c.unset.var.returned.http.200.proxy.passed.canonical.placeholder.through.unchanged.for.unset.env.substitution.may.be.a.no.op",
@@ -8866,7 +8994,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1279,
+          "line": 1414,
           "text": "M-S15c: unset-var request reached fake Slack — unresolved placeholder escaped the proxy boundary",
           "polarity": "fail",
           "normalized_id": "m.s15c.unset.var.request.reached.fake.slack.unresolved.placeholder.escaped.the.proxy.boundary",
@@ -8874,7 +9002,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1300,
+          "line": 1435,
           "text": "M-S16: apps.connections.open returned ok:true — real xapp token round-trip verified!",
           "polarity": "pass",
           "normalized_id": "m.s16.apps.connections.open.returned.ok.true.real.xapp.token.round.trip.verified",
@@ -8882,7 +9010,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1302,
+          "line": 1437,
           "text": "M-S16: apps.connections.open auth-rejected — Socket Mode HTTPS leg verified (OpenShell alias rewrite → fake Slack)",
           "polarity": "pass",
           "normalized_id": "m.s16.apps.connections.open.auth.rejected.socket.mode.https.leg.verified.openshell.alias.rewrite.fake.slack",
@@ -8890,7 +9018,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1305,
+          "line": 1440,
           "text": "M-S16a: fake Slack saw host-side app token in header and urlencoded body",
           "polarity": "pass",
           "normalized_id": "m.s16a.fake.slack.saw.host.side.app.token.in.header.and.urlencoded.body",
@@ -8898,7 +9026,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1307,
+          "line": 1442,
           "text": "M-S16a: fake Slack capture did not prove app header/body rewrite: ${sl_app_capture:0:300}",
           "polarity": "fail",
           "normalized_id": "m.s16a.fake.slack.capture.did.not.prove.app.header.body.rewrite.sl.app.capture.0.300",
@@ -8906,7 +9034,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1312,
+          "line": 1447,
           "text": "M-S16: OpenShell did not resolve the xapp- alias for Socket Mode path",
           "polarity": "fail",
           "normalized_id": "m.s16.openshell.did.not.resolve.the.xapp.alias.for.socket.mode.path",
@@ -8914,7 +9042,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1314,
+          "line": 1449,
           "text": "M-S16: Unexpected apps.connections.open response (status=$sl_app_status): ${sl_app_api:0:200}",
           "polarity": "fail",
           "normalized_id": "m.s16.unexpected.apps.connections.open.response.status.sl.app.status.sl.app.api.0.200",
@@ -8922,7 +9050,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1338,
+          "line": 1473,
           "text": "M-S16b: unset app-token failed closed before upstream exposure",
           "polarity": "pass",
           "normalized_id": "m.s16b.unset.app.token.failed.closed.before.upstream.exposure",
@@ -8930,7 +9058,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1340,
+          "line": 1475,
           "text": "M-S16b: L7 proxy substitutes openshell:resolve:env:SLACK_APP_TOKEN at egress (unset-var control diverged)",
           "polarity": "pass",
           "normalized_id": "m.s16b.l7.proxy.substitutes.openshell.resolve.env.slack.app.token.at.egress.unset.var.control.diverged",
@@ -8938,7 +9066,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1342,
+          "line": 1477,
           "text": "M-S16b: unset app-token env returned HTTP 200 — proxy may be passing canonical placeholders through unchanged",
           "polarity": "fail",
           "normalized_id": "m.s16b.unset.app.token.env.returned.http.200.proxy.may.be.passing.canonical.placeholders.through.unchanged",
@@ -8946,7 +9074,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1344,
+          "line": 1479,
           "text": "M-S16b: unset app-token request reached fake Slack — unresolved placeholder escaped the proxy boundary",
           "polarity": "fail",
           "normalized_id": "m.s16b.unset.app.token.request.reached.fake.slack.unresolved.placeholder.escaped.the.proxy.boundary",
@@ -8954,7 +9082,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1353,
+          "line": 1488,
           "text": "M-S16b: L7 proxy passed canonical placeholder through unchanged for SLACK_APP_TOKEN",
           "polarity": "fail",
           "normalized_id": "m.s16b.l7.proxy.passed.canonical.placeholder.through.unchanged.for.slack.app.token",
@@ -8962,7 +9090,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1355,
+          "line": 1490,
           "text": "M-S16b: Unexpected response (status=$sl_app_canon_status): ${sl_app_canonical:0:200}",
           "polarity": "fail",
           "normalized_id": "m.s16b.unexpected.response.status.sl.app.canon.status.sl.app.canonical.0.200",
@@ -8970,7 +9098,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1370,
+          "line": 1505,
           "text": "M18: Telegram getMe returned 200 with real token",
           "polarity": "pass",
           "normalized_id": "m18.telegram.getme.returned.200.with.real.token",
@@ -8978,7 +9106,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1372,
+          "line": 1507,
           "text": "M18b: Telegram response contains ok:true",
           "polarity": "pass",
           "normalized_id": "m18b.telegram.response.contains.ok.true",
@@ -8986,7 +9114,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1375,
+          "line": 1510,
           "text": "M18: Expected Telegram getMe 200 with real token, got: $tg_status",
           "polarity": "fail",
           "normalized_id": "m18.expected.telegram.getme.200.with.real.token.got.tg.status",
@@ -8994,7 +9122,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1405,
+          "line": 1540,
           "text": "M19: Telegram sendMessage succeeded",
           "polarity": "pass",
           "normalized_id": "m19.telegram.sendmessage.succeeded",
@@ -9002,7 +9130,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1407,
+          "line": 1542,
           "text": "M19: Telegram sendMessage failed: ${send_result:0:200}",
           "polarity": "fail",
           "normalized_id": "m19.telegram.sendmessage.failed.send.result.0.200",
@@ -9010,7 +9138,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1419,
+          "line": 1554,
           "text": "M20: Discord users/@me returned 200 with real token",
           "polarity": "pass",
           "normalized_id": "m20.discord.users.me.returned.200.with.real.token",
@@ -9018,7 +9146,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1421,
+          "line": 1556,
           "text": "M20: Expected Discord users/@me 200 with real token, got: $dc_status",
           "polarity": "fail",
           "normalized_id": "m20.expected.discord.users.me.200.with.real.token.got.dc.status",
@@ -9026,7 +9154,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1453,
+          "line": 1588,
           "text": "S1: Gateway is serving on port 18789 — Slack auth failure did not crash it",
           "polarity": "pass",
           "normalized_id": "s1.gateway.is.serving.on.port.18789.slack.auth.failure.did.not.crash.it",
@@ -9034,7 +9162,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1455,
+          "line": 1590,
           "text": "S1: Gateway is not serving on port 18789 (${gw_port:0:200})",
           "polarity": "fail",
           "normalized_id": "s1.gateway.is.not.serving.on.port.18789.gw.port.0.200",
@@ -9042,7 +9170,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1481,
+          "line": 1616,
           "text": "S2: Gateway log shows Slack rejection was caught by channel guard",
           "polarity": "pass",
           "normalized_id": "s2.gateway.log.shows.slack.rejection.was.caught.by.channel.guard",
@@ -9050,7 +9178,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1506,
+          "line": 1641,
           "text": "Cleanup: Sandbox '$SANDBOX_NAME' intentionally kept",
           "polarity": "pass",
           "normalized_id": "cleanup.sandbox.sandbox.name.intentionally.kept",
@@ -9058,7 +9186,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1508,
+          "line": 1643,
           "text": "Cleanup: Sandbox '$SANDBOX_NAME' still present after cleanup",
           "polarity": "fail",
           "normalized_id": "cleanup.sandbox.sandbox.name.still.present.after.cleanup",
@@ -9066,7 +9194,7 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1510,
+          "line": 1645,
           "text": "Cleanup: Sandbox '$SANDBOX_NAME' removed",
           "polarity": "pass",
           "normalized_id": "cleanup.sandbox.sandbox.name.removed",
@@ -16458,7 +16586,7 @@
   ],
   "totals": {
     "scripts": 52,
-    "assertions": 2024,
+    "assertions": 2040,
     "zero_assertion_scripts": 1
   }
 }

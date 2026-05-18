@@ -298,20 +298,6 @@ export function planAutoDispatch({
     };
   }
 
-  const maxJobs = Number.parseInt(env.E2E_ADVISOR_AUTO_DISPATCH_MAX_JOBS || "0", 10);
-  if (Number.isFinite(maxJobs) && maxJobs > 0 && jobs.length > maxJobs) {
-    return {
-      ...base,
-      reason: `advisor recommended ${jobs.length} dispatchable jobs, above E2E_ADVISOR_AUTO_DISPATCH_MAX_JOBS=${maxJobs}`,
-      prNumber: pr.number,
-      authorAssociation,
-      authorLogin,
-      allowedByAuthorAllowlist,
-      jobs,
-      ignoredJobs,
-    };
-  }
-
   const targetRef = pr.head?.sha || pr.head?.ref || "";
   const dispatchRef = env.E2E_ADVISOR_AUTO_DISPATCH_REF || pr.base?.ref || DEFAULT_DISPATCH_REF;
   const advisorDispatchId = buildAdvisorDispatchId(pr.number, env);

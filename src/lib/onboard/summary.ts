@@ -96,7 +96,7 @@ export function formatOnboardConfigSummary({
         ? "  Nous API key: host-managed; sandbox receives inference placeholder only"
         : "  Nous OAuth:    host-managed; sandbox receives inference placeholder only"
       : credentialEnv
-        ? `  API key:       ${credentialEnv} (staged for OpenShell gateway registration)`
+        ? "  API key:       configured for OpenShell gateway registration"
         : `  API key:       (not required for ${provider ?? "this provider"})`;
   const noteLines = (Array.isArray(notes) ? notes : [])
     .filter((note) => typeof note === "string" && note.length > 0)
