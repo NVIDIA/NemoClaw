@@ -96,6 +96,14 @@ function stdoutText(): string {
   return stdoutChunks.join("");
 }
 
+function capturedJsonOutput<T = unknown>(): T {
+  const json = stdoutText()
+    .split("\n")
+    .filter((line) => line && !line.startsWith("RUN_ID:") && !line.startsWith("PROGRESS:"))
+    .join("\n");
+  return JSON.parse(json) as T;
+}
+
 function minimalBlueprint(overrides?: Record<string, unknown>): Record<string, unknown> {
   return {
     version: "1.0",
@@ -486,6 +494,57 @@ describe("runner", () => {
       expect(plan.dry_run).toBe(false);
     });
 
+    it("does not expose credential field names or secret values in public plan output", async () => {
+      captureStdout();
+      mockExeca.mockResolvedValue({ exitCode: 0 });
+      const bp = {
+        components: {
+          inference: {
+            profiles: {
+              secrets: {
+                provider_type: "openai",
+                provider_name: "secret-provider",
+                endpoint: "https://api.example.com/v1",
+                model: "gpt-4",
+                credential_env: "SECRET_KEY",
+                credential_default: "default-secret-value",
+                token: "future-token-value",
+                authorization: "Bearer future-authorization",
+              },
+            },
+          },
+          sandbox: { image: "openclaw", name: "sb", forward_ports: [18789] },
+        },
+      };
+      process.env.SECRET_KEY = "real-secret-value";
+      try {
+        const plan = await actionPlan("secrets", bp);
+        const rendered = capturedJsonOutput<{ inference: Record<string, unknown> }>();
+        const out = stdoutText();
+
+        expect(plan.inference).not.toHaveProperty("credential_env");
+        expect(rendered.inference).toEqual({
+          provider_type: "openai",
+          provider_name: "secret-provider",
+          endpoint: "https://api.example.com/v1",
+          model: "gpt-4",
+        });
+        for (const leaked of [
+          "credential_env",
+          "credential_default",
+          "SECRET_KEY",
+          "default-secret-value",
+          "real-secret-value",
+          "future-token-value",
+          "future-authorization",
+        ]) {
+          expect(out).not.toContain(leaked);
+        }
+      } finally {
+        delete process.env.SECRET_KEY;
+      }
+    });
+
     it("passes dryRun through to the plan", async () => {
       captureStdout();
       mockExeca.mockResolvedValue({ exitCode: 0 });
@@ -820,17 +879,20 @@ describe("runner", () => {
       expect(plan.timestamp).toBeDefined();
     });
 
-    it("excludes secret fields from persisted plan.json", async () => {
+    it("persists only the explicit safe plan schema", async () => {
       const bp = {
         components: {
           inference: {
             profiles: {
               secrets: {
                 provider_type: "openai",
+                provider_name: "secret-provider",
                 endpoint: "https://api.example.com",
                 model: "gpt-4",
                 credential_env: "SECRET_KEY",
                 credential_default: "default-secret-value",
+                token: "future-token-value",
+                authorization: "Bearer future-authorization",
               },
             },
           },
@@ -850,11 +912,29 @@ describe("runner", () => {
       if (!entry?.content) throw new Error("plan.json has no content");
       const persisted = JSON.parse(entry.content);
 
-      expect(persisted.inference).not.toHaveProperty("credential_env");
-      expect(persisted.inference).not.toHaveProperty("credential_default");
-      // Ensure non-secret fields are still present
-      expect(persisted.inference.provider_type).toBe("openai");
-      expect(persisted.inference.endpoint).toBe("https://api.example.com");
+      expect(Object.keys(persisted).sort()).toEqual(
+        ["inference", "policy_additions", "profile", "run_id", "sandbox_name", "timestamp"].sort(),
+      );
+      expect(Object.keys(persisted.inference).sort()).toEqual(
+        ["endpoint", "model", "provider_name", "provider_type"].sort(),
+      );
+      expect(persisted.inference).toEqual({
+        provider_type: "openai",
+        provider_name: "secret-provider",
+        endpoint: "https://api.example.com",
+        model: "gpt-4",
+      });
+      for (const leaked of [
+        "credential_env",
+        "credential_default",
+        "SECRET_KEY",
+        "default-secret-value",
+        "real-secret",
+        "future-token-value",
+        "future-authorization",
+      ]) {
+        expect(entry.content).not.toContain(leaked);
+      }
     });
 
     it("emits all progress milestones", async () => {
@@ -1107,11 +1187,104 @@ describe("runner", () => {
       expect(stdoutText()).toContain('"nc-run-1"');
     });
 
+    it("re-renders only safe allowlisted fields from plan.json", () => {
+      const rid = "nc-run-sensitive";
+      addDir(`${RUNS_DIR}/${rid}`);
+      addFile(
+        `${RUNS_DIR}/${rid}/plan.json`,
+        JSON.stringify({
+          run_id: rid,
+          profile: "default",
+          sandbox: {
+            image: "openclaw",
+            name: "sb",
+            forward_ports: [18789],
+            token: "sandbox-token-value",
+          },
+          sandbox_name: "sb",
+          policy_additions: {},
+          inference: {
+            provider_type: "openai",
+            provider_name: "secret-provider",
+            endpoint: "https://api.example.com/v1",
+            model: "gpt-4",
+            credential_env: "SECRET_KEY",
+            credential_default: "default-secret-value",
+            token: "future-token-value",
+            authorization: "Bearer future-authorization",
+          },
+          router: {
+            enabled: true,
+            port: 4000,
+            pool_config_path: "router/pool-config.yaml",
+            authorization: "router-authorization",
+          },
+          timestamp: "2026-05-17T00:00:00.000Z",
+          dry_run: false,
+          token: "top-level-token-value",
+          authorization: "Bearer top-level-authorization",
+          future_sensitive_field: { api_key: "future-api-key" },
+        }),
+      );
+
+      actionStatus(rid);
+
+      expect(capturedJsonOutput()).toEqual({
+        run_id: rid,
+        profile: "default",
+        sandbox: {
+          image: "openclaw",
+          name: "sb",
+          forward_ports: [18789],
+        },
+        sandbox_name: "sb",
+        policy_additions: {},
+        inference: {
+          provider_type: "openai",
+          provider_name: "secret-provider",
+          endpoint: "https://api.example.com/v1",
+          model: "gpt-4",
+        },
+        router: {
+          enabled: true,
+          port: 4000,
+          pool_config_path: "router/pool-config.yaml",
+        },
+        timestamp: "2026-05-17T00:00:00.000Z",
+        dry_run: false,
+      });
+      const out = stdoutText();
+      for (const leaked of [
+        "credential_env",
+        "credential_default",
+        "SECRET_KEY",
+        "default-secret-value",
+        "future-token-value",
+        "future-authorization",
+        "sandbox-token-value",
+        "router-authorization",
+        "top-level-token-value",
+        "top-level-authorization",
+        "future-api-key",
+      ]) {
+        expect(out).not.toContain(leaked);
+      }
+    });
+
     it("prints unknown status when plan.json is missing", () => {
       addDir(`${RUNS_DIR}/nc-run-1`);
 
       actionStatus("nc-run-1");
       expect(stdoutText()).toContain('"status":"unknown"');
+    });
+
+    it("prints unknown status when plan.json is corrupt", () => {
+      addDir(`${RUNS_DIR}/nc-run-1`);
+      addFile(`${RUNS_DIR}/nc-run-1/plan.json`, "{not valid json");
+
+      actionStatus("nc-run-1");
+
+      expect(capturedJsonOutput()).toEqual({ run_id: "nc-run-1", status: "unknown" });
     });
 
     // ── Path traversal rejection ──────────────────────────────────
