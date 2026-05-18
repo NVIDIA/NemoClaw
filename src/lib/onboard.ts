@@ -342,7 +342,6 @@ import {
 import { streamGatewayStart } from "./onboard/gateway";
 import { reportGpuPassthroughRecovery } from "./onboard/gpu-recovery";
 import {
-  filterEnabledChannelsByAgent,
   getAvailableMessagingChannelsForAgent,
   resolveMessagingChannelSeed,
   resolveQrSelectedChannels,
