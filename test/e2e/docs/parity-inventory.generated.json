@@ -234,7 +234,7 @@
       "assertions": [
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 188,
+          "line": 193,
           "text": "C0: NVIDIA_API_KEY is required",
           "polarity": "fail",
           "normalized_id": "c0.nvidia.api.key.is.required",
@@ -242,7 +242,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 191,
+          "line": 196,
           "text": "C0: NVIDIA_API_KEY is set",
           "polarity": "pass",
           "normalized_id": "c0.nvidia.api.key.is.set",
@@ -250,7 +250,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 194,
+          "line": 199,
           "text": "C0: NEMOCLAW_NON_INTERACTIVE=1 is required",
           "polarity": "fail",
           "normalized_id": "c0.nemoclaw.non.interactive.1.is.required",
@@ -258,7 +258,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 197,
+          "line": 202,
           "text": "C0: NEMOCLAW_NON_INTERACTIVE=1 is set",
           "polarity": "pass",
           "normalized_id": "c0.nemoclaw.non.interactive.1.is.set",
@@ -266,7 +266,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 215,
+          "line": 220,
           "text": "C1a: Pre-cleanup complete",
           "polarity": "pass",
           "normalized_id": "c1a.pre.cleanup.complete",
@@ -274,7 +274,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 251,
+          "line": 256,
           "text": "C1b: install.sh + onboard completed (exit 0)",
           "polarity": "pass",
           "normalized_id": "c1b.install.sh.onboard.completed.exit.0",
@@ -282,7 +282,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 253,
+          "line": 258,
           "text": "C1b: install.sh failed (exit $install_exit)",
           "polarity": "fail",
           "normalized_id": "c1b.install.sh.failed.exit.install.exit",
@@ -290,7 +290,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 259,
+          "line": 264,
           "text": "C1c: openshell not on PATH after install",
           "polarity": "fail",
           "normalized_id": "c1c.openshell.not.on.path.after.install",
@@ -298,7 +298,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 262,
+          "line": 267,
           "text": "C1c: openshell installed",
           "polarity": "pass",
           "normalized_id": "c1c.openshell.installed",
@@ -306,7 +306,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 265,
+          "line": 270,
           "text": "C1d: nemoclaw not on PATH after install",
           "polarity": "fail",
           "normalized_id": "c1d.nemoclaw.not.on.path.after.install",
@@ -314,7 +314,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 268,
+          "line": 273,
           "text": "C1d: nemoclaw installed",
           "polarity": "pass",
           "normalized_id": "c1d.nemoclaw.installed",
@@ -322,7 +322,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 271,
+          "line": 276,
           "text": "C1e: Sandbox '${SANDBOX_NAME}' is Ready",
           "polarity": "pass",
           "normalized_id": "c1e.sandbox.sandbox.name.is.ready",
@@ -330,7 +330,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 273,
+          "line": 278,
           "text": "C1e: Sandbox '${SANDBOX_NAME}' not Ready",
           "polarity": "fail",
           "normalized_id": "c1e.sandbox.sandbox.name.not.ready",
@@ -338,7 +338,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 283,
+          "line": 288,
           "text": "C2a: Provider '${SANDBOX_NAME}-telegram-bridge' unexpectedly exists at baseline",
           "polarity": "fail",
           "normalized_id": "c2a.provider.sandbox.name.telegram.bridge.unexpectedly.exists.at.baseline",
@@ -346,7 +346,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 285,
+          "line": 290,
           "text": "C2a: No telegram-bridge provider at baseline",
           "polarity": "pass",
           "normalized_id": "c2a.no.telegram.bridge.provider.at.baseline",
@@ -354,7 +354,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 289,
+          "line": 294,
           "text": "C2b: openclaw.json unexpectedly contains 'telegram' at baseline",
           "polarity": "fail",
           "normalized_id": "c2b.openclaw.json.unexpectedly.contains.telegram.at.baseline",
@@ -362,7 +362,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 293,
+          "line": 298,
           "text": "C2b: could not read openclaw.json inside sandbox at baseline",
           "polarity": "fail",
           "normalized_id": "c2b.could.not.read.openclaw.json.inside.sandbox.at.baseline",
@@ -370,7 +370,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 295,
+          "line": 300,
           "text": "C2b: openclaw.json has no 'telegram' channel block at baseline",
           "polarity": "pass",
           "normalized_id": "c2b.openclaw.json.has.no.telegram.channel.block.at.baseline",
@@ -378,7 +378,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 301,
+          "line": 306,
           "text": "C2c: 'telegram' preset unexpectedly applied at baseline",
           "polarity": "fail",
           "normalized_id": "c2c.telegram.preset.unexpectedly.applied.at.baseline",
@@ -386,7 +386,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 303,
+          "line": 308,
           "text": "C2c: 'telegram' preset not applied at baseline",
           "polarity": "pass",
           "normalized_id": "c2c.telegram.preset.not.applied.at.baseline",
@@ -394,7 +394,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 322,
+          "line": 327,
           "text": "C3a: channels add telegram registered the bridge",
           "polarity": "pass",
           "normalized_id": "c3a.channels.add.telegram.registered.the.bridge",
@@ -402,7 +402,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 324,
+          "line": 329,
           "text": "C3a: channels add telegram did not register",
           "polarity": "fail",
           "normalized_id": "c3a.channels.add.telegram.did.not.register",
@@ -410,7 +410,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 330,
+          "line": 335,
           "text": "C3b: rebuild (post-add) completed",
           "polarity": "pass",
           "normalized_id": "c3b.rebuild.post.add.completed",
@@ -418,7 +418,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 332,
+          "line": 337,
           "text": "C3b: rebuild (post-add) failed",
           "polarity": "fail",
           "normalized_id": "c3b.rebuild.post.add.failed",
@@ -426,7 +426,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 347,
+          "line": 352,
           "text": "C4a: 'telegram' preset present in policy list after add+rebuild (#3437 fixed)",
           "polarity": "pass",
           "normalized_id": "c4a.telegram.preset.present.in.policy.list.after.add.rebuild.3437.fixed",
@@ -434,7 +434,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 349,
+          "line": 354,
           "text": "C4a: REGRESSION — 'telegram' preset missing from policy list after add+rebuild (#3437)",
           "polarity": "fail",
           "normalized_id": "c4a.regression.telegram.preset.missing.from.policy.list.after.add.rebuild.3437",
@@ -442,7 +442,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 353,
+          "line": 358,
           "text": "C4b: openclaw.json contains 'telegram' channel block after add+rebuild",
           "polarity": "pass",
           "normalized_id": "c4b.openclaw.json.contains.telegram.channel.block.after.add.rebuild",
@@ -450,7 +450,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 357,
+          "line": 362,
           "text": "C4b: could not read openclaw.json inside sandbox post-add",
           "polarity": "fail",
           "normalized_id": "c4b.could.not.read.openclaw.json.inside.sandbox.post.add",
@@ -458,7 +458,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 359,
+          "line": 364,
           "text": "C4b: openclaw.json missing 'telegram' channel after add+rebuild",
           "polarity": "fail",
           "normalized_id": "c4b.openclaw.json.missing.telegram.channel.after.add.rebuild",
@@ -466,7 +466,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 364,
+          "line": 369,
           "text": "C4c: telegram-bridge provider exists in gateway after add+rebuild",
           "polarity": "pass",
           "normalized_id": "c4c.telegram.bridge.provider.exists.in.gateway.after.add.rebuild",
@@ -474,7 +474,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 366,
+          "line": 371,
           "text": "C4c: telegram-bridge provider missing in gateway after add+rebuild",
           "polarity": "fail",
           "normalized_id": "c4c.telegram.bridge.provider.missing.in.gateway.after.add.rebuild",
@@ -482,7 +482,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 374,
+          "line": 379,
           "text": "C4d: egress to api.telegram.org reaches Telegram through L7 proxy",
           "polarity": "pass",
           "normalized_id": "c4d.egress.to.api.telegram.org.reaches.telegram.through.l7.proxy",
@@ -490,7 +490,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 380,
+          "line": 385,
           "text": "C4d: egress to api.telegram.org blocked by proxy (preset not in effect)",
           "polarity": "fail",
           "normalized_id": "c4d.egress.to.api.telegram.org.blocked.by.proxy.preset.not.in.effect",
@@ -498,7 +498,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 396,
+          "line": 401,
           "text": "C5a: channels remove telegram unregistered the bridge",
           "polarity": "pass",
           "normalized_id": "c5a.channels.remove.telegram.unregistered.the.bridge",
@@ -506,7 +506,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 398,
+          "line": 403,
           "text": "C5a: channels remove telegram did not unregister",
           "polarity": "fail",
           "normalized_id": "c5a.channels.remove.telegram.did.not.unregister",
@@ -514,7 +514,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 406,
+          "line": 411,
           "text": "C5b: rebuild (post-remove) completed",
           "polarity": "pass",
           "normalized_id": "c5b.rebuild.post.remove.completed",
@@ -522,7 +522,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 408,
+          "line": 413,
           "text": "C5b: rebuild (post-remove) failed",
           "polarity": "fail",
           "normalized_id": "c5b.rebuild.post.remove.failed",
@@ -530,7 +530,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 419,
+          "line": 424,
           "text": "C6a: openclaw.json still contains 'telegram' after remove+rebuild",
           "polarity": "fail",
           "normalized_id": "c6a.openclaw.json.still.contains.telegram.after.remove.rebuild",
@@ -538,7 +538,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 425,
+          "line": 430,
           "text": "C6a: could not read openclaw.json inside sandbox post-remove",
           "polarity": "fail",
           "normalized_id": "c6a.could.not.read.openclaw.json.inside.sandbox.post.remove",
@@ -546,7 +546,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 427,
+          "line": 432,
           "text": "C6a: openclaw.json excludes 'telegram' after remove+rebuild",
           "polarity": "pass",
           "normalized_id": "c6a.openclaw.json.excludes.telegram.after.remove.rebuild",
@@ -554,7 +554,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 432,
+          "line": 437,
           "text": "C6b: telegram-bridge provider still exists in gateway after remove+rebuild",
           "polarity": "fail",
           "normalized_id": "c6b.telegram.bridge.provider.still.exists.in.gateway.after.remove.rebuild",
@@ -562,7 +562,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 434,
+          "line": 439,
           "text": "C6b: telegram-bridge provider removed from gateway after remove+rebuild",
           "polarity": "pass",
           "normalized_id": "c6b.telegram.bridge.provider.removed.from.gateway.after.remove.rebuild",
@@ -570,7 +570,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 443,
+          "line": 448,
           "text": "C6c: REGRESSION — 'telegram' preset still applied after remove+rebuild (#3671)",
           "polarity": "fail",
           "normalized_id": "c6c.regression.telegram.preset.still.applied.after.remove.rebuild.3671",
@@ -578,7 +578,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 445,
+          "line": 450,
           "text": "C6c: 'telegram' preset removed from policy list after remove+rebuild",
           "polarity": "pass",
           "normalized_id": "c6c.telegram.preset.removed.from.policy.list.after.remove.rebuild",
