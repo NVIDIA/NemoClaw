@@ -207,10 +207,24 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   return false;
 }
 
-function runOptional(runtime: UninstallRuntime, description: string, command: string, args: string[]): void {
+function runOptional(
+  runtime: UninstallRuntime,
+  description: string,
+  command: string,
+  args: string[],
+  opts: { onSkip?: string } = {},
+): void {
   const result = runtime.run(command, args, { env: runtime.env, stdio: "ignore" });
-  if (result.status === 0) runtime.log(description);
-  else runtime.warn(`${description} skipped`);
+  if (result.status === 0) {
+    runtime.log(description);
+    return;
+  }
+  // #3456 sub-bug #4: when the destroy/delete call no-ops (target already
+  // gone), printing `<description> skipped` was self-contradictory — e.g.
+  // "Destroyed gateway 'nemoclaw' skipped" suggested the gateway was both
+  // destroyed AND skipped. Callers that care can pass a `onSkip` message
+  // describing the actual state (target absent or unreachable).
+  runtime.warn(opts.onSkip ?? `${description} skipped`);
 }
 
 function stopHelperServices(paths: UninstallPaths, runtime: UninstallRuntime): void {
@@ -390,12 +404,14 @@ function removeOpenShellResources(options: UninstallRunOptions, runtime: Uninsta
   for (const provider of NEMOCLAW_PROVIDERS) {
     runOptional(runtime, `Deleted provider '${provider}'`, "openshell", ["provider", "delete", provider]);
   }
-  runOptional(runtime, `Destroyed gateway '${options.gatewayName || "nemoclaw"}'`, "openshell", [
-    "gateway",
-    "destroy",
-    "-g",
-    options.gatewayName || "nemoclaw",
-  ]);
+  const gatewayLabel = options.gatewayName || "nemoclaw";
+  runOptional(
+    runtime,
+    `Destroyed gateway '${gatewayLabel}'`,
+    "openshell",
+    ["gateway", "destroy", "-g", gatewayLabel],
+    { onSkip: `Gateway '${gatewayLabel}' already removed or unreachable` },
+  );
 }
 
 function removeAliases(paths: UninstallPaths, runtime: UninstallRuntime): void {
@@ -566,6 +582,7 @@ function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: Uninst
         commandExists: runtime.commandExists,
       });
       stopOrphanedOpenShell(runtime);
+      stopMatchingPids("openshell-gateway", runtime, "host openshell-gateway processes");
       stopOllamaAuthProxy(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);
@@ -582,9 +599,10 @@ function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: Uninst
     } else if (step.name === "State and binaries") {
       removeManagedSwap(paths, runtime);
       for (const pattern of paths.runtimeTempGlobs) removeGlob(pattern, runtime);
-      if (options.keepOpenShell) runtime.log("Keeping openshell binary as requested.");
+      if (options.keepOpenShell) runtime.log("Keeping OpenShell binaries as requested.");
       else for (const target of paths.openshellInstallPaths) removeFileWithOptionalSudo(target, runtime);
       removePath(paths.nemoclawStateDir, runtime);
+      removePath(paths.gatewayLocalStateDir, runtime);
       removePath(paths.openshellConfigDir, runtime);
       removePath(paths.nemoclawConfigDir, runtime);
     }

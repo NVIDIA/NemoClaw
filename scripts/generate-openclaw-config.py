@@ -30,6 +30,7 @@ Environment variables:
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map
     NEMOCLAW_DISCORD_GUILDS_B64         Base64-encoded Discord guild config
     NEMOCLAW_TELEGRAM_CONFIG_B64        Base64-encoded Telegram config (e.g. {"requireMention": true})
+    NEMOCLAW_WECHAT_CONFIG_B64          Base64-encoded WeChat config (e.g. {"accountId": "...", "baseUrl": "...", "userId": "..."})
     NEMOCLAW_DISABLE_DEVICE_AUTH        Set to "1" to force-disable device auth
     NEMOCLAW_PROXY_HOST                 Egress proxy host (default: 10.200.0.1)
     NEMOCLAW_PROXY_PORT                 Egress proxy port (default: 3128)
@@ -442,8 +443,18 @@ def build_config(env: dict | None = None) -> dict:
             env.get("NEMOCLAW_TELEGRAM_CONFIG_B64", "e30=") or "e30="
         ).decode("utf-8")
     )
+    # NEMOCLAW_WECHAT_CONFIG_B64 is intentionally not decoded here. The
+    # WeChat plugin's per-account state (accountId/baseUrl/userId) is read by
+    # seed-wechat-accounts.py, which the Dockerfile invokes separately after
+    # `openclaw plugins install` registers the openclaw-weixin channel id.
+    # Decoding it here too would create a misleading second consumer that
+    # nothing acts on.
 
-    _token_keys = {"discord": "token", "telegram": "botToken", "slack": "botToken"}
+    _token_keys = {
+        "discord": "token",
+        "telegram": "botToken",
+        "slack": "botToken",
+    }
     _env_keys = {
         "discord": "DISCORD_BOT_TOKEN",
         "telegram": "TELEGRAM_BOT_TOKEN",
@@ -481,6 +492,24 @@ def build_config(env: dict | None = None) -> dict:
             account["dmPolicy"] = "allowlist"
             account["allowFrom"] = _allowed_ids[ch]
         _ch_cfg[ch] = {"accounts": {"default": account}}
+
+    # WeChat (openclaw-weixin) is NOT added to channels.* here — writing
+    # channels.openclaw-weixin upfront makes `openclaw plugins install` fail
+    # with "unknown channel id: openclaw-weixin" because the plugin registry
+    # hasn't seen the channel yet (chicken-and-egg). The block is written
+    # AFTER `openclaw plugins install` runs, by scripts/seed-wechat-accounts.py,
+    # which adds:
+    #   channels.openclaw-weixin.channelConfigUpdatedAt = <ISO timestamp>
+    #   channels.openclaw-weixin.accounts.<accountId>.enabled = true
+    # The upstream plugin's auth/accounts.ts reads that block at boot to
+    # decide which accounts to start; without enabled=true the bridge no-ops.
+    #
+    # Per-account secrets (token, baseUrl, userId) still live in the plugin's
+    # own state dir at <stateDir>/openclaw-weixin/accounts/<accountId>.json
+    # (also seeded by seed-wechat-accounts.py). DM allowlist uses the
+    # framework allowFrom file at credentials/openclaw-weixin-{accountId}-
+    # allowFrom.json — not the openclaw.json accounts.<id>.allowFrom mechanism
+    # that telegram/discord/slack use.
 
     if "discord" in _ch_cfg and _discord_guilds:
         _ch_cfg["discord"].update(
@@ -561,6 +590,12 @@ def build_config(env: dict | None = None) -> dict:
         "acpx": {"enabled": False},
         "bonjour": {"enabled": False},
         "qqbot": {"enabled": False},
+        # The @tencent-weixin/openclaw-weixin plugin is pre-installed in the
+        # base image (Dockerfile.base) so onboarding does not depend on the
+        # public npm registry for it. Enable the entry unconditionally — the
+        # bridge no-ops at startup unless seed-wechat-accounts.py has also
+        # registered an accountId under channels.openclaw-weixin.accounts.
+        "openclaw-weixin": {"enabled": True},
     }
     _bundled_provider_plugins = {
         "amazon-bedrock": {"amazon-bedrock", "bedrock"},
@@ -673,6 +708,10 @@ def main() -> None:
     with open(path, "w") as f:
         json.dump(config, f, indent=2)
     os.chmod(path, 0o600)
+    # NOTE: seed-wechat-accounts.py is invoked separately from the Dockerfile
+    # AFTER `openclaw plugins install`. Calling it here would write
+    # channels.openclaw-weixin before the plugin registers its channel id,
+    # which makes the install fail with "unknown channel id: openclaw-weixin".
 
 
 if __name__ == "__main__":

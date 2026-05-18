@@ -1588,7 +1588,7 @@ describe("CLI dispatch", () => {
     }
   });
 
-  it("doctor accepts a live cloudflared PID", () => {
+  it("doctor accepts a live cloudflared PID", testTimeoutOptions(35_000), () => {
     const { sandboxName, serviceDir } = createCloudflaredServiceDir("doctorcloudflared-");
     const setup = createDoctorTestSetup(
       "nemoclaw-cli-doctor-cloudflared-pid-",
@@ -1730,9 +1730,19 @@ describe("CLI dispatch", () => {
     expect(add.code).toBe(0);
     expect(add.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
 
+    const addMixedCase = runWithEnv("alpha channels add Telegram --dry-run", { HOME: home });
+    expect(addMixedCase.code).toBe(0);
+    expect(addMixedCase.out).toContain("--dry-run: would enable channel 'telegram' for 'alpha'.");
+
     const remove = runWithEnv("alpha channels remove telegram --dry-run", { HOME: home });
     expect(remove.code).toBe(0);
     expect(remove.out).toContain("--dry-run: would remove channel 'telegram' for 'alpha'.");
+
+    const removeMixedCase = runWithEnv("alpha channels remove Telegram --dry-run", { HOME: home });
+    expect(removeMixedCase.code).toBe(0);
+    expect(removeMixedCase.out).toContain(
+      "--dry-run: would remove channel 'telegram' for 'alpha'.",
+    );
 
     const stop = runWithEnv("alpha channels stop telegram --dry-run", { HOME: home });
     expect(stop.code).toBe(0);
@@ -3464,7 +3474,7 @@ describe("CLI dispatch", () => {
     expect(fs.existsSync(sshMarkerFile)).toBe(false);
   });
 
-  it("connect --probe-only falls back to SSH when sandbox exec never starts", () => {
+  it("connect --probe-only falls back to SSH when sandbox exec never starts", testTimeoutOptions(15_000), () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-connect-probe-exec-fallback-"),
     );
@@ -4769,7 +4779,9 @@ describe("CLI dispatch", () => {
     });
 
     expect(r.code).toBe(0);
-    expect(r.out).toContain("Inference:");
+    // #3265: backend label is qualified `Inference (ollama backend):` so the
+    // upcoming auth-proxy subprobe line renders in parallel.
+    expect(r.out).toContain("Inference (ollama backend):");
     expect(r.out).toContain("unreachable");
     expect(r.out).toContain("Start Ollama and retry");
     expect(r.out).toContain("http://127.0.0.1:11434/api/tags");

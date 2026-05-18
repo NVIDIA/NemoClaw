@@ -16,6 +16,6 @@
     "moduleDetection": "force",
     "types": ["node"]
   },
-  "include": ["agents/hermes/**/*.ts", "bin/**/*.ts", "scripts/**/*.ts", "src/**/*.ts", "test/**/*.ts", "nemoclaw-blueprint/scripts/**/*.ts"],
+  "include": ["agents/hermes/**/*.ts", "bin/**/*.ts", "scripts/**/*.ts", "src/**/*.ts", "test/**/*.ts", "tools/**/*.ts", "tools/**/*.mts", "nemoclaw-blueprint/scripts/**/*.ts"],
   "exclude": ["node_modules", "nemoclaw"]
 }

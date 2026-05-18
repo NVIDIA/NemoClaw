@@ -47,11 +47,21 @@ export function patchStagedDockerfile(
   discordGuilds: LooseObject = {},
   baseImageRef: string | null = null,
   telegramConfig: LooseObject = {},
+  wechatConfig: LooseObject = {},
   darwinVmCompat = false,
+  inferenceBaseUrlOverride: string | null = null,
 ): void {
   const sanitizedModel = sanitizeDockerArg(model);
-  const { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat } =
-    getSandboxInferenceConfig(sanitizedModel, provider, preferredInferenceApi);
+  const sandboxInference = getSandboxInferenceConfig(
+    sanitizedModel,
+    provider,
+    preferredInferenceApi,
+  );
+  const { providerKey, primaryModelRef, inferenceApi, inferenceCompat } = sandboxInference;
+  const inferenceBaseUrl =
+    inferenceBaseUrlOverride && inferenceBaseUrlOverride.trim()
+      ? inferenceBaseUrlOverride
+      : sandboxInference.inferenceBaseUrl;
   let dockerfile = fs.readFileSync(dockerfilePath, "utf8");
   // Pin the base image to a specific digest when available (#1904).
   // The ref must come from pullAndResolveBaseImageDigest() — never from
@@ -214,6 +224,12 @@ export function patchStagedDockerfile(
     dockerfile = dockerfile.replace(
       /^ARG NEMOCLAW_TELEGRAM_CONFIG_B64=.*$/m,
       `ARG NEMOCLAW_TELEGRAM_CONFIG_B64=${encodeSanitizedDockerJsonArg(telegramConfig)}`,
+    );
+  }
+  if (wechatConfig && Object.keys(wechatConfig).length > 0) {
+    dockerfile = dockerfile.replace(
+      /^ARG NEMOCLAW_WECHAT_CONFIG_B64=.*$/m,
+      `ARG NEMOCLAW_WECHAT_CONFIG_B64=${encodeSanitizedDockerJsonArg(wechatConfig)}`,
     );
   }
   fs.writeFileSync(dockerfilePath, dockerfile);

@@ -4,6 +4,50 @@
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
+## v0.0.44
+
+NemoClaw v0.0.44 improves onboarding reliability, GPU sandbox networking, local inference verification, messaging recovery, and remote dashboard access:
+
+- `nemoclaw onboard` handles DGX Spark and Jetson hosts more conservatively. Unified-memory GPU detection works for Spark, Jetson defaults to CPU-only sandbox passthrough unless you opt in, and local Ollama validation tolerates slow unified-memory model loads that still fit host memory.
+- Linux Docker-driver GPU sandboxes preserve `host.openshell.internal` during recreation and inject a reachable DNS resolver when the host uses a systemd-resolved loopback nameserver, which keeps local inference and external DNS working after GPU patching.
+- Onboarding and sandbox builds fail less often on first run. Preflight can guide missing NVIDIA Container Toolkit setup, Docker builds force BuildKit for Dockerfile bind mounts, npm installs retry transient registry resets, and compatible-endpoint onboarding runs a final inference smoke check before reporting success.
+- `nemoclaw <name> connect` repairs stale `inference.local` routes before opening the shell, reports local Ollama backend and auth-proxy diagnostics when repair fails, and `--probe-only` keeps dashboard and process recovery from failing just because inference repair needs follow-up.
+- `nemoclaw <name> channels add <channel>` applies the matching built-in network policy preset before rebuild, and rebuilds preserve paused channel state so stopped messaging channels stay disabled after destroy and recreate.
+- Remote hosts can opt into dashboard forwarding on all interfaces with `NEMOCLAW_DASHBOARD_BIND=0.0.0.0`, and gateway drift checks now stop backup, status, rebuild, recover, and upgrade flows before they trust stale OpenShell state.
+- Workspace restore uploads backed-up directories file by file, dashboard forwards retry while stopped ports are still releasing, and the in-sandbox OpenClaw gateway respawns after unexpected exits.
+
+## v0.0.43
+
+NemoClaw v0.0.43 improves GPU onboarding and uninstall cleanup on Linux Docker-driver hosts:
+
+- The standard installer can repair missing NVIDIA CDI device specs before onboarding by enabling the NVIDIA CDI refresh service, then falling back to direct `nvidia-ctk` spec generation when needed.
+- Linux Docker-driver GPU onboarding handles the Docker flags and sandbox policy needed for NVIDIA GPU proof writes to `/proc/<pid>/task/<tid>/comm`, which fixes DGX Spark installs that previously failed with a permission error during direct GPU proof.
+- `nemoclaw uninstall` removes the Linux gateway state directory under `~/.local/state/nemoclaw`, including gateway PID, SQLite, audit log, and VM-driver state left by Docker-driver gateways.
+
+## v0.0.42
+
+NemoClaw v0.0.42 improves onboarding, status diagnostics, local inference checks, and messaging setup:
+
+- `nemoclaw onboard` uses the Docker-driver OpenShell gateway path on macOS and no longer requires VM driver helper assets for standard macOS onboarding.
+- Dashboard port selection probes occupied ports more thoroughly, including root-owned listeners on macOS, and rolls back a newly-created sandbox if the dashboard forward cannot start after the image build.
+- `nemoclaw status` shows `Inference` and `Connected` fields for each listed sandbox, and cloudflared service output now distinguishes stopped, invalid PID file, and stale PID states with a `nemoclaw tunnel start` recovery hint.
+- Local Ollama status and doctor checks now probe the authenticated proxy in addition to the backend, so a broken proxy is reported separately from a healthy `127.0.0.1:11434` backend.
+- Compatible OpenAI endpoint validation retries reasoning-only smoke responses with a larger output budget before classifying the setup as a model output budget problem instead of a route failure.
+- `channels add` and `channels remove` normalize channel names before saving or rebuilding, and `channels add` hints when a matching built-in policy preset exists but is not applied yet.
+- GPU recovery and uninstall output now use registry-aware recovery commands and clearer gateway removal wording.
+- Onboarding applies selected built-in policy presets in a single policy update when possible, while preserving the final live policy and registry state.
+- The installer handles unchanged user-local CLI shims idempotently, avoiding duplicate shim-creation messages during install-plus-verify flows.
+
+## v0.0.41
+
+NemoClaw v0.0.41 improves Docker-driver onboarding and release compatibility:
+
+- `nemoclaw onboard` can pin fresh OpenShell installs to a published release that fits the blueprint's tested version range, while retaining the installer fallback when release metadata is unavailable.
+- Docker-driver gateway startup verifies that sandbox containers can reach `host.openshell.internal` before reporting the gateway healthy, and Linux firewall failures include a targeted `ufw` remediation.
+- Local Ollama setup probes sandbox-to-proxy reachability before it commits the inference route, so blocked `11435` traffic stops onboarding with a rerun-safe fix instead of leaving a broken route.
+- Linux Docker-driver GPU onboarding can recreate the OpenShell-managed sandbox container with NVIDIA GPU access and leaves diagnostics plus cleanup guidance when GPU readiness fails.
+- `nemoclaw uninstall` removes all installer-managed OpenShell helper binaries unless you pass `--keep-openshell`.
+
 ## v0.0.40
 
 NemoClaw v0.0.40 improves onboarding reliability, local inference setup, and sandbox recovery:

@@ -15,7 +15,11 @@ ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest
 FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d AS builder
 ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FUND=false \
-    NPM_CONFIG_UPDATE_NOTIFIER=false
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
+    NPM_CONFIG_FETCH_TIMEOUT=300000
 COPY nemoclaw/package.json nemoclaw/package-lock.json nemoclaw/tsconfig.json /opt/nemoclaw/
 COPY nemoclaw/src/ /opt/nemoclaw/src/
 WORKDIR /opt/nemoclaw
@@ -46,7 +50,7 @@ RUN set -eu; \
             apt-get install -y --no-install-recommends procps=2:4.0.4-9; \
         fi; \
         if [ "$needs_chattr" = "1" ]; then \
-            apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b10; \
+            apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b11; \
         fi; \
     fi; \
     rm -rf /var/lib/apt/lists/*; \
@@ -59,9 +63,17 @@ COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
 COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
+RUN chmod -R a+rX /opt/nemoclaw-blueprint/
 
 # Install runtime dependencies only (no devDependencies, no build step)
 WORKDIR /opt/nemoclaw
+ENV NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false \
+    NPM_CONFIG_UPDATE_NOTIFIER=false \
+    NPM_CONFIG_FETCH_RETRIES=5 \
+    NPM_CONFIG_FETCH_RETRY_MINTIMEOUT=20000 \
+    NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
+    NPM_CONFIG_FETCH_TIMEOUT=300000
 RUN npm ci --omit=dev
 
 # Upgrade OpenClaw if the base image is stale.
@@ -159,7 +171,6 @@ RUN set -eu; \
 #
 # Both patches fail-close: if grep finds no targets, the build aborts so
 # the next maintainer reviewing an OPENCLAW_VERSION bump knows to revisit.
-COPY scripts/rcf_patch.py /usr/local/lib/nemoclaw/rcf_patch.py
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
     OC_DIST=/usr/local/lib/node_modules/openclaw/dist; \
@@ -191,20 +202,6 @@ RUN set -eu; \
     sed -i 's/const baseLstat = await fs\.lstat(params\.installBaseDir)/const baseLstat = await fs.stat(params.installBaseDir)/' "$ipd_file"; \
     sed -i 's/baseLstat\.isSymbolicLink()/false \/* nemoclaw: symlink check disabled, realpath guards containment *\//' "$ipd_file"; \
     if grep -q 'fs\.lstat(params\.installBaseDir)' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left lstat in assertInstallBaseStable" >&2; exit 1; fi; \
-    # --- Patch 4: graceful EACCES in replaceConfigFile for sandbox (#2254) --- \
-    # Plugin install persists metadata via replaceConfigFile. In the sandbox, \
-    # openclaw.json is immutable (444 root:root) by design.  OpenClaw 2026.4.24 \
-    # restructured config writes: replaceConfigFile now first attempts a \
-    # single-key include-file mutation (tryWriteSingleTopLevelIncludeMutation), \
-    # falling back to writeConfigFile for the full config.  Both paths can hit \
-    # EACCES in the read-only sandbox tree.  This patch wraps the entire \
-    # write block in a try/catch that catches EACCES when OPENSHELL_SANDBOX=1 \
-    # and emits a warning instead of crashing.  Plugins still load via \
-    # auto-discovery from the extensions directory. \
-    rcf_file="$(grep -RIlE --include='*.js' 'async function replaceConfigFile\(params\)' "$OC_DIST" | head -n 1)"; \
-    test -n "$rcf_file" || { echo "ERROR: replaceConfigFile function not found in OpenClaw dist" >&2; exit 1; }; \
-    python3 /usr/local/lib/nemoclaw/rcf_patch.py "$rcf_file"; \
-    grep -REq --include='*.js' 'OPENSHELL_SANDBOX.*EACCES' "$rcf_file" || { echo "ERROR: Patch 4 (replaceConfigFile EACCES) not applied" >&2; exit 1; }; \
     # --- Patch 5: bump default WS handshake timeout 10s -> 60s (#2484) --- \
     # OpenClaw's WS connect handshake has a hard-coded 10s timeout on both \
     # client and server. Server-side connect-handler processing can exceed \
@@ -240,10 +237,12 @@ COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
+COPY scripts/seed-wechat-accounts.py /usr/local/lib/nemoclaw/seed-wechat-accounts.py
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /usr/local/lib/nemoclaw/generate-openclaw-config.py \
+        /usr/local/lib/nemoclaw/seed-wechat-accounts.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
     && chmod 755 /usr/local/share/nemoclaw \
         /usr/local/share/nemoclaw/openclaw-plugins \
@@ -294,6 +293,12 @@ ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
 # When requireMention is true, Telegram groups get groups: {"*": {"requireMention": true}}
 # with groupPolicy: open. See #1737, #3022. Default: empty map.
 ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
+# Base64-encoded JSON WeChat config (e.g.
+# {"accountId":"…","baseUrl":"https://…","userId":"…"}).
+# Captured by the host-side iLink QR login during onboard. Non-secret per-account
+# metadata only — the bot token flows through the OpenShell provider, never
+# baked into the image. Default: empty map.
+ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
 # since terminal-based pairing is impossible in those contexts.
@@ -340,6 +345,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
     NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
+    NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
@@ -375,11 +381,32 @@ USER sandbox
 # list of env vars and derivation rules.
 RUN python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
 
-# Install NemoClaw plugin into OpenClaw. Prune non-runtime metadata from
-# staged bundled plugin dependencies before this layer is committed; deleting
-# it in a later layer would not reduce the OCI image imported by k3s.
+# TEMPORARY: install the WeChat plugin here (was moved to Dockerfile.base in
+# e23486b but the wholesale rewrite by generate-openclaw-config.py above
+# blew away plugins.installs.openclaw-weixin from base's openclaw.json,
+# leaving the plugin unloadable at runtime and taking Telegram down with it).
+# Running the install AFTER generate-openclaw-config.py merges the registry
+# entry into the freshly-written config. Seed the per-account state right
+# after so the bridge picks up the captured iLink session.
+# hadolint ignore=DL3059,DL4006
 RUN (openclaw doctor --fix > /dev/null 2>&1 || true) \
-    && (openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true) \
+    && openclaw plugins install \
+        '@tencent-weixin/openclaw-weixin@2.4.2' --pin \
+    && openclaw config set plugins.entries.openclaw-weixin.enabled true \
+    && python3 /usr/local/lib/nemoclaw/seed-wechat-accounts.py
+
+# Lock down npm: no further registry traffic in this image. Everything past
+# this point must resolve from local sources only.
+ENV NPM_CONFIG_OFFLINE=true \
+    NPM_CONFIG_AUDIT=false \
+    NPM_CONFIG_FUND=false
+
+# Install NemoClaw plugin into OpenClaw (local /opt/nemoclaw, no network).
+# Prune non-runtime metadata from staged bundled plugin dependencies before
+# this layer is committed; deleting it in a later layer would not reduce the
+# OCI image imported by k3s.
+# hadolint ignore=DL3059,DL4006
+RUN (openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true) \
     && if [ -d /sandbox/.openclaw/plugin-runtime-deps ]; then \
         find /sandbox/.openclaw/plugin-runtime-deps -type f \( \
             -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o \
@@ -489,6 +516,7 @@ RUN set -eu; \
         "$config_dir/flows" \
         "$config_dir/sandbox" \
         "$config_dir/telegram" \
+        "$config_dir/wechat" \
         "$config_dir/media" \
         "$config_dir/plugin-runtime-deps"; \
     touch "$config_dir/update-check.json" "$config_dir/exec-approvals.json"; \

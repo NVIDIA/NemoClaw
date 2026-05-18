@@ -316,6 +316,7 @@ Set Up Task-Specific Sub-Agents <inference/set-up-sub-agent>
 :hidden:
 
 Manage Sandbox Lifecycle <manage-sandboxes/lifecycle>
+Runtime Controls <manage-sandboxes/runtime-controls>
 Set Up Messaging Channels <manage-sandboxes/messaging-channels>
 Workspace Files <manage-sandboxes/workspace-files>
 Backup and Restore <manage-sandboxes/backup-restore>

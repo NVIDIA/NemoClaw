@@ -10,6 +10,7 @@ import {
   checkPortAvailable,
   getDockerBridgeGatewayIp,
   getMemoryInfo,
+  getNvidiaCdiSpecPath,
   ensureSwap,
   isDockerUnderProvisioned,
   MIN_RECOMMENDED_DOCKER_CPUS,
@@ -20,6 +21,7 @@ import {
   parseDockerStorageDriver,
   parseDockerUsesContainerdSnapshotter,
   planHostRemediation,
+  dnsProbeName,
   probeContainerDns,
 } from "../../../dist/lib/onboard/preflight";
 
@@ -723,6 +725,14 @@ describe("assessHost — CDI device-spec gap (#3152)", () => {
   });
 });
 
+describe("getNvidiaCdiSpecPath", () => {
+  it("builds the default NVIDIA CDI spec path from Docker CDI dirs", () => {
+    expect(getNvidiaCdiSpecPath({ dockerCdiSpecDirs: ["/etc/cdi/", "/var/run/cdi"] })).toBe(
+      "/etc/cdi/nvidia.yaml",
+    );
+  });
+});
+
 describe("planHostRemediation", () => {
   it("recommends starting docker when installed but unreachable and service inactive", () => {
     const actions = planHostRemediation({
@@ -748,6 +758,7 @@ describe("planHostRemediation", () => {
       hasNvidiaGpu: false,
       dockerCdiSpecDirs: [],
       cdiNvidiaGpuSpecMissing: false,
+      nvidiaContainerToolkitInstalled: true,
       notes: [],
     });
 
@@ -780,6 +791,7 @@ describe("planHostRemediation", () => {
       hasNvidiaGpu: false,
       dockerCdiSpecDirs: [],
       cdiNvidiaGpuSpecMissing: false,
+      nvidiaContainerToolkitInstalled: true,
       notes: [],
     });
 
@@ -816,6 +828,7 @@ describe("planHostRemediation", () => {
       hasNvidiaGpu: false,
       dockerCdiSpecDirs: [],
       cdiNvidiaGpuSpecMissing: false,
+      nvidiaContainerToolkitInstalled: true,
       notes: [],
     });
 
@@ -850,6 +863,7 @@ describe("planHostRemediation", () => {
       hasNvidiaGpu: false,
       dockerCdiSpecDirs: [],
       cdiNvidiaGpuSpecMissing: false,
+      nvidiaContainerToolkitInstalled: true,
       notes: [],
     });
 
@@ -881,6 +895,7 @@ describe("planHostRemediation", () => {
       hasNvidiaGpu: false,
       dockerCdiSpecDirs: [],
       cdiNvidiaGpuSpecMissing: false,
+      nvidiaContainerToolkitInstalled: true,
       notes: [],
     });
 
@@ -911,6 +926,7 @@ describe("planHostRemediation", () => {
       hasNvidiaGpu: true,
       dockerCdiSpecDirs: ["/etc/cdi", "/var/run/cdi"],
       cdiNvidiaGpuSpecMissing: true,
+      nvidiaContainerToolkitInstalled: true,
       notes: [],
     });
 
@@ -920,12 +936,107 @@ describe("planHostRemediation", () => {
     expect(action).toBeTruthy();
     expect(action?.kind).toBe("sudo");
     expect(action?.blocking).toBe(true);
-    expect(action?.commands[0]).toBe(
+    expect(action?.commands[0]).toBe("sudo mkdir -p /etc/cdi");
+    expect(action?.commands[1]).toBe(
       "sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml",
     );
-    expect(action?.commands[1]).toContain("nvidia-ctk cdi list");
-    expect(action?.commands[2]).toContain("nemoclaw onboard");
+    expect(action?.commands[2]).toContain("nvidia-ctk cdi list");
+    expect(action?.commands[3]).toContain("nemoclaw onboard");
     expect(action?.reason).toContain("nvidia.com/gpu");
+  });
+
+  it("emits an install_nvidia_container_toolkit action with apt bootstrap when nvidia-ctk is missing on apt hosts", () => {
+    const actions = planHostRemediation({
+      platform: "linux",
+      isWsl: false,
+      runtime: "docker",
+      packageManager: "apt",
+      systemctlAvailable: true,
+      dockerServiceActive: true,
+      dockerServiceEnabled: true,
+      dockerInstalled: true,
+      dockerRunning: true,
+      dockerReachable: true,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "v2",
+      dockerDefaultCgroupnsMode: "unknown",
+      isContainerRuntimeUnderProvisioned: false,
+      hasNestedOverlayConflict: false,
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: true,
+      dockerCdiSpecDirs: ["/etc/cdi", "/var/run/cdi"],
+      cdiNvidiaGpuSpecMissing: true,
+      nvidiaContainerToolkitInstalled: false,
+      notes: [],
+    });
+
+    expect(actions.find((entry) => entry.id === "generate_nvidia_cdi_spec")).toBeUndefined();
+    const action = actions.find((entry) => entry.id === "install_nvidia_container_toolkit");
+    expect(action).toBeTruthy();
+    expect(action?.kind).toBe("sudo");
+    expect(action?.blocking).toBe(true);
+    expect(action?.title).toContain("Install NVIDIA Container Toolkit");
+    expect(action?.reason).toContain("nvidia-container-toolkit");
+    expect(action?.commands.some((c) => c.includes("nvidia-container-toolkit-keyring.gpg"))).toBe(
+      true,
+    );
+    expect(action?.commands.some((c) => c === "sudo apt-get install -y nvidia-container-toolkit")).toBe(
+      true,
+    );
+    expect(
+      action?.commands.some((c) => c.startsWith("sudo nvidia-ctk cdi generate --output=")),
+    ).toBe(true);
+    const ctkInstallIndex =
+      action?.commands.findIndex((c) => c === "sudo apt-get install -y nvidia-container-toolkit") ??
+      -1;
+    const ctkGenerateIndex =
+      action?.commands.findIndex((c) => c.startsWith("sudo nvidia-ctk cdi generate --output=")) ??
+      -1;
+    expect(ctkInstallIndex).toBeGreaterThanOrEqual(0);
+    expect(ctkGenerateIndex).toBeGreaterThan(ctkInstallIndex);
+  });
+
+  it("emits an install_nvidia_container_toolkit action with a docs pointer when nvidia-ctk is missing on unknown package managers", () => {
+    const actions = planHostRemediation({
+      platform: "linux",
+      isWsl: false,
+      runtime: "docker",
+      packageManager: "unknown",
+      systemctlAvailable: true,
+      dockerServiceActive: true,
+      dockerServiceEnabled: true,
+      dockerInstalled: true,
+      dockerRunning: true,
+      dockerReachable: true,
+      nodeInstalled: true,
+      openshellInstalled: true,
+      dockerCgroupVersion: "v2",
+      dockerDefaultCgroupnsMode: "unknown",
+      isContainerRuntimeUnderProvisioned: false,
+      hasNestedOverlayConflict: false,
+      requiresHostCgroupnsFix: false,
+      isUnsupportedRuntime: false,
+      isHeadlessLikely: false,
+      hasNvidiaGpu: true,
+      dockerCdiSpecDirs: ["/etc/cdi", "/var/run/cdi"],
+      cdiNvidiaGpuSpecMissing: true,
+      nvidiaContainerToolkitInstalled: false,
+      notes: [],
+    });
+
+    const action = actions.find((entry) => entry.id === "install_nvidia_container_toolkit");
+    expect(action).toBeTruthy();
+    expect(
+      action?.commands.some((c) =>
+        c.includes("docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide"),
+      ),
+    ).toBe(true);
+    expect(
+      action?.commands.some((c) => c.startsWith("sudo nvidia-ctk cdi generate --output=")),
+    ).toBe(true);
   });
 });
 
@@ -1060,13 +1171,35 @@ describe("probeContainerDns", () => {
     expect(result.reason).toBe("image_pull_failed");
   });
 
-  it("flags resolution_failed for NXDOMAIN-style failures (resolver OK, name unknown)", () => {
+  it("returns ok on NXDOMAIN — resolver reachable, name does not resolve (#3630)", () => {
+    // The default probe queries a random `.invalid` subdomain (RFC 6761),
+    // which any compliant resolver answers with NXDOMAIN. NXDOMAIN proves
+    // the resolver was reached even though the name doesn't resolve, which
+    // is the only invariant we need to prove DNS works. Crucially, this
+    // path does NOT depend on a real A record (e.g., `registry.npmjs.org`)
+    // being reachable from the container, so a Docker-embedded-DNS cache
+    // hit cannot mask a host-side egress block. See #3630.
     const result = probeContainerDns({
       outputOverride:
         "Server:\t\t1.1.1.1\n" +
         "Address:\t1.1.1.1:53\n" +
         "\n" +
-        "** server can't find registry.npmjs.org: NXDOMAIN\n",
+        "** server can't find nemoclaw-dns-probe-abc123def456.invalid: NXDOMAIN\n",
+    });
+    expect(result.ok).toBe(true);
+    expect(result.reason).toBeUndefined();
+  });
+
+  it("flags resolution_failed for malformed responses with neither Address nor NXDOMAIN", () => {
+    // Resolver answered with something we don't recognize (e.g., SERVFAIL,
+    // unexpected format). Surface as resolution_failed rather than masking
+    // it as success.
+    const result = probeContainerDns({
+      outputOverride:
+        "Server:\t\t1.1.1.1\n" +
+        "Address:\t1.1.1.1:53\n" +
+        "\n" +
+        ";; reply from unexpected source: 8.8.8.8#53, expected 1.1.1.1#53\n",
     });
     expect(result.ok).toBe(false);
     expect(result.reason).toBe("resolution_failed");
@@ -1106,7 +1239,9 @@ describe("probeContainerDns", () => {
     const script = captured[0][2];
     expect(script).toContain("docker run --rm");
     expect(script).toContain("busybox:latest");
-    expect(script).toContain("registry.npmjs.org");
+    // Probe queries a random `.invalid` subdomain (#3630), not a real
+    // domain — cache-bypass guarantee. Stable prefix is asserted instead.
+    expect(script).toMatch(/nslookup nemoclaw-dns-probe-[0-9a-f]+\.invalid /);
     expect(script).toContain("2>&1");
   });
 
@@ -1122,7 +1257,33 @@ describe("probeContainerDns", () => {
     expect(seen).toEqual(["echo", "OVERRIDDEN"]);
   });
 
-  it("treats thrown runCapture errors as error reason", () => {
+  it("uses a random .invalid probe per call to bypass Docker embedded DNS cache (#3630)", () => {
+    // Before #3630 the probe queried `registry.npmjs.org`, whose answer
+    // Docker's embedded DNS resolver could serve from cache even when
+    // host-side egress to UDP/TCP port 53 was fully blocked. The fix
+    // is a random subdomain of the RFC 6761 reserved `.invalid` TLD so
+    // the query is never cached anywhere and always exercises real
+    // upstream DNS reachability.
+    const name1 = dnsProbeName();
+    const name2 = dnsProbeName();
+    expect(name1).toMatch(/^nemoclaw-dns-probe-[0-9a-f]{16}\.invalid$/);
+    expect(name2).toMatch(/^nemoclaw-dns-probe-[0-9a-f]{16}\.invalid$/);
+    expect(name1).not.toBe(name2);
+  });
+
+  it("honors a pinned probeName override for stable test assertions", () => {
+    let seenScript = "";
+    probeContainerDns({
+      probeName: "pinned-test.invalid",
+      runCaptureImpl: (command) => {
+        seenScript = command[2] ?? "";
+        return "Server:\t1.1.1.1\nAddress:\t1.1.1.1:53\n** server can't find pinned-test.invalid: NXDOMAIN\n";
+      },
+    });
+    expect(seenScript).toContain("nslookup pinned-test.invalid");
+  });
+
+    it("treats thrown runCapture errors as error reason", () => {
     const result = probeContainerDns({
       runCaptureImpl: () => {
         throw new Error("docker daemon unreachable");

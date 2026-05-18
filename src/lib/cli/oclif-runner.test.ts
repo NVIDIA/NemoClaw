@@ -3,7 +3,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { loadMock, runCommandMock } = vi.hoisted(() => ({
+const { executeMock, loadMock, runCommandMock } = vi.hoisted(() => ({
+  executeMock: vi.fn(),
   loadMock: vi.fn(),
   runCommandMock: vi.fn(),
 }));
@@ -12,9 +13,10 @@ vi.mock("@oclif/core", () => ({
   Config: {
     load: loadMock,
   },
+  execute: executeMock,
 }));
 
-import { runRegisteredOclifCommand } from "./oclif-runner";
+import { runOclifArgv, runRegisteredOclifCommand } from "./oclif-runner";
 
 function makeConfig() {
   const rootPlugin = {
@@ -40,8 +42,31 @@ class UnexpectedArgsError extends Error {
   oclif = { exit: 2 };
 }
 
+describe("runOclifArgv", () => {
+  it("executes native oclif argv with branded package metadata", async () => {
+    const config = makeConfig();
+    loadMock.mockResolvedValue(config);
+    executeMock.mockResolvedValue(undefined);
+
+    await runOclifArgv(["sandbox", "channels", "start", "--help"], { rootDir: "/repo" });
+
+    expect(loadMock).toHaveBeenCalledWith("/repo");
+    expect(executeMock).toHaveBeenCalledWith({
+      args: ["sandbox", "channels", "start", "--help"],
+      loadOptions: {
+        root: "/repo",
+        pjson: config.pjson,
+      },
+    });
+    expect(config.pjson.oclif.bin).toBe("nemoclaw");
+    expect(config.options.pjson.oclif.bin).toBe("nemoclaw");
+    expect(config.plugins.get("root")?.pjson.oclif.bin).toBe("nemoclaw");
+  });
+});
+
 describe("runRegisteredOclifCommand", () => {
   beforeEach(() => {
+    executeMock.mockReset();
     runCommandMock.mockReset();
     loadMock.mockReset();
     loadMock.mockResolvedValue(makeConfig());

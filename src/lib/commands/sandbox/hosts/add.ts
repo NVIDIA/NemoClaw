@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command } from "@oclif/core";
+import { NemoClawCommand } from "../../../cli/nemoclaw-oclif-command";
 
 import { buildHostAliasArgs, getHostsRuntimeBridge, hostAliasAddArgs, hostAliasMutationFlags } from "./common";
 
-export default class HostsAddCommand extends Command {
+export default class HostsAddCommand extends NemoClawCommand {
   static id = "sandbox:hosts:add";
   static strict = true;
   static summary = "Add a sandbox /etc/hosts alias";

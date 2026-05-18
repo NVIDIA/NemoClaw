@@ -137,3 +137,22 @@ export function redactUrl(value: unknown): string | null {
     return redactSensitiveText(value);
   }
 }
+
+function isSensitiveKey(key: string): boolean {
+  return /(?:api[_-]?key|token|secret|password|credential|authorization|bearer)/i.test(key);
+}
+
+export function redactForLog(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+  if (typeof value === "string") return redactFull(value);
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+
+  if (Array.isArray(value)) return value.map((entry) => redactForLog(entry, seen));
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    redacted[key] = isSensitiveKey(key) ? "<REDACTED>" : redactForLog(entry, seen);
+  }
+  return redacted;
+}

@@ -1,11 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Args, Command, Flags } from "@oclif/core";
+import { Args } from "@oclif/core";
+import { NemoClawCommand } from "../../../cli/nemoclaw-oclif-command";
 
 import { getSkillInstallRuntimeBridge } from "./common";
 
-export default class SkillInstallCliCommand extends Command {
+export default class SkillInstallCliCommand extends NemoClawCommand {
   static id = "sandbox:skill:install";
   static strict = true;
   static summary = "Deploy a skill directory to the sandbox";
@@ -28,7 +29,6 @@ export default class SkillInstallCliCommand extends Command {
     }),
   };
   static flags = {
-    help: Flags.help({ char: "h" }),
   };
 
   public async run(): Promise<void> {

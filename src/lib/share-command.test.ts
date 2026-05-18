@@ -29,6 +29,7 @@ function makeDeps(overrides: Partial<ShareCommandDeps> = {}): ShareCommandDeps {
       output: "Host openshell-alpha\n  HostName 127.0.0.1\n",
     })),
     ensureLive: vi.fn(async () => undefined),
+    checkSandboxPathExists: vi.fn(() => true),
     colorGreen: "",
     colorReset: "",
     cliName: "nemoclaw",

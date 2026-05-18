@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Args, Command, Flags } from "@oclif/core";
+import { Args, Flags } from "@oclif/core";
+import { NemoClawCommand } from "../../cli/nemoclaw-oclif-command";
 
 import { logsSinceDurationFlag } from "../../cli/duration-flags";
 import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
@@ -31,7 +32,7 @@ function getRuntimeBridge() {
   return runtimeBridgeFactory();
 }
 
-export default class SandboxLogsCommand extends Command {
+export default class SandboxLogsCommand extends NemoClawCommand {
   static id = "sandbox:logs";
   static strict = true;
   static summary = "Stream sandbox logs";
@@ -51,7 +52,6 @@ export default class SandboxLogsCommand extends Command {
     }),
   };
   static flags = {
-    help: Flags.help({ char: "h" }),
     follow: Flags.boolean({ description: "Follow logs until interrupted" }),
     tail: Flags.integer({
       char: "n",

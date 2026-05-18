@@ -7,6 +7,77 @@ export type OpenShellInstallResult = {
   futureShellPathHint: string | null;
 };
 
+export type OpenshellInstallVersionResolution =
+  | { kind: "pin"; version: string; latest: string | null; reason: "latest" | "max-cap" }
+  | { kind: "no-max"; latest: string | null }
+  | { kind: "incompatible"; latest: string | null; max: string; message: string };
+
+const SEMVER_TRIPLE = /^[0-9]+\.[0-9]+\.[0-9]+$/;
+
+/**
+ * Sanitize an OpenShell release tag from an external source (GitHub release tag
+ * name, blueprint field, env var) into a plain `X.Y.Z` version string. Returns
+ * null for empty, leading-`-`, or non-semver-triple inputs so callers never
+ * pass malformed strings into version comparison logic.
+ */
+export function parseOpenshellReleaseTag(tag: unknown): string | null {
+  if (typeof tag !== "string") return null;
+  const trimmed = tag.trim();
+  if (!trimmed) return null;
+  if (trimmed.startsWith("-")) return null;
+  const stripped = trimmed.startsWith("v") ? trimmed.slice(1) : trimmed;
+  if (!SEMVER_TRIPLE.test(stripped)) return null;
+  return stripped;
+}
+
+/**
+ * Pure resolver for which OpenShell release the installer should fetch.
+ *
+ * - If `options.max` is null, returns `kind: "no-max"` so callers leave the
+ *   install path alone (legacy behaviour — script picks its own pin / latest).
+ * - Otherwise, picks the highest entry of `available` that is `<= max`.
+ *   Returns `kind: "incompatible"` with a message naming both latest and max
+ *   when no such release exists.
+ *
+ * Malformed entries in `available` (empty string, leading `-`, non-semver) are
+ * silently dropped. The shipped blueprint guarantees `max` is valid before it
+ * reaches this function, but a defensive parse is also applied here.
+ */
+export function resolveOpenshellInstallVersion(
+  available: readonly string[],
+  options: { max: string | null },
+  helpers: { versionGte: (a: string, b: string) => boolean },
+): OpenshellInstallVersionResolution {
+  const sanitized = (available ?? [])
+    .map((entry) => parseOpenshellReleaseTag(entry))
+    .filter((entry): entry is string => entry !== null);
+  sanitized.sort((a, b) => (helpers.versionGte(a, b) ? (a === b ? 0 : -1) : 1));
+  const latest = sanitized[0] ?? null;
+
+  const max = parseOpenshellReleaseTag(options.max);
+  if (!max) {
+    return { kind: "no-max", latest };
+  }
+
+  if (latest && helpers.versionGte(max, latest)) {
+    return { kind: "pin", version: latest, latest, reason: "latest" };
+  }
+
+  const capped = sanitized.find((entry) => helpers.versionGte(max, entry));
+  if (capped) {
+    return { kind: "pin", version: capped, latest, reason: "max-cap" };
+  }
+
+  return {
+    kind: "incompatible",
+    latest,
+    max,
+    message:
+      `No OpenShell release ≤ ${max} is available (latest published: ${latest ?? "unknown"}). ` +
+      "Upgrade NemoClaw or raise max_openshell_version in nemoclaw-blueprint/blueprint.yaml.",
+  };
+}
+
 export type DockerDriverBinaryOverrides = {
   gatewayBin?: string | null;
   sandboxBin?: string | null;
@@ -20,7 +91,6 @@ export type OpenShellInstallDeps = {
   ) => boolean;
   resolveOpenShellGatewayBinary: () => string | null;
   resolveOpenShellSandboxBinary: () => string | null;
-  resolveOpenShellVmDriverBinary: () => string | null;
   isOpenshellInstalled: () => boolean;
   installOpenshell: () => OpenShellInstallResult;
   getInstalledOpenshellVersion: (versionOutput?: string | null) => string | null;
@@ -45,7 +115,6 @@ export function areRequiredDockerDriverBinariesPresent(
     | "isLinuxDockerDriverGatewayEnabled"
     | "resolveOpenShellGatewayBinary"
     | "resolveOpenShellSandboxBinary"
-    | "resolveOpenShellVmDriverBinary"
   >,
   platform: NodeJS.Platform = process.platform,
   binaries: DockerDriverBinaryOverrides = {},
@@ -58,12 +127,8 @@ export function areRequiredDockerDriverBinariesPresent(
   const sandboxBinary = Object.prototype.hasOwnProperty.call(binaries, "sandboxBin")
     ? binaries.sandboxBin
     : deps.resolveOpenShellSandboxBinary();
-  const vmDriverBinary = Object.prototype.hasOwnProperty.call(binaries, "vmDriverBin")
-    ? binaries.vmDriverBin
-    : deps.resolveOpenShellVmDriverBinary();
   if (!gatewayBinary) return false;
   if (platform === "linux" && !sandboxBinary) return false;
-  if (platform === "darwin" && !vmDriverBinary) return false;
   return true;
 }
 
@@ -111,12 +176,7 @@ export function ensureOpenshellForOnboard(deps: OpenShellInstallDeps): OpenShell
         if (needsDevChannel) {
           deps.log("  OpenShell Docker-driver onboarding requires the dev channel. Upgrading...");
         } else if (needsDockerDriverBinaries) {
-          const required =
-            platform === "linux"
-              ? "gateway and sandbox"
-              : platform === "darwin"
-                ? "gateway and VM driver"
-                : "gateway";
+          const required = platform === "linux" ? "gateway and sandbox" : "gateway";
           deps.log(
             `  OpenShell standalone gateway onboarding requires the ${required} binaries. Reinstalling...`,
           );

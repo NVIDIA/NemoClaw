@@ -6,20 +6,27 @@
  * health checks, and command generators for vLLM and Ollama.
  */
 
+import fs from "node:fs";
+import os from "node:os";
+import nodePath from "node:path";
 import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
+import type { CaptureResult } from "../runner";
+import { buildSubprocessEnv } from "../subprocess-env";
 
-const { shellQuote, runCapture } = require("../runner");
+const { shellQuote, runCapture, runCaptureEx } = require("../runner");
 
-import { VLLM_PORT, OLLAMA_PORT, OLLAMA_PROXY_PORT } from "../core/ports";
+import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 
 const { isWsl } = require("../platform");
+const { detectNvidiaPlatform } = require("./nim");
 
 /** Port containers use to reach Ollama — proxy on non-WSL, direct on WSL2. */
 export const OLLAMA_CONTAINER_PORT = isWsl() ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
 
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
+export const LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV = "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL";
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
 export const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
 export const QWEN3_6_OLLAMA_MODEL = "qwen3.6:35b";
@@ -27,6 +34,8 @@ export const SMALL_OLLAMA_MODEL = "qwen2.5:7b";
 export const LARGE_OLLAMA_MIN_MEMORY_MB = 32768;
 
 export type RunCaptureFn = (cmd: string | string[], opts?: { ignoreError?: boolean }) => string;
+
+export type RunCaptureExFn = (cmd: string[]) => CaptureResult;
 
 // Hosts that the WSL-side onboard CLI tries when probing Ollama. Native Linux
 // and macOS only ever reach Ollama on the local loopback. WSL with Docker
@@ -91,6 +100,11 @@ export function setResolvedOllamaHost(host: string): void {
 
 export interface GpuInfo {
   totalMemoryMB: number;
+  // Optional, narrows the GpuDetection union from inference/nim.ts. Used to
+  // gate the large-Ollama-model defaults so a partially-identified device
+  // does not get sized as if it were confirmed NVIDIA / Apple Silicon
+  // (#3510).
+  type?: string;
 }
 
 export interface ValidationResult {
@@ -104,10 +118,57 @@ export interface LocalProviderHealthStatus {
   providerLabel: string;
   endpoint: string;
   detail: string;
+  /**
+   * Specific failure mode, rendered as the status word (e.g. `unauthorized`,
+   * `unreachable`). Absent on `ok:true`; defaults to `unreachable` at the
+   * render layer if absent on `ok:false`. (#3265)
+   */
+  failureLabel?: "unreachable" | "unhealthy" | "unauthorized";
+  /**
+   * Short qualifier (e.g. "auth proxy") rendered as `Inference (<probeLabel>):`
+   * for additional hops so multi-hop health surfaces in the status output.
+   * Absent for the main backend probe. (#3265)
+   */
+  probeLabel?: string;
+  /**
+   * Additional probes that share the same Inference rendering — currently
+   * used to surface the Ollama auth-proxy hop alongside the backend probe so
+   * a failing proxy doesn't get hidden behind a healthy backend. (#3265)
+   */
+  subprobes?: LocalProviderHealthStatus[];
 }
 
 export interface LocalProviderHealthProbeOptions {
   runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;
+  /**
+   * Lets callers that perform their own Ollama auth-proxy check avoid the
+   * legacy inline proxy subprobe. The inline subprobe is retained for status
+   * rendering paths that still need a combined backend/proxy result.
+   */
+  skipOllamaAuthProxySubprobe?: boolean;
+  /**
+   * Reads the persisted Ollama auth-proxy bearer token. Injectable for tests.
+   * Default reads from `~/.nemoclaw/ollama-proxy-token` (written by
+   * inference/ollama/proxy.ts during onboard).
+   */
+  loadOllamaProxyTokenImpl?: () => string | null;
+}
+
+function defaultLoadOllamaProxyToken(): string | null {
+  const tokenPath = nodePath.join(os.homedir(), ".nemoclaw", "ollama-proxy-token");
+  try {
+    if (fs.existsSync(tokenPath)) {
+      const token = fs.readFileSync(tokenPath, "utf-8").trim();
+      return token || null;
+    }
+  } catch {
+    /* ignore — null means "no auth-proxy onboarded; skip the subprobe" */
+  }
+  return null;
+}
+
+function runLocalCurlProbe(argv: string[]): CurlProbeResult {
+  return runCurlProbe(argv, { env: buildSubprocessEnv(), replaceEnv: true });
 }
 
 export function validateOllamaPortConfiguration(): ValidationResult {
@@ -124,13 +185,34 @@ export function validateOllamaPortConfiguration(): ValidationResult {
   return { ok: true };
 }
 
-export function getLocalProviderBaseUrl(provider: string): string | null {
+function normalizeLocalInferenceHostUrl(raw: string | null | undefined): string | null {
+  const value = String(raw || "").trim().replace(/\/+$/, "");
+  if (!value) return null;
+  if (/^[A-Za-z0-9_.-]+$/.test(value)) return `http://${value}`;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol === "http:" && parsed.hostname) return `http://${parsed.hostname}`;
+  } catch {
+    return null;
+  }
+  return null;
+}
+
+function getLocalInferenceSandboxHostUrl(): string {
+  return normalizeLocalInferenceHostUrl(process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV]) || HOST_GATEWAY_URL;
+}
+
+export function getLocalProviderBaseUrl(
+  provider: string,
+  options: { hostUrl?: string | null } = {},
+): string | null {
+  const hostUrl = normalizeLocalInferenceHostUrl(options.hostUrl) || getLocalInferenceSandboxHostUrl();
   switch (provider) {
     case "vllm-local":
-      return `${HOST_GATEWAY_URL}:${VLLM_PORT}/v1`;
+      return `${hostUrl}:${VLLM_PORT}/v1`;
     case "ollama-local":
       // Containers reach Ollama through the auth proxy, not directly.
-      return `${HOST_GATEWAY_URL}:${OLLAMA_CONTAINER_PORT}/v1`;
+      return `${hostUrl}:${OLLAMA_CONTAINER_PORT}/v1`;
     default:
       return null;
   }
@@ -199,6 +281,74 @@ function buildLocalProviderProbeDetail(
   return `${label} is reachable on ${endpoint}, but the health probe failed. (${result.message})`;
 }
 
+/**
+ * Probe the Ollama auth proxy on :11435 with the persisted bearer token.
+ *
+ * Returns `null` when no token has been persisted (no Ollama onboard ever
+ * ran), so callers omit the line rather than report a misleading
+ * "unreachable". Returns `ok:false` with a "401 unauthorized" detail when
+ * the proxy is reachable but rejects the token — this is the exact signal
+ * the false-positive in #3265 was hiding (e.g. when the proxy fails to
+ * inject NEMOCLAW_OLLAMA_PROXY_TOKEN, #3198). (#3265)
+ */
+export function probeOllamaAuthProxyHealth(
+  options: LocalProviderHealthProbeOptions = {},
+): LocalProviderHealthStatus | null {
+  const loadToken = options.loadOllamaProxyTokenImpl ?? defaultLoadOllamaProxyToken;
+  const token = loadToken();
+  if (!token) {
+    return null;
+  }
+  const endpoint = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags`;
+  const runCurlProbeImpl = options.runCurlProbeImpl ?? runLocalCurlProbe;
+  const result = runCurlProbeImpl([
+    "-sS",
+    "--connect-timeout",
+    "3",
+    "--max-time",
+    "5",
+    "-H",
+    `Authorization: Bearer ${token}`,
+    endpoint,
+  ]);
+
+  const base = {
+    providerLabel: "Ollama auth proxy",
+    endpoint,
+    probeLabel: "auth proxy",
+  };
+  if (result.ok) {
+    return { ...base, ok: true, detail: `Ollama auth proxy is reachable on ${endpoint}.` };
+  }
+  if (result.httpStatus === 401) {
+    return {
+      ...base,
+      ok: false,
+      failureLabel: "unauthorized",
+      detail:
+        `Ollama auth proxy returned 401 on ${endpoint} — the persisted token is no longer ` +
+        `accepted. Re-run \`nemoclaw onboard\` (Ollama path) to rotate the proxy token.`,
+    };
+  }
+  if (result.httpStatus === 0) {
+    return {
+      ...base,
+      ok: false,
+      failureLabel: "unreachable",
+      detail:
+        `Ollama auth proxy is unreachable on ${endpoint}. The proxy process may have stopped; ` +
+        `re-run \`nemoclaw <sandbox> connect\` to restart it. (${result.message})`,
+    };
+  }
+  return {
+    ...base,
+    ok: false,
+    failureLabel: "unhealthy",
+    detail:
+      `Ollama auth proxy returned HTTP ${result.httpStatus} on ${endpoint}. (${result.message})`,
+  };
+}
+
 export function probeLocalProviderHealth(
   provider: string,
   options: LocalProviderHealthProbeOptions = {},
@@ -209,8 +359,23 @@ export function probeLocalProviderHealth(
     return null;
   }
 
-  const runCurlProbeImpl = options.runCurlProbeImpl ?? runCurlProbe;
+  const runCurlProbeImpl = options.runCurlProbeImpl ?? runLocalCurlProbe;
   const result = runCurlProbeImpl(["-sS", "--connect-timeout", "3", "--max-time", "5", endpoint]);
+
+  // Per #3265 the status line is renamed `Inference (<backend>):` for local
+  // providers so the upcoming `Inference (auth proxy):` subprobe lines render
+  // in parallel and the user can see which hop is broken.
+  const probeLabel =
+    provider === "ollama-local" ? "ollama backend" :
+    provider === "vllm-local" ? "vllm backend" : undefined;
+
+  const subprobes: LocalProviderHealthStatus[] = [];
+  if (provider === "ollama-local" && !options.skipOllamaAuthProxySubprobe) {
+    const proxyProbe = probeOllamaAuthProxyHealth(options);
+    if (proxyProbe) subprobes.push(proxyProbe);
+  }
+  const attachSubprobes = subprobes.length > 0 ? { subprobes } : {};
+  const attachProbeLabel = probeLabel ? { probeLabel } : {};
 
   if (result.ok) {
     return {
@@ -218,6 +383,8 @@ export function probeLocalProviderHealth(
       providerLabel,
       endpoint,
       detail: `${providerLabel} is reachable on ${endpoint}.`,
+      ...attachProbeLabel,
+      ...attachSubprobes,
     };
   }
 
@@ -226,6 +393,8 @@ export function probeLocalProviderHealth(
     providerLabel,
     endpoint,
     detail: buildLocalProviderProbeDetail(provider, endpoint, result),
+    ...attachProbeLabel,
+    ...attachSubprobes,
   };
 }
 
@@ -470,9 +639,22 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   return parseOllamaList(listOutput);
 }
 
+function isLargeOllamaCapableGpu(gpu: GpuInfo | null): boolean {
+  // Only confirmed-NVIDIA and Apple-Silicon devices get the large-model
+  // default.  Other detection outcomes (null, missing `type`, or a partial
+  // result that fell through the NVIDIA path with type set to something
+  // else) fall back to the smaller model so we never download a 22 GB
+  // model onto a host whose acceleration is unconfirmed (#3510).
+  return (
+    !!gpu &&
+    (gpu.type === "nvidia" || gpu.type === "apple") &&
+    gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB
+  );
+}
+
 export function getBootstrapOllamaModelOptions(gpu: GpuInfo | null): string[] {
   const options = [SMALL_OLLAMA_MODEL];
-  if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
+  if (isLargeOllamaCapableGpu(gpu)) {
     options.push(DEFAULT_OLLAMA_MODEL);
     options.push(QWEN3_6_OLLAMA_MODEL);
   }
@@ -485,7 +667,7 @@ export function getDefaultOllamaModel(
 ): string {
   const models = getOllamaModelOptions(runCaptureImpl);
   if (models.length === 0) {
-    if (gpu && gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB) {
+    if (isLargeOllamaCapableGpu(gpu)) {
       return QWEN3_6_OLLAMA_MODEL;
     }
     return SMALL_OLLAMA_MODEL;
@@ -542,10 +724,22 @@ export function getOllamaProbeCommand(
 export function validateOllamaModel(
   model: string,
   runCaptureImpl?: RunCaptureFn,
+  isSparkImpl?: () => boolean,
+  runCaptureExImpl?: RunCaptureExFn,
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
+  const captureEx = runCaptureExImpl ?? runCaptureEx;
+  const isSpark = isSparkImpl ?? (() => detectNvidiaPlatform() === "spark");
   const probeCmd = getOllamaProbeCommand(model);
-  const output = capture(probeCmd, { ignoreError: true });
+  const probeResult = captureEx(probeCmd);
+  let output = probeResult.stdout;
+  // On DGX Spark (128 GB unified memory), loading a large model from disk can take >2 min.
+  // Only retry with a 300 s timeout when the initial probe genuinely timed out — fast
+  // failures (connection refused, Ollama not running) surface immediately. (#3251)
+  if (isSpark() && probeResult.timedOut) {
+    const retryResult = captureEx(getOllamaProbeCommand(model, 300));
+    output = retryResult.stdout;
+  }
   if (!output) {
     return {
       ok: false,
@@ -567,6 +761,25 @@ export function validateOllamaModel(
             `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
             `model's capabilities and pick one whose list includes 'tools'.`,
         };
+      }
+      // Ollama checks available RAM instead of total; false positive on DGX Spark
+      // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
+      const memMatch = errText.match(
+        /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
+      );
+      if (memMatch && isSpark()) {
+        const requiresGiB = parseFloat(memMatch[1]);
+        const freeOut = capture(["free", "-m"], { ignoreError: true });
+        if (freeOut) {
+          const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
+          if (memLine) {
+            const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
+            const totalGiB = totalMB / 1024;
+            if (totalGiB >= requiresGiB) {
+              return { ok: true };
+            }
+          }
+        }
       }
       return {
         ok: false,

@@ -4,7 +4,7 @@
 import { deleteCredential, saveCredential } from "../credentials/store";
 
 export interface ChannelDef {
-  envKey: string;
+  envKey?: string;
   description: string;
   help: string;
   label: string;
@@ -24,6 +24,9 @@ export interface ChannelDef {
   tokenFormatHint?: string;
   appTokenFormat?: RegExp;
   appTokenFormatHint?: string;
+  // "host-qr" channels capture the token via a host-side QR handshake instead
+  // of a paste prompt. Defaults to "token-paste" when omitted.
+  loginMethod?: "token-paste" | "host-qr";
 }
 
 export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
@@ -58,6 +61,19 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     userIdLabel: "Discord User ID (optional guild allowlist)",
     allowIdsMode: "guild",
   },
+  wechat: {
+    envKey: "WECHAT_BOT_TOKEN",
+    description: "WeChat (personal) bot messaging",
+    help:
+      "Captured automatically via a host-side QR scan during onboard — pair the bot by scanning the QR with WeChat on your phone (Discover → Scan). DM-only.",
+    label: "WeChat Bot Token",
+    userIdEnvKey: "WECHAT_ALLOWED_IDS",
+    userIdHelp:
+      "Optional: restrict who can DM the bot. The WeChat user id of the operator who scanned is added automatically; supply additional ids as a comma-separated list.",
+    userIdLabel: "WeChat User ID(s) (DM allowlist)",
+    allowIdsMode: "dm",
+    loginMethod: "host-qr",
+  },
   slack: {
     envKey: "SLACK_BOT_TOKEN",
     description: "Slack bot messaging",
@@ -91,7 +107,18 @@ export function listChannels(): Array<{ name: string } & ChannelDef> {
 }
 
 export function getChannelTokenKeys(channel: ChannelDef): string[] {
+  if (!channel.envKey) return [];
   return channel.appTokenEnvKey ? [channel.envKey, channel.appTokenEnvKey] : [channel.envKey];
+}
+
+export function channelUsesQrPairing(channel: ChannelDef): boolean {
+  return !channel.envKey;
+}
+
+export function channelHasStaticToken(
+  channel: ChannelDef,
+): channel is ChannelDef & { envKey: string } {
+  return typeof channel.envKey === "string" && channel.envKey.length > 0;
 }
 
 export function persistChannelTokens(tokens: Record<string, string>): void {

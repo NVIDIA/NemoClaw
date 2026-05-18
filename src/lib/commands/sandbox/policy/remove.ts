@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Command } from "@oclif/core";
+import { NemoClawCommand } from "../../../cli/nemoclaw-oclif-command";
 
 import {
   appendCommonPolicyFlags,
@@ -10,7 +10,7 @@ import {
   policyMutationFlags,
 } from "./common";
 
-export default class PolicyRemoveCommand extends Command {
+export default class PolicyRemoveCommand extends NemoClawCommand {
   static id = "sandbox:policy:remove";
   static strict = true;
   static summary = "Remove an applied policy preset";

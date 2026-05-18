@@ -14,13 +14,12 @@ export default class InternalDevNpmLinkOrShimCommand extends NemoClawCommand {
   static usage = ["internal dev npm-link-or-shim [--repo-root <path>]"];
   static examples = ["<%= config.bin %> internal dev npm-link-or-shim"];
   static flags = {
-    help: Flags.help({ char: "h" }),
     "repo-root": Flags.string({ description: "Repository root to expose", hidden: true }),
   };
 
   public async run(): Promise<void> {
     const { flags } = await this.parse(InternalDevNpmLinkOrShimCommand);
     const result = runNpmLinkOrShim({ repoRoot: flags["repo-root"] ?? this.config.root });
-    if (result.status !== 0) process.exit(result.status);
+    this.applyExitResult(result);
   }
 }

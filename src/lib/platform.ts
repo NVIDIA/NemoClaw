@@ -77,6 +77,11 @@ function getColimaDockerSocketCandidates(opts: PlatformLookupOptions = {}): stri
   return [
     path.join(home, ".colima/default/docker.sock"),
     path.join(home, ".config/colima/default/docker.sock"),
+    // Some Colima profiles (and older layouts) place the socket at the
+    // top-level ~/.colima/docker.sock rather than under default/. Reported
+    // in #3503 — keep as a candidate so detection succeeds without the
+    // user having to symlink to /var/run/docker.sock.
+    path.join(home, ".colima/docker.sock"),
   ];
 }
 

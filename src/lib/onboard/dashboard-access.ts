@@ -49,6 +49,24 @@ export function getWslHostAddress(options: DashboardAccessOptions = {}): string 
   );
 }
 
+/**
+ * Read the operator-opt-in remote-bind env var. Only "0.0.0.0" enables the
+ * remote bind; anything else (empty, "127.0.0.1", invalid IPs) leaves the
+ * default loopback bind. (#3259)
+ */
+function readBindOverride(options: DashboardAccessOptions): string | undefined {
+  const raw = options.env?.NEMOCLAW_DASHBOARD_BIND ?? process.env.NEMOCLAW_DASHBOARD_BIND;
+  return typeof raw === "string" ? raw : undefined;
+}
+
+/**
+ * I/O-boundary wrapper around the pure `buildChain` function. Resolves the
+ * platform hints (`isWsl`, `wslHostAddress`, `bindOverride`) from the host
+ * environment and config, then delegates the actual decision to `buildChain`
+ * so the contract stays a pure function and tests can call `buildChain`
+ * directly without env mocks. Callers in onboard / status / doctor share
+ * this entry point so the same hints apply consistently across the CLI.
+ */
 export function buildDashboardChain(
   chatUiUrl = defaultChatUiUrl(),
   options: DashboardAccessOptions = {},
@@ -57,6 +75,7 @@ export function buildDashboardChain(
     chatUiUrl,
     isWsl: isWsl(options),
     wslHostAddress: getWslHostAddress(options),
+    bindOverride: readBindOverride(options),
   });
 }
 

@@ -28,7 +28,8 @@ export default class InferenceGetCommand extends NemoClawCommand {
       await runInferenceGet({ json: flags.json === true });
     } catch (error) {
       if (error instanceof InferenceGetError) {
-        this.error(error.message, { exit: error.exitCode });
+        this.failWithLines([error.message], error.exitCode);
+        return;
       }
       throw error;
     }

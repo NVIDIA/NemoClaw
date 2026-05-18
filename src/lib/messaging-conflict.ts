@@ -52,6 +52,7 @@ const PROVIDER_SUFFIXES: Record<string, string> = {
   telegram: "-telegram-bridge",
   discord: "-discord-bridge",
   slack: "-slack-bridge",
+  wechat: "-wechat-bridge",
 };
 
 const KNOWN_CHANNELS = Object.keys(PROVIDER_SUFFIXES);

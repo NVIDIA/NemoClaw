@@ -10,9 +10,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 type ManifestWithOptionalPresets = {
   version: number;
@@ -27,9 +25,6 @@ type ManifestWithOptionalPresets = {
   blueprintDigest: string | null;
   policyPresets?: string[] | null;
 };
-
-// Import compiled modules from dist/
-const sandboxState = await import(path.join(REPO_ROOT, "dist", "lib", "state", "sandbox.js"));
 
 describe("rebuild policy preset restoration (#1952)", () => {
   describe("RebuildManifest policyPresets field", () => {

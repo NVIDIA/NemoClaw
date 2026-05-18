@@ -3,12 +3,18 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import childProcess, { type SpawnSyncReturns } from "node:child_process";
-import { mkdtempSync, writeFileSync, existsSync, rmSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 // Import from compiled dist/ so coverage is attributed correctly.
-import { getServiceStatuses, showStatus, stopAll } from "../../../dist/lib/tunnel/services";
+import {
+  getServiceStatuses,
+  readCloudflaredState,
+  showStatus,
+  startAll,
+  stopAll,
+} from "../../../dist/lib/tunnel/services";
 
 const ollamaProxyDistPath = resolve(
   import.meta.dirname,
@@ -123,6 +129,143 @@ describe("showStatus", () => {
     // Should NOT show the URL since cloudflared is not actually running
     expect(output).not.toContain("Public URL");
     logSpy.mockRestore();
+  });
+
+  // #2604: wangericnv and Carlos (issue comments 2026-05-11, 2026-05-14) both
+  // asked for a "no cloudflared process; restart with ..." shape — a cause
+  // phrase plus a single-command recovery. All three failure modes surface
+  // "no cloudflared process" and point at `nemoclaw tunnel start`, which
+  // overwrites a stale PID file when isRunning() is false (see startService).
+  it("prints `tunnel start` remediation when the PID file is missing (stopped)", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    showStatus({ pidDir });
+    const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("(stopped)");
+    expect(output).toContain("no cloudflared process");
+    expect(output).toContain("nemoclaw tunnel start");
+    logSpy.mockRestore();
+  });
+
+  it("prints `tunnel start` remediation when the PID file holds garbage (stale-pid-file)", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), "not-a-number");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    showStatus({ pidDir });
+    const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("(stale PID file)");
+    expect(output).toContain("no cloudflared process");
+    expect(output).toContain("nemoclaw tunnel start");
+    logSpy.mockRestore();
+  });
+
+  it("prints `tunnel start` remediation when the PID points at a dead process (stale-pid-process)", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    showStatus({ pidDir });
+    const output = logSpy.mock.calls.map((c) => c[0]).join("\n");
+    expect(output).toContain("(stale PID 999999999)");
+    expect(output).toContain("no cloudflared process");
+    expect(output).toContain("PID 999999999 is dead or not cloudflared");
+    expect(output).toContain("nemoclaw tunnel start");
+    logSpy.mockRestore();
+  });
+});
+
+describe("startAll", () => {
+  let tmpDir: string;
+  let pidDir: string;
+  let originalPath: string | undefined;
+
+  beforeEach(() => {
+    tmpDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-start-test-"));
+    pidDir = join(tmpDir, "pids");
+    originalPath = process.env.PATH;
+  });
+
+  afterEach(() => {
+    process.env.PATH = originalPath;
+    const pid = readCloudflaredState(pidDir);
+    if (pid.kind === "running") {
+      try {
+        process.kill(pid.pid, "SIGTERM");
+      } catch {
+        // Process may have already exited.
+      }
+    }
+    rmSync(tmpDir, { recursive: true, force: true });
+    vi.restoreAllMocks();
+  });
+
+  it("writes a private PID file and surfaces only real trycloudflare hosts", async () => {
+    const binDir = join(tmpDir, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const fakeCloudflared = join(binDir, "cloudflared");
+    writeFileSync(
+      fakeCloudflared,
+      [
+        "#!/usr/bin/env sh",
+        "echo 'https://attacker.trycloudflare.com.evil.test'",
+        "echo 'https://good.trycloudflare.com/route#secret-fragment'",
+        "sleep 20",
+      ].join("\n"),
+    );
+    chmodSync(fakeCloudflared, 0o700);
+    process.env.PATH = `${binDir}:${originalPath ?? ""}`;
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await startAll({ pidDir, dashboardPort: 12345 });
+
+    const pidFile = join(pidDir, "cloudflared.pid");
+    expect(readFileSync(pidFile, "utf-8")).toMatch(/^\d+$/);
+    expect(statSync(pidFile).mode & 0o777).toBe(0o600);
+    const output = logSpy.mock.calls.map((call) => String(call[0])).join("\n");
+    expect(output).toContain("https://good.trycloudflare.com/route");
+    expect(output).not.toContain("evil.test");
+    expect(output).not.toContain("secret-fragment");
+  });
+});
+
+// #2604: readCloudflaredState is the shared source of truth used by both
+// showStatus and the doctor's cloudflared check. Tests below exercise each
+// branch of the discriminated union.
+describe("readCloudflaredState", () => {
+  let pidDir: string;
+
+  beforeEach(() => {
+    pidDir = mkdtempSync(join(tmpdir(), "nemoclaw-svc-state-test-"));
+  });
+
+  afterEach(() => {
+    rmSync(pidDir, { recursive: true, force: true });
+  });
+
+  it("returns stopped when no PID file exists", () => {
+    expect(readCloudflaredState(pidDir)).toEqual({ kind: "stopped" });
+  });
+
+  it("returns stopped when the PID file is empty", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), "");
+    expect(readCloudflaredState(pidDir)).toEqual({ kind: "stopped" });
+  });
+
+  it("returns stale-pid-file when contents are not parseable as a positive integer", () => {
+    writeFileSync(join(pidDir, "cloudflared.pid"), "not-a-number");
+    expect(readCloudflaredState(pidDir)).toEqual({ kind: "stale-pid-file" });
+  });
+
+  it("returns stale-pid-process when the PID is dead (kernel ESRCH)", () => {
+    // PID > max(int32) is virtually guaranteed dead on macOS/Linux.
+    writeFileSync(join(pidDir, "cloudflared.pid"), "999999999");
+    const state = readCloudflaredState(pidDir);
+    expect(state.kind).toBe("stale-pid-process");
+    if (state.kind === "stale-pid-process") expect(state.pid).toBe(999999999);
+  });
+
+  it("returns stale-pid-process when the PID points at a different process", () => {
+    // Use this test process's own PID — guaranteed alive, but not cloudflared.
+    writeFileSync(join(pidDir, "cloudflared.pid"), String(process.pid));
+    const state = readCloudflaredState(pidDir);
+    expect(state.kind).toBe("stale-pid-process");
   });
 });
 

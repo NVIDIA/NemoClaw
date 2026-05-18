@@ -64,14 +64,6 @@ function writeExecutable(target: string, contents: string) {
   fs.writeFileSync(target, contents, { mode: 0o755 });
 }
 
-function requireMatch(match: RegExpMatchArray | null, message: string): RegExpMatchArray {
-  expect(match).not.toBeNull();
-  if (!match) {
-    throw new Error(message);
-  }
-  return match;
-}
-
 // ---------------------------------------------------------------------------
 // Helpers shared across suites
 // ---------------------------------------------------------------------------
@@ -491,6 +483,7 @@ exit 98
     expect(output).toMatch(/gemini \| ollama \| custom \| nim-local \| vllm \| routed/);
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
     expect(output).toMatch(/NEMOCLAW_POLICY_MODE/);
+    expect(output).toMatch(/NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt/);
     expect(output).toMatch(/NEMOCLAW_SANDBOX_NAME/);
     expect(output).toMatch(/nvidia\.com\/nemoclaw\.sh/);
   });
@@ -989,7 +982,12 @@ exit 0
       path.join(fakeBin, "docker"),
       `#!/usr/bin/env bash
 if [ "$1" = "info" ]; then
-  exit 1
+  # Let the installer's early ensure_docker gate pass, then simulate Docker
+  # becoming unavailable for the shared host preflight after the CLI is linked.
+  if [ -x "$NPM_PREFIX/bin/nemoclaw" ]; then
+    exit 1
+  fi
+  exit 0
 fi
 exit 0
 `,
@@ -1048,6 +1046,173 @@ fi`,
     expect(output).toMatch(/Start Docker/);
     expect(output).toMatch(/Skipping onboarding until the host prerequisites above are fixed\./);
     expect(fs.existsSync(onboardLog)).toBe(false);
+  });
+
+  function runNvidiaCdiInstallerRepairTest({
+    systemctlScript,
+  }: {
+    systemctlScript: string;
+  }) {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-cdi-repair-"));
+    const fakeBin = path.join(tmp, "bin");
+    const sourceRoot = path.join(tmp, "source");
+    const cdiDir = path.join(tmp, "cdi");
+    const cdiState = path.join(tmp, "cdi-generated");
+    const sudoLog = path.join(tmp, "sudo.log");
+    const systemctlLog = path.join(tmp, "systemctl.log");
+    fs.mkdirSync(fakeBin);
+    fs.mkdirSync(path.join(sourceRoot, "dist", "lib", "onboard"), { recursive: true });
+
+    fs.writeFileSync(
+      path.join(sourceRoot, "dist", "lib", "onboard", "preflight.js"),
+      `
+const fs = require("fs");
+exports.assessHost = () => ({
+  runtime: "docker",
+  notes: [],
+  dockerCdiSpecDirs: [process.env.CDI_DIR],
+  cdiNvidiaGpuSpecMissing: !fs.existsSync(process.env.CDI_STATE),
+});
+exports.getNvidiaCdiSpecPath = (host) =>
+  String(host.dockerCdiSpecDirs[0]).replace(/\\/+$/, "") + "/nvidia.yaml";
+exports.planHostRemediation = (host) =>
+  host.cdiNvidiaGpuSpecMissing
+    ? [{
+        title: "Generate NVIDIA CDI device specs",
+        reason: "missing nvidia.com/gpu",
+        commands: ["sudo nvidia-ctk cdi generate --output=" + exports.getNvidiaCdiSpecPath(host)],
+        blocking: true,
+      }]
+    : [];
+`,
+    );
+    writeNodeStub(fakeBin);
+    writeExecutable(
+      path.join(fakeBin, "sudo"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SUDO_LOG"
+if [ "\${1:-}" = "-v" ]; then
+  exit 0
+fi
+exec "$@"
+`,
+    );
+    writeExecutable(path.join(fakeBin, "systemctl"), systemctlScript);
+    writeExecutable(
+      path.join(fakeBin, "nvidia-ctk"),
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "cdi" ] && [ "\${2:-}" = "generate" ]; then
+  printf 'noisy nvidia-ctk generate stdout\\n'
+  printf 'noisy nvidia-ctk generate stderr\\n' >&2
+  touch "$CDI_STATE"
+  exit 0
+fi
+if [ "\${1:-}" = "cdi" ] && [ "\${2:-}" = "list" ]; then
+  if [ -f "$CDI_STATE" ]; then
+    printf 'nvidia.com/gpu=all\\n'
+    exit 0
+  fi
+  exit 1
+fi
+exit 99
+`,
+    );
+    writeExecutable(
+      path.join(fakeBin, "id"),
+      `#!/usr/bin/env bash
+if [ "\${1:-}" = "-u" ]; then
+  printf '1000\\n'
+  exit 0
+fi
+exec /usr/bin/id "$@"
+`,
+    );
+
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+NEMOCLAW_SOURCE_ROOT="$SOURCE_ROOT"
+run_installer_host_preflight
+`,
+      ],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          SOURCE_ROOT: sourceRoot,
+          CDI_DIR: cdiDir,
+          CDI_STATE: cdiState,
+          SUDO_LOG: sudoLog,
+          SYSTEMCTL_LOG: systemctlLog,
+        },
+      },
+    );
+
+    return {
+      cdiDir,
+      output: `${result.stdout}${result.stderr}`,
+      result,
+      sudoLog: fs.existsSync(sudoLog) ? fs.readFileSync(sudoLog, "utf-8") : "",
+      systemctlLog: fs.existsSync(systemctlLog) ? fs.readFileSync(systemctlLog, "utf-8") : "",
+    };
+  }
+
+  it("enables nvidia-cdi-refresh before installer host preflight blocks", () => {
+    const { output, result, sudoLog, systemctlLog } = runNvidiaCdiInstallerRepairTest({
+      systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+if [ "\${1:-}" = "enable" ]; then
+  touch "$CDI_STATE"
+  exit 0
+fi
+exit 99
+`,
+    });
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Trying NVIDIA CDI refresh service \(auto-generates GPU CDI specs\)/);
+    expect(output).toMatch(/Enabled NVIDIA CDI refresh service/);
+    expect(output).not.toMatch(/falling back to direct generation/);
+    expect(output).not.toMatch(/Host preflight found issues/);
+    expect(output).not.toMatch(/noisy nvidia-ctk generate/);
+    expect(systemctlLog).toMatch(
+      /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
+    );
+    expect(sudoLog).toMatch(/^-v$/m);
+    expect(sudoLog).not.toMatch(/nvidia-ctk cdi generate/);
+  });
+
+  it("falls back to direct NVIDIA CDI generation when refresh service does not repair", () => {
+    const { cdiDir, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+exit 1
+`,
+      });
+
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Generating missing NVIDIA CDI device spec/);
+    expect(output).toMatch(/Generated NVIDIA CDI device spec/);
+    expect(output).toMatch(/Trying NVIDIA CDI refresh service \(auto-generates GPU CDI specs\)/);
+    expect(output).toMatch(/falling back to direct generation/);
+    expect(output).not.toMatch(/Host preflight found issues/);
+    expect(output).not.toMatch(/noisy nvidia-ctk generate/);
+    expect(systemctlLog).toMatch(
+      /^enable --now nvidia-cdi-refresh\.path nvidia-cdi-refresh\.service$/m,
+    );
+    expect(sudoLog).toMatch(/^-v$/m);
+    expect(sudoLog).toContain(`nvidia-ctk cdi generate --output=${cdiDir}/nvidia.yaml`);
   });
 
   it("warns on Podman but still runs onboarding", () => {
@@ -1355,11 +1520,22 @@ exit 99
 if [ "\${1:-}" = "-c" ]; then
   shift 2
 fi
-if [ "$1" = "clone" ]; then
+if [ "\${1:-}" = "-C" ]; then
+  shift 2
+fi
+if [ "$1" = "init" ]; then
   target="\${@: -1}"
-  mkdir -p "$target/nemoclaw"
+  mkdir -p "$target/nemoclaw" "$target/scripts"
   echo '{"name":"nemoclaw","version":"0.1.0","dependencies":{"openclaw":"2026.3.11"}}' > "$target/package.json"
   echo '{"name":"nemoclaw-plugin","version":"0.1.0"}' > "$target/nemoclaw/package.json"
+  cat > "$target/scripts/install-openshell.sh" <<'EOS'
+#!/usr/bin/env bash
+exit 0
+EOS
+  chmod +x "$target/scripts/install-openshell.sh"
+  exit 0
+fi
+if [ "$1" = "remote" ] || [ "$1" = "fetch" ] || [ "$1" = "checkout" ]; then
   exit 0
 fi
 exit 0
@@ -1448,7 +1624,9 @@ exit 0
     expect(result.status).toBe(0);
     expect(fs.readFileSync(shimPath, "utf-8")).toContain(`export PATH="${fakeBin}:$PATH"`);
     expect(fs.readFileSync(shimPath, "utf-8")).toContain(path.join(prefix, "bin", "nemoclaw"));
-    expect(`${result.stdout}${result.stderr}`).toMatch(/Created user-local shim/);
+    expect(`${result.stdout}${result.stderr}`.match(/Created user-local shim/g) ?? []).toHaveLength(
+      1,
+    );
   });
 
   it("preserves ready output when nemoclaw is already resolvable after install", () => {
@@ -2926,8 +3104,8 @@ NON_INTERACTIVE=""
 NEMOCLAW_PROVIDER=""
 NEMOCLAW_NO_EXPRESS=""
 maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s\\n" \\
-  "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
+printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s\\n" \\
+  "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
   "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}"
 '''
 env = dict(os.environ)
@@ -3001,7 +3179,7 @@ sys.exit(exit_code)
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for DGX Spark/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 PROVIDER=install-ollama MODEL=qwen3\.6:35b POLICY=suggested YES=1/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-ollama MODEL=qwen3\.6:35b POLICY=suggested YES=1/,
     );
   });
 
@@ -3022,8 +3200,8 @@ NON_INTERACTIVE=""
 NEMOCLAW_PROVIDER=""
 NEMOCLAW_NO_EXPRESS=""
 maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s\\n" \\
-  "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
+printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s\\n" \\
+  "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
   "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}"
 `,
       ],
@@ -3043,7 +3221,7 @@ printf "RESULT NON_INTERACTIVE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s\\n" \\
     expect(output).toMatch(/Detected DGX Spark/);
     expect(output).toMatch(/Skipping express prompt \(no TTY\)/);
     expect(output).not.toMatch(/Run express install/);
-    expect(output).toMatch(/RESULT NON_INTERACTIVE= PROVIDER= MODEL= POLICY= YES=/);
+    expect(output).toMatch(/RESULT NON_INTERACTIVE= SUDO_MODE= PROVIDER= MODEL= POLICY= YES=/);
   });
 });
 
