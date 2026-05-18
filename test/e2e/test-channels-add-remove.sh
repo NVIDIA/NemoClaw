@@ -201,6 +201,12 @@ if [ "${NEMOCLAW_NON_INTERACTIVE:-}" != "1" ]; then
 fi
 pass "C0: NEMOCLAW_NON_INTERACTIVE=1 is set"
 
+if [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
+  fail "C0: NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required"
+  print_summary
+fi
+pass "C0: NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is set"
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 1: Install + onboard sandbox WITHOUT any messaging channel
 # ══════════════════════════════════════════════════════════════════
