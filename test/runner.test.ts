@@ -579,7 +579,13 @@ describe("regression guards", () => {
 
     const defs = [];
     for (const file of files) {
-      const src = fs.readFileSync(file, "utf-8");
+      let src: string;
+      try {
+        src = fs.readFileSync(file, "utf-8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
       if (src.includes("function shellQuote")) {
         defs.push(path.relative(repoRoot, file));
       }

@@ -68,7 +68,9 @@ const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
 const { isLinuxDockerDriverGatewayEnabled }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
-const { shouldInspectLegacyGatewayGpuPassthrough }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
+const {
+  reconcileGatewayGpuReuseForGpuIntent,
+}: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
 const {
   syncPresetSelection,
 }: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
@@ -2742,13 +2744,16 @@ async function refreshDockerDriverGatewayReuseState(
   return "stale";
 }
 
-function destroyGateway(): boolean {
+function destroyGateway(
+  clearRegistry: () => void = registry.clearAll,
+  isDockerDriverGatewayEnabledForDestroy: () => boolean = isLinuxDockerDriverGatewayEnabled,
+): boolean {
   return destroyGatewayWithVolumeCleanup({
-    clearRegistry: registry.clearAll,
+    clearRegistry,
     dockerRemoveVolumesByPrefix,
     gatewayName: GATEWAY_NAME,
     hasLifecycleCommands: () => gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
-    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled,
+    isDockerDriverGatewayEnabled: isDockerDriverGatewayEnabledForDestroy,
     removeDockerDriverGatewayRegistration,
     runOpenshell,
     stopDockerDriverGatewayProcess,
@@ -9681,27 +9686,22 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       }
     }
 
-    const canReuseHealthyGateway = gatewayReuseState === "healthy";
-
-    // Verify legacy reusable gateway GPU passthrough; Docker-driver gateways use live CLI health.
-    if (shouldInspectLegacyGatewayGpuPassthrough(
+    gatewayReuseState = reconcileGatewayGpuReuseForGpuIntent({
       gatewayReuseState,
       gpuPassthrough,
-      isLinuxDockerDriverGatewayEnabled(),
-      gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
-    )) {
-      const container = `openshell-cluster-${GATEWAY_NAME}`;
-      const gpuCheck = docker.dockerInspect(
-        ["--type", "container", "--format", "{{json .HostConfig.DeviceRequests}}", container],
-        { ignoreError: true, suppressOutput: true },
-      );
-      const gpuOutput = String(gpuCheck.stdout || "").trim();
-      const gatewayHasGpu = gpuCheck.status === 0 && gpuOutput !== "null" && gpuOutput !== "[]";
-      if (!gatewayHasGpu) {
-        reportGpuPassthroughRecovery(console.error);
-        process.exit(1);
-      }
-    }
+      gatewayName: GATEWAY_NAME,
+      currentSandboxName: recordedSandboxName || requestedSandboxName,
+      recreateSandbox: isRecreateSandbox(),
+      confirmedDockerDriverGateway:
+        isLinuxDockerDriverGatewayEnabled() &&
+        gatewayReuseState === "healthy" &&
+        !gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
+      stopDashboardForwards: stopAllDashboardForwards,
+      retireLegacyGatewayForDockerDriverUpgrade,
+      destroyGatewayRuntimeForGpuReuse: () => destroyGateway(() => undefined, () => false),
+    });
+
+    const canReuseHealthyGateway = gatewayReuseState === "healthy";
 
     const resumeGateway =
       resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
