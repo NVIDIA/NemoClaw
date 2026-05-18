@@ -410,6 +410,231 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       secret_requirement: NVIDIA_API_KEY secret and network egress
+  test-channels-add-remove.sh:
+    scenario: ubuntu-repo-cloud-openclaw
+    status: not-started
+    bucket: providers-messaging
+    assertions:
+    - legacy: 'C0: NVIDIA_API_KEY is required'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NVIDIA_API_KEY is set'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NEMOCLAW_NON_INTERACTIVE=1 is required'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NEMOCLAW_NON_INTERACTIVE=1 is set'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1a: Pre-cleanup complete'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1b: install.sh + onboard completed (exit 0)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1b: install.sh failed (exit $install_exit)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1c: openshell not on PATH after install'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1c: openshell installed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1d: nemoclaw not on PATH after install'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1d: nemoclaw installed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1e: Sandbox ''${SANDBOX_NAME}'' is Ready'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1e: Sandbox ''${SANDBOX_NAME}'' not Ready'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2a: Provider ''${SANDBOX_NAME}-telegram-bridge'' unexpectedly exists at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2a: No telegram-bridge provider at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2b: openclaw.json unexpectedly contains ''telegram'' at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2b: could not read openclaw.json inside sandbox at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2b: openclaw.json has no ''telegram'' channel block at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2c: ''telegram'' preset unexpectedly applied at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2c: ''telegram'' preset not applied at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C3a: channels add telegram registered the bridge'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C3a: channels add telegram did not register'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C3b: rebuild (post-add) completed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C3b: rebuild (post-add) failed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4a: ''telegram'' preset present in policy list after add+rebuild (#3437 fixed)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: "C4a: REGRESSION \u2014 'telegram' preset missing from policy list after add+rebuild (#3437)"
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4b: openclaw.json contains ''telegram'' channel block after add+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4b: could not read openclaw.json inside sandbox post-add'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4b: openclaw.json missing ''telegram'' channel after add+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4c: telegram-bridge provider exists in gateway after add+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4c: telegram-bridge provider missing in gateway after add+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4d: egress to api.telegram.org reaches Telegram through L7 proxy'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4d: egress to api.telegram.org blocked by proxy (preset not in effect)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C5a: channels remove telegram unregistered the bridge'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C5a: channels remove telegram did not unregister'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C5b: rebuild (post-remove) completed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C5b: rebuild (post-remove) failed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6a: openclaw.json still contains ''telegram'' after remove+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6a: could not read openclaw.json inside sandbox post-remove'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6a: openclaw.json excludes ''telegram'' after remove+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6b: telegram-bridge provider still exists in gateway after remove+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6b: telegram-bridge provider removed from gateway after remove+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: "C6c: REGRESSION \u2014 'telegram' preset still applied after remove+rebuild (#3671)"
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6c: ''telegram'' preset removed from policy list after remove+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
   test-channels-stop-start.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: not-started
