@@ -244,8 +244,8 @@ server.listen(port, "127.0.0.1", () => {
 setInterval(() => {}, 1000);
 NODE
   PORT_HOLDER_PID=$!
-  local i
-  for i in $(seq 1 40); do
+  local _i
+  for _i in $(seq 1 40); do
     if node -e 'const net=require("node:net"); const port=Number(process.argv[1]); const s=net.connect(port,"127.0.0.1"); s.once("connect",()=>{s.destroy(); process.exit(0);}); s.once("error",()=>process.exit(1)); setTimeout(()=>process.exit(1),250);' "$port" >/dev/null 2>&1; then
       return 0
     fi
