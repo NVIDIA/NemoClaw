@@ -102,7 +102,6 @@ const {
   dockerContainerInspectFormat,
   dockerExecArgv,
   dockerImageInspect,
-  dockerInfo,
   dockerInfoFormat,
   dockerInspect,
   dockerRemoveVolumesByPrefix,
@@ -241,7 +240,12 @@ const {
 };
 const { sleepSeconds, waitForHttp, waitUntil } = require("./core/wait");
 const platformUtils: typeof import("./platform") = require("./platform");
-const { inferContainerRuntime, isWsl, shouldPatchCoredns } = platformUtils;
+const { isWsl, shouldPatchCoredns } = platformUtils;
+const {
+  getContainerRuntime,
+  repairLocalInferenceSystemdOverrideOrExit,
+  shouldFrontOllamaWithProxy,
+}: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
 const credentials: typeof import("./credentials/store") = require("./credentials/store");
 const {
@@ -342,7 +346,12 @@ import {
   sanitizeMessagingChannelConfig,
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
-import { reportGpuPassthroughRecovery } from "./onboard/gpu-recovery";
+import {
+  filterEnabledChannelsByAgent,
+  getAvailableMessagingChannelsForAgent,
+  resolveMessagingChannelSeed,
+  resolveQrSelectedChannels,
+} from "./onboard/messaging-state";
 import { getMessagingToken } from "./onboard/messaging-token";
 import type {
   DockerDriverBinaryOverrides,
@@ -350,6 +359,7 @@ import type {
   OpenShellInstallResult,
 } from "./onboard/openshell-install";
 import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
+import { getSuggestedPolicyPresets } from "./onboard/policy-presets";
 import {
   getResumeSandboxGpuOverrides,
   resolveSandboxGpuConfig,
@@ -1804,7 +1814,7 @@ function getRecordedMessagingChannelsForResume(
   session: Session | null, sandboxName: string | null,
 ): string[] | null {
   return require("./onboard/messaging-reuse").getNonInteractiveStoredMessagingChannels(
-    resume, session?.messagingChannels, sandboxName, MESSAGING_CHANNELS, (envKey: string) => Boolean(getCredential(envKey) || normalizeCredentialValue(process.env[envKey])),
+    resume, session?.messagingChannels, sandboxName, MESSAGING_CHANNELS, (envKey: string) => Boolean(normalizeCredentialValue(process.env[envKey]) || getCredential(envKey)),
     registry.getSandbox.bind(registry), registry.getDisabledChannels.bind(registry), providerExistsInGateway, isNonInteractive());
 }
 
@@ -2486,11 +2496,6 @@ function getResumeConfigConflicts(
   }
 
   return conflicts;
-}
-
-function getContainerRuntime(): ContainerRuntime {
-  const info = dockerInfo({ ignoreError: true });
-  return inferContainerRuntime(info);
 }
 
 function printRemediationActions(
@@ -4710,6 +4715,7 @@ async function createSandbox(
     sandboxNameOverride ?? (await promptValidatedSandboxName(agent)),
     "sandbox name",
   );
+  enabledChannels = filterEnabledChannelsByAgent(enabledChannels, agent);
   const effectiveSandboxGpuConfig =
     sandboxGpuConfig ?? resolveSandboxGpuConfig(gpu, { flag: null, device: null });
 
@@ -4823,9 +4829,12 @@ async function createSandbox(
   // Credentials stay in the keychain; the bridge simply isn't registered with
   // the gateway on the next rebuild. `channels start` removes the entry and
   // the bridge comes back.
-  const disabledChannels = require("./onboard/channel-state").resolveDisabledChannels(sandboxName);
+  const disabledChannels: string[] = require("./onboard/channel-state").resolveDisabledChannels(
+    sandboxName,
+  );
+  const disabledChannelNames = new Set(disabledChannels);
   const disabledEnvKeys = new Set(
-    MESSAGING_CHANNELS.filter((c) => disabledChannels.includes(c.name)).flatMap((c) =>
+    MESSAGING_CHANNELS.filter((c) => disabledChannelNames.has(c.name)).flatMap((c) =>
       getChannelTokenKeys(c),
     ),
   );
@@ -5299,6 +5308,11 @@ async function createSandbox(
   const tokensByEnvKey = Object.fromEntries(
     messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
   );
+  const qrSelectedChannels = resolveQrSelectedChannels(
+    MESSAGING_CHANNELS,
+    enabledChannels,
+    disabledChannelNames,
+  );
   const activeMessagingChannels = [
     ...new Set([
       ...messagingTokenDefs
@@ -5313,6 +5327,7 @@ async function createSandbox(
           return [];
         }),
       ...reusableMessagingChannels,
+      ...qrSelectedChannels,
     ]),
   ];
   const { useDockerGpuPatch, logMessage: sandboxGpuLogMessage } =
@@ -5363,13 +5378,9 @@ async function createSandbox(
   // comma-separated list of IDs (e.g. TELEGRAM_ALLOWED_IDS="123,456").
   const messagingAllowedIds: Record<string, string[]> = {};
   const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
+  const activeChannelNames = new Set(activeMessagingChannels);
   for (const ch of MESSAGING_CHANNELS) {
-    if (
-      ch.envKey &&
-      enabledTokenEnvKeys.has(ch.envKey) &&
-      ch.userIdEnvKey &&
-      process.env[ch.userIdEnvKey]
-    ) {
+    if (activeChannelNames.has(ch.name) && ch.userIdEnvKey && process.env[ch.userIdEnvKey]) {
       const ids = String(process.env[ch.userIdEnvKey])
         .split(",")
         .map((s) => s.trim())
@@ -6999,27 +7010,24 @@ async function setupNim(
         }
         if (!ollamaReady) {
           console.log("  Starting Ollama...");
-          // Keep raw Ollama loopback-only. Non-WSL containers reach it through
-          // the authenticated proxy on OLLAMA_PROXY_PORT.
-          // Shell required: backgrounding (&), env var prefix, output redirection.
-          const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} `;
-          runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+          // Keep raw Ollama loopback-only; the auth proxy (or Docker Desktop
+          // on WSL via host.docker.internal) fronts container access.
+          runShell(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
+            ignoreError: true,
+          });
           if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
             console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
             if (isNonInteractive()) process.exit(1);
             continue selectionLoop;
           }
         }
-        if (isWsl()) {
-          // WSL2 doesn't need the proxy — Docker can reach the host directly.
-          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
-        } else {
-          if (!startOllamaAuthProxy()) {
-            process.exit(1);
-          }
+        if (shouldFrontOllamaWithProxy()) {
+          if (!startOllamaAuthProxy()) process.exit(1);
           console.log(
             `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
           );
+        } else {
+          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
         }
         provider = "ollama-local";
         // Local Ollama needs no user-supplied API key — the auth proxy uses
@@ -7165,8 +7173,9 @@ async function setupNim(
           // Fall back to manual start only when systemd is unavailable.
           if (overrideState === "not-applicable" && !findReachableOllamaHost()) {
             console.log("  Starting Ollama...");
-            const ollamaEnv = isWsl() ? "" : `OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} `;
-            runShell(`${ollamaEnv}ollama serve > /dev/null 2>&1 &`, { ignoreError: true });
+            runShell(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
+              ignoreError: true,
+            });
             if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
               console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
               if (isNonInteractive()) process.exit(1);
@@ -7174,16 +7183,13 @@ async function setupNim(
             }
           }
         }
-        if (isWsl()) {
-          // WSL2 doesn't need the proxy — Docker reaches the host directly.
-          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
-        } else {
-          if (!startOllamaAuthProxy()) {
-            process.exit(1);
-          }
+        if (shouldFrontOllamaWithProxy()) {
+          if (!startOllamaAuthProxy()) process.exit(1);
           console.log(
             `  ✓ Using Ollama on localhost:${OLLAMA_PORT} (proxy on :${OLLAMA_PROXY_PORT})`,
           );
+        } else {
+          console.log(`  ✓ Using Ollama on localhost:${OLLAMA_PORT}`);
         }
         provider = "ollama-local";
         // See above ollama branch — internal proxy token, no user API key.
@@ -7578,13 +7584,14 @@ async function setupInference(
   } else if (provider === "ollama-local") {
     const validation = validateLocalProvider(provider);
     let proxyReady = false;
+    const frontOllamaWithProxy = shouldFrontOllamaWithProxy();
     if (!validation.ok) {
       // The container reachability check uses Docker's --add-host host-gateway,
       // which may not work on all Docker configurations (e.g., Brev, rootless).
       // The real sandbox uses k3s CoreDNS + NodeHosts — a different path.
       // Try to start/restart the auth proxy before probing — this recovers
       // from stale or missing proxy processes before we decide to abort.
-      if (!isWsl()) {
+      if (frontOllamaWithProxy) {
         ensureOllamaAuthProxy();
         proxyReady = isProxyHealthy();
       }
@@ -7612,7 +7619,7 @@ async function setupInference(
     }
     const baseUrl = getLocalProviderBaseUrl(provider);
     let ollamaCredential = "ollama";
-    if (!isWsl()) {
+    if (frontOllamaWithProxy) {
       // Skip if already started during the fallback recovery above.
       if (!proxyReady) ensureOllamaAuthProxy();
       const proxyToken = getOllamaProxyToken();
@@ -7805,12 +7812,24 @@ async function checkTelegramReachability(token: string) {
   }
 }
 
-async function setupMessagingChannels(): Promise<string[]> {
+async function setupMessagingChannels(
+  agent: AgentDefinition | null = null,
+  existingChannels: string[] | null = null,
+): Promise<string[]> {
   step(5, 8, "Messaging channels");
+
+  const availableChannels = getAvailableMessagingChannelsForAgent(MESSAGING_CHANNELS, agent);
+  const seedFromState = (includeAllExisting = false): string[] =>
+    resolveMessagingChannelSeed(
+      availableChannels,
+      existingChannels,
+      (channel) => Boolean(getMessagingToken(channel.envKey)),
+      { includeAllExisting },
+    );
 
   // Non-interactive: skip prompt, tokens come from env/credentials
   if (isNonInteractive() || process.env.NEMOCLAW_NON_INTERACTIVE === "1") {
-    const found = MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name);
+    const found = Array.from(new Set(seedFromState(false)));
     if (found.length > 0) {
       note(`  [non-interactive] Messaging tokens detected: ${found.join(", ")}`);
       if (found.includes("telegram")) {
@@ -7825,15 +7844,14 @@ async function setupMessagingChannels(): Promise<string[]> {
     return found;
   }
 
-  // Single-keypress toggle selector — pre-select channels that already have tokens.
-  // Press a channel number to toggle; press Enter to continue.
-  const enabled = new Set(
-    MESSAGING_CHANNELS.filter((c) => getMessagingToken(c.envKey)).map((c) => c.name),
-  );
+  // Single-keypress toggle selector — pre-select channels that already have tokens
+  // or were recorded for this sandbox (so a rebuild does not silently drop QR-only
+  // channels that have no host token).
+  const enabled = new Set(seedFromState(true));
 
   const output = process.stderr;
   // Lines above the prompt: 1 blank + 1 header + N channels + 1 blank = N + 3
-  const linesAbovePrompt = MESSAGING_CHANNELS.length + 3;
+  const linesAbovePrompt = availableChannels.length + 3;
   let firstDraw = true;
   const showList = () => {
     if (!firstDraw) {
@@ -7843,13 +7861,13 @@ async function setupMessagingChannels(): Promise<string[]> {
     firstDraw = false;
     output.write("\n");
     output.write("  Available messaging channels:\n");
-    MESSAGING_CHANNELS.forEach((ch, i) => {
+    availableChannels.forEach((ch, i) => {
       const marker = enabled.has(ch.name) ? "●" : "○";
       const status = getMessagingToken(ch.envKey) ? " (configured)" : "";
       output.write(`    [${i + 1}] ${marker} ${ch.name} — ${ch.description}${status}\n`);
     });
     output.write("\n");
-    output.write(`  Press 1-${MESSAGING_CHANNELS.length} to toggle, Enter when done: `);
+    output.write(`  Press 1-${availableChannels.length} to toggle, Enter when done: `);
   };
 
   showList();
@@ -7897,8 +7915,8 @@ async function setupMessagingChannels(): Promise<string[]> {
           return;
         }
         const num = parseInt(ch, 10);
-        if (num >= 1 && num <= MESSAGING_CHANNELS.length) {
-          const channel = MESSAGING_CHANNELS[num - 1];
+        if (num >= 1 && num <= availableChannels.length) {
+          const channel = availableChannels[num - 1];
           if (enabled.has(channel.name)) {
             enabled.delete(channel.name);
           } else {
@@ -7932,7 +7950,7 @@ async function setupMessagingChannels(): Promise<string[]> {
     return [];
   }
 
-  await setupSelectedMessagingChannels(selected, enabled, MESSAGING_CHANNELS);
+  await setupSelectedMessagingChannels(selected, enabled, availableChannels);
   console.log("");
 
   // Channels where the user declined to enter a token were dropped from
@@ -7953,45 +7971,6 @@ async function setupMessagingChannels(): Promise<string[]> {
   return Array.from(enabled);
 }
 
-function getSuggestedPolicyPresets({
-  enabledChannels = null,
-  webSearchConfig = null,
-  provider = null,
-}: {
-  enabledChannels?: string[] | null;
-  webSearchConfig?: WebSearchConfig | null;
-  provider?: string | null;
-} = {}): string[] {
-  const suggestions = ["pypi", "npm"];
-
-  // Auto-suggest local-inference preset when a local provider is selected
-  if (provider && LOCAL_INFERENCE_PROVIDERS.includes(provider)) {
-    suggestions.push("local-inference");
-  }
-  const usesExplicitMessagingSelection = Array.isArray(enabledChannels);
-
-  const maybeSuggestMessagingPreset = (channel: string, envKey: string): void => {
-    if (usesExplicitMessagingSelection) {
-      if (enabledChannels.includes(channel)) suggestions.push(channel);
-      return;
-    }
-    if (getCredential(envKey) || process.env[envKey]) {
-      suggestions.push(channel);
-      if (process.stdout.isTTY && !isNonInteractive() && process.env.CI !== "true") {
-        console.log(`  Auto-detected: ${envKey} -> suggesting ${channel} preset`);
-      }
-    }
-  };
-
-  maybeSuggestMessagingPreset("telegram", "TELEGRAM_BOT_TOKEN");
-  maybeSuggestMessagingPreset("slack", "SLACK_BOT_TOKEN");
-  maybeSuggestMessagingPreset("discord", "DISCORD_BOT_TOKEN");
-  maybeSuggestMessagingPreset("wechat", "WECHAT_BOT_TOKEN");
-
-  if (webSearchConfig) suggestions.push("brave");
-
-  return suggestions;
-}
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
 
@@ -9771,6 +9750,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       if (resumeProviderSelection) {
         skippedStepMessage("provider_selection", `${provider} / ${model}`);
         hydrateCredentialEnv(credentialEnv);
+        // #3342: resume short-circuits provider selection — repair the
+        // ollama-local systemd loopback override here so legacy 0.0.0.0
+        // drop-ins from older NemoClaw versions get rewritten every resume.
+        repairLocalInferenceSystemdOverrideOrExit(provider, isNonInteractive);
       } else {
         // #2753: do not persist sandboxName to onboard-session.json before
         // the sandbox actually exists in the gateway (Step 6 markStepComplete
@@ -10031,7 +10014,12 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           );
         }
       } else {
-        selectedMessagingChannels = await setupMessagingChannels();
+        const existing = sandboxName
+          ? registry.getSandbox(sandboxName)?.messagingChannels ??
+            session?.messagingChannels ??
+            null
+          : session?.messagingChannels ?? null;
+        selectedMessagingChannels = await setupMessagingChannels(agent, existing);
       }
       const messagingChannelConfig = readMessagingChannelConfigFromEnv();
       onboardSession.updateSession((current: Session) => {

@@ -40,6 +40,9 @@ export function buildMessagingEnvLines(
     if (channel === "wechat") {
       envLines.push(...buildWechatEnvLines(allowedIds, wechatConfig));
     }
+    if (channel === "whatsapp") {
+      envLines.push(...buildWhatsappEnvLines(allowedIds));
+    }
   }
 
   const discordAllowedUsers = collectDiscordAllowedUsers(allowedIds, discordGuilds);
@@ -109,6 +112,20 @@ function buildWechatEnvLines(
   }
   if (wechatAllowed.length > 0) {
     lines.push(`WEIXIN_ALLOWED_USERS=${wechatAllowed.join(",")}`);
+  }
+  return lines;
+}
+
+// Hermes' WhatsApp bridge is tokenless from NemoClaw's point of view: the
+// operator pairs it inside the sandbox with `hermes whatsapp`, accepting
+// Hermes-owned mutable session state under ~/.hermes/platforms/whatsapp/session.
+// The gateway still needs the env feature flag baked into .env so the platform
+// starts after rebuild.
+function buildWhatsappEnvLines(allowedIds: MessagingAllowedIds): string[] {
+  const lines = ["WHATSAPP_ENABLED=true", "WHATSAPP_MODE=bot"];
+  const allowedUsers = (allowedIds.whatsapp ?? []).map(String).filter(Boolean);
+  if (allowedUsers.length > 0) {
+    lines.push(`WHATSAPP_ALLOWED_USERS=${allowedUsers.join(",")}`);
   }
   return lines;
 }
