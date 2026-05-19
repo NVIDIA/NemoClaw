@@ -26,9 +26,9 @@ export type PublicTranslationResult =
   | PublicUsageErrorTranslation
   | UnknownPublicActionTranslation;
 
-type LegacyRoute = {
+type SandboxRoute = {
   commandId: string;
-  legacyTokens: string[];
+  publicTokens: string[];
 };
 
 type GlobalRoute = {
@@ -44,17 +44,17 @@ function hasChildCommand(commandId: string, commandIds: ReadonlySet<string>): bo
   return [...commandIds].some((id) => id.startsWith(`${commandId}:`));
 }
 
-function legacyRoutes(): LegacyRoute[] {
+function sandboxRoutes(): SandboxRoute[] {
   const commandIds = registeredCommandIds();
   return [...commandIds]
     .filter((commandId) => commandId.startsWith("sandbox:"))
     .filter((commandId) => !hasChildCommand(commandId, commandIds))
     .map((commandId) => ({
       commandId,
-      legacyTokens: sandboxRouteTokens(commandId) ?? [],
+      publicTokens: sandboxRouteTokens(commandId) ?? [],
     }))
-    .filter((route) => route.legacyTokens.length > 0)
-    .sort((a, b) => b.legacyTokens.length - a.legacyTokens.length);
+    .filter((route) => route.publicTokens.length > 0)
+    .sort((a, b) => b.publicTokens.length - a.publicTokens.length);
 }
 
 function globalRoutes(): GlobalRoute[] {
@@ -83,9 +83,9 @@ function nativeArgv(commandId: string, args: string[], argv?: string[]): NativeA
 
 function parentSubcommands(action: string): Set<string> {
   return new Set(
-    legacyRoutes()
-      .filter((route) => route.legacyTokens[0] === action)
-      .map((route) => route.legacyTokens[1])
+    sandboxRoutes()
+      .filter((route) => route.publicTokens[0] === action)
+      .map((route) => route.publicTokens[1])
       .filter((token): token is string => Boolean(token)),
   );
 }
@@ -152,9 +152,9 @@ export function translatePublicSandboxArgv(
   }
 
   const inputTokens = [action, ...actionArgs];
-  for (const route of legacyRoutes()) {
-    if (!startsWithTokens(inputTokens, route.legacyTokens)) continue;
-    const remainingArgs = inputTokens.slice(route.legacyTokens.length);
+  for (const route of sandboxRoutes()) {
+    if (!startsWithTokens(inputTokens, route.publicTokens)) continue;
+    const remainingArgs = inputTokens.slice(route.publicTokens.length);
     return nativeArgv(route.commandId, [sandboxName, ...remainingArgs]);
   }
 

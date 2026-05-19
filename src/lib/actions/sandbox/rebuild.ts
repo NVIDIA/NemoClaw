@@ -36,6 +36,7 @@ import {
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import { loadAgent } from "../../agent/defs";
+import * as agentRuntime from "../../agent/runtime";
 import { ensureAgentBaseImage } from "../../agent/onboard";
 import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
@@ -54,8 +55,6 @@ import {
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
-
-const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.

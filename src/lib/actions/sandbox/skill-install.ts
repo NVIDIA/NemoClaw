@@ -6,13 +6,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
 import { captureOpenshell } from "../../adapters/openshell/runtime";
 import { ensureLiveSandboxOrExit } from "./gateway-state";
 import * as skillInstall from "../../skill-install";
 import { D, G, R, YW } from "../../cli/terminal-style";
-
-const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 export function printSkillInstallUsage(): void {
   console.log("");

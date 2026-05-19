@@ -18,7 +18,11 @@ import * as policies from "../../policy";
 const { HOST_QR_LOGIN_HANDLERS } = require("../../host-qr-handlers") as typeof import("../../host-qr-handlers");
 const onboardSession = require("../../state/onboard-session") as typeof import("../../state/onboard-session");
 
-import { parsePolicyAddArgs } from "../../domain/policy-channel";
+import {
+  parsePolicyAddOptions,
+  type PolicyAddOptions,
+  type PolicyRemoveOptions,
+} from "../../domain/policy-channel";
 import * as registry from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { rebuildSandbox } from "./rebuild";
@@ -51,8 +55,11 @@ const YW = useColor ? "\x1b[1;33m" : "";
  * order and aborts at the first failure (already-applied presets are not
  * rolled back).
  */
-export async function addSandboxPolicy(sandboxName: string, args: string[] = []): Promise<void> {
-  const { dryRun, skipConfirm, source, presetArg } = parsePolicyAddArgs(args);
+export async function addSandboxPolicy(
+  sandboxName: string,
+  options: PolicyAddOptions = {},
+): Promise<void> {
+  const { dryRun, skipConfirm, source, presetArg } = parsePolicyAddOptions(options);
 
   if (source.kind === "error") {
     console.error(`  ${source.message}`);
@@ -844,14 +851,14 @@ export async function startSandboxChannel(sandboxName: string, args: string[] = 
   await sandboxChannelsSetEnabled(sandboxName, args, false);
 }
 
-
-export async function removeSandboxPolicy(sandboxName: string, args: string[] = []): Promise<void> {
-  const dryRun = args.includes("--dry-run");
-  const skipConfirm =
-    args.includes("--yes") ||
-    args.includes("-y") ||
-    args.includes("--force") ||
-    process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+export async function removeSandboxPolicy(
+  sandboxName: string,
+  options: PolicyRemoveOptions = {},
+): Promise<void> {
+  const dryRun = Boolean(options.dryRun);
+  const skipConfirm = Boolean(
+    options.yes || options.force || process.env.NEMOCLAW_NON_INTERACTIVE === "1",
+  );
 
   // Remove-able presets = built-in presets + custom presets applied via
   // --from-file / --from-dir (tracked in registry.customPolicies).
@@ -860,7 +867,7 @@ export async function removeSandboxPolicy(sandboxName: string, args: string[] = 
   const allPresets = [...builtinPresets, ...customPresets];
   const applied = policies.getAppliedPresets(sandboxName);
 
-  const presetArg = args.find((arg) => !arg.startsWith("-"));
+  const presetArg = options.preset;
   let answer = null;
   if (presetArg) {
     const normalized = presetArg.trim().toLowerCase();

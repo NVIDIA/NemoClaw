@@ -4,7 +4,7 @@
 /**
  * Public command display registry derived from oclif command metadata.
  *
- * The command entries shown in root help, docs checks, and legacy dispatch
+ * The command entries shown in root help, docs checks, and public dispatch
  * helpers are exposed through the oclif command entrypoints under
  * `src/commands/**`. This module projects that metadata into the historical
  * `CommandDef` shape while command discovery itself stays owned by oclif.
@@ -138,8 +138,8 @@ export function globalCommandTokens(): Set<string> {
 /**
  * Action tokens for sandbox commands.
  *
- * The tokens are derived from oclif command IDs and explicit compatibility
- * route overrides, not from public help text. Includes empty string for the
+ * The tokens are derived from oclif command IDs and explicit public route
+ * overrides, not from public help text. Includes empty string for the
  * default connect behavior.
  */
 export function sandboxActionTokens(): string[] {

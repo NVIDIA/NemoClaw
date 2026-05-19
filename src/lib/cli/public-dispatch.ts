@@ -1,16 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Compatibility dispatcher for NemoClaw's public CLI surface.
+// Public dispatcher for NemoClaw's sandbox-first CLI surface.
 //
 // oclif owns command discovery, parsing, help rendering, and command execution
-// under src/commands/**. This module intentionally stays in front of oclif only
-// for product compatibility: the public sandbox grammar is
+// under src/commands/**. This module intentionally stays in front of oclif to
+// support NemoClaw's permanent product grammar:
 // `nemoclaw <sandbox-name> <action>` while the oclif-native command IDs are
 // `sandbox:<action>` and parse as `nemoclaw sandbox <action> <sandbox-name>`.
 // Keep new command adapters in src/commands/** and product behavior in
 // src/lib/actions/**; keep this file limited to argv normalization,
-// compatibility routing, suggestions, and registry-aware sandbox-name checks.
+// public route translation, suggestions, and registry-aware sandbox-name checks.
 const { ROOT, validateName } = require("../runner");
 const { CLI_NAME } = require("./branding");
 const { help } = require("../actions/root-help");
@@ -281,7 +281,7 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
   if (handlePublicConnectHelp(normalized)) return;
 
   // Help is parser metadata, not sandbox runtime behavior. Render sandbox-scoped
-  // legacy help before registry recovery so `nemoclaw missing channels start --help`
+  // public help before registry recovery so `nemoclaw missing channels start --help`
   // stays side-effect free and never starts or repairs services.
   if (
     !normalized.connectHelpRequested &&

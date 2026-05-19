@@ -16,6 +16,7 @@ import {
 } from "../../adapters/openshell/timeouts";
 import { CLI_NAME } from "../../cli/branding";
 import { D, G, R, YW } from "../../cli/terminal-style";
+import * as agentRuntime from "../../agent/runtime";
 import { parseGatewayInference } from "../../inference/config";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
 import {
@@ -39,8 +40,6 @@ import {
   applyOpenShellVmDnsMonkeypatch,
   shouldApplyVmDnsMonkeypatch,
 } from "./vm-dns-monkeypatch";
-
-const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 

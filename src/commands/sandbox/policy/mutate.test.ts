@@ -10,7 +10,7 @@ import PolicyRemoveCommand from "./remove";
 const rootDir = process.cwd();
 
 describe("policy mutation oclif commands", () => {
-  it("maps policy-add flags to the legacy argv shape", async () => {
+  it("maps policy-add flags to typed action options", async () => {
     const runtime = {
       sandboxPolicyAdd: vi.fn().mockResolvedValue(undefined),
       sandboxPolicyRemove: vi.fn().mockResolvedValue(undefined),
@@ -22,16 +22,17 @@ describe("policy mutation oclif commands", () => {
       rootDir,
     );
 
-    expect(runtime.sandboxPolicyAdd).toHaveBeenCalledWith("alpha", [
-      "github",
-      "--yes",
-      "--dry-run",
-      "--from-file",
-      "/tmp/preset.yaml",
-    ]);
+    expect(runtime.sandboxPolicyAdd).toHaveBeenCalledWith("alpha", {
+      preset: "github",
+      yes: true,
+      force: false,
+      dryRun: true,
+      fromFile: "/tmp/preset.yaml",
+      fromDir: undefined,
+    });
   });
 
-  it("maps policy-remove flags to the legacy argv shape", async () => {
+  it("maps policy-remove flags to typed action options", async () => {
     const runtime = {
       sandboxPolicyAdd: vi.fn().mockResolvedValue(undefined),
       sandboxPolicyRemove: vi.fn().mockResolvedValue(undefined),
@@ -40,11 +41,12 @@ describe("policy mutation oclif commands", () => {
 
     await PolicyRemoveCommand.run(["alpha", "github", "-y", "--dry-run"], rootDir);
 
-    expect(runtime.sandboxPolicyRemove).toHaveBeenCalledWith("alpha", [
-      "github",
-      "--yes",
-      "--dry-run",
-    ]);
+    expect(runtime.sandboxPolicyRemove).toHaveBeenCalledWith("alpha", {
+      preset: "github",
+      yes: true,
+      force: false,
+      dryRun: true,
+    });
   });
 
   it("rejects missing custom policy paths before dispatch", async () => {

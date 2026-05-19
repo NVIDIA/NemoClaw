@@ -17,7 +17,7 @@ export type OclifCommandMetadata = {
   flags?: Record<string, unknown>;
   hidden?: boolean;
   id?: string;
-  /** Public compatibility help/listing metadata for `nemoclaw <name> action` grammar. */
+  /** Public sandbox-first help/listing metadata for `nemoclaw <name> action` grammar. */
   publicDisplay?: readonly PublicCommandDisplayEntry[];
   state?: string;
   strict?: boolean;

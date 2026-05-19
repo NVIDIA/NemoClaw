@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
+import * as agentRuntime from "../../agent/runtime";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { parseSandboxPhase } from "../../state/gateway";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
@@ -42,8 +43,6 @@ import {
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import { D, G, R, RD, YW } from "../../cli/terminal-style";
-
-const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 type ProbeProviderHealth = (
   provider: string,

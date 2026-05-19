@@ -246,6 +246,22 @@ function checkAdapterFile(absPath: string, repoPath: string, violations: Violati
   }
 }
 
+function checkNoBinLibShimImport(absPath: string, repoPath: string, violations: Violation[]): void {
+  for (const ref of collectImportRefs(absPath)) {
+    const target = resolveInternalImport(absPath, ref.specifier);
+    if (target?.startsWith("bin/lib/") && !target.endsWith(".json")) {
+      addViolation(
+        violations,
+        repoPath,
+        ref.line,
+        ref.column,
+        "src-no-bin-lib-shims",
+        `src must import implementation modules directly instead of packaged shim ${target}`,
+      );
+    }
+  }
+}
+
 function checkCommandFile(absPath: string, repoPath: string, violations: Violation[]): void {
   const sourceFile = sourceFileFor(absPath);
   let commandClassCount = 0;
@@ -285,6 +301,7 @@ export function findLayerImportBoundaryViolations(root = SRC_ROOT): Violation[] 
   const violations: Violation[] = [];
   for (const absPath of walk(root)) {
     const repoPath = toRepoPath(absPath);
+    checkNoBinLibShimImport(absPath, repoPath, violations);
     if (isDomainFile(repoPath)) checkDomainFile(absPath, repoPath, violations);
     if (isActionFile(repoPath)) checkActionFile(absPath, repoPath, violations);
     if (isAdapterFile(repoPath)) checkAdapterFile(absPath, repoPath, violations);

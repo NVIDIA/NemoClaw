@@ -4,7 +4,7 @@
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import {
-  appendCommonPolicyFlags,
+  commonPolicyOptions,
   getPolicyRuntimeBridge,
   policyMutationArgs,
   policyMutationFlags,
@@ -25,9 +25,9 @@ export default class PolicyRemoveCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(PolicyRemoveCommand);
-    const legacyArgs: string[] = [];
-    if (args.preset) legacyArgs.push(args.preset);
-    appendCommonPolicyFlags(legacyArgs, flags);
-    await getPolicyRuntimeBridge().sandboxPolicyRemove(args.sandboxName, legacyArgs);
+    await getPolicyRuntimeBridge().sandboxPolicyRemove(args.sandboxName, {
+      preset: args.preset,
+      ...commonPolicyOptions(flags),
+    });
   }
 }
