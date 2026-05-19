@@ -27,7 +27,8 @@ Environment variables:
                                         disable). Empty/unset preserves the OpenClaw default.
     NEMOCLAW_INFERENCE_COMPAT_B64       Base64-encoded inference compat JSON
     NEMOCLAW_MESSAGING_CHANNELS_B64     Base64-encoded channel list
-    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map
+    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map (Slack IDs cover
+                                        DMs and channel @mentions)
     NEMOCLAW_DISCORD_GUILDS_B64         Base64-encoded Discord guild config
     NEMOCLAW_TELEGRAM_CONFIG_B64        Base64-encoded Telegram config (e.g. {"requireMention": true})
     NEMOCLAW_WECHAT_CONFIG_B64          Base64-encoded WeChat config (e.g. {"accountId": "...", "baseUrl": "...", "userId": "..."})
@@ -509,6 +510,15 @@ def build_config(env: dict | None = None) -> dict:
         if ch in _allowed_ids and _allowed_ids[ch]:
             account["dmPolicy"] = "allowlist"
             account["allowFrom"] = _allowed_ids[ch]
+            if ch == "slack":
+                account["groupPolicy"] = "allowlist"
+                account["channels"] = {
+                    "*": {
+                        "enabled": True,
+                        "requireMention": True,
+                        "users": _allowed_ids[ch],
+                    }
+                }
         _ch_cfg[ch] = {"accounts": {"default": account}}
 
     # WeChat (openclaw-weixin) is NOT added to channels.* here — writing

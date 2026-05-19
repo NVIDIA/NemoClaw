@@ -44,6 +44,7 @@
 #   DISCORD_BOT_TOKEN_REAL                 — optional: enables Phase 6 real round-trip
 #   SLACK_BOT_TOKEN                        — defaults to fake token (xoxb-fake-...)
 #   SLACK_APP_TOKEN                        — defaults to fake token (xapp-fake-...)
+#   SLACK_ALLOWED_USERS                    — comma-separated Slack user IDs for DM and channel @mention allowlisting
 #   SLACK_BOT_TOKEN_REVOKED                — optional: revoked xoxb- token to test auth pre-validation (#2340)
 #   SLACK_APP_TOKEN_REVOKED                — optional: paired xapp- token for the revoked bot token
 #   WECHAT_BOT_TOKEN                       — defaults to fake token; presence skips host-side QR login
@@ -123,6 +124,7 @@ DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
 SLACK_TOKEN="${SLACK_BOT_TOKEN:-xoxb-fake-slack-token-e2e}"
 SLACK_APP="${SLACK_APP_TOKEN:-xapp-fake-slack-app-token-e2e}"
 TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
+SLACK_IDS="${SLACK_ALLOWED_USERS-U0AR85ATALW,U09E2ESLACK}"
 # WeChat: pre-seeding WECHAT_BOT_TOKEN + the per-account metadata env vars lets
 # the non-interactive onboard path (src/lib/onboard.ts:8433) treat wechat as
 # "already configured" and skip the host-qr handler entirely. Fake values are
@@ -138,6 +140,7 @@ export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
 export SLACK_BOT_TOKEN="$SLACK_TOKEN"
 export SLACK_APP_TOKEN="$SLACK_APP"
 export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
+export SLACK_ALLOWED_USERS="$SLACK_IDS"
 export WECHAT_BOT_TOKEN="$WECHAT_TOKEN"
 export WECHAT_ACCOUNT_ID="$WECHAT_ACCOUNT"
 export WECHAT_BASE_URL="$WECHAT_BASE"
@@ -214,6 +217,15 @@ info "Telegram token: ${TELEGRAM_TOKEN:0:10}... (${#TELEGRAM_TOKEN} chars)"
 info "Discord token: ${DISCORD_TOKEN:0:10}... (${#DISCORD_TOKEN} chars)"
 info "Slack bot token: configured (${#SLACK_TOKEN} chars)"
 info "Slack app token: configured (${#SLACK_APP} chars)"
+slack_allowed_user_count=0
+if [ -n "$SLACK_IDS" ]; then
+  IFS=',' read -ra _slack_allowed_ids <<<"$SLACK_IDS"
+  for _sid in "${_slack_allowed_ids[@]}"; do
+    _sid="${_sid//[[:space:]]/}"
+    [ -n "$_sid" ] && ((slack_allowed_user_count++))
+  done
+fi
+info "Slack allowed users configured: ${slack_allowed_user_count} ID(s)"
 info "WeChat token: configured (${#WECHAT_TOKEN} chars), account=${WECHAT_ACCOUNT}"
 info "Sandbox name: $SANDBOX_NAME"
 
@@ -863,6 +875,85 @@ print('yes' if 'slack' in d else 'no')
   if [ "$slack_configured" = "yes" ]; then
     pass "M11e: Slack channel configured with placeholder tokens (guard needed)"
 
+    # M11f/M11g/M11h: SLACK_ALLOWED_USERS should authorize both DMs and
+    # channel @mentions from the same users. Config lives on the Slack account
+    # because OpenClaw supports multi-account Slack channel policy.
+    sl_dm_policy=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+account = d.get('slack', {}).get('accounts', {}).get('default', {})
+print(account.get('dmPolicy', ''))
+" 2>/dev/null || true)
+    if [ "$sl_dm_policy" = "allowlist" ]; then
+      pass "M11f: Slack dmPolicy is 'allowlist'"
+    elif [ -n "$sl_dm_policy" ]; then
+      fail "M11f: Slack dmPolicy is '$sl_dm_policy' (expected 'allowlist')"
+    else
+      skip "M11f: Slack dmPolicy not set"
+    fi
+
+    sl_group_policy=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+account = d.get('slack', {}).get('accounts', {}).get('default', {})
+print(account.get('groupPolicy', ''))
+" 2>/dev/null || true)
+    if [ "$sl_group_policy" = "allowlist" ]; then
+      pass "M11g: Slack groupPolicy is 'allowlist'"
+    elif [ -n "$sl_group_policy" ]; then
+      fail "M11g: Slack groupPolicy is '$sl_group_policy' (expected 'allowlist')"
+    else
+      skip "M11g: Slack groupPolicy not set"
+    fi
+
+    sl_channel_users=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+account = d.get('slack', {}).get('accounts', {}).get('default', {})
+wildcard = account.get('channels', {}).get('*', {})
+if wildcard.get('enabled') is not True:
+    print('BAD_ENABLED')
+elif wildcard.get('requireMention') is not True:
+    print('BAD_REQUIRE_MENTION')
+else:
+    users = wildcard.get('users', [])
+    if not isinstance(users, list):
+        print('BAD_USERS_TYPE')
+    elif len(users) == 0:
+        print('EMPTY_USERS')
+    else:
+        print(','.join(str(i) for i in users))
+" 2>/dev/null || true)
+    if [ "$sl_channel_users" = "BAD_ENABLED" ]; then
+      fail "M11h: Slack wildcard channel config is not enabled"
+    elif [ "$sl_channel_users" = "BAD_REQUIRE_MENTION" ]; then
+      fail "M11h: Slack wildcard channel config does not require mention"
+    elif [ "$sl_channel_users" = "BAD_USERS_TYPE" ]; then
+      fail "M11h: Slack wildcard channel users is not a list"
+    elif [ "$sl_channel_users" = "EMPTY_USERS" ]; then
+      fail "M11h: Slack wildcard channel users is empty"
+    elif [ -n "$sl_channel_users" ]; then
+      IFS=',' read -ra expected_slack_ids <<<"$SLACK_IDS"
+      missing_slack_ids=()
+      expected_slack_id_count=0
+      sl_channel_users_csv=",${sl_channel_users//[[:space:]]/},"
+      for sid in "${expected_slack_ids[@]}"; do
+        sid="${sid//[[:space:]]/}"
+        [ -z "$sid" ] && continue
+        ((expected_slack_id_count++))
+        if [[ "$sl_channel_users_csv" != *",$sid,"* ]]; then
+          missing_slack_ids+=("$sid")
+        fi
+      done
+      if [ ${#missing_slack_ids[@]} -eq 0 ]; then
+        pass "M11h: Slack wildcard channel @mention allowlist contains expected user count (${expected_slack_id_count})"
+      else
+        fail "M11h: Slack wildcard channel users missing ${#missing_slack_ids[@]} expected ID(s)"
+      fi
+    else
+      skip "M11h: Slack wildcard channel users not set"
+    fi
+
     # Diagnostics: check if the guard was installed and what NODE_OPTIONS looks like
     info "Checking guard installation diagnostics:"
     guard_exists=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ls -la /tmp/nemoclaw-slack-channel-guard.js 2>/dev/null || echo "EXEC_FAILED")
@@ -1329,6 +1420,37 @@ console.log("OK");
 NODE
 }
 
+check_fake_slack_capture_message() {
+  local path="$1"
+  local expected_channel="$2"
+  local expected_text="$3"
+  node - "$FAKE_SLACK_API_CAPTURE_FILE" "$path" "$expected_channel" "$expected_text" <<'NODE'
+const fs = require("fs");
+const [file, path, expectedChannel, expectedText] = process.argv.slice(2);
+const rows = fs
+  .readFileSync(file, "utf8")
+  .trim()
+  .split(/\n+/)
+  .filter(Boolean)
+  .map((line) => JSON.parse(line))
+  .filter((row) => row.event === "request" && row.path === path);
+const last = rows.at(-1);
+if (!last) {
+  console.log(`NO_REQUEST ${path}`);
+  process.exit(2);
+}
+if (last.channel !== expectedChannel) {
+  console.log(`BAD_CHANNEL ${last.channel}`);
+  process.exit(3);
+}
+if (last.text !== expectedText) {
+  console.log(`BAD_TEXT ${last.text}`);
+  process.exit(4);
+}
+console.log("OK");
+NODE
+}
+
 info "Calling fake Slack /api/auth.test from inside sandbox with Bolt-shape placeholder..."
 sl_api=""
 if [ "$fake_slack_ready" = "1" ]; then
@@ -1488,6 +1610,43 @@ elif echo "$sl_app_canonical" | grep -qF 'openshell:resolve:env:'; then
   fail "M-S16b: L7 proxy passed canonical placeholder through unchanged for SLACK_APP_TOKEN"
 else
   fail "M-S16b: Unexpected response (status=$sl_app_canon_status): ${sl_app_canonical:0:200}"
+fi
+
+# M-S17: Slack channel @mention allowlist proof (#3729). This runs inside the
+# sandbox, imports OpenClaw's installed Slack test API, and verifies:
+#   - the configured Slack user can prepare a channel app_mention
+#   - another user is denied by channels.*.users
+#   - sendMessageSlack posts back to the channel through the hermetic fake API
+info "Running Slack channel @mention allowlist proof through installed OpenClaw..."
+sl_channel_proof=""
+sl_allowed_user="${SLACK_IDS%%,*}"
+sl_allowed_user="${sl_allowed_user//[[:space:]]/}"
+if [ "$fake_slack_ready" = "1" ] && [ -n "$sl_allowed_user" ]; then
+  sl_channel_proof=$(run_fake_slack_channel_mention_proof "$FAKE_SLACK_API_PORT" "$sl_allowed_user" "U999DENIED" || true)
+fi
+
+info "Slack channel @mention proof response: ${sl_channel_proof:0:500}"
+if echo "$sl_channel_proof" | grep -q '"ok":true' \
+  && echo "$sl_channel_proof" | grep -q '"deniedPrepared":true'; then
+  pass "M-S17: Slack channel @mention allowlist accepts configured user and denies another user"
+  sl_post_capture=$(check_fake_slack_capture_token "/api/chat.postMessage" "$SLACK_TOKEN" || true)
+  if [ "$sl_post_capture" = "OK" ]; then
+    pass "M-S17a: fake Slack saw host-side bot token for channel reply"
+  else
+    fail "M-S17a: fake Slack capture did not prove channel reply token rewrite: ${sl_post_capture:0:300}"
+  fi
+  sl_message_capture=$(check_fake_slack_capture_message "/api/chat.postMessage" "C0E2ESLACK" "NemoClaw Slack channel mention proof" || true)
+  if [ "$sl_message_capture" = "OK" ]; then
+    pass "M-S17b: fake Slack captured non-secret channel/text metadata for channel reply"
+  else
+    fail "M-S17b: fake Slack did not capture expected channel reply metadata: ${sl_message_capture:0:300}"
+  fi
+elif [ "$fake_slack_ready" != "1" ]; then
+  skip "M-S17: fake Slack API was not ready"
+elif [ -z "$sl_allowed_user" ]; then
+  skip "M-S17: SLACK_ALLOWED_USERS is empty"
+else
+  fail "M-S17: Slack channel @mention proof failed: ${sl_channel_proof:0:500}"
 fi
 
 # ══════════════════════════════════════════════════════════════════
