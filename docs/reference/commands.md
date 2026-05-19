@@ -605,7 +605,9 @@ Channels fall into three login modes:
 
 - **Token paste** (`telegram`, `discord`, `slack`): the command prompts for any missing token and registers it with the OpenShell gateway.
 - **Host-side QR** (`wechat`): the command runs an interactive host-side QR scan to capture a static session token, then registers it with the gateway.
-- **In-sandbox QR** (`whatsapp`): the command records the channel without a host-side token or OpenShell credential provider; you complete pairing from inside the sandbox after the rebuild by running `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes. This intentionally leaves QR-created mutable session state in the sandbox until you unpair it or clear the durable agent state.
+- **In-sandbox QR** (`whatsapp`): the command records the channel without a host-side token or OpenShell credential provider.
+  NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes; after rebuild, run `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes.
+  This intentionally leaves QR-created mutable session state in the sandbox until you unpair it or clear the durable agent state.
 
 After registering the channel, NemoClaw asks whether to rebuild immediately.
 Running `add` for an already-configured channel simply overwrites the stored credentials where applicable — the operation is idempotent.

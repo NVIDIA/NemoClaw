@@ -56,6 +56,7 @@ Set `SLACK_ALLOWED_USERS` to comma-separated Slack member IDs to authorize those
 Channel messages still require an explicit bot mention.
 
 WhatsApp Web does not use a host-side token or OpenShell credential provider.
+NemoClaw advertises WhatsApp for both OpenClaw and Hermes sandboxes, and each agent completes pairing with its own in-sandbox command.
 Pairing happens inside the sandbox after the rebuild completes and creates mutable session credentials there.
 Run `openshell term` and then use the agent-specific pairing command to render the QR code in the terminal:
 
