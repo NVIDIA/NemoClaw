@@ -7,7 +7,7 @@
 # Covers Test 1 from issue #3462 ("onboard telegram -> channels stop -> channels start")
 # plus the live channel removal path from issue #3671. The regression surface
 # is intentionally exercised for both supported agents (OpenClaw and Hermes)
-# and every messaging channel (telegram, discord, wechat, slack).
+# and every messaging channel (telegram, discord, wechat, slack, whatsapp).
 #
 # Regression coverage:
 #   - #3453: `channels stop <ch>` + rebuild must actually remove the channel
@@ -102,7 +102,8 @@ OPENCLAW_SANDBOX_NAME="${NEMOCLAW_CHANNELS_OPENCLAW_SANDBOX_NAME:-${BASE_SANDBOX
 HERMES_SANDBOX_NAME="${NEMOCLAW_CHANNELS_HERMES_SANDBOX_NAME:-${BASE_SANDBOX_NAME}-hermes}"
 REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 OPENSHELL_BIN="${NEMOCLAW_OPENSHELL_BIN:-openshell}"
-CHANNELS=(telegram discord wechat slack)
+CHANNELS=(telegram discord wechat slack whatsapp)
+TOKENLESS_CHANNELS=(whatsapp)
 
 ACTIVE_AGENT=""
 ACTIVE_SANDBOX=""
@@ -259,6 +260,9 @@ channel_presence() {
       slack)
         probe='grep -Eq "^SLACK_BOT_TOKEN=xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN$" /sandbox/.hermes/.env && grep -Eq "^SLACK_APP_TOKEN=xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN$" /sandbox/.hermes/.env'
         ;;
+      whatsapp)
+        probe='grep -Eq "^WHATSAPP_ENABLED=true$" /sandbox/.hermes/.env && grep -Eq "^WHATSAPP_MODE=bot$" /sandbox/.hermes/.env'
+        ;;
     esac
     out=$(sandbox_exec "if [ -r /sandbox/.hermes/.env ]; then if ${probe}; then echo yes; else echo no; fi; else echo missing; fi" | tail -1) || true
   fi
@@ -279,7 +283,7 @@ dump_channel_state() {
     sandbox_exec "python3 -c 'import json; print(list(json.load(open(\"/sandbox/.openclaw/openclaw.json\")).get(\"channels\", {}).keys()))' 2>&1" | head -10 || true
   else
     info ".hermes/.env messaging keys:"
-    sandbox_exec "grep -E '^(TELEGRAM_BOT_TOKEN|DISCORD_BOT_TOKEN|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|WEIXIN_TOKEN)=' /sandbox/.hermes/.env 2>/dev/null || true" | head -20 || true
+    sandbox_exec "grep -E '^(TELEGRAM_BOT_TOKEN|DISCORD_BOT_TOKEN|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|WEIXIN_TOKEN|WHATSAPP_ENABLED|WHATSAPP_MODE|WHATSAPP_ALLOWED_USERS)=' /sandbox/.hermes/.env 2>/dev/null || true" | head -20 || true
   fi
 }
 
@@ -519,6 +523,38 @@ run_rebuild() {
   fi
 }
 
+ensure_tokenless_channels_enabled() {
+  local added=0
+  local channel log rc msg
+  for channel in "${TOKENLESS_CHANNELS[@]}"; do
+    if registry_array_contains messagingChannels "$channel"; then
+      msg="${ACTIVE_AGENT}/${channel}: tokenless channel already registered"
+      pass_msg "$msg"
+      continue
+    fi
+    log="/tmp/nc-channels-${ACTIVE_AGENT}-add-${channel}.log"
+    if nemoclaw "$ACTIVE_SANDBOX" channels add "$channel" >"$log" 2>&1; then
+      rc=0
+    else
+      rc=$?
+    fi
+    cat "$log"
+    if [ "$rc" -eq 0 ] && grep -q "Enabled ${channel} channel" "$log"; then
+      msg="${ACTIVE_AGENT}/${channel}: channels add registered tokenless QR channel"
+      pass_msg "$msg"
+      added=1
+    else
+      msg="${ACTIVE_AGENT}/${channel}: channels add failed or did not register tokenless QR channel"
+      fail_msg "$msg"
+      tail -30 "$log" 2>/dev/null || true
+    fi
+  done
+
+  if [ "$added" -eq 1 ]; then
+    run_rebuild "add-tokenless-channels"
+  fi
+}
+
 stop_all_channels() {
   local channel log rc msg
   for channel in "${CHANNELS[@]}"; do
@@ -571,7 +607,7 @@ remove_all_channels() {
       rc=$?
     fi
     cat "$log"
-    if [ "$rc" -eq 0 ] && grep -q "Removed ${channel} bridge" "$log"; then
+    if [ "$rc" -eq 0 ] && { grep -q "Removed ${channel} bridge" "$log" || grep -q "Removed ${channel} channel" "$log"; }; then
       msg="${ACTIVE_AGENT}/${channel}: channels remove completed on a live sandbox"
       pass_msg "$msg"
     else
@@ -652,6 +688,8 @@ run_agent_scenario() {
     openshell sandbox list 2>&1 || true
     print_summary
   fi
+
+  ensure_tokenless_channels_enabled
 
   section "${agent}: baseline with all channels active"
   assert_provider_records_exist "at baseline"

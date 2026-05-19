@@ -97,7 +97,7 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
   },
   whatsapp: {
     description: "WhatsApp Web messaging (QR pairing)",
-    help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, run `openshell term <sandbox>` and then `openclaw channels login --channel whatsapp` to display the QR.",
+    help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, run `openshell term <sandbox>` and then use `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes to display the QR.",
     label: "WhatsApp",
     loginMethod: "in-sandbox-qr",
   },

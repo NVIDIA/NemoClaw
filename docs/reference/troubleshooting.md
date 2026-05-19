@@ -538,7 +538,7 @@ Follow these steps to reconnect.
    $ nemoclaw tunnel start
    ```
 
-   Telegram, Discord, and Slack are handled by OpenShell-managed channel messaging configured at onboarding, not by a separate bridge process from `nemoclaw tunnel start`. To pause a single bridge without destroying the sandbox, use `nemoclaw <name> channels stop <channel>`.
+   Telegram, Discord, Slack, WeChat, and WhatsApp are handled by OpenShell-managed channel messaging configured at onboarding, not by a separate bridge process from `nemoclaw tunnel start`. To pause a single bridge without destroying the sandbox, use `nemoclaw <name> channels stop <channel>`.
 
 :::{admonition} If the sandbox does not recover
 :class: warning
@@ -735,7 +735,7 @@ $ nemoclaw <name> rebuild
 ### `openclaw channels add` or `remove` is blocked inside the sandbox
 
 This is expected.
-The messaging channel list is frozen into the sandbox's container image when the image is built during `nemoclaw onboard` or `nemoclaw rebuild` (the selected channel names are passed to the `docker build` as `NEMOCLAW_MESSAGING_CHANNELS_B64` and written into `/sandbox/.openclaw/openclaw.json` as part of the image).
+The messaging channel list is frozen into the sandbox's container image when the image is built during `nemoclaw onboard` or `nemoclaw rebuild` (the selected channel names are passed to the `docker build` as `NEMOCLAW_MESSAGING_CHANNELS_B64` and written into agent config such as `/sandbox/.openclaw/openclaw.json` for OpenClaw or `/sandbox/.hermes/.env` for Hermes).
 Changes made inside the running sandbox do not persist across rebuilds, so `openclaw channels` commands that mutate the config are intercepted.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw channels <add|remove>` and prints an actionable error pointing at the host-side commands below, instead of letting the call fail deep in the binary with a raw `EACCES` trace.
 
@@ -750,7 +750,7 @@ $ nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
 `channels add` registers credentials with the OpenShell gateway and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
 
-WhatsApp pairs entirely inside the sandbox, so `openclaw channels login --channel whatsapp` is allowed inside the sandbox and is the supported way to complete pairing after the channel has been added on the host.
+WhatsApp pairs entirely inside the sandbox. For OpenClaw sandboxes, `openclaw channels login --channel whatsapp` is allowed inside the sandbox; for Hermes sandboxes, run `hermes whatsapp` inside the sandbox. These are the supported ways to complete pairing after the channel has been added on the host.
 WeChat captures its token via a host-side QR during the host-side `nemoclaw <sandbox> channels add wechat` flow, so it does not need an in-sandbox `channels login` step.
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox

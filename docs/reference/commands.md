@@ -605,7 +605,7 @@ Channels fall into three login modes:
 
 - **Token paste** (`telegram`, `discord`, `slack`): the command prompts for any missing token and registers it with the OpenShell gateway.
 - **Host-side QR** (`wechat`): the command runs an interactive host-side QR scan to capture a static session token, then registers it with the gateway.
-- **In-sandbox QR** (`whatsapp`): the command registers a tokenless bridge with the gateway; you complete pairing from inside the sandbox after the rebuild by running `openclaw channels login --channel whatsapp`.
+- **In-sandbox QR** (`whatsapp`): the command records the channel without a host-side token; you complete pairing from inside the sandbox after the rebuild by running `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes.
 
 After registering the channel, NemoClaw asks whether to rebuild immediately.
 Running `add` for an already-configured channel simply overwrites the stored credentials where applicable — the operation is idempotent.
@@ -628,7 +628,7 @@ When `NEMOCLAW_NON_INTERACTIVE=1` is set, any missing token fails fast and no re
 Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel.
 Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt.
 When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway.
-If the matching built-in policy preset is applied, such as `telegram`, `discord`, or `slack`, NemoClaw also removes that preset so the upstream API is no longer allow-listed after the channel is gone.
+If the matching built-in policy preset is applied, such as `telegram`, `discord`, `slack`, `wechat`, or `whatsapp`, NemoClaw also removes that preset so the upstream API is no longer allow-listed after the channel is gone.
 
 ```console
 $ nemoclaw my-assistant channels remove telegram
@@ -640,11 +640,11 @@ $ nemoclaw my-assistant channels remove telegram
 
 As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` skips the rebuild prompt and queues the change for a manual `nemoclaw <name> rebuild`.
 
-Host-side removal is the supported path because `/sandbox/.openclaw/openclaw.json` is baked into the container image at build time; `openclaw channels remove` inside the sandbox would modify the running config but not persist changes across rebuilds.
+Host-side removal is the supported path because agent channel config is baked into the container image at build time (`/sandbox/.openclaw/openclaw.json` for OpenClaw and `/sandbox/.hermes/.env` for Hermes); agent-specific channel removals inside the sandbox would modify the running config but not persist changes across rebuilds.
 
 ### `nemoclaw <name> channels stop <channel>`
 
-Pause a single messaging bridge (`telegram`, `discord`, or `slack`) without clearing its credentials.
+Pause a single messaging bridge (`telegram`, `discord`, `slack`, `wechat`, or `whatsapp`) without clearing its credentials.
 The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway.
 The provider stays registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
 

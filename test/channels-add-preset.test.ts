@@ -47,7 +47,8 @@ function runScript(scriptBody: string, extraEnv: Record<string, string> = {}): S
 //     (apply MUST precede rebuild)
 function buildPreamble({
   presetNamesAvailable = ["telegram", "slack", "discord", "npm", "github"],
-}: { presetNamesAvailable?: string[] } = {}): string {
+  sandboxAgent = "openclaw",
+}: { presetNamesAvailable?: string[]; sandboxAgent?: string } = {}): string {
   const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
   return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});
@@ -70,11 +71,13 @@ const onboard = require(${j("onboard.js")});
 onboard.isNonInteractive = () => true;
 
 const onboardProviders = require(${j("onboard/providers.js")});
-onboardProviders.upsertMessagingProviders = () => {};
+const providerCalls = [];
+onboardProviders.upsertMessagingProviders = (defs) => { providerCalls.push(...defs); };
 
 const registry = require(${j("state/registry.js")});
 registry.getSandbox = () => ({
   name: "test-sb",
+  agent: ${JSON.stringify(sandboxAgent)},
   messagingChannels: [],
   disabledChannels: [],
   providerCredentialHashes: {},
@@ -104,7 +107,7 @@ console.log = (...args) => {
 
 const channelModule = require(${j("actions/sandbox/policy-channel.js")});
 
-module.exports = { channelModule, appliedCalls, callOrder };
+module.exports = { channelModule, appliedCalls, callOrder, providerCalls };
 `;
 }
 
@@ -152,6 +155,48 @@ const ctx = module.exports;
       );
     });
   }
+
+  it("applies the tokenless WhatsApp preset for Hermes before triggering rebuild", () => {
+    const script = `${buildPreamble({
+      presetNamesAvailable: ["telegram", "slack", "discord", "whatsapp", "npm", "github"],
+      sandboxAgent: "hermes",
+    })}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", ["whatsapp"]);
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      appliedCalls: ctx.appliedCalls,
+      callOrder: ctx.callOrder,
+      providerCalls: ctx.providerCalls,
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.providerCalls, [], "WhatsApp must not create host-side providers");
+    assert.deepEqual(
+      payload.appliedCalls,
+      [{ sandboxName: "test-sb", presetName: "whatsapp" }],
+      `expected applyPreset("test-sb", "whatsapp") exactly once; got ${JSON.stringify(payload.appliedCalls)}`,
+    );
+    const applyIdx = payload.callOrder.indexOf("applyPreset:whatsapp");
+    const rebuildIdx = payload.callOrder.indexOf("promptAndRebuild");
+    assert.ok(applyIdx >= 0, `applyPreset was never called (order: ${JSON.stringify(payload.callOrder)})`);
+    assert.ok(rebuildIdx >= 0, `promptAndRebuild was never called (order: ${JSON.stringify(payload.callOrder)})`);
+    assert.ok(
+      applyIdx < rebuildIdx,
+      `applyPreset must run before promptAndRebuild; got order: ${JSON.stringify(payload.callOrder)}`,
+    );
+  });
 
   // Negative: when the channel name does not match any built-in preset,
   // the helper short-circuits via listPresets() and applyPreset is not

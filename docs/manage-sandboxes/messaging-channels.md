@@ -3,8 +3,8 @@ title:
   page: "Set Up Messaging Channels with NemoClaw and OpenShell"
   nav: "Set Up Messaging Channels"
 description:
-  main: "Connect Telegram, Discord, Slack, or WhatsApp to your sandboxed OpenClaw agent using OpenShell-managed channel messaging."
-  agent: "Explains how Telegram, Discord, Slack, and WhatsApp reach the sandboxed OpenClaw agent through OpenShell-managed processes and NemoClaw channel commands. Use when setting up messaging channels, chat interfaces, or integrations without relying on nemoclaw tunnel start for bridges."
+  main: "Connect Telegram, Discord, Slack, or WhatsApp to your sandboxed OpenClaw or Hermes agent using OpenShell-managed channel messaging."
+  agent: "Explains how Telegram, Discord, Slack, and WhatsApp reach sandboxed OpenClaw and Hermes agents through OpenShell-managed processes and NemoClaw channel commands. Use when setting up messaging channels, chat interfaces, or integrations without relying on nemoclaw tunnel start for bridges."
 keywords: ["nemoclaw messaging channels", "nemoclaw telegram", "nemoclaw discord", "nemoclaw slack", "nemoclaw whatsapp", "openshell channel messaging"]
 topics: ["generative_ai", "ai_agents"]
 tags: ["openclaw", "openshell", "telegram", "discord", "slack", "whatsapp", "messaging", "deployment", "nemoclaw"]
@@ -24,12 +24,12 @@ status: published
 
 # Messaging Channels
 
-Telegram, Discord, Slack, and WhatsApp reach your agent through OpenShell-managed processes and gateway constructs.
+Telegram, Discord, Slack, and WhatsApp reach your OpenClaw or Hermes agent through OpenShell-managed processes and gateway constructs.
 For token-based channels, NemoClaw registers credentials with OpenShell providers; WhatsApp pairs inside the sandbox via QR scan and stores session state there.
 NemoClaw bakes the selected channel configuration into the sandbox image and keeps runtime delivery under OpenShell control.
 
 You can enable channels during `nemoclaw onboard` or add them later with host-side `nemoclaw <sandbox> channels` commands.
-Do not run `openclaw channels add` or `openclaw channels remove` inside the sandbox because `/sandbox/.openclaw/openclaw.json` is generated at image build time and changes inside the running container do not persist across rebuilds.
+Do not run agent-specific channel mutation commands such as `openclaw channels add` or `openclaw channels remove` inside the sandbox because NemoClaw generates `/sandbox/.openclaw/openclaw.json` for OpenClaw and `/sandbox/.hermes/.env` for Hermes at image build time, and changes inside the running container do not persist across rebuilds.
 
 `nemoclaw tunnel start` does not start Telegram, Discord, Slack, or other chat bridges.
 It only starts optional host services such as the cloudflared tunnel when that binary is present. (`nemoclaw start` is kept as a deprecated alias.)
@@ -71,8 +71,14 @@ Channel messages still require an explicit bot mention.
 
 WhatsApp Web does not use a host-side token.
 Pairing happens inside the sandbox after the rebuild completes.
-Run `openshell term <sandbox>` and then `openclaw channels login --channel whatsapp` to render the QR code in the terminal, and scan it with your phone.
-Session credentials are generated and stored inside the running sandbox under the durable `whatsapp` state directory, so they survive rebuilds without re-pairing.
+Run `openshell term <sandbox>` and then use the agent-specific pairing command to render the QR code in the terminal:
+
+```console
+$ openclaw channels login --channel whatsapp  # OpenClaw sandboxes
+$ hermes whatsapp                             # Hermes sandboxes
+```
+
+Session credentials are generated and stored inside durable agent state (`whatsapp` for OpenClaw, `platforms/whatsapp` for Hermes), so they survive rebuilds without re-pairing.
 NemoClaw cannot detect cross-sandbox WhatsApp conflicts the way it does for token-based channels.
 Pair only one sandbox per WhatsApp account at a time.
 
@@ -103,7 +109,7 @@ Then run onboarding:
 $ nemoclaw onboard
 ```
 
-Complete the rest of the wizard so the blueprint can create OpenShell providers (for example `<sandbox>-telegram-bridge`), bake channel configuration into the image (`NEMOCLAW_MESSAGING_CHANNELS_B64`), and start the sandbox.
+Complete the rest of the wizard so the blueprint can create OpenShell providers where needed (for example `<sandbox>-telegram-bridge`), bake channel configuration into the image (`NEMOCLAW_MESSAGING_CHANNELS_B64`), and start the sandbox.
 
 ## Add Channels After Onboarding
 
@@ -120,9 +126,10 @@ Add the channel you want:
 $ nemoclaw my-assistant channels add telegram
 $ nemoclaw my-assistant channels add discord
 $ nemoclaw my-assistant channels add slack
+$ nemoclaw my-assistant channels add whatsapp
 ```
 
-`channels add` collects whatever each channel needs (token prompts for Telegram, Discord, and Slack; a host-side QR scan for WeChat; nothing for WhatsApp because pairing happens in-sandbox after rebuild), registers a bridge provider with the OpenShell gateway when a token was captured, records the channel in the sandbox registry, and asks whether to rebuild immediately.
+`channels add` collects whatever each channel needs (token prompts for Telegram, Discord, and Slack; a host-side QR scan for WeChat; nothing for WhatsApp because pairing happens in-sandbox after rebuild), registers bridge providers with the OpenShell gateway when tokens were captured, records the channel in the sandbox registry, and asks whether to rebuild immediately.
 The command accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase channel name.
 If a matching built-in network policy preset exists, `channels add` applies it to the sandbox automatically before the rebuild so the bridge has egress to its upstream API; if applying the preset fails, NemoClaw warns and tells you to re-apply manually with `nemoclaw <sandbox> policy-add <channel>` after the rebuild.
 Choose the rebuild so the running sandbox image picks up the new channel.
@@ -180,13 +187,13 @@ If NemoClaw only has legacy channel metadata and cannot compare credential hashe
 
 Use `channels stop` when you want to pause one bridge and keep the sandbox running.
 Use `nemoclaw tunnel stop` or its deprecated alias `nemoclaw stop` when you want to stop host auxiliary services and also ask NemoClaw to stop the OpenClaw gateway inside the selected sandbox.
-Stopping the in-sandbox gateway stops Telegram, Discord, and Slack polling for that sandbox until you restart the sandbox or gateway.
+Stopping the in-sandbox gateway stops Telegram, Discord, Slack, and WhatsApp polling for that sandbox until you restart the sandbox or gateway.
 
 ## Confirm Delivery
 
 After the sandbox is running, send a message to the configured bot or app.
 If delivery fails, use `openshell term` on the host, check gateway logs, and verify network policy allows the channel API.
-Use the matching policy preset (`telegram`, `discord`, `slack`, or `whatsapp`) or review [Common Integration Policy Examples](../network-policy/integration-policy-examples.md).
+Use the matching policy preset (`telegram`, `discord`, `slack`, `wechat`, or `whatsapp`) or review [Common Integration Policy Examples](../network-policy/integration-policy-examples.md).
 
 ## Tunnel Command
 

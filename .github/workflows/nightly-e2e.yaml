@@ -375,7 +375,7 @@ jobs:
   # Regression coverage for #3453 (stop must disable across rebuild), #3381
   # (start must re-attach from cached credentials), and #3671 (remove must
   # detach/delete providers and survive rebuild with token env still present).
-  # Exercises OpenClaw and Hermes across telegram, discord, wechat, and slack.
+  # Exercises OpenClaw and Hermes across telegram, discord, wechat, slack, and whatsapp.
   channels-stop-start-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&

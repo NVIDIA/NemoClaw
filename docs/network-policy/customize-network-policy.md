@@ -203,6 +203,8 @@ Available presets:
 | `pypi` | Python Package Index |
 | `slack` | Slack API and webhooks |
 | `telegram` | Telegram Bot API |
+| `wechat` | WeChat messaging |
+| `whatsapp` | WhatsApp Web messaging |
 
 To apply a preset to a running sandbox:
 
