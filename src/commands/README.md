@@ -4,18 +4,20 @@
 # `src/commands`
 
 This tree is the oclif discovery surface for the packaged `nemoclaw` CLI.
-Each file is intentionally thin: it exports a command class from `src/lib/commands/**`
-and attaches NemoClaw's public display metadata.
+Command entrypoint files define the oclif command class directly. Do not add new
+public command shims that only re-export from `src/lib/**`, and do not recreate a
+parallel command layer under `src/lib`. Prefer `src/lib/<feature>/**` for shared
+parser helpers.
 
 ```text
 src/commands/<public command path>.ts
-  -> import command implementation from src/lib/commands/**
-  -> wrap with src/lib/cli/command-display.ts metadata
+  -> parse flags/args
+  -> call src/lib/actions/** or small src/lib/<feature> command-support helpers
 ```
 
-Keep behavior out of this tree. Product behavior belongs in `src/lib/actions/**`, pure
-planning and classification belongs in `src/lib/domain/**`, and host/runtime boundaries
-belong in `src/lib/adapters/**`.
+Keep product behavior out of this tree. Command classes should stay thin: product
+behavior belongs in `src/lib/actions/**`, pure planning and classification belongs in
+`src/lib/domain/**`, and host/runtime boundaries belong in `src/lib/adapters/**`.
 
 Hidden `nemoclaw internal ...` entrypoints live under `src/commands/internal/**`; see
 `src/commands/internal/README.md` for their narrower compatibility contract.

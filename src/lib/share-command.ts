@@ -17,6 +17,23 @@ import path from "path";
 import { buildShareCommandDeps } from "./share-command-deps";
 import type { ShareCommandDeps } from "./share-command-deps";
 
+export class ShareCommandError extends Error {
+  readonly lines: readonly string[];
+  readonly exitCode: number;
+
+  constructor(lines: string | readonly string[], exitCode = 1) {
+    const normalized = Array.isArray(lines) ? lines : [lines];
+    super(normalized.join("\n"));
+    this.name = "ShareCommandError";
+    this.lines = normalized;
+    this.exitCode = exitCode;
+  }
+}
+
+function shareFail(lines: string | readonly string[], exitCode = 1): never {
+  throw new ShareCommandError(lines, exitCode);
+}
+
 // ── Helpers ──────────────────────────────────────────────────────
 
 /**
@@ -154,20 +171,20 @@ export async function runShareMount(
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (sshfsCheck.status !== 0) {
-    console.error("  sshfs is not installed.");
-    if (process.platform === "darwin") {
-      console.error("  Install with: brew install macfuse && brew install sshfs");
-    } else {
-      console.error("  Install with: sudo apt-get install sshfs  (or: sudo dnf install fuse-sshfs)");
-    }
-    process.exit(1);
+    shareFail([
+      "  sshfs is not installed.",
+      process.platform === "darwin"
+        ? "  Install with: brew install macfuse && brew install sshfs"
+        : "  Install with: sudo apt-get install sshfs  (or: sudo dnf install fuse-sshfs)",
+    ]);
   }
 
   // Check not already mounted
   if (isMountPoint(localMount)) {
-    console.error(`  ${localMount} is already mounted.`);
-    console.error(`  Run '${deps.cliName} ${sandboxName} share unmount' first.`);
-    process.exit(1);
+    shareFail([
+      `  ${localMount} is already mounted.`,
+      `  Run '${deps.cliName} ${sandboxName} share unmount' first.`,
+    ]);
   }
 
   // Verify sandbox is running
@@ -179,8 +196,7 @@ export async function runShareMount(
   // Get SSH config
   const sshConfigResult = deps.getSshConfig(sandboxName);
   if (sshConfigResult.status !== 0) {
-    console.error("  Failed to obtain SSH configuration for the sandbox.");
-    process.exit(1);
+    shareFail("  Failed to obtain SSH configuration for the sandbox.");
   }
 
   // Use a private temp directory to prevent symlink attacks on predictable paths.
@@ -231,18 +247,19 @@ export async function runShareMount(
     );
     if (result.status !== 0) {
       const stderr = (result.stderr || "").trim();
-      console.error("  SSHFS mount failed.");
-      if (stderr) console.error(`  ${stderr}`);
+      mountFailed = true;
+      const lines = ["  SSHFS mount failed."];
+      if (stderr) lines.push(`  ${stderr}`);
       if (/sftp/i.test(stderr)) {
-        console.error("  The sandbox may lack openssh-sftp-server.");
-        console.error(
+        lines.push("  The sandbox may lack openssh-sftp-server.");
+        lines.push(
           `  If this sandbox uses the default base image, rebuild with: ${deps.cliName} ${sandboxName} rebuild --yes`,
         );
-        console.error(
+        lines.push(
           "  If it was created from a custom `--from` image, add openssh-sftp-server at /usr/lib/openssh/sftp-server and rebuild.",
         );
       }
-      mountFailed = true;
+      shareFail(lines);
     } else {
       console.log(`  ${G}✓${R} Mounted ${remotePath} → ${localMount}`);
       console.log(`  Edit files at ${localMount} — changes appear in the sandbox instantly.`);
@@ -255,7 +272,7 @@ export async function runShareMount(
       /* ignore */
     }
   }
-  if (mountFailed) process.exit(1);
+  if (mountFailed) shareFail("  SSHFS mount failed.");
 }
 
 export function runShareUnmount(
@@ -275,10 +292,10 @@ export function runShareUnmount(
   } else {
     const resolved = resolveLinuxUnmount();
     if (!resolved) {
-      console.error("  Could not find fusermount3 or fusermount on this host.");
-      console.error("  Install with: sudo apt-get install fuse3  (or: sudo dnf install fuse3)");
-      process.exit(1);
-      return;
+      shareFail([
+        "  Could not find fusermount3 or fusermount on this host.",
+        "  Install with: sudo apt-get install fuse3  (or: sudo dnf install fuse3)",
+      ]);
     }
     unmountCmd = resolved;
     unmountArgs = ["-u", localMount];
@@ -291,14 +308,13 @@ export function runShareUnmount(
   if (result.status !== 0) {
     const stderr = (result.stderr || "").trim();
     if (/not mounted|not found|no mount/i.test(stderr)) {
-      console.error(`  ${localMount} is not currently mounted.`);
-    } else {
-      console.error(`  Unmount failed: ${stderr || "unknown error"}`);
-      if (process.platform !== "darwin") {
-        console.error(`  Try: ${unmountCmd} -uz ${localMount}`);
-      }
+      shareFail(`  ${localMount} is not currently mounted.`);
     }
-    process.exit(1);
+    const lines = [`  Unmount failed: ${stderr || "unknown error"}`];
+    if (process.platform !== "darwin") {
+      lines.push(`  Try: ${unmountCmd} -uz ${localMount}`);
+    }
+    shareFail(lines);
   }
   console.log(`  ${G}✓${R} Unmounted ${localMount}`);
 }
@@ -320,9 +336,10 @@ export function runShareStatus(
 
 export function printShareUsageAndExit(exitCode = 1): never {
   const { cliName } = buildShareCommandDeps();
-  console.error(`  Usage: ${cliName} <name> share <mount|unmount|status>`);
-  console.error("    mount   [sandbox-path] [local-mount-point]  Mount sandbox filesystem via SSHFS");
-  console.error("    unmount [local-mount-point]                 Unmount a previously mounted filesystem");
-  console.error("    status  [local-mount-point]                 Check current mount status");
-  process.exit(exitCode);
+  shareFail([
+    `  Usage: ${cliName} <name> share <mount|unmount|status>`,
+    "    mount   [sandbox-path] [local-mount-point]  Mount sandbox filesystem via SSHFS",
+    "    unmount [local-mount-point]                 Unmount a previously mounted filesystem",
+    "    status  [local-mount-point]                 Check current mount status",
+  ], exitCode);
 }

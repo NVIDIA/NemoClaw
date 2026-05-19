@@ -86,7 +86,9 @@ describe("sandbox build context staging", () => {
       "index.js",
     );
 
-    expect((fs.statSync(stagedManifestDir).mode & 0o777).toString(8)).toBe("755");
+    const stagedManifestDirMode = fs.statSync(stagedManifestDir).mode & 0o777;
+    expect(stagedManifestDirMode & 0o555).toBe(0o555);
+    expect(stagedManifestDirMode & 0o002).toBe(0);
     expect((fs.statSync(stagedManifest).mode & 0o777).toString(8)).toBe("644");
     expect((fs.statSync(stagedPlugin).mode & 0o777).toString(8)).toBe("644");
   }

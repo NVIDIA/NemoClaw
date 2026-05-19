@@ -8,16 +8,16 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const require = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const COMMAND_PATHS = {
-  common: path.join(REPO_ROOT, "dist", "lib", "commands", "credentials", "common.js"),
-  credentials: path.join(REPO_ROOT, "dist", "lib", "commands", "credentials.js"),
-  list: path.join(REPO_ROOT, "dist", "lib", "commands", "credentials", "list.js"),
-  reset: path.join(REPO_ROOT, "dist", "lib", "commands", "credentials", "reset.js"),
+  common: path.join(REPO_ROOT, "dist", "lib", "credentials", "command-support.js"),
+  credentials: path.join(REPO_ROOT, "dist", "commands", "credentials.js"),
+  list: path.join(REPO_ROOT, "dist", "commands", "credentials", "list.js"),
+  reset: path.join(REPO_ROOT, "dist", "commands", "credentials", "reset.js"),
 };
 const GLOBAL_ACTIONS_PATH = path.join(REPO_ROOT, "dist", "lib", "actions", "global.js");
 type CredentialsCommandClasses = {
-  CredentialsCommand: typeof import("../dist/lib/commands/credentials.js").default;
-  CredentialsListCommand: typeof import("../dist/lib/commands/credentials/list.js").default;
-  CredentialsResetCommand: typeof import("../dist/lib/commands/credentials/reset.js").default;
+  CredentialsCommand: typeof import("../dist/commands/credentials.js").default;
+  CredentialsListCommand: typeof import("../dist/commands/credentials/list.js").default;
+  CredentialsResetCommand: typeof import("../dist/commands/credentials/reset.js").default;
 };
 type SpawnLikeResult = { status: number | null; stdout?: string; stderr?: string };
 type RuntimeRecovery = {

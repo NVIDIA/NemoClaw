@@ -5,28 +5,34 @@
  * Public command display registry derived from oclif command metadata.
  *
  * The command entries shown in root help, docs checks, and legacy dispatch
- * helpers are colocated with the oclif command entrypoints under
- * `src/commands/**` via `withCommandDisplay(...)`. This module projects that
- * metadata into the historical `CommandDef` shape while command discovery
- * itself stays owned by oclif.
+ * helpers are exposed through the oclif command entrypoints under
+ * `src/commands/**`. This module projects that metadata into the historical
+ * `CommandDef` shape while command discovery itself stays owned by oclif.
  *
  * Usage strings use "nemoclaw" as a canonical placeholder. The exported
  * {@link brandedUsage} helper replaces it with the active CLI_NAME
  * (e.g. "nemohermes") for display.
  */
 
-import { CLI_NAME } from "./branding";
-import type { CommandDisplayEntry, CommandGroup } from "./command-display";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "./branding";
+import type { CommandGroup, PublicCommandDisplayEntry } from "./command-display";
 import { getRegisteredOclifCommandsMetadata } from "./oclif-metadata";
+import { PUBLIC_DISPLAY_ENTRIES } from "./public-display-defaults";
+import { globalRouteTokenVariants, sandboxRouteTokens } from "./public-route-metadata";
 
 export type { CommandGroup } from "./command-display";
 
-/** Replace the canonical "nemoclaw" prefix in a usage string with CLI_NAME. */
-export function brandedUsage(usage: string): string {
-  return usage.replace(/^nemoclaw/, CLI_NAME);
+/** Replace canonical NemoClaw public copy with active CLI/agent branding. */
+export function brandedPublicText(text: string): string {
+  return text.replace(/nemoclaw/g, CLI_NAME).replace(/NemoClaw/g, CLI_DISPLAY_NAME);
 }
 
-export interface CommandDef extends Omit<CommandDisplayEntry, "order"> {
+/** Replace the canonical "nemoclaw" prefix in a usage string with CLI_NAME. */
+export function brandedUsage(usage: string): string {
+  return brandedPublicText(usage.replace(/^nemoclaw/, CLI_NAME));
+}
+
+export interface CommandDef extends Omit<PublicCommandDisplayEntry, "order"> {
   /** Registered internal oclif command ID that handles this public command shape. */
   commandId: string;
 }
@@ -47,12 +53,13 @@ export const GROUP_ORDER: readonly CommandGroup[] = [
   "Cleanup",
 ] as const;
 
-type RegisteredCommandDisplayEntry = CommandDisplayEntry & { commandId: string };
+type RegisteredCommandDisplayEntry = PublicCommandDisplayEntry & { commandId: string };
 
 function displayEntriesFromOclifMetadata(): CommandDef[] {
   const entries: RegisteredCommandDisplayEntry[] = [];
   for (const [commandId, metadata] of Object.entries(getRegisteredOclifCommandsMetadata())) {
-    for (const displayEntry of metadata.display ?? []) {
+    const publicDisplay = metadata.publicDisplay ?? PUBLIC_DISPLAY_ENTRIES[commandId] ?? [];
+    for (const displayEntry of publicDisplay) {
       entries.push({ ...displayEntry, commandId });
     }
   }
@@ -91,7 +98,7 @@ export function commandsByGroup(): Map<CommandGroup, CommandDef[]> {
       .map((c) => ({
         ...c,
         usage: brandedUsage(c.usage),
-        description: c.description.replace(/nemoclaw/g, CLI_NAME),
+        description: brandedPublicText(c.description),
       }));
     if (cmds.length > 0) {
       grouped.set(group, cmds);
@@ -119,10 +126,11 @@ export function canonicalUsageList(): string[] {
  */
 export function globalCommandTokens(): Set<string> {
   const tokens = new Set<string>();
-  for (const cmd of globalCommands()) {
-    const rest = cmd.usage.replace(/^nemoclaw\s+/, "");
-    const token = rest.split(/\s+/)[0];
-    tokens.add(token);
+  for (const commandId of Object.keys(getRegisteredOclifCommandsMetadata())) {
+    for (const routeTokens of globalRouteTokenVariants(commandId)) {
+      const [token] = routeTokens;
+      if (token) tokens.add(token);
+    }
   }
   return tokens;
 }
@@ -130,16 +138,16 @@ export function globalCommandTokens(): Set<string> {
 /**
  * Action tokens for sandbox commands.
  *
- * For "nemoclaw <name> connect", extracts "connect".
- * Includes empty string for default connect behavior.
+ * The tokens are derived from oclif command IDs and explicit compatibility
+ * route overrides, not from public help text. Includes empty string for the
+ * default connect behavior.
  */
 export function sandboxActionTokens(): string[] {
   const seen = new Set<string>();
   const tokens: string[] = [];
-  for (const cmd of sandboxCommands()) {
-    const rest = cmd.usage.replace(/^nemoclaw\s+<name>\s*/, "");
-    const token = rest.split(/\s+/)[0];
-    if (!seen.has(token)) {
+  for (const commandId of Object.keys(getRegisteredOclifCommandsMetadata())) {
+    const [token] = sandboxRouteTokens(commandId) ?? [];
+    if (token && !seen.has(token)) {
       seen.add(token);
       tokens.push(token);
     }

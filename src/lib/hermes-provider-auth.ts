@@ -25,6 +25,19 @@ const onboardProviders = require("./onboard/providers") as {
   ) => { ok: boolean; status?: number; message?: string };
 };
 
+type HermesToolGatewayBroker = {
+  registerHermesToolGatewayRefreshProvider: (
+    sandboxName: string,
+    refreshToken: string,
+    runOpenshell: RunOpenshell,
+  ) => { providerName: string; brokerToken: string };
+  ensureHermesToolGatewayBroker: (options?: { refreshToken?: string }) => boolean;
+};
+
+function getHermesToolGatewayBroker(): HermesToolGatewayBroker {
+  return require("./hermes-tool-gateway-broker") as HermesToolGatewayBroker;
+}
+
 export const HERMES_PROVIDER_NAME = "hermes-provider";
 export const HERMES_INFERENCE_CREDENTIAL_ENV = "OPENAI_API_KEY";
 export const HERMES_NOUS_API_KEY_CREDENTIAL_ENV = "NOUS_API_KEY";
@@ -105,6 +118,7 @@ export async function ensureHermesProviderOAuthCredentials(
     fetch = undefined,
     noBrowser = false,
     baseUrl = oauth.DEFAULT_INFERENCE_BASE_URL,
+    toolGatewayPresets = [],
   }: {
     allowInteractiveLogin?: boolean;
     runOpenshell?: RunOpenshell | null;
@@ -112,6 +126,7 @@ export async function ensureHermesProviderOAuthCredentials(
     fetch?: typeof globalThis.fetch;
     noBrowser?: boolean;
     baseUrl?: string;
+    toolGatewayPresets?: string[];
   } = {},
 ): Promise<HermesProviderCredentialState | null> {
   if (!runOpenshell) {
@@ -133,6 +148,17 @@ export async function ensureHermesProviderOAuthCredentials(
     HERMES_INFERENCE_CREDENTIAL_ENV,
     inferenceBaseUrl,
   );
+  if (Array.isArray(toolGatewayPresets) && toolGatewayPresets.length > 0) {
+    const hermesToolGateway = getHermesToolGatewayBroker();
+    hermesToolGateway.registerHermesToolGatewayRefreshProvider(
+      _sandboxName,
+      tokens.refresh_token,
+      runOpenshell,
+    );
+    if (!hermesToolGateway.ensureHermesToolGatewayBroker({ refreshToken: tokens.refresh_token })) {
+      throw new Error("Hermes managed-tool gateway broker did not become ready");
+    }
+  }
   return {
     auth_method: "oauth",
     provider: HERMES_PROVIDER_NAME,

@@ -1,24 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import path from "node:path";
+
 import { Config as OclifConfig } from "@oclif/core";
 import { describe, expect, it } from "vitest";
 
 import { getRegisteredOclifCommandsMetadata } from "./oclif-metadata";
 import { COMMANDS, visibleCommands } from "./command-registry";
 
-describe("public command display metadata", () => {
-  it("derives command display entries from oclif command-class metadata", () => {
-    const metadata = getRegisteredOclifCommandsMetadata();
-    const discoveredDisplay = Object.entries(metadata).flatMap(([commandId, commandMetadata]) =>
-      (commandMetadata.display ?? []).map((entry) => ({ commandId, usage: entry.usage })),
-    );
+function* walkTsFiles(dir: string): Generator<string> {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) yield* walkTsFiles(fullPath);
+    else if (entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) yield fullPath;
+  }
+}
 
-    expect(discoveredDisplay).toHaveLength(COMMANDS.length);
-    expect(discoveredDisplay).toEqual(
-      expect.arrayContaining(
-        COMMANDS.map((command) => ({ commandId: command.commandId, usage: command.usage })),
-      ),
+describe("public command display metadata", () => {
+  it("loads public display entries for root help and docs checks", () => {
+    expect(COMMANDS.length).toBeGreaterThan(0);
+    expect(COMMANDS.map((command) => ({ commandId: command.commandId, usage: command.usage }))).toEqual(
+      expect.arrayContaining([
+        { commandId: "onboard", usage: "nemoclaw onboard" },
+        { commandId: "sandbox:status", usage: "nemoclaw <name> status" },
+        { commandId: "inference:get", usage: "nemoclaw inference get" },
+      ]),
     );
   });
 
@@ -38,5 +46,30 @@ describe("public command display metadata", () => {
       .map((command) => command.usage);
 
     expect(invalid).toEqual([]);
+  });
+
+  it("keeps public command discovery wrappers free of display metadata", () => {
+    const commandFiles = [...walkTsFiles(path.join(process.cwd(), "src", "commands"))].filter(
+      (file) => !file.includes(`${path.sep}internal${path.sep}`),
+    );
+    const wrappersWithDisplayHelpers = commandFiles
+      .filter((file) => fs.readFileSync(file, "utf-8").includes("withCommandDisplay"))
+      .map((file) => path.relative(process.cwd(), file));
+
+    expect(wrappersWithDisplayHelpers).toEqual([]);
+  });
+
+  it("keeps non-internal command discovery files independent from legacy lib command re-exports", () => {
+    const commandFiles = [...walkTsFiles(path.join(process.cwd(), "src", "commands"))].filter(
+      (file) => !file.includes(`${path.sep}internal${path.sep}`),
+    );
+    const legacyCommandReExports = commandFiles
+      .filter((file) => {
+        const body = fs.readFileSync(file, "utf-8");
+        return /export \{ default \} from "[^"]*\/lib\/commands\//.test(body);
+      })
+      .map((file) => path.relative(process.cwd(), file));
+
+    expect(legacyCommandReExports).toEqual([]);
   });
 });
