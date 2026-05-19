@@ -579,6 +579,22 @@ migrate_legacy_layout "/sandbox/.hermes" "/sandbox/.hermes-data" "hermes" || exi
 
 echo 'Setting up NemoClaw (Hermes)...' >&2
 
+# ── Tirith build-time failure recovery ────────────────────────
+# The Hermes base image downloads tirith during `docker build`. When the
+# download fails (e.g. no proxy env in build context), a marker file is
+# written and the build proceeds silently. Hermes's own ensure_installed()
+# checks this marker and skips retry, so the gateway starts without tirith
+# and the onboard health-check times out (#3793).
+#
+# Fix: clear the marker before launching the gateway so ensure_installed()
+# retries the download at runtime (where the network is reachable via the
+# OpenShell proxy). The runtime fallback is proven to work — see #3793.
+TIRITH_MARKER="${HERMES_DIR}/.tirith-install-failed"
+if [ -f "$TIRITH_MARKER" ]; then
+  echo "[startup] tirith build-time install failed (reason: $(cat "$TIRITH_MARKER" 2>/dev/null || echo unknown)), clearing marker for runtime retry..." >&2
+  rm -f "$TIRITH_MARKER"
+fi
+
 # ── Non-root fallback ──────────────────────────────────────────
 if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
