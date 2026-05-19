@@ -813,6 +813,126 @@ const { setupInference } = require(${onboardPath});
     assert.equal(payload.savedOpenAiKey, "sk-existing");
   });
 
+  it("recovers the Ollama auth proxy on WSL when the sandbox needs proxy fronting", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-wsl-proxy-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-ollama-wsl-proxy-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    );
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"),
+    );
+    const topologyPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "local-inference-topology.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const platform = require(${platformPath});
+const localInference = require(${localInferencePath});
+const proxy = require(${proxyPath});
+const topology = require(${topologyPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+
+const commands = [];
+const proxyCalls = [];
+runner.run = (command, opts = {}) => {
+  const cmd = _n(command);
+  commands.push({ command: cmd, env: opts.env || null });
+  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("inference") && cmd.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: ollama-local",
+      "  Model: qwen2.5:7b",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+platform.isWsl = () => true;
+topology.shouldFrontOllamaWithProxy = () => true;
+localInference.validateLocalProvider = () => ({
+  ok: false,
+  message: "container cannot reach Ollama",
+  diagnostic: "simulated WSL native Docker reachability failure",
+});
+localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:11435/v1";
+localInference.getOllamaWarmupCommand = () => ["true"];
+localInference.validateOllamaModel = () => ({ ok: true });
+proxy.ensureOllamaAuthProxy = () => {
+  proxyCalls.push("ensure");
+};
+proxy.isProxyHealthy = () => {
+  proxyCalls.push("healthy");
+  return true;
+};
+proxy.getOllamaProxyToken = () => "proxy-token";
+proxy.persistAndProbeOllamaProxy = async (token) => {
+  proxyCalls.push("persist:" + token);
+};
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference("test-box", "qwen2.5:7b", "ollama-local");
+  console.log(JSON.stringify({ commands, proxyCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const payload = parseStdoutJson<{ commands: CommandEntry[]; proxyCalls: string[] }>(
+      result.stdout,
+    );
+    assert.deepEqual(payload.proxyCalls, ["ensure", "healthy", "persist:proxy-token"]);
+    const providerCommand = payload.commands.find(
+      (entry) => entry.command.includes("provider create") && entry.command.includes("ollama-local"),
+    );
+    assert.ok(providerCommand, "expected ollama-local provider create command");
+    assert.match(providerCommand.command, /--credential NEMOCLAW_OLLAMA_PROXY_TOKEN/);
+    assert.equal(providerCommand.env?.NEMOCLAW_OLLAMA_PROXY_TOKEN, "proxy-token");
+    assert.doesNotMatch(providerCommand.command, /proxy-token/);
+    assert.ok(
+      payload.commands.some((entry) =>
+        entry.command.includes("inference set --no-verify --provider ollama-local"),
+      ),
+      "expected ollama-local inference route to be selected",
+    );
+  });
+
   it("detects when the live inference route already matches the requested provider and model", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-ready-"));

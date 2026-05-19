@@ -176,7 +176,7 @@ console.log = () => {};
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.tier, "open");
     const names: string[] = payload.presets.map((p: { name: string }) => p.name);
-    const social = ["slack", "discord", "telegram"];
+    const social = ["slack", "discord", "telegram", "whatsapp"];
     const hasSocial = social.some((n) => names.includes(n));
     assert.ok(
       hasSocial,

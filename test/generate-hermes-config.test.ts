@@ -255,6 +255,30 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).toContain("WEIXIN_ALLOWED_USERS=operator_self_id,bot_other_friend\n");
   });
 
+  it("enables Hermes WhatsApp without provider tokens or generic platform blocks", () => {
+    const { config, envFile } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["whatsapp"]),
+    });
+
+    expect(config.whatsapp).toBeUndefined();
+    expect(config.platforms.whatsapp).toBeUndefined();
+    expect(envFile).toContain("WHATSAPP_ENABLED=true\n");
+    expect(envFile).toContain("WHATSAPP_MODE=bot\n");
+    expect(envFile).not.toContain("WHATSAPP_BOT_TOKEN=");
+    expect(envFile).not.toContain("openshell:resolve:env:WHATSAPP");
+  });
+
+  it("emits Hermes WhatsApp allowed users when configured", () => {
+    const { envFile } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["whatsapp"]),
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
+        whatsapp: ["15551234567", "15557654321"],
+      }),
+    });
+
+    expect(envFile).toContain("WHATSAPP_ALLOWED_USERS=15551234567,15557654321\n");
+  });
+
   it("fails fast when WeChat is enabled without captured account metadata", () => {
     const result = runConfigScriptRaw({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["wechat"]),

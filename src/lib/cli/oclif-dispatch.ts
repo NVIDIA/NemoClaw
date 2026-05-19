@@ -48,6 +48,16 @@ function hasHelpFlag(args: readonly string[]): boolean {
   return args.includes("--help") || args.includes("-h");
 }
 
+function argsBeforeSeparator(args: readonly string[]): readonly string[] {
+  const separatorIndex = args.indexOf("--");
+  return separatorIndex === -1 ? args : args.slice(0, separatorIndex);
+}
+
+function hasRouteHelpFlag(route: LegacyRoute, args: readonly string[]): boolean {
+  if (route.commandId !== "sandbox:exec") return hasHelpFlag(args);
+  return hasHelpFlag(argsBeforeSeparator(args));
+}
+
 function legacyTokensFromUsage(usage: string): string[] {
   const rest = usage.replace(/^nemoclaw\s+<name>\s*/, "");
   return rest
@@ -76,7 +86,7 @@ function startsWithTokens(tokens: readonly string[], prefix: readonly string[]):
 }
 
 function routeToOclif(route: LegacyRoute, sandboxName: string, args: string[]): DispatchResult {
-  if (hasHelpFlag(args)) {
+  if (hasRouteHelpFlag(route, args)) {
     return { kind: "help", commandId: route.commandId, publicUsage: route.publicUsage };
   }
   return {

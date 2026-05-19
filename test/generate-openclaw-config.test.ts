@@ -195,6 +195,28 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.channels.telegram).toBeDefined();
   });
 
+  it("emits a tokenless WhatsApp config block for QR-paired channels", () => {
+    const channels = Buffer.from(JSON.stringify(["whatsapp"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.whatsapp).toBeDefined();
+    const account = config.channels.whatsapp.accounts.default;
+    expect(account.enabled).toBe(true);
+    expect(account.healthMonitor).toEqual({ enabled: false });
+    expect(account.token).toBeUndefined();
+    expect(account.botToken).toBeUndefined();
+    expect(account.appToken).toBeUndefined();
+  });
+
+  it("keeps WhatsApp config alongside token-based channels in the same run", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram", "whatsapp"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.telegram.accounts.default.botToken).toBe(
+      "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+    );
+    expect(config.channels.whatsapp.accounts.default.enabled).toBe(true);
+    expect(config.channels.whatsapp.accounts.default.botToken).toBeUndefined();
+  });
+
   it("emits groups with requireMention when TELEGRAM_REQUIRE_MENTION is true (#3022)", () => {
     const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
     const telegramConfig = Buffer.from(JSON.stringify({ requireMention: true })).toString("base64");
@@ -343,6 +365,28 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(slack.appToken).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
     expect(slack.botToken).toMatch(/^xoxb-[A-Za-z0-9_-]+$/);
     expect(slack.appToken).toMatch(/^xapp-[A-Za-z0-9_-]+$/);
+  });
+
+  it("uses Slack allowed IDs for DMs and channel mention allowlisting (#3729)", () => {
+    const allowedUsers = ["U01ABC2DEF3", "U04GHI5JKL6"];
+    const channels = Buffer.from(JSON.stringify(["slack"])).toString("base64");
+    const allowedIds = Buffer.from(JSON.stringify({ slack: allowedUsers })).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: allowedIds,
+    });
+    const slack = config.channels.slack.accounts.default;
+
+    expect(slack.dmPolicy).toBe("allowlist");
+    expect(slack.allowFrom).toEqual(allowedUsers);
+    expect(slack.groupPolicy).toBe("allowlist");
+    expect(slack.channels).toEqual({
+      "*": {
+        enabled: true,
+        requireMention: true,
+        users: allowedUsers,
+      },
+    });
   });
 
   it("enables web search when env is '1'", () => {

@@ -12,7 +12,6 @@ const {
   findReachableOllamaHost,
   resetOllamaHostCache,
 }: typeof import("../inference/local") = require("../inference/local");
-const { isWsl }: typeof import("../platform") = require("../platform");
 
 const OLLAMA_SYSTEMD_OVERRIDE_PATH = "/etc/systemd/system/ollama.service.d/override.conf";
 const NON_INTERACTIVE_SUDO_MODE_ENV = "NEMOCLAW_NON_INTERACTIVE_SUDO_MODE";
@@ -44,7 +43,12 @@ function getSudoPrefix(isNonInteractive: boolean): "sudo" | "sudo -n" {
 export function ensureOllamaLoopbackSystemdOverride(
   options: OllamaLoopbackSystemdOverrideOptions = {},
 ): OllamaLoopbackSystemdOverrideState {
-  if (process.platform !== "linux" || isWsl()) return "not-applicable";
+  // Linux-only check kept; WSL distros that run systemd (default on Win11 22H2+)
+  // also need the loopback override repaired. The auth proxy in front of Ollama
+  // now handles bridge-network reachability for both native-Docker-in-WSL and
+  // non-WSL Linux, so loopback binding is the right policy everywhere. See
+  // issues #3342 (re-onboard repair) and #3695 (WSL native Docker).
+  if (process.platform !== "linux") return "not-applicable";
 
   const hasOllamaSystemdUnit = !!runCapture(
     [
@@ -143,13 +147,26 @@ function mergeOllamaLoopbackSystemdOverride(existingDropIn: string): string {
     }
   }
 
-  const hostLines = lines
-    .slice(serviceStart + 1, serviceEnd)
-    .filter((line) => !/^\s*[#;]/.test(line) && /\bOLLAMA_HOST=/.test(line));
-  if (hostLines.at(-1)?.trim() === desiredLine) {
+  // Strip any existing non-comment OLLAMA_HOST assignments inside [Service]
+  // before re-appending the loopback override. systemd's "last wins" semantics
+  // for repeated Environment= would usually pick the appended line, but legacy
+  // 0.0.0.0 drop-ins from older NemoClaw versions occasionally outlived the
+  // restart — removing the stale line makes the policy unambiguous. (#3342)
+  const ollamaHostLine = (line: string): boolean =>
+    !/^\s*[#;]/.test(line) && /\bOLLAMA_HOST=/.test(line);
+  const serviceBody = lines.slice(serviceStart + 1, serviceEnd);
+  const filteredBody = serviceBody.filter((line) => !ollamaHostLine(line));
+  if (
+    filteredBody.length === serviceBody.length &&
+    serviceBody.some((line) => line.trim() === desiredLine)
+  ) {
     return lines.join("\n") + "\n";
   }
-
-  lines.splice(serviceEnd, 0, desiredLine);
-  return lines.join("\n") + "\n";
+  const rebuilt = [
+    ...lines.slice(0, serviceStart + 1),
+    ...filteredBody,
+    desiredLine,
+    ...lines.slice(serviceEnd),
+  ];
+  return rebuilt.join("\n") + "\n";
 }

@@ -19,11 +19,26 @@ const { shellQuote, runCapture, runCaptureEx } = require("../runner");
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
 
-const { isWsl } = require("../platform");
+const { containerCanReachHostLoopback, inferContainerRuntime, isWsl } = require("../platform");
+const { dockerInfo } = require("../adapters/docker/info");
 const { detectNvidiaPlatform } = require("./nim");
 
-/** Port containers use to reach Ollama — proxy on non-WSL, direct on WSL2. */
-export const OLLAMA_CONTAINER_PORT = isWsl() ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
+/**
+ * Port containers use to reach Ollama. Returns the raw Ollama port when the
+ * container can reach the host's 127.0.0.1 directly (Docker Desktop on WSL),
+ * and the auth proxy port otherwise (native Docker on any host, macOS, etc.).
+ * Memoised — call resetOllamaContainerPortCache() in tests.
+ */
+let _ollamaContainerPort: number | null = null;
+export function getOllamaContainerPort(): number {
+  if (_ollamaContainerPort !== null) return _ollamaContainerPort;
+  const runtime = inferContainerRuntime(dockerInfo({ ignoreError: true }));
+  _ollamaContainerPort = containerCanReachHostLoopback(runtime) ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
+  return _ollamaContainerPort;
+}
+export function resetOllamaContainerPortCache(): void {
+  _ollamaContainerPort = null;
+}
 
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 export const LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV = "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL";
@@ -212,7 +227,7 @@ export function getLocalProviderBaseUrl(
       return `${hostUrl}:${VLLM_PORT}/v1`;
     case "ollama-local":
       // Containers reach Ollama through the auth proxy, not directly.
-      return `${hostUrl}:${OLLAMA_CONTAINER_PORT}/v1`;
+      return `${hostUrl}:${getOllamaContainerPort()}/v1`;
     default:
       return null;
   }
@@ -439,7 +454,7 @@ export function getLocalProviderContainerReachabilityCheck(provider: string): st
         "/dev/null",
         "-w",
         "%{http_code}",
-        `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`,
+        `http://host.openshell.internal:${getOllamaContainerPort()}/api/tags`,
       ];
     default:
       return null;
@@ -515,7 +530,7 @@ export function validateLocalProvider(
     case "ollama-local":
       return {
         ok: false,
-        message: `Local Ollama is responding on ${getResolvedOllamaHost()}, but the Docker container reachability check failed for http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}. This may be a Docker networking issue — the sandbox uses a different network path and may still work.`,
+        message: `Local Ollama is responding on ${getResolvedOllamaHost()}, but the Docker container reachability check failed for http://host.openshell.internal:${getOllamaContainerPort()}. This may be a Docker networking issue — the sandbox uses a different network path and may still work.`,
         diagnostic,
       };
     default:
@@ -532,7 +547,7 @@ function getContainerCheckUrl(provider: string): string {
     case "vllm-local":
       return `http://host.openshell.internal:${VLLM_PORT}/v1/models`;
     case "ollama-local":
-      return `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`;
+      return `http://host.openshell.internal:${getOllamaContainerPort()}/api/tags`;
     default:
       return "http://host.openshell.internal/";
   }

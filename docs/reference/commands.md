@@ -159,7 +159,7 @@ If Brave Search key validation fails in non-interactive mode, onboarding prints 
 After fixing the key, re-enable web search with `nemoclaw config web-search`.
 
 The wizard prompts for a sandbox name.
-Names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 Uppercase letters are automatically lowercased.
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
 Use `--agent <name>` to target a specific installed agent profile during onboarding.
@@ -240,7 +240,7 @@ If a `--resume` is attempted with a different `--from` path than the original se
 #### `--name <sandbox>`
 
 Set the sandbox name without going through the interactive prompt.
-The same name format and reserved-name rules that the wizard enforces apply here too. Names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+The same name format and reserved-name rules that the wizard enforces apply here too. Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 Names that match a NemoClaw CLI command (`status`, `list`, `debug`, etc.) are rejected up front.
 
 ```console
@@ -276,7 +276,9 @@ Prerequisites:
 - NVIDIA GPU drivers installed and working (`nvidia-smi` must succeed).
 - NVIDIA Container Toolkit configured for Docker.
 
-When GPU passthrough is enabled and a gateway already exists without it, onboarding exits with guidance to destroy and re-onboard.
+When GPU passthrough is enabled and a gateway already exists without it, onboarding first checks whether replacing the CPU-only gateway is safe.
+If no other registered sandbox depends on that gateway, or if `--recreate-sandbox` is recreating the only registered sandbox with the same name, onboarding cleans up the stale gateway and continues.
+If other sandboxes depend on the gateway or Docker state is unclear, onboarding exits without cleanup and prints targeted destroy or gateway-removal guidance.
 To add GPU to an existing sandbox, rerun with `--recreate-sandbox`.
 Set `NEMOCLAW_DOCKER_GPU_PATCH=0` only when you need to bypass the Linux Docker-driver compatibility patch during troubleshooting.
 
@@ -330,6 +332,26 @@ $ nemoclaw my-assistant connect [--probe-only]
 
 The `--probe-only` flag verifies the sandbox is reachable over SSH and exits without opening a shell.
 Use it for health checks and scripted readiness probes.
+
+### `nemoclaw <name> exec`
+
+Run a single command non-interactively in a running sandbox via the OpenShell exec endpoint.
+The command runs as the sandbox user with `HOME=/sandbox`, so in-sandbox tooling resolves NemoClaw-provisioned config under `/sandbox/.openclaw` the same way it does for `connect` and `openshell sandbox connect`.
+This is the supported substitute for `docker exec` on the sandbox container; raw `docker exec` runs as root and lands on `HOME=/root`, where the agent config is not present and `openclaw agent` falls back to its built-in defaults.
+
+```console
+$ nemoclaw my-assistant exec -- openclaw agent -m "What is 2+2?"
+$ nemoclaw my-assistant exec --workdir /sandbox/workspace -- ls -la
+```
+
+Everything after `--` is forwarded verbatim to the sandbox command, including flags the inner command needs.
+The exit code is the remote command's exit code.
+
+| Flag | Description |
+|------|-------------|
+| `--workdir <dir>` | Working directory inside the sandbox |
+| `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
+| `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
 
 ### `nemoclaw <name> recover`
 
@@ -589,7 +611,7 @@ $ nemoclaw my-assistant hosts-remove searxng.local
 
 ### `nemoclaw <name> channels list`
 
-List the messaging channels NemoClaw knows about (`telegram`, `discord`, `slack`) with a short description.
+List the messaging channels NemoClaw knows about (`telegram`, `discord`, `slack`, `wechat`, `whatsapp`) with a short description.
 The command is a static reference; it does not consult credentials or the running sandbox.
 
 ```console
@@ -598,11 +620,19 @@ $ nemoclaw my-assistant channels list
 
 ### `nemoclaw <name> channels add <channel>`
 
-Store credentials for a messaging channel (`telegram`, `discord`, or `slack`) and rebuild the sandbox so the image picks up the new channel.
-The command prompts for any missing token, registers it with the OpenShell gateway, then asks whether to rebuild immediately.
-Running `add` for an already-configured channel simply overwrites the stored tokens — the operation is idempotent.
+Register a messaging channel with the sandbox and rebuild so the image picks up the new channel.
+Channels fall into three login modes:
+
+- **Token paste** (`telegram`, `discord`, `slack`): the command prompts for any missing token and registers it with the OpenShell gateway.
+- **Host-side QR** (`wechat`): the command runs an interactive host-side QR scan to capture a static session token, then registers it with the gateway.
+- **In-sandbox QR** (`whatsapp`): the command records the channel without a host-side token or OpenShell credential provider.
+  NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes; after rebuild, run `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes.
+  This intentionally leaves QR-created mutable session state in the sandbox until you unpair it or clear the durable agent state.
+
+After registering the channel, NemoClaw asks whether to rebuild immediately.
+Running `add` for an already-configured channel simply overwrites the stored credentials where applicable — the operation is idempotent.
 Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
-After a successful add, NemoClaw prints a `policy-add <channel>` hint when a matching built-in network policy preset exists but is not applied to the sandbox yet.
+If a matching built-in network policy preset exists, NemoClaw applies it to the sandbox before the rebuild so the bridge has egress to its upstream API; if applying the preset fails, NemoClaw warns and tells you to re-apply manually with `nemoclaw <sandbox> policy-add <channel>`.
 
 ```console
 $ nemoclaw my-assistant channels add telegram
@@ -619,6 +649,8 @@ When `NEMOCLAW_NON_INTERACTIVE=1` is set, any missing token fails fast and no re
 
 Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel.
 Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt.
+When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway.
+If the matching built-in policy preset is applied, such as `telegram`, `discord`, `slack`, `wechat`, or `whatsapp`, NemoClaw also removes that preset so the upstream API is no longer allow-listed after the channel is gone.
 
 ```console
 $ nemoclaw my-assistant channels remove telegram
@@ -630,11 +662,11 @@ $ nemoclaw my-assistant channels remove telegram
 
 As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` skips the rebuild prompt and queues the change for a manual `nemoclaw <name> rebuild`.
 
-Host-side removal is the supported path because `/sandbox/.openclaw/openclaw.json` is baked into the container image at build time; `openclaw channels remove` inside the sandbox would modify the running config but not persist changes across rebuilds.
+Host-side removal is the supported path because agent channel config is baked into the container image at build time (`/sandbox/.openclaw/openclaw.json` for OpenClaw and `/sandbox/.hermes/.env` for Hermes); agent-specific channel removals inside the sandbox would modify the running config but not persist changes across rebuilds.
 
 ### `nemoclaw <name> channels stop <channel>`
 
-Pause a single messaging bridge (`telegram`, `discord`, or `slack`) without clearing its credentials.
+Pause a single messaging bridge (`telegram`, `discord`, `slack`, `wechat`, or `whatsapp`) without clearing its credentials.
 The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway.
 The provider stays registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
 
@@ -837,6 +869,7 @@ Prerequisites:
 
 - `sshfs` must be installed on the host (`sudo apt-get install sshfs` on Linux, `brew install macfuse && brew install sshfs` on macOS).
 - The sandbox must be running.
+- The remote sandbox path must exist. NemoClaw verifies it before invoking `sshfs` and prints a `connect`, then `ls <path>` check when the probe fails.
 - Sandboxes created before the `openssh-sftp-server` base image update must be rebuilt with `nemoclaw <name> rebuild`.
 - The local mount path must be on a writable filesystem; FUSE creates the mount on the host side.
   If the default `~/.nemoclaw/mounts/<name>` lives on a read-only filesystem, pass an explicit writable path as the second positional argument.

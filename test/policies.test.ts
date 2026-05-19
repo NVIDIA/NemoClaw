@@ -129,9 +129,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 13 presets", () => {
+    it("returns all 14 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(13);
+      expect(presets.length).toBe(14);
     });
 
     it("each preset has name and description", () => {
@@ -160,6 +160,7 @@ describe("policies", () => {
         "slack",
         "telegram",
         "wechat",
+        "whatsapp",
       ];
       expect(names).toEqual(expected);
     });
@@ -181,11 +182,117 @@ describe("policies", () => {
     });
 
     it("includes /usr/bin/node in communication presets", () => {
-      for (const preset of ["discord", "slack", "telegram"]) {
+      for (const preset of ["discord", "slack", "telegram", "whatsapp"]) {
         const content = requirePresetContent(policies.loadPreset(preset));
         expect(content).toContain("/usr/local/bin/node");
         expect(content).toContain("/usr/bin/node");
       }
+    });
+
+    it("whatsapp preset routes web.whatsapp.com as a raw L4 tunnel with TLS pass-through", () => {
+      // The /ws/chat upgrade is HTTP/1.1-only; if the proxy terminates TLS it
+      // negotiates h2 ALPN with Meta's edge and the WS upgrade fails (Meta
+      // returns 405/400 because there is no 101 Switching Protocols flow
+      // over h2). `access: full` + `tls: skip` keeps OpenShell out of the
+      // bytes so Baileys does the TLS handshake end-to-end and gets h1.
+      // Apex and *.web.whatsapp.com (fallback nodes w1.web.whatsapp.com,
+      // w2.web.whatsapp.com, ...) share the same shape so reconnects do
+      // not surprise the operator.
+      const presetPath = path.join(
+        import.meta.dirname,
+        "..",
+        "nemoclaw-blueprint",
+        "policies",
+        "presets",
+        "whatsapp.yaml",
+      );
+      const parsed = YAML.parse(fs.readFileSync(presetPath, "utf-8"));
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.whatsapp?.endpoints ?? [];
+
+      for (const host of ["web.whatsapp.com", "*.web.whatsapp.com"]) {
+        const entry = endpoints.find((item) => item.host === host);
+        if (!entry) throw new Error(`expected ${host} endpoint`);
+        expect(entry.port).toBe(443);
+        expect(entry.access).toBe("full");
+        expect(entry.tls).toBe("skip");
+        // L4 tunnels cannot enforce REST/WebSocket rules; declaring either
+        // would coerce the proxy into a TLS-terminating path that breaks
+        // the WS upgrade.
+        expect(entry.protocol).toBeUndefined();
+        expect(entry.rules).toBeUndefined();
+      }
+    });
+
+    it("whatsapp REST traffic is constrained to *.whatsapp.net with GET + POST", () => {
+      // Baileys touches several whatsapp.net subdomains during pairing and
+      // steady-state (mmg, static, cdn, pps, v, e1, f, s). Earlier the preset
+      // listed mmg and static individually; consolidating to a *.whatsapp.net
+      // wildcard keeps the preset future-proof without expanding trust
+      // beyond Meta-controlled infrastructure. Mirrors the jira preset's
+      // *.atlassian.net wildcard.
+      const presetPath = path.join(
+        import.meta.dirname,
+        "..",
+        "nemoclaw-blueprint",
+        "policies",
+        "presets",
+        "whatsapp.yaml",
+      );
+      const parsed = YAML.parse(fs.readFileSync(presetPath, "utf-8"));
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.whatsapp?.endpoints ?? [];
+
+      // Apex listed separately so the matcher (which does not cover the
+      // bare apex via `*.whatsapp.net`) still allows it if Baileys or a
+      // future plugin ever resolves the apex.
+      for (const host of ["whatsapp.net", "*.whatsapp.net"]) {
+        const entry = endpoints.find((item) => item.host === host);
+        if (!entry) throw new Error(`expected ${host} endpoint`);
+        expect(entry.port).toBe(443);
+        expect(entry.protocol).toBe("rest");
+        expect(entry.enforcement).toBe("enforce");
+        const rules = Array.isArray(entry.rules) ? entry.rules : [];
+        const methods = rules
+          .map((rule: { allow?: { method?: string } }) => rule.allow?.method)
+          .sort();
+        expect(methods).toEqual(["GET", "POST"]);
+      }
+    });
+
+    it("whatsapp preset narrowly allows the Baileys version-discovery file on raw.githubusercontent.com", () => {
+      // Baileys' fetchLatestBaileysVersion() reads one file from the
+      // WhiskeySockets/Baileys master branch to refresh the WA protocol
+      // constant at session creation. Without this allow rule the fetch
+      // fails closed and Baileys advertises a stale bundled constant
+      // which Meta now rejects on pair. Scope is pinned to that single
+      // file path with GET only so the rule does not turn into a general
+      // raw.githubusercontent.com escape hatch.
+      const presetPath = path.join(
+        import.meta.dirname,
+        "..",
+        "nemoclaw-blueprint",
+        "policies",
+        "presets",
+        "whatsapp.yaml",
+      );
+      const parsed = YAML.parse(fs.readFileSync(presetPath, "utf-8"));
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.whatsapp?.endpoints ?? [];
+
+      const entry = endpoints.find((item) => item.host === "raw.githubusercontent.com");
+      if (!entry) throw new Error("expected raw.githubusercontent.com endpoint");
+      expect(entry.port).toBe(443);
+      expect(entry.protocol).toBe("rest");
+      expect(entry.enforcement).toBe("enforce");
+      expect(entry.rules).toEqual([
+        {
+          allow: {
+            method: "GET",
+            path: "/WhiskeySockets/Baileys/master/src/Defaults/index.ts",
+          },
+        },
+      ]);
     });
 
     it("local-inference preset targets host.openshell.internal on Ollama, proxy, and vLLM ports", () => {
