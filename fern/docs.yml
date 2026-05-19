@@ -35,6 +35,7 @@ theme:
   footer-nav: minimal
 
 logo:
+  href: /nemoclaw/latest
   right-text: NemoClaw
 
 favicon: ./assets/NVIDIA_symbol.svg
