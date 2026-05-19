@@ -22,10 +22,7 @@ const SYSTEM_PROMPT_TOOLS_PATTERN = [
   "\t\t\ttools: effectiveTools,",
   "\t\t\tmodelAliasLines: buildModelAliasLines(params.config),",
 ].join("\n");
-const ALREADY_PATCHED_FORBIDDEN_PATTERNS = [
-  SYSTEM_PROMPT_TOOLS_PATTERN,
-  ALL_CUSTOM_TOOLS_PATTERN,
-];
+const ALREADY_PATCHED_FORBIDDEN_PATTERNS = [SYSTEM_PROMPT_TOOLS_PATTERN, ALL_CUSTOM_TOOLS_PATTERN];
 const ALREADY_PATCHED_REQUIRED_PATTERNS = [
   "\t\tconst nemoClawToolCatalogControls = [",
   "\t\tconst nemoClawPromptVisibleTools = nemoClawToolCatalogEnabled ? nemoClawToolCatalogControls : effectiveTools;",
@@ -222,7 +219,9 @@ function patchSelectionText(source, filePath) {
       throw new Error(`${filePath}: compact catalog marker is present but original targets remain`);
     }
     if (ALREADY_PATCHED_REQUIRED_PATTERNS.some((pattern) => !source.includes(pattern))) {
-      throw new Error(`${filePath}: compact catalog marker is present but patch shape is incomplete`);
+      throw new Error(
+        `${filePath}: compact catalog marker is present but patch shape is incomplete`,
+      );
     }
     return { patched: false, text: source };
   }
