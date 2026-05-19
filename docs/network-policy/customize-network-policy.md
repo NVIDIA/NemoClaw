@@ -54,17 +54,10 @@ Static changes modify the baseline policy file and take effect after the next sa
 
 Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpoint entries.
 
-If you only need one of the built-in presets, use `nemoclaw <name> policy-add` instead of editing YAML by hand:
+If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into this file and re-run `nemoclaw onboard`.
 
-```console
-$ nemoclaw my-assistant policy-add
-```
-
-To remove a previously applied preset, use `nemoclaw <name> policy-remove`:
-
-```console
-$ nemoclaw my-assistant policy-remove
-```
+If you only need to apply a preset to a running sandbox, use `nemoclaw <name> policy-add` under [Dynamic Changes](#dynamic-changes).
+That updates the live policy and does not edit `openclaw-sandbox.yaml`.
 
 Use a manual YAML edit when you need to allow custom hosts that are not covered by a preset, such as an internal API or a weather service.
 
@@ -100,7 +93,7 @@ $ nemoclaw <name> status
 ### Add Blueprint Policy Additions
 
 If you maintain a custom blueprint, you can add extra policy entries under `components.policy.additions` in `nemoclaw-blueprint/blueprint.yaml`.
-NemoClaw validates those entries with the same policy schema used by preset files, fetches the live policy during sandbox creation, merges the additions into `network_policies`, and applies the merged policy through OpenShell.
+NemoClaw validates those entries with the same policy schema used by preset files, fetches the live policy during sandbox creation, merges the additions into `network_policies`, and applies the me[...]
 The applied additions are recorded in the run metadata so you can audit which blueprint-level policy entries were active for that sandbox run.
 
 ## Dynamic Changes
@@ -166,7 +159,7 @@ $ openshell policy set --policy live-policy.yaml my-assistant
 
 Dynamic changes apply only to the current session.
 When the sandbox stops, the running policy resets to the baseline composed from `openclaw-sandbox.yaml` plus the presets recorded for the sandbox.
-To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above — the file under `presets/` persists) or edit `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
+To make a custom policy survive a sandbox recreation, ship the preset file in the repository (Option 1 above — the file under `presets/` persists) or edit `openclaw-sandbox.yaml` and re-run `ne[...]
 
 ### Approve Requests Interactively
 
@@ -303,7 +296,7 @@ Review every host in a custom preset before applying it, especially when the fil
 
 ### Remove a Custom Preset
 
-Custom presets applied with `--from-file` or `--from-dir` are recorded in the NemoClaw sandbox registry alongside their full YAML content, so they can be removed by name — the original file does not need to be kept on disk:
+Custom presets applied with `--from-file` or `--from-dir` are recorded in the NemoClaw sandbox registry alongside their full YAML content, so they can be removed by name — the original file doe[...]
 
 ```console
 $ nemoclaw my-assistant policy-remove my-internal-api --yes
@@ -314,7 +307,7 @@ $ nemoclaw my-assistant policy-remove my-internal-api --yes
 ## Related Topics
 
 - [Approve or Deny Agent Network Requests](approve-network-requests.md) for real-time operator approval.
-- [Common Integration Policy Examples](integration-policy-examples.md) for maintained preset examples such as Outlook, messaging, GitHub, Jira, Brave Search, package managers, Hugging Face, and local inference.
+- [Common Integration Policy Examples](integration-policy-examples.md) for maintained preset examples such as Outlook, messaging, GitHub, Jira, Brave Search, package managers, Hugging Face, and l[...]
 - [Network Policies](../reference/network-policies.md) for the full baseline policy reference.
 - OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) for the full YAML policy schema reference.
 - OpenShell [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) for applying, iterating, and debugging policies at the OpenShell layer.

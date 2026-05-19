@@ -9,6 +9,7 @@ position: 1
 ---
 
 import { BadgeLinks } from "./_components/BadgeLinks";
+import { CommandTerminal } from "./_components/CommandTerminal";
 
 <BadgeLinks
   badges={[
@@ -45,19 +46,7 @@ Install NemoClaw and run your first sandboxed agent.
 
 <llms-ignore>
 
-<div className="nc-term">
-  <div className="nc-term-bar">
-    <span className="nc-term-dot nc-term-dot-r" />
-    <span className="nc-term-dot nc-term-dot-y" />
-    <span className="nc-term-dot nc-term-dot-g" />
-  </div>
-  <div className="nc-term-body">
-    <div>
-      <span className="nc-ps">$ </span>
-      <span>curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash</span>
-    </div>
-  </div>
-</div>
+<CommandTerminal command="curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash" />
 
 </llms-ignore>
 
@@ -69,7 +58,11 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 </llms-only>
 
-The Fern migration is starting with the About section while the remaining MyST pages stay in place as the legacy source for generated user skills and parity checks.
+For getting started guidance, see [Quickstart](/get-started/quickstart).
+
+Learn about the NemoClaw architecture in [Architecture Overview](/about/how-it-works), [Ecosystem](/about/ecosystem), and [Architecture Details](/reference/architecture).
+
+Find NemoClaw user skills for your host AI coding assistant in [Agent Skills](/resources/agent-skills).
 
 ---
 

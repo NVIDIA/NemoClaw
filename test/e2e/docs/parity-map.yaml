@@ -33,6 +33,271 @@ scripts:
       reason: regression guard validates fix PR #3594 before migration to scenario framework
       owner: e2e-maintainers
       runner_requirement: local CLI build with mocked OpenShell runner
+  test-bedrock-runtime-compatible-anthropic.sh:
+    scenario: ubuntu-repo-cloud-openclaw
+    status: deferred
+    bucket: providers-messaging
+    assertions:
+    - legacy: 'B0: sudo is required to edit /etc/hosts for Bedrock hostname mapping'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: passwordless sudo is required to edit /etc/hosts for Bedrock hostname mapping'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: Bedrock Runtime hostname maps to localhost'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: Bedrock Runtime hostname did not resolve to localhost after hosts edit'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B1: onboard completed for Bedrock Runtime compatible Anthropic endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B1: onboard failed for Bedrock Runtime compatible Anthropic endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B2: onboard state keeps provider identity as compatible-anthropic-endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B2: onboard state did not preserve compatible-anthropic-endpoint identity: ${probe:0:500}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B3: Bedrock Runtime adapter health endpoint failed'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B3: Bedrock Runtime adapter health reports fake endpoint and us-east-1'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B3: Bedrock Runtime adapter health payload was not the expected fake endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B4: openshell inference get failed: ${route:0:300}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B4: OpenShell route points at compatible-anthropic-endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B4: OpenShell route did not point at compatible-anthropic-endpoint: ${plain_route:0:400}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B5: OpenShell provider registry contains compatible-anthropic-endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B5: OpenShell provider registry did not expose compatible-anthropic-endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B6: OpenClaw config uses only managed inference.local provider'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B6: OpenClaw config did not use the expected inference.local provider shape'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B6: could not read Hermes config.yaml: ${config:0:240}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B6: Hermes config.yaml was not patched correctly: ${probe:0:400}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B6: Hermes config uses inference.local without OpenShell/OpenClaw provider blocks'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B7: sandbox inference.local chat completion returned PONG'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B7: sandbox inference.local chat completion failed: ${response:0:400}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B8: OpenClaw agent turn hit a provider or transport error'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B8: OpenClaw agent completed a Bedrock-backed turn through inference.local'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B8: OpenClaw agent did not return PONG through Bedrock adapter'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B8: Hermes local chat API completed a Bedrock-backed turn through inference.local'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B8: Hermes local chat API did not return PONG through Bedrock adapter: ${response:0:400}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B9: fake Bedrock Runtime endpoint observed authenticated Converse traffic'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B9: fake Bedrock Runtime endpoint did not observe authenticated Converse traffic'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B10: fake Bedrock Runtime endpoint observed authenticated ConverseStream traffic'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B10: fake Bedrock Runtime endpoint did not observe OpenClaw streamed traffic'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B11: adapter token file was not created on the host'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B11: Bedrock Runtime adapter host log was not written'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B11: Bedrock Runtime adapter host log records safe Converse and ConverseStream breadcrumbs'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B11: Bedrock Runtime adapter host log did not record a ConverseStream breadcrumb'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B11: Bedrock Runtime adapter host log records safe Converse breadcrumbs'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B11: Bedrock Runtime adapter host log did not record expected request breadcrumbs'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B12: sandbox configs, env, proc, and logs contain no Bedrock token or hostname leaks'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B12: leak scan found forbidden Bedrock token or hostname locations'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'Docker is running'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'Docker is not running'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'python3 is available'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'python3 not found'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'NEMOCLAW_NON_INTERACTIVE=1'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'NEMOCLAW_NON_INTERACTIVE=1 is required'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'third-party software acceptance is set'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: source CLI and OpenShell are ready'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: source CLI/OpenShell preparation failed'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: fake Bedrock Runtime endpoint started'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: fake Bedrock Runtime endpoint failed to start'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
   test-brave-search-e2e.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated

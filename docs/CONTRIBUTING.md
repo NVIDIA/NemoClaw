@@ -1,3 +1,8 @@
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+-->
+
 # Contributing to NemoClaw Documentation
 
 This guide covers how to write, edit, and review documentation for NemoClaw. If you change code that affects user-facing behavior, update the relevant docs in the same PR.
@@ -103,17 +108,35 @@ For full usage details and all flags, see the docstring at the top of `scripts/d
 
 Verify the docs are built correctly by building them and checking the output.
 
-The public site is built with Fern. To validate the Fern configuration and migrated MDX pages, run:
+The public site is built with Fern.
+The repo pins the Fern CLI version in `fern/fern.config.json`.
+Use the npm scripts so every docs command uses that pinned version.
+
+To print the pinned Fern CLI version, run:
 
 ```console
-$ make docs
+$ npm run docs:deps
+```
+
+To validate the Fern configuration and migrated MDX pages, run:
+
+```console
+$ npm run docs
 ```
 
 To serve the docs locally and automatically rebuild on changes, run:
 
 ```console
-$ make docs-live
+$ npm run docs:live
 ```
+
+To publish a branch-based Fern preview whenever docs files change, run:
+
+```console
+$ npm run docs:preview:watch
+```
+
+The preview watcher uses the current Git branch name as the Fern preview ID and watches the `docs/` and `fern/` directories.
 
 Fern `.mdx` pages are the source for generated user skills. Legacy `.md` pages may remain temporarily for parity checks, but release-prep skill generation should pass `--doc-platform fern-mdx`.
 
@@ -124,7 +147,7 @@ Before opening a doc-only PR, run:
 
 ```console
 $ npx prek run --all-files
-$ make docs
+$ npm run docs
 ```
 
 Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
@@ -264,7 +287,7 @@ Use these consistently:
 
 1. Create a branch following the project convention.
 2. Make your changes.
-3. Build locally with `make docs` and verify the output.
+3. Build locally with `npm run docs` and verify the output.
 4. Open a PR with `docs:` as the conventional commit type.
 
 ```text
