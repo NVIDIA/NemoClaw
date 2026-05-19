@@ -57,6 +57,9 @@
 #   WECHAT_USER_ID                         — defaults to fake operator wechat user ID (seeds DM allowlist)
 #   WECHAT_ALLOWED_IDS                     — optional: comma-separated DM allowlist for wechat
 #   WhatsApp                               — QR-only; the test enables it via `channels add whatsapp`
+#   WHATSAPP_TOKEN / WHATSAPP_BOT_TOKEN / WHATSAPP_SESSION_SECRET
+#                                          — overwritten with fake decoys to prove NemoClaw ignores host-side
+#                                            WhatsApp credential-shaped env vars
 #   TELEGRAM_CHAT_ID_E2E                   — optional: enables sendMessage test
 #   NEMOCLAW_OPENSHELL_BIN                 — optional OpenShell binary under test
 #   NEMOCLAW_FRESH=1                       — auto-set to discard interrupted onboard sessions
@@ -167,6 +170,10 @@ WECHAT_ACCOUNT="${WECHAT_ACCOUNT_ID:-e2e-fake-account-12345}"
 WECHAT_BASE="${WECHAT_BASE_URL:-https://ilinkai-fake-e2e.wechat.com}"
 WECHAT_USER="${WECHAT_USER_ID:-wxid_e2efakeoperator}"
 WECHAT_IDS="${WECHAT_ALLOWED_IDS:-${WECHAT_USER}}"
+# WhatsApp is QR-only, but seed host-side decoys to prove they are ignored.
+WHATSAPP_TOKEN_DECOY="test-fake-whatsapp-token-e2e"
+WHATSAPP_BOT_TOKEN_DECOY="test-fake-whatsapp-bot-token-e2e"
+WHATSAPP_SESSION_SECRET_DECOY="test-fake-whatsapp-session-secret-e2e"
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
 export SLACK_BOT_TOKEN="$SLACK_TOKEN"
@@ -178,6 +185,9 @@ export WECHAT_ACCOUNT_ID="$WECHAT_ACCOUNT"
 export WECHAT_BASE_URL="$WECHAT_BASE"
 export WECHAT_USER_ID="$WECHAT_USER"
 export WECHAT_ALLOWED_IDS="$WECHAT_IDS"
+export WHATSAPP_TOKEN="$WHATSAPP_TOKEN_DECOY"
+export WHATSAPP_BOT_TOKEN="$WHATSAPP_BOT_TOKEN_DECOY"
+export WHATSAPP_SESSION_SECRET="$WHATSAPP_SESSION_SECRET_DECOY"
 
 # Run a command inside the sandbox via stdin (avoids exposing sensitive args in process list)
 sandbox_exec_stdin() {
@@ -819,11 +829,19 @@ else
   pass "M-WA7b: No WhatsApp credential placeholder present in sandbox process list"
 fi
 
-sandbox_fs_wa=$(sandbox_exec "grep -rIlm1 -E 'WHATSAPP_.*(TOKEN|SECRET|AUTH|SESSION)|openshell:resolve:env:WHATSAPP' /sandbox /home /etc /tmp /var 2>/dev/null || true")
+sandbox_fs_wa=$(sandbox_exec "
+  {
+    grep -rIlm1 -E '(^|[^A-Z0-9_])WHATSAPP_[A-Z0-9_]*(TOKEN|SECRET|AUTH|SESSION)[A-Z0-9_]*=' /sandbox /home /etc /tmp /var 2>/dev/null || true
+    grep -rIlm1 -F 'openshell:resolve:env:WHATSAPP' /sandbox /home /etc /tmp /var 2>/dev/null || true
+    grep -rIlm1 -F '$WHATSAPP_TOKEN_DECOY' /sandbox /home /etc /tmp /var 2>/dev/null || true
+    grep -rIlm1 -F '$WHATSAPP_BOT_TOKEN_DECOY' /sandbox /home /etc /tmp /var 2>/dev/null || true
+    grep -rIlm1 -F '$WHATSAPP_SESSION_SECRET_DECOY' /sandbox /home /etc /tmp /var 2>/dev/null || true
+  } | sort -u
+")
 if [ -n "$sandbox_fs_wa" ]; then
-  fail "M-WA7c: WhatsApp credential placeholder found on sandbox filesystem: ${sandbox_fs_wa}"
+  fail "M-WA7c: WhatsApp host credential material found on sandbox filesystem: ${sandbox_fs_wa}"
 else
-  pass "M-WA7c: No WhatsApp credential placeholder found on sandbox filesystem"
+  pass "M-WA7c: No WhatsApp host credential material found on sandbox filesystem"
 fi
 
 # ══════════════════════════════════════════════════════════════════
