@@ -1,8 +1,20 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Release Notes
+# NemoClaw Release Notes
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
+
+## v0.0.45
+
+NemoClaw v0.0.45 improves onboarding recovery, local inference behavior, channel cleanup, sandbox sharing diagnostics, and uninstall cleanup:
+
+- `nemoclaw onboard` handles GPU setup failures more directly. It can replace a stale CPU-only gateway when doing so is safe, skips GPU advice when you explicitly pass `--no-gpu`, points working-driver hosts toward NVIDIA Container Toolkit setup, and enforces the 63-character sandbox name limit before names reach OpenShell.
+- Preflight checks catch more host setup issues before the sandbox build starts. Container DNS probing uses a fresh `.invalid` lookup so cached DNS answers do not hide blocked resolver egress, and restrictive checkout file modes no longer make model-specific setup manifests unreadable inside the image.
+- Local inference setup is more predictable. Managed vLLM accepts `NEMOCLAW_VLLM_MODEL` for supported registry slugs and checks Hugging Face tokens before pulling gated models. Ollama-backed sandboxes now enable streamed usage accounting so OpenClaw token counters update after each turn.
+- Messaging channel removal is a clean inverse of channel add. `nemoclaw <name> channels remove <channel>` detaches live bridge providers before deleting them and un-applies the matching built-in network policy preset when it was active.
+- `nemoclaw <name> share mount` fails earlier with clearer guidance when the sandbox path cannot be verified or the host mount target is on a read-only filesystem.
+- `nemoclaw uninstall` stops host `openshell-gateway` processes, and subprocesses add IPv6 loopback plus wildcard local bind addresses to `NO_PROXY` so local traffic stays off forwarded proxies.
+- Diagnostics and internal command output redact more credential-shaped values and use private temporary directories for generated SSH and config files.
 
 ## v0.0.44
 
