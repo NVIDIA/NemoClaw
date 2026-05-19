@@ -270,7 +270,7 @@
           "text": "C0: NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required",
           "polarity": "fail",
           "normalized_id": "c0.nemoclaw.accept.third.party.software.1.is.required",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
@@ -278,7 +278,7 @@
           "text": "C0: NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is set",
           "polarity": "pass",
           "normalized_id": "c0.nemoclaw.accept.third.party.software.1.is.set",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
