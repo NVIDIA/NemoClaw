@@ -592,7 +592,10 @@ echo 'Setting up NemoClaw (Hermes)...' >&2
 TIRITH_MARKER="${HERMES_DIR}/.tirith-install-failed"
 if [ -f "$TIRITH_MARKER" ]; then
   echo "[startup] tirith build-time install failed (reason: $(cat "$TIRITH_MARKER" 2>/dev/null || echo unknown)), clearing marker for runtime retry..." >&2
-  rm -f "$TIRITH_MARKER"
+  rm -f "$TIRITH_MARKER" 2>/dev/null
+  if [ -f "$TIRITH_MARKER" ]; then
+    echo "[startup] Warning: failed to remove tirith marker at $TIRITH_MARKER — runtime retry may be blocked" >&2
+  fi
 fi
 
 # ── Non-root fallback ──────────────────────────────────────────
