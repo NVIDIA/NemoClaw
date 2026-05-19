@@ -30,7 +30,7 @@ const {
   buildCompatibleEndpointSandboxSmokeCommand,
   buildCompatibleEndpointSandboxSmokeScript,
   shouldRunCompatibleEndpointSandboxSmoke,
-  spawnOutputToString,
+  verifyCompatibleEndpointSandboxSmoke,
 }: typeof import("./onboard/compatible-endpoint-smoke") = require("./onboard/compatible-endpoint-smoke");
 const {
   buildSandboxConfigSyncScript,
@@ -82,6 +82,8 @@ const {
 const {
   setupSelectedMessagingChannels,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
+const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") =
+  require("./onboard/bedrock-runtime");
 const { buildVllmMenuEntries }: typeof import("./onboard/vllm-menu") = require("./onboard/vllm-menu");
 const {
   prepareModelRouterVenv,
@@ -1933,99 +1935,6 @@ function isInferenceRouteReady(provider: string, model: string): boolean {
     runCaptureOpenshell(["inference", "get"], { ignoreError: true }),
   );
   return Boolean(live && live.provider === provider && live.model === model);
-}
-
-function verifyCompatibleEndpointSandboxSmoke(options: {
-  sandboxName: string;
-  provider: string;
-  model: string;
-  endpointUrl?: string | null;
-  credentialEnv?: string | null;
-  messagingChannels?: string[] | null;
-  agent?: AgentDefinition | null;
-}): void {
-  if (
-    !shouldRunCompatibleEndpointSandboxSmoke(
-      options.provider,
-      options.messagingChannels,
-      options.agent,
-    )
-  ) {
-    return;
-  }
-
-  console.log("  Verifying compatible endpoint through the messaging sandbox...");
-
-  const providerResult = runOpenshell(["provider", "get", options.provider], {
-    ignoreError: true,
-    suppressOutput: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const providerDetails = [
-    spawnOutputToString(providerResult.stdout),
-    spawnOutputToString(providerResult.stderr),
-  ]
-    .join("\n")
-    .trim();
-
-  if (providerResult.status !== 0) {
-    console.error(
-      `  Compatible endpoint provider '${options.provider}' is missing from the OpenShell gateway.`,
-    );
-    console.error(
-      "  The sandbox would start Telegram, but agent turns would fail before reaching the model.",
-    );
-    if (providerDetails) console.error(`  ${compactText(redact(providerDetails)).slice(0, 800)}`);
-    process.exit(providerResult.status || 1);
-  }
-
-  if (
-    options.endpointUrl &&
-    providerDetails &&
-    /OPENAI_BASE_URL|baseUrl|base URL|endpoint/i.test(providerDetails) &&
-    !providerDetails.includes(options.endpointUrl)
-  ) {
-    console.warn(
-      `  ⚠ Gateway provider '${options.provider}' did not report the selected endpoint URL.`,
-    );
-    console.warn("    Continuing to the sandbox-side inference.local smoke check.");
-  }
-  if (
-    options.credentialEnv &&
-    providerDetails &&
-    /credential|api key|secret/i.test(providerDetails) &&
-    !providerDetails.includes(options.credentialEnv)
-  ) {
-    console.warn(
-      `  ⚠ Gateway provider '${options.provider}' did not report the selected credential binding.`,
-    );
-  }
-
-  const script = buildCompatibleEndpointSandboxSmokeCommand(options.model);
-  const smokeResult = runOpenshell(
-    ["sandbox", "exec", "-n", options.sandboxName, "--", "sh", "-lc", script],
-    {
-      ignoreError: true,
-      suppressOutput: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      timeout: 90_000,
-    },
-  );
-  const smokeOutput = [
-    spawnOutputToString(smokeResult.stdout),
-    spawnOutputToString(smokeResult.stderr),
-  ]
-    .join("\n")
-    .trim();
-
-  if (smokeResult.status !== 0 || !/INFERENCE_SMOKE_OK/.test(smokeOutput)) {
-    console.error("  Compatible endpoint sandbox smoke check failed.");
-    console.error("  Telegram provider startup is not the root cause; inference.local failed.");
-    if (smokeOutput) console.error(`  ${compactText(redact(smokeOutput)).slice(0, 1200)}`);
-    process.exit(smokeResult.status || 1);
-  }
-
-  console.log("  ✓ Compatible endpoint responds through inference.local inside the sandbox");
 }
 
 function sandboxExistsInGateway(sandboxName: string): boolean {
@@ -6591,6 +6500,7 @@ async function setupNim(
             console.log("");
             continue selectionLoop;
           }
+          endpointUrl = bedrockRuntimeOnboard.normalizeCustomAnthropicEndpointUrl(endpointUrl);
         }
 
         if (selected.key === "hermesProvider") {
@@ -6725,20 +6635,6 @@ async function setupNim(
             }
           }
 
-          if (isNonInteractive()) {
-            if (!resolveProviderCredential(credentialEnv)) {
-              console.error(
-                `  ${credentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
-              );
-              process.exit(1);
-            }
-          } else {
-            await ensureNamedCredential(
-              credentialEnv,
-              remoteConfig.label + " API key",
-              remoteConfig.helpUrl,
-            );
-          }
           const _envModelRemote = (process.env.NEMOCLAW_MODEL || "").trim();
           const defaultModel =
             requestedModel ||
@@ -6749,6 +6645,42 @@ async function setupNim(
             credentialEnv,
             `Missing credential env for ${remoteConfig.label}`,
           );
+          const bedrockSelection = await bedrockRuntimeOnboard.selectBedrockRuntimeCustomAnthropic({
+            selectedKey: selected.key,
+            endpointUrl,
+            credentialEnv: selectedCredentialEnv,
+            label: remoteConfig.label,
+            helpUrl: remoteConfig.helpUrl,
+            defaultModel,
+            backToSelection: BACK_TO_SELECTION,
+            isNonInteractive,
+            promptInputModel,
+            replaceNamedCredential,
+          });
+          if (bedrockSelection.action === "retry-selection") {
+            console.log("  Returning to provider selection.");
+            console.log("");
+            continue selectionLoop;
+          }
+          if (bedrockSelection.action === "selected") {
+            model = bedrockSelection.model;
+            preferredInferenceApi = bedrockSelection.preferredInferenceApi;
+            break;
+          }
+          if (isNonInteractive()) {
+            if (!resolveProviderCredential(selectedCredentialEnv)) {
+              console.error(
+                `  ${selectedCredentialEnv} (or NEMOCLAW_PROVIDER_KEY) is required for ${remoteConfig.label} in non-interactive mode.`,
+              );
+              process.exit(1);
+            }
+          } else {
+            await ensureNamedCredential(
+              selectedCredentialEnv,
+              remoteConfig.label + " API key",
+              remoteConfig.helpUrl,
+            );
+          }
           let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
           if (selected.key === "openai" || selected.key === "gemini") {
             const modelAuthMode = getProbeAuthMode(provider);
@@ -6879,7 +6811,7 @@ async function setupNim(
               } else {
                 const validation = await validateOpenAiLikeSelection(
                   remoteConfig.label,
-                  endpointUrl,
+                  requireValue(endpointUrl, `Missing endpoint URL for ${remoteConfig.label}`),
                   model,
                   selectedCredentialEnv,
                   retryMessage,
@@ -6911,7 +6843,7 @@ async function setupNim(
           while (true) {
             const validation = await validateOpenAiLikeSelection(
               remoteConfig.label,
-              endpointUrl,
+              requireValue(endpointUrl, `Missing endpoint URL for ${remoteConfig.label}`),
               model,
               credentialEnv,
               "Please choose a provider/model again.",
@@ -7555,6 +7487,19 @@ async function setupInference(
       console.error(`  Unsupported provider configuration: ${provider}`);
       process.exit(1);
     }
+    const bedrockSetup = await bedrockRuntimeOnboard.setupBedrockRuntimeInference({
+      sandboxName,
+      provider,
+      model,
+      endpointUrl,
+      credentialEnv,
+      isNonInteractive,
+      runOpenshell,
+      upsertProvider,
+      verifyInferenceRoute,
+      verifyOnboardInferenceSmoke,
+    });
+    if (bedrockSetup.handled) return bedrockSetup.result;
     while (true) {
       const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
       const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
@@ -9724,8 +9669,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         process.exit(1);
       }
       process.env.NEMOCLAW_OPENSHELL_BIN = getOpenshellBinary();
+      const needsBedrockRuntimeAdapter =
+        provider === "compatible-anthropic-endpoint" &&
+        bedrockRuntimeOnboard.needsBedrockRuntimeAdapter(endpointUrl);
       const resumeInference =
-        !forceProviderSelection && resume && isInferenceRouteReady(provider, model);
+        !needsBedrockRuntimeAdapter &&
+        !forceProviderSelection &&
+        resume &&
+        isInferenceRouteReady(provider, model);
       if (resumeInference) {
         if (provider === hermesProviderAuth.HERMES_PROVIDER_NAME) {
           if (!sandboxName) {
@@ -10081,6 +10032,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       sandboxName,
       provider,
       model,
+      runOpenshell,
+      redact,
       endpointUrl,
       credentialEnv,
       messagingChannels: Array.isArray(activeMessagingChannels) ? activeMessagingChannels : [],
