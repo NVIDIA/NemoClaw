@@ -641,6 +641,128 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
+  it("routes Bedrock Runtime custom Anthropic endpoints through the hidden OpenAI adapter", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-bedrock-runtime-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-bedrock-runtime-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const adapterPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "bedrock-runtime-adapter.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const adapter = require(${adapterPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get compatible-anthropic-endpoint")) {
+    return { status: 1, stdout: "", stderr: "" };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: compatible-anthropic-endpoint",
+      "  Model: anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+adapter.ensureBedrockRuntimeAdapter = async ({ classification, compatibleCredential }) => ({
+  baseUrl: "http://host.openshell.internal:11436/v1",
+  localBaseUrl: "http://127.0.0.1:11436/v1",
+  credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+  token: "adapter-token",
+  region: classification.region,
+  compatibleCredential,
+});
+
+process.env.COMPATIBLE_ANTHROPIC_API_KEY = "bedrock-bearer";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference(
+    "test-box",
+    "anthropic.claude-3-5-sonnet-20240620-v1:0",
+    "compatible-anthropic-endpoint",
+    "https://bedrock-runtime.us-east-1.amazonaws.com",
+    "COMPATIBLE_ANTHROPIC_API_KEY",
+  );
+  console.log(JSON.stringify(commands));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
+    const providerCommand = commands.find((entry) => /provider create/.test(entry.command));
+    assert.ok(providerCommand, "expected hidden adapter provider registration");
+    assert.match(providerCommand.command, /--name compatible-anthropic-endpoint/);
+    assert.match(providerCommand.command, /--type openai/);
+    assert.match(providerCommand.command, /--credential NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN/);
+    assert.match(
+      providerCommand.command,
+      /OPENAI_BASE_URL=http:\/\/host\.openshell\.internal:11436\/v1/,
+    );
+    assert.equal(providerCommand.env?.NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN, "adapter-token");
+    assert.ok(
+      !JSON.stringify(commands).includes("bedrock-bearer"),
+      "Bedrock bearer token must not appear in OpenShell argv or env",
+    );
+    const sandboxCommands = commands.filter((entry) => /\bsandbox\b/.test(entry.command));
+    assert.ok(
+      !sandboxCommands.some((entry) =>
+        JSON.stringify(entry).includes("NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"),
+      ),
+      "adapter credential env must not be passed to sandbox commands",
+    );
+    assert.ok(
+      !sandboxCommands.some((entry) => JSON.stringify(entry).includes("adapter-token")),
+      "adapter token must not be passed to sandbox commands",
+    );
+    assert.ok(
+      !result.stderr.includes("bedrock-bearer") && !result.stderr.includes("adapter-token"),
+      "Bedrock tokens must not appear in onboarding stderr",
+    );
+    assert.match(
+      commands.at(-1)?.command || "",
+      /inference set --no-verify --provider compatible-anthropic-endpoint --model anthropic\.claude-3-5-sonnet-20240620-v1:0/,
+    );
+  });
+
   it("resolves a sandbox name before reconciling Hermes Provider on resume", { timeout: 60_000 }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-resume-"));

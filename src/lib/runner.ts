@@ -140,6 +140,8 @@ function runArrayCmd(
 
   const stdio = stdioCfg ?? defaultStdio;
 
+  // run() always uses argv arrays and rejects `shell: true` above.
+  // codeql[js/indirect-command-line-injection]
   const result = spawnSync(exe, args, {
     ...spawnOpts,
     stdio,
@@ -229,6 +231,8 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
   }
 
   try {
+    // runCapture() always uses argv arrays and rejects `shell: true` above.
+    // codeql[js/indirect-command-line-injection]
     const result = spawnSync(exe, args, {
       ...spawnOpts,
       cwd: ROOT,

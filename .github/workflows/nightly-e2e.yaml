@@ -16,6 +16,9 @@
 #   kimi-inference-compat-e2e
 #                            Validates Kimi K2.6 safe exec splitting through OpenClaw trajectories
 #                            with a hermetic OpenAI-compatible mock (#2620).
+#   bedrock-runtime-compatible-anthropic-e2e
+#                            Validates the silent Bedrock Runtime custom Anthropic endpoint path
+#                            through a hermetic fake Bedrock Runtime host for OpenClaw and Hermes.
 #   token-rotation-e2e       Validates that rotating a messaging token and re-running onboard
 #                            propagates the new credential to the sandbox. Combined Telegram +
 #                            Discord + Slack coverage with cross-talk assertions. See issue #1903.
@@ -72,6 +75,7 @@ on:
           openclaw-slack-pairing-e2e,
           messaging-compatible-endpoint-e2e,
           kimi-inference-compat-e2e,
+          bedrock-runtime-compatible-anthropic-e2e,
           token-rotation-e2e, sandbox-survival-e2e,
           openshell-gateway-upgrade-e2e,
           issue-2478-crash-loop-recovery-e2e, hermes-e2e,
@@ -561,6 +565,70 @@ jobs:
         with:
           name: agent-log-kimi-inference-compat
           path: /tmp/nemoclaw-e2e-kimi-inference-compat-agent.log
+          if-no-files-found: ignore
+
+  # ── Bedrock Runtime compatible Anthropic endpoint (#3767) ─────
+  # Hermetic fake Bedrock Runtime endpoint path. The sandbox only sees
+  # inference.local; the host-side OpenShell provider owns the hidden adapter
+  # token and the upstream Bedrock bearer derived from the fake pasted key.
+  bedrock-runtime-compatible-anthropic-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',bedrock-runtime-compatible-anthropic-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run Bedrock Runtime compatible Anthropic E2E test
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_AGENT: ${{ matrix.agent }}
+          NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-bedrock-runtime-compatible-anthropic.sh
+
+      - name: Upload onboard log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboard-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
+          path: /tmp/nemoclaw-e2e-bedrock-runtime-${{ matrix.agent }}-onboard.log
+          if-no-files-found: ignore
+
+      - name: Upload build/setup log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
+          path: /tmp/nemoclaw-e2e-bedrock-runtime-${{ matrix.agent }}-build.log
+          if-no-files-found: ignore
+
+      - name: Upload fake Bedrock Runtime log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mock-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
+          path: /tmp/nemoclaw-e2e-bedrock-runtime-${{ matrix.agent }}-mock.log
+          if-no-files-found: ignore
+
+      - name: Upload Bedrock Runtime adapter log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adapter-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
+          path: ~/.nemoclaw/bedrock-runtime-adapter.log
           if-no-files-found: ignore
 
   # ── Token rotation (credential propagation to L7 proxy) ─────
@@ -2077,6 +2145,7 @@ jobs:
         channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
+        bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
@@ -2171,6 +2240,7 @@ jobs:
         channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
+        bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
@@ -2322,6 +2392,7 @@ jobs:
         channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
+        bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,

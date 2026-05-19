@@ -45,6 +45,7 @@
     "prepublishOnly": "git describe --tags --match 'v*' | sed 's/^v//' > .version && test -s .version && cd nemoclaw && env -u npm_config_global -u npm_config_prefix -u npm_config_omit npm install --ignore-scripts && ./node_modules/.bin/tsc"
   },
   "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "3.1046.0",
     "@oclif/core": "^4.10.5",
     "js-yaml": "^4.1.1",
     "p-retry": "^4.6.2",
