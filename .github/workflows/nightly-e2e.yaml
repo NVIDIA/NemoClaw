@@ -87,7 +87,8 @@ on:
           snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e,
           upgrade-stale-sandbox-e2e, rebuild-hermes-e2e,
           rebuild-hermes-stale-base-e2e, double-onboard-e2e,
-          onboard-repair-e2e, onboard-resume-e2e, runtime-overrides-e2e,
+          onboard-repair-e2e, onboard-resume-e2e, onboard-negative-paths-e2e,
+          runtime-overrides-e2e,
           credential-sanitization-e2e, telegram-injection-e2e,
           overlayfs-autofix-e2e, device-auth-health-e2e,
           launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
@@ -1756,6 +1757,45 @@ jobs:
           path: test-onboard-resume-*.log
           if-no-files-found: ignore
 
+  # -- Onboard Negative Paths E2E -------------------------------
+  onboard-negative-paths-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+      - name: Install NemoClaw
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
+      - name: Run onboard negative-path E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: |
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          bash test/e2e/test-onboard-negative-paths.sh
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboard-negative-paths-test-log
+          path: /tmp/nemoclaw-e2e-onboard-negative-paths.log
+          if-no-files-found: ignore
+
   # ── Runtime Overrides E2E ──────────────────────────────────
   runtime-overrides-e2e:
     if: >-
@@ -2171,6 +2211,7 @@ jobs:
         double-onboard-e2e,
         onboard-repair-e2e,
         onboard-resume-e2e,
+        onboard-negative-paths-e2e,
         runtime-overrides-e2e,
         credential-sanitization-e2e,
         telegram-injection-e2e,
@@ -2266,6 +2307,7 @@ jobs:
         double-onboard-e2e,
         onboard-repair-e2e,
         onboard-resume-e2e,
+        onboard-negative-paths-e2e,
         runtime-overrides-e2e,
         credential-sanitization-e2e,
         telegram-injection-e2e,
@@ -2418,6 +2460,7 @@ jobs:
         double-onboard-e2e,
         onboard-repair-e2e,
         onboard-resume-e2e,
+        onboard-negative-paths-e2e,
         runtime-overrides-e2e,
         credential-sanitization-e2e,
         telegram-injection-e2e,

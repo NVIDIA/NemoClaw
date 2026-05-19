@@ -298,6 +298,11 @@ scripts:
       reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: Docker + sudo hosts edit + OpenShell
+  test-onboard-negative-paths.sh:
+    scenario: ubuntu-repo-cloud-openclaw
+    status: deferred
+    bucket: onboarding-negative-paths
+    assertions: []
   test-brave-search-e2e.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
