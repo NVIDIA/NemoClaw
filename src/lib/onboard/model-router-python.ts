@@ -12,13 +12,18 @@
  * virtual environment.", even when a healthy python3.11 is right there on
  * PATH.
  *
- * pickHostPython probes each candidate interpreter for two things:
- *   1. version is inside the supported window (3.10 ≤ X < 3.14)
- *   2. the stdlib modules venv setup needs (ensurepip, pyexpat, ssl, venv)
- *      actually import without raising
+ * Probing happens in two stages, both with fallback:
+ *   1. pickHostPython runs the stdlib import probe across the candidate list
+ *      and returns every interpreter that passes, in priority order.
+ *   2. prepareModelRouterVenv walks that list, retrying `python -m venv` on
+ *      the next healthy candidate if creation fails — so a python whose
+ *      imports succeed but whose venv bootstrap is broken does not strand
+ *      onboarding (Codex P2 on PR #3786).
  *
- * It returns the first candidate that passes, plus the per-candidate failure
- * reasons so the caller can show the real cause when nothing works.
+ * NEMOCLAW_MODEL_ROUTER_PYTHON is strict: when set, that single interpreter
+ * is the only candidate. If it fails the probe, NemoClaw aborts rather than
+ * silently using a different python (Codex P3 on PR #3786), matching the
+ * "pin" wording in docs/inference/inference-options.md and commands.md.
  *
  * Every external call (which lookup, probe invocation) is dependency-injected
  * so tests run with no spawn.
@@ -53,6 +58,8 @@ const CANDIDATES: readonly string[] = [
   "python3",
 ];
 
+export const OVERRIDE_ENV_VAR = "NEMOCLAW_MODEL_ROUTER_PYTHON";
+
 const PROBE_SCRIPT = [
   "import sys, json",
   "err = None",
@@ -81,8 +88,16 @@ export interface PythonProbeFailure {
 }
 
 export interface PickHostPythonResult {
+  /** First healthy candidate, or null when nothing qualifies. Kept for
+   * back-compat with callers that only need the best pick. */
   ok: PythonProbeOk | null;
+  /** Every healthy candidate in priority order, so the venv step can
+   * fall back to the next one when `python -m venv` itself fails. */
+  healthy: readonly PythonProbeOk[];
   failures: readonly PythonProbeFailure[];
+  /** True when NEMOCLAW_MODEL_ROUTER_PYTHON was set. Used to tailor the
+   * failure message and signal strict-override semantics to callers. */
+  overrideRequested: boolean;
 }
 
 export interface PickHostPythonDeps {
@@ -99,10 +114,14 @@ export function pickHostPython(deps: PickHostPythonDeps = {}): PickHostPythonRes
   const env = deps.env ?? process.env;
 
   const failures: PythonProbeFailure[] = [];
+  const healthy: PythonProbeOk[] = [];
   const tried = new Set<string>();
 
-  const override = (env.NEMOCLAW_MODEL_ROUTER_PYTHON || "").trim();
-  const ordered = override ? [override, ...CANDIDATES] : [...CANDIDATES];
+  const override = (env[OVERRIDE_ENV_VAR] || "").trim();
+  // Strict override: when the env var is set, that interpreter is the *only*
+  // candidate. We do not fall back to PATH lookups — silently using a
+  // different python would contradict the "pin" wording in docs.
+  const ordered = override ? [override] : [...CANDIDATES];
 
   for (const candidate of ordered) {
     const resolved = candidate.startsWith("/") ? candidate : which(candidate);
@@ -116,13 +135,19 @@ export function pickHostPython(deps: PickHostPythonDeps = {}): PickHostPythonRes
     const result = probeCandidate(candidate, resolved, probe);
     if (result.ok) {
       log(`  ${candidate} (${resolved}): version ${result.ok.version.join(".")} healthy`);
-      return { ok: { ...result.ok, command: candidate }, failures };
+      healthy.push({ ...result.ok, command: candidate });
+      continue;
     }
     failures.push(result.failure);
     log(`  ${candidate} (${resolved}): ${result.failure.reason}`);
   }
 
-  return { ok: null, failures };
+  return {
+    ok: healthy[0] ?? null,
+    healthy,
+    failures,
+    overrideRequested: override.length > 0,
+  };
 }
 
 function probeCandidate(
@@ -176,20 +201,36 @@ function compareVersion(a: readonly [number, number], b: readonly [number, numbe
   return a[1] - b[1];
 }
 
-export function formatHostPythonFailureMessage(failures: readonly PythonProbeFailure[]): string {
+export function formatHostPythonFailureMessage(
+  failures: readonly PythonProbeFailure[],
+  options: { overrideRequested?: boolean } = {},
+): string {
   const ceiling = `${MAX_PYTHON_EXCLUSIVE[0]}.${MAX_PYTHON_EXCLUSIVE[1] - 1}`;
-  const lines = [
-    `No usable host Python interpreter found for Model Router.`,
-    `Need Python ${MIN_PYTHON_VERSION.join(".")}-${ceiling} with ${REQUIRED_STDLIB_MODULES.join(", ")} importable.`,
-    "Probed:",
-  ];
+  const lines: string[] = [];
+  if (options.overrideRequested) {
+    lines.push(
+      `${OVERRIDE_ENV_VAR} pins the Model Router interpreter, but that interpreter is not usable.`,
+      `Need Python ${MIN_PYTHON_VERSION.join(".")}-${ceiling} with ${REQUIRED_STDLIB_MODULES.join(", ")} importable.`,
+      "Probed:",
+    );
+  } else {
+    lines.push(
+      `No usable host Python interpreter found for Model Router.`,
+      `Need Python ${MIN_PYTHON_VERSION.join(".")}-${ceiling} with ${REQUIRED_STDLIB_MODULES.join(", ")} importable.`,
+      "Probed:",
+    );
+  }
   for (const f of failures) {
     lines.push(`  - ${f.candidate}${f.resolved ? ` (${f.resolved})` : ""}: ${f.reason}`);
   }
-  lines.push(
-    "Install a supported interpreter (for example `brew install python@3.12` on macOS),",
-    "or set NEMOCLAW_MODEL_ROUTER_PYTHON to the absolute path of a known-good python.",
-  );
+  if (options.overrideRequested) {
+    lines.push(`Unset ${OVERRIDE_ENV_VAR}, or point it at a working python (for example python3.12).`);
+  } else {
+    lines.push(
+      "Install a supported interpreter (for example `brew install python@3.12` on macOS),",
+      `or set ${OVERRIDE_ENV_VAR} to the absolute path of a known-good python.`,
+    );
+  }
   return lines.join("\n");
 }
 
@@ -218,34 +259,57 @@ function defaultLog(message: string): void {
 }
 
 /**
- * Prepare the Model Router venv: pick a healthy host python, create the venv,
- * and verify the venv python landed on disk. Throws with the real reason on
- * any failure (probe failure, version mismatch, stdlib import error, or
- * `python -m venv` non-zero exit). Returns the absolute path to the venv
- * python binary on success.
+ * Prepare the Model Router venv. Iterates the priority-ordered list of probe-
+ * clean host pythons and runs `python -m venv` on each; if creation fails (or
+ * the venv python does not land on disk) it falls through to the next
+ * candidate. Throws with the real reason — probe failures and per-candidate
+ * venv failures both — when nothing produces a working venv.
+ *
+ * Returns the absolute path to the venv python binary on success.
  */
 export function prepareModelRouterVenv(opts: {
   venvDir: string;
   log?: (message: string) => void;
 }): string {
   const log = opts.log ?? defaultLog;
-  const { ok: hostPython, failures } = pickHostPython({ log });
-  if (!hostPython) {
-    throw new Error(formatHostPythonFailureMessage(failures));
+  const { healthy, failures, overrideRequested } = pickHostPython({ log });
+  if (healthy.length === 0) {
+    throw new Error(formatHostPythonFailureMessage(failures, { overrideRequested }));
   }
 
   const venvPython = path.join(opts.venvDir, "bin", "python");
   fs.mkdirSync(path.dirname(opts.venvDir), { recursive: true });
-  log(`  Preparing Model Router environment: ${opts.venvDir} (using ${hostPython.executable})`);
-  const venvResult = run([hostPython.command, "-m", "venv", opts.venvDir], {
-    ignoreError: true,
-    timeout: 120_000,
-  });
-  if (venvResult.status !== 0 || !fs.existsSync(venvPython)) {
-    const stderrTail = (venvResult.stderr?.toString("utf-8") || "").trim().split("\n").slice(-3).join("\n");
-    throw new Error(
-      `Failed to create Model Router virtual environment with ${hostPython.executable}.${stderrTail ? `\n${stderrTail}` : ""}`,
-    );
+
+  const venvFailures: string[] = [];
+  for (const hostPython of healthy) {
+    log(`  Preparing Model Router environment: ${opts.venvDir} (using ${hostPython.executable})`);
+    // Remove any partial venv left by a previous candidate so `python -m venv`
+    // does not bail on a half-populated directory.
+    if (fs.existsSync(opts.venvDir)) {
+      fs.rmSync(opts.venvDir, { recursive: true, force: true });
+    }
+    const venvResult = run([hostPython.command, "-m", "venv", opts.venvDir], {
+      ignoreError: true,
+      timeout: 120_000,
+    });
+    if (venvResult.status === 0 && fs.existsSync(venvPython)) {
+      return venvPython;
+    }
+    const stderrTail = (venvResult.stderr?.toString("utf-8") || "")
+      .trim()
+      .split("\n")
+      .slice(-3)
+      .join("\n");
+    const detail = stderrTail || `venv exit ${venvResult.status}`;
+    venvFailures.push(`  - ${hostPython.executable}: ${detail}`);
+    log(`  ${hostPython.executable}: venv creation failed (${detail.split("\n")[0]})`);
   }
-  return venvPython;
+
+  throw new Error(
+    [
+      "Failed to create Model Router virtual environment with any healthy host Python.",
+      "Tried:",
+      ...venvFailures,
+    ].join("\n"),
+  );
 }

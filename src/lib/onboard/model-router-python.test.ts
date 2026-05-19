@@ -9,6 +9,7 @@ import {
   formatHostPythonFailureMessage,
   MAX_PYTHON_EXCLUSIVE,
   MIN_PYTHON_VERSION,
+  OVERRIDE_ENV_VAR,
   pickHostPython,
 } from "../../../dist/lib/onboard/model-router-python";
 
@@ -34,8 +35,15 @@ describe("pickHostPython", () => {
       "python3.13": "/usr/bin/python3.13",
       "python3.12": "/usr/bin/python3.12",
       "python3.11": "/usr/bin/python3.11",
+      "python3.10": "/usr/bin/python3.13",
+      python3: "/usr/bin/python3.13",
     })[cmd] ?? null;
-    const probe = () => probeOk([3, 13, 2]);
+    const probe = (executable: string) =>
+      ({
+        "/usr/bin/python3.13": probeOk([3, 13, 2]),
+        "/usr/bin/python3.12": probeOk([3, 12, 7]),
+        "/usr/bin/python3.11": probeOk([3, 11, 9]),
+      })[executable] ?? probeImportError("never picked");
 
     const result = pickHostPython({ which, probe, log: () => {}, env: {} });
 
@@ -43,6 +51,32 @@ describe("pickHostPython", () => {
     assert.equal(result.ok?.executable, "/usr/bin/python3.13");
     assert.deepEqual(result.ok?.version, [3, 13, 2]);
     assert.deepEqual(result.failures, []);
+    assert.equal(result.overrideRequested, false);
+  });
+
+  it("returns every healthy candidate in priority order so the caller can fall back on venv failure (#3786 Codex P2)", () => {
+    const which = (cmd: string) => ({
+      "python3.13": "/usr/bin/python3.13",
+      "python3.12": "/usr/bin/python3.12",
+      "python3.11": "/usr/bin/python3.11",
+      "python3.10": null,
+      python3: "/usr/bin/python3.13",
+    })[cmd] ?? null;
+    const probe = (executable: string) =>
+      ({
+        "/usr/bin/python3.13": probeOk([3, 13, 2]),
+        "/usr/bin/python3.12": probeOk([3, 12, 7]),
+        "/usr/bin/python3.11": probeOk([3, 11, 9]),
+      })[executable] ?? probeImportError("never picked");
+
+    const result = pickHostPython({ which, probe, log: () => {}, env: {} });
+
+    assert.deepEqual(
+      result.healthy.map((h) => h.command),
+      ["python3.13", "python3.12", "python3.11"],
+    );
+    // python3 deduped because it resolves to the same path as python3.13.
+    assert.equal(result.healthy.length, 3);
   });
 
   it("falls back when the top candidate fails the stdlib probe (#3781)", () => {
@@ -108,26 +142,48 @@ describe("pickHostPython", () => {
     assert.equal(probeCount, 1);
   });
 
-  it("honours NEMOCLAW_MODEL_ROUTER_PYTHON as the highest-priority candidate", () => {
-    const which = (cmd: string) => ({
-      "python3.13": "/usr/bin/python3.13",
-    })[cmd] ?? null;
+  it("treats NEMOCLAW_MODEL_ROUTER_PYTHON as a strict pin and does not fall back to PATH (#3786 Codex P3)", () => {
+    const which = (cmd: string) => (cmd === "python3.12" ? "/usr/bin/python3.12" : null);
     const probe = (executable: string) => {
-      if (executable === "/opt/custom/python3.12") return probeOk([3, 12, 6]);
-      if (executable === "/usr/bin/python3.13") return probeOk([3, 13, 2]);
-      return probeImportError("never picked");
+      if (executable === "/opt/custom/python3.10") {
+        return probeImportError("ImportError: bogus override");
+      }
+      // Any unexpected probe (e.g. on the PATH python3.12) would mean we
+      // wrongly fell back — return a healthy result so the assertion can
+      // catch the regression.
+      return probeOk([3, 12, 7]);
     };
 
     const result = pickHostPython({
       which,
       probe,
       log: () => {},
-      env: { NEMOCLAW_MODEL_ROUTER_PYTHON: "/opt/custom/python3.12" },
+      env: { [OVERRIDE_ENV_VAR]: "/opt/custom/python3.10" },
+    });
+
+    assert.equal(result.ok, null);
+    assert.equal(result.overrideRequested, true);
+    assert.deepEqual(result.healthy, []);
+    assert.equal(result.failures.length, 1);
+    assert.equal(result.failures[0].candidate, "/opt/custom/python3.10");
+  });
+
+  it("honours a healthy NEMOCLAW_MODEL_ROUTER_PYTHON override", () => {
+    const which = () => null;
+    const probe = (executable: string) =>
+      executable === "/opt/custom/python3.12" ? probeOk([3, 12, 6]) : probeImportError("never picked");
+
+    const result = pickHostPython({
+      which,
+      probe,
+      log: () => {},
+      env: { [OVERRIDE_ENV_VAR]: "/opt/custom/python3.12" },
     });
 
     assert.equal(result.ok?.command, "/opt/custom/python3.12");
     assert.equal(result.ok?.executable, "/opt/custom/python3.12");
     assert.deepEqual(result.ok?.version, [3, 12, 6]);
+    assert.equal(result.overrideRequested, true);
   });
 
   it("returns ok=null with per-candidate failures when nothing qualifies", () => {
@@ -137,11 +193,33 @@ describe("pickHostPython", () => {
     const result = pickHostPython({ which, probe, log: () => {}, env: {} });
 
     assert.equal(result.ok, null);
+    assert.deepEqual(result.healthy, []);
     assert.ok(result.failures.length >= 1);
-    const message = formatHostPythonFailureMessage(result.failures);
+    const message = formatHostPythonFailureMessage(result.failures, {
+      overrideRequested: result.overrideRequested,
+    });
     assert.match(message, /No usable host Python interpreter/);
     assert.match(message, /ImportError: missing pyexpat/);
-    assert.match(message, /NEMOCLAW_MODEL_ROUTER_PYTHON/);
+    assert.match(message, new RegExp(OVERRIDE_ENV_VAR));
+  });
+
+  it("tailors the failure message when the override pin is the only candidate that failed", () => {
+    const which = () => null;
+    const probe = () => probeImportError("ImportError: cannot import name 'foo'");
+
+    const result = pickHostPython({
+      which,
+      probe,
+      log: () => {},
+      env: { [OVERRIDE_ENV_VAR]: "/opt/custom/python3.10" },
+    });
+
+    const message = formatHostPythonFailureMessage(result.failures, {
+      overrideRequested: result.overrideRequested,
+    });
+    assert.match(message, new RegExp(`${OVERRIDE_ENV_VAR} pins`));
+    assert.match(message, /not usable/);
+    assert.match(message, /Unset/);
   });
 });
 
