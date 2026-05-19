@@ -38,8 +38,6 @@ That placement lets NemoClaw configure the environment without giving the agent 
 :alt: NemoClaw High-Level Component Diagram
 :width: 100%
 :align: center
-
-NemoClaw High-Level Component Diagram
 ```
 
 The diagram has the following components:
@@ -80,10 +78,10 @@ Reproducible setup
 
 NemoClaw is split into three integration pieces:
 
-- The *host CLI* runs onboarding, validates provider choices, stores configuration, and calls OpenShell commands for gateway, provider, sandbox, and policy operations.
-- The *plugin* is a TypeScript package that runs with OpenClaw inside the sandbox.
+- The _host CLI_ runs onboarding, validates provider choices, stores configuration, and calls OpenShell commands for gateway, provider, sandbox, and policy operations.
+- The _plugin_ is a TypeScript package that runs with OpenClaw inside the sandbox.
   It registers the managed inference provider metadata, the `/nemoclaw` slash command, and runtime context hooks.
-- The *blueprint* is a versioned YAML package with the sandbox image, policy, inference profile, and supporting assets.
+- The _blueprint_ is a versioned YAML package with the sandbox image, policy, inference profile, and supporting assets.
   The runner resolves and verifies the blueprint before applying it through OpenShell.
 
 This separation keeps the sandbox plugin small while allowing host orchestration and blueprint contents to evolve on their own release cadence.

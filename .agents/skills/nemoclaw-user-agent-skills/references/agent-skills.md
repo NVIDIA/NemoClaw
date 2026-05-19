@@ -9,9 +9,11 @@ This means you can interact with the full NemoClaw documentation as skills insid
 Ask your assistant a question about NemoClaw and it responds with the same guidance found in these docs, adapted to your current situation.
 Skills cover installation, inference configuration, network policy management, monitoring, deployment, security, workspace management, and the CLI reference.
 
-> **Note:** If you are a contributor and have cloned the full NemoClaw repository, the full set of skills including contributor and maintainer skills are already available at the project root.
-> Open the `NemoClaw` directory in your coding assistant and the skills load automatically.
-> This page is for users who installed NemoClaw with the installer and do not have a local clone.
+**Note:**
+
+If you are a contributor and have cloned the full NemoClaw repository, the full set of skills including contributor and maintainer skills are already available at the project root.
+Open the `NemoClaw` directory in your coding assistant and the skills load automatically.
+This page is for users who installed NemoClaw with the installer and do not have a local clone.
 
 ## Get the Skills
 

@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Documentation checks (default: all):
-#   1) Markdown links — local paths exist; optional curl for unique http(s) URLs.
+#   1) Markdown/MDX links — local paths exist; optional curl for unique http(s) URLs.
 #   2) CLI parity — `nemoclaw --help` vs ### `nemoclaw …` in docs/reference/commands.md.
 #
 # Usage (from repo root):
@@ -12,7 +12,7 @@
 #   test/e2e/e2e-cloud-experimental/check-docs.sh --only-cli
 #   test/e2e/e2e-cloud-experimental/check-docs.sh --local-only
 #   CHECK_DOC_LINKS_REMOTE=0 test/e2e/e2e-cloud-experimental/check-docs.sh
-#   test/e2e/e2e-cloud-experimental/check-docs.sh path/to/a.md
+#   test/e2e/e2e-cloud-experimental/check-docs.sh path/to/a.md path/to/b.mdx
 #
 # Environment:
 #   CHECK_DOC_LINKS_REMOTE   If 0, skip http(s) probes for links check.
@@ -42,13 +42,13 @@ WITH_SKILLS=0
 
 usage() {
   cat <<'EOF'
-Documentation checks: Markdown links + nemoclaw --help vs commands reference
+Documentation checks: Markdown/MDX links + nemoclaw --help vs commands reference
 + install.sh --help vs canonical provider list.
 
-Usage: test/e2e/e2e-cloud-experimental/check-docs.sh [options] [extra.md ...]
+Usage: test/e2e/e2e-cloud-experimental/check-docs.sh [options] [extra.md/.mdx ...]
 
 Options:
-  --only-links     Run only the Markdown link check.
+  --only-links     Run only the Markdown/MDX link check.
   --only-cli       Run only the CLI help vs docs/reference/commands.md check
                    (includes both command-level and flag-level parity).
   --only-install   Run only the install.sh --help vs canonical provider check.
@@ -575,7 +575,7 @@ collect_default_docs() {
     [[ -f "$f" ]] && printf '%s\n' "$f"
   done
   if [[ -d "$REPO_ROOT/docs" ]]; then
-    find "$REPO_ROOT/docs" -type f -name '*.md' | LC_ALL=C sort
+    find "$REPO_ROOT/docs" -type f \( -name '*.md' -o -name '*.mdx' \) | LC_ALL=C sort
   fi
   if [[ "$WITH_SKILLS" -eq 1 && -d "$REPO_ROOT/.agents/skills" ]]; then
     find "$REPO_ROOT/.agents/skills" -type f -name '*.md' | LC_ALL=C sort
@@ -658,6 +658,21 @@ check_local_ref() {
   fi
   if [[ "$stripped" == *://* ]]; then
     return 0
+  fi
+
+  if [[ "$stripped" == /* ]]; then
+    local site_path="${stripped#/}"
+    local candidate
+    for candidate in \
+      "$REPO_ROOT/docs/$site_path" \
+      "$REPO_ROOT/docs/$site_path.mdx" \
+      "$REPO_ROOT/docs/$site_path.md" \
+      "$REPO_ROOT/docs/$site_path/index.mdx" \
+      "$REPO_ROOT/docs/$site_path/index.md"; do
+      [[ -e "$candidate" ]] && return 0
+    done
+    echo "check-docs: [links] broken site route in $md_path:$line_no -> $target" >&2
+    return 1
   fi
 
   if (cd "$(dirname "$md_path")" && [[ -e "$stripped" ]]); then
@@ -752,7 +767,7 @@ run_links_check() {
   if [[ "$WITH_SKILLS" -eq 1 ]]; then
     log "[links] scope: default doc set + .agents/skills/**/*.md"
   else
-    log "[links] scope: README, CONTRIBUTING, SECURITY, spark-install, CODE_OF_CONDUCT, .github PR template, docs/**/*.md"
+    log "[links] scope: README, CONTRIBUTING, SECURITY, spark-install, CODE_OF_CONDUCT, .github PR template, docs/**/*.{md,mdx}"
   fi
   if [[ "$CHECK_DOC_LINKS_REMOTE" != 0 ]]; then
     log "[links] remote: curl unique http(s) targets (disable: CHECK_DOC_LINKS_REMOTE=0 or --local-only)"

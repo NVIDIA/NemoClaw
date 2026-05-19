@@ -1,19 +1,12 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Security Best Practices
+# NemoClaw Security Best Practices: Controls, Risks, and Posture Profiles
 
 NemoClaw ships with deny-by-default security controls across four layers: network, filesystem, process, and inference.
 You can tune every control, but each change shifts the risk profile.
 This page documents every configurable knob, its default, what it protects, the concrete risk of relaxing it, and a recommendation for common use cases.
 
 For background on how the layers fit together, refer to How It Works (use the `nemoclaw-user-overview` skill).
-
-<!-- TODO: uncomment after the OpenShell docs are published
-:::{seealso}
-OpenShell enforces the platform-level mechanisms that NemoClaw configures, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication.
-For the full platform-level controls reference, see [OpenShell Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html).
-:::
--->
 
 ## Protection Layers at a Glance
 
@@ -72,43 +65,16 @@ flowchart TB
     style GW fill:#2a2a2a,stroke:#76b900,stroke-width:2px,color:#fff
 ```
 
-:::{list-table}
-:header-rows: 1
-:widths: 20 30 20 30
-
-* - Layer
-  - What it protects
-  - Enforcement point
-  - Changeable at runtime
-
-* - Network
-  - Unauthorized outbound connections and data exfiltration.
-  - OpenShell gateway
-  - Yes. Use `openshell policy set` or operator approval.
-
-* - Filesystem
-  - System binary tampering, credential theft, config manipulation.
-  - Landlock LSM + container mounts
-  - Landlock layout: no. Requires sandbox re-creation. Config lockdown posture: yes, with host-side shields commands.
-
-* - Process
-  - Privilege escalation, fork bombs, syscall abuse.
-  - Container runtime (Docker/K8s `securityContext`)
-  - No. Requires sandbox re-creation.
-
-* - Inference
-  - Credential exposure, unauthorized model access, cost overruns.
-  - OpenShell gateway
-  - Yes. Use `nemoclaw inference set`.
-
-:::
+| Layer | What it protects | Enforcement point | Changeable at runtime |
+| --- | --- | --- | --- |
+| Network | Unauthorized outbound connections and data exfiltration. | OpenShell gateway | Yes. Use `openshell policy set` or operator approval. |
+| Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Config lockdown posture: yes, with host-side shields commands. |
+| Process | Privilege escalation, fork bombs, syscall abuse. | Container runtime (Docker/K8s `securityContext`) | No. Requires sandbox re-creation. |
+| Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use `nemoclaw inference set`. |
 
 ## Network Controls
 
 NemoClaw controls which hosts, ports, and HTTP methods the sandbox can reach, and lets operators approve or deny requests in real time.
-
-<!-- OpenShell provides additional network enforcement mechanisms not covered here, including network namespace isolation, SSRF protection, TLS auto-detection and termination, and audit-vs-enforce modes.
-See the [Network Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#network-controls) section of the OpenShell Security Best Practices. -->
 
 ### Deny-by-Default Egress
 
@@ -194,9 +160,6 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 
 NemoClaw restricts which paths the agent can read and write, protecting system binaries, configuration files, and gateway credentials.
 
-<!-- OpenShell covers additional filesystem enforcement details, including `hard_requirement` compatibility mode for Landlock and policy path validation rules.
-See the [Filesystem Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#filesystem-controls) section of the OpenShell Security Best Practices. -->
-
 ### Read-Only System Paths
 
 The container mounts system directories read-only to prevent the agent from modifying binaries, libraries, or configuration files.
@@ -255,9 +218,6 @@ Landlock is a Linux Security Module that enforces filesystem access rules at the
 ## Process Controls
 
 NemoClaw limits the capabilities, user privileges, and resource quotas available to processes inside the sandbox.
-
-<!-- OpenShell enforces additional process-level controls not covered here, including seccomp BPF socket domain filters and a specific enforcement application order (namespace entry, privilege drop, Landlock, seccomp).
-See the [Process Controls](https://docs.nvidia.com/openshell/latest/security/best-practices.html#process-controls) section of the OpenShell Security Best Practices. -->
 
 ### Capability Drops
 
@@ -549,4 +509,3 @@ The following patterns weaken security without providing meaningful benefit.
 - Sandbox Hardening (use the `nemoclaw-user-deploy-remote` skill) for container-level security measures.
 - Inference Options (use the `nemoclaw-user-configure-inference` skill) for provider configuration details.
 - How It Works (use the `nemoclaw-user-overview` skill) for the protection layer architecture.
-<!-- - OpenShell [Security Best Practices](https://docs.nvidia.com/openshell/latest/security/best-practices.html) for the platform-level controls reference, including network namespace isolation, seccomp filters, SSRF protection, TLS termination, and gateway authentication. -->

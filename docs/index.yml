@@ -1,0 +1,150 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+landing-page:
+  page: "Home"
+  path: index.mdx
+
+navigation:
+  - section: "About NemoClaw"
+    slug: about
+    contents:
+      - page: "Overview"
+        path: about/overview.mdx
+        slug: overview
+      - page: "Architecture Overview"
+        path: about/how-it-works.mdx
+        slug: how-it-works
+      - page: "Ecosystem"
+        path: about/ecosystem.mdx
+        slug: ecosystem
+      - page: "Release Notes"
+        path: about/release-notes.mdx
+        slug: release-notes
+  - section: "Get Started"
+    slug: get-started
+    contents:
+      - section: "Prerequisites"
+        path: get-started/prerequisites.mdx
+        slug: prerequisites
+        contents:
+          - page: "(Windows Only) Windows Prerequisites"
+            path: get-started/windows-preparation.mdx
+            slug: windows-preparation
+      - page: "Quickstart with OpenClaw"
+        path: get-started/quickstart.mdx
+        slug: quickstart
+      - page: "Quickstart with Hermes"
+        path: get-started/quickstart-hermes.mdx
+        slug: quickstart-hermes
+  - section: "Inference"
+    slug: inference
+    contents:
+      - page: "Inference Options"
+        path: inference/inference-options.mdx
+        slug: inference-options
+      - page: "Use Local Inference"
+        path: inference/use-local-inference.mdx
+        slug: use-local-inference
+      - page: "Tool-Calling Reliability"
+        path: inference/tool-calling-reliability.mdx
+        slug: tool-calling-reliability
+      - page: "Switch Inference Providers"
+        path: inference/switch-inference-providers.mdx
+        slug: switch-inference-providers
+      - page: "Set Up Task-Specific Sub-Agents"
+        path: inference/set-up-sub-agent.mdx
+  - section: "Manage Sandboxes"
+    slug: manage-sandboxes
+    contents:
+      - page: "Manage Sandbox Lifecycle"
+        path: manage-sandboxes/lifecycle.mdx
+        slug: lifecycle
+      - page: "Runtime Controls"
+        path: manage-sandboxes/runtime-controls.mdx
+        slug: runtime-controls
+      - page: "Set Up Messaging Channels"
+        path: manage-sandboxes/messaging-channels.mdx
+        slug: messaging-channels
+      - page: "Workspace Files"
+        path: manage-sandboxes/workspace-files.mdx
+        slug: workspace-files
+      - page: "Backup and Restore"
+        path: manage-sandboxes/backup-restore.mdx
+        slug: backup-restore
+  - section: "Network Policy"
+    slug: network-policy
+    contents:
+      - page: "Approve or Deny Network Requests"
+        path: network-policy/approve-network-requests.mdx
+        slug: approve-network-requests
+      - page: "Customize the Network Policy"
+        path: network-policy/customize-network-policy.mdx
+        slug: customize-network-policy
+      - page: "Integration Policy Examples"
+        path: network-policy/integration-policy-examples.mdx
+        slug: integration-policy-examples
+  - section: "Deployment"
+    slug: deployment
+    contents:
+      - page: "Deploy to Remote GPU Instances"
+        path: deployment/deploy-to-remote-gpu.mdx
+        slug: deploy-to-remote-gpu
+      - page: "Brev Web UI"
+        path: deployment/brev-web-ui.mdx
+        slug: brev-web-ui
+      - page: "Install OpenClaw Plugins"
+        path: deployment/install-openclaw-plugins.mdx
+        slug: install-openclaw-plugins
+      - page: "Sandbox Hardening"
+        path: deployment/sandbox-hardening.mdx
+        slug: sandbox-hardening
+  - section: "Monitoring"
+    slug: monitoring
+    contents:
+      - page: "Monitor Sandbox Activity"
+        path: monitoring/monitor-sandbox-activity.mdx
+        slug: monitor-sandbox-activity
+  - section: "Security"
+    slug: security
+    contents:
+      - page: "Security Best Practices"
+        path: security/best-practices.mdx
+        slug: best-practices
+      - page: "Credential Storage"
+        path: security/credential-storage.mdx
+        slug: credential-storage
+      - page: "OpenClaw Controls"
+        path: security/openclaw-controls.mdx
+        slug: openclaw-controls
+  - section: "Reference"
+    slug: reference
+    contents:
+      - page: "Architecture Details"
+        path: reference/architecture.mdx
+        slug: architecture
+      - page: "CLI Commands Reference"
+        path: reference/commands.mdx
+        slug: commands
+      - page: "CLI Selection Guide"
+        path: reference/cli-selection-guide.mdx
+        slug: cli-selection-guide
+      - page: "Network Policies"
+        path: reference/network-policies.mdx
+        slug: network-policies
+      - page: "Troubleshooting"
+        path: reference/troubleshooting.mdx
+        slug: troubleshooting
+  - section: "Resources"
+    slug: resources
+    contents:
+      - page: "Agent Skills"
+        path: resources/agent-skills.mdx
+        slug: agent-skills
+      - link: "Report Vulnerabilities"
+        href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
+      - page: "License"
+        path: resources/license.mdx
+        slug: license
+      - link: "Discord"
+        href: https://discord.gg/XFpfPv9Uvx

@@ -259,7 +259,8 @@ NemoClaw/
 │       └── llm-router/      # LLM Router v3 submodule (prefill routing engine)
 ├── scripts/          # Install helpers, setup, automation
 ├── test/             # Integration and E2E tests
-└── docs/             # User-facing docs (Sphinx/MyST)
+├── fern/             # Fern site configuration and shared assets
+└── docs/             # User-facing docs (Fern MDX plus legacy MyST source during migration)
 ```
 
 ## Community
