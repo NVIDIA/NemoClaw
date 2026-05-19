@@ -140,11 +140,10 @@ export function globalCommandTokens(): Set<string> {
 }
 
 /**
- * Action tokens for sandbox commands.
+ * Leaf global command IDs that should use command-ID compatibility execution.
  *
- * The tokens are derived from oclif command IDs and explicit public route
- * overrides, not from public help text. Includes empty string for the
- * default connect behavior.
+ * Derived from registered oclif metadata by excluding nested IDs and command
+ * IDs that have registered child commands.
  */
 export function directGlobalCommandIds(): Set<string> {
   const ids = new Set<string>();
