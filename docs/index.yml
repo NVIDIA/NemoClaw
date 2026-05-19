@@ -12,7 +12,7 @@ navigation:
       - page: "Overview"
         path: about/overview.mdx
         slug: overview
-      - page: "How It Works"
+      - page: "Architecture Overview"
         path: about/how-it-works.mdx
         slug: how-it-works
       - page: "Ecosystem"
@@ -28,7 +28,7 @@ navigation:
         path: get-started/prerequisites.mdx
         slug: prerequisites
         contents:
-          - page: "Windows Preparation"
+          - page: "(Windows Only) Windows Prerequisites"
             path: get-started/windows-preparation.mdx
             slug: windows-preparation
       - page: "Quickstart with OpenClaw"
@@ -60,6 +60,9 @@ navigation:
       - page: "Manage Sandbox Lifecycle"
         path: manage-sandboxes/lifecycle.mdx
         slug: lifecycle
+      - page: "Runtime Controls"
+        path: manage-sandboxes/runtime-controls.mdx
+        slug: runtime-controls
       - page: "Set Up Messaging Channels"
         path: manage-sandboxes/messaging-channels.mdx
         slug: messaging-channels
@@ -84,8 +87,9 @@ navigation:
   - section: "Deployment"
     slug: deployment
     contents:
-      - page: "Deploy to a Remote GPU Instance"
+      - page: "Deploy to Remote GPU Instances"
         path: deployment/deploy-to-remote-gpu.mdx
+        slug: deploy-to-remote-gpu
       - page: "Brev Web UI"
         path: deployment/brev-web-ui.mdx
         slug: brev-web-ui
@@ -116,7 +120,7 @@ navigation:
   - section: "Reference"
     slug: reference
     contents:
-      - page: "Architecture"
+      - page: "Architecture Details"
         path: reference/architecture.mdx
         slug: architecture
       - page: "CLI Commands Reference"
@@ -137,10 +141,10 @@ navigation:
       - page: "Agent Skills"
         path: resources/agent-skills.mdx
         slug: agent-skills
+      - link: "Report Vulnerabilities"
+        href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
       - page: "License"
         path: resources/license.mdx
         slug: license
-      - link: "Report Vulnerabilities"
-        href: https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md
       - link: "Discord"
         href: https://discord.gg/XFpfPv9Uvx

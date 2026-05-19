@@ -53,6 +53,8 @@ navbar-links:
     value: https://github.com/NVIDIA/NemoClaw
 
 experimental:
+  mdx-components:
+    - ../docs/_components
   basepath-aware: true
 
 versions:
