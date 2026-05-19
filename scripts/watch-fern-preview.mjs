@@ -65,21 +65,38 @@ function watchDirectoryTree(directory) {
     return;
   }
 
-  watchers.set(
-    directory,
-    watch(directory, { persistent: true }, (_eventType, filename) => {
-      if (filename) {
-        const changedPath = path.join(directory, filename.toString());
-        if (shouldIgnorePath(changedPath)) {
-          return;
+  try {
+    watchers.set(
+      directory,
+      watch(directory, { persistent: true }, (_eventType, filename) => {
+        if (filename) {
+          const changedPath = path.join(directory, filename.toString());
+          if (shouldIgnorePath(changedPath)) {
+            return;
+          }
+          addWatcherForNewDirectory(changedPath);
         }
-        addWatcherForNewDirectory(changedPath);
-      }
-      scheduleRun();
-    }),
-  );
+        scheduleRun();
+      }),
+    );
+  } catch (error) {
+    if (!isIgnorableWatchError(error)) {
+      throw error;
+    }
+    return;
+  }
 
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+  let entries;
+  try {
+    entries = readdirSync(directory, { withFileTypes: true });
+  } catch (error) {
+    if (!isIgnorableWatchError(error)) {
+      throw error;
+    }
+    return;
+  }
+
+  for (const entry of entries) {
     if (!entry.isDirectory()) {
       continue;
     }
@@ -96,10 +113,20 @@ function addWatcherForNewDirectory(changedPath) {
     return;
   }
 
-  const stats = statSync(changedPath);
-  if (stats.isDirectory()) {
-    watchDirectoryTree(changedPath);
+  try {
+    const stats = statSync(changedPath);
+    if (stats.isDirectory()) {
+      watchDirectoryTree(changedPath);
+    }
+  } catch (error) {
+    if (!isIgnorableWatchError(error)) {
+      throw error;
+    }
   }
+}
+
+function isIgnorableWatchError(error) {
+  return error?.code === "ENOENT" || error?.code === "EPERM";
 }
 
 function shouldIgnorePath(candidatePath) {

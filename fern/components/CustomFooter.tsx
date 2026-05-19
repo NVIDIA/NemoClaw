@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 /**
  * Custom footer for NVIDIA docs (Fern native header/footer).
  * Markup and class names match the original custom-app footer 1:1 so that

@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 /**
  * Badge links for GitHub, License, project status, Discord, etc.
  * Uses a flex wrapper to display badges horizontally and hides Fern's

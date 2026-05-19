@@ -1,3 +1,8 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
 /**
  * Inline component that renders the current docs version (e.g. "26.02").
  * Parses the version from the URL path (/v26.02/...) at runtime.
