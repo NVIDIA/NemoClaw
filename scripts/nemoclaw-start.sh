@@ -2164,6 +2164,10 @@ NODE
   fi
 }
 
+seed_default_workspace_templates_as_sandbox() {
+  "${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "$(declare -f seed_default_workspace_templates); seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json"
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # Migrate legacy symlink layout before anything else reads .openclaw
@@ -2464,7 +2468,7 @@ provision_agent_workspaces
 # Run as the sandbox user so the seeded files inherit sandbox:sandbox
 # ownership (the function's own cp calls would otherwise produce
 # root-owned files in this branch). See function comment for context.
-"${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "$(declare -f seed_default_workspace_templates); seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json"
+seed_default_workspace_templates_as_sandbox
 
 # Defence-in-depth: verify /tmp file permissions before launching services.
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh

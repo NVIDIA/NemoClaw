@@ -1950,11 +1950,53 @@ describe("seed_default_workspace_templates (#3240)", () => {
     }
   });
 
-  it("uses the shared sandbox step-down prefix in the root startup path", () => {
-    expect(src).toContain(
-      '"${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "$(declare -f seed_default_workspace_templates); seed_default_workspace_templates /sandbox/.openclaw/workspace',
+  it("seeds through the shared sandbox step-down prefix", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-step-down-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    const stepDownLog = path.join(tmpDir, "step-down.log");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    writeTemplates(templatesDir);
+    const configPath = path.join(tmpDir, "openclaw.json");
+    fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { skipBootstrap: true } } }));
+    const scriptPath = path.join(tmpDir, "seed-as-sandbox.sh");
+    const seedAsSandbox = extractShellFunctionFromSource(
+      src,
+      "seed_default_workspace_templates_as_sandbox",
+    )
+      .replaceAll("/sandbox/.openclaw/workspace", workspaceDir)
+      .replaceAll("/sandbox/.openclaw/openclaw.json", configPath);
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `STEP_DOWN_LOG=${JSON.stringify(stepDownLog)}`,
+        `TEMPLATES_DIR=${JSON.stringify(templatesDir)}`,
+        `STEP_DOWN_PREFIX_SANDBOX=(env STEP_DOWN_MARKER=sandbox-step-down)`,
+        extractShellFunctionFromSource(src, "seed_default_workspace_templates")
+          .replace("local templates_dir=\"${2:-}\"", 'local templates_dir="${2:-$TEMPLATES_DIR}"')
+          .replace(
+            "local workspace_dir=\"${1:-/sandbox/.openclaw/workspace}\"",
+            'printf "%s\\n" "$STEP_DOWN_MARKER" >"$STEP_DOWN_LOG"\n  local workspace_dir="${1:-/sandbox/.openclaw/workspace}"',
+          ),
+        seedAsSandbox.replace(" '' ", ' "$TEMPLATES_DIR" '),
+        "seed_default_workspace_templates_as_sandbox",
+      ].join("\n"),
+      { mode: 0o700 },
     );
-    expect(src).not.toContain('gosu sandbox bash -c "$(declare -f seed_default_workspace_templates);');
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: { ...process.env, STEP_DOWN_LOG: stepDownLog },
+        timeout: 5000,
+      });
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(stepDownLog, "utf-8").trim()).toBe("sandbox-step-down");
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
 
