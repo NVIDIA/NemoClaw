@@ -530,7 +530,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 417,
+          "line": 415,
           "text": "C5b: rebuild (post-remove) completed",
           "polarity": "pass",
           "normalized_id": "c5b.rebuild.post.remove.completed",
@@ -538,7 +538,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 419,
+          "line": 417,
           "text": "C5b: rebuild (post-remove) failed",
           "polarity": "fail",
           "normalized_id": "c5b.rebuild.post.remove.failed",
@@ -546,7 +546,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 430,
+          "line": 428,
           "text": "C6a: openclaw.json still contains 'telegram' after remove+rebuild",
           "polarity": "fail",
           "normalized_id": "c6a.openclaw.json.still.contains.telegram.after.remove.rebuild",
@@ -554,7 +554,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 436,
+          "line": 434,
           "text": "C6a: could not read openclaw.json inside sandbox post-remove",
           "polarity": "fail",
           "normalized_id": "c6a.could.not.read.openclaw.json.inside.sandbox.post.remove",
@@ -562,7 +562,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 438,
+          "line": 436,
           "text": "C6a: openclaw.json excludes 'telegram' after remove+rebuild",
           "polarity": "pass",
           "normalized_id": "c6a.openclaw.json.excludes.telegram.after.remove.rebuild",
@@ -570,7 +570,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 443,
+          "line": 441,
           "text": "C6b: telegram-bridge provider still exists in gateway after remove+rebuild",
           "polarity": "fail",
           "normalized_id": "c6b.telegram.bridge.provider.still.exists.in.gateway.after.remove.rebuild",
@@ -578,7 +578,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 445,
+          "line": 443,
           "text": "C6b: telegram-bridge provider removed from gateway after remove+rebuild",
           "polarity": "pass",
           "normalized_id": "c6b.telegram.bridge.provider.removed.from.gateway.after.remove.rebuild",
@@ -586,7 +586,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 454,
+          "line": 452,
           "text": "C6c: REGRESSION — 'telegram' preset still applied after remove+rebuild (#3671)",
           "polarity": "fail",
           "normalized_id": "c6c.regression.telegram.preset.still.applied.after.remove.rebuild.3671",
@@ -594,7 +594,7 @@
         },
         {
           "script": "test/e2e/test-channels-add-remove.sh",
-          "line": 456,
+          "line": 454,
           "text": "C6c: 'telegram' preset removed from policy list after remove+rebuild",
           "polarity": "pass",
           "normalized_id": "c6c.telegram.preset.removed.from.policy.list.after.remove.rebuild",

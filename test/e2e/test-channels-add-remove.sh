@@ -410,8 +410,6 @@ else
   tail -20 /tmp/nc-remove.log 2>/dev/null || true
 fi
 
-unset TELEGRAM_BOT_TOKEN
-
 info "Rebuilding sandbox to apply the remove..."
 if run_rebuild_with_live_log /tmp/nc-rebuild-remove.log; then
   pass "C5b: rebuild (post-remove) completed"
