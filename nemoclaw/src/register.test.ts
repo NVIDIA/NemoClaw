@@ -30,12 +30,17 @@ import { loadOnboardConfig } from "./onboard/config.js";
 
 const mockedReadFileSync = vi.mocked(readFileSync);
 const mockedLoadOnboardConfig = vi.mocked(loadOnboardConfig);
+const originalReadFileSync = (await vi.importActual<typeof import("node:fs")>("node:fs"))
+  .readFileSync;
 
 function mockMissingOpenClawConfig(): void {
   mockedReadFileSync.mockReset();
-  mockedReadFileSync.mockImplementation(() => {
-    throw new Error("openclaw config unavailable");
-  });
+  mockedReadFileSync.mockImplementation(((path, ...args) => {
+    if (String(path).includes("openclaw.json")) {
+      throw Object.assign(new Error("openclaw config unavailable"), { code: "ENOENT" });
+    }
+    return originalReadFileSync(path, ...args);
+  }) as typeof readFileSync);
 }
 
 function createMockApi(): OpenClawPluginApi {
