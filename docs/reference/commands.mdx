@@ -900,7 +900,8 @@ For a remote Brev instance, SSH to the instance and run `openshell term` there, 
 
 ## `openshell settings`
 
-Manage sandbox and gateway settings exposed by OpenShell. NemoClaw does not wrap these; run them directly with the `openshell` CLI on the host where the sandbox lives.
+Manage sandbox and gateway settings exposed by OpenShell.
+NemoClaw does not wrap these; run them directly with the `openshell` CLI on the host where the sandbox lives.
 
 ```console
 $ openshell settings get [<sandbox> | --global]
@@ -908,7 +909,9 @@ $ openshell settings set [<sandbox> | --global] --key <key> --value <value>
 $ openshell settings delete [<sandbox> | --global] --key <key>
 ```
 
-`openshell settings get <sandbox>` prints the effective settings for that sandbox plus the config revision and policy hash that produced them. `--global` reads or writes the gateway-wide scope; a sandbox-scoped value always overrides the global value when both are set.
+`openshell settings get <sandbox>` prints the effective settings for that sandbox plus the config revision and policy hash that produced them.
+`--global` reads or writes the gateway-wide scope.
+A sandbox-scoped value always overrides the global value when both are set.
 
 The current named settings on OpenShell 0.0.39 are:
 
@@ -1260,7 +1263,10 @@ These flags change defaults for commands that manage existing sandboxes.
 
 ### Sandbox Runtime Environment
 
-The variables above run on the host. NemoClaw also stamps a fixed set of environment variables *inside* every sandbox it creates. They are not configured by the operator; they document the runtime the agent process sees. Operators debugging in-sandbox network or TLS failures start here.
+The variables above run on the host.
+NemoClaw also stamps a fixed set of environment variables *inside* every sandbox it creates.
+They are not configured by the operator; they document the runtime the agent process sees.
+Operators debugging in-sandbox network or TLS failures start here.
 
 Read the live values for any sandbox with `openshell sandbox exec -n <name> -- env | sort`.
 
@@ -1278,8 +1284,10 @@ Read the live values for any sandbox with `openshell sandbox exec -n <name> -- e
 
 The proxy IP, port, and CA bundle paths are the source of two common in-sandbox failures:
 
-- TLS errors from `curl`, `python-requests`, `git`, or `node` usually mean the CA bundle has been overridden or the binary is not honoring the env vars above. Check `cat /etc/openshell-tls/ca-bundle.pem` from inside the sandbox and confirm the binary in question reads `SSL_CERT_FILE` (or its equivalent).
-- Timeouts on outbound HTTP usually mean the destination is not in the active policy. Use `openshell policy get` on the host to see what is currently allowed, and `nemoclaw <name> policy-add` to add a preset.
+- TLS errors from `curl`, `python-requests`, `git`, or `node` usually mean the CA bundle has been overridden or the binary is not honoring the env vars above.
+  Check `cat /etc/openshell-tls/ca-bundle.pem` from inside the sandbox and confirm the binary in question reads `SSL_CERT_FILE` (or its equivalent).
+- Timeouts on outbound HTTP usually mean the destination is not in the active policy.
+  Use `openshell policy get` on the host to see what is currently allowed, and `nemoclaw <name> policy-add` to add a preset.
 
 ## NemoHermes Alias
 
