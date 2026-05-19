@@ -7,6 +7,9 @@
 #   messaging-providers-e2e  Validates messaging credential provider/placeholder/L7-proxy chain
 #                            for Telegram + Discord + Slack. Uses fake tokens. Slack additionally
 #                            exercises OpenShell provider-shaped alias resolution (#2085 follow-up).
+#   openclaw-slack-pairing-e2e
+#                            Validates hermetic Slack Socket Mode pairing request approval across
+#                            gateway and connect-shell OpenClaw state roots (#3730/#3737).
 #   messaging-compatible-endpoint-e2e
 #                            Validates Telegram + OpenAI-compatible endpoint inference routing
 #                            through inference.local with a hermetic local mock (#2766).
@@ -66,6 +69,7 @@ on:
           Comma-separated job names to run (empty = all).
           Valid: cloud-e2e, cloud-onboard-e2e, cloud-inference-e2e,
           skill-agent-e2e, docs-validation-e2e, messaging-providers-e2e,
+          openclaw-slack-pairing-e2e,
           messaging-compatible-endpoint-e2e,
           kimi-inference-compat-e2e,
           token-rotation-e2e, sandbox-survival-e2e,
@@ -295,10 +299,10 @@ jobs:
           bash test/e2e/test-docs-validation.sh
 
   # ── Messaging Providers E2E ──────────────────────────────────
-  # Validates the full provider/placeholder/L7-proxy chain for messaging
-  # credentials (Telegram, Discord). Uses fake tokens by default — the L7
-  # proxy rewrites placeholders and the real API returns 401, proving the
-  # chain works. See: PR #1081
+  # Validates the full provider/placeholder/L7-proxy chain for token-backed
+  # messaging credentials, and the QR-only WhatsApp config/policy/no-provider
+  # path. Uses fake tokens by default — the L7 proxy rewrites placeholders and
+  # the real API returns 401, proving the chain works. See: PR #1081
   messaging-providers-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -306,7 +310,7 @@ jobs:
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',messaging-providers-e2e,'))
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -332,7 +336,46 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: install-log-messaging-providers
-          path: /tmp/nemoclaw-e2e-install.log
+          path: |
+            /tmp/nemoclaw-e2e-install.log
+            /tmp/nemoclaw-e2e-whatsapp-*.log
+          if-no-files-found: ignore
+
+  # ── OpenClaw Slack Pairing E2E (#3730/#3737) ──────────────────
+  # Hermetic Socket Mode inbound event + chat.postMessage reply path, then
+  # connect-shell `openclaw pairing approve slack <code>` against shared state.
+  openclaw-slack-pairing-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openclaw-slack-pairing-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run OpenClaw Slack pairing E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_POLICY_TIER: "open"
+          NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-slack-pairing"
+          GITHUB_TOKEN: ${{ github.token }}
+          SLACK_BOT_TOKEN: "xoxb-fake-slack-pairing-e2e"
+          SLACK_APP_TOKEN: "xapp-fake-slack-pairing-e2e"
+        run: bash test/e2e/test-openclaw-slack-pairing.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: install-log-openclaw-slack-pairing
+          path: /tmp/nemoclaw-e2e-openclaw-slack-pairing-install.log
           if-no-files-found: ignore
 
   # ── Messaging + compatible endpoint regression (#2766) ───────
@@ -375,7 +418,7 @@ jobs:
   # Regression coverage for #3453 (stop must disable across rebuild), #3381
   # (start must re-attach from cached credentials), and #3671 (remove must
   # detach/delete providers and survive rebuild with token env still present).
-  # Exercises OpenClaw and Hermes across telegram, discord, wechat, and slack.
+  # Exercises OpenClaw and Hermes across telegram, discord, wechat, slack, and whatsapp.
   channels-stop-start-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -2029,6 +2072,7 @@ jobs:
         skill-agent-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
+        openclaw-slack-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
@@ -2122,6 +2166,7 @@ jobs:
         skill-agent-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
+        openclaw-slack-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
@@ -2272,6 +2317,7 @@ jobs:
         skill-agent-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
+        openclaw-slack-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
@@ -2330,6 +2376,17 @@ jobs:
             // ── Gather results from the current run's needs context ─
             const needs = ${{ toJSON(needs) }};
             const today = formatDate(new Date());
+            const isDispatch = context.eventName === 'workflow_dispatch';
+            const requestedJobsRaw = isDispatch ? '${{ inputs.jobs }}'.trim() : '';
+            const requestedJobs = requestedJobsRaw
+              ? requestedJobsRaw.split(',').map((name) => name.trim()).filter(Boolean)
+              : [];
+            const isSelectiveDispatch = isDispatch && requestedJobs.length > 0;
+            const runMode = isSelectiveDispatch
+              ? 'Selective dispatch'
+              : isDispatch
+                ? 'Manual full run'
+                : 'Scheduled full nightly';
 
             const entries = Object.entries(needs).filter(([name]) => !EXCLUDED_JOBS.has(name));
             let success = 0;
@@ -2356,45 +2413,49 @@ jobs:
 
             // ── Fetch prior-day run for trend comparison ────────────
             let trendLine = '';
-            try {
-              const WORKFLOW_FILE = 'nightly-e2e.yaml';
-              const now = new Date();
-              const since48h = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
-              const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+            if (isSelectiveDispatch) {
+              trendLine = 'Trend: ⊘ Not shown for selective dispatches';
+            } else {
+              try {
+                const WORKFLOW_FILE = 'nightly-e2e.yaml';
+                const now = new Date();
+                const since48h = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
+                const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
 
-              const { data } = await github.rest.actions.listWorkflowRuns({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: WORKFLOW_FILE,
-                created: `>=${since48h}`,
-                per_page: 50,
-              });
+                const { data } = await github.rest.actions.listWorkflowRuns({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: WORKFLOW_FILE,
+                  created: `>=${since48h}`,
+                  per_page: 50,
+                });
 
-              // Find completed scheduled runs from 24–48h ago
-              const priorRuns = data.workflow_runs.filter(r =>
-                r.status === 'completed' &&
-                r.event === 'schedule' &&
-                new Date(r.created_at) < new Date(since24h)
-              );
+                // Find completed scheduled runs from 24–48h ago
+                const priorRuns = data.workflow_runs.filter(r =>
+                  r.status === 'completed' &&
+                  r.event === 'schedule' &&
+                  new Date(r.created_at) < new Date(since24h)
+                );
 
-              if (priorRuns.length > 0) {
-                // Check the most recent prior run
-                const priorRun = priorRuns[0];
-                const priorPerfect = priorRun.conclusion === 'success';
-                if (perfect && priorPerfect) {
-                  trendLine = 'Trend: ➡️ Stable (perfect both days)';
-                } else if (perfect && !priorPerfect) {
-                  trendLine = 'Trend: ↗️ Improving (yesterday had failures → today perfect)';
-                } else if (!perfect && priorPerfect) {
-                  trendLine = 'Trend: ↘️ Degrading (yesterday perfect → today has failures)';
+                if (priorRuns.length > 0) {
+                  // Check the most recent prior run
+                  const priorRun = priorRuns[0];
+                  const priorPerfect = priorRun.conclusion === 'success';
+                  if (perfect && priorPerfect) {
+                    trendLine = 'Trend: ➡️ Stable (perfect both days)';
+                  } else if (perfect && !priorPerfect) {
+                    trendLine = 'Trend: ↗️ Improving (yesterday had failures → today perfect)';
+                  } else if (!perfect && priorPerfect) {
+                    trendLine = 'Trend: ↘️ Degrading (yesterday perfect → today has failures)';
+                  } else {
+                    trendLine = 'Trend: ➡️ Stable (failures both days)';
+                  }
                 } else {
-                  trendLine = 'Trend: ➡️ Stable (failures both days)';
+                  trendLine = 'Trend: ⊘ No prior-day data for comparison';
                 }
-              } else {
-                trendLine = 'Trend: ⊘ No prior-day data for comparison';
+              } catch (e) {
+                trendLine = `Trend: ⊘ Could not fetch prior-day data (${e.message})`;
               }
-            } catch (e) {
-              trendLine = `Trend: ⊘ Could not fetch prior-day data (${e.message})`;
             }
 
             // ── Build scorecard ─────────────────────────────────────
@@ -2402,12 +2463,20 @@ jobs:
             const lines = [
               `## 🌅 NemoClaw Nightly Scorecard — ${today}`,
               '',
+              `**Run mode:** ${runMode}`,
+            ];
+
+            if (isSelectiveDispatch) {
+              lines.push(`**Requested jobs:** ${requestedJobs.map((name) => `\`${name}\``).join(', ')}`);
+            }
+
+            lines.push(
               `**Jobs run:** ${ran} of ${total}`,
               `  ✅ ${success} passed`,
               `  ❌ ${failure} failed`,
               `  ⊘  ${cancelled} cancelled`,
               `  ⏭️  ${skipped} skipped`,
-            ];
+            );
 
             if (failedJobs.length > 0) {
               lines.push('');

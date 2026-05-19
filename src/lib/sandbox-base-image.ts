@@ -36,6 +36,8 @@ export type SandboxBaseImageResolution = {
   glibcVersion: string | null;
 };
 
+const BASE_IMAGE_INPUT_PATHS = ["Dockerfile.base", "nemoclaw-blueprint/blueprint.yaml"];
+
 /**
  * Combine stderr + stdout from a captured `dockerBuild` failure and pass them
  * through the runner's redaction so secrets in build output never reach the
@@ -113,6 +115,93 @@ export function getSourceShortShaTags(rootDir = ROOT, env: NodeJS.ProcessEnv = p
   if (git.status === 0) push(git.stdout);
 
   return Array.from(new Set(values));
+}
+
+function gitStatus(rootDir: string, args: string[], env: NodeJS.ProcessEnv = process.env): number | null {
+  const git = spawnSync("git", ["-C", rootDir, ...args], {
+    encoding: "utf-8",
+    stdio: "ignore",
+    timeout: 5_000,
+    env,
+  });
+  return git.status;
+}
+
+function gitRefExists(rootDir: string, ref: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return gitStatus(rootDir, ["rev-parse", "--verify", `${ref}^{commit}`], env) === 0;
+}
+
+function gitFetchRemoteBranch(
+  rootDir: string,
+  remote: string,
+  branch: string,
+  localRef: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const normalizedBranch = String(branch || "").trim();
+  if (!normalizedBranch) return;
+
+  spawnSync(
+    "git",
+    [
+      "-C",
+      rootDir,
+      "fetch",
+      "--no-tags",
+      "--depth=1",
+      remote,
+      `+refs/heads/${normalizedBranch}:${localRef}`,
+    ],
+    {
+      encoding: "utf-8",
+      stdio: "ignore",
+      timeout: 30_000,
+      env: { ...env, GIT_TERMINAL_PROMPT: "0" },
+    },
+  );
+}
+
+function gitHasPathDiff(
+  rootDir: string,
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): boolean | null {
+  const status = gitStatus(rootDir, [...args, "--", ...BASE_IMAGE_INPUT_PATHS], env);
+  if (status === 0) return false;
+  if (status === 1) return true;
+  return null;
+}
+
+export function baseImageInputsChangedSinceMain(
+  rootDir = ROOT,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const worktreeDiff = gitHasPathDiff(rootDir, ["diff", "--quiet"], env);
+  if (worktreeDiff === true) return true;
+
+  const stagedDiff = gitHasPathDiff(rootDir, ["diff", "--cached", "--quiet"], env);
+  if (stagedDiff === true) return true;
+
+  const baseBranch = String(env.GITHUB_BASE_REF || "main").trim() || "main";
+  const baseRemoteRef = `origin/${baseBranch}`;
+  if (!gitRefExists(rootDir, baseRemoteRef, env)) {
+    gitFetchRemoteBranch(rootDir, "origin", baseBranch, `refs/remotes/origin/${baseBranch}`, env);
+  }
+
+  const candidates = [
+    baseRemoteRef,
+    "origin/main",
+    "upstream/main",
+    "main",
+  ].filter((ref): ref is string => !!ref);
+
+  for (const ref of Array.from(new Set(candidates))) {
+    if (!gitRefExists(rootDir, ref, env)) continue;
+    const diff = gitHasPathDiff(rootDir, ["diff", "--quiet", ref, "HEAD"], env);
+    if (diff != null) return diff;
+  }
+
+  return false;
 }
 
 function localBuildAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -263,6 +352,18 @@ export function resolveSandboxBaseImage(
       const imageRef = `${options.imageName}:${tag}`;
       const resolved = resolvePulledCandidate(options.imageName, imageRef, "source-sha", options);
       if (resolved) return resolved;
+    }
+
+    if (baseImageInputsChangedSinceMain(options.rootDir || ROOT, env)) {
+      const local = resolveLocalCandidate(options);
+      if (local) return local;
+      // The base Dockerfile changed, so fail closed instead of silently using stale :latest.
+      return {
+        ref: options.localTag,
+        digest: null,
+        source: "local",
+        glibcVersion: null,
+      };
     }
 
     const latestRef = `${options.imageName}:${SANDBOX_BASE_TAG}`;

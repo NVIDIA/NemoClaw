@@ -1,6 +1,6 @@
 ---
 title:
-  page: "NemoClaw Troubleshooting Guide"
+  page: "Troubleshooting"
   nav: "Troubleshooting"
 description:
   main: "Diagnose and resolve common NemoClaw installation, onboarding, and runtime issues."
@@ -151,7 +151,7 @@ If the L4T version is not recognized, the setup step is skipped and the installe
 
 Some corporate networks block outbound UDP port 53 to public DNS servers and force all host name resolution through DNS over TLS on TCP port 853. Containers do not inherit the host's DNS-over-TLS configuration, so the sandbox build's `npm ci` step times out trying to resolve `registry.npmjs.org` against `1.1.1.1` or `8.8.8.8`.
 
-NemoClaw's preflight runs a short `docker run --rm busybox nslookup registry.npmjs.org` probe before starting the sandbox build. When the probe confirms a DNS failure, onboarding stops with platform-specific remediation instead of hanging for ~15 minutes and printing a cryptic `Exit handler never called`.
+NemoClaw's preflight runs a short `docker run --rm busybox nslookup nemoclaw-dns-probe-<random>.invalid` probe before starting the sandbox build. The fresh `.invalid` name should return NXDOMAIN through a working resolver, so cached answers cannot hide blocked DNS egress. When the probe confirms a DNS failure, onboarding stops with platform-specific remediation instead of hanging for ~15 minutes and printing a cryptic `Exit handler never called`.
 
 The fix depends on your platform and runtime. Pick the matching path from the preflight output, apply it, then re-run `nemoclaw onboard`.
 
@@ -163,7 +163,7 @@ The fix depends on your platform and runtime. Pick the matching path from the pr
 Verify the fix worked:
 
 ```console
-$ docker run --rm busybox nslookup registry.npmjs.org
+$ docker run --rm busybox nslookup example.com
 ```
 
 When the lookup returns an answer, retry onboarding.
@@ -538,7 +538,8 @@ Follow these steps to reconnect.
    $ nemoclaw tunnel start
    ```
 
-   Telegram, Discord, and Slack are handled by OpenShell-managed channel messaging configured at onboarding, not by a separate bridge process from `nemoclaw tunnel start`. To pause a single bridge without destroying the sandbox, use `nemoclaw <name> channels stop <channel>`.
+   OpenShell-managed channel messaging handles Telegram, Discord, Slack, WeChat, and WhatsApp at onboarding, not through a separate bridge process from `nemoclaw tunnel start`.
+   To pause a single bridge without destroying the sandbox, use `nemoclaw <name> channels stop <channel>`.
 
 :::{admonition} If the sandbox does not recover
 :class: warning
@@ -735,7 +736,7 @@ $ nemoclaw <name> rebuild
 ### `openclaw channels add` or `remove` is blocked inside the sandbox
 
 This is expected.
-The messaging channel list is frozen into the sandbox's container image when the image is built during `nemoclaw onboard` or `nemoclaw rebuild` (the selected channel names are passed to the `docker build` as `NEMOCLAW_MESSAGING_CHANNELS_B64` and written into `/sandbox/.openclaw/openclaw.json` as part of the image).
+The messaging channel list is frozen into the sandbox's container image when the image is built during `nemoclaw onboard` or `nemoclaw rebuild` (the selected channel names are passed to the `docker build` as `NEMOCLAW_MESSAGING_CHANNELS_B64` and written into agent config such as `/sandbox/.openclaw/openclaw.json` for OpenClaw or `/sandbox/.hermes/.env` for Hermes).
 Changes made inside the running sandbox do not persist across rebuilds, so `openclaw channels` commands that mutate the config are intercepted.
 NemoClaw's sandbox entrypoint installs a guard that intercepts `openclaw channels <add|remove>` and prints an actionable error pointing at the host-side commands below, instead of letting the call fail deep in the binary with a raw `EACCES` trace.
 
@@ -743,12 +744,17 @@ Run the equivalent host-side command instead:
 
 ```console
 $ nemoclaw <sandbox> channels list
-$ nemoclaw <sandbox> channels add <telegram|discord|slack>
-$ nemoclaw <sandbox> channels remove <telegram|discord|slack>
+$ nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>
+$ nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
 ```
 
 `channels add` registers credentials with the OpenShell gateway and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
+
+WhatsApp pairs entirely inside the sandbox.
+NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes after you add the channel on the host.
+Run `openclaw channels login --channel whatsapp` inside OpenClaw sandboxes, or run `hermes whatsapp` inside Hermes sandboxes.
+WeChat captures its token via a host-side QR during the host-side `nemoclaw <sandbox> channels add wechat` flow, so it does not need an in-sandbox `channels login` step.
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
@@ -1048,6 +1054,9 @@ $ openshell gateway start
 GPU passthrough is not CI-tested on DGX Spark.
 It is expected to work when you pass `--gpu` and the NVIDIA Container Toolkit is configured.
 Verify the toolkit is configured by running `docker run --rm --runtime=nvidia --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi` from the host.
+If `nvidia-smi` works on the host but onboarding says GPU passthrough was not enabled, install or repair the NVIDIA Container Toolkit, then run `sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`.
+If a reusable gateway was previously started without GPU passthrough, NemoClaw replaces it automatically only when no other registered sandboxes depend on it, or when `--recreate-sandbox` is recreating the only registered sandbox with the same name.
+When shared gateway cleanup would be unsafe, follow the targeted destroy or gateway-removal commands printed by onboarding.
 
 ### `unresolvable CDI devices nvidia.com/gpu=all` during gateway start
 
@@ -1202,7 +1211,8 @@ Skills are blocked for one of three reasons.
 Skills that require macOS-only binaries cannot be enabled on Brev.
 Skills that require additional CLI binaries require a custom sandbox image rebuild.
 
-For credentials, use the supported host-side setup flow. Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack>` for messaging channels.
+For credentials, use the supported host-side setup flow.
+Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack|wechat|whatsapp>` for messaging channels.
 To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
 
 ```console

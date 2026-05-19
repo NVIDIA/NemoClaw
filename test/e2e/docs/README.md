@@ -25,6 +25,20 @@ first, they are short and deliberately not redundant with prose:
 - [`../validation_suites/suites.yaml`](../validation_suites/suites.yaml)
   — ordered validation steps, each with a `requires_state` predicate.
 
+## Layered scenario model
+
+The E2E source of truth is layered as base environment, onboarding profile,
+test plan, expected state, and post-onboard suites. Test plans can also declare
+onboarding assertions that run after install/onboard and before expected-state
+validation.
+
+Plan-only resolution accepts either an alias or a test plan ID:
+
+```bash
+bash test/e2e/runtime/run-scenario.sh ubuntu-repo-cloud-openclaw --plan-only
+bash test/e2e/runtime/run-scenario.sh ubuntu-repo-docker__cloud-nvidia-openclaw --plan-only
+```
+
 ## How to run
 
 ```bash
@@ -71,23 +85,13 @@ unchanged during the migration.
 
 ## Legacy assertion inventory
 
-The generated inventory at `test/e2e/docs/parity-inventory.generated.json`
-is the auditable source of truth for legacy E2E `PASS:` / `FAIL:`
-assertions. Regenerate it after changing any `test/e2e/test-*.sh`
-entrypoint or `test/e2e/brev-e2e.test.ts`:
+The legacy assertion inventory is generated when `.github/workflows/e2e-parity-compare.yaml` produces a parity report. The workflow uploads `parity-inventory.generated.json` as an artifact under `.e2e/parity/`; normal feature PRs do not commit this generated inventory.
+
+Generate a local inventory when debugging migration coverage:
 
 ```bash
-npx tsx scripts/e2e/extract-legacy-assertions.ts
+npx tsx scripts/e2e/extract-legacy-assertions.ts --output /tmp/parity-inventory.generated.json
 ```
-
-Use `--check` to verify the committed inventory has no drift:
-
-```bash
-npx tsx scripts/e2e/extract-legacy-assertions.ts --check
-```
-
-Scripts with no extracted assertions remain listed with a review TODO so
-parity gaps are visible in diffs.
 
 `test/e2e/docs/parity-map.yaml` is the assertion-level migration map.
 Every inventory assertion must be classified as `mapped`, `deferred`, or
@@ -114,10 +118,6 @@ describe the required shape; `run-scenario.sh <id> --plan-only`
 validates your change without running anything destructive.
 
 When adding a suite assertion, emit or preserve a stable `PASS: <id>` /
-`FAIL: <id>` log line, add the legacy assertion mapping if one exists,
-regenerate the inventory, and re-run strict parity validation. Platform-
-specific scenarios such as GPU, macOS, WSL, Brev, or DGX Spark must also
-list `runner_requirements` in `scenarios.yaml`.
+`FAIL: <id>` log line, add the legacy assertion mapping if one exists, and use the dedicated parity workflow to regenerate inventory/report artifacts. Platform-specific scenarios such as GPU, macOS, WSL, Brev, or DGX Spark must also list `runner_requirements` in `scenarios.yaml`.
 
-New legacy-style `test-*.sh` scripts are blocked by
-`scripts/e2e/lint-conventions.ts` — migrate into the matrix instead.
+Prefer new scenario-matrix coverage over new legacy-style `test-*.sh` scripts. Normal PR lint no longer blocks feature work on global parity-map bookkeeping; use the parity workflow when intentionally advancing migration coverage.

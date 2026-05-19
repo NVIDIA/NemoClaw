@@ -2,9 +2,32 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { HermesBuildSettings } from "./build-env.ts";
+import {
+  applyManagedToolConfig,
+  loadManagedToolGatewayMatrix,
+} from "./managed-tool-gateway.ts";
 import { buildDiscordConfig } from "./messaging-config.ts";
 
+const API_SERVER_TOOLSETS = [
+  "web",
+  "browser",
+  "terminal",
+  "file",
+  "code_execution",
+  "vision",
+  "image_gen",
+  "skills",
+  "todo",
+  "memory",
+  "session_search",
+  "delegation",
+  "cronjob",
+  "nemoclaw",
+  "audio",
+];
+
 export function buildHermesConfig(settings: HermesBuildSettings): Record<string, unknown> {
+  const apiServerToolsets = [...API_SERVER_TOOLSETS];
   const config: Record<string, unknown> = {
     _config_version: 12,
     model: {
@@ -31,6 +54,12 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
       compact: false,
       tool_progress: "all",
     },
+    plugins: {
+      enabled: ["nemoclaw"],
+    },
+    platform_toolsets: {
+      api_server: apiServerToolsets,
+    },
   };
 
   // Hermes v2026.4.23 reads Discord behavior from top-level `discord:`.
@@ -38,6 +67,23 @@ export function buildHermesConfig(settings: HermesBuildSettings): Record<string,
   // real secrets or credential placeholders under platforms.discord.
   if (settings.messaging.enabledChannels.has("discord")) {
     config.discord = buildDiscordConfig(settings.messaging.discordGuilds);
+  }
+
+  if (settings.managedToolGateways.brokerEnabled) {
+    const matrix = loadManagedToolGatewayMatrix();
+    for (const preset of settings.managedToolGateways.presets) {
+      const entry = matrix[preset];
+      if (!entry) {
+        throw new Error(`Unknown Hermes managed-tool gateway preset: ${preset}`);
+      }
+      applyManagedToolConfig(config, entry.config);
+    }
+    if (
+      settings.managedToolGateways.presets.includes("nous-audio") &&
+      !apiServerToolsets.includes("tts")
+    ) {
+      apiServerToolsets.push("tts");
+    }
   }
 
   const telegramConfig = settings.messaging.telegramConfig;

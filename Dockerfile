@@ -282,8 +282,9 @@ ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # so the L7 proxy can rewrite them at egress. Default: empty list.
 ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 # Base64-encoded JSON map of channel→allowed sender IDs for DM allowlisting
-# (e.g. {"telegram":["123456789"]}). Channels with IDs get dmPolicy=allowlist;
-# channels without IDs keep the OpenClaw default (pairing). Default: empty map.
+# (e.g. {"telegram":["123456789"]}). Channels with IDs get dmPolicy=allowlist.
+# Slack also uses those IDs for channel @mention allowlisting. Channels without
+# IDs keep the OpenClaw default (pairing). Default: empty map.
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 # Base64-encoded JSON map of Discord guild configs keyed by server ID
 # (e.g. {"1234567890":{"requireMention":true,"users":["555"]}}).
@@ -381,19 +382,8 @@ USER sandbox
 # list of env vars and derivation rules.
 RUN python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
 
-# TEMPORARY: install the WeChat plugin here (was moved to Dockerfile.base in
-# e23486b but the wholesale rewrite by generate-openclaw-config.py above
-# blew away plugins.installs.openclaw-weixin from base's openclaw.json,
-# leaving the plugin unloadable at runtime and taking Telegram down with it).
-# Running the install AFTER generate-openclaw-config.py merges the registry
-# entry into the freshly-written config. Seed the per-account state right
-# after so the bridge picks up the captured iLink session.
 # hadolint ignore=DL3059,DL4006
-RUN (openclaw doctor --fix > /dev/null 2>&1 || true) \
-    && openclaw plugins install \
-        '@tencent-weixin/openclaw-weixin@2.4.2' --pin \
-    && openclaw config set plugins.entries.openclaw-weixin.enabled true \
-    && python3 /usr/local/lib/nemoclaw/seed-wechat-accounts.py
+RUN openclaw doctor --fix --non-interactive
 
 # Lock down npm: no further registry traffic in this image. Everything past
 # this point must resolve from local sources only.

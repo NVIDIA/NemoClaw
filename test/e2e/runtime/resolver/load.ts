@@ -70,6 +70,9 @@ function validateScenarios(doc: Record<string, unknown>, file: string): Scenario
         `scenario ${id} uses array-form 'expected_states'; use singular 'expected_state'`,
       );
     }
+    if (typeof e.alias_for_plan === "string") {
+      continue;
+    }
     if (typeof e.expected_state !== "string") {
       throw new Error(`scenario ${id} must declare a string 'expected_state'`);
     }
@@ -82,6 +85,22 @@ function validateScenarios(doc: Record<string, unknown>, file: string): Scenario
         e.runner_requirements.some((requirement) => typeof requirement !== "string")
       ) {
         throw new Error(`scenario ${id}.runner_requirements must be a list of strings`);
+      }
+    }
+    if ("skipped_capabilities" in e) {
+      if (
+        !Array.isArray(e.skipped_capabilities) ||
+        e.skipped_capabilities.some((skip) => {
+          if (!skip || typeof skip !== "object" || Array.isArray(skip)) return true;
+          const s = skip as Record<string, unknown>;
+          return (
+            typeof s.id !== "string" ||
+            typeof s.reason !== "string" ||
+            ("suites" in s && (!Array.isArray(s.suites) || s.suites.some((suite) => typeof suite !== "string")))
+          );
+        })
+      ) {
+        throw new Error(`scenario ${id}.skipped_capabilities must list {id, reason, suites?}`);
       }
     }
     const dims = e.dimensions as Record<string, unknown> | undefined;

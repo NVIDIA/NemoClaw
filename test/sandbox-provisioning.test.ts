@@ -116,6 +116,13 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       expect(fs.statSync(openclawDir).isDirectory()).toBe(true);
       expect(fs.statSync(path.join(openclawDir, "exec-approvals.json")).isFile()).toBe(true);
       expect(fs.statSync(path.join(openclawDir, "update-check.json")).isFile()).toBe(true);
+      for (const dir of ["credentials", "devices", "identity", "logs", "telegram"]) {
+        const stateDir = path.join(openclawDir, dir);
+        expect(fs.statSync(stateDir).isDirectory()).toBe(true);
+        expect(fs.lstatSync(stateDir).isSymbolicLink()).toBe(false);
+        expect(fs.statSync(stateDir).mode & 0o020).toBe(0o020);
+        expect(fs.statSync(stateDir).mode & 0o2000).toBe(0o2000);
+      }
       expect(fs.existsSync(path.join(sandboxRoot, ".openclaw-data"))).toBe(false);
       expect(fs.lstatSync(path.join(openclawDir, "exec-approvals.json")).isSymbolicLink()).toBe(
         false,
@@ -479,9 +486,14 @@ describe("Hermes sandbox provisioning", () => {
         expect(run.result.status).toBe(0);
         const hermesDir = path.join(run.sandboxRoot, ".hermes");
         expect((fs.statSync(hermesDir).mode & 0o777).toString(8)).toBe("750");
-        for (const dir of ["logs", "cache"]) {
+        for (const dir of ["logs", "cache", "platforms"]) {
           expect((fs.statSync(path.join(hermesDir, dir)).mode & 0o777).toString(8)).toBe("770");
         }
+        expect((fs.statSync(path.join(hermesDir, "platforms")).mode & 0o7777).toString(8)).toBe(
+          "2770",
+        );
+        const whatsappSessionDir = path.join(hermesDir, "platforms", "whatsapp", "session");
+        expect((fs.statSync(whatsappSessionDir).mode & 0o7777).toString(8)).toBe("2770");
         expect((fs.statSync(path.join(hermesDir, "runtime")).mode & 0o7777).toString(8)).toBe(
           "2770",
         );
