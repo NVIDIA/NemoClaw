@@ -7,7 +7,6 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const EXPECTED_OPENCLAW_VERSION = "2026.4.24";
 const MARKER = "/* nemoclaw compact tool catalog (#2600) */";
 const ALL_CUSTOM_TOOLS_PATTERN =
   "\t\t\tconst allCustomTools = [...customTools, ...clientToolDefs];";
@@ -240,11 +239,6 @@ function patchSelectionText(source, filePath) {
 function patchOpenClawToolCatalog(distDir) {
   const resolvedDist = path.resolve(distDir);
   const version = readOpenClawVersion(resolvedDist);
-  if (version !== EXPECTED_OPENCLAW_VERSION) {
-    throw new Error(
-      `OpenClaw compact tool catalog patch is pinned to ${EXPECTED_OPENCLAW_VERSION}, found ${version}`,
-    );
-  }
 
   const selectionFiles = listSelectionFiles(resolvedDist);
   if (selectionFiles.length === 0) {
@@ -264,9 +258,9 @@ function patchOpenClawToolCatalog(distDir) {
   const { patched, text } = patchSelectionText(source, target);
   if (patched) {
     fs.writeFileSync(target, text);
-    return { status: "patched", file: target };
+    return { status: "patched", file: target, version };
   }
-  return { status: "already-patched", file: target };
+  return { status: "already-patched", file: target, version };
 }
 
 function main(argv) {
@@ -277,7 +271,9 @@ function main(argv) {
   }
   try {
     const result = patchOpenClawToolCatalog(distDir);
-    console.log(`INFO: OpenClaw compact tool catalog ${result.status}: ${result.file}`);
+    console.log(
+      `INFO: OpenClaw compact tool catalog ${result.status}: ${result.file} (openclaw ${result.version})`,
+    );
     return 0;
   } catch (err) {
     console.error(`ERROR: ${err instanceof Error ? err.message : String(err)}`);
@@ -290,7 +286,6 @@ if (require.main === module) {
 }
 
 module.exports = {
-  EXPECTED_OPENCLAW_VERSION,
   MARKER,
   patchOpenClawToolCatalog,
   patchSelectionText,

@@ -150,7 +150,7 @@ function parseToolResult(result: any) {
 }
 
 describe("OpenClaw compact tool catalog patch", () => {
-  it("patches the pinned selection runtime once and fails closed on drift", () => {
+  it("patches compatible selection runtimes once and fails closed on shape drift", () => {
     const fixture = makeFixture();
     try {
       const first = runPatch(fixture.dist);
@@ -167,6 +167,16 @@ describe("OpenClaw compact tool catalog patch", () => {
       fs.rmSync(fixture.root, { recursive: true, force: true });
     }
 
+    const futureVersion = makeFixture({ version: "2026.5.1" });
+    try {
+      const result = runPatch(futureVersion.dist);
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("openclaw 2026.5.1");
+      expect(fs.readFileSync(futureVersion.selectionPath, "utf-8")).toContain(MARKER);
+    } finally {
+      fs.rmSync(futureVersion.root, { recursive: true, force: true });
+    }
+
     const changed = makeFixture({
       allCustomToolsLine: "\t\t\tconst allCustomTools = customTools.concat(clientToolDefs);",
     });
@@ -176,15 +186,6 @@ describe("OpenClaw compact tool catalog patch", () => {
       expect(result.stderr).toContain("Expected exactly one selection-*.js target, found 0");
     } finally {
       fs.rmSync(changed.root, { recursive: true, force: true });
-    }
-
-    const versionDrift = makeFixture({ version: "2026.4.25" });
-    try {
-      const result = runPatch(versionDrift.dist);
-      expect(result.status).toBe(1);
-      expect(result.stderr).toContain("pinned to 2026.4.24, found 2026.4.25");
-    } finally {
-      fs.rmSync(versionDrift.root, { recursive: true, force: true });
     }
   });
 
