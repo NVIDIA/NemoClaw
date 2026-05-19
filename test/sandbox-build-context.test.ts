@@ -73,6 +73,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.py"));
     writeFixture(path.join("scripts", "seed-wechat-accounts.py"));
+    writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.js"));
   }
 
   function expectStagedBlueprintModes(buildCtx: string) {
@@ -195,6 +196,9 @@ describe("sandbox build context staging", () => {
         true,
       );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "seed-wechat-accounts.py"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-tool-catalog.js"))).toBe(
+        true,
+      );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-init.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
     } finally {
