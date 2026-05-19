@@ -402,11 +402,16 @@ ENV NPM_CONFIG_OFFLINE=true \
     NPM_CONFIG_FUND=false
 
 # Install NemoClaw plugin into OpenClaw (local /opt/nemoclaw, no network).
+# This must fail the image build if registration fails; otherwise the sandbox
+# can boot with a discoverable plugin manifest but without the /nemoclaw runtime
+# command registered in the active Gateway.
 # Prune non-runtime metadata from staged bundled plugin dependencies before
 # this layer is committed; deleting it in a later layer would not reduce the
 # OCI image imported by k3s.
 # hadolint ignore=DL3059,DL4006
-RUN (openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true) \
+RUN openclaw plugins install /opt/nemoclaw \
+    && openclaw plugins enable nemoclaw \
+    && openclaw plugins inspect nemoclaw --json > /dev/null \
     && if [ -d /sandbox/.openclaw/plugin-runtime-deps ]; then \
         find /sandbox/.openclaw/plugin-runtime-deps -type f \( \
             -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o \
