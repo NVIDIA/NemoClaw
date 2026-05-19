@@ -5,6 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
+import { loadAgent, type AgentDefinition } from "../../agent/defs";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { hashCredential } from "../../security/credential-hash";
 import { getCredential, prompt as askPrompt } from "../../credentials/store";
@@ -24,6 +25,7 @@ import { rebuildSandbox } from "./rebuild";
 import {
   type ChannelDef,
   KNOWN_CHANNELS,
+  channelUsesInSandboxQrPairing,
   clearChannelTokens,
   getChannelDef,
   getChannelTokenKeys,
@@ -249,10 +251,23 @@ export function listSandboxPolicies(sandboxName: string) {
 
 // ── Messaging channels ───────────────────────────────────────────
 
+function resolveAgentForSandbox(sandboxName: string): AgentDefinition {
+  const entry = registry.getSandbox(sandboxName);
+  const agentName = entry?.agent || "openclaw";
+  return loadAgent(agentName);
+}
+
+function channelSupportedByAgent(channelName: string, agent: AgentDefinition): boolean {
+  const supported = agent.messagingPlatforms;
+  return !Array.isArray(supported) || supported.length === 0 || supported.includes(channelName);
+}
+
 export function listSandboxChannels(sandboxName: string) {
+  const agent = resolveAgentForSandbox(sandboxName);
   console.log("");
   console.log(`  Known messaging channels for sandbox '${sandboxName}':`);
   for (const [name, channel] of Object.entries(KNOWN_CHANNELS)) {
+    if (!channelSupportedByAgent(name, agent)) continue;
     console.log(`    ${name} — ${channel.description}`);
   }
   console.log("");
@@ -280,23 +295,25 @@ async function applyChannelAddToGatewayAndRegistry(
   channelName: string,
   acquired: Record<string, string>,
 ): Promise<void> {
-  const recovery = await recoverNamedGatewayRuntime();
-  if (!recovery.recovered) {
-    console.error(
-      `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Tokens were staged`,
-    );
-    console.error("  in env for this run only — re-run after starting the gateway, or run");
-    console.error("  'openshell gateway start --name nemoclaw' manually.");
-    process.exit(1);
-  }
   const tokenDefs = Object.entries(acquired).map(([envKey, token]) => ({
     name: bridgeProviderName(sandboxName, channelName, envKey),
     envKey,
     token,
   }));
-  // upsertMessagingProviders handles create-or-update and process.exits on
-  // failure, so reaching the next line means every entry is registered.
-  onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
+  if (tokenDefs.length > 0) {
+    const recovery = await recoverNamedGatewayRuntime();
+    if (!recovery.recovered) {
+      console.error(
+        `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway. Tokens were staged`,
+      );
+      console.error("  in env for this run only — re-run after starting the gateway, or run");
+      console.error("  'openshell gateway start --name nemoclaw' manually.");
+      process.exit(1);
+    }
+    // upsertMessagingProviders handles create-or-update and process.exits on
+    // failure, so reaching the next line means every entry is registered.
+    onboardProviders.upsertMessagingProviders(tokenDefs, runOpenshell);
+  }
 
   // Persist the enabled-channels list in the registry so a deferred
   // `nemoclaw <sandbox> rebuild` knows the channel set without needing
@@ -327,15 +344,17 @@ async function applyChannelRemoveToGatewayAndRegistry(
   channelName: string,
   channelTokenKeys: string[],
 ): Promise<void> {
-  const recovery = await recoverNamedGatewayRuntime();
-  if (!recovery.recovered) {
-    console.error(
-      `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway to delete the bridge.`,
-    );
-    console.error(
-      "  Re-run after starting the gateway, or run 'openshell gateway start --name nemoclaw'.",
-    );
-    process.exit(1);
+  if (channelTokenKeys.length > 0) {
+    const recovery = await recoverNamedGatewayRuntime();
+    if (!recovery.recovered) {
+      console.error(
+        `  Could not reach the ${CLI_DISPLAY_NAME} OpenShell gateway to delete the bridge.`,
+      );
+      console.error(
+        "  Re-run after starting the gateway, or run 'openshell gateway start --name nemoclaw'.",
+      );
+      process.exit(1);
+    }
   }
 
   // Detach providers from the sandbox before deletion. openshell rejects
@@ -616,8 +635,34 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
   }
   const canonical = rawChannelArg.trim().toLowerCase();
 
+  const agent = resolveAgentForSandbox(sandboxName);
+  if (!channelSupportedByAgent(canonical, agent)) {
+    console.error(
+      `  Channel '${canonical}' is not supported by agent '${agent.name}' for sandbox '${sandboxName}'.`,
+    );
+    console.error(`  Supported channels: ${agent.messagingPlatforms.join(", ") || "(none)"}`);
+    process.exit(1);
+  }
+
   if (dryRun) {
     console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
+    return;
+  }
+
+  // QR-paired channels that own their session inside the sandbox have no
+  // host-side credential to acquire; register the bridge now and let the
+  // operator complete pairing after rebuild.
+  if (channelUsesInSandboxQrPairing(channel)) {
+    if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
+      process.exit(1);
+    }
+    await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
+    console.log("");
+    console.log(`  ${channel.help}`);
+    console.log(
+      `  ${G}✓${R} Enabled ${canonical} channel. Complete QR pairing from inside the sandbox after rebuild.`,
+    );
+    await promptAndRebuild(sandboxName, `add '${canonical}'`);
     return;
   }
 
@@ -645,10 +690,10 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
 // Must run before promptAndRebuild — the rebuild's backup manifest only
 // captures presets already applied (#3437). Without this, channel bridges
 // boot without egress to their upstream API after rebuild.
-function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): void {
+function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
   const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
   if (!builtinPresets.has(channelName)) {
-    return;
+    return true;
   }
   try {
     const applied = policies.applyPreset(sandboxName, channelName);
@@ -659,13 +704,16 @@ function applyChannelPresetIfAvailable(sandboxName: string, channelName: string)
       console.error(
         `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
       );
+      return false;
     }
+    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset: ${msg}`);
     console.error(
       `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
     );
+    return false;
   }
 }
 
@@ -726,18 +774,20 @@ export async function removeSandboxChannel(sandboxName: string, args: string[] =
   }
 
   clearChannelTokens(channel);
+  const tokenKeys = getChannelTokenKeys(channel);
   // Same rationale as channels-add: tear down the gateway providers and
   // drop the channel from the registry NOW so a deferred rebuild does
   // not leave a stale bridge running against a token NemoClaw has
   // already "removed" from the user's perspective.
-  await applyChannelRemoveToGatewayAndRegistry(
-    sandboxName,
-    canonical,
-    getChannelTokenKeys(channel),
-  );
-  console.log(`  ${G}✓${R} Removed ${canonical} bridge from the OpenShell gateway.`);
+  await applyChannelRemoveToGatewayAndRegistry(sandboxName, canonical, tokenKeys);
+  if (tokenKeys.length > 0) {
+    console.log(`  ${G}✓${R} Removed ${canonical} bridge from the OpenShell gateway.`);
+  } else {
+    console.log(`  ${G}✓${R} Removed ${canonical} channel.`);
+  }
 
   removeChannelPresetIfPresent(sandboxName, canonical);
+
 
   await promptAndRebuild(sandboxName, `remove '${canonical}'`);
 }

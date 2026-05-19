@@ -111,6 +111,7 @@ const MESSAGING_PRESET_LABELS: Record<string, string> = {
   discord: "Discord",
   slack: "Slack",
   wechat: "WeChat",
+  whatsapp: "WhatsApp",
 };
 
 function getMessagingPresetWarning(presetName: string): string | null {
@@ -119,8 +120,9 @@ function getMessagingPresetWarning(presetName: string): string | null {
   return [
     `Note: the '${presetName}' preset only opens network egress to the ${label} API.`,
     `To actually enable ${label} messaging, re-run 'nemoclaw onboard' and select ${label}`,
-    "in the messaging channels step. The bot token and channel bridge are wired",
-    "up at onboard time and are not added by applying this preset alone.",
+    "in the messaging channels step. Channel setup, pairing, and runtime",
+    "configuration are wired up at onboard time and are not added by applying",
+    "this preset alone.",
   ].join("\n  ");
 }
 

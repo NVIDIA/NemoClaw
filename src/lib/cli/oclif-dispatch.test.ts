@@ -79,6 +79,37 @@ describe("resolveLegacySandboxDispatch", () => {
     });
   });
 
+  it("rewrites the legacy exec action and forwards the user command verbatim", () => {
+    expect(
+      resolveLegacySandboxDispatch("alpha", "exec", [
+        "--",
+        "openclaw",
+        "agent",
+        "--agent",
+        "main",
+        "-m",
+        "hi",
+      ]),
+    ).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:exec",
+      args: ["alpha", "--", "openclaw", "agent", "--agent", "main", "-m", "hi"],
+    });
+  });
+
+  it("does not treat inner exec --help flags after the separator as NemoClaw help", () => {
+    expect(resolveLegacySandboxDispatch("alpha", "exec", ["--", "grep", "--help"])).toEqual({
+      kind: "oclif",
+      commandId: "sandbox:exec",
+      args: ["alpha", "--", "grep", "--help"],
+    });
+    expect(resolveLegacySandboxDispatch("alpha", "exec", ["--help"])).toEqual({
+      kind: "help",
+      commandId: "sandbox:exec",
+      publicUsage: "<name> exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]",
+    });
+  });
+
   it("rewrites legacy hyphenated actions to oclif-native command ids", () => {
     expect(resolveLegacySandboxDispatch("alpha", "policy-add", ["--from-file"])).toEqual({
       kind: "oclif",

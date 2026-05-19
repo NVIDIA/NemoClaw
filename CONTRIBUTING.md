@@ -76,8 +76,8 @@ These are the primary `make` and `npm` targets for day-to-day development:
 | `npm run typecheck:cli` | Type-check CLI TypeScript using `tsconfig.cli.json` (`bin/`, `scripts/`, `src/`, `test/`, `nemoclaw-blueprint/scripts/`) |
 | `npm test` | Run root-level tests (`test/*.test.js`) |
 | `cd nemoclaw && npm test` | Run plugin unit tests (Vitest) |
-| `make docs` | Build documentation (Sphinx/MyST) |
-| `make docs-live` | Serve docs locally with auto-rebuild |
+| `make docs` | Validate Fern documentation |
+| `make docs-live` | Serve Fern docs locally with auto-rebuild |
 | `npx prek run --all-files` | Run all hooks from `.pre-commit-config.yaml` — see below |
 
 ### Git hooks (prek)
@@ -123,7 +123,8 @@ The repository is organized as follows.
 | `bin/` | CLI entry point (`nemoclaw.js`) |
 | `scripts/` | Install helpers and automation scripts |
 | `test/` | Root-level integration tests |
-| `docs/` | User-facing documentation (Sphinx/MyST) |
+| `docs/` | User-facing documentation (Fern MDX plus legacy MyST source during migration) |
+| `fern/` | Fern site configuration, theme, and assets |
 
 ## Language Policy
 
@@ -142,9 +143,9 @@ During release prep, run that skill first, make any doc version bumps, regenerat
 
 To build and preview docs locally:
 
-```bash
-make docs       # build the docs
-make docs-live  # serve locally with auto-rebuild
+```console
+$ make docs       # validate the Fern docs
+$ make docs-live  # serve Fern docs locally with auto-rebuild
 ```
 
 See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full style guide and writing conventions.

@@ -65,7 +65,11 @@ const server = http.createServer((req, res) => {
     const authorization = req.headers.authorization || "";
     const expectedToken = expectedTokenForPath(pathname);
     const expectedAuthorization = `Bearer ${expectedToken}`;
-    const bodyToken = new URLSearchParams(body).get("token") || "";
+    const bodyParams = new URLSearchParams(body);
+    const bodyToken = bodyParams.get("token") || "";
+    const channel = bodyParams.get("channel") || "";
+    const text = bodyParams.get("text") || "";
+    const threadTs = bodyParams.get("thread_ts") || "";
     const tokenMatchesExpected = authorization === expectedAuthorization;
     const bodyMatchesExpected = bodyToken === expectedToken;
     const authAccepted = tokenMatchesExpected && bodyMatchesExpected;
@@ -87,7 +91,44 @@ const server = http.createServer((req, res) => {
       bodyTokenPresent: Boolean(bodyToken),
       authorizationRedacted: true,
       bodyRedacted: true,
+      ...(pathname === "/api/chat.postMessage"
+        ? {
+            channel,
+            text,
+            textLength: text.length,
+            threadTs,
+          }
+        : {}),
     });
+
+    if (pathname === "/api/chat.postMessage") {
+      res.writeHead(200, {
+        "content-type": "application/json",
+      });
+      res.end(
+        JSON.stringify(
+          authAccepted
+            ? {
+                ok: true,
+                channel,
+                ts: "1710000000.000200",
+                message: {
+                  type: "message",
+                  channel,
+                  text,
+                  ts: "1710000000.000200",
+                  ...(threadTs ? { thread_ts: threadTs } : {}),
+                },
+              }
+            : {
+                ok: false,
+                error: "bad_auth",
+                endpoint: pathname,
+              },
+        ),
+      );
+      return;
+    }
 
     res.writeHead(authAccepted ? 200 : 401, {
       "content-type": "application/json",

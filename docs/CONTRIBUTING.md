@@ -40,16 +40,16 @@ The current generated skills and their source pages are:
 
 | Skill | Source docs |
 |---|---|
-| `nemoclaw-user-overview` | `docs/about/overview.md`, `docs/about/ecosystem.md`, `docs/about/how-it-works.md`, `docs/about/release-notes.md` |
-| `nemoclaw-user-agent-skills` | `docs/resources/agent-skills.md` |
-| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.md`, `docs/deployment/install-openclaw-plugins.md`, `docs/deployment/sandbox-hardening.md` |
-| `nemoclaw-user-get-started` | `docs/get-started/prerequisites.md`, `docs/get-started/quickstart.md`, `docs/get-started/quickstart-hermes.md`, `docs/get-started/windows-preparation.md` |
-| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.md`, `docs/inference/use-local-inference.md`, `docs/inference/switch-inference-providers.md`, `docs/inference/set-up-sub-agent.md` |
-| `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.md`, `docs/manage-sandboxes/messaging-channels.md`, `docs/manage-sandboxes/workspace-files.md`, `docs/manage-sandboxes/backup-restore.md` |
-| `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.md` |
-| `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.md`, `docs/network-policy/integration-policy-examples.md`, `docs/network-policy/approve-network-requests.md` |
-| `nemoclaw-user-reference` | `docs/reference/architecture.md`, `docs/reference/commands.md`, `docs/reference/cli-selection-guide.md`, `docs/reference/network-policies.md`, `docs/reference/troubleshooting.md` |
-| `nemoclaw-user-configure-security` | `docs/security/best-practices.md`, `docs/security/credential-storage.md`, `docs/security/openclaw-controls.md` |
+| `nemoclaw-user-overview` | `docs/about/overview.mdx`, `docs/about/ecosystem.mdx`, `docs/about/how-it-works.mdx`, `docs/about/release-notes.mdx` |
+| `nemoclaw-user-agent-skills` | `docs/resources/agent-skills.mdx` |
+| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.mdx`, `docs/deployment/install-openclaw-plugins.mdx`, `docs/deployment/sandbox-hardening.mdx` |
+| `nemoclaw-user-get-started` | `docs/get-started/prerequisites.mdx`, `docs/get-started/quickstart.mdx`, `docs/get-started/quickstart-hermes.mdx`, `docs/get-started/windows-preparation.mdx` |
+| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.mdx`, `docs/inference/use-local-inference.mdx`, `docs/inference/switch-inference-providers.mdx`, `docs/inference/set-up-sub-agent.mdx` |
+| `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.mdx`, `docs/manage-sandboxes/messaging-channels.mdx`, `docs/manage-sandboxes/workspace-files.mdx`, `docs/manage-sandboxes/backup-restore.mdx` |
+| `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.mdx` |
+| `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.mdx`, `docs/network-policy/integration-policy-examples.mdx`, `docs/network-policy/approve-network-requests.mdx` |
+| `nemoclaw-user-reference` | `docs/reference/architecture.mdx`, `docs/reference/commands.mdx`, `docs/reference/cli-selection-guide.mdx`, `docs/reference/network-policies.mdx`, `docs/reference/troubleshooting.mdx` |
+| `nemoclaw-user-configure-security` | `docs/security/best-practices.mdx`, `docs/security/credential-storage.mdx`, `docs/security/openclaw-controls.mdx` |
 
 ### Regenerating NemoClaw User Skills after Doc Changes
 
@@ -62,13 +62,13 @@ For daily release prep, the NemoClaw maintainers use this sequence:
 
 1. Run the `nemoclaw-contributor-update-docs` skill for the day's release prep.
 2. Make doc version bumps by updating `versions1.json` and `project.json` in the `docs/` directory.
-3. Run `python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user`.
+3. Run `python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
 4. Create the PR with both docs and generated user skills.
 
 To regenerate skills manually during release prep, run from the repo root:
 
 ```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
+python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
 ```
 
 Always use this exact output path (`.agents/skills/`) and prefix (`nemoclaw-user`) so skill names and locations stay consistent.
@@ -76,7 +76,7 @@ Always use this exact output path (`.agents/skills/`) and prefix (`nemoclaw-user
 Preview what would change before writing files:
 
 ```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
+python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx --dry-run
 ```
 
 Other useful flags:
@@ -84,8 +84,9 @@ Other useful flags:
 | Flag | Purpose |
 |------|---------|
 | `--strategy <name>` | Grouping strategy: `smart` (default), `grouped`, or `individual`. |
+| `--doc-platform <name>` | Source format: `fern-mdx` for migrated Fern pages or `myst-md` for legacy Markdown. |
 | `--name-map CAT=NAME` | Override a generated skill name (e.g. `--name-map about=overview`). |
-| `--exclude <file>` | Skip specific files (e.g. `--exclude "release-notes.md"`). |
+| `--exclude <file>` | Skip specific files (e.g. `--exclude "release-notes.mdx"`). |
 
 ### How the Script Works
 
@@ -94,7 +95,7 @@ Within each group, the procedure page (`how_to`, `get_started`, or `tutorial`) w
 Sibling procedure pages, concept pages, and reference pages go into a `references/` subdirectory for progressive disclosure, keeping `SKILL.md` concise while preserving access to the full docs.
 
 Cross-references between doc pages are rewritten as skill-to-skill pointers so agents can navigate between skills.
-MyST/Sphinx directives are converted to standard markdown.
+Fern MDX components and MyST/Sphinx directives are converted to standard markdown.
 
 For full usage details and all flags, see the docstring at the top of `scripts/docs-to-skills.py`.
 
@@ -102,26 +103,28 @@ For full usage details and all flags, see the docstring at the top of `scripts/d
 
 Verify the docs are built correctly by building them and checking the output.
 
-To build the docs, run:
+The public site is built with Fern. To validate the Fern configuration and migrated MDX pages, run:
 
-```bash
-make docs
+```console
+$ make docs
 ```
 
 To serve the docs locally and automatically rebuild on changes, run:
 
-```bash
-make docs-live
+```console
+$ make docs-live
 ```
+
+Fern `.mdx` pages are the source for generated user skills. Legacy `.md` pages may remain temporarily for parity checks, but release-prep skill generation should pass `--doc-platform fern-mdx`.
 
 ## Doc-Only PR Verification
 
 Doc-only pull requests do not need the full test suite by default.
 Before opening a doc-only PR, run:
 
-```bash
-npx prek run --all-files
-make docs
+```console
+$ npx prek run --all-files
+$ make docs
 ```
 
 Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
@@ -131,18 +134,39 @@ Run the full tests only when the change also touches code, generated behavior, o
 
 ### Format
 
-- Docs use [MyST Markdown](https://myst-parser.readthedocs.io/), a Sphinx-compatible superset of CommonMark.
-- Every page starts with YAML frontmatter (title, description.main, description.agent, topics, tags, content type).
-- Include the SPDX license header after frontmatter:
+- Fern pages use MDX with YAML frontmatter. Use a flat `title`, `description`, optional `sidebar-title`, `description-agent`, `keywords`, and `position`.
+- Do not duplicate the page title as a body H1 in MDX pages because Fern renders the title from frontmatter.
+- The docs-to-skills pipeline treats Fern `description-agent` as the equivalent of legacy MyST `description.agent`.
+- Include the SPDX license header in MDX frontmatter as comments:
 
-  ```html
-  <!--
-    SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
-    SPDX-License-Identifier: Apache-2.0
-  -->
+  ```yaml
+  ---
+  # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  # SPDX-License-Identifier: Apache-2.0
+  title: "NemoClaw Page Title"
+  description: "One-sentence summary for readers, SEO, and doc search snippets."
+  description-agent: "Third-person verb summary for agent routing. Add 'Use when...' with trigger phrases."
+  ---
   ```
 
-### Frontmatter Template
+### MDX Frontmatter Template
+
+```yaml
+---
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "NemoClaw Page Title: Subtitle with Context"
+sidebar-title: "Short Nav Title"
+description: "One-sentence summary for readers, SEO, and doc search snippets."
+description-agent: "Third-person verb summary for agent routing. Add 'Use when...' with trigger phrases."
+keywords: "primary keyword, secondary keyword phrase"
+position: 1
+---
+```
+
+### Legacy Skill Frontmatter Template
+
+Use this nested shape only for legacy `.md` pages when running the pipeline with `--doc-platform myst-md`.
 
 ```yaml
 ---
@@ -171,10 +195,10 @@ For example, set the OpenClaw quickstart to `10` and the Hermes quickstart to `2
 
 ### Page Structure
 
-1. H1 heading matching the `title.page` value.
-2. A one- or two-sentence introduction stating what the page covers.
-3. Sections organized by task or concept, using H2 and H3. Start each section with an introductory sentence that orients the reader.
-4. A "Next Steps" section at the bottom linking to related pages.
+1. Start MDX pages with a one- or two-sentence introduction stating what the page covers.
+2. Organize sections by task or concept, using H2 and H3. Start each section with an introductory sentence that orients the reader.
+3. Use Fern components like `<Note>`, `<Tip>`, `<Warning>`, `<Cards>`, and `<Card>` for callouts and landing-page navigation.
+4. Add a "Next Steps" or "Related Topics" section at the bottom when it helps users continue.
 
 ## Style Guide
 
@@ -212,7 +236,8 @@ These patterns are common in LLM-generated text and erode trust with technical r
   ```
 
 - Use tables for structured comparisons. Keep tables simple (no nested formatting).
-- Use MyST admonitions (`:::{tip}`, `:::{note}`, `:::{warning}`) for callouts, not bold text.
+- Use Fern callout components (`<Note>`, `<Tip>`, `<Warning>`) for callouts in MDX pages, not bold text.
+- Use MyST admonitions (`:::{tip}`, `:::{note}`, `:::{warning}`) only in legacy `.md` pages that have not migrated yet.
 - Avoid nested admonitions.
 - Do not number section titles. Write "Deploy a Gateway" not "Section 1: Deploy a Gateway" or "Step 3: Verify."
 - Do not use colons in titles. Write "Deploy and Manage Gateways" not "Gateways: Deploy and Manage."

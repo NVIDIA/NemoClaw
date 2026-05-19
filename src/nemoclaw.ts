@@ -63,6 +63,16 @@ function hasHelpFlag(args: readonly string[]): boolean {
   return args.includes("--help") || args.includes("-h");
 }
 
+function argsBeforeSeparator(args: readonly string[]): readonly string[] {
+  const separatorIndex = args.indexOf("--");
+  return separatorIndex === -1 ? args : args.slice(0, separatorIndex);
+}
+
+function hasLegacySandboxHelpFlag(action: string, args: readonly string[]): boolean {
+  if (action !== "exec") return hasHelpFlag(args);
+  return hasHelpFlag(argsBeforeSeparator(args));
+}
+
 function findRegisteredSandboxName(tokens: string[]): string | null {
   const registered = new Set(
     registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name),
@@ -78,7 +88,7 @@ function printConnectOrderHint(candidate: string | null): void {
 }
 
 const VALID_SANDBOX_ACTIONS =
-  "connect, status, doctor, logs, policy-add, policy-remove, policy-list, hosts-add, hosts-list, hosts-remove, skill, snapshot, share, rebuild, recover, shields, config, channels, gateway-token, destroy";
+  "connect, exec, status, doctor, logs, policy-add, policy-remove, policy-list, hosts-add, hosts-list, hosts-remove, skill, snapshot, share, rebuild, recover, shields, config, channels, gateway-token, destroy";
 
 function printDispatchUsageError(
   result: Extract<DispatchResult, { kind: "usageError" }>,
@@ -185,7 +195,7 @@ async function main(argv: string[] = process.argv.slice(2)): Promise<void> {
   if (
     !normalized.connectHelpRequested &&
     sandboxActions.includes(requestedSandboxAction) &&
-    hasHelpFlag(requestedSandboxActionArgs)
+    hasLegacySandboxHelpFlag(requestedSandboxAction, requestedSandboxActionArgs)
   ) {
     validateName(cmd, "sandbox name");
     await runDispatchResult(

@@ -63,6 +63,11 @@ describe("onboard policy preset suggestions", () => {
         "slack",
         "discord",
       ]);
+      expect(getSuggestedPolicyPresets({ enabledChannels: ["whatsapp"] })).toEqual([
+        "pypi",
+        "npm",
+        "whatsapp",
+      ]);
     } finally {
       if (originalTelegramBotToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
       else process.env.TELEGRAM_BOT_TOKEN = originalTelegramBotToken;
@@ -70,6 +75,18 @@ describe("onboard policy preset suggestions", () => {
       else process.env.DISCORD_BOT_TOKEN = originalDiscordBotToken;
       if (originalSlackBotToken === undefined) delete process.env.SLACK_BOT_TOKEN;
       else process.env.SLACK_BOT_TOKEN = originalSlackBotToken;
+    }
+  });
+
+  it("never auto-detects WhatsApp because the channel has no host env key", () => {
+    const originalTelegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    try {
+      expect(getSuggestedPolicyPresets()).not.toContain("whatsapp");
+      expect(getSuggestedPolicyPresets({ provider: null })).not.toContain("whatsapp");
+    } finally {
+      if (originalTelegramBotToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+      else process.env.TELEGRAM_BOT_TOKEN = originalTelegramBotToken;
     }
   });
 

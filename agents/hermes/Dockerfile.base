@@ -15,7 +15,7 @@
 #   2. New apt package needed   — add it to the apt-get install list
 #   3. gosu upgrade             — update URL, checksum, and version
 #   4. node:22-trixie-slim digest rot — update-docker-pin.sh updates all
-#   5. New .hermes subdirectory — add mkdir below
+#   5. New .hermes subdirectory — add mkdir/chmod below
 # ────────────────────────────────────────────────────────────────
 
 FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
@@ -89,6 +89,9 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/profiles \
         /sandbox/.hermes/cache \
         /sandbox/.hermes/pairing \
+        /sandbox/.hermes/platforms \
+        /sandbox/.hermes/platforms/whatsapp \
+        /sandbox/.hermes/platforms/whatsapp/session \
         /sandbox/.hermes/runtime \
     && chown -R sandbox:sandbox /sandbox/.hermes \
     && chown gateway:sandbox /sandbox/.hermes/runtime \
@@ -106,7 +109,14 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/profiles \
         /sandbox/.hermes/cache \
         /sandbox/.hermes/pairing \
+        /sandbox/.hermes/platforms \
+        /sandbox/.hermes/platforms/whatsapp \
+        /sandbox/.hermes/platforms/whatsapp/session \
         /sandbox/.hermes/runtime \
+    && chmod 2770 \
+        /sandbox/.hermes/platforms \
+        /sandbox/.hermes/platforms/whatsapp \
+        /sandbox/.hermes/platforms/whatsapp/session \
     && chmod 2770 /sandbox/.hermes/runtime \
     && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \
         rm -f "/sandbox/.hermes/${name}"; \
@@ -134,8 +144,7 @@ RUN printf '%s\n' \
 
 # Install Hermes Agent from the selected GitHub release.
 # The image prebakes only the extras mapped to NemoClaw-supported onboarding
-# integrations: messaging (Telegram, Discord, Slack, WeChat — the WeChat
-# adapter shares the messaging extra's aiohttp + cryptography deps) and
+# integrations: messaging (Telegram, Discord, Slack, WeChat, WhatsApp) and
 # web (API health/UI runtime). New Hermes integrations should be installed
 # by the agent workflow when they are enabled rather than shipped in the
 # base image by default.

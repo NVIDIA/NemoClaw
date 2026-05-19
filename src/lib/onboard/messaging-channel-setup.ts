@@ -14,7 +14,7 @@ import { dispatchHostQrLogin } from "./host-qr-dispatch";
 type ChannelEntry = { name: string } & ChannelDef;
 
 const getMessagingToken = (envKey: string): string | null =>
-  getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
+  normalizeCredentialValue(process.env[envKey]) || getCredential(envKey) || null;
 
 const getMessagingConfigValue = (envKey: string): string | null =>
   normalizeMessagingChannelConfigValue(envKey, process.env[envKey]);
@@ -54,6 +54,13 @@ export async function setupSelectedMessagingChannels(
       }
       const suffix = outcome.summary ? ` (${outcome.summary})` : "";
       console.log(`  ✓ ${ch.name} token saved${suffix}`);
+    } else if (ch.loginMethod === "in-sandbox-qr") {
+      console.log("");
+      console.log(`  ${ch.help}`);
+      console.log(
+        `  ✓ ${ch.name} enabled — complete QR pairing from inside the sandbox after rebuild.`,
+      );
+      continue;
     } else {
       if (!channelHasStaticToken(ch)) continue;
       console.log("");

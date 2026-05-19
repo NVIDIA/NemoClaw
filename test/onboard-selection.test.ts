@@ -1298,7 +1298,7 @@ runner.runShell = (command, opts = {}) => {
         "[Install]",
         "WantedBy=multi-user.target",
         "",
-      ].join("\\n"),
+      ].join("\n"),
     };
   }
   const match = command.match(/(?:sudo(?: -n)? )?install -D -m 0644 '([^']+)'/);
@@ -1370,10 +1370,18 @@ const { setupNim } = require(${onboardPath});
 
     const repairedHost = 'Environment="OLLAMA_HOST=127.0.0.1:11434"';
     const oldHost = 'Environment="OLLAMA_HOST=0.0.0.0:11434"';
-    assert.ok(payload.installedBody.includes(oldHost), "existing override content is preserved");
+    assert.ok(payload.installedBody.includes(repairedHost), "loopback host should be installed");
     assert.ok(
-      payload.installedBody.lastIndexOf(repairedHost) > payload.installedBody.lastIndexOf(oldHost),
-      "loopback repair should override earlier OLLAMA_HOST settings",
+      !payload.installedBody.includes(oldHost),
+      "legacy 0.0.0.0 OLLAMA_HOST line should be removed, not just shadowed (#3342)",
+    );
+    assert.ok(
+      payload.installedBody.includes('Environment="OLLAMA_MODELS=/srv/ollama"'),
+      "non-OLLAMA_HOST settings should be preserved",
+    );
+    assert.ok(
+      payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'),
+      "other Environment= settings should be preserved",
     );
   });
 

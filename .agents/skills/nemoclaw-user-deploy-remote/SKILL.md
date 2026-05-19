@@ -39,8 +39,10 @@ If you are connecting from your local machine and still need to provision the re
 
 ## Step 2: Deploy the Instance
 
-> **Warning:** The `nemoclaw deploy` command is deprecated.
-> Prefer provisioning the remote host separately, then running the standard NemoClaw installer and `nemoclaw onboard` on that host.
+**Warning:**
+
+The `nemoclaw deploy` command is deprecated.
+Prefer provisioning the remote host separately, then running the standard NemoClaw installer and `nemoclaw onboard` on that host.
 
 Create a Brev instance and run the legacy compatibility flow:
 
@@ -104,13 +106,15 @@ $ nemoclaw deploy <instance-name>
 For SSH port-forwarding, the origin is typically `http://127.0.0.1:18789` (the
 default), so no extra configuration is needed.
 
-> **Warning:** On Brev, set `CHAT_UI_URL` in the launchable environment configuration so it is
-> available when the installer builds the sandbox image. If `CHAT_UI_URL` is not
-> set on a headless host, the compatibility wrapper prints a warning.
->
-> `NEMOCLAW_DISABLE_DEVICE_AUTH` is also evaluated at image build time.
-> When `CHAT_UI_URL` points at a non-loopback origin, NemoClaw disables OpenClaw device pairing in the generated sandbox configuration because browser-only remote users cannot complete terminal-based pairing.
-> Any device that can reach the configured dashboard origin can connect without pairing, so avoid exposing that origin on internet-reachable or shared-network deployments.
+**Warning:**
+
+On Brev, set `CHAT_UI_URL` in the launchable environment configuration so it is
+available when the installer builds the sandbox image. If `CHAT_UI_URL` is not
+set on a headless host, the compatibility wrapper prints a warning.
+
+`NEMOCLAW_DISABLE_DEVICE_AUTH` is also evaluated at image build time.
+When `CHAT_UI_URL` points at a non-loopback origin, NemoClaw disables OpenClaw device pairing in the generated sandbox configuration because browser-only remote users cannot complete terminal-based pairing.
+Any device that can reach the configured dashboard origin can connect without pairing, so avoid exposing that origin on internet-reachable or shared-network deployments.
 
 ## Step 7: First-Run Readiness Budget
 

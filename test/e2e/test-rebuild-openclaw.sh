@@ -375,7 +375,12 @@ fi
 # No credentials in backup
 BACKUP_DIR="$HOME/.nemoclaw/rebuild-backups/${SANDBOX_NAME}"
 if [ -d "$BACKUP_DIR" ]; then
-  CRED_LEAKS=$(find "$BACKUP_DIR" \( -name "*.json" -o -name "*.env" -o -name ".env" \) -exec grep -l "nvapi-\|sk-\|Bearer " {} \; 2>/dev/null || true)
+  # Dependency lockfiles can contain public package metadata matching coarse
+  # token patterns; the product snapshot filter excludes them too.
+  CRED_LEAKS=$(find "$BACKUP_DIR" \
+    \( -name "package-lock.json" -o -name "npm-shrinkwrap.json" -o -name "yarn.lock" -o -name "pnpm-lock.yaml" -o -name "pnpm-lock.yml" \) -prune -o \
+    \( -name "*.json" -o -name "*.env" -o -name ".env" \) -type f \
+    -exec grep -l "nvapi-\|sk-\|Bearer " {} \; 2>/dev/null || true)
   if [ -z "$CRED_LEAKS" ]; then
     pass "No credentials in backup"
   else
