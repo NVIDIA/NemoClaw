@@ -131,6 +131,36 @@ function gitRefExists(rootDir: string, ref: string, env: NodeJS.ProcessEnv = pro
   return gitStatus(rootDir, ["rev-parse", "--verify", `${ref}^{commit}`], env) === 0;
 }
 
+function gitFetchRemoteBranch(
+  rootDir: string,
+  remote: string,
+  branch: string,
+  localRef: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const normalizedBranch = String(branch || "").trim();
+  if (!normalizedBranch) return;
+
+  spawnSync(
+    "git",
+    [
+      "-C",
+      rootDir,
+      "fetch",
+      "--no-tags",
+      "--depth=1",
+      remote,
+      `+refs/heads/${normalizedBranch}:${localRef}`,
+    ],
+    {
+      encoding: "utf-8",
+      stdio: "ignore",
+      timeout: 30_000,
+      env: { ...env, GIT_TERMINAL_PROMPT: "0" },
+    },
+  );
+}
+
 function gitHasPathDiff(
   rootDir: string,
   args: string[],
@@ -152,8 +182,14 @@ export function baseImageInputsChangedSinceMain(
   const stagedDiff = gitHasPathDiff(rootDir, ["diff", "--cached", "--quiet"], env);
   if (stagedDiff === true) return true;
 
+  const baseBranch = String(env.GITHUB_BASE_REF || "main").trim() || "main";
+  const baseRemoteRef = `origin/${baseBranch}`;
+  if (!gitRefExists(rootDir, baseRemoteRef, env)) {
+    gitFetchRemoteBranch(rootDir, "origin", baseBranch, `refs/remotes/origin/${baseBranch}`, env);
+  }
+
   const candidates = [
-    env.GITHUB_BASE_REF ? `origin/${env.GITHUB_BASE_REF}` : null,
+    baseRemoteRef,
     "origin/main",
     "upstream/main",
     "main",

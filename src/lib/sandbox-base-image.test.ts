@@ -54,6 +54,23 @@ function createGitFixture() {
   return root;
 }
 
+function createGitFixtureWithRemoteOnlyBaseRef() {
+  const remote = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-remote-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-clone-"));
+  tmpRoots.push(root, remote);
+
+  git(remote, ["init", "--bare"]);
+  git(root, ["init", "-b", "main"]);
+  writeFixture(root, "Dockerfile.base", "FROM node:22\n");
+  writeFixture(root, "nemoclaw-blueprint/blueprint.yaml", "min_openclaw_version: 2026.4.24\n");
+  writeFixture(root, "src/other.ts", "export const value = 1;\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "initial"]);
+  git(root, ["remote", "add", "origin", remote]);
+  git(root, ["push", "origin", "main"]);
+  return root;
+}
+
 afterEach(() => {
   for (const root of tmpRoots.splice(0)) {
     fs.rmSync(root, { recursive: true, force: true });
@@ -134,6 +151,18 @@ describe("sandbox base image helpers", () => {
     git(root, ["commit", "-m", "change base"]);
 
     expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
+  });
+
+  it("fetches the base ref before deciding detached dispatch checkouts can use latest", () => {
+    const root = createGitFixtureWithRemoteOnlyBaseRef();
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "Dockerfile.base", "FROM node:22\nRUN echo changed\n");
+    git(root, ["add", "Dockerfile.base"]);
+    git(root, ["commit", "-m", "change base"]);
+
+    expect(git(root, ["rev-parse", "--verify", "origin/main"]).length).toBeGreaterThan(0);
+    git(root, ["update-ref", "-d", "refs/remotes/origin/main"]);
+    expect(baseImageInputsChangedSinceMain(root, { ...gitEnv, GITHUB_ACTIONS: "true" })).toBe(true);
   });
 
   it("detects committed blueprint minimum-version changes relative to origin/main", () => {
