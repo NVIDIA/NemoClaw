@@ -85,54 +85,26 @@ function makeStoppedGatewayEnv(prefix: string): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
-
-  const registryDir = path.join(home, ".nemoclaw");
-  fs.mkdirSync(registryDir, { recursive: true });
-  fs.writeFileSync(
-    path.join(registryDir, "sandboxes.json"),
-    JSON.stringify({
-      sandboxes: {
-        alpha: {
-          name: "alpha",
-          model: "test-model",
-          provider: "nvidia-prod",
-          gpuEnabled: false,
-          policies: [],
-        },
-      },
-      defaultSandbox: "alpha",
-    }),
-    { mode: 0o600 },
-  );
+  writeSandboxRegistry(home, "alpha");
 
   // openshell lies: sandbox list exits 0 and lists alpha as Ready even though
   // the gateway container is down (reads stale local registry/cache).
-  fs.writeFileSync(
-    path.join(localBin, "openshell"),
-    [
-      "#!/bin/sh",
-      'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-      '  printf "NAME STATUS\\nalpha Ready\\n"',
-      "  exit 0",
-      "fi",
-      "exit 0",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
+  writeExecutable(path.join(localBin, "openshell"), [
+    'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+    '  printf "NAME STATUS\\nalpha Ready\\n"',
+    "  exit 0",
+    "fi",
+    "exit 0",
+  ]);
 
   // docker inspect: returns "false" for State.Running (gateway stopped).
-  fs.writeFileSync(
-    path.join(localBin, "docker"),
-    [
-      "#!/bin/sh",
-      'if [ "$1" = "inspect" ]; then',
-      '  echo "false"',
-      "  exit 0",
-      "fi",
-      "exit 0",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
+  writeExecutable(path.join(localBin, "docker"), [
+    'if [ "$1" = "inspect" ]; then',
+    '  echo "false"',
+    "  exit 0",
+    "fi",
+    "exit 0",
+  ]);
 
   return {
     HOME: home,
@@ -186,7 +158,7 @@ describe("snapshot gateway guard (#2673)", () => {
   });
 });
 
-describe("snapshot Docker-driver gateway guard", () => {
+describe("snapshot VM-driver gateway guard", () => {
   it("snapshot create accepts healthy macOS VM-driver gateways without legacy cluster container", () => {
     const env = makeHealthyVmGatewayEnv("nemoclaw-snap-vm-gw-create-");
     const r = runCli("alpha snapshot create --name baseline", env);

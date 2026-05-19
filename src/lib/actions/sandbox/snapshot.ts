@@ -203,7 +203,7 @@ async function autoCreateSandboxFromSource(
 
 // Docker/VM-driver sandboxes do not expose the legacy cluster container, so
 // verify gateway health through OpenShell metadata instead.
-function probeDockerDriverGatewayRunning(): boolean {
+function probeGatewayMetadataHealth(): boolean {
   const status = captureOpenshell(["status"], { ignoreError: true, timeout: 10000 });
   const namedGatewayInfo = captureOpenshell(["gateway", "info", "-g", NEMOCLAW_GATEWAY_NAME], {
     ignoreError: true,
@@ -227,7 +227,7 @@ function usesGatewayMetadataProbe(driver: string | null | undefined): boolean {
 function probeGatewayRunning(sandboxName?: string): boolean {
   const entry = sandboxName ? registry.getSandbox(sandboxName) : null;
   if (usesGatewayMetadataProbe(entry?.openshellDriver)) {
-    return probeDockerDriverGatewayRunning();
+    return probeGatewayMetadataHealth();
   }
   const container = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
   const result = dockerInspect(
