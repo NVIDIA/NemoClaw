@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { runSandboxSnapshot } from "../../lib/actions/sandbox/snapshot";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
-import { getSnapshotRuntimeBridge, sandboxNameArg, snapshotCommandError } from "../../lib/sandbox/snapshot-command-support";
+import { sandboxNameArg, snapshotCommandError } from "../../lib/sandbox/snapshot-command-support";
 
 export default class SnapshotCommand extends NemoClawCommand {
   static id = "sandbox:snapshot";
@@ -22,7 +23,7 @@ export default class SnapshotCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args } = await this.parse(SnapshotCommand);
     try {
-      await getSnapshotRuntimeBridge().sandboxSnapshot(args.sandboxName, []);
+      await runSandboxSnapshot(args.sandboxName, { kind: "help" });
     } catch (error) {
       const snapshotError = snapshotCommandError(error);
       if (snapshotError) {

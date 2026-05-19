@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { installSandboxSkill } from "../../lib/actions/sandbox/skill-install";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
-import { getSkillInstallRuntimeBridge } from "../../lib/sandbox/skill-command-support";
 
 export default class SkillCliCommand extends NemoClawCommand {
   static id = "sandbox:skill";
@@ -19,6 +19,10 @@ export default class SkillCliCommand extends NemoClawCommand {
       this.failWithLines(["Missing required sandboxName for skill."], 2);
       return;
     }
-    await getSkillInstallRuntimeBridge().sandboxSkillInstall(sandboxName, actionArgs);
+    await installSandboxSkill(sandboxName, {
+      command: actionArgs[0],
+      path: actionArgs[1],
+      extraArgs: actionArgs.slice(2),
+    });
   }
 }

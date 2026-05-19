@@ -16,8 +16,6 @@ import * as registry from "../../state/registry";
 import type { SandboxEntry } from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 
-const { parseRestoreArgs } = sandboxState;
-
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
   useColor && (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit");
@@ -27,6 +25,12 @@ const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
+
+export type SnapshotRequest =
+  | { kind: "help" }
+  | { kind: "create"; name?: string }
+  | { kind: "list" }
+  | { kind: "restore"; selector?: string; to?: string };
 
 export class SnapshotCommandError extends Error {
   readonly lines: readonly string[];
@@ -43,24 +47,6 @@ export class SnapshotCommandError extends Error {
 
 function snapshotExit(exitCode = 1): never {
   throw new SnapshotCommandError([], exitCode);
-}
-
-function parseSnapshotCreateFlags(flags: string[]) {
-  const opts: { name: string | null } = { name: null };
-  for (let i = 0; i < flags.length; i++) {
-    const flag = flags[i];
-    if (flag === "--name") {
-      if (i + 1 >= flags.length || flags[i + 1].startsWith("--")) {
-        console.error("  --name requires a value");
-        snapshotExit(1);
-      }
-      opts.name = flags[++i];
-    } else {
-      console.error(`  Unknown flag: ${flag}`);
-      snapshotExit(1);
-    }
-  }
-  return opts;
 }
 
 function formatSnapshotVersion(b: unknown) {
@@ -241,11 +227,12 @@ function probeGatewayRunning(sandboxName?: string): boolean {
   return result.status === 0 && String(result.stdout || "").trim() === "true";
 }
 
-export async function runSandboxSnapshot(sandboxName: string, subArgs: string[]) {
-  const subcommand = subArgs[0] || "help";
-  switch (subcommand) {
+export async function runSandboxSnapshot(
+  sandboxName: string,
+  request: SnapshotRequest = { kind: "help" },
+) {
+  switch (request.kind) {
     case "create": {
-      const opts = parseSnapshotCreateFlags(subArgs.slice(1));
       if (!probeGatewayRunning(sandboxName)) {
         console.error("  Failed to query live sandbox state from OpenShell.");
         snapshotExit(1);
@@ -256,9 +243,9 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
         console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
         snapshotExit(1);
       }
-      const label = opts.name ? ` (--name ${opts.name})` : "";
+      const label = request.name ? ` (--name ${request.name})` : "";
       console.log(`  Creating snapshot of '${sandboxName}'${label}...`);
-      const result = sandboxState.backupSandboxState(sandboxName, { name: opts.name });
+      const result = sandboxState.backupSandboxState(sandboxName, { name: request.name ?? null });
       if (result.success) {
         // Virtual snapshotVersion is only assigned by listBackups, so re-resolve
         // the just-created snapshot by its timestamp to get a valid v<N>.
@@ -306,15 +293,9 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
       // sandbox. If `dst` is not yet live, it is auto-created by cloning the
       // source sandbox's baked image. Without `--to`, restore targets
       // sandboxName itself
-      const parsed = parseRestoreArgs(sandboxName, subArgs);
-      if (!parsed.ok) {
-        console.error(`  ${parsed.error}`);
-        snapshotExit(1);
-      }
+      const target = request.to ?? sandboxName;
       const targetSandbox =
-        parsed.targetSandbox === sandboxName
-          ? sandboxName
-          : validateName(parsed.targetSandbox, "target sandbox name");
+        target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
       if (!probeGatewayRunning(sandboxName)) {
         console.error("  Failed to query live sandbox state from OpenShell.");
         snapshotExit(1);
@@ -341,7 +322,7 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
         const srcEntry = registry.getSandbox(sandboxName) || { name: sandboxName };
         await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry);
       }
-      const selector = parsed.selector;
+      const selector = request.selector ?? null;
       let backupPath;
       let resolvedSnapshot = null;
       if (selector) {

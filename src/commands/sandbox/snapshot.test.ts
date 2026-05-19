@@ -1,10 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const runSandboxSnapshot = vi.hoisted(() => vi.fn().mockResolvedValue(undefined));
+
+vi.mock("../../lib/actions/sandbox/snapshot", () => ({
+  runSandboxSnapshot,
+}));
 
 import SnapshotCommand from "./snapshot";
-import { setSnapshotRuntimeBridgeFactoryForTest } from "../../lib/sandbox/snapshot-command-support";
 import SnapshotCreateCommand from "./snapshot/create";
 import SnapshotListCommand from "./snapshot/list";
 import SnapshotRestoreCommand from "./snapshot/restore";
@@ -12,52 +17,44 @@ import SnapshotRestoreCommand from "./snapshot/restore";
 const rootDir = process.cwd();
 
 describe("snapshot oclif commands", () => {
-  it("shows parent snapshot usage through the action", async () => {
-    const sandboxSnapshot = vi.fn().mockResolvedValue(undefined);
-    setSnapshotRuntimeBridgeFactoryForTest(() => ({ sandboxSnapshot }));
+  beforeEach(() => {
+    runSandboxSnapshot.mockClear();
+  });
 
+  it("shows parent snapshot usage through the action", async () => {
     await SnapshotCommand.run(["alpha"], rootDir);
 
-    expect(sandboxSnapshot).toHaveBeenCalledWith("alpha", []);
+    expect(runSandboxSnapshot).toHaveBeenCalledWith("alpha", { kind: "help" });
   });
 
   it("rejects unknown parent snapshot args before dispatch", async () => {
-    const sandboxSnapshot = vi.fn().mockResolvedValue(undefined);
-    setSnapshotRuntimeBridgeFactoryForTest(() => ({ sandboxSnapshot }));
-
     await expect(SnapshotCommand.run(["alpha", "bogus"], rootDir)).rejects.toThrow(/bogus/);
 
-    expect(sandboxSnapshot).not.toHaveBeenCalled();
+    expect(runSandboxSnapshot).not.toHaveBeenCalled();
   });
 
-  it("runs snapshot list through the legacy snapshot implementation", async () => {
-    const sandboxSnapshot = vi.fn().mockResolvedValue(undefined);
-    setSnapshotRuntimeBridgeFactoryForTest(() => ({ sandboxSnapshot }));
-
+  it("runs snapshot list through typed action options", async () => {
     await SnapshotListCommand.run(["alpha"], rootDir);
 
-    expect(sandboxSnapshot).toHaveBeenCalledWith("alpha", ["list"]);
+    expect(runSandboxSnapshot).toHaveBeenCalledWith("alpha", { kind: "list" });
   });
 
   it("runs snapshot restore with an optional selector and target", async () => {
-    const sandboxSnapshot = vi.fn().mockResolvedValue(undefined);
-    setSnapshotRuntimeBridgeFactoryForTest(() => ({ sandboxSnapshot }));
-
     await SnapshotRestoreCommand.run(["alpha", "v2", "--to", "beta"], rootDir);
 
-    expect(sandboxSnapshot).toHaveBeenCalledWith("alpha", ["restore", "v2", "--to", "beta"]);
+    expect(runSandboxSnapshot).toHaveBeenCalledWith("alpha", {
+      kind: "restore",
+      selector: "v2",
+      to: "beta",
+    });
   });
 
   it("runs snapshot create with an optional label", async () => {
-    const sandboxSnapshot = vi.fn().mockResolvedValue(undefined);
-    setSnapshotRuntimeBridgeFactoryForTest(() => ({ sandboxSnapshot }));
-
     await SnapshotCreateCommand.run(["alpha", "--name", "before-upgrade"], rootDir);
 
-    expect(sandboxSnapshot).toHaveBeenCalledWith("alpha", [
-      "create",
-      "--name",
-      "before-upgrade",
-    ]);
+    expect(runSandboxSnapshot).toHaveBeenCalledWith("alpha", {
+      kind: "create",
+      name: "before-upgrade",
+    });
   });
 });

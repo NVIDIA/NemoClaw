@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args } from "@oclif/core";
+import { installSandboxSkill } from "../../../lib/actions/sandbox/skill-install";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
-
-import { getSkillInstallRuntimeBridge } from "../../../lib/sandbox/skill-command-support";
 
 export default class SkillInstallCliCommand extends NemoClawCommand {
   static id = "sandbox:skill:install";
@@ -33,9 +32,9 @@ export default class SkillInstallCliCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(SkillInstallCliCommand);
-    await getSkillInstallRuntimeBridge().sandboxSkillInstall(args.sandboxName, [
-      "install",
-      args.skillPath,
-    ]);
+    await installSandboxSkill(args.sandboxName, {
+      command: "install",
+      path: args.skillPath,
+    });
   }
 }
