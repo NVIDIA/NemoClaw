@@ -8,6 +8,9 @@ E2E_PORT_HOLDER_PID="${E2E_PORT_HOLDER_PID:-}"
 
 e2e_port_holder_start() {
   local port="$1"
+  if [[ -n "${E2E_PORT_HOLDER_PID}" ]]; then
+    e2e_port_holder_stop
+  fi
   E2E_PORT_HOLDER_PID=""
   node - "${port}" <<'NODE' >/tmp/nemoclaw-e2e-port-holder.log 2>&1 &
 const net = require("node:net");
@@ -34,6 +37,11 @@ NODE
     fi
     sleep 0.25
   done
+  if [[ -n "${E2E_PORT_HOLDER_PID}" ]]; then
+    kill "${E2E_PORT_HOLDER_PID}" >/dev/null 2>&1 || true
+    wait "${E2E_PORT_HOLDER_PID}" >/dev/null 2>&1 || true
+    E2E_PORT_HOLDER_PID=""
+  fi
   return 1
 }
 
