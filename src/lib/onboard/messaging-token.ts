@@ -5,5 +5,5 @@ import { getCredential, normalizeCredentialValue } from "../credentials/store";
 
 export function getMessagingToken(envKey: string | undefined): string | null {
   if (!envKey) return null;
-  return getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
+  return normalizeCredentialValue(process.env[envKey]) || getCredential(envKey) || null;
 }

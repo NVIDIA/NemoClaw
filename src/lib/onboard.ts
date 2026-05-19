@@ -1810,7 +1810,7 @@ function getRecordedMessagingChannelsForResume(
   session: Session | null, sandboxName: string | null,
 ): string[] | null {
   return require("./onboard/messaging-reuse").getNonInteractiveStoredMessagingChannels(
-    resume, session?.messagingChannels, sandboxName, MESSAGING_CHANNELS, (envKey: string) => Boolean(getCredential(envKey) || normalizeCredentialValue(process.env[envKey])),
+    resume, session?.messagingChannels, sandboxName, MESSAGING_CHANNELS, (envKey: string) => Boolean(normalizeCredentialValue(process.env[envKey]) || getCredential(envKey)),
     registry.getSandbox.bind(registry), registry.getDisabledChannels.bind(registry), providerExistsInGateway, isNonInteractive());
 }
 

@@ -653,13 +653,15 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
   // host-side credential to acquire; register the bridge now and let the
   // operator complete pairing after rebuild.
   if (channelUsesInSandboxQrPairing(channel)) {
+    if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
+      process.exit(1);
+    }
     await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, {});
     console.log("");
     console.log(`  ${channel.help}`);
     console.log(
       `  ${G}✓${R} Enabled ${canonical} channel. Complete QR pairing from inside the sandbox after rebuild.`,
     );
-    applyChannelPresetIfAvailable(sandboxName, canonical);
     await promptAndRebuild(sandboxName, `add '${canonical}'`);
     return;
   }
@@ -688,10 +690,10 @@ export async function addSandboxChannel(sandboxName: string, args: string[] = []
 // Must run before promptAndRebuild — the rebuild's backup manifest only
 // captures presets already applied (#3437). Without this, channel bridges
 // boot without egress to their upstream API after rebuild.
-function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): void {
+function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
   const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
   if (!builtinPresets.has(channelName)) {
-    return;
+    return true;
   }
   try {
     const applied = policies.applyPreset(sandboxName, channelName);
@@ -702,13 +704,16 @@ function applyChannelPresetIfAvailable(sandboxName: string, channelName: string)
       console.error(
         `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
       );
+      return false;
     }
+    return true;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset: ${msg}`);
     console.error(
       `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
     );
+    return false;
   }
 }
 

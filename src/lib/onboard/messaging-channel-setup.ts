@@ -14,7 +14,7 @@ import { dispatchHostQrLogin } from "./host-qr-dispatch";
 type ChannelEntry = { name: string } & ChannelDef;
 
 const getMessagingToken = (envKey: string): string | null =>
-  getCredential(envKey) || normalizeCredentialValue(process.env[envKey]) || null;
+  normalizeCredentialValue(process.env[envKey]) || getCredential(envKey) || null;
 
 const getMessagingConfigValue = (envKey: string): string | null =>
   normalizeMessagingChannelConfigValue(envKey, process.env[envKey]);

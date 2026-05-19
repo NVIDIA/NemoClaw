@@ -3,14 +3,10 @@
 
 import { deleteCredential, saveCredential } from "../credentials/store";
 
-export interface ChannelDef {
-  envKey?: string;
+export interface ChannelBase {
   description: string;
   help: string;
   label: string;
-  appTokenEnvKey?: string;
-  appTokenHelp?: string;
-  appTokenLabel?: string;
   userIdEnvKey?: string;
   userIdHelp?: string;
   userIdLabel?: string;
@@ -20,17 +16,39 @@ export interface ChannelDef {
   serverIdLabel?: string;
   requireMentionEnvKey?: string;
   requireMentionHelp?: string;
+}
+
+export interface CredentialBackedChannelDef extends ChannelBase {
+  envKey?: string;
+  appTokenEnvKey?: string;
+  appTokenHelp?: string;
+  appTokenLabel?: string;
   tokenFormat?: RegExp;
   tokenFormatHint?: string;
   appTokenFormat?: RegExp;
   appTokenFormatHint?: string;
   // "host-qr" channels capture a static token via a host-side QR handshake
-  // (e.g. wechat/iLink). "in-sandbox-qr" channels pair entirely inside the
-  // sandbox because the bot library owns the live session state and host-side
-  // capture would yield a stale blob (e.g. WhatsApp Web's Signal-style
-  // identity). Defaults to "token-paste" when omitted.
-  loginMethod?: "token-paste" | "host-qr" | "in-sandbox-qr";
+  // (e.g. wechat/iLink). Defaults to "token-paste" when omitted.
+  loginMethod?: "token-paste" | "host-qr";
 }
+
+export interface InSandboxQrChannelDef extends ChannelBase {
+  // In-sandbox QR channels pair entirely inside the sandbox because the bot
+  // library owns the live session state and host-side capture would yield a
+  // stale blob (e.g. WhatsApp Web's Signal-style identity). They must never
+  // declare host-side token env keys or OpenShell provider credentials.
+  loginMethod: "in-sandbox-qr";
+  envKey?: never;
+  appTokenEnvKey?: never;
+  appTokenHelp?: never;
+  appTokenLabel?: never;
+  tokenFormat?: never;
+  tokenFormatHint?: never;
+  appTokenFormat?: never;
+  appTokenFormatHint?: never;
+}
+
+export type ChannelDef = CredentialBackedChannelDef | InSandboxQrChannelDef;
 
 export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
   telegram: {
@@ -97,7 +115,7 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
   },
   whatsapp: {
     description: "WhatsApp Web messaging (QR pairing)",
-    help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, run `openshell term <sandbox>` and then use `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes to display the QR.",
+    help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, run `openshell term` and then use `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes to display the QR.",
     label: "WhatsApp",
     loginMethod: "in-sandbox-qr",
   },
@@ -126,7 +144,7 @@ export function channelUsesInSandboxQrPairing(channel: ChannelDef): boolean {
 
 export function channelHasStaticToken(
   channel: ChannelDef,
-): channel is ChannelDef & { envKey: string } {
+): channel is CredentialBackedChannelDef & { envKey: string } {
   return typeof channel.envKey === "string" && channel.envKey.length > 0;
 }
 

@@ -54,6 +54,15 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.slack)).toBe(false);
   });
 
+  it("declares no credential-bearing metadata for WhatsApp", () => {
+    const whatsapp = getChannelDef("whatsapp");
+    expect(whatsapp?.envKey).toBeUndefined();
+    expect(whatsapp?.appTokenEnvKey).toBeUndefined();
+    expect(whatsapp?.tokenFormat).toBeUndefined();
+    expect(whatsapp?.appTokenFormat).toBeUndefined();
+    expect(getChannelTokenKeys(KNOWN_CHANNELS.whatsapp)).toEqual([]);
+  });
+
   it("only slack declares a secondary app-token env var", () => {
     expect(getChannelDef("telegram")?.appTokenEnvKey).toBeUndefined();
     expect(getChannelDef("discord")?.appTokenEnvKey).toBeUndefined();
