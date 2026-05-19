@@ -23,8 +23,8 @@ describe("onboard summary helpers", () => {
     assert.ok(summary.includes("gemini-api"), "summary includes provider");
     assert.ok(summary.includes("gemini-2.5-flash"), "summary includes model");
     assert.ok(
-      summary.includes("GEMINI_API_KEY (staged for OpenShell gateway registration)"),
-      "summary shows API key env var + staging state",
+      summary.includes("configured for OpenShell gateway registration"),
+      "summary shows API key staging state without printing env var names",
     );
     assert.ok(summary.includes("enabled"), "summary includes web-search enabled");
     assert.ok(summary.includes("telegram, slack"), "summary lists enabled channels");

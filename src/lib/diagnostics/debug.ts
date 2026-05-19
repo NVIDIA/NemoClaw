@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -314,8 +314,9 @@ function collectSandboxInternals(
 
   section("Sandbox Internals");
 
-  // Generate temporary SSH config
-  const sshConfigPath = join(tmpdir(), `nemoclaw-ssh-${String(Date.now())}`);
+  // Generate temporary SSH config in a private directory.
+  const sshConfigDir = mkdtempSync(join(tmpdir(), "nemoclaw-ssh-"));
+  const sshConfigPath = join(sshConfigDir, "config");
   try {
     const sshResult = spawnSync("openshell", ["sandbox", "ssh-config", sandboxName], {
       timeout: TIMEOUT_MS,
@@ -358,9 +359,7 @@ function collectSandboxInternals(
       ]);
     }
   } finally {
-    if (existsSync(sshConfigPath)) {
-      unlinkSync(sshConfigPath);
-    }
+    rmSync(sshConfigDir, { force: true, recursive: true });
   }
 }
 

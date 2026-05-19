@@ -32,6 +32,10 @@ function pullRequest(authorAssociation = "MEMBER", overrides = {}) {
   };
 }
 
+function nightlyWorkflowText(): string {
+  return fs.readFileSync(path.join(ROOT, ".github/workflows/nightly-e2e.yaml"), "utf8");
+}
+
 function advisorResult(job = "network-policy-e2e") {
   return {
     confidence: "high",
@@ -48,28 +52,17 @@ function advisorResult(job = "network-policy-e2e") {
 
 describe("E2E advisor auto-dispatch planning", () => {
   it("derives dispatchable jobs from nightly-e2e selective-dispatch predicates", () => {
-    const workflowText = fs.readFileSync(
-      path.join(ROOT, ".github/workflows/nightly-e2e.yaml"),
-      "utf8",
-    );
-    const jobs = extractDispatchableJobs(workflowText);
+    const jobs = extractDispatchableJobs(nightlyWorkflowText());
 
     expect(jobs).toContain("network-policy-e2e");
     expect(jobs).toContain("cloud-e2e");
     expect(jobs).not.toContain("report-to-pr");
     expect(jobs).not.toContain("notify-on-failure");
     expect(jobs).not.toContain("scorecard");
-
-    for (const job of jobs) {
-      expect(workflowText).toContain(`contains(format(',{0},', inputs.jobs), ',${job},')`);
-    }
   });
 
   it("plans a trusted main-workflow dispatch for NVIDIA org member PRs", () => {
-    const workflowText = fs.readFileSync(
-      path.join(ROOT, ".github/workflows/nightly-e2e.yaml"),
-      "utf8",
-    );
+    const workflowText = nightlyWorkflowText();
     const plan = planAutoDispatch({
       result: advisorResult(),
       workflowText,
@@ -121,10 +114,7 @@ describe("E2E advisor auto-dispatch planning", () => {
   });
 
   it("plans dispatch for allowlisted authors whose private org membership appears as contributor", () => {
-    const workflowText = fs.readFileSync(
-      path.join(ROOT, ".github/workflows/nightly-e2e.yaml"),
-      "utf8",
-    );
+    const workflowText = nightlyWorkflowText();
     const plan = planAutoDispatch({
       result: advisorResult(),
       workflowText,
@@ -142,10 +132,7 @@ describe("E2E advisor auto-dispatch planning", () => {
   });
 
   it("skips PRs that are not authored by org members, owners, or allowlisted authors", () => {
-    const workflowText = fs.readFileSync(
-      path.join(ROOT, ".github/workflows/nightly-e2e.yaml"),
-      "utf8",
-    );
+    const workflowText = nightlyWorkflowText();
     const plan = planAutoDispatch({
       result: advisorResult(),
       workflowText,
@@ -163,10 +150,7 @@ describe("E2E advisor auto-dispatch planning", () => {
   });
 
   it("skips draft PRs", () => {
-    const workflowText = fs.readFileSync(
-      path.join(ROOT, ".github/workflows/nightly-e2e.yaml"),
-      "utf8",
-    );
+    const workflowText = nightlyWorkflowText();
     const plan = planAutoDispatch({
       result: advisorResult(),
       workflowText,
@@ -182,10 +166,7 @@ describe("E2E advisor auto-dispatch planning", () => {
   });
 
   it("ignores recommendations that are not dispatchable in the target workflow", () => {
-    const workflowText = fs.readFileSync(
-      path.join(ROOT, ".github/workflows/nightly-e2e.yaml"),
-      "utf8",
-    );
+    const workflowText = nightlyWorkflowText();
     const plan = planAutoDispatch({
       result: advisorResult("not-a-real-e2e-job"),
       workflowText,

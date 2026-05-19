@@ -214,6 +214,9 @@ RUN set -eu; \
         "$config_dir/profiles" \
         "$config_dir/cache" \
         "$config_dir/pairing" \
+        "$config_dir/platforms" \
+        "$config_dir/platforms/whatsapp" \
+        "$config_dir/platforms/whatsapp/session" \
         "$config_dir/weixin" \
         "$config_dir/weixin/accounts" \
         "$config_dir/runtime"; \
@@ -255,9 +258,16 @@ RUN set -eu; \
         /sandbox/.hermes/profiles \
         /sandbox/.hermes/cache \
         /sandbox/.hermes/pairing \
+        /sandbox/.hermes/platforms \
+        /sandbox/.hermes/platforms/whatsapp \
+        /sandbox/.hermes/platforms/whatsapp/session \
         /sandbox/.hermes/weixin \
         /sandbox/.hermes/weixin/accounts \
         /sandbox/.hermes/runtime \
+    && chmod 2770 \
+        /sandbox/.hermes/platforms \
+        /sandbox/.hermes/platforms/whatsapp \
+        /sandbox/.hermes/platforms/whatsapp/session \
     && chmod 2770 /sandbox/.hermes/runtime \
     && chmod 640 /sandbox/.hermes/config.yaml \
     && chmod 640 /sandbox/.hermes/.env \

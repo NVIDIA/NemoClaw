@@ -44,6 +44,6 @@ export default class InternalInstallerPlanCommand extends NemoClawCommand {
     });
 
     if (flags.json) this.logJson(plan);
-    else console.log(`Installer plan: ref '${plan.installRef}', version '${plan.installerVersion}'`);
+    else console.log("Installer plan built. Re-run with --json for redacted details.");
   }
 }

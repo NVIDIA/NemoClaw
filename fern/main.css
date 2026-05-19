@@ -1,0 +1,108 @@
+/*
+ * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+:root {
+  --nv-color-green: #76b900;
+  --nv-color-black: #000000;
+  --nv-color-white: #ffffff;
+  --nv-dark-grey-2: #1a1a1a;
+  --nv-light-grey-2: #eeeeee;
+}
+
+.prose {
+  color: var(--nv-dark-grey-2) !important;
+}
+
+.dark .prose {
+  color: var(--nv-light-grey-2) !important;
+}
+
+.fern-mdx-link {
+  color: var(--tw-prose-body);
+  font-weight: var(--font-weight-normal);
+  text-decoration-color: var(--accent);
+}
+
+.badge-links {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+  line-height: 0;
+  margin: 0.25rem 0 0.75rem;
+}
+
+.badge-links a {
+  display: inline-flex;
+  align-items: center;
+}
+
+.badge-links img {
+  display: block;
+  margin: 0 !important;
+}
+
+.badge-links .fern-mdx-link svg {
+  display: none;
+}
+
+.badge-links + p {
+  margin-top: 0 !important;
+}
+
+.explore-cards {
+  margin-top: 1rem;
+}
+
+.nc-term {
+  margin: 1.5rem 0;
+  overflow: hidden;
+  border-radius: 8px;
+  background: #1a1a2e;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 25%);
+  font-family: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.875rem;
+  line-height: 1.8;
+}
+
+.nc-term-bar {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  padding: 10px 14px;
+  background: #252545;
+}
+
+.nc-term-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.nc-term-dot-r {
+  background: #ff5f56;
+}
+
+.nc-term-dot-y {
+  background: #ffbd2e;
+}
+
+.nc-term-dot-g {
+  background: #27c93f;
+}
+
+.nc-term-body {
+  padding: 16px 20px;
+  color: #d4d4d8;
+}
+
+.nc-ps,
+.nc-hl {
+  color: var(--nv-color-green);
+}
+
+.nc-hl {
+  font-weight: 600;
+}

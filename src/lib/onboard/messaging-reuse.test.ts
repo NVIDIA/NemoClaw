@@ -81,7 +81,7 @@ describe("onboard messaging reuse", () => {
     expect(reusedChannels).toEqual(["wechat"]);
   });
 
-  it("normalizes empty resume messaging channels to null", () => {
+  it("honors an explicit empty resume messaging channel set", () => {
     const reusedChannels = getNonInteractiveStoredMessagingChannels(
       true,
       ["unknown"],
@@ -94,6 +94,22 @@ describe("onboard messaging reuse", () => {
       true,
     );
 
-    expect(reusedChannels).toBeNull();
+    expect(reusedChannels).toEqual([]);
+  });
+
+  it("does not rediscover token-backed channels when resume recorded none", () => {
+    const reusedChannels = getNonInteractiveStoredMessagingChannels(
+      true,
+      [],
+      "assistant",
+      messagingChannels,
+      () => true,
+      () => ({ messagingChannels: ["discord"] }),
+      () => [],
+      () => true,
+      true,
+    );
+
+    expect(reusedChannels).toEqual([]);
   });
 });

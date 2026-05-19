@@ -1621,17 +1621,73 @@ openclaw() {
       esac
       ;;
     channels)
+      # `status` is read-only diagnostics. `login` is only allowed for
+      # WhatsApp, whose QR pairing intentionally happens inside the sandbox.
+      # Other persistent mutations (including host-QR channel login) stay
+      # blocked — they must go through the host CLI so registry/provider state
+      # and rebuild reasons are captured.
       case "$2" in
-        list | "" | -h | --help) ;;
+        list | status | "" | -h | --help) ;;
+        login)
+          _login_channel=""
+          _login_help=0
+          _prev_arg_was_channel_flag=0
+          _seen_login_subcommand=0
+          for _arg in "$@"; do
+            if [ "$_seen_login_subcommand" = "0" ]; then
+              [ "$_arg" = "login" ] && _seen_login_subcommand=1
+              continue
+            fi
+            if [ "$_prev_arg_was_channel_flag" = "1" ]; then
+              _login_channel="$_arg"
+              _prev_arg_was_channel_flag=0
+              continue
+            fi
+            case "$_arg" in
+              --channel)
+                _prev_arg_was_channel_flag=1
+                ;;
+              --channel=*)
+                _login_channel="${_arg#--channel=}"
+                ;;
+              -h | --help)
+                _login_help=1
+                ;;
+              --*)
+                ;;
+              *)
+                [ -z "$_login_channel" ] && _login_channel="$_arg"
+                ;;
+            esac
+          done
+          if [ "$_login_help" != "1" ] && [ "$_login_channel" != "whatsapp" ]; then
+            echo "Error: 'openclaw channels login' is only supported inside the sandbox for WhatsApp." >&2
+            echo "Changes inside the sandbox do not persist across rebuilds." >&2
+            echo "" >&2
+            echo "To add or remove messaging channels, exit the sandbox and run:" >&2
+            echo "  nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>" >&2
+            echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>" >&2
+            echo "" >&2
+            echo "WhatsApp pairs entirely inside the sandbox; complete pairing via:" >&2
+            echo "  openclaw channels login --channel whatsapp" >&2
+            echo "WeChat captures its token via a host-side QR during the host-side" >&2
+            echo "'channels add wechat' flow — no in-sandbox login step." >&2
+            return 1
+          fi
+          ;;
         *)
           echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
           echo "Changes inside the sandbox do not persist across rebuilds." >&2
           echo "" >&2
           echo "To add or remove messaging channels, exit the sandbox and run:" >&2
-          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack>" >&2
-          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack>" >&2
+          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>" >&2
+          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>" >&2
           echo "" >&2
           echo "These stage the change and rebuild the sandbox to apply it." >&2
+          echo "WhatsApp pairs entirely inside the sandbox; complete pairing via:" >&2
+          echo "  openclaw channels login --channel whatsapp" >&2
+          echo "WeChat captures its token via a host-side QR during the host-side" >&2
+          echo "'channels add wechat' flow — no in-sandbox login step." >&2
           return 1
           ;;
       esac

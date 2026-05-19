@@ -11,6 +11,14 @@ const WORKFLOW_PATH = path.join(REPO_ROOT, ".github/workflows/e2e-scenarios.yaml
 const PARITY_WORKFLOW_PATH = path.join(REPO_ROOT, ".github/workflows/e2e-parity-compare.yaml");
 
 type AnyRecord = Record<string, unknown>;
+type WorkflowStep = {
+  id?: string;
+  if?: string;
+  name?: string;
+  run?: string;
+  uses?: string;
+  with?: AnyRecord;
+};
 
 function loadWorkflowAt(workflowPath: string): AnyRecord {
   expect(fs.existsSync(workflowPath), `workflow missing at ${workflowPath}`).toBe(true);
@@ -20,6 +28,31 @@ function loadWorkflowAt(workflowPath: string): AnyRecord {
 
 function loadWorkflow(): AnyRecord {
   return loadWorkflowAt(WORKFLOW_PATH);
+}
+
+function workflowJob(workflow: AnyRecord, jobId: string): AnyRecord {
+  const jobs = workflow.jobs as Record<string, AnyRecord> | undefined;
+  const job = jobs?.[jobId];
+  expect(job, `missing workflow job ${jobId}`).toBeTruthy();
+  return job ?? {};
+}
+
+function workflowSteps(workflow: AnyRecord, jobId: string): WorkflowStep[] {
+  const value = workflowJob(workflow, jobId).steps;
+  expect(Array.isArray(value), `workflow job ${jobId} missing steps`).toBe(true);
+  return (Array.isArray(value) ? value : []) as WorkflowStep[];
+}
+
+function namedStep(workflow: AnyRecord, jobId: string, stepName: string): WorkflowStep {
+  const step = workflowSteps(workflow, jobId).find((candidate) => candidate.name === stepName);
+  expect(step, `missing step '${stepName}' in ${jobId}`).toBeTruthy();
+  return step ?? {};
+}
+
+function uploadArtifactStep(workflow: AnyRecord, jobId: string, stepName: string): WorkflowStep {
+  const step = namedStep(workflow, jobId, stepName);
+  expect(step.uses).toBe("actions/upload-artifact@v4");
+  return step;
 }
 
 describe("e2e-scenarios workflow", () => {
@@ -38,19 +71,18 @@ describe("e2e-scenarios workflow", () => {
   });
 
   it("e2e_scenarios_workflow_should_call_run_scenario_without_plan_only", () => {
-    const raw = fs.readFileSync(WORKFLOW_PATH, "utf8");
-    expect(raw).toMatch(/test\/e2e\/runtime\/run-scenario\.sh/);
-    expect(raw).not.toMatch(/--plan-only|plan_only/);
+    const wf = loadWorkflow();
+    const runScenario = namedStep(wf, "run-scenario", "Run scenario");
+    expect(runScenario.run).toContain("bash test/e2e/runtime/run-scenario.sh");
+    expect(runScenario.run).not.toContain("--plan-only");
   });
 
   it("e2e_scenarios_workflow_should_upload_artifacts", () => {
-    const raw = fs.readFileSync(WORKFLOW_PATH, "utf8");
-    expect(raw).toMatch(/actions\/upload-artifact/);
-    // Artifact name should be scenario-scoped.
-    expect(raw).toMatch(/e2e-scenario-.*\$\{\{\s*(?:inputs|github\.event\.inputs)\.scenario\s*\}\}/);
-    // Uploads .e2e/ artifacts, including hidden artifact paths.
-    expect(raw).toMatch(/\.e2e\//);
-    expect(raw).toMatch(/include-hidden-files:\s*true/);
+    const wf = loadWorkflow();
+    const upload = uploadArtifactStep(wf, "run-scenario", "Upload scenario artifacts");
+    expect(upload.with?.name).toBe("e2e-scenario-${{ github.event.inputs.scenario }}");
+    expect(upload.with?.path).toContain(".e2e/");
+    expect(upload.with?.["include-hidden-files"]).toBe(true);
   });
 
   it("e2e_scenarios_workflow_should_be_manual_only", () => {
@@ -79,19 +111,25 @@ describe("e2e-parity-compare workflow", () => {
   });
 
   it("parity_workflow_should_upload_logs_and_reports", () => {
-    const raw = fs.readFileSync(PARITY_WORKFLOW_PATH, "utf8");
-    expect(raw).toMatch(/actions\/upload-artifact/);
-    expect(raw).toMatch(/legacy\.log/);
-    expect(raw).toMatch(/scenario\.log/);
-    expect(raw).toMatch(/parity-report\.json/);
-    expect(raw).toMatch(/coverage-report\.md/);
+    const wf = loadWorkflowAt(PARITY_WORKFLOW_PATH);
+    const legacyRun = namedStep(wf, "compare", "Run legacy script");
+    const scenarioRun = namedStep(wf, "compare", "Run migrated scenario");
+    const compare = namedStep(wf, "compare", "Compare parity");
+    const coverage = namedStep(wf, "compare", "Render coverage report");
+    const upload = uploadArtifactStep(wf, "compare", "Upload parity artifacts");
+
+    expect(legacyRun.run).toContain(".e2e/parity/legacy.log");
+    expect(scenarioRun.run).toContain(".e2e/parity/scenario.log");
+    expect(compare.run).toContain(".e2e/parity/parity-report.json");
+    expect(coverage.run).toContain(".e2e/parity/coverage-report.md");
+    expect(upload.with?.path).toContain(".e2e/");
   });
 
   it("parity_workflow_should_fail_on_strict_divergence", () => {
-    const raw = fs.readFileSync(PARITY_WORKFLOW_PATH, "utf8");
-    const compareStep = raw.match(/- name: Compare parity[\s\S]*?(?=\n\s*- name:|\n\s*uses:|$)/)?.[0] ?? "";
-    expect(compareStep).toMatch(/compare-parity\.sh/);
-    expect(compareStep).toMatch(/STRICT_ARGS\+=\(--strict\)/);
-    expect(compareStep).not.toMatch(/compare-parity\.sh[\s\S]*\|\|\s*true/);
+    const wf = loadWorkflowAt(PARITY_WORKFLOW_PATH);
+    const compare = namedStep(wf, "compare", "Compare parity");
+    expect(compare.run).toContain("compare-parity.sh");
+    expect(compare.run).toContain("STRICT_ARGS+=(--strict)");
+    expect(compare.run).not.toContain("|| true");
   });
 });

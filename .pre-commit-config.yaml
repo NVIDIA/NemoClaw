@@ -201,9 +201,9 @@ repos:
     hooks:
       - id: docs-to-skills-dry-run
         name: Verify docs-to-skills output
-        entry: python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
+        entry: python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx --dry-run
         language: system
-        files: ^(docs/.*\.md$|docs/conf\.py$|ci/platform-matrix\.json$|scripts/docs-to-skills\.py$|scripts/generate-platform-docs\.py$)
+        files: ^(docs/.*\.mdx?$|docs/conf\.py$|ci/platform-matrix\.json$|scripts/docs-to-skills\.py$|scripts/generate-platform-docs\.py$)
         pass_filenames: false
         priority: 10
 
@@ -281,7 +281,8 @@ repos:
           bash -c 'node -e "require(\"node:fs\").rmSync(\"dist\", { recursive: true, force: true })" && npm run build:cli && npx tsx scripts/check-dist-sourcemaps.ts dist && npx vitest run --project cli --coverage --coverage.reporter=text-summary --coverage.reporter=json-summary --coverage.reportsDirectory=coverage/cli --coverage.include="bin/**/*.js" --coverage.include="dist/lib/**/*.js" --coverage.exclude="test/**/*.js" --coverage.exclude="test/**/*.ts" && npx tsx scripts/check-coverage-ratchet.ts coverage/cli/coverage-summary.json ci/coverage-threshold-cli.json "CLI coverage"'
         language: system
         pass_filenames: false
-        files: ^(bin/|src/|test/)
+        files: ^(bin/|src/.*\.(ts|tsx|js|mjs|cjs)$|test/.*\.(ts|tsx|js|mjs|cjs)$)
+        require_serial: true
         priority: 20
 
       - id: test-plugin
@@ -305,7 +306,7 @@ repos:
         entry: npx vitest run test/skills-frontmatter.test.ts
         language: system
         pass_filenames: false
-        files: ^(\.agents/skills/|docs/.*\.md$|scripts/docs-to-skills\.py$|test/skills-frontmatter\.test\.js$)
+        files: ^(\.agents/skills/|docs/.*\.mdx?$|scripts/docs-to-skills\.py$|test/skills-frontmatter\.test\.js$)
         priority: 20
 
 default_language_version:

@@ -764,7 +764,7 @@ describe("nemoclaw-start configure guard behavior", () => {
   it("#2592: blocks every (channel × op) mutating combo and surfaces the host-side hint", () => {
     const setup = writeProxyEnvWithGuard();
     try {
-      const channels = ["slack", "telegram", "discord"];
+      const channels = ["slack", "telegram", "discord", "wechat", "whatsapp"];
       const ops = ["add", "remove"];
       for (const op of ops) {
         for (const channel of channels) {
@@ -774,6 +774,46 @@ describe("nemoclaw-start configure guard behavior", () => {
           expect(result.stderr).toContain(`nemoclaw <sandbox> channels ${op}`);
         }
       }
+    } finally {
+      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // WhatsApp pairs entirely inside the sandbox via `openclaw channels login
+  // --channel whatsapp`, so the guard must allow that exact in-sandbox login
+  // path. WeChat completes pairing host-side and must stay blocked here so it
+  // cannot bypass NemoClaw's host-side registry/provider/rebuild path.
+  // `status` is read-only diagnostics and is similarly safe to allow.
+  it("allows only WhatsApp `channels login` and read-only `channels status` inside the sandbox", () => {
+    const setup = writeProxyEnvWithGuard();
+    try {
+      const allowed = [
+        ["channels", "login", "--channel", "whatsapp"],
+        ["channels", "login", "--channel=whatsapp"],
+        ["channels", "status", "--channel", "whatsapp"],
+        ["channels", "status"],
+      ];
+      for (const argv of allowed) {
+        const result = runGuardedOpenclaw(setup, argv);
+        expect(result.status, `${argv.join(" ")} should pass the guard`).toBe(0);
+      }
+
+      const blocked = [
+        ["channels", "login"],
+        ["channels", "login", "--channel", "wechat"],
+        ["channels", "login", "--channel=telegram"],
+      ];
+      for (const argv of blocked) {
+        const result = runGuardedOpenclaw(setup, argv);
+        expect(result.status, `${argv.join(" ")} should be blocked`).toBe(1);
+        expect(result.stderr).toContain("only supported inside the sandbox for WhatsApp");
+      }
+
+      const log = fs.readFileSync(setup.commandLog, "utf-8");
+      expect(log).toContain("channels login --channel whatsapp");
+      expect(log).toContain("channels login --channel=whatsapp");
+      expect(log).toContain("channels status");
+      expect(log).not.toContain("channels login --channel wechat");
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
@@ -1201,14 +1241,31 @@ const cases = [
   new Error('token_revoked'),
   Object.assign(new Error('stack path'), { stack: 'at @slack/web-api' }),
   new Error('CONNECT failed for slack.com'),
+  new Error('CONNECT failed for https://hooks.slack.com/services/T/B/C'),
 ];
 for (const err of cases) process.emit('unhandledRejection', err, {});
 setImmediate(function () { console.log('cases=' + cases.length); });
 `);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("cases=4");
-    expect((result.stderr.match(/provider failed to start/g) || []).length).toBe(4);
+    expect(result.stdout).toContain("cases=5");
+    expect((result.stderr.match(/provider failed to start/g) || []).length).toBe(5);
     expect(result.stderr).toContain("caught by safety net, gateway continues");
+  });
+
+  it("does not classify arbitrary hosts containing slack.com as Slack errors", () => {
+    const result = runSlackGuardHarness(`
+let downstreamCalled = false;
+process.on('unhandledRejection', function () {
+  downstreamCalled = true;
+});
+process.emit('unhandledRejection', new Error('CONNECT failed for https://slack.com.evil.example'), {});
+setImmediate(function () {
+  console.log('downstream=' + downstreamCalled);
+});
+`);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("downstream=true");
+    expect(result.stderr).not.toContain("provider failed to start");
   });
 });
 

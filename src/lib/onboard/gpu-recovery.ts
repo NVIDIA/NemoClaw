@@ -20,13 +20,14 @@ import * as registry from "../state/registry";
  * branch in onboard. Caller is expected to emit each line on its own line
  * via `console.error` / `runtime.log`.
  *
- * Empty / null input means no sandboxes are registered locally; we suggest
- * `nemoclaw uninstall` because there is nothing for `nemoclaw <name>
- * destroy` to act on. A single registered sandbox gets one destroy line
- * with `--cleanup-gateway` so the gateway also goes away (otherwise destroy
- * preserves the shared gateway by default — see v0.0.39 release notes).
- * Multiple sandboxes get one destroy line each; only the last carries
- * `--cleanup-gateway` so the gateway lives until every sandbox is gone.
+ * Empty / null input means no sandboxes are registered locally; onboard has
+ * already tried the safe stale-gateway replacement path, so the manual fallback
+ * should target gateway cleanup instead of a full uninstall. A single
+ * registered sandbox gets one destroy line with `--cleanup-gateway` so the
+ * gateway also goes away (otherwise destroy preserves the shared gateway by
+ * default — see v0.0.39 release notes). Multiple sandboxes get one destroy
+ * line each; only the last carries `--cleanup-gateway` so the gateway lives
+ * until every sandbox is gone.
  */
 export function gpuPassthroughRecoveryLines(names: readonly string[] | null): string[] {
   const cleanNames = (names ?? []).map((n) => n.trim()).filter((n) => n.length > 0);
@@ -34,9 +35,12 @@ export function gpuPassthroughRecoveryLines(names: readonly string[] | null): st
   if (cleanNames.length === 0) {
     return [
       "  Existing gateway was started without GPU passthrough.",
-      "  No sandboxes are registered, so there is nothing for `nemoclaw destroy` to act on.",
-      "  Clear the stale gateway state and re-onboard with GPU enabled:",
-      "    nemoclaw uninstall && nemoclaw onboard --gpu",
+      "  No sandboxes are registered, so onboard attempted safe gateway replacement automatically.",
+      "  If the retry still fails, clear the stale gateway state and re-onboard with GPU enabled:",
+      "    openshell gateway remove nemoclaw",
+      "    # For OpenShell releases that still expose lifecycle commands:",
+      "    openshell gateway destroy -g nemoclaw",
+      "    nemoclaw onboard --gpu",
     ];
   }
 

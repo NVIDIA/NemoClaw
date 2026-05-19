@@ -201,7 +201,7 @@ describe("openshell helpers", () => {
         exit: exitWithCode,
       }),
     ).toThrow("exit:1");
-    expect(errors).toEqual(["  Failed to start openshell status: spawn EACCES"]);
+    expect(errors).toEqual(["  Failed to start OpenShell command: spawn EACCES"]);
   });
 
   it("treats capture spawn failures as fatal errors", () => {
@@ -218,7 +218,7 @@ describe("openshell helpers", () => {
         exit: exitWithCode,
       }),
     ).toThrow("exit:1");
-    expect(errors).toEqual(["  Failed to start openshell status: spawn ENOENT"]);
+    expect(errors).toEqual(["  Failed to start OpenShell command: spawn ENOENT"]);
   });
 
   it("reads the installed openshell version through the capture helper", () => {

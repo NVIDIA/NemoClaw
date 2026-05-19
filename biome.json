@@ -17,6 +17,7 @@
       "src/**/*.ts",
       "bin/**/*.js",
       "scripts/**/*.js",
+      "scripts/**/*.mjs",
       "scripts/**/*.ts",
       "test/**/*.js",
       "docs/_ext/**/*.js",
@@ -92,6 +93,7 @@
         "bin/**/*.js",
         "commitlint.config.js",
         "scripts/**/*.js",
+        "scripts/**/*.mjs",
         "test/**/*.js",
         "docs/_ext/**/*.js"
       ],

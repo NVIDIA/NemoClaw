@@ -19,6 +19,10 @@ class TestCommand extends NemoClawCommand {
   public fail(lines: readonly string[], code?: number): void {
     this.failWithLines(lines, code);
   }
+
+  public json(value: unknown): void {
+    this.logJson(value);
+  }
 }
 
 function makeCommand(): TestCommand {
@@ -53,5 +57,15 @@ describe("NemoClawCommand", () => {
 
     expect(process.exitCode).toBe(9);
     expect(error.mock.calls).toEqual([["line 1"], ["line 2"]]);
+  });
+
+  it("redacts sensitive JSON output before logging", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+
+    makeCommand().json({ provider: "build", apiKey: "nvapi-" + "a".repeat(24) });
+
+    expect(log).toHaveBeenCalledWith(
+      JSON.stringify({ provider: "build", apiKey: "<REDACTED>" }, null, 2),
+    );
   });
 });
