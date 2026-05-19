@@ -45,6 +45,16 @@ function parseStdoutJson<T>(stdout: string): T {
   return JSON.parse(line);
 }
 
+function stripMessagingEnv(source: NodeJS.ProcessEnv): Record<string, string | undefined> {
+  const env = { ...source } as Record<string, string | undefined>;
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("DISCORD_") || key.startsWith("TELEGRAM_")) {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
 type OnboardTestInternalsCandidate = Partial<OnboardTestInternals> | null;
 
 function isOnboardTestInternals(
@@ -618,15 +628,252 @@ const { setupInference } = require(${onboardPath});
 
     expect(result.status).toBe(0);
     const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
-    assert.equal(commands.length, 3);
+    assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway select nemoclaw/);
-    assert.match(commands[1].command, /provider get hermes-provider/);
-    assert.match(commands[2].command, /inference set --no-verify --provider hermes-provider/);
+    assert.match(commands[1].command, /provider list/);
+    assert.match(commands[2].command, /provider get hermes-provider/);
+    assert.match(commands[3].command, /inference set --no-verify --provider hermes-provider/);
     assert.ok(!commands.some((entry) => /provider (create|update)/.test(entry.command)));
     assert.ok(!commands.some((entry) => entry.env?.NOUS_API_KEY || entry.env?.OPENAI_API_KEY));
     assert.ok(
       !commands.some((entry) => /nous-host-secret|openai-host-secret/.test(entry.command)),
       "host credential values must not appear in argv",
+    );
+  });
+
+  it("resolves a sandbox name before reconciling Hermes Provider on resume", { timeout: 60_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-resume-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "hermes-resume-sandbox-name-check.js");
+    const openshellPath = JSON.stringify(path.join(fakeBin, "openshell"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const sessionPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"),
+    );
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const nimPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "nim.js"));
+    const gatewayStatePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "gateway.js"));
+    const dockerDriverPlatformPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "docker-driver-platform.js"),
+    );
+    const gatewayGpuPassthroughPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "gateway-gpu-passthrough.js"),
+    );
+    const onboardProbesPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "onboard-probes.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const onboardSession = require(${sessionPath});
+const credentials = require(${credentialsPath});
+const nim = require(${nimPath});
+const gatewayState = require(${gatewayStatePath});
+const dockerDriverPlatform = require(${dockerDriverPlatformPath});
+const gatewayGpuPassthrough = require(${gatewayGpuPassthroughPath});
+const onboardProbes = require(${onboardProbesPath});
+
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const commands = [];
+const prompts = [];
+const registryUpdates = [];
+const done = new Error("INFERENCE_STEP_DONE");
+let inferenceSessionSnapshot = null;
+
+delete process.env.NEMOCLAW_NON_INTERACTIVE;
+delete process.env.NEMOCLAW_SANDBOX_NAME;
+delete process.env.NOUS_API_KEY;
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith("DISCORD_") || key.startsWith("TELEGRAM_")) {
+    delete process.env[key];
+  }
+}
+process.env.NEMOCLAW_OPENSHELL_BIN = ${openshellPath};
+process.env.OPENSHELL_GATEWAY = "nemoclaw";
+
+try {
+  Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+  Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+} catch {
+  process.stdin.isTTY = true;
+  process.stdout.isTTY = true;
+}
+
+runner.run = (command, opts = {}) => {
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  const normalized = _n(command);
+  if (normalized.includes("inference get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: hermes-provider",
+      "  Model: moonshotai/kimi-k2.6",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+
+registry.getSandbox = (name) =>
+  name === "hermes-resume"
+    ? {
+        name,
+        gpuEnabled: false,
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+        hermesToolGateways: [],
+        messagingChannels: [],
+        policies: ["nous-web"],
+      }
+    : null;
+registry.updateSandbox = (name, updates) => {
+  registryUpdates.push({ name, updates });
+  return true;
+};
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+
+credentials.prompt = async (question) => {
+  prompts.push(String(question));
+  if (String(question).includes("Sandbox name")) return "hermes-resume";
+  return "yes";
+};
+
+nim.detectGpu = () => null;
+gatewayState.getGatewayReuseState = () => "healthy";
+gatewayState.shouldSelectNamedGatewayForReuse = () => false;
+gatewayState.getSandboxStateFromOutputs = () => "ready";
+gatewayState.isGatewayHealthy = () => true;
+dockerDriverPlatform.isLinuxDockerDriverGatewayEnabled = () => false;
+gatewayGpuPassthrough.reconcileGatewayGpuReuseForGpuIntent = ({ gatewayReuseState }) => gatewayReuseState;
+onboardProbes.verifyOnboardInferenceSmoke = () => {};
+
+const complete = () => ({
+  status: "complete",
+  startedAt: new Date().toISOString(),
+  completedAt: new Date().toISOString(),
+  error: null,
+});
+onboardSession.saveSession(
+  onboardSession.createSession({
+    mode: "interactive",
+    agent: "hermes",
+    sandboxName: null,
+    provider: "hermes-provider",
+    model: "moonshotai/kimi-k2.6",
+    endpointUrl: "https://inference-api.nousresearch.com/v1",
+    credentialEnv: "NOUS_API_KEY",
+    hermesAuthMethod: "api_key",
+    hermesToolGateways: [],
+    policyPresets: ["nous-web"],
+    metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+    steps: {
+      preflight: complete(),
+      gateway: complete(),
+      provider_selection: complete(),
+    },
+  }),
+);
+
+const originalMarkStepComplete = onboardSession.markStepComplete;
+onboardSession.markStepComplete = (stepName, updates = {}) => {
+  const result = originalMarkStepComplete(stepName, updates);
+  if (stepName === "inference") {
+    inferenceSessionSnapshot = result;
+    throw done;
+  }
+  return result;
+};
+
+const { onboard } = require(${onboardPath});
+
+(async () => {
+  try {
+    await onboard({ resume: true, agent: "hermes", acceptThirdPartySoftware: true, noGpu: true });
+    throw new Error("Expected onboarding to reach the inference step");
+  } catch (error) {
+    if (error === done || error?.message === done.message) {
+      console.log(JSON.stringify({
+        commands,
+        prompts,
+        registryUpdates,
+        inferenceSessionSandboxName: inferenceSessionSnapshot?.sandboxName ?? null,
+      }));
+      return;
+    }
+    console.error(error);
+    process.exit(1);
+  }
+})();
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const env: Record<string, string | undefined> = {
+      ...stripMessagingEnv(process.env),
+      HOME: tmpDir,
+      PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_OPENSHELL_BIN: path.join(fakeBin, "openshell"),
+    };
+    delete env.NEMOCLAW_NON_INTERACTIVE;
+    delete env.NEMOCLAW_SANDBOX_NAME;
+    delete env.NOUS_API_KEY;
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(
+      `${result.stderr}\n${result.stdout}`,
+      /Hermes Provider requires a sandbox name/,
+    );
+    const payload = parseStdoutJson<{
+      commands: CommandEntry[];
+      prompts: string[];
+      registryUpdates: Array<{ name: string; updates: Record<string, unknown> }>;
+      inferenceSessionSandboxName: string | null;
+    }>(result.stdout);
+
+    assert.ok(
+      payload.prompts.some((question) => question.includes("Sandbox name")),
+      "resume should prompt for the missing sandbox name before Hermes inference reconciliation",
+    );
+    assert.ok(
+      payload.commands.some((entry) =>
+        /inference set --no-verify --provider hermes-provider/.test(entry.command),
+      ),
+      "resume should reach openshell inference set",
+    );
+    assert.ok(!payload.commands.some((entry) => /provider (create|update)/.test(entry.command)));
+    assert.equal(
+      payload.inferenceSessionSandboxName,
+      null,
+      "resume inference must not persist sandboxName before sandbox creation",
+    );
+    assert.ok(
+      payload.registryUpdates.some(
+        (call) =>
+          call.name === "hermes-resume" &&
+          call.updates.provider === "hermes-provider" &&
+          call.updates.model === "moonshotai/kimi-k2.6",
+      ),
+      "Hermes setup should reconcile inference against the resolved sandbox name",
     );
   });
 

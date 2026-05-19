@@ -83,6 +83,7 @@ export interface Session {
   routerPid: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
+  hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingChannels: string[] | null;
   messagingChannelConfig: MessagingChannelConfig | null;
@@ -159,8 +160,9 @@ export interface SessionUpdates {
   routerPid?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
-  policyPresets?: string[];
-  messagingChannels?: string[];
+  hermesToolGateways?: string[] | null;
+  policyPresets?: string[] | null;
+  messagingChannels?: string[] | null;
   messagingChannelConfig?: MessagingChannelConfig | null;
   disabledChannels?: string[] | null;
   migratedLegacyValueHashes?: Record<string, string>;
@@ -186,6 +188,7 @@ export interface DebugSessionSummary {
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
   nimContainer: string | null;
+  hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   gpuPassthrough: boolean;
   lastStepStarted: string | null;
@@ -354,6 +357,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig:
       overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
+    hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
     messagingChannelConfig: sanitizeMessagingChannelConfig(overrides.messagingChannelConfig),
@@ -395,6 +399,7 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
+    hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
     messagingChannelConfig: sanitizeMessagingChannelConfig(data.messagingChannelConfig),
@@ -808,10 +813,21 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (updates.webSearchConfig === null) {
     safe.webSearchConfig = null;
   }
-  if (Array.isArray(updates.policyPresets)) {
+  if (updates.hermesToolGateways === null) {
+    safe.hermesToolGateways = null;
+  } else if (Array.isArray(updates.hermesToolGateways)) {
+    safe.hermesToolGateways = updates.hermesToolGateways.filter(
+      (value) => typeof value === "string",
+    );
+  }
+  if (updates.policyPresets === null) {
+    safe.policyPresets = null;
+  } else if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }
-  if (Array.isArray(updates.messagingChannels)) {
+  if (updates.messagingChannels === null) {
+    safe.messagingChannels = null;
+  } else if (Array.isArray(updates.messagingChannels)) {
     safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
   }
   if (updates.messagingChannelConfig === null) {
@@ -955,6 +971,7 @@ export function summarizeForDebug(
     hermesAuthMethod: session.hermesAuthMethod,
     preferredInferenceApi: session.preferredInferenceApi,
     nimContainer: session.nimContainer,
+    hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
     gpuPassthrough: session.gpuPassthrough,
     lastStepStarted: session.lastStepStarted,

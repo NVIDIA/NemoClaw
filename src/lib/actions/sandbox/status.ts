@@ -88,9 +88,27 @@ function printInferenceProbeLine(probe: ProviderHealthStatus): void {
   console.log(`      ${probe.detail}`);
 }
 
+function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): void {
+  if (
+    !sb ||
+    sb.agent !== "hermes" ||
+    !Array.isArray(sb.hermesToolGateways) ||
+    sb.hermesToolGateways.length === 0
+  ) {
+    return;
+  }
+  try {
+    const hermesToolGatewayBroker = require("../../hermes-tool-gateway-broker");
+    hermesToolGatewayBroker.ensureHermesToolGatewayBrokerForSandboxEntry(sb, { quiet: true });
+  } catch {
+    /* non-fatal — status should still show sandbox diagnostics */
+  }
+}
+
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   const sb = registry.getSandbox(sandboxName);
+  maybeEnsureHermesToolGatewayBroker(sb);
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
   // hanging when its container is stopped and the published port is held by a
   // foreign listener) suppress the sandbox header. The downstream switch

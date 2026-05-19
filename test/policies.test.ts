@@ -129,9 +129,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 14 presets", () => {
+    it("returns all 19 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(14);
+      expect(presets.length).toBe(19);
     });
 
     it("each preset has name and description", () => {
@@ -154,6 +154,11 @@ describe("policies", () => {
         "huggingface",
         "jira",
         "local-inference",
+        "nous-audio",
+        "nous-browser",
+        "nous-code",
+        "nous-image",
+        "nous-web",
         "npm",
         "outlook",
         "pypi",
@@ -328,6 +333,46 @@ describe("policies", () => {
       expect(content).toContain("/usr/bin/node");
       expect(content).toContain("/usr/bin/curl");
       expect(content).toContain("/usr/bin/python3");
+    });
+
+    it("Nous managed-tool presets expose only the host broker plus Browser Use CDP exception", () => {
+      const matrix = JSON.parse(
+        fs.readFileSync(
+          path.join(REPO_ROOT, "agents", "hermes", "host", "managed-tool-gateway-matrix.json"),
+          "utf8",
+        ),
+      );
+      const vendorHosts = [
+        "firecrawl-gateway.nousresearch.com",
+        "fal-queue-gateway.nousresearch.com",
+        "openai-audio-gateway.nousresearch.com",
+        "browser-use-gateway.nousresearch.com",
+        "modal-gateway.nousresearch.com",
+      ];
+
+      for (const [presetName, entry] of Object.entries(matrix) as Array<
+        [string, { brokerPath: string }]
+      >) {
+        const content = requirePresetContent(policies.loadPreset(presetName));
+        const parsed = YAML.parse(content);
+        const policyEntries = Object.values(parsed.network_policies ?? {}) as Array<{
+          endpoints?: Array<{ host?: string; port?: number }>;
+        }>;
+        const endpoints = policyEntries.flatMap((policy) => policy.endpoints ?? []);
+        const brokerEndpoint = endpoints.find(
+          (endpoint) => endpoint.host === "host.openshell.internal" && endpoint.port === 11436,
+        );
+        expect(brokerEndpoint, `missing broker endpoint for ${presetName}`).toBeDefined();
+        expect(JSON.stringify(brokerEndpoint)).toContain(entry.brokerPath);
+        for (const host of vendorHosts) {
+          expect(content).not.toContain(host);
+        }
+        if (presetName === "nous-browser") {
+          expect(content).toContain("*.cdp1.browser-use.com");
+        } else {
+          expect(content).not.toContain("browser-use.com");
+        }
+      }
     });
   });
 

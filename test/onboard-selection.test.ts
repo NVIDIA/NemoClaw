@@ -402,6 +402,132 @@ const { setupNim } = require(${onboardPath});
     assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
   });
 
+  it("surfaces a precise error when NEMOCLAW_PROVIDER=install-vllm but no vLLM profile is detected (#3765)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-no-profile-"));
+    const scriptPath = path.join(tmpDir, "install-vllm-no-profile-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const vllmPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "vllm.js"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const vllm = require(${vllmPath});
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("Unexpected ensureApiKey call in non-interactive test");
+};
+vllm.installVllm = async () => {
+  console.error("INSTALL_VLLM_CALLED");
+  return { ok: false };
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+// gpu=null forces detectVllmProfile to return null, the scenario the bug
+// reports: explicit env-var opt-in with no profile detected.
+(async () => {
+  await setupNim(null, null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_EXPERIMENTAL: "1",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    // The fix routes the explicit opt-in through the install-vllm dispatcher,
+    // which emits a precise message instead of the generic "Requested provider
+    // 'install-vllm' is not available in this environment." that hid the cause.
+    assert.match(result.stderr, /No vLLM install profile available for this host\./);
+    assert.doesNotMatch(result.stderr, /Requested provider 'install-vllm' is not available/);
+    assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
+  });
+
+  it("logs a note when NEMOCLAW_PROVIDER=install-vllm is overridden by a running vLLM server (#3765)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-running-"));
+    const scriptPath = path.join(tmpDir, "install-vllm-running-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("Unexpected ensureApiKey call in non-interactive test");
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  // vLLM probe succeeds → vllmRunning becomes true.
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return '{"data":[]}';
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  try {
+    await setupNim({ type: "nvidia" }, null);
+  } catch (e) {
+    // Downstream paths (model probe, gateway, etc.) are not mocked here; we
+    // only care about the menu-build log emitted before any failure.
+  }
+})();
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_EXPERIMENTAL: "1",
+      },
+    });
+
+    assert.match(
+      result.stdout,
+      /NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:8000 — selecting the running instance\./,
+    );
+  });
+
   it("does not label NVIDIA Endpoints as recommended in the provider list", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-no-recommended-label-"));

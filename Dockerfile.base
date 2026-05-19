@@ -200,3 +200,12 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     fi; \
     npm install -g "openclaw@${OPENCLAW_VERSION}" \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"
+
+USER sandbox
+WORKDIR /sandbox
+# hadolint ignore=DL3059,DL4006
+RUN openclaw plugins install '@tencent-weixin/openclaw-weixin@2.4.2' --pin \
+    && openclaw config set plugins.entries.openclaw-weixin.enabled true
+# hadolint ignore=DL3002
+USER root
+WORKDIR /

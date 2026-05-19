@@ -7,6 +7,7 @@ import { getLiveGatewayInference } from "../inference/live";
 
 export interface InferenceGetOptions {
   json?: boolean;
+  quiet?: boolean;
 }
 
 export interface InferenceGetResult {
@@ -54,11 +55,13 @@ export async function runInferenceGet(
     provider: result.inference.provider,
     model: result.inference.model,
   };
-  if (options.json) {
-    deps.log(JSON.stringify(payload, null, 2));
-  } else {
-    deps.log(`Provider: ${payload.provider ?? "unknown"}`);
-    deps.log(`Model:    ${payload.model ?? "unknown"}`);
+  if (!options.quiet) {
+    if (options.json) {
+      deps.log(JSON.stringify(payload, null, 2));
+    } else {
+      deps.log(`Provider: ${payload.provider ?? "unknown"}`);
+      deps.log(`Model:    ${payload.model ?? "unknown"}`);
+    }
   }
 
   return payload;

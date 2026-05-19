@@ -18,10 +18,12 @@
 
 import type { ResolverInput } from "./load.ts";
 import type {
+  BaseScenario,
   ResolvedPlan,
   ResolvedSuite,
   SuiteDefinition,
   ExpectedStateConfig,
+  TestPlan,
 } from "./schema.ts";
 
 export type { ResolverInput } from "./load.ts";
@@ -77,47 +79,39 @@ function validateSuiteAgainstState(
 }
 
 export function resolveScenario(scenarioId: string, meta: ResolverInput): ResolvedPlan {
-  const scenarios = meta.scenarios.setup_scenarios;
-  if (!(scenarioId in scenarios)) {
-    const available = Object.keys(scenarios).sort().join(", ");
-    throw new Error(
-      `unknown scenario '${scenarioId}' (available: ${available || "<none>"})`,
-    );
+  const legacy = meta.scenarios.setup_scenarios[scenarioId];
+  const directPlan = meta.scenarios.test_plans?.[scenarioId];
+  if (!legacy && !directPlan) {
+    const available = [
+      ...Object.keys(meta.scenarios.setup_scenarios),
+      ...Object.keys(meta.scenarios.test_plans ?? {}),
+    ].sort().join(", ");
+    throw new Error(`unknown scenario '${scenarioId}' (available: ${available || "<none>"})`);
   }
-  const sc = scenarios[scenarioId];
-  const platform = lookupProfile(
-    meta.scenarios.platforms,
-    "platform",
-    sc.dimensions.platform,
-    scenarioId,
-  );
-  const install = lookupProfile(
-    meta.scenarios.installs,
-    "install",
-    sc.dimensions.install,
-    scenarioId,
-  );
-  const runtime = lookupProfile(
-    meta.scenarios.runtimes,
-    "runtime",
-    sc.dimensions.runtime,
-    scenarioId,
-  );
-  const onboarding = lookupProfile(
-    meta.scenarios.onboarding,
-    "onboarding",
-    sc.dimensions.onboarding,
-    scenarioId,
-  );
-  if (!(sc.expected_state in meta.expectedStates.expected_states)) {
+  const planId = legacy?.alias_for_plan ?? scenarioId;
+  const layeredPlan = meta.scenarios.test_plans?.[planId];
+  const legacyDimensions = legacy?.dimensions;
+  const baseId = layeredPlan?.base;
+  const base = baseId ? lookupProfile(meta.scenarios.base_scenarios ?? {}, "base", baseId, scenarioId) : undefined;
+  const onboardingId = legacy?.alias_for_plan && legacyDimensions?.onboarding ? legacyDimensions.onboarding : (layeredPlan?.onboarding ?? legacyDimensions?.onboarding);
+  const onboardingCollection = onboardingId && onboardingId in meta.scenarios.onboarding ? meta.scenarios.onboarding : (meta.scenarios.onboarding_profiles ?? meta.scenarios.onboarding);
+  const onboarding = lookupProfile(onboardingCollection, "onboarding", onboardingId ?? "", scenarioId);
+  const platformId = base?.platform ?? legacyDimensions?.platform;
+  const installId = base?.install ?? legacyDimensions?.install;
+  const runtimeId = base?.runtime ?? legacyDimensions?.runtime;
+  if (!platformId || !installId || !runtimeId) throw new Error(`scenario '${scenarioId}' is missing layered base or legacy dimensions`);
+  const platform = lookupProfile(meta.scenarios.platforms, "platform", platformId, scenarioId);
+  const install = lookupProfile(meta.scenarios.installs, "install", installId, scenarioId);
+  const runtime = lookupProfile(meta.scenarios.runtimes, "runtime", runtimeId, scenarioId);
+  const expectedStateId = layeredPlan?.expected_state ?? legacy?.expected_state;
+  if (!expectedStateId || !(expectedStateId in meta.expectedStates.expected_states)) {
     const available = Object.keys(meta.expectedStates.expected_states).sort().join(", ");
-    throw new Error(
-      `scenario '${scenarioId}' references unknown expected_state '${sc.expected_state}' (available: ${available || "<none>"})`,
-    );
+    throw new Error(`scenario '${scenarioId}' references unknown expected_state '${expectedStateId}' (available: ${available || "<none>"})`);
   }
-  const stateConfig = meta.expectedStates.expected_states[sc.expected_state];
+  const stateConfig = meta.expectedStates.expected_states[expectedStateId];
+  const suiteIds = layeredPlan?.suites ?? legacy?.suites ?? [];
   const resolvedSuites: ResolvedSuite[] = [];
-  for (const suiteId of sc.suites) {
+  for (const suiteId of suiteIds) {
     if (!(suiteId in meta.suites.suites)) {
       const available = Object.keys(meta.suites.suites).sort().join(", ");
       throw new Error(
@@ -132,30 +126,49 @@ export function resolveScenario(scenarioId: string, meta: ResolverInput): Resolv
       steps: def.steps.map((s) => ({ id: s.id, script: s.script })),
     });
   }
+  const runnerRequirements = [
+    ...(base?.runner_requirements ?? []),
+    ...((layeredPlan as TestPlan | undefined)?.runner_requirements ?? []),
+    ...(legacy?.runner_requirements ?? []),
+  ];
   return {
     scenario_id: scenarioId,
+    plan_id: layeredPlan ? planId : undefined,
+    legacy_scenario_id: legacy?.alias_for_plan ? scenarioId : undefined,
+    base: base && baseId ? { id: baseId, profile: base as BaseScenario } : undefined,
+    onboarding: onboardingId ? { id: onboardingId, profile: onboarding } : undefined,
+    onboarding_assertions: layeredPlan?.onboarding_assertions ?? [],
     dimensions: {
-      platform: { id: sc.dimensions.platform, profile: platform },
-      install: { id: sc.dimensions.install, profile: install },
-      runtime: { id: sc.dimensions.runtime, profile: runtime },
-      onboarding: { id: sc.dimensions.onboarding, profile: onboarding },
+      platform: { id: platformId, profile: platform },
+      install: { id: installId, profile: install },
+      runtime: { id: runtimeId, profile: runtime },
+      onboarding: { id: onboardingId ?? "", profile: onboarding },
     },
-    expected_state: { id: sc.expected_state, config: stateConfig },
+    expected_state: { id: expectedStateId, config: stateConfig },
     suites: resolvedSuites,
-    overrides: sc.overrides,
-    runner_requirements: sc.runner_requirements,
+    overrides: layeredPlan?.overrides ?? legacy?.overrides,
+    runner_requirements: runnerRequirements.length > 0 ? runnerRequirements : undefined,
+    required_secrets: layeredPlan?.required_secrets,
+    expected_failure: layeredPlan?.expected_failure ?? base?.expected_failure ?? legacy?.expected_failure,
   };
 }
 
 export function formatPlan(plan: ResolvedPlan): string {
   const lines: string[] = [];
   lines.push(`Scenario: ${plan.scenario_id}`);
+  if (plan.plan_id) lines.push(`Test plan: ${plan.plan_id}`);
+  if (plan.base) lines.push(`Base: ${plan.base.id}`);
+  if (plan.onboarding) lines.push(`Onboarding: ${plan.onboarding.id}`);
   lines.push("Dimensions:");
   lines.push(`  platform=${plan.dimensions.platform.id}`);
   lines.push(`  install=${plan.dimensions.install.id}`);
   lines.push(`  runtime=${plan.dimensions.runtime.id}`);
   lines.push(`  onboarding=${plan.dimensions.onboarding.id}`);
   lines.push(`Expected state: ${plan.expected_state.id}`);
+  if (plan.onboarding_assertions && plan.onboarding_assertions.length > 0) {
+    lines.push("Onboarding assertions:");
+    for (const assertion of plan.onboarding_assertions) lines.push(`  - ${assertion}`);
+  }
   lines.push("Suites:");
   for (const s of plan.suites) {
     lines.push(`  - ${s.id}`);
@@ -168,6 +181,10 @@ export function formatPlan(plan: ResolvedPlan): string {
     for (const requirement of plan.runner_requirements) {
       lines.push(`  - ${requirement}`);
     }
+  }
+  if (plan.expected_failure) {
+    lines.push("Expected failure:");
+    lines.push(`  ${JSON.stringify(plan.expected_failure)}`);
   }
   if (plan.overrides) {
     lines.push("Overrides:");

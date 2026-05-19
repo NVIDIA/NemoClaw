@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  GatewayTokenCommandError,
   parseGatewayTokenArgs,
   runGatewayTokenCommand,
 } from "../../dist/lib/gateway-token-command";
@@ -49,12 +50,11 @@ describe("runGatewayTokenCommand", () => {
   it("prints the token to stdout and warns on stderr", () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "secret-token-abc");
-    const exitCode = runGatewayTokenCommand(
+    runGatewayTokenCommand(
       "alpha",
       { quiet: false },
       { fetchToken, log: sinks.log, error: sinks.error },
     );
-    expect(exitCode).toBe(0);
     expect(fetchToken).toHaveBeenCalledWith("alpha");
     expect(sinks.out).toEqual(["secret-token-abc"]);
     expect(sinks.err).toHaveLength(1);
@@ -63,7 +63,7 @@ describe("runGatewayTokenCommand", () => {
 
   it("suppresses the security warning when quiet is set", () => {
     const sinks = makeSinks();
-    const exitCode = runGatewayTokenCommand(
+    runGatewayTokenCommand(
       "alpha",
       { quiet: true },
       {
@@ -72,58 +72,66 @@ describe("runGatewayTokenCommand", () => {
         error: sinks.error,
       },
     );
-    expect(exitCode).toBe(0);
     expect(sinks.out).toEqual(["secret-token-abc"]);
     expect(sinks.err).toEqual([]);
   });
 
-  it("exits 1 with diagnostics when the token cannot be fetched", () => {
+  it("throws diagnostics when the token cannot be fetched", () => {
     const sinks = makeSinks();
-    const exitCode = runGatewayTokenCommand(
-      "alpha",
-      { quiet: false },
-      {
-        fetchToken: () => null,
-        log: sinks.log,
-        error: sinks.error,
-      },
-    );
-    expect(exitCode).toBe(1);
+    expect(() =>
+      runGatewayTokenCommand(
+        "alpha",
+        { quiet: false },
+        {
+          fetchToken: () => null,
+          log: sinks.log,
+          error: sinks.error,
+        },
+      ),
+    ).toThrow(GatewayTokenCommandError);
     expect(sinks.out).toEqual([]);
-    expect(sinks.err.join("\n")).toMatch(/Could not retrieve/);
-    expect(sinks.err.join("\n")).toMatch(/sandbox is running/);
+    try {
+      runGatewayTokenCommand("alpha", { quiet: false }, { fetchToken: () => null });
+    } catch (error) {
+      expect(error).toBeInstanceOf(GatewayTokenCommandError);
+      expect((error as GatewayTokenCommandError).exitCode).toBe(1);
+      expect((error as GatewayTokenCommandError).lines.join("\n")).toMatch(/Could not retrieve/);
+      expect((error as GatewayTokenCommandError).lines.join("\n")).toMatch(/sandbox is running/);
+    }
   });
 
-  it("exits 1 when fetchToken throws", () => {
+  it("throws when fetchToken throws", () => {
     const sinks = makeSinks();
-    const exitCode = runGatewayTokenCommand(
-      "alpha",
-      { quiet: true },
-      {
-        fetchToken: () => {
-          throw new Error("openshell offline");
+    expect(() =>
+      runGatewayTokenCommand(
+        "alpha",
+        { quiet: true },
+        {
+          fetchToken: () => {
+            throw new Error("openshell offline");
+          },
+          log: sinks.log,
+          error: sinks.error,
         },
-        log: sinks.log,
-        error: sinks.error,
-      },
-    );
-    expect(exitCode).toBe(1);
+      ),
+    ).toThrow(/Could not retrieve/);
     expect(sinks.out).toEqual([]);
-    expect(sinks.err.join("\n")).toMatch(/Could not retrieve/);
+    expect(sinks.err).toEqual([]);
   });
 
   it("treats an empty-string token as missing", () => {
     const sinks = makeSinks();
-    const exitCode = runGatewayTokenCommand(
-      "alpha",
-      { quiet: false },
-      {
-        fetchToken: () => "",
-        log: sinks.log,
-        error: sinks.error,
-      },
-    );
-    expect(exitCode).toBe(1);
+    expect(() =>
+      runGatewayTokenCommand(
+        "alpha",
+        { quiet: false },
+        {
+          fetchToken: () => "",
+          log: sinks.log,
+          error: sinks.error,
+        },
+      ),
+    ).toThrow(/Could not retrieve/);
     expect(sinks.out).toEqual([]);
   });
 
@@ -134,18 +142,24 @@ describe("runGatewayTokenCommand", () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "should-not-be-called");
     const getSandboxAgent = vi.fn(() => "hermes");
-    const exitCode = runGatewayTokenCommand(
-      "hermes",
-      { quiet: false },
-      { fetchToken, getSandboxAgent, log: sinks.log, error: sinks.error },
-    );
-    expect(exitCode).toBe(1);
+    let thrown: GatewayTokenCommandError | null = null;
+    try {
+      runGatewayTokenCommand(
+        "hermes",
+        { quiet: false },
+        { fetchToken, getSandboxAgent, log: sinks.log, error: sinks.error },
+      );
+    } catch (error) {
+      thrown = error as GatewayTokenCommandError;
+    }
+    expect(thrown).toBeInstanceOf(GatewayTokenCommandError);
     expect(getSandboxAgent).toHaveBeenCalledWith("hermes");
     expect(fetchToken).not.toHaveBeenCalled();
     expect(sinks.out).toEqual([]);
     // Issue #3180 contract: a single agent-aware "not applicable" line.
-    expect(sinks.err).toHaveLength(1);
-    const stderr = sinks.err[0] ?? "";
+    expect(sinks.err).toEqual([]);
+    expect(thrown?.lines).toHaveLength(1);
+    const stderr = thrown?.lines[0] ?? "";
     expect(stderr).toMatch(/hermes/);
     expect(stderr).toMatch(/OpenClaw/);
     expect(stderr).toMatch(/not applicable/i);
@@ -155,7 +169,7 @@ describe("runGatewayTokenCommand", () => {
 
   it("falls back to fetchToken when the agent lookup throws", () => {
     const sinks = makeSinks();
-    const exitCode = runGatewayTokenCommand(
+    runGatewayTokenCommand(
       "alpha",
       { quiet: true },
       {
@@ -167,14 +181,13 @@ describe("runGatewayTokenCommand", () => {
         error: sinks.error,
       },
     );
-    expect(exitCode).toBe(0);
     expect(sinks.out).toEqual(["openclaw-token"]);
   });
 
   it("uses the OpenClaw control path when the resolved agent is openclaw", () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "openclaw-token");
-    const exitCode = runGatewayTokenCommand(
+    runGatewayTokenCommand(
       "alpha",
       { quiet: true },
       {
@@ -184,7 +197,6 @@ describe("runGatewayTokenCommand", () => {
         error: sinks.error,
       },
     );
-    expect(exitCode).toBe(0);
     expect(fetchToken).toHaveBeenCalledWith("alpha");
     expect(sinks.out).toEqual(["openclaw-token"]);
   });
@@ -192,7 +204,7 @@ describe("runGatewayTokenCommand", () => {
   it("uses the OpenClaw control path when getSandboxAgent returns null", () => {
     // Sandbox registry pre-dates the agent field — treat as OpenClaw.
     const sinks = makeSinks();
-    const exitCode = runGatewayTokenCommand(
+    runGatewayTokenCommand(
       "alpha",
       { quiet: true },
       {
@@ -202,7 +214,6 @@ describe("runGatewayTokenCommand", () => {
         error: sinks.error,
       },
     );
-    expect(exitCode).toBe(0);
     expect(sinks.out).toEqual(["openclaw-token"]);
   });
 });

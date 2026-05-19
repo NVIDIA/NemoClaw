@@ -44,6 +44,7 @@ import base64
 import json
 import os
 import re
+import runpy
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
@@ -738,18 +739,61 @@ def build_config(env: dict | None = None) -> dict:
     return config
 
 
+def _preserve_existing_plugin_installs(config: dict, path: str) -> None:
+    try:
+        with open(path) as f:
+            existing = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return
+
+    if not isinstance(existing, dict):
+        return
+    existing_plugins = existing.get("plugins")
+    if not isinstance(existing_plugins, dict):
+        return
+    existing_installs = existing_plugins.get("installs")
+    if not isinstance(existing_installs, dict) or not existing_installs:
+        return
+
+    plugins = config.setdefault("plugins", {})
+    current_installs = plugins.get("installs")
+    if not isinstance(current_installs, dict):
+        current_installs = {}
+    plugins["installs"] = {**existing_installs, **current_installs}
+
+
+def _has_plugin_install(config: dict, plugin_id: str) -> bool:
+    plugins = config.get("plugins")
+    if not isinstance(plugins, dict):
+        return False
+    installs = plugins.get("installs")
+    return isinstance(installs, dict) and plugin_id in installs
+
+
+def _seed_wechat_accounts_if_installed(config: dict) -> None:
+    if not _has_plugin_install(config, "openclaw-weixin"):
+        return
+
+    seed_script = Path(__file__).resolve().with_name("seed-wechat-accounts.py")
+    namespace = runpy.run_path(str(seed_script))
+    main = namespace.get("main")
+    if not callable(main):
+        raise RuntimeError(f"{seed_script} does not expose main()")
+    exit_code = main()
+    if exit_code not in (None, 0):
+        raise SystemExit(exit_code)
+
+
 def main() -> None:
     """Generate openclaw.json from environment variables."""
     config = build_config()
     path = os.path.expanduser("~/.openclaw/openclaw.json")
+    _preserve_existing_plugin_installs(config, path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         json.dump(config, f, indent=2)
     os.chmod(path, 0o600)
-    # NOTE: seed-wechat-accounts.py is invoked separately from the Dockerfile
-    # AFTER `openclaw plugins install`. Calling it here would write
-    # channels.openclaw-weixin before the plugin registers its channel id,
-    # which makes the install fail with "unknown channel id: openclaw-weixin".
+    _seed_wechat_accounts_if_installed(config)
 
 
 if __name__ == "__main__":
