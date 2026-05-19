@@ -177,6 +177,7 @@ INSTALL_METHOD="$(read_plan_string dimensions.install.profile.method)"
 ONBOARDING_ID="$(read_plan_string dimensions.onboarding.id)"
 RUNTIME_ID="$(read_plan_string dimensions.runtime.id)"
 RUNTIME_CONTAINER_DAEMON="$(read_plan_string dimensions.runtime.profile.container_daemon)"
+EXPECTED_STATE_ID="$(read_plan_string expected_state.id)"
 
 # Trace the dimension id so scenario-level assertions can identify the
 # configured install (e.g. repo-current); e2e_install internally traces
@@ -214,7 +215,7 @@ fi
 # CI runners normally have Docker available, so force the Docker client at an
 # unreachable socket and assert onboarding fails before any sandbox is created.
 
-if [[ "$(read_plan_string expected_state.id)" == "preflight-failure-no-sandbox" ]]; then
+if [[ "${EXPECTED_STATE_ID}" == "preflight-failure-no-sandbox" ]]; then
   negative_log="${E2E_CONTEXT_DIR}/negative-preflight.log"
   sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
   if DOCKER_HOST="unix:///tmp/nemoclaw-e2e-missing-docker.sock" e2e_onboard "${ONBOARDING_ID}" >"${negative_log}" 2>&1; then
@@ -234,7 +235,10 @@ if [[ "$(read_plan_string expected_state.id)" == "preflight-failure-no-sandbox" 
   exit 0
 fi
 
+DOCKER_OPTIONAL_UNAVAILABLE=0
 if [[ "${RUNTIME_CONTAINER_DAEMON}" == "optional" ]] && ! docker info >/dev/null 2>&1; then
+  DOCKER_OPTIONAL_UNAVAILABLE=1
+  echo "SKIP: scenario.${SCENARIO_ID}.docker-dependent-suites Docker unavailable for optional runtime ${RUNTIME_ID}; gateway/sandbox/inference coverage skipped"
   echo "run-scenario: Docker unavailable for optional runtime ${RUNTIME_ID}; scaling back to platform-only suites"
 else
   onboard_log="${E2E_CONTEXT_DIR}/onboard.log"
@@ -301,6 +305,26 @@ done < <(node -e "
 if [[ "${#SUITE_IDS[@]}" -eq 0 ]]; then
   echo "run-scenario: no suites selected for ${SCENARIO_ID}" >&2
   exit 4
+fi
+
+if [[ "${DOCKER_OPTIONAL_UNAVAILABLE}" -eq 1 ]]; then
+  FILTERED_SUITE_IDS=()
+  for suite_id in "${SUITE_IDS[@]}"; do
+    case "${suite_id}" in
+      smoke | inference | credentials | hermes-specific | local-ollama-inference | ollama-proxy | gateway-health | sandbox-shell | cloud-inference | ollama-auth-proxy | security-credentials | messaging-telegram | messaging-discord | messaging-slack | security-shields | inference-routing | sandbox-lifecycle | sandbox-operations | snapshot | rebuild | upgrade | diagnostics | docs-validation | openai-compatible-inference | inference-switch | kimi-compatibility | messaging-token-rotation | security-policy | security-injection)
+        echo "SKIP: suite.${suite_id} skipped because optional Docker runtime ${RUNTIME_ID} is unavailable"
+        ;;
+      *)
+        FILTERED_SUITE_IDS+=("${suite_id}")
+        ;;
+    esac
+  done
+  SUITE_IDS=("${FILTERED_SUITE_IDS[@]}")
+fi
+
+if [[ "${#SUITE_IDS[@]}" -eq 0 ]]; then
+  echo "run-scenario: all suites skipped for ${SCENARIO_ID}" >&2
+  exit 0
 fi
 
 bash "${SCRIPT_DIR}/run-suites.sh" "${SUITE_IDS[@]}"

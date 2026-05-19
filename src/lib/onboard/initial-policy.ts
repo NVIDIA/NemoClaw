@@ -164,7 +164,7 @@ export function getNetworkPolicyNames(policyContent: string): Set<string> | null
 export function prepareInitialSandboxCreatePolicy(
   basePolicyPath: string,
   activeMessagingChannels: string[],
-  options: { directGpu?: boolean; dockerGpuPatch?: boolean } = {},
+  options: { directGpu?: boolean; dockerGpuPatch?: boolean; additionalPresets?: string[] } = {},
 ): InitialSandboxPolicy {
   const directGpuPolicy = options.directGpu
     ? prepareDirectGpuSandboxPolicy(basePolicyPath, {
@@ -175,9 +175,12 @@ export function prepareInitialSandboxCreatePolicy(
   const cleanupFns = directGpuPolicy?.cleanup ? [directGpuPolicy.cleanup] : [];
   const requestedCreateTimePresets = [
     ...new Set(
-      activeMessagingChannels.flatMap(
-        (channel) => CREATE_TIME_POLICY_PRESETS_BY_CHANNEL[channel] || [],
-      ),
+      [
+        ...activeMessagingChannels.flatMap(
+          (channel) => CREATE_TIME_POLICY_PRESETS_BY_CHANNEL[channel] || [],
+        ),
+        ...(options.additionalPresets || []),
+      ],
     ),
   ];
   const combinedCleanup =

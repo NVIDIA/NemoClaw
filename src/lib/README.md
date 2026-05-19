@@ -8,7 +8,7 @@
 ## Primary layers
 
 ```text
-src/lib/commands/**  oclif adapter classes and parser glue
+src/commands/**      oclif adapter classes and parser glue
 src/lib/actions/**   workflow orchestration and user-facing command behavior
 src/lib/domain/**    pure decisions, policy, classification, and planning
 src/lib/adapters/**  host boundaries: process, fs, Docker, OpenShell, HTTP
@@ -41,7 +41,7 @@ src/lib/messaging/**    channel/messaging policy and message filtering helpers
 src/lib/onboard/**      onboarding support modules around the large legacy flow
 src/lib/policy/**       policy preset loading, tier selection, and application support
 src/lib/runtime/**      sandbox/runtime recovery helpers
-src/lib/sandbox/**      sandbox config, build, stream, channel, and version support
+src/lib/sandbox/**      sandbox config, build, stream, channel, version, and command support
 src/lib/security/**     redaction, secret patterns, and credential filtering
 src/lib/shields/**      shields orchestration, timers, and audit helpers
 src/lib/tunnel/**       local service/tunnel command support

@@ -165,4 +165,15 @@ network_policies:
     expect(prepared.cleanup?.()).toBe(true);
     expect(fs.existsSync(prepared.policyPath)).toBe(false);
   });
+
+  it("merges additional create-time presets with channel presets", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["slack"], {
+      additionalPresets: ["nous-web"],
+    });
+
+    expect(prepared.appliedPresets).toEqual(["slack", "nous-web"]);
+    expect(prepared.cleanup?.()).toBe(true);
+  });
 });

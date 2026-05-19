@@ -255,10 +255,9 @@ The sandbox still calls `https://inference.local/v1`, so do not point in-sandbox
 :::{dropdown} Experimental: Local NIM and Local vLLM
 :icon: beaker
 
-These options appear when `NEMOCLAW_EXPERIMENTAL=1` is set and the prerequisites are met.
-
-- **Local NVIDIA NIM** requires a NIM-capable GPU. NemoClaw pulls and manages a NIM container.
-- **Local vLLM** uses a vLLM server already running on `localhost:8000`, or installs and starts a managed vLLM container on supported DGX Spark, DGX Station, and Linux NVIDIA GPU hosts. NemoClaw auto-detects the loaded model.
+- **Local NVIDIA NIM** appears when `NEMOCLAW_EXPERIMENTAL=1` is set and the host has a NIM-capable GPU. NemoClaw pulls and manages a NIM container.
+- **Local vLLM (already running)** appears whenever NemoClaw detects a vLLM server on `localhost:8000`. No flag is required for the menu entry. NemoClaw auto-detects the loaded model.
+- **Local vLLM (managed install/start)** requires `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. NemoClaw pulls and starts a vLLM container on supported DGX Spark, DGX Station, and Linux NVIDIA GPU hosts.
 
 For setup, refer to [Use a Local Inference Server](../inference/use-local-inference.md).
 :::
@@ -294,7 +293,7 @@ After you confirm the summary, NemoClaw registers the selected provider with the
 The wizard then asks whether to enable Brave Web Search.
 If you enable it, enter a Brave Search API key when prompted.
 
-The wizard also offers messaging channels such as Telegram, Discord, and Slack.
+The wizard also offers messaging channels such as Telegram, Discord, Slack, and WhatsApp.
 Press a channel number to toggle it, then press Enter to continue.
 If you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
 For example, Slack bot tokens must start with `xoxb-`.

@@ -103,12 +103,10 @@ describe("Phase 1.G convention lint", () => {
     expect(r.stdout + r.stderr).toMatch(/repo.?root|git rev-parse/i);
   });
 
-  it("lint_should_flag_new_legacy_test_script_with_no_parity_map_entry", () => {
+  it("lint_should_not_require_legacy_scripts_to_update_parity_map", () => {
     writeLegacy(tmp, "test-new-thing.sh", '# legacy script\npass "something"');
     const r = runTsx(LINT_BIN, ["--root", tmp]);
-    expect(r.status).not.toBe(0);
-    expect(r.stdout + r.stderr).toMatch(/test-new-thing\.sh/);
-    expect(r.stdout + r.stderr).toMatch(/parity.?map/i);
+    expect(r.status, r.stdout + r.stderr).toBe(0);
   });
 
   it("retired_wrapper_lint_should_reject_monolithic_logic", () => {

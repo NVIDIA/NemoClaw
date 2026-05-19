@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Approve or Deny Agent Network Requests
+# Approve or Deny NemoClaw Agent Network Requests
 
 Review and act on network requests that the agent makes to endpoints not listed in the sandbox policy.
 OpenShell intercepts these requests and presents them in the TUI for operator approval.

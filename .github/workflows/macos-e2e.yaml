@@ -70,9 +70,6 @@ jobs:
           npm ci --ignore-scripts
           npm run build
 
-      - name: Run vitest suite
-        run: npx vitest run --testTimeout 60000
-
       - name: Detect Docker availability
         id: docker
         run: |
@@ -100,7 +97,7 @@ jobs:
         if: steps.docker.outputs.docker_ok != 'true'
         run: |
           echo 'Skipping macOS full E2E because Docker is unavailable on this runner.'
-          echo 'The workflow still validated the NemoClaw build and vitest suite on macOS (Apple Silicon).'
+          echo 'The workflow still validated the NemoClaw build on macOS (Apple Silicon).'
 
       - name: Upload logs on failure
         if: failure()

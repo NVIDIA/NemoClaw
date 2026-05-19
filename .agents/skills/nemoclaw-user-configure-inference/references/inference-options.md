@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Inference Options
+# NemoClaw Inference Options
 
 NemoClaw supports multiple inference providers.
 During onboarding, the `nemoclaw onboard` wizard presents a numbered list of providers to choose from.
@@ -19,7 +19,6 @@ NemoClaw uses provider-specific local tokens for those routes, and rebuilds of l
 
 ## Provider Status
 
-<!-- provider-status:begin -->
 | Provider | Status | Endpoint type | Notes |
 |----------|--------|---------------|-------|
 | NVIDIA Endpoints | Tested | OpenAI-compatible | Hosted models on integrate.api.nvidia.com |
@@ -32,7 +31,6 @@ NemoClaw uses provider-specific local tokens for those routes, and rebuilds of l
 | Local Ollama | Caveated | Local Ollama API | Available when Ollama is installed or running on the host |
 | Local NVIDIA NIM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable GPU |
 | Local vLLM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a server already running on `localhost:8000` |
-<!-- provider-status:end -->
 
 ## Provider Options
 

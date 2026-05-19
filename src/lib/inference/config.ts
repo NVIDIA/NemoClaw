@@ -194,6 +194,14 @@ export function getSandboxInferenceConfig(
       break;
     case "anthropic-prod":
     case "compatible-anthropic-endpoint":
+      if (provider === "compatible-anthropic-endpoint" && inferenceApi === "openai-completions") {
+        providerKey = MANAGED_PROVIDER_ID;
+        primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
+        inferenceCompat = {
+          supportsStore: false,
+        };
+        break;
+      }
       providerKey = "anthropic";
       primaryModelRef = `anthropic/${model}`;
       inferenceBaseUrl = "https://inference.local";

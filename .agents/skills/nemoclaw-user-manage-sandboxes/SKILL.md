@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-manage-sandboxes"
-description: "Explains operational tasks after the quickstart: listing sandboxes, status and health checks, logs, diagnostics, port forwards, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall. Trigger keywords - manage nemoclaw sandboxes, nemoclaw status, nemoclaw list, nemoclaw dashboard port, nemoclaw rebuild, nemoclaw upgrade sandboxes, nemoclaw uninstall, nemoclaw backup, nemoclaw restore, workspace backup, openshell sandbox download upload, nemoclaw messaging channels, nemoclaw telegram, nemoclaw discord, nemoclaw slack, openshell channel messaging, nemoclaw workspace files, soul.md, user.md, identity.md, agents.md, sandbox persistence."
+description: "Explains operational tasks after the quickstart: listing sandboxes, status and health checks, logs, diagnostics, port forwards, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall. Trigger keywords - manage nemoclaw sandboxes, nemoclaw status, nemoclaw list, nemoclaw dashboard port, nemoclaw rebuild, nemoclaw upgrade sandboxes, nemoclaw uninstall, nemoclaw shields, shields up, shields down, shields status, sandbox mutability, sandbox runtime configuration, sandbox lockdown, nemoclaw backup, nemoclaw restore, workspace backup, openshell sandbox download upload, nemoclaw messaging channels, nemoclaw telegram, nemoclaw discord, nemoclaw slack, openshell channel messaging, nemoclaw workspace files, soul.md, user.md, identity.md, agents.md, sandbox persistence."
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -231,14 +231,14 @@ When a backup command reports partial archive output, NemoClaw keeps the usable 
 
 See Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill) for the full list of state-preservation guarantees, snapshot retention, and instructions for manual backups when the auto-flow is not enough.
 
-:::{note} If the rebuild aborts with `Missing credential: <KEY>`
+**If the rebuild aborts with `Missing credential: <KEY>`:**
+
 The rebuild preflight reads the provider credential recorded by your last `nemoclaw onboard` session.
 If you have switched providers since onboarding, for example from a remote API to a local Ollama setup, the preflight may still reference the old key and fail before any destroy step runs.
 
 To recover, re-run `nemoclaw onboard` and select your current provider.
 This refreshes the session metadata.
 Your existing container keeps serving traffic until the new image is ready.
-:::
 
 ## Step 9: Uninstall
 
@@ -266,6 +266,7 @@ For a full comparison of the two forms, including what they fetch, what they tru
 
 ## References
 
+- **Load [references/runtime-controls.md](references/runtime-controls.md)** when an operator needs to temporarily lower or restore the sandbox security posture, or when a user is trying to figure out whether a config change needs a rebuild. Single page that answers 'what can I change at runtime vs. what requires a rebuild' for NemoClaw sandboxes, and documents the operator-only shields lockdown commands (shields up, shields down with timeout/reason/policy, shields status).
 - **Load [references/backup-restore.md](references/backup-restore.md)** when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds. Backs up and restores OpenClaw workspace files before destructive operations such as sandbox rebuilds.
 - **Load [references/messaging-channels.md](references/messaging-channels.md)** when setting up messaging channels, chat interfaces, or integrations without relying on nemoclaw tunnel start for bridges. Explains how Telegram, Discord, and Slack reach the sandboxed OpenClaw agent through OpenShell-managed processes and NemoClaw channel commands.
 - **Load [references/workspace-files.md](references/workspace-files.md)** when users ask about `SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, or other workspace files, or when preparing to back up or restore workspace state. Explains what workspace personality and configuration files are, where they live, and how they persist across sandbox restarts.

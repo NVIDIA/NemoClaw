@@ -89,16 +89,17 @@ tool, switch to vLLM with `--enable-auto-tool-choice` and the correct
 
 ### Authenticated Reverse Proxy
 
-On non-WSL hosts, NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated reverse proxy on `0.0.0.0:11435`.
-The native install/start paths also reset NemoClaw-managed systemd launches to the loopback binding.
+NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated reverse proxy on `0.0.0.0:11435` whenever the sandbox container cannot reach the host's loopback directly.
+The install/start paths also reset NemoClaw-managed systemd launches to the loopback binding.
 Containers and other hosts on the local network reach Ollama only through the
 proxy, which validates a Bearer token before forwarding requests.
-On that native path, NemoClaw never exposes Ollama without authentication.
+On that path, NemoClaw never exposes Ollama without authentication.
 
-WSL Ollama paths do not use this proxy.
+NemoClaw skips the proxy only when Docker Desktop on WSL bridges the host's loopback into containers via `host.docker.internal` — there, raw Ollama on `127.0.0.1:11434` is directly reachable and the auth proxy adds no value.
+**Native Docker installed inside a WSL distro** (the more common WSL2 setup with `docker-ce`) does **not** see the host's loopback from its bridge network, so the proxy runs there too.
 Windows-host Ollama uses the Windows daemon through `host.docker.internal`.
 
-For non-WSL Ollama setups, the onboard wizard manages the proxy automatically:
+For Ollama setups that go through the proxy, the onboard wizard manages it automatically:
 
 - Generates a random 24-byte token on first run and stores it in
   `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
@@ -307,15 +308,16 @@ Start vLLM with the model you want before onboarding if you manage the server yo
 
 ### Override the Managed-vLLM Model
 
-Managed vLLM serves the profile default by, well, default.
-Export `NEMOCLAW_VLLM_MODEL=<slug>` before invoking the installer to swap in a different model from the registry; NemoClaw uses the matching `vllm serve` flags (reasoning parser, tool-call parser, `--max-model-len`).
+Managed vLLM serves the profile default unless you select a different registry entry.
+Export `NEMOCLAW_VLLM_MODEL=<slug>` before invoking the installer to choose a different model from the registry.
+NemoClaw uses the matching `vllm serve` flags, including the reasoning parser, tool-call parser, and `--max-model-len`.
 Recognised slugs:
 
 | Slug | Hugging Face model | Notes |
 |---|---|---|
 | `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Default on DGX Spark and DGX Station profiles |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | Default on the generic Linux + NVIDIA GPU profile |
-| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated — requires Hugging Face license acceptance |
+| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated. Requires Hugging Face license acceptance |
 
 The slug is case-insensitive; the full Hugging Face id is also accepted.
 An unrecognised value fails fast with a list of valid slugs.

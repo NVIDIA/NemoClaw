@@ -3,14 +3,10 @@
 
 import { deleteCredential, saveCredential } from "../credentials/store";
 
-export interface ChannelDef {
-  envKey?: string;
+export interface ChannelBase {
   description: string;
   help: string;
   label: string;
-  appTokenEnvKey?: string;
-  appTokenHelp?: string;
-  appTokenLabel?: string;
   userIdEnvKey?: string;
   userIdHelp?: string;
   userIdLabel?: string;
@@ -20,14 +16,40 @@ export interface ChannelDef {
   serverIdLabel?: string;
   requireMentionEnvKey?: string;
   requireMentionHelp?: string;
+}
+
+export interface CredentialBackedChannelDef extends ChannelBase {
+  envKey?: string;
+  appTokenEnvKey?: string;
+  appTokenHelp?: string;
+  appTokenLabel?: string;
   tokenFormat?: RegExp;
   tokenFormatHint?: string;
   appTokenFormat?: RegExp;
   appTokenFormatHint?: string;
-  // "host-qr" channels capture the token via a host-side QR handshake instead
-  // of a paste prompt. Defaults to "token-paste" when omitted.
+  // "host-qr" channels capture a static token via a host-side QR handshake
+  // (e.g. wechat/iLink). Defaults to "token-paste" when omitted.
   loginMethod?: "token-paste" | "host-qr";
 }
+
+export interface InSandboxQrChannelDef extends ChannelBase {
+  // In-sandbox QR channels intentionally let the bot library own mutable
+  // session state inside the sandbox after the operator pairs the account.
+  // That is the runtime tradeoff of enabling the channel without a host bridge;
+  // NemoClaw must still not declare host-side token env keys or OpenShell
+  // provider credentials for these channels.
+  loginMethod: "in-sandbox-qr";
+  envKey?: never;
+  appTokenEnvKey?: never;
+  appTokenHelp?: never;
+  appTokenLabel?: never;
+  tokenFormat?: never;
+  tokenFormatHint?: never;
+  appTokenFormat?: never;
+  appTokenFormatHint?: never;
+}
+
+export type ChannelDef = CredentialBackedChannelDef | InSandboxQrChannelDef;
 
 export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
   telegram: {
@@ -92,6 +114,12 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     userIdLabel: "Slack Member IDs (comma-separated allowlist)",
     allowIdsMode: "dm",
   },
+  whatsapp: {
+    description: "WhatsApp Web messaging (QR pairing)",
+    help: "WhatsApp Web pairs via QR code scanned with your phone — no host-side token. After the sandbox is running, run `openshell term` and then use `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes to display the QR.",
+    label: "WhatsApp",
+    loginMethod: "in-sandbox-qr",
+  },
 };
 
 export function getChannelDef(name: string): ChannelDef | undefined {
@@ -111,13 +139,13 @@ export function getChannelTokenKeys(channel: ChannelDef): string[] {
   return channel.appTokenEnvKey ? [channel.envKey, channel.appTokenEnvKey] : [channel.envKey];
 }
 
-export function channelUsesQrPairing(channel: ChannelDef): boolean {
-  return !channel.envKey;
+export function channelUsesInSandboxQrPairing(channel: ChannelDef): boolean {
+  return channel.loginMethod === "in-sandbox-qr";
 }
 
 export function channelHasStaticToken(
   channel: ChannelDef,
-): channel is ChannelDef & { envKey: string } {
+): channel is CredentialBackedChannelDef & { envKey: string } {
   return typeof channel.envKey === "string" && channel.envKey.length > 0;
 }
 
