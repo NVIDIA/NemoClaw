@@ -241,6 +241,23 @@ Refer to the following pages on the official documentation website for more info
 | [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) | Full NemoClaw CLI command reference. |
 | [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html) | Common issues and resolution steps. |
 
+### Build Docs Locally
+
+The public documentation site is built with Fern.
+The repo pins the Fern CLI version in `fern/fern.config.json`.
+Use the npm scripts so every docs command uses that pinned version.
+
+```bash
+npm run docs
+npm run docs:live
+```
+
+To publish a branch-based Fern preview whenever docs files change, run:
+
+```bash
+npm run docs:preview:watch
+```
+
 ## Project Structure
 
 The following directories make up the NemoClaw repository.

@@ -16,6 +16,18 @@
     "reason": "Internal Vitest-only sentinel that prevents hermetic CLI tests with fake OpenShell binaries from reading the host's real Docker gateway image. Production users should not set it."
   },
   {
+    "name": "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+    "reason": "Internal child-process setting used only when launching the hidden Bedrock Runtime adapter. Users should configure Bedrock through the existing custom Anthropic endpoint flow instead."
+  },
+  {
+    "name": "NEMOCLAW_BEDROCK_RUNTIME_ENDPOINT_URL",
+    "reason": "Internal child-process setting used only to pass the auto-detected Bedrock Runtime endpoint to the hidden local adapter. Not a public user-facing configuration knob."
+  },
+  {
+    "name": "NEMOCLAW_BEDROCK_RUNTIME_REGION",
+    "reason": "Internal child-process setting used only to pass the resolved Bedrock Runtime region to the hidden local adapter. Users should rely on the endpoint URL or standard AWS region environment variables."
+  },
+  {
     "name": "NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE",
     "reason": "Internal installer sentinel exported only during OpenShell gateway replacement so onboard restores the pre-upgrade sandbox backup. Not user-facing."
   },

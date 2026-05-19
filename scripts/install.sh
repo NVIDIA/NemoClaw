@@ -550,6 +550,7 @@ usage() {
   printf "    NEMOCLAW_NON_INTERACTIVE=1    Same as --non-interactive\n"
   printf "    NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt Allow sudo prompts during non-interactive onboarding\n"
   printf "    NEMOCLAW_FRESH=1              Same as --fresh\n"
+  printf "    NEMOCLAW_NO_EXPRESS=1         Skip express install prompt on supported platforms\n"
   printf "    NEMOCLAW_SANDBOX_NAME         Sandbox name to create/use\n"
   printf "    NEMOCLAW_SINGLE_SESSION=1     Abort if active sandbox sessions exist\n"
   printf "    NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1\n"
@@ -2037,7 +2038,7 @@ ensure_docker() {
   case "$(uname -s)" in
     Darwin | MINGW* | MSYS*) return 0 ;;
   esac
-  if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
+  if is_wsl_host; then
     return 0
   fi
   # Fast path: docker info works → already set up (root, or already-active group).
@@ -2117,11 +2118,31 @@ ensure_docker() {
   fi
 }
 
-# Detect DGX Spark / DGX Station from firmware (DMI first, devicetree fallback).
-# Echoes "DGX Spark", "DGX Station", or empty. Used to gate the express
-# install prompt; only platforms with a known sensible default are offered.
+is_wsl_host() {
+  if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
+    return 0
+  fi
+  if [ -r /proc/sys/kernel/osrelease ] \
+    && grep -qiE 'microsoft|wsl' /proc/sys/kernel/osrelease 2>/dev/null; then
+    return 0
+  fi
+  if [ -r /proc/version ] \
+    && grep -qiE 'microsoft|wsl' /proc/version 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+# Detect DGX Spark / DGX Station from firmware (DMI first, devicetree fallback)
+# and Windows WSL from the host environment. Echoes "DGX Spark",
+# "DGX Station", "Windows WSL", or empty. Used to gate the express install
+# prompt; only platforms with a known sensible default are offered.
 detect_express_platform() {
   local model=""
+  if is_wsl_host; then
+    printf "Windows WSL"
+    return
+  fi
   if [ -r /sys/class/dmi/id/product_name ]; then
     model="$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"
   fi
@@ -2135,7 +2156,7 @@ detect_express_platform() {
   esac
 }
 
-# Prompt the user to opt into express install on Spark/Station. Sets the
+# Prompt the user to opt into express install on supported platforms. Sets the
 # non-interactive + provider/model env vars when accepted. Skipped when
 # the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
 # no TTY.
@@ -2197,6 +2218,9 @@ maybe_offer_express_install() {
           ;;
         "DGX Station")
           export NEMOCLAW_PROVIDER=install-vllm
+          ;;
+        "Windows WSL")
+          export NEMOCLAW_PROVIDER=install-windows-ollama
           ;;
       esac
       ;;

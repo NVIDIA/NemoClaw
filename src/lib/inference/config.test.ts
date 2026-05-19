@@ -270,6 +270,40 @@ describe("getSandboxInferenceConfig", () => {
       });
   });
 
+  it("maps Bedrock Runtime custom Anthropic endpoints through the managed OpenAI-compatible route", () => {
+    expect(
+      getSandboxInferenceConfig(
+        "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "compatible-anthropic-endpoint",
+        "openai-completions",
+      ),
+    ).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/anthropic.claude-3-5-sonnet-20240620-v1:0`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsStore: false,
+      },
+    });
+  });
+
+  it("keeps true Anthropic-compatible endpoints on Anthropic Messages", () => {
+    expect(
+      getSandboxInferenceConfig(
+        "claude-sonnet-proxy",
+        "compatible-anthropic-endpoint",
+        "anthropic-messages",
+      ),
+    ).toEqual({
+      providerKey: "anthropic",
+      primaryModelRef: "anthropic/claude-sonnet-proxy",
+      inferenceBaseUrl: "https://inference.local",
+      inferenceApi: "anthropic-messages",
+      inferenceCompat: null,
+    });
+  });
+
   it("maps Gemini to the routed inference provider with supportsStore disabled", () => {
     expect(getSandboxInferenceConfig("gemini-2.5-flash", "gemini-api")).toEqual({
       providerKey: MANAGED_PROVIDER_ID,

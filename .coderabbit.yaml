@@ -190,6 +190,8 @@ reviews:
           rebuild with cached Telegram credentials
         - `messaging-compatible-endpoint-e2e` — Telegram + compatible endpoint
           inference.local regression
+        - `bedrock-runtime-compatible-anthropic-e2e` — Bedrock Runtime
+          compatible Anthropic endpoint adapter boundary
         - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
           isolation
         - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
@@ -198,9 +200,26 @@ reviews:
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,channels-stop-start-e2e,messaging-compatible-endpoint-e2e,hermes-discord-e2e,hermes-slack-e2e,openshell-gateway-upgrade-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,channels-stop-start-e2e,messaging-compatible-endpoint-e2e,bedrock-runtime-compatible-anthropic-e2e,hermes-discord-e2e,hermes-slack-e2e,openshell-gateway-upgrade-e2e
         ```
 
+    - path: "src/lib/onboard/bedrock-runtime.ts"
+      instructions: &e2e-bedrock-runtime-compatible-anthropic |
+        This file is part of the Bedrock Runtime compatible Anthropic endpoint
+        path. Changes affect endpoint classification, hidden adapter startup,
+        adapter-token isolation, and the sandbox-facing inference.local route.
+
+        **E2E test recommendation:**
+        - `bedrock-runtime-compatible-anthropic-e2e` — fake Bedrock Runtime
+          endpoint through OpenClaw and Hermes with sandbox leak checks
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=bedrock-runtime-compatible-anthropic-e2e
+        ```
+
+    - path: "src/lib/inference/bedrock-runtime*.ts"
+      instructions: *e2e-bedrock-runtime-compatible-anthropic
     - path: "src/lib/onboard/channel-state.ts"
       instructions: &e2e-channel-stop-start |
         This file controls disabled channel resolution used during onboard
@@ -561,6 +580,9 @@ reviews:
     - path: "nemoclaw-blueprint/openclaw-plugins/kimi-inference-compat/**"
       instructions: *e2e-kimi-inference-compat
 
+    - path: "test/e2e/test-bedrock-runtime-compatible-anthropic.sh"
+      instructions: *e2e-bedrock-runtime-compatible-anthropic
+
     - path: "test/e2e/test-openshell-gateway-upgrade.sh"
       instructions: |
         This script validates the old OpenShell install upgrade guard for
@@ -598,6 +620,10 @@ reviews:
       instructions: |
         This is the nightly E2E workflow definition. Changes here affect
         which tests run and how they are triggered.
+
+        If a new E2E job is added, verify corresponding
+        `path_instructions` entries exist in `.coderabbit.yaml` for the
+        source files it covers.
 
         If a job is renamed or removed, update the corresponding aggregate
         job `needs` lists (`notify-on-failure`, `report-to-pr`, and
