@@ -57,6 +57,27 @@ onboarding:
     agent: openclaw
     provider: nvidia
     inference_route: inference-local
+  cloud-openclaw-custom-policies:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    model: nvidia/nemotron-3-super-120b-a12b
+    policy_presets:
+    - npm
+    - pypi
+  cloud-openclaw-invalid-nvidia-key:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    invalid_api_key: not-a-nvidia-key
+  cloud-openclaw-gateway-port-conflict:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    gateway_port: 18080
   cloud-hermes: &id002
     path: cloud
     agent: hermes
@@ -172,6 +193,34 @@ setup_scenarios:
       runtime: docker-missing
       onboarding: cloud-openclaw
     expected_state: preflight-failure-no-sandbox
+    suites: []
+  ubuntu-repo-cloud-openclaw-custom-policies:
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw-custom-policies
+    expected_state: cloud-openclaw-custom-policies-ready
+    suites:
+    - smoke
+    - inference
+    - credentials
+    - onboarding-state
+  ubuntu-invalid-nvidia-key-negative:
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw-invalid-nvidia-key
+    expected_state: onboarding-failure-invalid-nvidia-key
+    suites: []
+  ubuntu-gateway-port-conflict-negative:
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw-gateway-port-conflict
+    expected_state: onboarding-failure-gateway-port-conflict
     suites: []
 base_scenarios:
   ubuntu-repo-docker:

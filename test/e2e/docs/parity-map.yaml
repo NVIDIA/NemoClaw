@@ -299,10 +299,41 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: Docker + sudo hosts edit + OpenShell
   test-onboard-negative-paths.sh:
-    scenario: ubuntu-repo-cloud-openclaw
-    status: deferred
+    scenario: ubuntu-repo-cloud-openclaw-custom-policies
+    status: migrated
     bucket: onboarding-negative-paths
-    assertions: []
+    assertions:
+    - legacy: NEMOCLAW_POLICY_MODE=restricted falls back to suggested presets
+      status: deferred
+      reason: pure policy fallback behavior belongs in focused TypeScript behavior tests
+      owner: e2e-maintainers
+      runner_requirement: local CLI build
+    - legacy: NEMOCLAW_POLICY_MODE=nonexistent falls back to suggested presets
+      status: deferred
+      reason: pure policy fallback behavior belongs in focused TypeScript behavior tests
+      owner: e2e-maintainers
+      runner_requirement: local CLI build
+    - legacy: Invalid NVIDIA API key exits cleanly with an explicit message and no stack trace
+      status: migrated
+      scenario: ubuntu-invalid-nvidia-key-negative
+      assertion_id: expected-state.failure.invalid-nvidia-api-key
+    - legacy: Non-NVIDIA provider key prefixes are accepted by provider-aware credential validation
+      status: deferred
+      reason: provider-aware prefix validation is pure validation logic and does not require live scenario coverage
+      owner: e2e-maintainers
+      runner_requirement: local CLI build
+    - legacy: Occupied onboard gateway port returns a user-friendly conflict error and no stack trace
+      status: migrated
+      scenario: ubuntu-gateway-port-conflict-negative
+      assertion_id: expected-state.failure.gateway-port-conflict
+    - legacy: Non-interactive onboard honors explicit NEMOCLAW_POLICY_PRESETS
+      status: migrated
+      scenario: ubuntu-repo-cloud-openclaw-custom-policies
+      assertion_id: onboarding-state.registry-provider-model-policies
+    - legacy: Non-interactive onboard honors NEMOCLAW_PROVIDER=cloud plus the requested model
+      status: migrated
+      scenario: ubuntu-repo-cloud-openclaw-custom-policies
+      assertion_id: onboarding-state.session-provider-model-policies
   test-brave-search-e2e.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated

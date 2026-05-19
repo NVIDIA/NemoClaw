@@ -30,6 +30,15 @@ suites:
     steps: &id008
     - id: credentials-present
       script: security/credentials/00-credentials-present.sh
+  onboarding-state:
+    requires_state:
+      sandbox.status: running
+      onboarding_state.provider: nvidia-prod
+    steps:
+    - id: registry-provider-model-policies
+      script: onboarding/state/00-registry-provider-model-policies.sh
+    - id: session-provider-model-policies
+      script: onboarding/state/01-session-provider-model-policies.sh
   local-ollama-inference:
     requires_state:
       gateway.health: healthy

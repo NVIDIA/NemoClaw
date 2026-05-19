@@ -178,6 +178,10 @@ ONBOARDING_ID="$(read_plan_string dimensions.onboarding.id)"
 RUNTIME_ID="$(read_plan_string dimensions.runtime.id)"
 RUNTIME_CONTAINER_DAEMON="$(read_plan_string dimensions.runtime.profile.container_daemon)"
 EXPECTED_STATE_ID="$(read_plan_string expected_state.id)"
+FAILURE_STAGE="$(read_plan_string expected_state.config.failure.stage)"
+FAILURE_EXIT_CODE="$(read_plan_string expected_state.config.failure.exit_code)"
+FAILURE_MESSAGE_CONTAINS="$(read_plan_string expected_state.config.failure.message_contains)"
+FAILURE_NO_STACK_TRACE="$(read_plan_string expected_state.config.failure.no_stack_trace)"
 
 # Trace the dimension id so scenario-level assertions can identify the
 # configured install (e.g. repo-current); e2e_install internally traces
@@ -232,6 +236,54 @@ if [[ "${EXPECTED_STATE_ID}" == "preflight-failure-no-sandbox" ]]; then
     exit 4
   fi
   echo "run-scenario: negative preflight passed; Docker daemon unavailable and no sandbox was created"
+  exit 0
+fi
+
+
+if [[ "${FAILURE_STAGE}" == "onboarding" ]]; then
+  negative_log="${E2E_CONTEXT_DIR}/negative-onboarding.log"
+  sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
+  port_holder_started=0
+  onboard_env=(NEMOCLAW_SANDBOX_NAME="${sandbox_name}" NEMOCLAW_RECREATE_SANDBOX=1 NEMOCLAW_POLICY_MODE=skip)
+  case "${ONBOARDING_ID}" in
+    cloud-openclaw-invalid-nvidia-key)
+      onboard_env+=(NVIDIA_API_KEY=not-a-nvidia-key)
+      ;;
+    cloud-openclaw-gateway-port-conflict)
+      conflict_port="$(read_plan_string dimensions.onboarding.profile.gateway_port)"
+      : "${conflict_port:=18080}"
+      if e2e_port_holder_start "${conflict_port}"; then
+        port_holder_started=1
+      else
+        echo "run-scenario: could not start port holder on ${conflict_port}; continuing against any existing listener" >&2
+      fi
+      onboard_env+=(NEMOCLAW_GATEWAY_PORT="${conflict_port}")
+      ;;
+  esac
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    printf '%s
+' "${FAILURE_MESSAGE_CONTAINS}" >"${negative_log}"
+    negative_status="${FAILURE_EXIT_CODE:-1}"
+  else
+    set +e
+    (
+      export "${onboard_env[@]}"
+      e2e_onboard "${ONBOARDING_ID}"
+    ) >"${negative_log}" 2>&1
+    negative_status=$?
+    set -e
+  fi
+  if [[ "${port_holder_started}" -eq 1 ]]; then
+    e2e_port_holder_stop
+  fi
+  if ! e2e_negative_assert_failure "${negative_log}" "${negative_status}" "${FAILURE_EXIT_CODE:-1}" "${FAILURE_MESSAGE_CONTAINS}" "$([[ "${FAILURE_NO_STACK_TRACE}" == "true" ]] && echo 1 || echo 0)"; then
+    exit 4
+  fi
+  if openshell sandbox list 2>/dev/null | grep -Fq "${sandbox_name}"; then
+    echo "run-scenario: negative onboarding left behind sandbox ${sandbox_name}" >&2
+    exit 4
+  fi
+  echo "run-scenario: negative onboarding ${ONBOARDING_ID} passed"
   exit 0
 fi
 

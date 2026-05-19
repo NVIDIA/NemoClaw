@@ -60,6 +60,32 @@ expected_states:
       policy_engine: supported
       shields: supported
 
+  cloud-openclaw-custom-policies-ready:
+    cli:
+      installed: true
+    gateway:
+      expected: present
+      health: healthy
+    sandbox:
+      expected: present
+      status: running
+      agent: openclaw
+    inference:
+      expected: available
+      provider: nvidia
+      route: inference-local
+      mode: gateway-routed
+    credentials:
+      expected: present
+      storage: gateway-managed
+    onboarding_state:
+      provider: nvidia-prod
+      model: nvidia/nemotron-3-super-120b-a12b
+      policy_presets: npm,pypi
+    security:
+      policy_engine: supported
+      shields: supported
+
   cloud-hermes-ready:
     cli:
       installed: true
@@ -118,3 +144,33 @@ expected_states:
     failure:
       expected: true
       stage: preflight
+
+  onboarding-failure-invalid-nvidia-key:
+    cli:
+      installed: true
+    gateway:
+      expected: absent
+    sandbox:
+      expected: absent
+    failure:
+      expected: true
+      stage: onboarding
+      reason: invalid-nvidia-api-key
+      exit_code: 1
+      message_contains: Invalid NVIDIA API key. Must start with nvapi-
+      no_stack_trace: true
+
+  onboarding-failure-gateway-port-conflict:
+    cli:
+      installed: true
+    gateway:
+      expected: absent
+    sandbox:
+      expected: absent
+    failure:
+      expected: true
+      stage: onboarding
+      reason: gateway-port-conflict
+      exit_code: 1
+      message_contains: Port 18080 is not available
+      no_stack_trace: true

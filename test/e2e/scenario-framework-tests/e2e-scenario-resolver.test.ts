@@ -40,6 +40,32 @@ describe("E2E scenario resolver", () => {
     }
   });
 
+  it("should_resolve_onboard_negative_path_migration_scenarios", () => {
+    const meta = realMetadata();
+    const custom = resolveScenario("ubuntu-repo-cloud-openclaw-custom-policies", meta);
+    expect(custom.dimensions.onboarding.id).toBe("cloud-openclaw-custom-policies");
+    expect(custom.expected_state.id).toBe("cloud-openclaw-custom-policies-ready");
+    expect(custom.suites.map((s) => s.id)).toContain("onboarding-state");
+
+    const invalidKey = resolveScenario("ubuntu-invalid-nvidia-key-negative", meta);
+    expect(invalidKey.expected_state.config.failure).toMatchObject({
+      expected: true,
+      stage: "onboarding",
+      reason: "invalid-nvidia-api-key",
+      exit_code: 1,
+      no_stack_trace: true,
+    });
+
+    const portConflict = resolveScenario("ubuntu-gateway-port-conflict-negative", meta);
+    expect(portConflict.expected_state.config.failure).toMatchObject({
+      expected: true,
+      stage: "onboarding",
+      reason: "gateway-port-conflict",
+      exit_code: 1,
+      no_stack_trace: true,
+    });
+  });
+
   it("should_fail_for_unknown_scenario", () => {
     const meta = realMetadata();
     expect(() => resolveScenario("does-not-exist", meta)).toThrow(/does-not-exist/);
