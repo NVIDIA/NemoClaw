@@ -35,19 +35,36 @@ export interface GatewayTokenCommandOptions {
   quiet?: boolean;
 }
 
+export class GatewayTokenCommandError extends Error {
+  readonly lines: readonly string[];
+  readonly exitCode: number;
+
+  constructor(lines: string | readonly string[], exitCode = 1) {
+    const normalized = Array.isArray(lines) ? lines : [lines];
+    super(normalized.join("\n"));
+    this.name = "GatewayTokenCommandError";
+    this.lines = normalized;
+    this.exitCode = exitCode;
+  }
+}
+
+function gatewayTokenFail(lines: string | readonly string[], exitCode = 1): never {
+  throw new GatewayTokenCommandError(lines, exitCode);
+}
+
 const SECURITY_WARNING =
   "Treat this token like a password -- do not log, share, or commit it.";
 
 /**
- * Run the gateway-token command. Returns the process exit code (0 on success,
- * 1 on failure). The caller is responsible for invoking `process.exit` and for
- * having validated that the sandbox exists in the registry.
+ * Run the gateway-token command. Throws {@link GatewayTokenCommandError} on
+ * failure. The caller is responsible for rendering failures and for having
+ * validated that the sandbox exists in the registry.
  */
 export function runGatewayTokenCommand(
   sandboxName: string,
   options: GatewayTokenCommandOptions,
   deps: GatewayTokenCommandDeps,
-): number {
+): void {
   const log = deps.log ?? ((m: string) => console.log(m));
   const error = deps.error ?? ((m: string) => console.error(m));
 
@@ -64,10 +81,9 @@ export function runGatewayTokenCommand(
     }
   }
   if (resolvedAgent && resolvedAgent !== "openclaw") {
-    error(
+    gatewayTokenFail(
       `  gateway-token is not applicable for sandbox '${sandboxName}': it uses the '${resolvedAgent}' agent, which does not expose a gateway auth token. This command only supports the OpenClaw agent.`,
     );
-    return 1;
   }
 
   let token: string | null;
@@ -78,16 +94,16 @@ export function runGatewayTokenCommand(
   }
 
   if (!token) {
-    error(`  Could not retrieve the gateway auth token for sandbox '${sandboxName}'.`);
-    error(`  Make sure the sandbox is running: nemoclaw ${sandboxName} status`);
-    return 1;
+    gatewayTokenFail([
+      `  Could not retrieve the gateway auth token for sandbox '${sandboxName}'.`,
+      `  Make sure the sandbox is running: nemoclaw ${sandboxName} status`,
+    ]);
   }
 
   log(token);
   if (!options.quiet) {
     error(SECURITY_WARNING);
   }
-  return 0;
 }
 
 /** Parse the raw `gateway-token` action arguments. */

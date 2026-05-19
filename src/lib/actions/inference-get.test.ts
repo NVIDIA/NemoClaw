@@ -56,6 +56,16 @@ describe("runInferenceGet", () => {
     });
   });
 
+  it("can return the route without rendering output for oclif JSON handling", async () => {
+    const deps = createDeps("Gateway inference:\n  Provider: openai-api\n  Model: gpt-5.4\n");
+
+    await expect(runInferenceGet({ quiet: true }, deps)).resolves.toEqual({
+      provider: "openai-api",
+      model: "gpt-5.4",
+    });
+    expect(deps.log).not.toHaveBeenCalled();
+  });
+
   it("fails when no route is configured", async () => {
     const deps = createDeps("Gateway inference:\n\n  Not configured\n");
 

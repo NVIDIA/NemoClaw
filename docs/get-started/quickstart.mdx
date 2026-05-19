@@ -233,10 +233,9 @@ The sandbox still calls `https://inference.local/v1`, so do not point in-sandbox
 
 <Accordion title="Experimental: Local NIM and Local vLLM">
 
-These options appear when `NEMOCLAW_EXPERIMENTAL=1` is set and the prerequisites are met.
-
-- **Local NVIDIA NIM** requires a NIM-capable GPU. NemoClaw pulls and manages a NIM container.
-- **Local vLLM** uses a vLLM server already running on `localhost:8000`, or installs and starts a managed vLLM container on supported DGX Spark, DGX Station, and Linux NVIDIA GPU hosts. NemoClaw auto-detects the loaded model.
+- **Local NVIDIA NIM** appears when `NEMOCLAW_EXPERIMENTAL=1` is set and the host has a NIM-capable GPU. NemoClaw pulls and manages a NIM container.
+- **Local vLLM (already running)** appears whenever NemoClaw detects a vLLM server on `localhost:8000`. No flag is required for the menu entry. NemoClaw auto-detects the loaded model.
+- **Local vLLM (managed install/start)** requires `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. NemoClaw pulls and starts a vLLM container on supported DGX Spark, DGX Station, and Linux NVIDIA GPU hosts.
 
 For setup, refer to [Use a Local Inference Server](/inference/use-local-inference).
 </Accordion>

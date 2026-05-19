@@ -199,13 +199,16 @@ if [ -z "$_DASHBOARD_PORT_RAW" ]; then
   fi
 else
   _DASHBOARD_PORT="$(printf '%s' "$_DASHBOARD_PORT_RAW" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  _DASHBOARD_PORT_VALID=1
   case "$_DASHBOARD_PORT" in
     *[!0-9]* | '')
-      echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
-      exit 1
+      _DASHBOARD_PORT_VALID=0
       ;;
   esac
-  if ! [ "$_DASHBOARD_PORT" -ge 1024 ] || ! [ "$_DASHBOARD_PORT" -le 65535 ]; then
+  if [ "$_DASHBOARD_PORT_VALID" -eq 1 ] && { [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; }; then
+    _DASHBOARD_PORT_VALID=0
+  fi
+  if [ "$_DASHBOARD_PORT_VALID" -ne 1 ]; then
     echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
     exit 1
   fi
@@ -225,6 +228,18 @@ export OPENCLAW_GATEWAY_PORT="$_DASHBOARD_PORT"
 export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:${_DASHBOARD_PORT}"
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
+_OPENCLAW_STATE_DIR="${_SANDBOX_HOME}/.openclaw"
+_OPENCLAW_CREDENTIALS_DIR="${_OPENCLAW_STATE_DIR}/credentials"
+
+# OpenClaw 2026.4.x stores channel pairing requests under
+# resolveOAuthDir(resolveStateDir(...))/<channel>-pairing.json. The gateway
+# runs as the gateway user while connect-shell commands run as sandbox, so
+# relying on HOME/os.homedir() can split pending requests across users. Force
+# every OpenClaw process in the sandbox to the persistent shared state root.
+export OPENCLAW_HOME="${_SANDBOX_HOME}"
+export OPENCLAW_STATE_DIR="${_OPENCLAW_STATE_DIR}"
+export OPENCLAW_CONFIG_PATH="${_OPENCLAW_STATE_DIR}/openclaw.json"
+export OPENCLAW_OAUTH_DIR="${_OPENCLAW_CREDENTIALS_DIR}"
 
 # ── Config integrity check (delegates to shared library) ────────
 # verify_config_integrity_if_locked is provided by sandbox-init.sh. OpenClaw
@@ -1580,6 +1595,13 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
+    local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
+    for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR; do
+      _openclaw_env_value="${!_openclaw_env_name:-}"
+      [ -n "$_openclaw_env_value" ] || continue
+      _escaped_openclaw_env_value="$(printf '%s' "$_openclaw_env_value" | sed "s/'/'\\\\''/g")"
+      printf "export %s='%s'\n" "$_openclaw_env_name" "$_escaped_openclaw_env_value"
+    done
     if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then
       _escaped_gateway_port="$(printf '%s' "$OPENCLAW_GATEWAY_PORT" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_PORT='%s'\n" "$_escaped_gateway_port"

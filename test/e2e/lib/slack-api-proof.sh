@@ -94,6 +94,21 @@ apply_fake_slack_api_policy() {
     --wait
 }
 
+apply_fake_slack_socket_mode_policy() {
+  local sandbox_name="$1"
+  local port="$2"
+  local host="${FAKE_SLACK_API_HOST:-host.openshell.internal}"
+  local allowed_ip_options
+  allowed_ip_options="$(fake_slack_api_allowed_ip_options)"
+  openshell policy update "$sandbox_name" \
+    --add-endpoint "${host}:${port}:read-write:websocket:enforce:websocket-credential-rewrite,${allowed_ip_options}" \
+    --add-allow "${host}:${port}:GET:/**" \
+    --add-allow "${host}:${port}:WEBSOCKET_TEXT:/**" \
+    --binary /usr/local/bin/node \
+    --binary /usr/bin/node \
+    --wait
+}
+
 run_fake_slack_api_node_request() {
   local port="$1"
   local path="$2"

@@ -82,6 +82,10 @@ const {
 const {
   setupSelectedMessagingChannels,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
+const { buildVllmMenuEntries }: typeof import("./onboard/vllm-menu") = require("./onboard/vllm-menu");
+const {
+  prepareModelRouterVenv,
+}: typeof import("./onboard/model-router-python") = require("./onboard/model-router-python");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -339,8 +343,8 @@ const openshellPinFlow: typeof import("./onboard/openshell-pin") =
 const sandboxCreateFailureDiagnostics: typeof import("./onboard/sandbox-create-failure") =
   require("./onboard/sandbox-create-failure");
 
-import type { AgentDefinition } from "./agent/defs";
 import type { CurlProbeResult } from "./adapters/http/probe";
+import type { AgentDefinition } from "./agent/defs";
 import type { WebSearchConfig } from "./inference/web-search";
 import {
   hydrateMessagingChannelConfig,
@@ -955,24 +959,16 @@ function installModelRouterCommand(routerDir = modelRouterPackageDir()): string 
     );
   }
 
-  if (!resolveHostCommandPath("python3")) {
-    throw new Error("python3 is required to prepare Model Router.");
-  }
-
   const venvDir = modelRouterVenvDir();
-  const venvPython = path.join(venvDir, "bin", "python");
   const routerCommand = modelRouterCommandPath(venvDir);
   const sourceFingerprint = getModelRouterSourceFingerprint(routerDir);
-
-  fs.mkdirSync(path.dirname(venvDir), { recursive: true });
-  console.log(`  Preparing Model Router environment: ${venvDir}`);
-  const venvResult = run(["python3", "-m", "venv", venvDir], {
-    ignoreError: true,
-    timeout: 120_000,
+  const allowReplaceExistingVenv =
+    path.resolve(venvDir) === path.resolve(MODEL_ROUTER_VENV_DIR) ||
+    readModelRouterInstalledFingerprint(venvDir) !== null;
+  const venvPython = prepareModelRouterVenv({
+    venvDir,
+    allowReplaceExisting: allowReplaceExistingVenv,
   });
-  if (venvResult.status !== 0 || !fs.existsSync(venvPython)) {
-    throw new Error("Failed to create Model Router virtual environment.");
-  }
 
   const installResult = run(
     [venvPython, "-m", "pip", "install", "--quiet", "--upgrade", `${routerDir}[prefill,proxy]`],
@@ -6324,24 +6320,14 @@ async function setupNim(
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
     options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
   }
-  // vLLM: an already-running local server is safe to offer in-place because
-  // selecting it is an explicit user action. Managed install/start remains
-  // gated by NEMOCLAW_PROVIDER=install-vllm or NEMOCLAW_EXPERIMENTAL because it
-  // pulls images and starts containers.
-  // Read NEMOCLAW_PROVIDER directly so interactive runs with an explicit
-  // env-var opt-in surface the menu entry too — requestedProvider is null
-  // outside non-interactive mode.
-  const explicitProvider = (process.env.NEMOCLAW_PROVIDER || "").trim().toLowerCase();
-  const userChoseManagedVllm = explicitProvider === "install-vllm";
-  if (vllmRunning) {
-    options.push({
-      key: "vllm",
-      label: `Local vLLM [experimental] (localhost:${VLLM_PORT}) — running (suggested)`,
-    });
-  } else if (vllmProfile && (userChoseManagedVllm || EXPERIMENTAL)) {
-    const verb = hasVllmImage ? "Start" : "Install";
-    options.push({ key: "install-vllm", label: `${verb} vLLM (${vllmProfile.name})` });
-  }
+  options.push(
+    ...buildVllmMenuEntries({
+      vllmRunning,
+      vllmProfile,
+      experimental: EXPERIMENTAL,
+      hasVllmImage,
+    }),
+  );
   // Skipped when Windows-host already won the cache: the running entry
   // above already covers that case.
   if (hasWindowsOllama && ollamaHost !== "host.docker.internal") {
