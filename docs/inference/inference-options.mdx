@@ -89,6 +89,23 @@ To use the router in scripted setup, set:
 $ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
 ```
 
+### Host Python requirement
+
+The Model Router runs in a host-side virtual environment that NemoClaw creates during onboarding.
+NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, and adopts the first interpreter that satisfies both of:
+
+- Version inside `[3.10, 3.14)`.
+- `ensurepip`, `pyexpat`, `ssl`, and `venv` all import without error.
+
+If no candidate qualifies, onboarding aborts and prints the real failure for each candidate.
+This surfaces issues like Homebrew `python@3.14` whose `pyexpat` extension fails to dlopen against the older system `libexpat` on macOS.
+
+To pin a specific interpreter, set `NEMOCLAW_MODEL_ROUTER_PYTHON` to its absolute path before running `nemoclaw onboard`:
+
+```console
+$ NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemoclaw onboard
+```
+
 ## Experimental Options
 
 The following local inference options are experimental.

@@ -260,6 +260,12 @@ const { setupInference, getSandboxInferenceConfig } = require(${onboardPath});
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
+          // pickHostPython probe (#3781) — emit a healthy probe response so
+          // the helper proceeds to the venv step instead of falling back.
+          'if [ "$1" = "-c" ]; then',
+          '  printf \'{"version": [3, 12, 7], "error": null}\\n\'',
+          "  exit 0",
+          "fi",
           'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
           '  venv_dir="$3"',
           '  mkdir -p "$venv_dir/bin"',
@@ -660,6 +666,12 @@ const { setupInference } = require(${onboardPath});
           "#!/usr/bin/env bash",
           "set -euo pipefail",
           `printf "python3 %s\\n" "$*" >> ${JSON.stringify(setupLog)}`,
+          // pickHostPython probe (#3781) — emit a healthy probe response so
+          // the helper proceeds to the venv step instead of falling back.
+          'if [ "$1" = "-c" ]; then',
+          '  printf \'{"version": [3, 12, 7], "error": null}\\n\'',
+          "  exit 0",
+          "fi",
           'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
           '  venv_dir="$3"',
           '  mkdir -p "$venv_dir/bin"',
