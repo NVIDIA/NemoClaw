@@ -5810,6 +5810,136 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       secret_requirement: WeChat test credentials
+    - legacy: 'M-WA0: channels add whatsapp registered QR-only channel'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA0: channels add whatsapp failed or did not register channel'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA1: Unexpected WhatsApp bridge provider exists in gateway'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA1: WhatsApp QR-only channel creates no bridge provider'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA2: registry.messagingChannels contains whatsapp after channel add'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA2: registry.messagingChannels missing whatsapp after channel add ($(registry_field messagingChannels))'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA3: WhatsApp policy preset applied before rebuild'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA3: WhatsApp policy preset missing expected endpoints before rebuild'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA4: Rebuild completed after WhatsApp channel add'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA4: Rebuild failed after WhatsApp channel add'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA5: WhatsApp policy preset survived rebuild with Node binary scope'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA5: WhatsApp policy preset missing expected endpoints/binaries after rebuild'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA6: Sandbox ''$SANDBOX_NAME'' is Ready after WhatsApp rebuild'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA6: Sandbox ''$SANDBOX_NAME'' not Ready after WhatsApp rebuild (list: ${sandbox_list:0:200})'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA7a: WhatsApp credential-like env var found in sandbox environment'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA7a: No WhatsApp credential-like env var present in sandbox environment'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA7b: WhatsApp credential placeholder found in sandbox process list'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA7b: No WhatsApp credential placeholder present in sandbox process list'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA7c: WhatsApp host credential material found on sandbox filesystem: ${sandbox_fs_wa}'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA7c: No WhatsApp host credential material found on sandbox filesystem'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA8: WhatsApp account is enabled in openclaw.json'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA8: WhatsApp account missing or disabled in openclaw.json (${whatsapp_account_json:0:200})'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA8a: WhatsApp health monitor is disabled for unpaired QR session'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA8a: WhatsApp health monitor is not disabled (${whatsapp_account_json:0:200})'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA9: WhatsApp config has no token/auth/session provider placeholders'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA9: WhatsApp config contains secret-like fields: ${whatsapp_secret_fields}'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
   test-network-policy.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
@@ -6980,6 +7110,76 @@ scripts:
       reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
       reviewer: e2e-maintainers
       approved_at: '2026-05-13'
+  test-openclaw-plugin-runtime-exdev.sh:
+    scenario: ''
+    status: deferred
+    bucket: openclaw-plugin-runtime-exdev
+    assertions:
+    - legacy: Docker is running
+      status: deferred
+      reason: regression guard validates #3513 before migration to scenario framework
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with Docker and NemoClaw/OpenShell CLIs
+    - legacy: Docker is not running
+      status: deferred
+      reason: prerequisite failure for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with Docker and NemoClaw/OpenShell CLIs
+    - legacy: NVIDIA_API_KEY is set
+      status: deferred
+      reason: regression guard validates #3513 with live provider credentials before scenario migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NVIDIA_API_KEY
+    - legacy: NVIDIA_API_KEY is required and must start with nvapi-
+      status: deferred
+      reason: prerequisite failure for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NVIDIA_API_KEY
+    - legacy: 'nemoclaw is available: $(nemoclaw --version 2>/dev/null || echo unknown)'
+      status: deferred
+      reason: regression guard validates checkout install before scenario migration
+      owner: e2e-maintainers
+      runner_requirement: local CLI build with installer
+    - legacy: nemoclaw not found after install
+      status: deferred
+      reason: prerequisite failure for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: local CLI build with installer
+    - legacy: fresh sandbox onboard completed
+      status: deferred
+      reason: regression guard validates #3513 on a fresh sandbox before scenario migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with Docker and OpenShell
+    - legacy: fresh sandbox onboard failed (exit ${onboard_rc}); see ${ONBOARD_LOG}
+      status: deferred
+      reason: setup failure evidence for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with Docker and OpenShell
+    - legacy: 'OpenClaw-style plugin runtime deps replacement hit #3513 EXDEV failure'
+      status: deferred
+      reason: executable red assertion for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with cross-filesystem /dev/shm and /sandbox paths
+    - legacy: runtime deps replacement exited ${agent_rc}; see ${AGENT_LOG}
+      status: deferred
+      reason: runtime failure evidence for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with OpenShell exec
+    - legacy: OpenClaw-style plugin runtime-deps replacement completed across filesystems
+      status: deferred
+      reason: expected green assertion after #3513 fix before migration to scenario framework
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with cross-filesystem /dev/shm and /sandbox paths
+    - legacy: runtime deps replacement exited 0 but success marker was missing; see ${AGENT_LOG}
+      status: deferred
+      reason: runtime success-marker failure evidence for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with OpenShell exec
+    - legacy: OpenClaw plugin runtime-deps EXDEV guard passed
+      status: deferred
+      reason: expected green summary after #3513 fix before migration to scenario framework
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with OpenShell exec
   test-openshell-gateway-upgrade.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
