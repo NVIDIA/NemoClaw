@@ -2038,7 +2038,7 @@ ensure_docker() {
   case "$(uname -s)" in
     Darwin | MINGW* | MSYS*) return 0 ;;
   esac
-  if [ -n "${WSL_DISTRO_NAME:-}" ] || [ -n "${WSL_INTEROP:-}" ]; then
+  if is_wsl_host; then
     return 0
   fi
   # Fast path: docker info works → already set up (root, or already-active group).

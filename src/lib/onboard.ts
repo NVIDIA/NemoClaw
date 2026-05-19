@@ -67,6 +67,9 @@ const {
 const {
   getSelectionDrift,
 }: typeof import("./onboard/selection-drift") = require("./onboard/selection-drift");
+const {
+  resolveProviderKeyFallback,
+}: typeof import("./onboard/provider-key-fallback") = require("./onboard/provider-key-fallback");
 const { isLinuxDockerDriverGatewayEnabled }: typeof import("./onboard/docker-driver-platform") = require("./onboard/docker-driver-platform");
 const {
   reconcileGatewayGpuReuseForGpuIntent,
@@ -6393,31 +6396,9 @@ async function setupNim(
         }
         selected = options.find((o) => o.key === providerKey);
         if (!selected) {
-          // Install action keys fall back to the equivalent running-provider
-          // key when the menu only emits the running entry (the install would
-          // have been a no-op anyway).
-          if (providerKey === "install-ollama") {
-            selected = options.find((o) => o.key === "ollama");
-          } else if (providerKey === "install-vllm") {
-            selected = options.find((o) => o.key === "vllm");
-          } else if (providerKey === "install-windows-ollama") {
-            // Windows-host Ollama requests may arrive from NEMOCLAW_PROVIDER
-            // before the dynamic menu knows whether Windows Ollama needs
-            // install, start/restart, or is already reachable. Collapse only
-            // to later-state entries that still point at the Windows host.
-            selected =
-              options.find((o) => o.key === "start-windows-ollama") ||
-              (ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL
-                ? options.find((o) => o.key === "ollama")
-                : undefined);
-          } else if (
-            providerKey === "start-windows-ollama" &&
-            ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL
-          ) {
-            selected = options.find((o) => o.key === "ollama");
-          } else if (providerKey === "ollama") {
-            selected = options.find((o) => o.key === "install-ollama");
-          }
+          selected = resolveProviderKeyFallback(options, providerKey, {
+            isWindowsHostOllama: ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL,
+          });
           if (!selected) {
             if (providerKey === "hermesProvider" && !hermesProviderAvailable) {
               console.error("  Hermes Provider is only available when onboarding Hermes Agent.");
