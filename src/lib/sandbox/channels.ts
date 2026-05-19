@@ -33,10 +33,11 @@ export interface CredentialBackedChannelDef extends ChannelBase {
 }
 
 export interface InSandboxQrChannelDef extends ChannelBase {
-  // In-sandbox QR channels pair entirely inside the sandbox because the bot
-  // library owns the live session state and host-side capture would yield a
-  // stale blob (e.g. WhatsApp Web's Signal-style identity). They must never
-  // declare host-side token env keys or OpenShell provider credentials.
+  // In-sandbox QR channels intentionally let the bot library own mutable
+  // session state inside the sandbox after the operator pairs the account.
+  // That is the runtime tradeoff of enabling the channel without a host bridge;
+  // NemoClaw must still not declare host-side token env keys or OpenShell
+  // provider credentials for these channels.
   loginMethod: "in-sandbox-qr";
   envKey?: never;
   appTokenEnvKey?: never;

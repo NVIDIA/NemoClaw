@@ -470,9 +470,9 @@ else
 fi
 
 whatsapp_policy_pre=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)
-if echo "$whatsapp_policy_pre" | grep -q "web.whatsapp.com" &&
-  echo "$whatsapp_policy_pre" | grep -q "whatsapp.net" &&
-  echo "$whatsapp_policy_pre" | grep -q "raw.githubusercontent.com"; then
+if echo "$whatsapp_policy_pre" | grep -q "web.whatsapp.com" \
+  && echo "$whatsapp_policy_pre" | grep -q "whatsapp.net" \
+  && echo "$whatsapp_policy_pre" | grep -q "raw.githubusercontent.com"; then
   pass "M-WA3: WhatsApp policy preset applied before rebuild"
 else
   fail "M-WA3: WhatsApp policy preset missing expected endpoints before rebuild"
@@ -489,10 +489,10 @@ else
 fi
 
 whatsapp_policy_post=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)
-if echo "$whatsapp_policy_post" | grep -q "web.whatsapp.com" &&
-  echo "$whatsapp_policy_post" | grep -q "whatsapp.net" &&
-  echo "$whatsapp_policy_post" | grep -q "raw.githubusercontent.com" &&
-  { echo "$whatsapp_policy_post" | grep -q "/usr/local/bin/node" || echo "$whatsapp_policy_post" | grep -q "/usr/bin/node"; }; then
+if echo "$whatsapp_policy_post" | grep -q "web.whatsapp.com" \
+  && echo "$whatsapp_policy_post" | grep -q "whatsapp.net" \
+  && echo "$whatsapp_policy_post" | grep -q "raw.githubusercontent.com" \
+  && { echo "$whatsapp_policy_post" | grep -q "/usr/local/bin/node" || echo "$whatsapp_policy_post" | grep -q "/usr/bin/node"; }; then
   pass "M-WA5: WhatsApp policy preset survived rebuild with Node binary scope"
 else
   fail "M-WA5: WhatsApp policy preset missing expected endpoints/binaries after rebuild"
@@ -717,13 +717,13 @@ fi
 # real token. OpenShell resolves the provider-shaped alias directly on egress.
 config_slack=$(sandbox_exec "cat /sandbox/.openclaw/openclaw.json 2>/dev/null | grep -E '\"(bot|app)Token\"'" 2>/dev/null || true)
 if [ -n "$config_slack" ] && {
-  echo "$config_slack" | grep -qF "$SLACK_TOKEN" ||
-    echo "$config_slack" | grep -qF "$SLACK_APP"
+  echo "$config_slack" | grep -qF "$SLACK_TOKEN" \
+    || echo "$config_slack" | grep -qF "$SLACK_APP"
 }; then
   fail "M-S5f: Real Slack bot/app token spliced into openclaw.json — apply_slack_token_override regression?"
-elif [ -n "$config_slack" ] &&
-  echo "$config_slack" | grep -q 'xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN' &&
-  echo "$config_slack" | grep -q 'xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN'; then
+elif [ -n "$config_slack" ] \
+  && echo "$config_slack" | grep -q 'xoxb-OPENSHELL-RESOLVE-ENV-SLACK_BOT_TOKEN' \
+  && echo "$config_slack" | grep -q 'xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN'; then
   pass "M-S5f: openclaw.json holds both Bolt-shape Slack placeholders (no real token on disk)"
 else
   skip "M-S5f: Could not extract Slack token fields from openclaw.json"
@@ -799,9 +799,9 @@ fi
 
 # ── WhatsApp QR-only isolation ────────────────────────────────────
 # WhatsApp is deliberately tokenless from NemoClaw's perspective. The operator
-# pairs inside the sandbox, and the session state is owned by OpenClaw. There
-# must be no host-side WhatsApp credential provider, placeholder, or token env
-# for OpenShell to rewrite.
+# pairs inside the sandbox, and mutable QR session state is allowed in durable
+# agent state. There must be no host-side WhatsApp credential provider,
+# placeholder, or token env for OpenShell to rewrite.
 
 if [ -z "$sandbox_env_all" ]; then
   skip "M-WA7a: Environment variable list is empty"
@@ -1248,9 +1248,9 @@ fi
 
 # M13: Node.js can reach Discord API/CDN through the proxy
 live_discord_policy=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)
-if echo "$live_discord_policy" | grep -q "discord.com" &&
-  echo "$live_discord_policy" | grep -q "cdn.discordapp.com" &&
-  { echo "$live_discord_policy" | grep -q "/usr/local/bin/node" || echo "$live_discord_policy" | grep -q "/usr/bin/node"; }; then
+if echo "$live_discord_policy" | grep -q "discord.com" \
+  && echo "$live_discord_policy" | grep -q "cdn.discordapp.com" \
+  && { echo "$live_discord_policy" | grep -q "/usr/local/bin/node" || echo "$live_discord_policy" | grep -q "/usr/bin/node"; }; then
   pass "M13-policy: Live policy contains Discord endpoints and Node binaries"
 else
   fail "M13-policy: Live policy is missing expected Discord preset endpoint/binary entries"
@@ -1278,8 +1278,8 @@ printf "RC=%s\n" "$rc"
 grep -E "Uses proxy|CONNECT discord.com:443|HTTP/1\\.[01] 403|CONNECT tunnel failed|Connection established|policy_denied|Forbidden" /tmp/nemoclaw-discord-curl.err /tmp/nemoclaw-discord-curl.body 2>/dev/null || true
 ' 2>/dev/null || true)
 info "Discord curl probe: ${live_dc_curl:0:500}"
-if echo "$live_dc_curl" | grep -qiE "CONNECT tunnel failed.*403|CONNECT discord\.com:443|HTTP/1\.[01] 403|policy_denied|Forbidden" &&
-  ! echo "$live_dc_curl" | grep -qiE "Connection established|200 Connection"; then
+if echo "$live_dc_curl" | grep -qiE "CONNECT tunnel failed.*403|CONNECT discord\.com:443|HTTP/1\.[01] 403|policy_denied|Forbidden" \
+  && ! echo "$live_dc_curl" | grep -qiE "Connection established|200 Connection"; then
   info "M13-curl: ambiguous live CONNECT 403 may be upstream or local; hermetic M13-rest-d/e prove whitelist behavior; output: ${live_dc_curl:0:300}"
 elif echo "$live_dc_curl" | grep -qiE "Connection established|200 Connection"; then
   fail "M13-curl: curl unexpectedly established a tunnel to Discord; binary whitelist may be too broad"
@@ -1323,8 +1323,8 @@ NODE
 ' 2>/dev/null || true)
 
 info "Discord Node probe: ${dc_reach:0:500}"
-if echo "$dc_reach" | grep -q "api:HTTP_" &&
-  echo "$dc_reach" | grep -q "cdn:HTTP_"; then
+if echo "$dc_reach" | grep -q "api:HTTP_" \
+  && echo "$dc_reach" | grep -q "cdn:HTTP_"; then
   pass "M13: Node.js reached Discord API and CDN through the same proxy (${dc_reach//$'\n'/ })"
 elif echo "$dc_reach" | grep -qiE "CONNECT.*403|policy_denied|forbidden"; then
   fail "M13: Node.js was denied by the proxy despite the Discord preset being applied: ${dc_reach:0:300}"
@@ -1375,8 +1375,8 @@ fi
 info "Fake Discord REST curl probe: ${fake_rest_curl:0:500}"
 if [ "$fake_rest_policy_ready" != "1" ]; then
   skip "M13-rest-d: Fake Discord REST policy unavailable; skipping curl denial proof"
-elif echo "$fake_rest_curl" | grep -qiE "CONNECT tunnel failed.*403|HTTP/1\.[01] 403|policy_denied|Forbidden" &&
-  ! echo "$fake_rest_curl" | grep -qiE "Connection established|200 Connection"; then
+elif echo "$fake_rest_curl" | grep -qiE "CONNECT tunnel failed.*403|HTTP/1\.[01] 403|policy_denied|Forbidden" \
+  && ! echo "$fake_rest_curl" | grep -qiE "Connection established|200 Connection"; then
   pass "M13-rest-d: curl was denied before reaching the fake Discord REST API"
 elif echo "$fake_rest_curl" | grep -qiE "Connection established|200 Connection"; then
   fail "M13-rest-d: curl unexpectedly established a tunnel to the fake Discord REST API"
@@ -1391,8 +1391,8 @@ fi
 info "Fake Discord REST capture counts: ${fake_rest_capture}"
 if [ "$fake_rest_policy_ready" != "1" ]; then
   skip "M13-rest-e: Fake Discord REST policy unavailable; skipping capture proof"
-elif echo "$fake_rest_capture" | grep -q "node=1" &&
-  echo "$fake_rest_capture" | grep -q "curl=0"; then
+elif echo "$fake_rest_capture" | grep -q "node=1" \
+  && echo "$fake_rest_capture" | grep -q "curl=0"; then
   pass "M13-rest-e: Fake server saw Node but no curl request"
 else
   fail "M13-rest-e: Unexpected fake Discord REST capture counts: ${fake_rest_capture}"
@@ -1407,8 +1407,8 @@ else
   fail "M13b: Failed to start hermetic fake Discord Gateway"
 fi
 
-if [ "$fake_gateway_ready" = "1" ] &&
-  apply_fake_discord_gateway_policy "$SANDBOX_NAME" "$FAKE_DISCORD_GATEWAY_PORT" >/tmp/nemoclaw-fake-discord-policy.log 2>&1; then
+if [ "$fake_gateway_ready" = "1" ] \
+  && apply_fake_discord_gateway_policy "$SANDBOX_NAME" "$FAKE_DISCORD_GATEWAY_PORT" >/tmp/nemoclaw-fake-discord-policy.log 2>&1; then
   pass "M13c: Applied native WebSocket policy with credential rewrite for fake Discord Gateway"
 else
   fail "M13c: Failed to apply fake Discord Gateway policy: $(tail -20 /tmp/nemoclaw-fake-discord-policy.log 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
@@ -1426,18 +1426,18 @@ else
   fail "M13d: Native WebSocket upgrade failed: ${dc_ws_native:0:300}"
 fi
 
-if echo "$dc_ws_native" | grep -q "^HELLO$" &&
-  echo "$dc_ws_native" | grep -q "^IDENTIFY_SENT_PLACEHOLDER$" &&
-  echo "$dc_ws_native" | grep -q "^READY$" &&
-  echo "$dc_ws_native" | grep -q "^HEARTBEAT_ACK$"; then
+if echo "$dc_ws_native" | grep -q "^HELLO$" \
+  && echo "$dc_ws_native" | grep -q "^IDENTIFY_SENT_PLACEHOLDER$" \
+  && echo "$dc_ws_native" | grep -q "^READY$" \
+  && echo "$dc_ws_native" | grep -q "^HEARTBEAT_ACK$"; then
   pass "M13e: Discord HELLO, placeholder IDENTIFY, READY, and heartbeat ACK completed"
 else
   fail "M13e: Discord Gateway protocol proof incomplete: ${dc_ws_native:0:400}"
 fi
 
-if [ "$fake_gateway_ready" = "1" ] &&
-  grep -Fq "\"token\":\"$DISCORD_TOKEN\"" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" &&
-  ! grep -Fq "openshell:resolve:env:DISCORD_BOT_TOKEN" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE"; then
+if [ "$fake_gateway_ready" = "1" ] \
+  && grep -Fq "\"token\":\"$DISCORD_TOKEN\"" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" \
+  && ! grep -Fq "openshell:resolve:env:DISCORD_BOT_TOKEN" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE"; then
   pass "M13f: Fake Gateway received host-side Discord token; sandbox-visible IDENTIFY used only the placeholder"
 else
   if [ "$fake_gateway_ready" = "1" ]; then
@@ -1456,9 +1456,9 @@ if [ "$fake_gateway_ready" = "1" ]; then
 fi
 info "Native fake Discord Gateway negative probe: ${dc_ws_negative:0:300}"
 
-if [ "$fake_gateway_ready" = "1" ] &&
-  ! echo "$dc_ws_negative" | grep -q "^READY$" &&
-  ! tail -n "$((capture_after_negative - capture_before_negative))" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" 2>/dev/null | grep -Fq "DEFINITELY_NOT_REGISTERED"; then
+if [ "$fake_gateway_ready" = "1" ] \
+  && ! echo "$dc_ws_negative" | grep -q "^READY$" \
+  && ! tail -n "$((capture_after_negative - capture_before_negative))" "$FAKE_DISCORD_GATEWAY_CAPTURE_FILE" 2>/dev/null | grep -Fq "DEFINITELY_NOT_REGISTERED"; then
   pass "M13g: Unregistered Discord WebSocket placeholder is rejected before upstream token exposure"
 else
   fail "M13g: Unregistered Discord WebSocket placeholder reached READY or leaked upstream"
@@ -1573,8 +1573,8 @@ else
   fail "M-S14a: Failed to start hermetic fake Slack API"
 fi
 
-if [ "$fake_slack_ready" = "1" ] &&
-  apply_fake_slack_api_policy "$SANDBOX_NAME" "$FAKE_SLACK_API_PORT" >/tmp/nemoclaw-fake-slack-policy.log 2>&1; then
+if [ "$fake_slack_ready" = "1" ] \
+  && apply_fake_slack_api_policy "$SANDBOX_NAME" "$FAKE_SLACK_API_PORT" >/tmp/nemoclaw-fake-slack-policy.log 2>&1; then
   pass "M-S14b: Applied REST policy for hermetic fake Slack API"
 else
   fail "M-S14b: Failed to apply fake Slack API policy: $(tail -20 /tmp/nemoclaw-fake-slack-policy.log 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
@@ -1824,8 +1824,8 @@ if [ "$fake_slack_ready" = "1" ] && [ -n "$sl_allowed_user" ]; then
 fi
 
 info "Slack channel @mention proof response: ${sl_channel_proof:0:500}"
-if echo "$sl_channel_proof" | grep -q '"ok":true' &&
-  echo "$sl_channel_proof" | grep -q '"deniedPrepared":true'; then
+if echo "$sl_channel_proof" | grep -q '"ok":true' \
+  && echo "$sl_channel_proof" | grep -q '"deniedPrepared":true'; then
   pass "M-S17: Slack channel @mention allowlist accepts configured user and denies another user"
   sl_post_capture=$(check_fake_slack_capture_token "/api/chat.postMessage" "$SLACK_TOKEN" || true)
   if [ "$sl_post_capture" = "OK" ]; then

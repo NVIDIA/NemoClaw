@@ -117,9 +117,9 @@ function buildWechatEnvLines(
 }
 
 // Hermes' WhatsApp bridge is tokenless from NemoClaw's point of view: the
-// operator pairs it inside the sandbox with `hermes whatsapp`, and Hermes
-// stores the live session under ~/.hermes/platforms/whatsapp/session. The
-// gateway still needs the env feature flag baked into .env so the platform
+// operator pairs it inside the sandbox with `hermes whatsapp`, accepting
+// Hermes-owned mutable session state under ~/.hermes/platforms/whatsapp/session.
+// The gateway still needs the env feature flag baked into .env so the platform
 // starts after rebuild.
 function buildWhatsappEnvLines(allowedIds: MessagingAllowedIds): string[] {
   const lines = ["WHATSAPP_ENABLED=true", "WHATSAPP_MODE=bot"];

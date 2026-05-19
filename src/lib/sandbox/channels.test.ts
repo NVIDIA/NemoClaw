@@ -54,7 +54,7 @@ describe("sandbox-channels KNOWN_CHANNELS", () => {
     expect(channelUsesInSandboxQrPairing(KNOWN_CHANNELS.slack)).toBe(false);
   });
 
-  it("declares no credential-bearing metadata for WhatsApp", () => {
+  it("declares no provider-credential metadata for WhatsApp", () => {
     const whatsapp = getChannelDef("whatsapp");
     expect(whatsapp?.envKey).toBeUndefined();
     expect(whatsapp?.appTokenEnvKey).toBeUndefined();

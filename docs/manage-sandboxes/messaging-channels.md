@@ -25,7 +25,7 @@ status: published
 # Messaging Channels
 
 Telegram, Discord, Slack, and WhatsApp reach your OpenClaw or Hermes agent through OpenShell-managed processes and gateway constructs.
-For token-based channels, NemoClaw registers credentials with OpenShell providers; WhatsApp pairs inside the sandbox via QR scan and stores session state there.
+For token-based channels, NemoClaw registers credentials with OpenShell providers; WhatsApp pairs inside the sandbox via QR scan and intentionally stores mutable session state there.
 NemoClaw bakes the selected channel configuration into the sandbox image and keeps runtime delivery under OpenShell control.
 
 You can enable channels during `nemoclaw onboard` or add them later with host-side `nemoclaw <sandbox> channels` commands.
@@ -69,8 +69,8 @@ Use `SLACK_BOT_TOKEN` for the bot user OAuth token (`xoxb-...`) and `SLACK_APP_T
 Set `SLACK_ALLOWED_USERS` to comma-separated Slack member IDs to authorize those users for DMs and for channel `@mention` events in channels where the Slack app is present.
 Channel messages still require an explicit bot mention.
 
-WhatsApp Web does not use a host-side token.
-Pairing happens inside the sandbox after the rebuild completes.
+WhatsApp Web does not use a host-side token or OpenShell credential provider.
+Pairing happens inside the sandbox after the rebuild completes and creates mutable session credentials there.
 Run `openshell term` and then use the agent-specific pairing command to render the QR code in the terminal:
 
 ```console
@@ -79,6 +79,7 @@ $ hermes whatsapp                             # Hermes sandboxes
 ```
 
 Session credentials are generated and stored inside durable agent state (`whatsapp` for OpenClaw, `platforms/whatsapp` for Hermes), so they survive rebuilds without re-pairing.
+This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
 NemoClaw cannot detect cross-sandbox WhatsApp conflicts the way it does for token-based channels.
 Pair only one sandbox per WhatsApp account at a time.
 
