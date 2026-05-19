@@ -371,11 +371,11 @@ jobs:
           path: /tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log
           if-no-files-found: ignore
 
-  # ── Channels stop/start lifecycle E2E (#3462 Test 1) ─────────
-  # Regression coverage for #3453 (channels stop must actually disable the
-  # channel across rebuild) and #3381 (channels start must re-attach from
-  # the cached credential). Telegram-only — Discord/Slack walk the same
-  # disabledChannels filter; telegram is the cheapest regression gate.
+  # ── Channels stop/start/remove lifecycle E2E (#3462, #3671) ─────────
+  # Regression coverage for #3453 (stop must disable across rebuild), #3381
+  # (start must re-attach from cached credentials), and #3671 (remove must
+  # detach/delete providers and survive rebuild with token env still present).
+  # Exercises OpenClaw and Hermes across telegram, discord, wechat, and slack.
   channels-stop-start-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -383,14 +383,14 @@ jobs:
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',channels-stop-start-e2e,'))
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
-      - name: Run channels stop/start lifecycle E2E test
+      - name: Run channels stop/start/remove lifecycle E2E test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           NEMOCLAW_NON_INTERACTIVE: "1"
@@ -400,6 +400,18 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-stop-start-e2e"
           TELEGRAM_ALLOWED_IDS: "123456789"
+          DISCORD_BOT_TOKEN: "test-fake-discord-token-stop-start-e2e"
+          DISCORD_SERVER_ID: "1491590992753590594"
+          DISCORD_ALLOWED_IDS: "1005536447329222676"
+          DISCORD_REQUIRE_MENTION: "0"
+          SLACK_BOT_TOKEN: "xoxb-fake-slack-token-stop-start-e2e"
+          SLACK_APP_TOKEN: "xapp-fake-slack-app-token-stop-start-e2e"
+          SLACK_ALLOWED_USERS: "U0123456789,U09ABCDEFGH"
+          WECHAT_BOT_TOKEN: "test-fake-wechat-token-stop-start-e2e"
+          WECHAT_ACCOUNT_ID: "e2e-fake-account-stop-start"
+          WECHAT_BASE_URL: "https://ilinkai-fake-stop-start.wechat.com"
+          WECHAT_USER_ID: "wxid_stopstart_operator"
+          WECHAT_ALLOWED_IDS: "wxid_stopstart_operator"
         run: bash test/e2e/test-channels-stop-start.sh
 
       - name: Upload install log on failure
@@ -407,7 +419,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: install-log-channels-stop-start
-          path: /tmp/nemoclaw-e2e-install.log
+          path: |
+            /tmp/nemoclaw-e2e-install.log
+            /tmp/nemoclaw-e2e-channels-*-install.log
+            /tmp/nc-channels-*.log
           if-no-files-found: ignore
 
   # ── Brave Search E2E (#2687) ─────────────────────────────────

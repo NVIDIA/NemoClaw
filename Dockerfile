@@ -282,8 +282,9 @@ ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # so the L7 proxy can rewrite them at egress. Default: empty list.
 ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 # Base64-encoded JSON map of channel→allowed sender IDs for DM allowlisting
-# (e.g. {"telegram":["123456789"]}). Channels with IDs get dmPolicy=allowlist;
-# channels without IDs keep the OpenClaw default (pairing). Default: empty map.
+# (e.g. {"telegram":["123456789"]}). Channels with IDs get dmPolicy=allowlist.
+# Slack also uses those IDs for channel @mention allowlisting. Channels without
+# IDs keep the OpenClaw default (pairing). Default: empty map.
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 # Base64-encoded JSON map of Discord guild configs keyed by server ID
 # (e.g. {"1234567890":{"requireMention":true,"users":["555"]}}).

@@ -28,7 +28,8 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | `scripts/` | Bash/JS/TS | Install helpers, setup, automation, E2E tooling |
 | `test/` | JavaScript (ESM) | Root-level integration tests (Vitest) |
 | `test/e2e/` | Bash/JS/TS | End-to-end tests, scenario-based runner (see `test/e2e/README.md`) |
-| `docs/` | Markdown (MyST) | User-facing docs (Sphinx) |
+| `docs/` | MDX/Markdown | User-facing docs (Fern MDX plus legacy MyST source during migration) |
+| `fern/` | YAML/CSS/SVG | Fern site configuration and shared assets |
 
 ## Quick Reference
 
@@ -52,7 +53,7 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 
 - **CLI and plugin**: TypeScript (`src/`, `nemoclaw/src/`) with a small CommonJS launcher in `bin/`; ESM in `test/`
 - **Blueprint**: YAML configuration (`nemoclaw-blueprint/`)
-- **Docs**: Sphinx/MyST Markdown
+- **Docs**: Fern MDX for migrated pages; legacy MyST Markdown remains during the transition for generated skills and parity checks
 - **Tooling scripts**: Bash and Python
 
 The `bin/` directory uses CommonJS intentionally for the launcher and a few compatibility helpers so the CLI still has a stable executable entry point. The main CLI implementation lives in `src/` and compiles to `dist/`. The `nemoclaw/` plugin uses TypeScript and requires compilation.

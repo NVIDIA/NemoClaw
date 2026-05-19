@@ -307,15 +307,16 @@ Start vLLM with the model you want before onboarding if you manage the server yo
 
 ### Override the Managed-vLLM Model
 
-Managed vLLM serves the profile default by, well, default.
-Export `NEMOCLAW_VLLM_MODEL=<slug>` before invoking the installer to swap in a different model from the registry; NemoClaw uses the matching `vllm serve` flags (reasoning parser, tool-call parser, `--max-model-len`).
+Managed vLLM serves the profile default unless you select a different registry entry.
+Export `NEMOCLAW_VLLM_MODEL=<slug>` before invoking the installer to choose a different model from the registry.
+NemoClaw uses the matching `vllm serve` flags, including the reasoning parser, tool-call parser, and `--max-model-len`.
 Recognised slugs:
 
 | Slug | Hugging Face model | Notes |
 |---|---|---|
 | `qwen3.6-27b` | `Qwen/Qwen3.6-27B-FP8` | Default on DGX Spark and DGX Station profiles |
 | `nemotron-3-nano-4b` | `nvidia/NVIDIA-Nemotron-3-Nano-4B-FP8` | Default on the generic Linux + NVIDIA GPU profile |
-| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated — requires Hugging Face license acceptance |
+| `deepseek-r1-distill-70b` | `deepseek-ai/DeepSeek-R1-Distill-Llama-70B` | Gated. Requires Hugging Face license acceptance |
 
 The slug is case-insensitive; the full Hugging Face id is also accepted.
 An unrecognised value fails fast with a list of valid slugs.

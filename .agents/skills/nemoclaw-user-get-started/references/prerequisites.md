@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Prerequisites
+# NemoClaw Prerequisites
 
 Before getting started, check the prerequisites to ensure you have the necessary software and hardware to run NemoClaw.
 
@@ -32,16 +32,16 @@ On Debian and Ubuntu, NemoClaw installs `zstd` with `apt-get` if it is missing; 
 On macOS, NemoClaw uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
 You do not need to install or sign a separate OpenShell VM driver helper for standard macOS onboarding.
 
-:::{warning} OpenShell Lifecycle
+**OpenShell Lifecycle:**
+
 For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
 Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
-:::
 
-:::{note} Docker storage driver
+**Docker storage driver:**
+
 On Linux hosts running Docker 26 or later with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) enabled (the install-time default for fresh `docker-ce` installations on Ubuntu 24.04 and similar distros), `nemoclaw onboard` transparently builds a `fuse-overlayfs`-enabled cluster image to bypass a kernel-level nested-overlay limitation in k3s.
 No manual setup is required.
 See the troubleshooting guide (use the `nemoclaw-user-reference` skill) for the override knobs and a manual `daemon.json` alternative.
-:::
 
 ## Platforms
 

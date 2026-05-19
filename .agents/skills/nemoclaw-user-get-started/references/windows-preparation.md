@@ -6,7 +6,9 @@ You can run NemoClaw inside Windows Subsystem for Linux (WSL 2) on Windows.
 Complete these steps before following the Quickstart (use the `nemoclaw-user-get-started` skill).
 Linux and macOS users do not need this page and can go directly to the Quickstart.
 
-> **Note:** This guide has been tested on x86-64.
+**Note:**
+
+This guide has been tested on x86-64.
 
 ## Prerequisites
 
@@ -37,9 +39,11 @@ $ wsl --install -d Ubuntu
 
 Let the distribution launch and complete first-run setup (pick a Unix username and password), then type `exit` to return to PowerShell.
 
-> **Warning:** Do not use the `--no-launch` flag.
-> The `--no-launch` flag downloads the package but does not register the distribution with WSL.
-> Commands like `wsl -d Ubuntu` fail with "There is no distribution with the supplied name" until the distribution has been launched at least once.
+**Warning:**
+
+Do not use the `--no-launch` flag.
+The `--no-launch` flag downloads the package but does not register the distribution with WSL.
+Commands like `wsl -d Ubuntu` fail with "There is no distribution with the supplied name" until the distribution has been launched at least once.
 
 Verify the distribution is registered and running WSL 2:
 

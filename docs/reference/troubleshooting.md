@@ -1,6 +1,6 @@
 ---
 title:
-  page: "NemoClaw Troubleshooting Guide"
+  page: "Troubleshooting"
   nav: "Troubleshooting"
 description:
   main: "Diagnose and resolve common NemoClaw installation, onboarding, and runtime issues."
@@ -151,7 +151,7 @@ If the L4T version is not recognized, the setup step is skipped and the installe
 
 Some corporate networks block outbound UDP port 53 to public DNS servers and force all host name resolution through DNS over TLS on TCP port 853. Containers do not inherit the host's DNS-over-TLS configuration, so the sandbox build's `npm ci` step times out trying to resolve `registry.npmjs.org` against `1.1.1.1` or `8.8.8.8`.
 
-NemoClaw's preflight runs a short `docker run --rm busybox nslookup registry.npmjs.org` probe before starting the sandbox build. When the probe confirms a DNS failure, onboarding stops with platform-specific remediation instead of hanging for ~15 minutes and printing a cryptic `Exit handler never called`.
+NemoClaw's preflight runs a short `docker run --rm busybox nslookup nemoclaw-dns-probe-<random>.invalid` probe before starting the sandbox build. The fresh `.invalid` name should return NXDOMAIN through a working resolver, so cached answers cannot hide blocked DNS egress. When the probe confirms a DNS failure, onboarding stops with platform-specific remediation instead of hanging for ~15 minutes and printing a cryptic `Exit handler never called`.
 
 The fix depends on your platform and runtime. Pick the matching path from the preflight output, apply it, then re-run `nemoclaw onboard`.
 
@@ -163,7 +163,7 @@ The fix depends on your platform and runtime. Pick the matching path from the pr
 Verify the fix worked:
 
 ```console
-$ docker run --rm busybox nslookup registry.npmjs.org
+$ docker run --rm busybox nslookup example.com
 ```
 
 When the lookup returns an answer, retry onboarding.
@@ -1048,6 +1048,9 @@ $ openshell gateway start
 GPU passthrough is not CI-tested on DGX Spark.
 It is expected to work when you pass `--gpu` and the NVIDIA Container Toolkit is configured.
 Verify the toolkit is configured by running `docker run --rm --runtime=nvidia --gpus all nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi` from the host.
+If `nvidia-smi` works on the host but onboarding says GPU passthrough was not enabled, install or repair the NVIDIA Container Toolkit, then run `sudo nvidia-ctk runtime configure --runtime=docker && sudo systemctl restart docker`.
+If a reusable gateway was previously started without GPU passthrough, NemoClaw replaces it automatically only when no other registered sandboxes depend on it, or when `--recreate-sandbox` is recreating the only registered sandbox with the same name.
+When shared gateway cleanup would be unsafe, follow the targeted destroy or gateway-removal commands printed by onboarding.
 
 ### `unresolvable CDI devices nvidia.com/gpu=all` during gateway start
 
