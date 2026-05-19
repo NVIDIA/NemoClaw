@@ -435,6 +435,16 @@ scripts:
       reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is set'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
     - legacy: 'C1a: Pre-cleanup complete'
       status: deferred
       reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
