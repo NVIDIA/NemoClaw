@@ -6400,6 +6400,21 @@ async function setupNim(
             selected = options.find((o) => o.key === "ollama");
           } else if (providerKey === "install-vllm") {
             selected = options.find((o) => o.key === "vllm");
+          } else if (providerKey === "install-windows-ollama") {
+            // Windows-host Ollama requests may arrive from NEMOCLAW_PROVIDER
+            // before the dynamic menu knows whether Windows Ollama needs
+            // install, start/restart, or is already reachable. Collapse only
+            // to later-state entries that still point at the Windows host.
+            selected =
+              options.find((o) => o.key === "start-windows-ollama") ||
+              (ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL
+                ? options.find((o) => o.key === "ollama")
+                : undefined);
+          } else if (
+            providerKey === "start-windows-ollama" &&
+            ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL
+          ) {
+            selected = options.find((o) => o.key === "ollama");
           } else if (providerKey === "ollama") {
             selected = options.find((o) => o.key === "install-ollama");
           }
