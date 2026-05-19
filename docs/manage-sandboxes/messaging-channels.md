@@ -46,7 +46,7 @@ For details, refer to [Commands](../reference/commands.md).
 |---------|-----------------|-------------------|
 | Telegram | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ALLOWED_IDS` for DM allowlisting, `TELEGRAM_REQUIRE_MENTION` for group-chat replies |
 | Discord | `DISCORD_BOT_TOKEN` | `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION` |
-| Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | None |
+| Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | `SLACK_ALLOWED_USERS` for DM and channel `@mention` user allowlisting |
 
 Telegram uses a bot token from [BotFather](https://t.me/BotFather).
 Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token.
@@ -63,6 +63,8 @@ Set `DISCORD_USER_ID` to restrict access to one user; otherwise, any member of t
 
 Slack uses Socket Mode and requires two tokens.
 Use `SLACK_BOT_TOKEN` for the bot user OAuth token (`xoxb-...`) and `SLACK_APP_TOKEN` for the app-level Socket Mode token (`xapp-...`).
+Set `SLACK_ALLOWED_USERS` to comma-separated Slack member IDs to authorize those users for DMs and for channel `@mention` events in channels where the Slack app is present.
+Channel messages still require an explicit bot mention.
 
 ## Enable Channels During Onboarding
 
@@ -80,6 +82,7 @@ $ export DISCORD_BOT_TOKEN=<your-discord-bot-token>
 $ export DISCORD_SERVER_ID=<your-discord-server-id>
 $ export SLACK_BOT_TOKEN=<your-slack-bot-token>
 $ export SLACK_APP_TOKEN=<your-slack-app-token>
+$ export SLACK_ALLOWED_USERS=<your-slack-member-id>
 ```
 
 Then run onboarding:

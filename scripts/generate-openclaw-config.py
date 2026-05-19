@@ -27,7 +27,8 @@ Environment variables:
                                         disable). Empty/unset preserves the OpenClaw default.
     NEMOCLAW_INFERENCE_COMPAT_B64       Base64-encoded inference compat JSON
     NEMOCLAW_MESSAGING_CHANNELS_B64     Base64-encoded channel list
-    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map
+    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map (Slack IDs cover
+                                        DMs and channel @mentions)
     NEMOCLAW_DISCORD_GUILDS_B64         Base64-encoded Discord guild config
     NEMOCLAW_TELEGRAM_CONFIG_B64        Base64-encoded Telegram config (e.g. {"requireMention": true})
     NEMOCLAW_WECHAT_CONFIG_B64          Base64-encoded WeChat config (e.g. {"accountId": "...", "baseUrl": "...", "userId": "..."})
@@ -423,6 +424,24 @@ def build_config(env: dict | None = None) -> dict:
             setup, inference_compat, openclaw_plugins, openclaw_plugin_ids
         )
 
+    # Ollama's OpenAI-compatible /v1/chat/completions stream omits the
+    # `usage` chunk by default; OpenAI clients have to send
+    # `stream_options.include_usage: true` to receive it. OpenClaw gates
+    # that request flag on `model.compat.supportsUsageInStreaming`
+    # (src/agents/openai-transport-stream.ts) and its Ollama extension
+    # only opts in when its own detector recognises the endpoint as
+    # Ollama. NemoClaw routes ollama-local traffic via the standardised
+    # `https://inference.local/v1` URL through the OpenShell gateway, so
+    # the upstream detector misses it and the TUI token counter stays
+    # `?` indefinitely (#2747). Set the flag here so the request is sent
+    # with `stream_options.include_usage: true` regardless of how
+    # OpenClaw resolves the provider id. Mirrors the LM Studio extension
+    # workaround (`withLmstudioUsageCompat` in
+    # extensions/lmstudio/src/stream.ts). Keep the set of provider keys
+    # in sync with `_bundled_provider_plugins["ollama"]` below.
+    if provider_key in {"ollama", "ollama-local"}:
+        inference_compat.setdefault("supportsUsageInStreaming", True)
+
     msg_channels = json.loads(
         base64.b64decode(
             env.get("NEMOCLAW_MESSAGING_CHANNELS_B64", "W10=") or "W10="
@@ -491,6 +510,15 @@ def build_config(env: dict | None = None) -> dict:
         if ch in _allowed_ids and _allowed_ids[ch]:
             account["dmPolicy"] = "allowlist"
             account["allowFrom"] = _allowed_ids[ch]
+            if ch == "slack":
+                account["groupPolicy"] = "allowlist"
+                account["channels"] = {
+                    "*": {
+                        "enabled": True,
+                        "requireMention": True,
+                        "users": _allowed_ids[ch],
+                    }
+                }
         _ch_cfg[ch] = {"accounts": {"default": account}}
 
     # WeChat (openclaw-weixin) is NOT added to channels.* here — writing
