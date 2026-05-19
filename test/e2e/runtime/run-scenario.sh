@@ -239,7 +239,6 @@ if [[ "${EXPECTED_STATE_ID}" == "preflight-failure-no-sandbox" ]]; then
   exit 0
 fi
 
-
 if [[ "${FAILURE_STAGE}" == "onboarding" ]]; then
   negative_log="${E2E_CONTEXT_DIR}/negative-onboarding.log"
   sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
