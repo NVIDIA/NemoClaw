@@ -124,6 +124,10 @@ export function canonicalUsageList(): string[] {
  * For flag-style like "nemoclaw --help", extracts "--help".
  * For "nemoclaw onboard --from", extracts "onboard".
  */
+function hasRegisteredChildCommand(commandId: string): boolean {
+  return Object.keys(getRegisteredOclifCommandsMetadata()).some((id) => id.startsWith(`${commandId}:`));
+}
+
 export function globalCommandTokens(): Set<string> {
   const tokens = new Set<string>();
   for (const commandId of Object.keys(getRegisteredOclifCommandsMetadata())) {
@@ -142,6 +146,16 @@ export function globalCommandTokens(): Set<string> {
  * overrides, not from public help text. Includes empty string for the
  * default connect behavior.
  */
+export function directGlobalCommandIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const commandId of Object.keys(getRegisteredOclifCommandsMetadata())) {
+    if (commandId.includes(":")) continue;
+    if (hasRegisteredChildCommand(commandId)) continue;
+    ids.add(commandId);
+  }
+  return ids;
+}
+
 export function sandboxActionTokens(): string[] {
   const seen = new Set<string>();
   const tokens: string[] = [];

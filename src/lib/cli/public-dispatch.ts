@@ -17,6 +17,7 @@ const { help } = require("../actions/root-help");
 const { runOclifArgv, runCompatibilityOclifCommandById } = require("./oclif-runner");
 const {
   canonicalUsageList,
+  directGlobalCommandIds,
   globalCommandTokens,
   sandboxActionTokens,
 } = require("./command-registry");
@@ -122,31 +123,17 @@ function validSandboxActionsText(): string {
   return sandboxActionList().filter(Boolean).join(", ");
 }
 
-// Direct command-ID execution is a bounded compatibility fallback for simple
-// global commands. With oclif flexible taxonomy enabled, native argv like
-// `status bogus` can be interpreted as command ID `status:bogus` instead of
-// command `status` with unexpected positional arg `bogus`.
-const DIRECT_COMMAND_ID_COMPATIBILITY_COMMANDS = new Set([
-  "backup-all",
-  "debug",
-  "deploy",
-  "gc",
-  "list",
-  "onboard",
-  "setup",
-  "setup-spark",
-  "start",
-  "status",
-  "stop",
-  "uninstall",
-  "update",
-  "upgrade-sandboxes",
-]);
+// Direct command-ID execution is a bounded fallback for leaf global commands.
+// With oclif flexible taxonomy enabled, native argv like `status bogus` can be
+// interpreted as command ID `status:bogus` instead of command `status` with an
+// unexpected positional arg `bogus`. Derive the leaf set from oclif metadata so
+// adding/removing global commands does not require maintaining a parallel list.
+const DIRECT_COMMAND_ID_GLOBAL_COMMANDS = directGlobalCommandIds();
 
 function shouldExecuteViaNativeArgv(result: Extract<PublicTranslationResult, { kind: "nativeArgv" }>): boolean {
   const helpArgs = result.commandId === "sandbox:exec" ? argsBeforeSeparator(result.args) : result.args;
   if (hasHelpFlag(helpArgs)) return false;
-  if (DIRECT_COMMAND_ID_COMPATIBILITY_COMMANDS.has(result.commandId)) return false;
+  if (DIRECT_COMMAND_ID_GLOBAL_COMMANDS.has(result.commandId)) return false;
   if (result.commandId.startsWith("root:")) return false;
   return true;
 }
