@@ -12496,7 +12496,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 380,
+          "line": 385,
           "text": "No credentials in backup",
           "polarity": "pass",
           "normalized_id": "no.credentials.in.backup",
@@ -12504,7 +12504,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 382,
+          "line": 387,
           "text": "Credentials found: $CRED_LEAKS",
           "polarity": "fail",
           "normalized_id": "credentials.found.cred.leaks",
@@ -12512,7 +12512,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 385,
+          "line": 390,
           "text": "Backup directory missing: $BACKUP_DIR",
           "polarity": "fail",
           "normalized_id": "backup.directory.missing.backup.dir",
@@ -12520,7 +12520,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 402,
+          "line": 407,
           "text": "npm preset survived rebuild (in registry)",
           "polarity": "pass",
           "normalized_id": "npm.preset.survived.rebuild.in.registry",
@@ -12528,7 +12528,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 404,
+          "line": 409,
           "text": "npm preset LOST after rebuild — issue #1952",
           "polarity": "fail",
           "normalized_id": "npm.preset.lost.after.rebuild.issue.1952",
@@ -12536,7 +12536,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 407,
+          "line": 412,
           "text": "pypi preset survived rebuild (in registry)",
           "polarity": "pass",
           "normalized_id": "pypi.preset.survived.rebuild.in.registry",
@@ -12544,7 +12544,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 409,
+          "line": 414,
           "text": "pypi preset LOST after rebuild — issue #1952",
           "polarity": "fail",
           "normalized_id": "pypi.preset.lost.after.rebuild.issue.1952",
@@ -12552,7 +12552,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 415,
+          "line": 420,
           "text": "npm preset active in gateway policy after rebuild",
           "polarity": "pass",
           "normalized_id": "npm.preset.active.in.gateway.policy.after.rebuild",
@@ -12560,7 +12560,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 417,
+          "line": 422,
           "text": "npm preset not in live gateway policy after rebuild — issue #1952",
           "polarity": "fail",
           "normalized_id": "npm.preset.not.in.live.gateway.policy.after.rebuild.issue.1952",
@@ -12568,7 +12568,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 420,
+          "line": 425,
           "text": "pypi preset active in gateway policy after rebuild",
           "polarity": "pass",
           "normalized_id": "pypi.preset.active.in.gateway.policy.after.rebuild",
@@ -12576,7 +12576,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 422,
+          "line": 427,
           "text": "pypi preset not in live gateway policy after rebuild — issue #1952",
           "polarity": "fail",
           "normalized_id": "pypi.preset.not.in.live.gateway.policy.after.rebuild.issue.1952",
@@ -12584,7 +12584,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 441,
+          "line": 446,
           "text": "Backup manifest contains policyPresets: ${MANIFEST_PRESETS}",
           "polarity": "pass",
           "normalized_id": "backup.manifest.contains.policypresets.manifest.presets",
@@ -12592,7 +12592,7 @@
         },
         {
           "script": "test/e2e/test-rebuild-openclaw.sh",
-          "line": 443,
+          "line": 448,
           "text": "Backup manifest missing expected policyPresets (npm,pypi): got '${MANIFEST_PRESETS}' — issue #1952",
           "polarity": "fail",
           "normalized_id": "backup.manifest.missing.expected.policypresets.npm.pypi.got.manifest.presets.issue.1952",
