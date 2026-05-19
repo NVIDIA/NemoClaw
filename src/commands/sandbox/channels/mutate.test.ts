@@ -12,7 +12,7 @@ import ChannelsStopCommand from "./stop";
 const rootDir = process.cwd();
 
 describe("channels mutation oclif commands", () => {
-  it("maps add flags to the legacy argv shape", async () => {
+  it("maps add flags to typed action options", async () => {
     const runtime = {
       sandboxChannelsAdd: vi.fn().mockResolvedValue(undefined),
       sandboxChannelsRemove: vi.fn().mockResolvedValue(undefined),
@@ -23,10 +23,13 @@ describe("channels mutation oclif commands", () => {
 
     await ChannelsAddCommand.run(["alpha", "telegram", "--dry-run"], rootDir);
 
-    expect(runtime.sandboxChannelsAdd).toHaveBeenCalledWith("alpha", ["telegram", "--dry-run"]);
+    expect(runtime.sandboxChannelsAdd).toHaveBeenCalledWith("alpha", {
+      channel: "telegram",
+      dryRun: true,
+    });
   });
 
-  it("maps remove/start/stop to the legacy argv shape", async () => {
+  it("maps remove/start/stop to typed action options", async () => {
     const runtime = {
       sandboxChannelsAdd: vi.fn().mockResolvedValue(undefined),
       sandboxChannelsRemove: vi.fn().mockResolvedValue(undefined),
@@ -39,12 +42,18 @@ describe("channels mutation oclif commands", () => {
     await ChannelsStartCommand.run(["alpha", "telegram", "--dry-run"], rootDir);
     await ChannelsStopCommand.run(["alpha", "slack"], rootDir);
 
-    expect(runtime.sandboxChannelsRemove).toHaveBeenCalledWith("alpha", ["telegram"]);
-    expect(runtime.sandboxChannelsStart).toHaveBeenCalledWith("alpha", [
-      "telegram",
-      "--dry-run",
-    ]);
-    expect(runtime.sandboxChannelsStop).toHaveBeenCalledWith("alpha", ["slack"]);
+    expect(runtime.sandboxChannelsRemove).toHaveBeenCalledWith("alpha", {
+      channel: "telegram",
+      dryRun: false,
+    });
+    expect(runtime.sandboxChannelsStart).toHaveBeenCalledWith("alpha", {
+      channel: "telegram",
+      dryRun: true,
+    });
+    expect(runtime.sandboxChannelsStop).toHaveBeenCalledWith("alpha", {
+      channel: "slack",
+      dryRun: false,
+    });
   });
 
   it("requires a channel before dispatch", async () => {

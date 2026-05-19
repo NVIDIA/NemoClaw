@@ -4,10 +4,11 @@
 import { Args } from "@oclif/core";
 
 import { dryRunFlag, forceFlag, yesFlag } from "../cli/common-flags";
+import type { PolicyAddOptions, PolicyRemoveOptions } from "../domain/policy-channel";
 
 type PolicyRuntimeBridge = {
-  sandboxPolicyAdd: (sandboxName: string, args?: string[]) => Promise<void>;
-  sandboxPolicyRemove: (sandboxName: string, args?: string[]) => Promise<void>;
+  sandboxPolicyAdd: (sandboxName: string, options?: PolicyAddOptions) => Promise<void>;
+  sandboxPolicyRemove: (sandboxName: string, options?: PolicyRemoveOptions) => Promise<void>;
 };
 
 let runtimeBridgeFactory = (): PolicyRuntimeBridge => {
@@ -40,13 +41,16 @@ const presetArg = Args.string({
   required: false,
 });
 
-export function appendCommonPolicyFlags(
-  args: string[],
-  flags: { yes?: boolean; force?: boolean; "dry-run"?: boolean },
-): void {
-  if (flags.yes) args.push("--yes");
-  if (flags.force) args.push("--force");
-  if (flags["dry-run"]) args.push("--dry-run");
+export function commonPolicyOptions(flags: {
+  yes?: boolean;
+  force?: boolean;
+  "dry-run"?: boolean;
+}) {
+  return {
+    yes: Boolean(flags.yes),
+    force: Boolean(flags.force),
+    dryRun: Boolean(flags["dry-run"]),
+  };
 }
 
 export const policyMutationArgs = { sandboxName: sandboxNameArg, preset: presetArg };

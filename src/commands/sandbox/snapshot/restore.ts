@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args, Flags } from "@oclif/core";
+import { runSandboxSnapshot } from "../../../lib/actions/sandbox/snapshot";
+import type { PublicCommandDisplayEntry } from "../../../lib/cli/command-display";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
-import { getSnapshotRuntimeBridge, sandboxNameArg, snapshotCommandError } from "../../../lib/sandbox/snapshot-command-support";
+import { sandboxNameArg, snapshotCommandError } from "../../../lib/sandbox/snapshot-command-support";
 
 export default class SnapshotRestoreCommand extends NemoClawCommand {
   static id = "sandbox:snapshot:restore";
@@ -17,6 +19,16 @@ export default class SnapshotRestoreCommand extends NemoClawCommand {
     "<%= config.bin %> sandbox snapshot restore alpha v2",
     "<%= config.bin %> sandbox snapshot restore alpha before-upgrade --to beta",
   ];
+  static publicDisplay = [
+    {
+      usage: "nemoclaw <name> snapshot restore",
+      description: "Restore state from a snapshot",
+      flags: "[selector] [--to <dst>]",
+      group: "Sandbox Management",
+      scope: "sandbox",
+      order: 9,
+    },
+  ] satisfies readonly PublicCommandDisplayEntry[];
   static args = {
     sandboxName: sandboxNameArg,
     selector: Args.string({
@@ -31,11 +43,12 @@ export default class SnapshotRestoreCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SnapshotRestoreCommand);
-    const subArgs = ["restore"];
-    if (args.selector) subArgs.push(args.selector);
-    if (flags.to) subArgs.push("--to", flags.to);
     try {
-      await getSnapshotRuntimeBridge().sandboxSnapshot(args.sandboxName, subArgs);
+      await runSandboxSnapshot(args.sandboxName, {
+        kind: "restore",
+        selector: args.selector,
+        to: flags.to,
+      });
     } catch (error) {
       const snapshotError = snapshotCommandError(error);
       if (snapshotError) {

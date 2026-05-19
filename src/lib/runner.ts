@@ -288,7 +288,11 @@ function runCaptureEx(cmd: readonly string[], opts: Omit<CaptureOptions, "ignore
     const result = spawnSync(exe, args, {
       ...spawnOpts,
       cwd: ROOT,
-      env: { ...process.env, ...extraEnv },
+      // #2616: route via buildRunnerEnv so subprocess env is sanitized and
+      // NO_PROXY=localhost,127.0.0.1 is injected when HTTP_PROXY is set.
+      // Otherwise curl probes against localhost (Ollama validation, etc.)
+      // tunnel through the user's host proxy and fail with HTTP 500.
+      env: buildRunnerEnv(extraEnv),
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });

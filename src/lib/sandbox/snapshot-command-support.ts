@@ -7,26 +7,6 @@ type SnapshotCommandFailure = Error & {
   exitCode: number;
   lines: readonly string[];
 };
-
-let runtimeBridgeFactory = () => ({
-  sandboxSnapshot: async (sandboxName: string, args: string[]) => {
-    const { runSandboxSnapshot } = require("../actions/sandbox/snapshot") as {
-      runSandboxSnapshot: (sandboxName: string, args: string[]) => Promise<void>;
-    };
-    await runSandboxSnapshot(sandboxName, args);
-  },
-});
-
-export function setSnapshotRuntimeBridgeFactoryForTest(
-  factory: () => { sandboxSnapshot: (sandboxName: string, args: string[]) => Promise<void> },
-): void {
-  runtimeBridgeFactory = factory;
-}
-
-export function getSnapshotRuntimeBridge() {
-  return runtimeBridgeFactory();
-}
-
 export function snapshotCommandError(error: unknown): SnapshotCommandFailure | null {
   if (!error || typeof error !== "object") return null;
   const candidate = error as Partial<SnapshotCommandFailure>;

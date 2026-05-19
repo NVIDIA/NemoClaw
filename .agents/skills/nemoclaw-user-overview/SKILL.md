@@ -6,7 +6,7 @@ description: "Explains how OpenClaw, OpenShell, and NemoClaw form the ecosystem,
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# NemoClaw Ecosystem: Stack, Placement, and When to Use NemoClaw or OpenShell
+# Ecosystem
 
 ## References
 

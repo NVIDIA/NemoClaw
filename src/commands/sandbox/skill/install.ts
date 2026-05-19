@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args } from "@oclif/core";
+import { installSandboxSkill } from "../../../lib/actions/sandbox/skill-install";
+import type { PublicCommandDisplayEntry } from "../../../lib/cli/command-display";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
-
-import { getSkillInstallRuntimeBridge } from "../../../lib/sandbox/skill-command-support";
 
 export default class SkillInstallCliCommand extends NemoClawCommand {
   static id = "sandbox:skill:install";
@@ -16,6 +16,16 @@ export default class SkillInstallCliCommand extends NemoClawCommand {
     "<%= config.bin %> sandbox skill install alpha ./my-skill",
     "<%= config.bin %> sandbox skill install alpha ./my-skill/SKILL.md",
   ];
+  static publicDisplay = [
+    {
+      usage: "nemoclaw <name> skill install",
+      description: "Deploy a skill directory to the sandbox",
+      flags: "<path>",
+      group: "Skills",
+      scope: "sandbox",
+      order: 16,
+    },
+  ] satisfies readonly PublicCommandDisplayEntry[];
   static args = {
     sandboxName: Args.string({
       name: "sandbox",
@@ -33,9 +43,9 @@ export default class SkillInstallCliCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args } = await this.parse(SkillInstallCliCommand);
-    await getSkillInstallRuntimeBridge().sandboxSkillInstall(args.sandboxName, [
-      "install",
-      args.skillPath,
-    ]);
+    await installSandboxSkill(args.sandboxName, {
+      command: "install",
+      path: args.skillPath,
+    });
   }
 }

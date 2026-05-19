@@ -1,9 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { runSandboxSnapshot } from "../../../lib/actions/sandbox/snapshot";
+import type { PublicCommandDisplayEntry } from "../../../lib/cli/command-display";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
-import { getSnapshotRuntimeBridge, sandboxNameArg, snapshotCommandError } from "../../../lib/sandbox/snapshot-command-support";
+import { sandboxNameArg, snapshotCommandError } from "../../../lib/sandbox/snapshot-command-support";
 
 export default class SnapshotListCommand extends NemoClawCommand {
   static id = "sandbox:snapshot:list";
@@ -12,6 +14,15 @@ export default class SnapshotListCommand extends NemoClawCommand {
   static description = "List available snapshots for a sandbox.";
   static usage = ["<name>"];
   static examples = ["<%= config.bin %> sandbox snapshot list alpha"];
+  static publicDisplay = [
+    {
+      usage: "nemoclaw <name> snapshot list",
+      description: "List available snapshots",
+      group: "Sandbox Management",
+      scope: "sandbox",
+      order: 8,
+    },
+  ] satisfies readonly PublicCommandDisplayEntry[];
   static args = {
     sandboxName: sandboxNameArg,
   };
@@ -21,7 +32,7 @@ export default class SnapshotListCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args } = await this.parse(SnapshotListCommand);
     try {
-      await getSnapshotRuntimeBridge().sandboxSnapshot(args.sandboxName, ["list"]);
+      await runSandboxSnapshot(args.sandboxName, { kind: "list" });
     } catch (error) {
       const snapshotError = snapshotCommandError(error);
       if (snapshotError) {

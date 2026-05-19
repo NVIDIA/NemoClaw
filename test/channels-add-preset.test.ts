@@ -127,7 +127,7 @@ describe("channels add applies matching policy preset (issue #3437)", () => {
 const ctx = module.exports;
 (async () => {
   try {
-    await ctx.channelModule.addSandboxChannel("test-sb", [${JSON.stringify(channel)}]);
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: ${JSON.stringify(channel)} });
     process.stdout.write("\\n__RESULT__" + JSON.stringify({
       appliedCalls: ctx.appliedCalls,
       callOrder: ctx.callOrder,
@@ -173,7 +173,7 @@ const ctx = module.exports;
 const ctx = module.exports;
 (async () => {
   try {
-    await ctx.channelModule.addSandboxChannel("test-sb", ["whatsapp"]);
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "whatsapp" });
     process.stdout.write("\\n__RESULT__" + JSON.stringify({
       appliedCalls: ctx.appliedCalls,
       callOrder: ctx.callOrder,
@@ -233,7 +233,7 @@ process.exit = (code) => {
 };
 (async () => {
   try {
-    await ctx.channelModule.addSandboxChannel("test-sb", ["whatsapp"]);
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "whatsapp" });
   } catch (err) {
     if (!String(err && err.message).startsWith("__EXIT__")) {
       process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
@@ -286,7 +286,7 @@ process.exit = (code) => {
 const ctx = module.exports;
 (async () => {
   try {
-    await ctx.channelModule.addSandboxChannel("test-sb", ["telegram"]);
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
     process.stdout.write("\\n__RESULT__" + JSON.stringify({
       appliedCalls: ctx.appliedCalls,
       callOrder: ctx.callOrder,

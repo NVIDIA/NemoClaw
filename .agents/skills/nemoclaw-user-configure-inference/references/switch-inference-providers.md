@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Switch NemoClaw Inference Models at Runtime
+# Switch Inference Models at Runtime
 
 Change the active inference model while the sandbox is running.
 No restart is required.

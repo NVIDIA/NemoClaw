@@ -16,7 +16,7 @@ export type CommandGroup =
   | "Cleanup";
 
 /**
- * Public compatibility display metadata for root help and docs checks.
+ * Public sandbox-first display metadata for root help and docs checks.
  *
  * Keep oclif-native parser metadata (`summary`, `description`, `usage`,
  * `flags`, `args`) on the command class itself. Use `static publicDisplay`

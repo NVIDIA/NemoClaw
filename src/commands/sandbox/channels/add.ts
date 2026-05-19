@@ -1,10 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { PublicCommandDisplayEntry } from "../../../lib/cli/command-display";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import {
-  buildChannelArgs,
+  channelMutationOptions,
   channelMutationArgs,
   channelMutationFlags,
   getChannelsRuntimeBridge,
@@ -17,6 +18,16 @@ export default class ChannelsAddCommand extends NemoClawCommand {
   static description = "Store credentials for a messaging channel and queue a sandbox rebuild.";
   static usage = ["<name> <channel> [--dry-run]"];
   static examples = ["<%= config.bin %> sandbox channels add alpha telegram"];
+  static publicDisplay = [
+    {
+      usage: "nemoclaw <name> channels add",
+      description: "Save credentials and rebuild",
+      flags: "<channel> [--dry-run]",
+      group: "Messaging Channels",
+      scope: "sandbox",
+      order: 21,
+    },
+  ] satisfies readonly PublicCommandDisplayEntry[];
   static args = channelMutationArgs;
   static flags = channelMutationFlags;
 
@@ -24,7 +35,7 @@ export default class ChannelsAddCommand extends NemoClawCommand {
     const { args, flags } = await this.parse(ChannelsAddCommand);
     await getChannelsRuntimeBridge().sandboxChannelsAdd(
       args.sandboxName,
-      buildChannelArgs(args.channel, flags),
+      channelMutationOptions(args.channel, flags),
     );
   }
 }

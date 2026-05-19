@@ -1,22 +1,23 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-// Compatibility dispatcher for NemoClaw's public CLI surface.
+// Public dispatcher for NemoClaw's sandbox-first CLI surface.
 //
 // oclif owns command discovery, parsing, help rendering, and command execution
-// under src/commands/**. This module intentionally stays in front of oclif only
-// for product compatibility: the public sandbox grammar is
+// under src/commands/**. This module intentionally stays in front of oclif to
+// support NemoClaw's permanent product grammar:
 // `nemoclaw <sandbox-name> <action>` while the oclif-native command IDs are
 // `sandbox:<action>` and parse as `nemoclaw sandbox <action> <sandbox-name>`.
 // Keep new command adapters in src/commands/** and product behavior in
 // src/lib/actions/**; keep this file limited to argv normalization,
-// compatibility routing, suggestions, and registry-aware sandbox-name checks.
+// public route translation, suggestions, and registry-aware sandbox-name checks.
 const { ROOT, validateName } = require("../runner");
 const { CLI_NAME } = require("./branding");
 const { help } = require("../actions/root-help");
 const { runOclifArgv, runCompatibilityOclifCommandById } = require("./oclif-runner");
 const {
   canonicalUsageList,
+  directGlobalCommandIds,
   globalCommandTokens,
   sandboxActionTokens,
 } = require("./command-registry");
@@ -122,31 +123,17 @@ function validSandboxActionsText(): string {
   return sandboxActionList().filter(Boolean).join(", ");
 }
 
-// Direct command-ID execution is a bounded compatibility fallback for simple
-// global commands. With oclif flexible taxonomy enabled, native argv like
-// `status bogus` can be interpreted as command ID `status:bogus` instead of
-// command `status` with unexpected positional arg `bogus`.
-const DIRECT_COMMAND_ID_COMPATIBILITY_COMMANDS = new Set([
-  "backup-all",
-  "debug",
-  "deploy",
-  "gc",
-  "list",
-  "onboard",
-  "setup",
-  "setup-spark",
-  "start",
-  "status",
-  "stop",
-  "uninstall",
-  "update",
-  "upgrade-sandboxes",
-]);
+// Direct command-ID execution is a bounded fallback for leaf global commands.
+// With oclif flexible taxonomy enabled, native argv like `status bogus` can be
+// interpreted as command ID `status:bogus` instead of command `status` with an
+// unexpected positional arg `bogus`. Derive the leaf set from oclif metadata so
+// adding/removing global commands does not require maintaining a parallel list.
+const DIRECT_COMMAND_ID_GLOBAL_COMMANDS = directGlobalCommandIds();
 
 function shouldExecuteViaNativeArgv(result: Extract<PublicTranslationResult, { kind: "nativeArgv" }>): boolean {
   const helpArgs = result.commandId === "sandbox:exec" ? argsBeforeSeparator(result.args) : result.args;
   if (hasHelpFlag(helpArgs)) return false;
-  if (DIRECT_COMMAND_ID_COMPATIBILITY_COMMANDS.has(result.commandId)) return false;
+  if (DIRECT_COMMAND_ID_GLOBAL_COMMANDS.has(result.commandId)) return false;
   if (result.commandId.startsWith("root:")) return false;
   return true;
 }
@@ -281,7 +268,7 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
   if (handlePublicConnectHelp(normalized)) return;
 
   // Help is parser metadata, not sandbox runtime behavior. Render sandbox-scoped
-  // legacy help before registry recovery so `nemoclaw missing channels start --help`
+  // public help before registry recovery so `nemoclaw missing channels start --help`
   // stays side-effect free and never starts or repairs services.
   if (
     !normalized.connectHelpRequested &&

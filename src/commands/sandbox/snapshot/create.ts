@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Flags } from "@oclif/core";
+import { runSandboxSnapshot } from "../../../lib/actions/sandbox/snapshot";
+import type { PublicCommandDisplayEntry } from "../../../lib/cli/command-display";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
-import { getSnapshotRuntimeBridge, sandboxNameArg, snapshotCommandError } from "../../../lib/sandbox/snapshot-command-support";
+import { sandboxNameArg, snapshotCommandError } from "../../../lib/sandbox/snapshot-command-support";
 
 export default class SnapshotCreateCommand extends NemoClawCommand {
   static id = "sandbox:snapshot:create";
@@ -16,6 +18,16 @@ export default class SnapshotCreateCommand extends NemoClawCommand {
     "<%= config.bin %> sandbox snapshot create alpha",
     "<%= config.bin %> sandbox snapshot create alpha --name before-upgrade",
   ];
+  static publicDisplay = [
+    {
+      usage: "nemoclaw <name> snapshot create",
+      description: "Create a snapshot of sandbox state",
+      flags: "[--name <name>]",
+      group: "Sandbox Management",
+      scope: "sandbox",
+      order: 7,
+    },
+  ] satisfies readonly PublicCommandDisplayEntry[];
   static args = {
     sandboxName: sandboxNameArg,
   };
@@ -25,12 +37,8 @@ export default class SnapshotCreateCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SnapshotCreateCommand);
-    const subArgs = ["create"];
-    if (flags.name) {
-      subArgs.push("--name", flags.name);
-    }
     try {
-      await getSnapshotRuntimeBridge().sandboxSnapshot(args.sandboxName, subArgs);
+      await runSandboxSnapshot(args.sandboxName, { kind: "create", name: flags.name });
     } catch (error) {
       const snapshotError = snapshotCommandError(error);
       if (snapshotError) {

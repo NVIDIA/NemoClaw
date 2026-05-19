@@ -23,7 +23,7 @@
  * NEMOCLAW_MODEL_ROUTER_PYTHON is strict: when set, that single interpreter
  * is the only candidate. If it fails the probe, NemoClaw aborts rather than
  * silently using a different python (Codex P3 on PR #3786), matching the
- * "pin" wording in docs/inference/inference-options.md and commands.md.
+ * "pin" wording in docs/inference/inference-options.mdx and commands.mdx.
  *
  * Every external call (which lookup, probe invocation) is dependency-injected
  * so tests run with no spawn.

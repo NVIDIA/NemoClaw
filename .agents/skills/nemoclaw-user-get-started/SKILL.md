@@ -14,7 +14,7 @@ Follow these steps to get started with NemoClaw and your first sandboxed OpenCla
 
 Make sure you have completed reviewing the Prerequisites (use the `nemoclaw-user-get-started` skill) before following this guide.
 
-## Step 1: Install NemoClaw and Onboard OpenClaw Agent
+## Install NemoClaw and Onboard OpenClaw Agent
 
 Download and run the installer script.
 The script installs Node.js if it is not already present, then runs the guided onboard wizard to create a sandbox, configure inference, and apply security policies.
@@ -48,8 +48,9 @@ $ newgrp docker
 $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-On DGX Spark and DGX Station, an interactive installer can offer express install after you accept the third-party software notice.
+On DGX Spark, DGX Station, and Windows WSL, an interactive installer offers express install after you accept the third-party software notice.
 Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, applies the suggested security policy, and selects the managed local inference path for that platform.
+On WSL, express install selects the Windows-host Ollama setup path.
 Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer when you want to choose a provider yourself.
 
 The installer auto-launches `nemoclaw onboard` when it can locate the freshly-installed binary.
@@ -220,10 +221,9 @@ The sandbox still calls `https://inference.local/v1`, so do not point in-sandbox
 
 **Experimental: Local NIM and Local vLLM:**
 
-These options appear when `NEMOCLAW_EXPERIMENTAL=1` is set and the prerequisites are met.
-
-- **Local NVIDIA NIM** requires a NIM-capable GPU. NemoClaw pulls and manages a NIM container.
-- **Local vLLM** uses a vLLM server already running on `localhost:8000`, or installs and starts a managed vLLM container on supported DGX Spark, DGX Station, and Linux NVIDIA GPU hosts. NemoClaw auto-detects the loaded model.
+- **Local NVIDIA NIM** appears when `NEMOCLAW_EXPERIMENTAL=1` is set and the host has a NIM-capable GPU. NemoClaw pulls and manages a NIM container.
+- **Local vLLM (already running)** appears whenever NemoClaw detects a vLLM server on `localhost:8000`. No flag is required for the menu entry. NemoClaw auto-detects the loaded model.
+- **Local vLLM (managed install/start)** requires `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. NemoClaw pulls and starts a vLLM container on supported DGX Spark, DGX Station, and Linux NVIDIA GPU hosts.
 
 For setup, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
 
@@ -258,7 +258,7 @@ After you confirm the summary, NemoClaw registers the selected provider with the
 The wizard then asks whether to enable Brave Web Search.
 If you enable it, enter a Brave Search API key when prompted.
 
-The wizard also offers messaging channels such as Telegram, Discord, and Slack.
+The wizard also offers messaging channels such as Telegram, Discord, Slack, and WhatsApp.
 Press a channel number to toggle it, then press Enter to continue.
 If you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
 For example, Slack bot tokens must start with `xoxb-`.
@@ -297,7 +297,7 @@ To change settings later:
 
 If you picked a different option, the `Model` line shows that provider's model and label instead. For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
 
-## Step 2: Run Your First Agent Prompt
+## Run Your First Agent Prompt
 
 You can chat with the agent from the terminal or the browser.
 

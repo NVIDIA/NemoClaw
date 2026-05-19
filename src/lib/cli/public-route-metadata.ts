@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * Machine-readable public compatibility routes.
+ * Machine-readable public sandbox-first routes.
  *
  * Keep these helpers deliberately small: they describe how NemoClaw's public
- * compatibility grammar maps onto oclif command IDs. Display copy lives in
+ * sandbox-first grammar maps onto oclif command IDs. Display copy lives in
  * `publicDisplay`; routing must not depend on usage/help strings.
  */
 
@@ -14,7 +14,7 @@ const GLOBAL_ROUTE_ALIASES: Record<string, readonly (readonly string[])[]> = {
   "root:version": [["version"], ["--version"], ["-v"]],
 };
 
-// These are public-grammar compatibility spellings, not oclif aliases. A
+// These are public-grammar spellings, not oclif aliases. A
 // hidden oclif alias can model native topic syntax like
 // `nemoclaw sandbox policy-add <name>`, but not NemoClaw's product grammar
 // `nemoclaw <name> policy-add` where the sandbox name precedes the action.

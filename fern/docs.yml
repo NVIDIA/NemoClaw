@@ -6,6 +6,7 @@
 instances:
   - url: nvidia-nemoclaw.docs.buildwithfern.com/nemoclaw
     custom-domain: docs.nvidia.com/nemoclaw
+    multi-source: true
 
 title: NVIDIA NemoClaw
 
@@ -55,7 +56,6 @@ experimental:
   mdx-components:
     - ../docs/_components
     - ./components
-  basepath-aware: true
 
 versions:
   - display-name: Latest

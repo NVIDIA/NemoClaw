@@ -172,7 +172,7 @@ Interactive third-party software acceptance requires a TTY.
     3. Pass the flag through to the installer:
          curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
 
-  See docs/reference/commands.md for the full non-interactive install reference.
+  See docs/reference/commands.mdx for the full non-interactive install reference.
 EOF
 }
 

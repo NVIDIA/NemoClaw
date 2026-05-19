@@ -268,7 +268,7 @@ jobs:
           if-no-files-found: ignore
 
   # ── Docs Validation E2E ──────────────────────────────────────
-  # CLI/docs parity (nemoclaw --help vs commands.md) + markdown link validation.
+  # CLI/docs parity (nemoclaw --help vs commands.mdx) + markdown link validation.
   # Split from cloud-experimental-e2e monolith (#2644).
   docs-validation-e2e:
     if: >-

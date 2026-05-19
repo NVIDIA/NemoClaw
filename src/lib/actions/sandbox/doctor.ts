@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
+import * as agentRuntime from "../../agent/runtime";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
 import { readCloudflaredState } from "../../tunnel/services";
@@ -25,8 +26,6 @@ import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import { buildStatusCommandDeps } from "../../status-command-deps";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
-
-const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 

@@ -3358,7 +3358,7 @@ async function preflight(
     process.exit(1);
   }
   console.log("  ✓ Docker is running");
-
+  require("./onboard/http-proxy-preflight").warnIfHostProxyMissesLoopback();
   const optedOutGpuPassthrough =
     preflightOpts.optedOutGpuPassthrough === true || preflightOpts.noGpu === true;
   assertCdiNvidiaGpuSpecPresent(host, optedOutGpuPassthrough);
@@ -4358,7 +4358,7 @@ function applyOverlayfsAutoFix(upstreamImage: string): string | null {
     const reason = err instanceof Error ? err.message : String(err);
     console.error(`  Patched cluster image build failed: ${reason}`);
     console.error(
-      "  Falling back to the upstream image. The k3s server will likely fail; see docs/reference/troubleshooting.md.",
+      "  Falling back to the upstream image. The k3s server will likely fail; see docs/reference/troubleshooting.mdx.",
     );
     overlayFixResultCache.set(upstreamImage, null);
     return null;

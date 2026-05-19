@@ -4,7 +4,7 @@
 /**
  * Public command display registry derived from oclif command metadata.
  *
- * The command entries shown in root help, docs checks, and legacy dispatch
+ * The command entries shown in root help, docs checks, and public dispatch
  * helpers are exposed through the oclif command entrypoints under
  * `src/commands/**`. This module projects that metadata into the historical
  * `CommandDef` shape while command discovery itself stays owned by oclif.
@@ -124,6 +124,10 @@ export function canonicalUsageList(): string[] {
  * For flag-style like "nemoclaw --help", extracts "--help".
  * For "nemoclaw onboard --from", extracts "onboard".
  */
+function hasRegisteredChildCommand(commandId: string): boolean {
+  return Object.keys(getRegisteredOclifCommandsMetadata()).some((id) => id.startsWith(`${commandId}:`));
+}
+
 export function globalCommandTokens(): Set<string> {
   const tokens = new Set<string>();
   for (const commandId of Object.keys(getRegisteredOclifCommandsMetadata())) {
@@ -136,12 +140,21 @@ export function globalCommandTokens(): Set<string> {
 }
 
 /**
- * Action tokens for sandbox commands.
+ * Leaf global command IDs that should use command-ID compatibility execution.
  *
- * The tokens are derived from oclif command IDs and explicit compatibility
- * route overrides, not from public help text. Includes empty string for the
- * default connect behavior.
+ * Derived from registered oclif metadata by excluding nested IDs and command
+ * IDs that have registered child commands.
  */
+export function directGlobalCommandIds(): Set<string> {
+  const ids = new Set<string>();
+  for (const commandId of Object.keys(getRegisteredOclifCommandsMetadata())) {
+    if (commandId.includes(":")) continue;
+    if (hasRegisteredChildCommand(commandId)) continue;
+    ids.add(commandId);
+  }
+  return ids;
+}
+
 export function sandboxActionTokens(): string[] {
   const seen = new Set<string>();
   const tokens: string[] = [];

@@ -473,7 +473,12 @@ function pullOllamaModelViaHttp(model) {
         body,
         url,
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        // #2616: inject NO_PROXY=localhost so the streamed pull against the
+        // local Ollama daemon doesn't tunnel through the user's host proxy.
+        env: buildSubprocessEnv(),
+      },
     );
 
     const readline = require("readline");
@@ -747,7 +752,9 @@ function unloadOllamaModels() {
     const psResult = spawnSync(
       "curl",
       ["-sS", "--max-time", "3", `http://localhost:${OLLAMA_PORT}/api/ps`],
-      { encoding: "utf8" },
+      // #2616: env-sanitize so http_proxy=127.0.0.1:8118 (Privoxy) doesn't
+      // hijack this localhost probe.
+      { encoding: "utf8", env: buildSubprocessEnv() },
     );
     if (psResult.status !== 0) return;
 
@@ -777,7 +784,8 @@ function unloadOllamaModels() {
           JSON.stringify({ model: entry.name, keep_alive: 0 }),
           `http://localhost:${OLLAMA_PORT}/api/generate`,
         ],
-        { encoding: "utf8" },
+        // #2616: env-sanitize so http_proxy doesn't hijack the unload call.
+        { encoding: "utf8", env: buildSubprocessEnv() },
       );
     }
   } catch {
