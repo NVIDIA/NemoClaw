@@ -1787,6 +1787,7 @@ jobs:
           export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          npm ci --ignore-scripts
           for scenario in \
             ubuntu-repo-cloud-openclaw-custom-policies \
             ubuntu-invalid-nvidia-key-negative \
