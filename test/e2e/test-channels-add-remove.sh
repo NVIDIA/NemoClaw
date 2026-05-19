@@ -117,7 +117,7 @@ openclaw_has_telegram() {
   # could not be read.
   local out
   out=$(sandbox_exec \
-    "python3 -c 'import json,sys; d=json.load(open(\"/opt/nemoclaw/openclaw.json\")); print(\"yes\" if \"telegram\" in d.get(\"channels\",{}) else \"no\")' 2>&1") || true
+    "python3 -c 'import json,sys; d=json.load(open(\"/sandbox/.openclaw/openclaw.json\")); print(\"yes\" if \"telegram\" in d.get(\"channels\",{}) else \"no\")' 2>&1") || true
   local verdict
   verdict="$(printf '%s\n' "$out" | tail -n1 | tr -d '\r')"
   case "$verdict" in
