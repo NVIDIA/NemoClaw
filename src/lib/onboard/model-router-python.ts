@@ -120,13 +120,27 @@ export function pickHostPython(deps: PickHostPythonDeps = {}): PickHostPythonRes
   const tried = new Set<string>();
 
   const override = (env[OVERRIDE_ENV_VAR] || "").trim();
+  if (override && !path.isAbsolute(override)) {
+    return {
+      ok: null,
+      healthy: [],
+      failures: [
+        {
+          candidate: override,
+          resolved: null,
+          reason: `${OVERRIDE_ENV_VAR} must be an absolute path`,
+        },
+      ],
+      overrideRequested: true,
+    };
+  }
   // Strict override: when the env var is set, that interpreter is the *only*
   // candidate. We do not fall back to PATH lookups — silently using a
   // different python would contradict the "pin" wording in docs.
   const ordered = override ? [override] : [...CANDIDATES];
 
   for (const candidate of ordered) {
-    const resolved = candidate.startsWith("/") ? candidate : which(candidate);
+    const resolved = path.isAbsolute(candidate) ? candidate : which(candidate);
     if (!resolved) {
       failures.push({ candidate, resolved: null, reason: "not on PATH" });
       continue;
@@ -226,7 +240,9 @@ export function formatHostPythonFailureMessage(
     lines.push(`  - ${f.candidate}${f.resolved ? ` (${f.resolved})` : ""}: ${f.reason}`);
   }
   if (options.overrideRequested) {
-    lines.push(`Unset ${OVERRIDE_ENV_VAR}, or point it at a working python (for example python3.12).`);
+    lines.push(
+      `Unset ${OVERRIDE_ENV_VAR}, or point it at an absolute path to a working python (for example /opt/homebrew/bin/python3.12).`,
+    );
   } else {
     lines.push(
       "Install a supported interpreter (for example `brew install python@3.12` on macOS),",
@@ -249,10 +265,13 @@ function defaultProbe(executable: string): { exit: number; stdout: string; stder
     stdio: ["ignore", "pipe", "pipe"],
     timeout: 15_000,
   });
+  const stdout = result.stdout ?? "";
+  const stderr = result.stderr ?? "";
+  const spawnError = result.error instanceof Error ? `${result.error.name}: ${result.error.message}` : "";
   return {
     exit: result.status ?? -1,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stdout,
+    stderr: stderr || spawnError,
   };
 }
 
@@ -272,8 +291,10 @@ function defaultLog(message: string): void {
 export function prepareModelRouterVenv(opts: {
   venvDir: string;
   log?: (message: string) => void;
+  allowReplaceExisting?: boolean;
 }): string {
   const log = opts.log ?? defaultLog;
+  const allowReplaceExisting = opts.allowReplaceExisting ?? false;
   const { healthy, failures, overrideRequested } = pickHostPython({ log });
   if (healthy.length === 0) {
     throw new Error(formatHostPythonFailureMessage(failures, { overrideRequested }));
@@ -285,8 +306,17 @@ export function prepareModelRouterVenv(opts: {
   const venvFailures: string[] = [];
   for (const hostPython of healthy) {
     log(`  Preparing Model Router environment: ${opts.venvDir} (using ${hostPython.executable})`);
-    // Remove any partial venv left by a previous candidate so `python -m venv`
-    // does not bail on a half-populated directory.
+    const existedBefore = fs.existsSync(opts.venvDir);
+    if (existedBefore && !allowReplaceExisting) {
+      const detail =
+        `refusing to replace existing Model Router virtual environment directory ${opts.venvDir}; ` +
+        "remove it first, choose an empty NEMOCLAW_MODEL_ROUTER_VENV path, or unset NEMOCLAW_MODEL_ROUTER_VENV";
+      venvFailures.push(`  - ${hostPython.executable}: ${detail}`);
+      log(`  ${hostPython.executable}: ${detail}`);
+      break;
+    }
+    // Remove only directories the caller has identified as owned by NemoClaw,
+    // or partial venvs created by an earlier failed candidate in this call.
     if (fs.existsSync(opts.venvDir)) {
       fs.rmSync(opts.venvDir, { recursive: true, force: true });
     }
@@ -307,6 +337,9 @@ export function prepareModelRouterVenv(opts: {
     const detail = stderrTail || `venv exit ${venvResult.status}`;
     venvFailures.push(`  - ${hostPython.executable}: ${detail}`);
     log(`  ${hostPython.executable}: venv creation failed (${detail.split("\n")[0]})`);
+    if (fs.existsSync(opts.venvDir)) {
+      fs.rmSync(opts.venvDir, { recursive: true, force: true });
+    }
   }
 
   // Preserve the probe-stage failures alongside the venv-stage failures so the

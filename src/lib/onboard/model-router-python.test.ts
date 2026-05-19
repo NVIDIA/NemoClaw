@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { describe, it } from "vitest";
 
@@ -11,6 +14,7 @@ import {
   MIN_PYTHON_VERSION,
   OVERRIDE_ENV_VAR,
   pickHostPython,
+  prepareModelRouterVenv,
 } from "../../../dist/lib/onboard/model-router-python";
 
 function probeOk(version: readonly [number, number, number]) {
@@ -21,12 +25,35 @@ function probeOk(version: readonly [number, number, number]) {
   };
 }
 
-function probeImportError(detail: string, version: readonly [number, number, number] = [3, 14, 5]) {
+function probeImportError(detail: string, version: readonly [number, number, number] = [3, 13, 0]) {
   return {
     exit: 1,
     stdout: JSON.stringify({ version: [...version], error: detail }),
     stderr: "",
   };
+}
+
+function writeFakePython(filePath: string, version: readonly [number, number, number] = [3, 13, 0]) {
+  fs.writeFileSync(
+    filePath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'if [ "$1" = "-c" ]; then',
+      `  printf '{"version": [${version.join(", ")}], "error": null}\\n'`,
+      "  exit 0",
+      "fi",
+      'if [ "$1" = "-m" ] && [ "$2" = "venv" ]; then',
+      '  mkdir -p "$3/bin"',
+      '  printf "#!/usr/bin/env bash\\n" > "$3/bin/python"',
+      '  chmod +x "$3/bin/python"',
+      "  exit 0",
+      "fi",
+      "exit 99",
+      "",
+    ].join("\n"),
+    { mode: 0o755 },
+  );
 }
 
 describe("pickHostPython", () => {
@@ -168,6 +195,30 @@ describe("pickHostPython", () => {
     assert.equal(result.failures[0].candidate, "/opt/custom/python3.10");
   });
 
+  it("rejects a non-absolute NEMOCLAW_MODEL_ROUTER_PYTHON pin without resolving PATH", () => {
+    let whichCalled = false;
+    let probeCalled = false;
+    const result = pickHostPython({
+      which: () => {
+        whichCalled = true;
+        return "/usr/bin/python3.12";
+      },
+      probe: () => {
+        probeCalled = true;
+        return probeOk([3, 12, 7]);
+      },
+      log: () => {},
+      env: { [OVERRIDE_ENV_VAR]: "python3.12" },
+    });
+
+    assert.equal(result.ok, null);
+    assert.equal(result.overrideRequested, true);
+    assert.deepEqual(result.healthy, []);
+    assert.equal(whichCalled, false);
+    assert.equal(probeCalled, false);
+    assert.match(result.failures[0].reason, /absolute path/);
+  });
+
   it("honours a healthy NEMOCLAW_MODEL_ROUTER_PYTHON override", () => {
     const which = () => null;
     const probe = (executable: string) =>
@@ -221,6 +272,17 @@ describe("pickHostPython", () => {
     assert.match(message, /not usable/);
     assert.match(message, /Unset/);
   });
+
+  it("surfaces spawn errors when an absolute override path does not exist", () => {
+    const result = pickHostPython({
+      log: () => {},
+      env: { [OVERRIDE_ENV_VAR]: "/tmp/nemoclaw-model-router-python-does-not-exist" },
+    });
+
+    assert.equal(result.ok, null);
+    assert.equal(result.failures.length, 1);
+    assert.match(result.failures[0].reason, /ENOENT|spawn/i);
+  });
 });
 
 describe("supported version window", () => {
@@ -230,5 +292,36 @@ describe("supported version window", () => {
 
   it("excludes 3.14 to dodge the macOS Homebrew pyexpat regression in #3781", () => {
     assert.deepEqual([...MAX_PYTHON_EXCLUSIVE], [3, 14]);
+  });
+});
+
+describe("prepareModelRouterVenv", () => {
+  it("refuses to replace an existing unowned venv directory", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-router-python-owned-"));
+    const oldPath = process.env.PATH;
+    const oldOverride = process.env[OVERRIDE_ENV_VAR];
+    try {
+      const fakeBin = path.join(tmpDir, "bin");
+      const venvDir = path.join(tmpDir, "existing-dir");
+      const sentinel = path.join(venvDir, "do-not-delete.txt");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.mkdirSync(venvDir, { recursive: true });
+      fs.writeFileSync(sentinel, "important");
+      writeFakePython(path.join(fakeBin, "python3.13"));
+
+      process.env.PATH = `${fakeBin}:/usr/bin:/bin`;
+      delete process.env[OVERRIDE_ENV_VAR];
+
+      assert.throws(
+        () => prepareModelRouterVenv({ venvDir, log: () => {} }),
+        /refusing to replace existing Model Router virtual environment directory/,
+      );
+      assert.equal(fs.readFileSync(sentinel, "utf-8"), "important");
+    } finally {
+      process.env.PATH = oldPath;
+      if (oldOverride === undefined) delete process.env[OVERRIDE_ENV_VAR];
+      else process.env[OVERRIDE_ENV_VAR] = oldOverride;
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

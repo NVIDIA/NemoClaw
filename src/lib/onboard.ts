@@ -935,7 +935,13 @@ function installModelRouterCommand(routerDir = modelRouterPackageDir()): string 
   const venvDir = modelRouterVenvDir();
   const routerCommand = modelRouterCommandPath(venvDir);
   const sourceFingerprint = getModelRouterSourceFingerprint(routerDir);
-  const venvPython = prepareModelRouterVenv({ venvDir });
+  const allowReplaceExistingVenv =
+    path.resolve(venvDir) === path.resolve(MODEL_ROUTER_VENV_DIR) ||
+    readModelRouterInstalledFingerprint(venvDir) !== null;
+  const venvPython = prepareModelRouterVenv({
+    venvDir,
+    allowReplaceExisting: allowReplaceExistingVenv,
+  });
 
   const installResult = run(
     [venvPython, "-m", "pip", "install", "--quiet", "--upgrade", `${routerDir}[prefill,proxy]`],

@@ -119,7 +119,9 @@ To pin a specific interpreter, set `NEMOCLAW_MODEL_ROUTER_PYTHON` to its absolut
 $ NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemoclaw onboard
 ```
 
-The pin is strict: NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to a different python on `PATH`.
+The pin is strict.
+NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to a different python on `PATH`.
+Relative command names such as `python3.12` are rejected; use `command -v python3.12` to find the absolute path.
 If `python -m venv` itself fails for a probe-clean interpreter (for example, a corrupt ensurepip seed), NemoClaw retries with the next healthy candidate when no pin is set; with a pin set, the failure stops onboarding so you can fix or repoint the pinned python.
 
 ## Experimental Options
