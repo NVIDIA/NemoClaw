@@ -898,6 +898,28 @@ $ openshell term
 
 For a remote Brev instance, SSH to the instance and run `openshell term` there, or use a port-forward to the gateway.
 
+## `openshell settings`
+
+Manage sandbox and gateway settings exposed by OpenShell. NemoClaw does not wrap these; run them directly with the `openshell` CLI on the host where the sandbox lives.
+
+```console
+$ openshell settings get [<sandbox> | --global]
+$ openshell settings set [<sandbox> | --global] --key <key> --value <value>
+$ openshell settings delete [<sandbox> | --global] --key <key>
+```
+
+`openshell settings get <sandbox>` prints the effective settings for that sandbox plus the config revision and policy hash that produced them. `--global` reads or writes the gateway-wide scope; a sandbox-scoped value always overrides the global value when both are set.
+
+The current named settings on OpenShell 0.0.39 are:
+
+| Key | Type | Effect |
+|-----|------|--------|
+| `agent_policy_proposals_enabled` | boolean | When set, the agent loop is allowed to propose new network policy entries from inside the sandbox. The proposals still require operator approval through `openshell term` before they affect egress. |
+| `ocsf_json_enabled` | boolean | When set, OpenShell emits sandbox audit events as OCSF JSON in addition to the human-readable log stream. Set this when feeding the audit log into a SIEM. |
+| `providers_v2_enabled` | boolean | When set, the sandbox uses the v2 inference provider plane (the same plane NemoClaw's `nemoclaw inference set` writes to). Leave unset on releases older than v0.0.44. |
+
+Unset keys fall through to the gateway-global value, and an unset global value falls through to the OpenShell default for that key.
+
 ### `nemoclaw tunnel start`
 
 Start optional host auxiliary services. This is the cloudflared tunnel when `cloudflared` is installed (for a public URL to the dashboard). Channel messaging (Telegram, Discord, Slack) is not started here; it is configured during `nemoclaw onboard` and runs through OpenShell-managed constructs.
@@ -1235,6 +1257,29 @@ These flags change defaults for commands that manage existing sandboxes.
 |----------|--------|--------|
 | `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Sets the default for whether `nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips the automatic DNS-proxy repair for stale `inference.local` routes during `nemoclaw <name> connect` and `nemoclaw <name> connect --probe-only`. Use only as a troubleshooting escape hatch. |
+
+### Sandbox Runtime Environment
+
+The variables above run on the host. NemoClaw also stamps a fixed set of environment variables *inside* every sandbox it creates. They are not configured by the operator; they document the runtime the agent process sees. Operators debugging in-sandbox network or TLS failures start here.
+
+Read the live values for any sandbox with `openshell sandbox exec -n <name> -- env | sort`.
+
+| Variable | Value | Effect |
+|----------|-------|--------|
+| `OPENSHELL_SANDBOX` | `1` | Set inside the sandbox only. Use in scripts that need to detect whether they are running inside an OpenShell sandbox. |
+| `HOME` | `/sandbox` | Sandbox process home. NemoClaw-provisioned config lives under `/sandbox/.openclaw` (OpenClaw) and `/sandbox/.hermes` (Hermes). |
+| `USER` | `sandbox` | Sandbox process identity. |
+| `HERMES_HOME` | `/sandbox/.hermes` | Hermes config root. Present in Hermes sandboxes only. |
+| `http_proxy`, `https_proxy`, `grpc_proxy`, `ALL_PROXY` (and the upper-case `HTTP_PROXY` / `HTTPS_PROXY` variants) | `http://10.200.0.1:3128` | Every outbound HTTP, HTTPS, and gRPC call from the sandbox is forced through this host-side OpenShell proxy. The sandbox cannot reach the outside world directly; egress is gateway-mediated and subject to the active network policy. Override the host and port with the `NEMOCLAW_PROXY_HOST` and `NEMOCLAW_PROXY_PORT` host variables at onboard time. |
+| `NO_PROXY` | `localhost,127.0.0.1,::1,10.200.0.1` | Loopback and the proxy itself bypass the proxy. |
+| `NODE_USE_ENV_PROXY` | `1` | Tells Node.js (22+) to honor the proxy env vars above so in-sandbox `node` and `npm` traffic is also gateway-mediated. |
+| `SSL_CERT_FILE`, `CURL_CA_BUNDLE`, `REQUESTS_CA_BUNDLE`, `GIT_SSL_CAINFO` | `/etc/openshell-tls/ca-bundle.pem` | Pins `curl`, `python-requests`, and `git` to the OpenShell-managed CA bundle. |
+| `NODE_EXTRA_CA_CERTS` | `/etc/openshell-tls/openshell-ca.pem` | Pins Node.js TLS verification to the OpenShell-managed CA. |
+
+The proxy IP, port, and CA bundle paths are the source of two common in-sandbox failures:
+
+- TLS errors from `curl`, `python-requests`, `git`, or `node` usually mean the CA bundle has been overridden or the binary is not honoring the env vars above. Check `cat /etc/openshell-tls/ca-bundle.pem` from inside the sandbox and confirm the binary in question reads `SSL_CERT_FILE` (or its equivalent).
+- Timeouts on outbound HTTP usually mean the destination is not in the active policy. Use `openshell policy get` on the host to see what is currently allowed, and `nemoclaw <name> policy-add` to add a preset.
 
 ## NemoHermes Alias
 
