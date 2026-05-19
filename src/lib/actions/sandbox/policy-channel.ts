@@ -38,6 +38,11 @@ import {
 } from "../../sandbox/channels";
 import type { HostQrLoginResult } from "../../host-qr-handlers";
 
+type ChannelMutationOptions = {
+  channel?: string;
+  dryRun?: boolean;
+};
+
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
   useColor && (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit");
@@ -625,9 +630,12 @@ async function acquireHostQrChannel(
   console.log(`  ${G}✓${R} ${channelArg} token saved${suffix}.`);
 }
 
-export async function addSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
-  const dryRun = args.includes("--dry-run");
-  const rawChannelArg = args.find((arg) => !arg.startsWith("-"));
+export async function addSandboxChannel(
+  sandboxName: string,
+  options: ChannelMutationOptions = {},
+): Promise<void> {
+  const dryRun = Boolean(options.dryRun);
+  const rawChannelArg = options.channel;
   if (!rawChannelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels add <channel> [--dry-run]`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
@@ -758,9 +766,12 @@ function removeChannelPresetIfPresent(sandboxName: string, channelName: string):
   }
 }
 
-export async function removeSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
-  const dryRun = args.includes("--dry-run");
-  const rawChannelArg = args.find((arg) => !arg.startsWith("-"));
+export async function removeSandboxChannel(
+  sandboxName: string,
+  options: ChannelMutationOptions = {},
+): Promise<void> {
+  const dryRun = Boolean(options.dryRun);
+  const rawChannelArg = options.channel;
   if (!rawChannelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels remove <channel> [--dry-run]`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
@@ -801,12 +812,12 @@ export async function removeSandboxChannel(sandboxName: string, args: string[] =
 
 async function sandboxChannelsSetEnabled(
   sandboxName: string,
-  args: string[],
+  options: ChannelMutationOptions,
   disabled: boolean,
 ): Promise<void> {
   const verb = disabled ? "stop" : "start";
-  const dryRun = args.includes("--dry-run");
-  const channelArg = args.find((arg) => !arg.startsWith("-"));
+  const dryRun = Boolean(options.dryRun);
+  const channelArg = options.channel;
   if (!channelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels ${verb} <channel> [--dry-run]`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
@@ -843,12 +854,18 @@ async function sandboxChannelsSetEnabled(
   await promptAndRebuild(sandboxName, `${verb} '${normalized}'`);
 }
 
-export async function stopSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
-  await sandboxChannelsSetEnabled(sandboxName, args, true);
+export async function stopSandboxChannel(
+  sandboxName: string,
+  options: ChannelMutationOptions = {},
+): Promise<void> {
+  await sandboxChannelsSetEnabled(sandboxName, options, true);
 }
 
-export async function startSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
-  await sandboxChannelsSetEnabled(sandboxName, args, false);
+export async function startSandboxChannel(
+  sandboxName: string,
+  options: ChannelMutationOptions = {},
+): Promise<void> {
+  await sandboxChannelsSetEnabled(sandboxName, options, false);
 }
 
 export async function removeSandboxPolicy(

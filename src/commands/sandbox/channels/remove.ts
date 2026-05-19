@@ -4,7 +4,7 @@
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import {
-  buildChannelArgs,
+  channelMutationOptions,
   channelMutationArgs,
   channelMutationFlags,
   getChannelsRuntimeBridge,
@@ -24,7 +24,7 @@ export default class ChannelsRemoveCommand extends NemoClawCommand {
     const { args, flags } = await this.parse(ChannelsRemoveCommand);
     await getChannelsRuntimeBridge().sandboxChannelsRemove(
       args.sandboxName,
-      buildChannelArgs(args.channel, flags),
+      channelMutationOptions(args.channel, flags),
     );
   }
 }
