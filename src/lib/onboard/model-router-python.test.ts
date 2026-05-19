@@ -47,7 +47,7 @@ describe("pickHostPython", () => {
 
     const result = pickHostPython({ which, probe, log: () => {}, env: {} });
 
-    assert.equal(result.ok?.command, "python3.13");
+    assert.equal(result.ok?.candidate, "python3.13");
     assert.equal(result.ok?.executable, "/usr/bin/python3.13");
     assert.deepEqual(result.ok?.version, [3, 13, 2]);
     assert.deepEqual(result.failures, []);
@@ -72,7 +72,7 @@ describe("pickHostPython", () => {
     const result = pickHostPython({ which, probe, log: () => {}, env: {} });
 
     assert.deepEqual(
-      result.healthy.map((h) => h.command),
+      result.healthy.map((h) => h.candidate),
       ["python3.13", "python3.12", "python3.11"],
     );
     // python3 deduped because it resolves to the same path as python3.13.
@@ -98,7 +98,7 @@ describe("pickHostPython", () => {
 
     const result = pickHostPython({ which, probe, log: () => {}, env: {} });
 
-    assert.equal(result.ok?.command, "python3.11");
+    assert.equal(result.ok?.candidate, "python3.11");
     assert.equal(result.ok?.executable, "/opt/homebrew/bin/python3.11");
     assert.deepEqual(result.ok?.version, [3, 11, 8]);
   });
@@ -180,7 +180,7 @@ describe("pickHostPython", () => {
       env: { [OVERRIDE_ENV_VAR]: "/opt/custom/python3.12" },
     });
 
-    assert.equal(result.ok?.command, "/opt/custom/python3.12");
+    assert.equal(result.ok?.candidate, "/opt/custom/python3.12");
     assert.equal(result.ok?.executable, "/opt/custom/python3.12");
     assert.deepEqual(result.ok?.version, [3, 12, 6]);
     assert.equal(result.overrideRequested, true);

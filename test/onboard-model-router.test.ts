@@ -115,7 +115,7 @@ fs.readFileSync = (filePath, ...args) => {
 const commands = [];
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  if (cmd.startsWith("python3 -m venv") || cmd.includes("/bin/python -m pip")) {
+  if (/\bpython3(?:\.\d+)? -m venv\b/.test(cmd) || cmd.includes("/bin/python -m pip")) {
     throw new Error("unexpected managed-router reinstall in reuse test: " + cmd);
   }
   if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {
@@ -360,7 +360,7 @@ fs.readFileSync = (filePath, ...args) => {
 const commands = [];
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  if (cmd.startsWith("python3 -m venv") || cmd.includes("/bin/python -m pip")) {
+  if (/\bpython3(?:\.\d+)? -m venv\b/.test(cmd) || cmd.includes("/bin/python -m pip")) {
     return originalRun(command, opts);
   }
   if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {
@@ -544,7 +544,7 @@ fs.readFileSync = (filePath, ...args) => {
 const commands = [];
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  if (cmd.startsWith("python3 -m venv") || cmd.includes("/bin/python -m pip")) {
+  if (/\bpython3(?:\.\d+)? -m venv\b/.test(cmd) || cmd.includes("/bin/python -m pip")) {
     throw new Error("unexpected managed-router reinstall in reuse test: " + cmd);
   }
   if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {
@@ -770,7 +770,7 @@ fs.readFileSync = (filePath, ...args) => {
 const commands = [];
 runner.run = (command, opts = {}) => {
   const cmd = _n(command);
-  if (cmd.startsWith("python3 -m venv") || cmd.includes("/bin/python -m pip")) {
+  if (/\bpython3(?:\.\d+)? -m venv\b/.test(cmd) || cmd.includes("/bin/python -m pip")) {
     return originalRun(command, opts);
   }
   if (/(^|[\/\s])pip3(?:\s|$)/.test(cmd)) {

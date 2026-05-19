@@ -72,11 +72,13 @@ const PROBE_SCRIPT = [
 ].join("\n");
 
 export interface PythonProbeOk {
-  /** Name to spawn (matches the candidate, e.g. "python3.12", or the
-   * NEMOCLAW_MODEL_ROUTER_PYTHON override absolute path). Production passes
-   * this to spawnSync so PATH resolution mirrors what `command -v` saw. */
-  command: string;
-  /** Absolute path discovered at probe time, for diagnostics. */
+  /** Original candidate label (e.g. "python3.12", or the override path).
+   * Used only for diagnostics/log lines so the user can correlate a
+   * failure to the candidate they expected to be tried. */
+  candidate: string;
+  /** Absolute path discovered at probe time. Production spawns this directly
+   * so a PATH change between probe and use cannot substitute a different
+   * interpreter (Codex P-Major on PR #3786, CodeRabbit follow-up). */
   executable: string;
   version: readonly [number, number, number];
 }
@@ -135,7 +137,7 @@ export function pickHostPython(deps: PickHostPythonDeps = {}): PickHostPythonRes
     const result = probeCandidate(candidate, resolved, probe);
     if (result.ok) {
       log(`  ${candidate} (${resolved}): version ${result.ok.version.join(".")} healthy`);
-      healthy.push({ ...result.ok, command: candidate });
+      healthy.push({ ...result.ok, candidate });
       continue;
     }
     failures.push(result.failure);
@@ -155,7 +157,7 @@ function probeCandidate(
   resolved: string,
   probe: NonNullable<PickHostPythonDeps["probe"]>,
 ):
-  | { ok: Omit<PythonProbeOk, "command">; failure?: never }
+  | { ok: Omit<PythonProbeOk, "candidate">; failure?: never }
   | { ok?: never; failure: PythonProbeFailure } {
   const probeResult = probe(resolved);
   let parsed: { version?: number[]; error?: string | null } = {};
@@ -288,7 +290,9 @@ export function prepareModelRouterVenv(opts: {
     if (fs.existsSync(opts.venvDir)) {
       fs.rmSync(opts.venvDir, { recursive: true, force: true });
     }
-    const venvResult = run([hostPython.command, "-m", "venv", opts.venvDir], {
+    // Spawn the absolute path so a PATH race between probe and use cannot
+    // substitute a different interpreter.
+    const venvResult = run([hostPython.executable, "-m", "venv", opts.venvDir], {
       ignoreError: true,
       timeout: 120_000,
     });
@@ -305,11 +309,16 @@ export function prepareModelRouterVenv(opts: {
     log(`  ${hostPython.executable}: venv creation failed (${detail.split("\n")[0]})`);
   }
 
-  throw new Error(
-    [
-      "Failed to create Model Router virtual environment with any healthy host Python.",
-      "Tried:",
-      ...venvFailures,
-    ].join("\n"),
-  );
+  // Preserve the probe-stage failures alongside the venv-stage failures so the
+  // user sees every reason NemoClaw rejected an interpreter, not just the
+  // venv-step reasons from the candidates that made it past the probe.
+  const lines = ["Failed to create Model Router virtual environment with any healthy host Python."];
+  if (failures.length > 0) {
+    lines.push("Probe-stage failures:");
+    for (const f of failures) {
+      lines.push(`  - ${f.candidate}${f.resolved ? ` (${f.resolved})` : ""}: ${f.reason}`);
+    }
+  }
+  lines.push("Venv-stage failures:", ...venvFailures);
+  throw new Error(lines.join("\n"));
 }
