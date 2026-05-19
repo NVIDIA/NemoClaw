@@ -7536,7 +7536,7 @@
           "text": "M-WA0: channels add whatsapp registered QR-only channel",
           "polarity": "pass",
           "normalized_id": "m.wa0.channels.add.whatsapp.registered.qr.only.channel",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7544,7 +7544,7 @@
           "text": "M-WA0: channels add whatsapp failed or did not register channel",
           "polarity": "fail",
           "normalized_id": "m.wa0.channels.add.whatsapp.failed.or.did.not.register.channel",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7552,7 +7552,7 @@
           "text": "M-WA1: Unexpected WhatsApp bridge provider exists in gateway",
           "polarity": "fail",
           "normalized_id": "m.wa1.unexpected.whatsapp.bridge.provider.exists.in.gateway",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7560,7 +7560,7 @@
           "text": "M-WA1: WhatsApp QR-only channel creates no bridge provider",
           "polarity": "pass",
           "normalized_id": "m.wa1.whatsapp.qr.only.channel.creates.no.bridge.provider",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7568,7 +7568,7 @@
           "text": "M-WA2: registry.messagingChannels contains whatsapp after channel add",
           "polarity": "pass",
           "normalized_id": "m.wa2.registry.messagingchannels.contains.whatsapp.after.channel.add",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7576,7 +7576,7 @@
           "text": "M-WA2: registry.messagingChannels missing whatsapp after channel add ($(registry_field messagingChannels))",
           "polarity": "fail",
           "normalized_id": "m.wa2.registry.messagingchannels.missing.whatsapp.after.channel.add.registry.field.messagingchannels",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7584,7 +7584,7 @@
           "text": "M-WA3: WhatsApp policy preset applied before rebuild",
           "polarity": "pass",
           "normalized_id": "m.wa3.whatsapp.policy.preset.applied.before.rebuild",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7592,7 +7592,7 @@
           "text": "M-WA3: WhatsApp policy preset missing expected endpoints before rebuild",
           "polarity": "fail",
           "normalized_id": "m.wa3.whatsapp.policy.preset.missing.expected.endpoints.before.rebuild",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7600,7 +7600,7 @@
           "text": "M-WA4: Rebuild completed after WhatsApp channel add",
           "polarity": "pass",
           "normalized_id": "m.wa4.rebuild.completed.after.whatsapp.channel.add",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7608,7 +7608,7 @@
           "text": "M-WA4: Rebuild failed after WhatsApp channel add",
           "polarity": "fail",
           "normalized_id": "m.wa4.rebuild.failed.after.whatsapp.channel.add",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7616,7 +7616,7 @@
           "text": "M-WA5: WhatsApp policy preset survived rebuild with Node binary scope",
           "polarity": "pass",
           "normalized_id": "m.wa5.whatsapp.policy.preset.survived.rebuild.with.node.binary.scope",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7624,7 +7624,7 @@
           "text": "M-WA5: WhatsApp policy preset missing expected endpoints/binaries after rebuild",
           "polarity": "fail",
           "normalized_id": "m.wa5.whatsapp.policy.preset.missing.expected.endpoints.binaries.after.rebuild",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7632,7 +7632,7 @@
           "text": "M-WA6: Sandbox '$SANDBOX_NAME' is Ready after WhatsApp rebuild",
           "polarity": "pass",
           "normalized_id": "m.wa6.sandbox.sandbox.name.is.ready.after.whatsapp.rebuild",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -7640,7 +7640,7 @@
           "text": "M-WA6: Sandbox '$SANDBOX_NAME' not Ready after WhatsApp rebuild (list: ${sandbox_list:0:200})",
           "polarity": "fail",
           "normalized_id": "m.wa6.sandbox.sandbox.name.not.ready.after.whatsapp.rebuild.list.sandbox.list.0.200",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8072,7 +8072,7 @@
           "text": "M-WA7a: WhatsApp credential-like env var found in sandbox environment",
           "polarity": "fail",
           "normalized_id": "m.wa7a.whatsapp.credential.like.env.var.found.in.sandbox.environment",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8080,7 +8080,7 @@
           "text": "M-WA7a: No WhatsApp credential-like env var present in sandbox environment",
           "polarity": "pass",
           "normalized_id": "m.wa7a.no.whatsapp.credential.like.env.var.present.in.sandbox.environment",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8088,7 +8088,7 @@
           "text": "M-WA7b: WhatsApp credential placeholder found in sandbox process list",
           "polarity": "fail",
           "normalized_id": "m.wa7b.whatsapp.credential.placeholder.found.in.sandbox.process.list",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8096,7 +8096,7 @@
           "text": "M-WA7b: No WhatsApp credential placeholder present in sandbox process list",
           "polarity": "pass",
           "normalized_id": "m.wa7b.no.whatsapp.credential.placeholder.present.in.sandbox.process.list",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8104,7 +8104,7 @@
           "text": "M-WA7c: WhatsApp host credential material found on sandbox filesystem: ${sandbox_fs_wa}",
           "polarity": "fail",
           "normalized_id": "m.wa7c.whatsapp.host.credential.material.found.on.sandbox.filesystem.sandbox.fs.wa",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8112,7 +8112,7 @@
           "text": "M-WA7c: No WhatsApp host credential material found on sandbox filesystem",
           "polarity": "pass",
           "normalized_id": "m.wa7c.no.whatsapp.host.credential.material.found.on.sandbox.filesystem",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8328,7 +8328,7 @@
           "text": "M-WA8: WhatsApp account is enabled in openclaw.json",
           "polarity": "pass",
           "normalized_id": "m.wa8.whatsapp.account.is.enabled.in.openclaw.json",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8336,7 +8336,7 @@
           "text": "M-WA8: WhatsApp account missing or disabled in openclaw.json (${whatsapp_account_json:0:200})",
           "polarity": "fail",
           "normalized_id": "m.wa8.whatsapp.account.missing.or.disabled.in.openclaw.json.whatsapp.account.json.0.200",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8344,7 +8344,7 @@
           "text": "M-WA8a: WhatsApp health monitor is disabled for unpaired QR session",
           "polarity": "pass",
           "normalized_id": "m.wa8a.whatsapp.health.monitor.is.disabled.for.unpaired.qr.session",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8352,7 +8352,7 @@
           "text": "M-WA8a: WhatsApp health monitor is not disabled (${whatsapp_account_json:0:200})",
           "polarity": "fail",
           "normalized_id": "m.wa8a.whatsapp.health.monitor.is.not.disabled.whatsapp.account.json.0.200",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8360,7 +8360,7 @@
           "text": "M-WA9: WhatsApp config has no token/auth/session provider placeholders",
           "polarity": "pass",
           "normalized_id": "m.wa9.whatsapp.config.has.no.token.auth.session.provider.placeholders",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
@@ -8368,7 +8368,7 @@
           "text": "M-WA9: WhatsApp config contains secret-like fields: ${whatsapp_secret_fields}",
           "polarity": "fail",
           "normalized_id": "m.wa9.whatsapp.config.contains.secret.like.fields.whatsapp.secret.fields",
-          "mapping_status": "unmapped"
+          "mapping_status": "deferred"
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
