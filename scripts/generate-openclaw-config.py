@@ -494,6 +494,16 @@ def build_config(env: dict | None = None) -> dict:
 
     _ch_cfg = {}
     for ch in msg_channels:
+        if ch == "whatsapp":
+            _ch_cfg[ch] = {
+                "accounts": {
+                    "default": {
+                        "enabled": True,
+                        "healthMonitor": {"enabled": False},
+                    }
+                }
+            }
+            continue
         if ch not in _token_keys:
             continue
         account = {

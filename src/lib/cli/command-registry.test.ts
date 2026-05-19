@@ -16,10 +16,10 @@ import {
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 58 commands", () => {
+    it("should contain exactly 59 commands", () => {
       // 26 global (21 visible + 5 hidden help/version aliases)
-      // 32 sandbox (26 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(58);
+      // 33 sandbox (27 visible + 6 hidden shields/config)
+      expect(COMMANDS).toHaveLength(59);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -51,9 +51,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 32 entries", () => {
-      // 26 visible + 6 hidden (shields×3 + config get/set/rotate-token)
-      expect(sandboxCommands()).toHaveLength(32);
+    it("should return exactly 33 entries", () => {
+      // 27 visible + 6 hidden (shields×3 + config get/set/rotate-token)
+      expect(sandboxCommands()).toHaveLength(33);
     });
 
     it("every entry has scope sandbox", () => {
@@ -64,10 +64,10 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 11 hidden commands (47 visible)", () => {
+    it("should exclude 11 hidden commands (48 visible)", () => {
       // 5 hidden global (help, --help, -h, --version, -v) +
       // 6 hidden sandbox (shields×3, config get/set/rotate-token)
-      expect(visibleCommands()).toHaveLength(47);
+      expect(visibleCommands()).toHaveLength(48);
     });
 
     it("no visible command has hidden=true", () => {
@@ -176,12 +176,13 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 21 unique action tokens including empty string", () => {
+    it("returns exactly 22 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(21);
+      expect(tokens).toHaveLength(22);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "connect",
+        "exec",
         "status",
         "doctor",
         "logs",

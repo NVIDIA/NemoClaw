@@ -295,10 +295,10 @@ jobs:
           bash test/e2e/test-docs-validation.sh
 
   # ── Messaging Providers E2E ──────────────────────────────────
-  # Validates the full provider/placeholder/L7-proxy chain for messaging
-  # credentials (Telegram, Discord). Uses fake tokens by default — the L7
-  # proxy rewrites placeholders and the real API returns 401, proving the
-  # chain works. See: PR #1081
+  # Validates the full provider/placeholder/L7-proxy chain for token-backed
+  # messaging credentials, and the QR-only WhatsApp config/policy/no-provider
+  # path. Uses fake tokens by default — the L7 proxy rewrites placeholders and
+  # the real API returns 401, proving the chain works. See: PR #1081
   messaging-providers-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -306,7 +306,7 @@ jobs:
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',messaging-providers-e2e,'))
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -332,7 +332,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: install-log-messaging-providers
-          path: /tmp/nemoclaw-e2e-install.log
+          path: |
+            /tmp/nemoclaw-e2e-install.log
+            /tmp/nemoclaw-e2e-whatsapp-*.log
           if-no-files-found: ignore
 
   # ── Messaging + compatible endpoint regression (#2766) ───────
@@ -375,7 +377,7 @@ jobs:
   # Regression coverage for #3453 (stop must disable across rebuild), #3381
   # (start must re-attach from cached credentials), and #3671 (remove must
   # detach/delete providers and survive rebuild with token env still present).
-  # Exercises OpenClaw and Hermes across telegram, discord, wechat, and slack.
+  # Exercises OpenClaw and Hermes across telegram, discord, wechat, slack, and whatsapp.
   channels-stop-start-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
