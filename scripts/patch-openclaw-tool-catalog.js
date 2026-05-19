@@ -22,6 +22,18 @@ const SYSTEM_PROMPT_TOOLS_PATTERN = [
   "\t\t\ttools: effectiveTools,",
   "\t\t\tmodelAliasLines: buildModelAliasLines(params.config),",
 ].join("\n");
+const ALREADY_PATCHED_FORBIDDEN_PATTERNS = [
+  SYSTEM_PROMPT_TOOLS_PATTERN,
+  ALL_CUSTOM_TOOLS_PATTERN,
+];
+const ALREADY_PATCHED_REQUIRED_PATTERNS = [
+  "\t\tconst nemoClawToolCatalogControls = [",
+  "\t\tconst nemoClawPromptVisibleTools = nemoClawToolCatalogEnabled ? nemoClawToolCatalogControls : effectiveTools;",
+  "\t\tif (nemoClawToolCatalogEnabled) {",
+  "\t\t\ttools: nemoClawPromptVisibleTools,",
+  "\t\t\tconst nemoClawCatalogSourceTools = [...customTools, ...clientToolDefs];",
+  "\t\t\tconst allCustomTools = nemoClawCreateToolCatalog(nemoClawCatalogSourceTools);",
+];
 
 const EFFECTIVE_TOOLS_REPLACEMENT = [
   EFFECTIVE_TOOLS_PATTERN,
@@ -206,8 +218,11 @@ function listSelectionFiles(distDir) {
 
 function patchSelectionText(source, filePath) {
   if (source.includes(MARKER)) {
-    if (source.includes(ALL_CUSTOM_TOOLS_PATTERN)) {
-      throw new Error(`${filePath}: compact catalog marker is present but original target remains`);
+    if (ALREADY_PATCHED_FORBIDDEN_PATTERNS.some((pattern) => source.includes(pattern))) {
+      throw new Error(`${filePath}: compact catalog marker is present but original targets remain`);
+    }
+    if (ALREADY_PATCHED_REQUIRED_PATTERNS.some((pattern) => !source.includes(pattern))) {
+      throw new Error(`${filePath}: compact catalog marker is present but patch shape is incomplete`);
     }
     return { patched: false, text: source };
   }

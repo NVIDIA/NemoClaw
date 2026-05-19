@@ -187,6 +187,23 @@ describe("OpenClaw compact tool catalog patch", () => {
     } finally {
       fs.rmSync(changed.root, { recursive: true, force: true });
     }
+
+    const partial = makeFixture({
+      allCustomToolsLine: [
+        MARKER,
+        "\t\t\tconst nemoClawCatalogSourceTools = [...customTools, ...clientToolDefs];",
+        "\t\t\tconst allCustomTools = nemoClawCreateToolCatalog(nemoClawCatalogSourceTools);",
+      ].join("\n"),
+    });
+    try {
+      const result = runPatch(partial.dist);
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain(
+        "compact catalog marker is present but original targets remain",
+      );
+    } finally {
+      fs.rmSync(partial.root, { recursive: true, force: true });
+    }
   });
 
   it("captures only catalog controls in the fake provider request and preserves rollback", async () => {
