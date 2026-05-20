@@ -20,9 +20,9 @@ export default class ChannelsStopCommand extends NemoClawCommand {
   static examples = ["<%= config.bin %> sandbox channels stop alpha discord"];
   static publicDisplay = [
     {
-      usage: "nemoclaw <name> channels stop",
+      usage: "nemoclaw <name> channels stop <channel>",
       description: "Disable channel (keeps credentials)",
-      flags: "<channel> [--dry-run]",
+      flags: "[--dry-run]",
       group: "Messaging Channels",
       scope: "sandbox",
       order: 23,

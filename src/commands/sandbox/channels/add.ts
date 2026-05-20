@@ -20,9 +20,9 @@ export default class ChannelsAddCommand extends NemoClawCommand {
   static examples = ["<%= config.bin %> sandbox channels add alpha telegram"];
   static publicDisplay = [
     {
-      usage: "nemoclaw <name> channels add",
+      usage: "nemoclaw <name> channels add <channel>",
       description: "Save credentials and rebuild",
-      flags: "<channel> [--dry-run]",
+      flags: "[--dry-run]",
       group: "Messaging Channels",
       scope: "sandbox",
       order: 21,
