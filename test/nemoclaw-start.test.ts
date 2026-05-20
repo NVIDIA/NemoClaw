@@ -1957,6 +1957,10 @@ describe("seed_default_workspace_templates (#3240)", () => {
     const stepDownLog = path.join(tmpDir, "step-down.log");
     fs.mkdirSync(workspaceDir, { recursive: true });
     writeTemplates(templatesDir);
+    fs.mkdirSync(path.join(tmpDir, "openclaw", "docs", "reference"), { recursive: true });
+    fs.cpSync(templatesDir, path.join(tmpDir, "openclaw", "docs", "reference", "templates"), {
+      recursive: true,
+    });
     const configPath = path.join(tmpDir, "openclaw.json");
     fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { skipBootstrap: true } } }));
     const scriptPath = path.join(tmpDir, "seed-as-sandbox.sh");
@@ -1973,8 +1977,11 @@ describe("seed_default_workspace_templates (#3240)", () => {
         "set -euo pipefail",
         `STEP_DOWN_LOG=${JSON.stringify(stepDownLog)}`,
         `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$0" >"$STEP_DOWN_LOG"; exec "$@"' sandbox-step-down)`,
-        extractShellFunctionFromSource(src, "seed_default_workspace_templates"),
-        seedAsSandbox.replace(" '' ", ` ${JSON.stringify(templatesDir)} `),
+        extractShellFunctionFromSource(src, "seed_default_workspace_templates").replaceAll(
+          "$(npm root -g 2>/dev/null || true)",
+          JSON.stringify(tmpDir),
+        ),
+        seedAsSandbox,
         "seed_default_workspace_templates_as_sandbox",
       ].join("\n"),
       { mode: 0o700 },
