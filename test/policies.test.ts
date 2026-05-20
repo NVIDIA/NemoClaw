@@ -69,6 +69,7 @@ registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
 policies.listPresets = () => [
   { name: "npm", description: "npm and Yarn registry access" },
   { name: "pypi", description: "Python Package Index (PyPI) access" },
+  { name: "discord", description: "Discord API, gateway, and CDN access" },
 ];
 policies.getAppliedPresets = () => [];
 policies.applyPreset = (sandboxName, presetName) => {
@@ -434,6 +435,16 @@ describe("policies", () => {
       expect(policies.getMessagingPresetWarning("discord")).toContain("Discord");
       expect(policies.getMessagingPresetWarning("slack")).toContain("Slack");
       expect(policies.getMessagingPresetWarning("wechat")).toContain("WeChat");
+    });
+
+    it("adds Discord validation guidance for Node probes instead of curl or DNS-only checks", () => {
+      const warning = policies.getMessagingPresetWarning("discord");
+
+      expect(warning).toContain("curl");
+      expect(warning).toContain("preset binary allowlist");
+      expect(warning).toContain("Node HTTPS");
+      expect(warning).toContain("https://discord.com/api/v10/gateway");
+      expect(warning).toContain('dns.resolve("gateway.discord.gg")');
     });
 
     it("returns null for non-messaging presets", () => {
@@ -1599,6 +1610,40 @@ selectForRemoval(items, options)
         /Note: the 'wechat' preset only opens network egress to the WeChat API\./,
       );
       expect(result.stdout).toMatch(/re-run 'nemoclaw onboard' and select WeChat/);
+    });
+
+    it("prints Discord validation guidance from the interactive preset flow", () => {
+      const result = runPolicyAdd("y", [], {}, "discord");
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /curl is not in the preset binary allowlist, so curl probes can fail/,
+      );
+      expect(result.stdout).toMatch(/https:\/\/discord\.com\/api\/v10\/gateway/);
+      expect(result.stdout).toMatch(/dns\.resolve\("gateway\.discord\.gg"\)/);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls).toContainEqual({
+        type: "apply",
+        sandboxName: "test-sandbox",
+        presetName: "discord",
+      });
+    });
+
+    it("prints Discord validation guidance when the preset name is provided", () => {
+      const result = runPolicyAdd("n", ["discord", "--yes"]);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /curl is not in the preset binary allowlist, so curl probes can fail/,
+      );
+      expect(result.stdout).toMatch(/Node HTTPS/);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls.some((call: PolicyCall) => call.type === "prompt")).toBeFalsy();
+      expect(calls).toContainEqual({
+        type: "apply",
+        sandboxName: "test-sandbox",
+        presetName: "discord",
+      });
     });
 
     it("does not warn about messaging when a non-messaging preset is selected", () => {
