@@ -466,41 +466,22 @@ print_done() {
   printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
   if [[ "$ONBOARD_RAN" == true ]]; then
-    local sandbox_name agent_name
-    sandbox_name="$(resolve_default_sandbox_name)"
+    local agent_name
     agent_name="$(resolve_onboarded_agent)"
     if [[ "$_needs_cli_refresh" == true ]]; then
       printf "  ${C_YELLOW}%s installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
       printf "  ${C_DIM}Onboarding completed; refresh PATH before using the CLI from this terminal.${C_RESET}\n"
+      printf "\n"
+      printf "  ${C_GREEN}For this terminal:${C_RESET}\n"
+      print_cli_path_refresh_actions
     else
       if [[ "$agent_name" == "openclaw" || -z "$agent_name" ]]; then
         printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
       else
         printf "  ${C_GREEN}Your %s Sandbox is live.${C_RESET}\n" "$(agent_display_name "$agent_name")"
       fi
-      printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
+      printf "  ${C_DIM}Use the Start chatting section above for browser and terminal options.${C_RESET}\n"
     fi
-    printf "\n"
-    printf "  ${C_GREEN}Next:${C_RESET}\n"
-    if [[ "$_needs_cli_refresh" == true ]]; then
-      print_cli_path_refresh_actions
-    else
-      printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
-    fi
-    printf "  %s$%s %s %s connect\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN" "$sandbox_name"
-    local agent_cmd
-    case "$agent_name" in
-      hermes)
-        agent_cmd="hermes"
-        ;;
-      "" | openclaw)
-        agent_cmd="openclaw tui"
-        ;;
-      *)
-        agent_cmd="$agent_name"
-        ;;
-    esac
-    printf "  %ssandbox@%s$%s %s\n" "$C_GREEN" "$sandbox_name" "$C_RESET" "$agent_cmd"
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
     if [[ "$_needs_cli_refresh" == true ]]; then
       printf "  ${C_YELLOW}%s CLI is installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
@@ -1426,8 +1407,12 @@ install_nemoclaw() {
     # floor. The source-checkout branch intentionally skips this — a developer
     # running ./scripts/install.sh manages their own openshell. The script is
     # idempotent on the happy path. See #2272.
-    spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
-    prefer_user_local_openshell
+    if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
+      info "Deferring OpenShell CLI installation until after pre-upgrade backup."
+    else
+      spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
+      prefer_user_local_openshell
+    fi
   fi
 
   refresh_path
@@ -1574,6 +1559,54 @@ resolve_existing_cli_runner() {
   fi
 
   return 1
+}
+
+prepare_current_cli_for_preupgrade_backup() {
+  local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-__unset__}"
+  info "Preparing current ${_CLI_DISPLAY} CLI for legacy OpenShell backup retry…"
+  export NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
+  install_nemoclaw
+  if [[ "$old_defer" == "__unset__" ]]; then
+    unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
+  else
+    export NEMOCLAW_DEFER_OPENSHELL_INSTALL="$old_defer"
+  fi
+  verify_nemoclaw
+}
+
+resolve_prepared_cli_runner() {
+  if [[ -n "${_CLI_PATH:-}" && -x "$_CLI_PATH" ]] && is_real_nemoclaw_cli "$_CLI_PATH" "$_CLI_BIN"; then
+    printf "%s" "$_CLI_PATH"
+    return 0
+  fi
+  resolve_existing_cli_runner
+}
+
+run_preupgrade_backup() {
+  local old_cli_runner="$1" old_openshell_version="$2"
+
+  if "$old_cli_runner" backup-all 2>&1; then
+    return 0
+  fi
+
+  if ! legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
+    return 1
+  fi
+
+  warn "Pre-upgrade backup with the existing ${_CLI_BIN} CLI failed."
+  warn "Retrying with the current ${_CLI_DISPLAY} CLI before retiring the legacy OpenShell gateway."
+  if ! prepare_current_cli_for_preupgrade_backup; then
+    warn "Could not prepare the current ${_CLI_DISPLAY} CLI for backup retry."
+    return 1
+  fi
+
+  local retry_cli_runner=""
+  if ! retry_cli_runner="$(resolve_prepared_cli_runner)"; then
+    warn "Could not locate the current ${_CLI_BIN} CLI for backup retry."
+    return 1
+  fi
+
+  "$retry_cli_runner" backup-all 2>&1
 }
 
 installed_openshell_version() {
@@ -1734,7 +1767,7 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
 
   info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
-  if ! "$old_cli_runner" backup-all 2>&1; then
+  if ! run_preupgrade_backup "$old_cli_runner" "$old_openshell_version"; then
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
     fi

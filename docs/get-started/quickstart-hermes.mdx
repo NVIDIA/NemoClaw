@@ -88,16 +88,27 @@ Hermes exposes an OpenAI-compatible API on port `8642`, not a browser dashboard.
 
 ```text
 ──────────────────────────────────────────────────
-Sandbox      my-hermes (Landlock + seccomp + netns)
-Model        nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
-──────────────────────────────────────────────────
-Run:         nemohermes my-hermes connect
-Status:      nemohermes my-hermes status
-Logs:        nemohermes my-hermes logs --follow
+NemoHermes is ready
 
-Hermes Agent OpenAI-compatible API
-Port 8642 must be forwarded before connecting.
-http://127.0.0.1:8642/v1
+Sandbox:  my-hermes
+Model:    nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
+
+Access
+
+  Hermes Agent OpenAI-compatible API
+  Port 8642 must be forwarded before connecting.
+  http://127.0.0.1:8642/v1
+
+Terminal:
+  nemohermes my-hermes connect
+
+Manage later
+
+  Status:      nemohermes my-hermes status
+  Logs:        nemohermes my-hermes logs --follow
+  Model:       nemohermes inference set --model <model> --provider <provider> --sandbox my-hermes
+  Policies:    nemohermes my-hermes policy-add
+  Credentials: nemohermes credentials reset <KEY> && nemohermes onboard
 ──────────────────────────────────────────────────
 ```
 

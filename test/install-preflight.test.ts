@@ -1754,8 +1754,9 @@ exit 0
     expect(result.status).toBe(0);
     expect(output).not.toMatch(/current shell cannot resolve 'nemoclaw'/);
     expect(output).not.toMatch(/this shell needs PATH refresh/);
-    expect(output).toMatch(/\$ source /);
-    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).not.toMatch(/\$ source /);
+    expect(output).not.toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).toContain("Use the Start chatting section above");
   });
 
   it("makes current-shell PATH refresh obvious when the installer added the bin dir", () => {
@@ -1846,7 +1847,7 @@ fi`,
     expect(output).not.toContain(
       "Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.",
     );
-    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).not.toMatch(/\$ nemoclaw my-assistant connect/);
   });
 });
 
