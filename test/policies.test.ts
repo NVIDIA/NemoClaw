@@ -129,9 +129,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 19 presets", () => {
+    it("returns all 18 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(19);
+      expect(presets.length).toBe(18);
     });
 
     it("each preset has name and description", () => {
@@ -148,7 +148,6 @@ describe("policies", () => {
         .sort();
       const expected = [
         "brave",
-        "brew",
         "discord",
         "github",
         "huggingface",
@@ -440,7 +439,6 @@ describe("policies", () => {
       expect(policies.getMessagingPresetWarning("npm")).toBeNull();
       expect(policies.getMessagingPresetWarning("pypi")).toBeNull();
       expect(policies.getMessagingPresetWarning("github")).toBeNull();
-      expect(policies.getMessagingPresetWarning("brew")).toBeNull();
     });
 
     it("returns null for unknown preset names", () => {

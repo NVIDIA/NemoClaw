@@ -696,6 +696,47 @@ Files with unsafe path characters are rejected to prevent shell injection.
 If the skill already exists on the sandbox, the command updates it in place and preserves chat history.
 For new installs, the agent session index is refreshed so the agent discovers the skill on the next session.
 
+### `nemoclaw <name> brew init`
+
+Bootstrap Homebrew (Linuxbrew) inside the sandbox.
+Creates the `linuxbrew` user inside the sandbox and runs the canonical Linuxbrew installer.
+The bottled `brew` binary lands at `/home/linuxbrew/.linuxbrew/bin/brew`.
+Refuses when shields are up — run `nemoclaw <name> shields down` first.
+
+```console
+$ nemoclaw my-assistant brew init
+```
+
+Homebrew refuses to run as anyone other than the prefix owner, so the agent inside the sandbox cannot invoke `brew install` directly. Bottled binaries dropped by `brew install` (for example `/home/linuxbrew/.linuxbrew/bin/jq`) remain executable from the agent's PATH and survive `shields up`.
+
+### `nemoclaw <name> brew install`
+
+Install one or more Homebrew formulae via the `linuxbrew` user.
+Refuses when shields are up or when `brew init` has not been run.
+
+```console
+$ nemoclaw my-assistant brew install hello
+$ nemoclaw my-assistant brew install jq curl
+```
+
+### `nemoclaw <name> brew uninstall`
+
+Uninstall one or more Homebrew formulae via the `linuxbrew` user.
+Refuses when shields are up or when `brew init` has not been run.
+
+```console
+$ nemoclaw my-assistant brew uninstall hello
+```
+
+### `nemoclaw <name> brew deinit`
+
+Remove the `linuxbrew` user and the entire Homebrew prefix (`/home/linuxbrew`).
+Refuses when shields are up.
+
+```console
+$ nemoclaw my-assistant brew deinit
+```
+
 ### `nemoclaw <name> rebuild`
 
 Upgrade a sandbox to the current agent version while preserving workspace state.

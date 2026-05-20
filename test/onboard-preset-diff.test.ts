@@ -3,7 +3,7 @@
 //
 // Regression test for #2177 — when a user re-runs `nemoclaw onboard` on an
 // existing sandbox and narrows the preset selection (e.g. Balanced default
-// of [npm, pypi, huggingface, brew, brave] down to just [npm]), the policy
+// of [npm, pypi, huggingface, brave] down to just [npm]), the policy
 // setup step must honor the final selection: apply new presets AND remove
 // previously-applied ones that are no longer selected.
 
@@ -45,7 +45,7 @@ function buildPreamble({
   tierEnv = "balanced",
   policyMode = "custom",
   policyPresets = "npm",
-  alreadyApplied = ["npm", "pypi", "huggingface", "brew", "brave"],
+  alreadyApplied = ["npm", "pypi", "huggingface", "brave"],
 } = {}): string {
   const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
   const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
@@ -143,9 +143,9 @@ console.log = () => {};
     // User asked for only npm.
     assert.deepEqual(payload.chosen, ["npm"]);
 
-    // The 4 defaults from Balanced that the user did NOT re-select must be
+    // The 3 defaults from Balanced that the user did NOT re-select must be
     // removed. This is the regression guard for #2177.
-    const expectedRemoved = ["pypi", "huggingface", "brew", "brave"].sort();
+    const expectedRemoved = ["pypi", "huggingface", "brave"].sort();
     assert.deepEqual(
       payload.removedCalls.slice().sort(),
       expectedRemoved,
@@ -171,7 +171,7 @@ console.log = () => {};
         policyMode: "suggested",
         policyPresets: "",
         // Balanced defaults plus a manually-added preset.
-        alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "local-inference"],
+        alreadyApplied: ["npm", "pypi", "huggingface", "brave", "local-inference"],
       }) +
       String.raw`
 console.log = () => {};
@@ -205,7 +205,7 @@ console.log = () => {};
 
     // Final state should still contain every previously-applied preset.
     const finalSorted = payload.finalApplied.slice().sort();
-    assert.deepEqual(finalSorted, ["brave", "brew", "huggingface", "local-inference", "npm", "pypi"]);
+    assert.deepEqual(finalSorted, ["brave", "huggingface", "local-inference", "npm", "pypi"]);
   });
 
   // Custom presets loaded via `policy-add --from-file` / `--from-dir` are
@@ -217,7 +217,7 @@ console.log = () => {};
       buildPreamble({
         policyMode: "suggested",
         policyPresets: "",
-        alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "my-internal-api"],
+        alreadyApplied: ["npm", "pypi", "huggingface", "brave", "my-internal-api"],
       }) +
       String.raw`
 console.log = () => {};
@@ -251,7 +251,7 @@ console.log = () => {};
       buildPreamble({
         policyMode: "suggested",
         policyPresets: "",
-        alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "my-internal-api"],
+        alreadyApplied: ["npm", "pypi", "huggingface", "brave", "my-internal-api"],
       }) +
       String.raw`
 console.log = () => {};
@@ -282,7 +282,6 @@ console.log = () => {};
     );
     assert.deepEqual(payload.removedCalls, ["brave"]);
     assert.deepEqual(payload.finalApplied.slice().sort(), [
-      "brew",
       "huggingface",
       "my-internal-api",
       "npm",

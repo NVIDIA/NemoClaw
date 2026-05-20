@@ -33,7 +33,6 @@ describe("onboard policy preset suggestions", () => {
     "npm",
     "pypi",
     "huggingface",
-    "brew",
     "brave",
     "slack",
     "discord",
@@ -108,7 +107,7 @@ describe("onboard policy preset suggestions", () => {
       enabledChannels: [],
       knownPresetNames: known,
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brave"]);
   });
 
   it("filters tier defaults to known presets for agent-specific onboarding", () => {
@@ -116,7 +115,7 @@ describe("onboard policy preset suggestions", () => {
       enabledChannels: [],
       knownPresetNames: known.filter((name) => name !== "brave"),
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface"]);
   });
 
   it("omits Brave when web search is unsupported", () => {
@@ -137,7 +136,7 @@ describe("onboard policy preset suggestions", () => {
       knownPresetNames: known,
       webSearchSupported: false,
     });
-    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface"]);
   });
 
   it("forwards enabled messaging channels into tier suggestions", () => {

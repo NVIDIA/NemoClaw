@@ -40,6 +40,7 @@ export interface SandboxEntry {
   hermesToolGateways?: string[];
   disabledChannels?: string[];
   dashboardPort?: number | null;
+  brewInitialised?: boolean;
 }
 
 export interface SandboxRegistry {

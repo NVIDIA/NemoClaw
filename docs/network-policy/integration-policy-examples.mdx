@@ -54,7 +54,6 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Workflow | Preset |
 |----------|--------|
 | Brave Search | `brave` |
-| Homebrew packages | `brew` |
 | Discord messaging | `discord` |
 | GitHub and GitHub API | `github` |
 | Hugging Face Hub and Inference API | `huggingface` |
@@ -206,7 +205,6 @@ Use these presets when an agent workflow installs packages or downloads model as
 |----------|--------|
 | npm or Yarn packages | `npm` |
 | Python packages from PyPI | `pypi` |
-| Homebrew packages | `brew` |
 | Hugging Face model or dataset access | `huggingface` |
 
 Add only the preset required for the task:
@@ -214,7 +212,6 @@ Add only the preset required for the task:
 ```console
 $ nemoclaw my-assistant policy-add npm --yes
 $ nemoclaw my-assistant policy-add pypi --yes
-$ nemoclaw my-assistant policy-add brew --yes
 $ nemoclaw my-assistant policy-add huggingface --yes
 ```
 
@@ -223,9 +220,17 @@ Remove package access after a one-time setup task if the sandbox no longer needs
 ```console
 $ nemoclaw my-assistant policy-remove npm --yes
 $ nemoclaw my-assistant policy-remove pypi --yes
-$ nemoclaw my-assistant policy-remove brew --yes
 $ nemoclaw my-assistant policy-remove huggingface --yes
 ```
+
+Homebrew is installed via a first-class subcommand rather than a network preset:
+
+```console
+$ nemoclaw my-assistant brew init
+$ nemoclaw my-assistant brew install hello
+```
+
+See [`nemoclaw <name> brew`](../reference/commands.mdx#nemoclaw-name-brew) for the full lifecycle.
 
 ## Local Inference
 

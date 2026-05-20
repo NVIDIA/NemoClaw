@@ -152,7 +152,7 @@ console.log = () => {};
     assert.equal(result.status, 0, result.stderr);
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.tier, "balanced");
-    assert.ok(payload.presets.length >= 5, "balanced tier must have at least 5 presets");
+    assert.ok(payload.presets.length >= 4, "balanced tier must have at least 4 presets");
     for (const p of payload.presets) {
       assert.equal(p.access, "read-write", `preset ${p.name} in balanced should be read-write`);
     }
@@ -753,7 +753,7 @@ ${body}
     assert.equal(result.status, 0, result.stderr);
     const resolved: Array<{ name: string }> = JSON.parse(result.stdout.trim());
     const names = resolved.map((p) => p.name);
-    const tierNames = ["npm", "pypi", "huggingface", "brew", "brave"];
+    const tierNames = ["npm", "pypi", "huggingface", "brave"];
     const lastTierIdx = Math.max(...tierNames.map((n) => names.indexOf(n)));
     const slackIdx = names.indexOf("slack");
     assert.ok(slackIdx > lastTierIdx, "non-tier preset (slack) should appear after tier presets");

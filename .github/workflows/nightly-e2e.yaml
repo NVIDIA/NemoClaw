@@ -84,7 +84,7 @@ on:
           openclaw-inference-switch-e2e,
           network-policy-e2e, state-backup-restore-e2e, tunnel-lifecycle-e2e, diagnostics-e2e,
           credential-migration-e2e,
-          snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e,
+          snapshot-commands-e2e, brew-command-e2e, shields-config-e2e, rebuild-openclaw-e2e,
           upgrade-stale-sandbox-e2e, rebuild-hermes-e2e,
           rebuild-hermes-stale-base-e2e, double-onboard-e2e,
           onboard-repair-e2e, onboard-resume-e2e, onboard-negative-paths-e2e,
@@ -1420,6 +1420,40 @@ jobs:
           path: /tmp/nemoclaw-e2e-install.log
           if-no-files-found: ignore
 
+  # ── Brew subcommand lifecycle E2E (#3757) ────────────────────
+  # TC-BREW-01..07: brew init/install/uninstall/deinit, idempotent init,
+  # shields-up refusal, install-without-init refusal.
+  brew-command-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',brew-command-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run brew command E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-brew-cmd"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-brew-command.sh
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: brew-command-test-log
+          path: test-brew-command-*.log
+          if-no-files-found: ignore
+
   # ── Shields & config lifecycle E2E ───────────────────────────
   # Validates shields down/up controls config mutability, config get/set/
   # rotate-token, audit trail, and auto-restore timer.
@@ -2216,6 +2250,7 @@ jobs:
         diagnostics-e2e,
         credential-migration-e2e,
         snapshot-commands-e2e,
+        brew-command-e2e,
         shields-config-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
@@ -2312,6 +2347,7 @@ jobs:
         diagnostics-e2e,
         credential-migration-e2e,
         snapshot-commands-e2e,
+        brew-command-e2e,
         shields-config-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,
@@ -2465,6 +2501,7 @@ jobs:
         diagnostics-e2e,
         credential-migration-e2e,
         snapshot-commands-e2e,
+        brew-command-e2e,
         shields-config-e2e,
         rebuild-openclaw-e2e,
         upgrade-stale-sandbox-e2e,

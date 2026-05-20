@@ -119,17 +119,21 @@ describe("tiers", () => {
   });
 
   describe("tier: balanced", () => {
-    it("includes npm, pypi, huggingface, brew, and brave", () => {
+    it("includes npm, pypi, huggingface, and brave", () => {
       const names = mustGetTier("balanced").presets.map((preset: TierPreset) => preset.name);
       expect(names).toContain("npm");
       expect(names).toContain("pypi");
       expect(names).toContain("huggingface");
-      expect(names).toContain("brew");
       expect(names).toContain("brave");
     });
 
-    it("has at least 5 presets", () => {
-      expect(mustGetTier("balanced").presets.length).toBeGreaterThanOrEqual(5);
+    it("has at least 4 presets", () => {
+      expect(mustGetTier("balanced").presets.length).toBeGreaterThanOrEqual(4);
+    });
+
+    it("does not include brew (replaced by first-class `nemoclaw <name> brew init`, #3757)", () => {
+      const names = mustGetTier("balanced").presets.map((preset: TierPreset) => preset.name);
+      expect(names).not.toContain("brew");
     });
 
     it("all balanced presets are read-write", () => {
@@ -192,7 +196,7 @@ describe("tiers", () => {
   describe("resolveTierPresets", () => {
     it("returns default presets for balanced with no overrides", () => {
       const resolved: TierPreset[] = tiers.resolveTierPresets("balanced");
-      expect(resolved.length).toBeGreaterThanOrEqual(5);
+      expect(resolved.length).toBeGreaterThanOrEqual(4);
       for (const preset of resolved) {
         expect(preset.access).toBe("read-write");
       }

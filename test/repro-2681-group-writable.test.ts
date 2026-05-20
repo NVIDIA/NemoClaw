@@ -50,7 +50,11 @@ function withMockedDockerExecFileSync<T>(calls: string[][], run: () => T): T {
   };
   const originalDockerExecFileSync = dockerExecModule.dockerExecFileSync;
   const shieldsModulePath = require.resolve("../dist/lib/shields/index.js");
+  const privilegedExecModulePath = require.resolve(
+    "../dist/lib/adapters/sandbox/privileged-exec.js",
+  );
   delete require.cache[shieldsModulePath];
+  delete require.cache[privilegedExecModulePath];
 
   dockerExecModule.dockerExecFileSync = vi.fn((args: readonly string[]) => {
     const separator = args.indexOf("--");
@@ -72,6 +76,7 @@ function withMockedDockerExecFileSync<T>(calls: string[][], run: () => T): T {
   } finally {
     dockerExecModule.dockerExecFileSync = originalDockerExecFileSync;
     delete require.cache[shieldsModulePath];
+    delete require.cache[privilegedExecModulePath];
   }
 }
 
@@ -176,7 +181,7 @@ const Module = require("node:module");
 const originalLoad = Module._load;
 const calls = [];
 Module._load = function patchedLoad(request, parent, isMain) {
-  if (request === "../adapters/docker/exec") {
+  if (request === "../docker/exec" || request === "../adapters/docker/exec") {
     return {
       dockerExecFileSync(args) {
         const separator = args.indexOf("--");
