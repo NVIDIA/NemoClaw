@@ -8,6 +8,7 @@ import {
   isBackToSelection,
 } from "../navigation";
 
+export type BackNavigationResult = BackToSelection | { kind: "back" };
 export type { BackToSelection };
 export { BACK_TO_SELECTION, isBackToSelection };
 
@@ -44,7 +45,7 @@ export function shouldReturnToProviderSelection(
 export function returningToProviderSelection(
   result: unknown,
   exitOnboardFromPrompt: () => never,
-): result is BackToSelection {
+): result is BackNavigationResult {
   if (!shouldReturnToProviderSelection(result, exitOnboardFromPrompt)) return false;
   printReturningToProviderSelection();
   return true;
@@ -142,7 +143,7 @@ export function createCredentialPromptHelpers(exitOnboardFromPrompt: () => never
     helpUrl?: string | null,
   ) => Promise<string | BackToSelection>;
   shouldReturnToProviderSelection: (result: unknown) => boolean;
-  returningToProviderSelection: (result: unknown) => result is BackToSelection;
+  returningToProviderSelection: (result: unknown) => result is BackNavigationResult;
 } {
   return {
     readValue: (question) => readCredentialValue(question, exitOnboardFromPrompt),
