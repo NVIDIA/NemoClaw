@@ -1,0 +1,186 @@
+{
+  "SPDX-FileCopyrightText": "Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/tools/pr-review-advisor/schema.json",
+  "title": "NemoClaw PR Review Advisor Result",
+  "type": "object",
+  "required": [
+    "version",
+    "baseRef",
+    "headRef",
+    "headSha",
+    "changedFiles",
+    "summary",
+    "gateStatus",
+    "findings",
+    "acceptanceCoverage",
+    "securityCategories",
+    "testDepth",
+    "e2eAdvisorStatus",
+    "positives",
+    "reviewCompleteness"
+  ],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "baseRef": { "type": "string" },
+    "headRef": { "type": "string" },
+    "headSha": { "type": "string" },
+    "changedFiles": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["recommendation", "confidence", "oneLine"],
+      "properties": {
+        "recommendation": {
+          "enum": [
+            "merge_as_is",
+            "merge_after_fixes",
+            "needs_rework",
+            "blocked",
+            "superseded",
+            "info_only"
+          ]
+        },
+        "confidence": { "enum": ["low", "medium", "high"] },
+        "oneLine": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "gateStatus": {
+      "type": "object",
+      "required": ["ci", "mergeability", "reviewThreads", "riskyCodeTested"],
+      "properties": {
+        "ci": { "$ref": "#/$defs/gate" },
+        "mergeability": { "$ref": "#/$defs/gate" },
+        "reviewThreads": { "$ref": "#/$defs/gate" },
+        "riskyCodeTested": { "$ref": "#/$defs/gate" }
+      },
+      "additionalProperties": false
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "acceptanceCoverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["clause", "status", "evidence"],
+        "properties": {
+          "clause": { "type": "string" },
+          "status": { "enum": ["met", "partial", "missing", "unknown"] },
+          "evidence": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "securityCategories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["category", "verdict", "justification"],
+        "properties": {
+          "category": { "type": "string" },
+          "verdict": { "enum": ["pass", "warning", "fail"] },
+          "justification": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "testDepth": {
+      "type": "object",
+      "required": ["verdict", "rationale", "suggestedTests"],
+      "properties": {
+        "verdict": {
+          "enum": ["unit_sufficient", "mocks_recommended", "e2e_required", "unknown"]
+        },
+        "rationale": { "type": "string" },
+        "suggestedTests": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "e2eAdvisorStatus": {
+      "type": "object",
+      "required": ["found", "requiredJobs", "passedForHeadSha", "missingForHeadSha", "verdict"],
+      "properties": {
+        "found": { "type": "boolean" },
+        "requiredJobs": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "passedForHeadSha": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "missingForHeadSha": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "verdict": { "enum": ["ok", "missing", "ambiguous", "not_found"] }
+      },
+      "additionalProperties": false
+    },
+    "positives": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "reviewCompleteness": {
+      "type": "object",
+      "required": ["limitations", "requiresHumanReview"],
+      "properties": {
+        "limitations": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "requiresHumanReview": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "gate": {
+      "type": "object",
+      "required": ["status", "evidence"],
+      "properties": {
+        "status": { "enum": ["pass", "fail", "warning", "pending", "unknown"] },
+        "evidence": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "finding": {
+      "type": "object",
+      "required": ["severity", "category", "file", "line", "title", "description", "recommendation", "evidence"],
+      "properties": {
+        "severity": { "enum": ["blocker", "warning", "suggestion"] },
+        "category": {
+          "enum": [
+            "security",
+            "correctness",
+            "tests",
+            "architecture",
+            "workflow",
+            "docs",
+            "scope",
+            "ci",
+            "e2e",
+            "acceptance"
+          ]
+        },
+        "file": { "type": ["string", "null"] },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "recommendation": { "type": "string" },
+        "evidence": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

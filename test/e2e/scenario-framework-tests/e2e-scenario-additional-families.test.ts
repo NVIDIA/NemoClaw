@@ -143,8 +143,20 @@ describe("Phase 9: negative preflight", () => {
     const p = plan as {
       dimensions: { runtime: { profile: { container_daemon?: string } } };
       expected_state: { id: string };
+      expected_failure?: {
+        phase?: string;
+        error_class?: string;
+        message_pattern?: string;
+        forbidden_side_effects?: string[];
+      };
     };
     expect(p.dimensions.runtime.profile.container_daemon).toBe("missing");
     expect(p.expected_state.id).toBe("preflight-failure-no-sandbox");
+    expect(p.expected_failure?.phase).toBe("preflight");
+    expect(p.expected_failure?.error_class).toBe("docker-missing");
+    expect(p.expected_failure?.message_pattern).toBeTypeOf("string");
+    expect(p.expected_failure?.forbidden_side_effects).toEqual(
+      expect.arrayContaining(["sandbox-created", "gateway-started", "credentials-written"]),
+    );
   });
 });

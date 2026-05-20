@@ -22,6 +22,7 @@ import type {
   ResolvedPlan,
   ResolvedSuite,
   SuiteDefinition,
+  ExpectedFailure,
   ExpectedStateConfig,
   TestPlan,
 } from "./schema.ts";
@@ -54,6 +55,55 @@ function getByDottedPath(obj: unknown, dotted: string): unknown {
     cur = (cur as Record<string, unknown>)[p];
   }
   return cur;
+}
+
+/**
+ * Merge a state-level `expected_failure` with an optional scenario-level
+ * override and return a fully-formed `ExpectedFailure`, or `undefined` if
+ * neither side declares one. Scenario-level fields win over state-level.
+ *
+ * After merge, every required field MUST be present. The loader already
+ * enforces this for state-level blocks; an override-only declaration on a
+ * positive expected state is rejected here.
+ */
+function resolveExpectedFailure(
+  stateConfig: ExpectedStateConfig,
+  expectedStateId: string,
+  scenarioId: string,
+  overrides: Array<{
+    block?: Partial<ExpectedFailure>;
+    mode: "fill" | "override";
+    origin: string;
+  }>,
+): ExpectedFailure | undefined {
+  const stateBlock = (stateConfig as { expected_failure?: unknown }).expected_failure as
+    | Partial<ExpectedFailure>
+    | undefined;
+  const presentOverrides = overrides.filter((source) => source.block);
+  if (!stateBlock && presentOverrides.length === 0) return undefined;
+  if (!stateBlock) {
+    const origins = presentOverrides.map((source) => source.origin).join(", ");
+    throw new Error(
+      `scenario '${scenarioId}' declares expected_failure but expected_state '${expectedStateId}' does not - declare the base contract on the state first (source: ${origins})`,
+    );
+  }
+  const merged: Partial<ExpectedFailure> = { ...stateBlock };
+  for (const source of overrides) {
+    const block = source.block;
+    if (!block) continue;
+    for (const key of Object.keys(block) as Array<keyof ExpectedFailure>) {
+      const value = block[key];
+      if (value === undefined) continue;
+      if (source.mode === "fill" && merged[key] !== undefined) continue;
+      (merged as Record<keyof ExpectedFailure, unknown>)[key] = value;
+    }
+  }
+  if (!merged.phase || !merged.error_class) {
+    throw new Error(
+      `scenario '${scenarioId}' expected_failure resolves with missing required fields (phase, error_class) after merge`,
+    );
+  }
+  return merged as ExpectedFailure;
 }
 
 function validateSuiteAgainstState(
@@ -131,6 +181,11 @@ export function resolveScenario(scenarioId: string, meta: ResolverInput): Resolv
     ...((layeredPlan as TestPlan | undefined)?.runner_requirements ?? []),
     ...(legacy?.runner_requirements ?? []),
   ];
+  const expectedFailure = resolveExpectedFailure(stateConfig, expectedStateId, scenarioId, [
+    { origin: `base '${baseId}'`, block: base?.expected_failure, mode: "fill" },
+    { origin: `test_plan '${planId}'`, block: layeredPlan?.expected_failure, mode: "override" },
+    { origin: `setup_scenario '${scenarioId}'`, block: legacy?.expected_failure, mode: "override" },
+  ]);
   return {
     scenario_id: scenarioId,
     plan_id: layeredPlan ? planId : undefined,
@@ -149,7 +204,7 @@ export function resolveScenario(scenarioId: string, meta: ResolverInput): Resolv
     overrides: layeredPlan?.overrides ?? legacy?.overrides,
     runner_requirements: runnerRequirements.length > 0 ? runnerRequirements : undefined,
     required_secrets: layeredPlan?.required_secrets,
-    expected_failure: layeredPlan?.expected_failure ?? base?.expected_failure ?? legacy?.expected_failure,
+    ...(expectedFailure ? { expected_failure: expectedFailure } : {}),
   };
 }
 
@@ -182,13 +237,20 @@ export function formatPlan(plan: ResolvedPlan): string {
       lines.push(`  - ${requirement}`);
     }
   }
-  if (plan.expected_failure) {
-    lines.push("Expected failure:");
-    lines.push(`  ${JSON.stringify(plan.expected_failure)}`);
-  }
   if (plan.overrides) {
     lines.push("Overrides:");
     lines.push(`  ${JSON.stringify(plan.overrides)}`);
+  }
+  if (plan.expected_failure) {
+    lines.push("Expected failure:");
+    lines.push(`  phase=${plan.expected_failure.phase}`);
+    lines.push(`  error_class=${plan.expected_failure.error_class}`);
+    if (plan.expected_failure.message_pattern) {
+      lines.push(`  message_pattern=${plan.expected_failure.message_pattern}`);
+    }
+    if (plan.expected_failure.forbidden_side_effects?.length) {
+      lines.push(`  forbidden_side_effects=${plan.expected_failure.forbidden_side_effects.join(",")}`);
+    }
   }
   return lines.join("\n");
 }

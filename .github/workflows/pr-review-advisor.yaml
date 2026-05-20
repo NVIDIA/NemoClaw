@@ -1,0 +1,210 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: PR Review / Advisor
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Base ref to diff against
+        required: false
+        default: origin/main
+      head_ref:
+        description: Head ref to diff
+        required: false
+        default: HEAD
+      target_repo:
+        description: Optional repo to analyze, e.g. NVIDIA/NemoClaw
+        required: false
+        type: string
+        default: ""
+      target_pr:
+        description: Optional pull request number in target_repo to analyze
+        required: false
+        type: string
+        default: ""
+      target_base:
+        description: Base branch to use with target_repo/target_pr manual analysis
+        required: false
+        type: string
+        default: main
+      run_analysis:
+        description: Run PR review advisor analysis
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+  # PR comments are posted via the issues comments endpoint, but PR-scoped
+  # tokens often require pull-requests: write for PR issue comments.
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-review-advisor-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: PR review advisor
+    if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Pin the Pi SDK to a known-good version. Updates should go through
+      # normal dependency review so a compromised upstream release cannot run
+      # automatically in this secret-bearing job.
+      PI_SDK_VERSION: "0.74.0"
+      PR_REVIEW_ADVISOR_TIMEOUT_MS: "900000"
+      PR_REVIEW_ADVISOR_HEARTBEAT_MS: "60000"
+      # Trusted implementation code is always checked out here. PR content is
+      # only read as inert analysis data under ADVISOR_WORKDIR.
+      ADVISOR_DIR: ${{ github.workspace }}/advisor
+    steps:
+      - name: Checkout trusted advisor code (main)
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: main
+          path: advisor
+          persist-credentials: false
+
+      - name: Checkout PR workspace (read-only data)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-workdir
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Checkout dispatch workspace (read-only data)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo == '' }}
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          path: pr-workdir
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Set default advisor workdir
+        run: echo "ADVISOR_WORKDIR=$GITHUB_WORKSPACE/pr-workdir" >> "$GITHUB_ENV"
+
+      - name: Prepare target PR checkout
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' }}
+        env:
+          TARGET_REPO: ${{ inputs.target_repo }}
+          TARGET_PR: ${{ inputs.target_pr }}
+          TARGET_BASE: ${{ inputs.target_base }}
+        run: |
+          TARGET_DIR=/tmp/pr-review-advisor-target
+          rm -rf "$TARGET_DIR"
+          mkdir -p "$TARGET_DIR"
+          git -C "$TARGET_DIR" init
+          git -C "$TARGET_DIR" remote add target "https://github.com/${TARGET_REPO}.git"
+          git -C "$TARGET_DIR" fetch --no-tags target "$TARGET_BASE"
+          git -C "$TARGET_DIR" fetch --no-tags target "pull/${TARGET_PR}/head:refs/remotes/target/pr-${TARGET_PR}"
+          git -C "$TARGET_DIR" checkout --detach "refs/remotes/target/pr-${TARGET_PR}"
+          echo "ADVISOR_WORKDIR=$TARGET_DIR" >> "$GITHUB_ENV"
+          echo "PR_NUMBER=$TARGET_PR" >> "$GITHUB_ENV"
+
+      - name: Install Pi SDK
+        run: |
+          PI_SDK_DIR="$RUNNER_TEMP/pi-sdk"
+          npm install --prefix "$PI_SDK_DIR" --ignore-scripts --no-save --package-lock=false --before=2026-05-14T00:00:00.000Z "@earendil-works/pi-coding-agent@${PI_SDK_VERSION}"
+          rm -rf "$ADVISOR_DIR/node_modules"
+          ln -s "$PI_SDK_DIR/node_modules" "$ADVISOR_DIR/node_modules"
+
+      - name: Run PR review advisor
+        id: analysis
+        continue-on-error: true
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref) }}
+          HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.target_pr }}
+          PR_REVIEW_ADVISOR_RUN_ANALYSIS: ${{ github.event_name == 'workflow_dispatch' && inputs.run_analysis == false && '0' || '1' }}
+          GH_TOKEN: ${{ github.token }}
+          PR_REVIEW_ADVISOR_API_KEY: ${{ secrets.PI_PR_REVIEW_ADVISOR_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          cd "$ADVISOR_WORKDIR"
+          if [ ! -f "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" ]; then
+            echo "Skipping PR review advisor: trusted main checkout does not yet contain analyze.mts"
+            mkdir -p "$GITHUB_WORKSPACE/artifacts/pr-review-advisor"
+            HEAD_SHA="$(git rev-parse "$HEAD_REF" 2>/dev/null || git rev-parse HEAD)"
+            export BASE_REF HEAD_REF HEAD_SHA
+            node <<'NODE'
+          const fs = require("node:fs");
+          const path = require("node:path");
+          const outDir = path.join(process.env.GITHUB_WORKSPACE, "artifacts/pr-review-advisor");
+          const reason = "Trusted main checkout does not yet contain tools/pr-review-advisor/analyze.mts; advisor will run after the implementation lands on main.";
+          const gate = { status: "unknown", evidence: reason };
+          const result = {
+            version: 1,
+            baseRef: process.env.BASE_REF || "origin/main",
+            headRef: process.env.HEAD_REF || "HEAD",
+            headSha: process.env.HEAD_SHA || "unknown",
+            changedFiles: [],
+            summary: { recommendation: "info_only", confidence: "low", oneLine: `PR review advisor skipped: ${reason}` },
+            gateStatus: { ci: gate, mergeability: gate, reviewThreads: gate, riskyCodeTested: gate },
+            findings: [],
+            acceptanceCoverage: [],
+            securityCategories: [{ category: "Holistic Security Posture", verdict: "warning", justification: "Advisor bootstrap skip; human review required." }],
+            testDepth: { verdict: "unknown", rationale: reason, suggestedTests: [] },
+            e2eAdvisorStatus: { found: false, requiredJobs: [], passedForHeadSha: [], missingForHeadSha: [], verdict: "not_found" },
+            positives: [],
+            reviewCompleteness: { limitations: [reason], requiresHumanReview: true },
+          };
+          fs.writeFileSync(path.join(outDir, "pr-review-advisor-result.json"), `${JSON.stringify({ skipped: true, reason }, null, 2)}\n`);
+          fs.writeFileSync(path.join(outDir, "pr-review-advisor-final-result.json"), `${JSON.stringify(result, null, 2)}\n`);
+          fs.writeFileSync(path.join(outDir, "pr-review-advisor-summary.md"), `# PR Review Advisor\n\nAdvisor analysis skipped.\n\nReason: ${reason}\n\nHuman maintainer review required: **yes**\n`);
+          NODE
+            exit 0
+          fi
+          node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts" \
+            --base "$BASE_REF" \
+            --head "$HEAD_REF" \
+            --schema "$ADVISOR_DIR/tools/pr-review-advisor/schema.json" \
+            --out-dir "$GITHUB_WORKSPACE/artifacts/pr-review-advisor"
+
+      - name: Publish job summary
+        if: always()
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/artifacts/pr-review-advisor/pr-review-advisor-summary.md" ]; then
+            cat "$GITHUB_WORKSPACE/artifacts/pr-review-advisor/pr-review-advisor-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            printf '# PR Review Advisor\n\nAdvisor analysis did not produce a summary. See raw artifacts/logs.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Post PR review advisor comment
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.PR_REVIEW_ADVISOR_GITHUB_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -f "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts" ]; then
+            node --experimental-strip-types "$ADVISOR_DIR/tools/pr-review-advisor/comment.mts" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pr "$PR_NUMBER" \
+              --summary "$GITHUB_WORKSPACE/artifacts/pr-review-advisor/pr-review-advisor-summary.md" \
+              --result "$GITHUB_WORKSPACE/artifacts/pr-review-advisor/pr-review-advisor-final-result.json"
+          else
+            echo "Skipping PR review advisor comment: trusted main checkout does not yet contain comment.mts"
+          fi
+
+      - name: Upload advisor artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pr-review-advisor
+          path: artifacts/pr-review-advisor/
+          if-no-files-found: warn

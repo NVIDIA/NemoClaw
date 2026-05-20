@@ -219,14 +219,112 @@ else
   printf 'run-scenario: using nemoclaw at %s\n' "${nemoclaw_bin}" >&2
 fi
 
-# Negative preflight scenarios intentionally model a missing container daemon.
-# CI runners normally have Docker available, so force the Docker client at an
-# unreachable socket and assert onboarding fails before any sandbox is created.
+# Negative scenarios declare an `expected_failure` block on their expected
+# state (see NemoClaw issue #3608). The runner forces the failure mode for
+# the scenario, captures the setup log, gathers a side-effect inventory, and
+# delegates structured matching to `resolver/index.ts match-failure`. The
+# matcher writes `expected-vs-actual.json` for CI artifact upload.
+
+read_plan_failure_field() {
+  local key="$1"
+  node -e "
+    (() => {
+      const p = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+      const ef = p.expected_failure;
+      if (!ef) { process.stdout.write(''); return; }
+      const v = ef[process.argv[2]];
+      process.stdout.write(v == null ? '' : Array.isArray(v) ? v.join(',') : String(v));
+    })();
+  " "${E2E_CONTEXT_DIR}/plan.json" "${key}"
+}
+
+EXPECTED_FAILURE_PHASE="$(read_plan_failure_field phase)"
+
+if [[ -n "${EXPECTED_FAILURE_PHASE}" ]]; then
+  expected_error_class="$(read_plan_failure_field error_class)"
+  negative_log="${E2E_CONTEXT_DIR}/negative-${EXPECTED_FAILURE_PHASE}.log"
+  sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
+
+  # Snapshot the side-effect baseline BEFORE forcing the failure so we only
+  # report effects newly introduced by this scenario. A pre-existing gateway
+  # or credentials file from an earlier run would otherwise look like a fresh
+  # side effect and falsely fail negative scenarios in dirty environments.
+  baseline_sandbox=0
+  if [[ -n "${sandbox_name}" ]] && openshell sandbox list 2>/dev/null | grep -Fq "${sandbox_name}"; then
+    baseline_sandbox=1
+  fi
+  baseline_gateway=0
+  if nemoclaw gateway status >/dev/null 2>&1; then
+    baseline_gateway=1
+  fi
+  baseline_credentials=0
+  if [[ -s "${HOME}/.nemoclaw/credentials.json" ]]; then
+    baseline_credentials=1
+  fi
+
+  # Force the failure mode declared by the scenario. Only `preflight` /
+  # `docker-missing` is implemented here; other phases are accepted by the
+  # schema but their forcing logic lands alongside the first consumer.
+  case "${EXPECTED_FAILURE_PHASE}:${expected_error_class}" in
+    preflight:docker-missing)
+      if [[ "${DRY_RUN}" -eq 1 ]]; then
+        printf 'Cannot connect to the Docker daemon during preflight\n' >"${negative_log}"
+      else
+        if DOCKER_HOST="unix:///tmp/nemoclaw-e2e-missing-docker.sock" \
+          e2e_onboard "${ONBOARDING_ID}" >"${negative_log}" 2>&1; then
+          echo "run-scenario: expected preflight failure, but onboarding succeeded" >&2
+          cat "${negative_log}" >&2
+          exit 4
+        fi
+      fi
+      ;;
+    *)
+      echo "run-scenario: expected_failure phase=${EXPECTED_FAILURE_PHASE} class=${expected_error_class} has no forcing implementation yet" >&2
+      exit 2
+      ;;
+  esac
+
+  # Compute the side-effect delta: only count effects that were absent in the
+  # baseline and present after the forced failure.
+  observed_side_effects=""
+  if [[ "${baseline_sandbox}" -eq 0 ]] && [[ -n "${sandbox_name}" ]] \
+    && openshell sandbox list 2>/dev/null | grep -Fq "${sandbox_name}"; then
+    observed_side_effects="${observed_side_effects:+${observed_side_effects},}sandbox-created"
+  fi
+  if [[ "${baseline_gateway}" -eq 0 ]] && nemoclaw gateway status >/dev/null 2>&1; then
+    observed_side_effects="${observed_side_effects:+${observed_side_effects},}gateway-started"
+  fi
+  if [[ "${baseline_credentials}" -eq 0 ]] && [[ -s "${HOME}/.nemoclaw/credentials.json" ]]; then
+    observed_side_effects="${observed_side_effects:+${observed_side_effects},}credentials-written"
+  fi
+
+  # `--observed-error-class` is intentionally omitted: the runner does not yet
+  # derive a structured error class from the actual failure output, and
+  # reporting the planned class back to the matcher would make the check
+  # tautological. The matcher logs this as a skipped check.
+  match_args=(
+    match-failure "${SCENARIO_ID}"
+    --context-dir "${E2E_CONTEXT_DIR}"
+    --log "${negative_log}"
+    --observed-phase "${EXPECTED_FAILURE_PHASE}"
+  )
+  if [[ -n "${observed_side_effects}" ]]; then
+    match_args+=(--observed-side-effects "${observed_side_effects}")
+  fi
+  if ! run_resolver "${match_args[@]}"; then
+    echo "run-scenario: expected-failure match failed; see ${E2E_CONTEXT_DIR}/expected-vs-actual.json" >&2
+    exit 4
+  fi
+  echo "run-scenario: negative scenario passed (phase=${EXPECTED_FAILURE_PHASE} class=${expected_error_class})"
+  exit 0
+fi
 
 if [[ "${EXPECTED_STATE_ID}" == "preflight-failure-no-sandbox" ]]; then
   negative_log="${E2E_CONTEXT_DIR}/negative-preflight.log"
   sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
-  if DOCKER_HOST="unix:///tmp/nemoclaw-e2e-missing-docker.sock" e2e_onboard "${ONBOARDING_ID}" >"${negative_log}" 2>&1; then
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    printf 'Cannot connect to the Docker daemon during preflight\n' >"${negative_log}"
+  elif DOCKER_HOST="unix:///tmp/nemoclaw-e2e-missing-docker.sock" e2e_onboard "${ONBOARDING_ID}" >"${negative_log}" 2>&1; then
     echo "run-scenario: expected preflight failure, but onboarding succeeded" >&2
     exit 4
   fi
