@@ -6,4 +6,4 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=../lib/baseline_onboarding.sh
 source "$SCRIPT_DIR/../lib/baseline_onboarding.sh"
 baseline_onboarding_load_context
-baseline_assert_inference_route_provider "$E2E_PROVIDER"
+baseline_assert_inference_route_provider "nvidia-prod"

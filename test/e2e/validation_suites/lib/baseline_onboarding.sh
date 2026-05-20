@@ -44,7 +44,7 @@ baseline_assert_nemoclaw_help_exits_zero() {
 
 baseline_assert_sandbox_list_contains_context_sandbox() {
   local out
-  if out=$(nemoclaw list 2>&1) && grep -Fq "$E2E_SANDBOX_NAME" <<<"$out"; then
+  if out=$(nemoclaw list 2>&1) && awk -v n="$E2E_SANDBOX_NAME" '$1 == n { found = 1 } END { exit !found }' <<<"$out"; then
     baseline_onboarding_pass validation.baseline_onboarding.sandbox_listed "$E2E_SANDBOX_NAME listed"
   else
     baseline_onboarding_fail validation.baseline_onboarding.sandbox_listed "sandbox not listed: ${out:0:200}"
