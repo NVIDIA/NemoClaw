@@ -10,16 +10,22 @@ type WorkflowRun = {
   conclusion: string | null;
 };
 
-function findPriorScheduledRunFromFirstPage(
-  runs: WorkflowRun[],
+function findPriorScheduledRunFromPages(
+  pages: WorkflowRun[][],
   since24h: string,
 ): WorkflowRun | undefined {
-  return runs.filter(
-    (run) =>
-      run.status === "completed" &&
-      run.event === "schedule" &&
-      new Date(run.created_at) < new Date(since24h),
-  )[0];
+  const priorRuns: WorkflowRun[] = [];
+  for (let page = 0; page < pages.length && priorRuns.length === 0; page++) {
+    priorRuns.push(
+      ...pages[page].filter(
+        (run) =>
+          run.status === "completed" &&
+          run.event === "schedule" &&
+          new Date(run.created_at) < new Date(since24h),
+      ),
+    );
+  }
+  return priorRuns[0];
 }
 
 describe("nightly scorecard prior-day trend lookup", () => {
@@ -43,11 +49,11 @@ describe("nightly scorecard prior-day trend lookup", () => {
       },
     ];
 
-    const currentImplementationResult = findPriorScheduledRunFromFirstPage(
-      firstPage,
+    const result = findPriorScheduledRunFromPages(
+      [firstPage, secondPage],
       since24h,
     );
 
-    expect(currentImplementationResult?.created_at).toBe(secondPage[0].created_at);
+    expect(result?.created_at).toBe(secondPage[0].created_at);
   });
 });
