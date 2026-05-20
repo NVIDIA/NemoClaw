@@ -1,12 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { CLI_NAME } from "./cli/branding";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
+import { CLI_NAME } from "./cli/branding";
 import { G, R } from "./cli/terminal-style";
 
 export interface ShareCommandDeps {
-  /** Run `openshell sandbox ssh-config <name>` and return output. */
+  /** Verify sandbox existence, then run `openshell sandbox ssh-config <name>` and return output. */
   getSshConfig: (sandboxName: string) => { status: number | null; output: string };
   /** Ensure the sandbox is live, exit process if not. */
   ensureLive: (sandboxName: string) => Promise<void>;
@@ -28,9 +28,13 @@ export interface ShareCommandDeps {
 }
 
 export function buildShareCommandDeps(): ShareCommandDeps {
-  const { captureOpenshell } = require("./adapters/openshell/runtime") as {
+  const { captureOpenshell, captureSandboxSshConfig } = require("./adapters/openshell/runtime") as {
     captureOpenshell: (
       args: string[],
+      opts?: { ignoreError?: boolean; timeout?: number },
+    ) => { status: number | null; output: string };
+    captureSandboxSshConfig: (
+      sandboxName: string,
       opts?: { ignoreError?: boolean; timeout?: number },
     ) => { status: number | null; output: string };
   };
@@ -40,7 +44,7 @@ export function buildShareCommandDeps(): ShareCommandDeps {
 
   return {
     getSshConfig: (sandboxName: string) =>
-      captureOpenshell(["sandbox", "ssh-config", sandboxName], {
+      captureSandboxSshConfig(sandboxName, {
         ignoreError: true,
         timeout: OPENSHELL_PROBE_TIMEOUT_MS,
       }),
