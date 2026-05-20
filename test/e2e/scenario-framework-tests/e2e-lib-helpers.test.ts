@@ -562,7 +562,13 @@ describe("baseline onboarding validation helper", () => {
       const ctx = path.join(tmp, "ctx");
       fs.mkdirSync(bin); fs.mkdirSync(ctx);
       fs.writeFileSync(path.join(ctx, "context.env"), "E2E_SANDBOX_NAME=sb1\nE2E_PROVIDER=nvidia\nE2E_INFERENCE_ROUTE=inference-local\n");
-      fs.writeFileSync(path.join(bin, "nemoclaw"), "#!/usr/bin/env bash\n[[ $1 == --help ]] && echo help && exit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(bin, "nemoclaw"), `#!/usr/bin/env bash
+case "$*" in
+  --help) echo help;;
+  "sb1 status") echo 'status running gateway healthy sandbox running';;
+  *) echo "unexpected nemoclaw args: $*" >&2; exit 64;;
+esac
+`, { mode: 0o755 });
       fs.writeFileSync(path.join(bin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
       const r = runBash(`
         set -euo pipefail
@@ -571,11 +577,13 @@ describe("baseline onboarding validation helper", () => {
         baseline_assert_nemoclaw_on_path
         baseline_assert_openshell_on_path
         baseline_assert_nemoclaw_help_exits_zero
+        baseline_assert_sandbox_status_exits_zero
       `, { E2E_CONTEXT_DIR: ctx, PATH: `${bin}:${process.env.PATH}` });
       expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.nemoclaw_on_path");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.openshell_on_path");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.nemoclaw_help_exits_zero");
+      expect(r.stdout).toContain("PASS: validation.baseline_onboarding.sandbox_status");
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
 });
@@ -614,7 +622,12 @@ describe("sandbox lifecycle validation helper", () => {
     try {
       const bin = path.join(tmp, "bin"); fs.mkdirSync(bin);
       fs.writeFileSync(path.join(bin, "nemoclaw"), `#!/usr/bin/env bash
-case "$1" in list) echo sb1;; status) echo 'status running gateway healthy sandbox running';; logs) echo logline;; esac
+case "$*" in
+  list) echo sb1;;
+  "sb1 status") echo 'status running gateway healthy sandbox running';;
+  "logs sb1") echo logline;;
+  *) echo "unexpected nemoclaw args: $*" >&2; exit 64;;
+esac
 `, { mode: 0o755 });
       fs.writeFileSync(path.join(bin, "openshell"), `#!/usr/bin/env bash
 echo lifecycle-ok

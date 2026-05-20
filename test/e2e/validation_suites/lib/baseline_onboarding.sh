@@ -53,7 +53,7 @@ baseline_assert_sandbox_list_contains_context_sandbox() {
 
 baseline_assert_sandbox_status_exits_zero() {
   local out
-  if out=$(nemoclaw status "$E2E_SANDBOX_NAME" 2>&1); then
+  if out=$(nemoclaw "$E2E_SANDBOX_NAME" status 2>&1); then
     baseline_onboarding_pass validation.baseline_onboarding.sandbox_status "$E2E_SANDBOX_NAME status ok"
   else
     baseline_onboarding_fail validation.baseline_onboarding.sandbox_status "status failed: ${out:0:200}"

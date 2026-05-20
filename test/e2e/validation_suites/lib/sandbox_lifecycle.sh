@@ -73,7 +73,7 @@ sandbox_lifecycle_assert_nemoclaw_list_contains_sandbox() {
 
 sandbox_lifecycle_assert_status_fields_present() {
   local id="validation.sandbox_operations.status_fields_present"
-  sandbox_lifecycle_run_with_timeout 20 nemoclaw status "${E2E_SANDBOX_NAME}" >/dev/null || {
+  sandbox_lifecycle_run_with_timeout 20 nemoclaw "${E2E_SANDBOX_NAME}" status >/dev/null || {
     sandbox_lifecycle_fail "${id}" "nemoclaw status failed"
     return 1
   }
