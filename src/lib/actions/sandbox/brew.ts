@@ -1,8 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { CLI_NAME } from "../../cli/branding";
 import { privilegedSandboxExec } from "../../adapters/sandbox/privileged-exec";
+import * as policy from "../../policy";
+import { ROOT, run, runCapture } from "../../runner";
 import { isShieldsDown } from "../../shields";
 import * as registry from "../../state/registry";
 import type { SandboxEntry } from "../../state/registry";
@@ -13,6 +19,13 @@ const PROFILE_D_PATH = "/etc/profile.d/nemoclaw-linuxbrew.sh";
 const FORMULA_PATTERN = /^[a-z0-9][a-z0-9._@/+-]*$/;
 const HOMEBREW_INSTALL_URL =
   "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh";
+const BREW_INTEGRATION_POLICY = path.join(
+  ROOT,
+  "nemoclaw-blueprint",
+  "policies",
+  "integrations",
+  "brew.yaml",
+);
 
 export type BrewRequest =
   | { kind: "help" }
@@ -70,6 +83,56 @@ function assertBrewInitialised(
 
 function isNonInteractive(): boolean {
   return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+}
+
+function readBrewIntegrationEntries(): string | null {
+  if (!fs.existsSync(BREW_INTEGRATION_POLICY)) return null;
+  const content = fs.readFileSync(BREW_INTEGRATION_POLICY, "utf-8");
+  return policy.extractPresetEntries(content);
+}
+
+function withTempPolicyFile<T>(content: string, fn: (filePath: string) => T): T {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-brew-policy-"));
+  const filePath = path.join(dir, "policy.yaml");
+  fs.writeFileSync(filePath, content, { encoding: "utf-8", mode: 0o600 });
+  try {
+    return fn(filePath);
+  } finally {
+    try {
+      fs.unlinkSync(filePath);
+    } catch {
+      /* best effort */
+    }
+    try {
+      fs.rmdirSync(dir);
+    } catch {
+      /* best effort */
+    }
+  }
+}
+
+function applyBrewRuntimePolicy(sandboxName: string): void {
+  const entries = readBrewIntegrationEntries();
+  if (!entries) return;
+  const rawPolicy = runCapture(policy.buildPolicyGetCommand(sandboxName), { ignoreError: true });
+  const current = policy.parseCurrentPolicy(rawPolicy);
+  const merged = policy.mergePresetIntoPolicy(current, entries);
+  withTempPolicyFile(merged, (filePath) => {
+    run(policy.buildPolicySetCommand(filePath, sandboxName));
+  });
+}
+
+function removeBrewRuntimePolicy(sandboxName: string): void {
+  const entries = readBrewIntegrationEntries();
+  if (!entries) return;
+  const rawPolicy = runCapture(policy.buildPolicyGetCommand(sandboxName), { ignoreError: true });
+  const current = policy.parseCurrentPolicy(rawPolicy);
+  if (!current) return;
+  const updated = policy.removePresetFromPolicy(current, entries);
+  if (updated === current) return;
+  withTempPolicyFile(updated, (filePath) => {
+    run(policy.buildPolicySetCommand(filePath, sandboxName));
+  });
 }
 
 function assertFormulae(packages: readonly string[]): void {
@@ -136,6 +199,8 @@ function runInit(sandboxName: string): void {
     input: brewInitScript(),
     timeout: 900_000,
   });
+  console.log(`  Authorising Homebrew binaries on the sandbox gateway policy...`);
+  applyBrewRuntimePolicy(sandboxName);
   if (!registry.updateSandbox(sandboxName, { brewInitialised: true })) {
     console.error(`  Failed to persist Homebrew state for '${sandboxName}'.`);
     brewExit(1);
@@ -199,6 +264,8 @@ function runDeinit(sandboxName: string): void {
     input: brewDeinitScript(),
     timeout: 180_000,
   });
+  console.log(`  Removing Homebrew gateway-policy entry...`);
+  removeBrewRuntimePolicy(sandboxName);
   if (!registry.updateSandbox(sandboxName, { brewInitialised: false })) {
     console.error(`  Failed to persist Homebrew state for '${sandboxName}'.`);
     brewExit(1);

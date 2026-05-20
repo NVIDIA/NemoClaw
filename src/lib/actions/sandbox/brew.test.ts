@@ -21,6 +21,21 @@ vi.mock("../../state/registry", () => ({
   updateSandbox,
 }));
 
+vi.mock("../../policy", () => ({
+  extractPresetEntries: vi.fn(() => null),
+  parseCurrentPolicy: vi.fn(() => ""),
+  mergePresetIntoPolicy: vi.fn((_a: string, _b: string) => ""),
+  removePresetFromPolicy: vi.fn((current: string) => current),
+  buildPolicyGetCommand: vi.fn(() => []),
+  buildPolicySetCommand: vi.fn(() => []),
+}));
+
+vi.mock("../../runner", () => ({
+  ROOT: "/tmp",
+  run: vi.fn(),
+  runCapture: vi.fn(() => ""),
+}));
+
 import { BrewCommandError, runSandboxBrew } from "./brew";
 
 function fail(message: string): never {

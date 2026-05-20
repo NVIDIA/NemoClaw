@@ -1,0 +1,61 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Internal policy applied by `nemoclaw <name> brew init` and removed by
+# `nemoclaw <name> brew deinit`. Not listed as a user-facing preset
+# (this file lives outside `policies/presets/`, so `listPresets()` and
+# `policy-add` cannot see it). The binaries section is the load-bearing
+# half — without it, Landlock denies execve on /home/linuxbrew/.linuxbrew/*
+# from inside the sandbox.
+
+preset:
+  name: __brew_runtime__
+  description: "Homebrew (Linuxbrew) runtime — applied by `brew init`."
+
+network_policies:
+  brew:
+    name: brew
+    endpoints:
+      - host: formulae.brew.sh
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: github.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: ghcr.io
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/token" }
+      - host: pkg-containers.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: objects.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+      - host: raw.githubusercontent.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+    binaries:
+      - { path: /usr/bin/curl }
+      - { path: /usr/bin/git }
+      - { path: /home/linuxbrew/.linuxbrew/bin/brew }
+      - { path: /home/linuxbrew/.linuxbrew/bin/* }
+      - { path: /home/linuxbrew/.linuxbrew/Homebrew/bin/* }
