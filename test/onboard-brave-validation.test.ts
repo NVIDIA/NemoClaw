@@ -352,9 +352,9 @@ const { loadAgent } = require(${agentDefsPath});
 });
 
 describe("configureWebSearch (interactive)", () => {
-  it("does not stage back as a Brave Search API key", () => {
+  it("returns to the Brave Search enable prompt when backing out of the API key prompt", () => {
     const { exitCode, payload } = runInteractiveConfigureWebSearch({
-      answers: ["y", "back"],
+      answers: ["y", "back", "n"],
     });
 
     expect(exitCode).toBe(0);
@@ -363,6 +363,9 @@ describe("configureWebSearch (interactive)", () => {
     expect(payload.braveKey).toBeNull();
     expect(payload.errors).toEqual([]);
     expect(payload.saved.every((entry) => entry.value !== "back")).toBe(true);
+    expect(
+      payload.prompts.filter((entry) => /Enable Brave Web Search\?/.test(entry.message)),
+    ).toHaveLength(2);
     expect(
       payload.prompts.some(
         (entry) => /Brave Search API key: /.test(entry.message) && entry.secret,

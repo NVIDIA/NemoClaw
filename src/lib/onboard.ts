@@ -2009,7 +2009,7 @@ async function promptBraveSearchRecovery(
   return "retry";
 }
 
-async function promptBraveSearchApiKey(): Promise<string | null> {
+async function promptBraveSearchApiKey(): Promise<string | typeof BACK_TO_SELECTION> {
   console.log("");
   console.log(`  Get your Brave Search API key from: ${BRAVE_SEARCH_HELP_URL}`);
   console.log("");
@@ -2017,9 +2017,7 @@ async function promptBraveSearchApiKey(): Promise<string | null> {
   while (true) {
     const value = await credentialPrompt.readValue("  Brave Search API key: ");
     if (isBackToSelection(value)) {
-      console.log("  Skipping Brave Web Search setup.");
-      console.log("");
-      return null;
+      return value;
     }
     const key = normalizeCredentialValue(value);
     if (!key) {
@@ -2032,7 +2030,7 @@ async function promptBraveSearchApiKey(): Promise<string | null> {
 
 async function ensureValidatedBraveSearchCredential(
   nonInteractive = isNonInteractive(),
-): Promise<string | null> {
+): Promise<string | typeof BACK_TO_SELECTION | null> {
   const savedApiKey = getCredential(webSearch.BRAVE_API_KEY_ENV);
   let apiKey: string | null =
     savedApiKey || normalizeCredentialValue(process.env[webSearch.BRAVE_API_KEY_ENV]);
@@ -2045,10 +2043,11 @@ async function ensureValidatedBraveSearchCredential(
           "Brave Search requires BRAVE_API_KEY or a saved Brave Search credential in non-interactive mode.",
         );
       }
-      apiKey = await promptBraveSearchApiKey();
-      if (!apiKey) {
-        return null;
+      const promptedApiKey = await promptBraveSearchApiKey();
+      if (isBackToSelection(promptedApiKey)) {
+        return promptedApiKey;
       }
+      apiKey = promptedApiKey;
       usingSavedKey = false;
     }
 
@@ -2125,6 +2124,9 @@ async function configureWebSearch(
   }
 
   const braveApiKey = await ensureValidatedBraveSearchCredential();
+  if (isBackToSelection(braveApiKey)) {
+    return configureWebSearch(existingConfig, agent, dockerfilePathOverride);
+  }
   if (!braveApiKey) {
     return null;
   }
@@ -9873,7 +9875,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       if (nextWebSearchConfig) {
         note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
         const braveApiKey = await ensureValidatedBraveSearchCredential();
-        nextWebSearchConfig = braveApiKey ? { fetchEnabled: true } : null;
+        if (isBackToSelection(braveApiKey)) {
+          nextWebSearchConfig = null;
+        } else {
+          nextWebSearchConfig = braveApiKey ? { fetchEnabled: true } : null;
+        }
         if (nextWebSearchConfig) {
           note("  [resume] Reusing Brave Search configuration.");
         }
