@@ -5,6 +5,7 @@ import { describe, it, expect } from "vitest";
 import path from "node:path";
 
 import {
+  containerCanReachHostLoopback,
   detectDockerHost,
   findColimaDockerSocket,
   getDockerSocketCandidates,
@@ -180,6 +181,31 @@ describe("platform helpers", () => {
       expect(shouldPatchCoredns("podman", { isWsl: true })).toBe(false);
       expect(shouldPatchCoredns("docker-desktop", { isWsl: true })).toBe(false);
       expect(shouldPatchCoredns("docker", { isWsl: true })).toBe(false);
+    });
+  });
+
+  describe("containerCanReachHostLoopback", () => {
+    it("only returns true under WSL + Docker Desktop (the bridged topology)", () => {
+      expect(containerCanReachHostLoopback("docker-desktop", { isWsl: true })).toBe(true);
+    });
+
+    it("returns false for WSL with native dockerd (#3695)", () => {
+      expect(containerCanReachHostLoopback("docker", { isWsl: true })).toBe(false);
+    });
+
+    it("returns false for non-WSL Docker Desktop (macOS)", () => {
+      expect(containerCanReachHostLoopback("docker-desktop", { isWsl: false })).toBe(false);
+    });
+
+    it("returns false for native Linux Docker", () => {
+      expect(containerCanReachHostLoopback("docker", { isWsl: false })).toBe(false);
+    });
+
+    it("returns false for non-Docker runtimes regardless of WSL", () => {
+      expect(containerCanReachHostLoopback("podman", { isWsl: true })).toBe(false);
+      expect(containerCanReachHostLoopback("colima", { isWsl: true })).toBe(false);
+      expect(containerCanReachHostLoopback("podman", { isWsl: false })).toBe(false);
+      expect(containerCanReachHostLoopback("unknown", { isWsl: true })).toBe(false);
     });
   });
 

@@ -1,14 +1,81 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  baseImageInputsChangedSinceMain,
   formatBuildFailureDiagnostics,
   getSourceShortShaTags,
   parseGlibcVersion,
   versionGte,
 } from "../../dist/lib/sandbox-base-image";
+
+const tmpRoots: string[] = [];
+const gitEnv = {
+  ...process.env,
+  GIT_AUTHOR_NAME: "Test User",
+  GIT_AUTHOR_EMAIL: "test@example.com",
+  GIT_COMMITTER_NAME: "Test User",
+  GIT_COMMITTER_EMAIL: "test@example.com",
+};
+
+function git(root: string, args: string[]) {
+  const result = spawnSync("git", ["-C", root, ...args], {
+    encoding: "utf-8",
+    env: gitEnv,
+  });
+  if (result.status !== 0) {
+    throw new Error(`git ${args.join(" ")} failed:\n${result.stderr}\n${result.stdout}`);
+  }
+  return result.stdout.trim();
+}
+
+function writeFixture(root: string, relativePath: string, contents: string) {
+  const absolutePath = path.join(root, relativePath);
+  fs.mkdirSync(path.dirname(absolutePath), { recursive: true });
+  fs.writeFileSync(absolutePath, contents);
+}
+
+function createGitFixture() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-test-"));
+  tmpRoots.push(root);
+  git(root, ["init", "-b", "main"]);
+  writeFixture(root, "Dockerfile.base", "FROM node:22\n");
+  writeFixture(root, "nemoclaw-blueprint/blueprint.yaml", "min_openclaw_version: 2026.4.24\n");
+  writeFixture(root, "src/other.ts", "export const value = 1;\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "initial"]);
+  git(root, ["update-ref", "refs/remotes/origin/main", "HEAD"]);
+  return root;
+}
+
+function createGitFixtureWithRemoteOnlyBaseRef() {
+  const remote = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-remote-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-image-clone-"));
+  tmpRoots.push(root, remote);
+
+  git(remote, ["init", "--bare"]);
+  git(root, ["init", "-b", "main"]);
+  writeFixture(root, "Dockerfile.base", "FROM node:22\n");
+  writeFixture(root, "nemoclaw-blueprint/blueprint.yaml", "min_openclaw_version: 2026.4.24\n");
+  writeFixture(root, "src/other.ts", "export const value = 1;\n");
+  git(root, ["add", "."]);
+  git(root, ["commit", "-m", "initial"]);
+  git(root, ["remote", "add", "origin", remote]);
+  git(root, ["push", "origin", "main"]);
+  return root;
+}
+
+afterEach(() => {
+  for (const root of tmpRoots.splice(0)) {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 describe("sandbox base image helpers", () => {
   it("parses glibc versions from ldd output", () => {
@@ -74,5 +141,54 @@ describe("sandbox base image helpers", () => {
       stdout: null,
     });
     expect(output).toContain("buffered build error");
+  });
+
+  it("detects committed Dockerfile.base changes relative to origin/main", () => {
+    const root = createGitFixture();
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "Dockerfile.base", "FROM node:22\nRUN echo changed\n");
+    git(root, ["add", "Dockerfile.base"]);
+    git(root, ["commit", "-m", "change base"]);
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
+  });
+
+  it("fetches the base ref before deciding detached dispatch checkouts can use latest", () => {
+    const root = createGitFixtureWithRemoteOnlyBaseRef();
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "Dockerfile.base", "FROM node:22\nRUN echo changed\n");
+    git(root, ["add", "Dockerfile.base"]);
+    git(root, ["commit", "-m", "change base"]);
+
+    expect(git(root, ["rev-parse", "--verify", "origin/main"]).length).toBeGreaterThan(0);
+    git(root, ["update-ref", "-d", "refs/remotes/origin/main"]);
+    expect(baseImageInputsChangedSinceMain(root, { ...gitEnv, GITHUB_ACTIONS: "true" })).toBe(true);
+  });
+
+  it("detects committed blueprint minimum-version changes relative to origin/main", () => {
+    const root = createGitFixture();
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "nemoclaw-blueprint/blueprint.yaml", "min_openclaw_version: 2026.4.25\n");
+    git(root, ["add", "nemoclaw-blueprint/blueprint.yaml"]);
+    git(root, ["commit", "-m", "change base input"]);
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
+  });
+
+  it("ignores non-base-image source changes relative to origin/main", () => {
+    const root = createGitFixture();
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "src/other.ts", "export const value = 2;\n");
+    git(root, ["add", "src/other.ts"]);
+    git(root, ["commit", "-m", "change app code"]);
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(false);
+  });
+
+  it("detects uncommitted Dockerfile.base changes", () => {
+    const root = createGitFixture();
+    writeFixture(root, "Dockerfile.base", "FROM node:22\nRUN echo dirty\n");
+
+    expect(baseImageInputsChangedSinceMain(root, gitEnv)).toBe(true);
   });
 });

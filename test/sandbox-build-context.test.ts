@@ -73,6 +73,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.py"));
     writeFixture(path.join("scripts", "seed-wechat-accounts.py"));
+    writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.js"));
   }
 
   function expectStagedBlueprintModes(buildCtx: string) {
@@ -86,7 +87,9 @@ describe("sandbox build context staging", () => {
       "index.js",
     );
 
-    expect((fs.statSync(stagedManifestDir).mode & 0o777).toString(8)).toBe("755");
+    const stagedManifestDirMode = fs.statSync(stagedManifestDir).mode & 0o777;
+    expect(stagedManifestDirMode & 0o555).toBe(0o555);
+    expect(stagedManifestDirMode & 0o002).toBe(0);
     expect((fs.statSync(stagedManifest).mode & 0o777).toString(8)).toBe("644");
     expect((fs.statSync(stagedPlugin).mode & 0o777).toString(8)).toBe("644");
   }
@@ -195,6 +198,9 @@ describe("sandbox build context staging", () => {
         true,
       );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "seed-wechat-accounts.py"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-tool-catalog.js"))).toBe(
+        true,
+      );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "lib", "sandbox-init.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
     } finally {

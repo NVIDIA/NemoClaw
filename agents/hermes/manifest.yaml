@@ -67,6 +67,10 @@ state_dirs:
   - profiles
   - cache
   - pairing
+  # Hermes' WhatsApp bridge stores QR-paired session credentials under
+  # ~/.hermes/platforms/whatsapp/session. Preserve the parent so rebuilds
+  # keep the in-sandbox pairing state without re-scanning.
+  - platforms
   # Hermes' iLink WeChat adapter persists per-account context tokens under
   # ~/.hermes/weixin/accounts/<id>.context-tokens.json so the long-poll
   # cursor survives a rebuild. The bot token itself comes from .env via
@@ -92,18 +96,21 @@ web_auth_method: bearer_token
 web_auth_env: API_SERVER_KEY
 
 # ── Messaging platforms ─────────────────────────────────────────
-# Hermes natively supports 14 platforms. We start with the 4 that
-# OpenShell already has L7 proxy support for. WeChat uses the iLink
+# Hermes natively supports 14 platforms. We enable the platforms with
+# OpenShell policy and NemoClaw config support. WeChat uses the iLink
 # gateway (host-side QR login during onboard); the in-sandbox Hermes
 # adapter reads WEIXIN_TOKEN + WEIXIN_ACCOUNT_ID per
 # https://hermes-agent.nousresearch.com/docs/user-guide/messaging/weixin.
+# WhatsApp pairs in the sandbox via `hermes whatsapp`; the selected channel
+# bakes WHATSAPP_ENABLED/WHATSAPP_MODE into .env and preserves session state.
 messaging_platforms:
   supported:
     - telegram
     - discord
     - slack
     - wechat
-  # Future: whatsapp, signal, matrix, mattermost, email, etc.
+    - whatsapp
+  # Future: signal, matrix, mattermost, email, etc.
   # Each needs a network policy entry before enabling.
 
 # ── Inference ───────────────────────────────────────────────────

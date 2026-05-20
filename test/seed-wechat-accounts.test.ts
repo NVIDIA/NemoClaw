@@ -229,6 +229,40 @@ describe("seed-wechat-accounts.py: openclaw.json patching (channels.openclaw-wei
     expect(cfg.channels["openclaw-weixin"].accounts.primary.enabled).toBe(true);
   });
 
+  it("restores plugin registration and channel block after a later OpenClaw config rewrite drops them", () => {
+    // The Dockerfile invokes this seed script again after OpenClaw doctor and
+    // plugin installation because those commands can rewrite openclaw.json
+    // after generate-openclaw-config.py first runs. Re-running the seed must
+    // be enough to put the upstream WeChat plugin and channel registration
+    // back; otherwise the gateway rejects channels.openclaw-weixin as an
+    // unknown channel id at startup.
+    writeOpenclawConfig({
+      channels: {
+        telegram: { accounts: { default: { enabled: true } } },
+        slack: { accounts: { default: { enabled: true } } },
+      },
+      plugins: {},
+    });
+
+    const result = runSeed({
+      NEMOCLAW_WECHAT_CONFIG_B64: configB64({
+        accountId: "primary",
+        baseUrl: "https://ilinkai.wechat.com",
+        userId: "wxid-42",
+      }),
+    });
+    expect(result.status).toBe(0);
+
+    const cfg = readJson(path.join(tmpDir, ".openclaw", "openclaw.json"));
+    expect(cfg.plugins.installs["openclaw-weixin"]).toEqual({
+      source: "npm",
+      spec: "@tencent-weixin/openclaw-weixin@2.4.2",
+    });
+    expect(cfg.plugins.entries["openclaw-weixin"].enabled).toBe(true);
+    expect(Object.keys(cfg.channels)).toEqual(["telegram", "slack", "openclaw-weixin"]);
+    expect(cfg.channels["openclaw-weixin"].accounts.primary.enabled).toBe(true);
+  });
+
   it("bails (and warns) when openclaw.json is missing — does not invent a config", () => {
     // generate-openclaw-config.py runs first and is responsible for producing
     // openclaw.json. If it failed silently, we'd rather print a warning than

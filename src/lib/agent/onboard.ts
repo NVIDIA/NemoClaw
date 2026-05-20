@@ -209,6 +209,42 @@ type AgentBinaryAvailability =
     };
 
 const AGENT_BINARY_CHECK_PREFIX = "NEMOCLAW_AGENT_BINARY_CHECK:";
+const HERMES_TIRITH_MARKER_ABSENT = "tirith marker: absent";
+const HERMES_STARTUP_DIAGNOSTICS_SCRIPT = `
+set +e
+marker=/sandbox/.hermes/.tirith-install-failed
+if [ ! -e "$marker" ]; then
+  echo "${HERMES_TIRITH_MARKER_ABSENT}"
+  exit 0
+fi
+if [ -L "$marker" ]; then
+  echo "tirith marker: symlink (not read)"
+else
+  printf "tirith marker: "
+  head -c 200 "$marker" 2>/dev/null || printf "unreadable"
+  printf "\\n"
+fi
+
+tirith=/sandbox/.hermes/bin/tirith
+if [ -x "$tirith" ] && [ ! -L "$tirith" ]; then
+  echo "tirith binary: present executable ($tirith)"
+elif [ -e "$tirith" ]; then
+  echo "tirith binary: present but not executable ($tirith)"
+else
+  echo "tirith binary: missing ($tirith)"
+fi
+
+for log in /tmp/nemoclaw-start.log /tmp/gateway.log; do
+  if [ -f "$log" ] && [ ! -L "$log" ]; then
+    echo "--- tail: $log ---"
+    tail -n 40 "$log" 2>/dev/null || echo "(tail unavailable)"
+  elif [ -L "$log" ]; then
+    echo "--- tail: $log skipped (symlink) ---"
+  else
+    echo "--- tail: $log unavailable ---"
+  fi
+done
+`.trim();
 
 /**
  * Check whether the selected agent binary is available inside the sandbox.
@@ -286,11 +322,48 @@ function describeAgentBinaryFailure(
 }
 
 /**
+ * Collect read-only Hermes startup diagnostics for Step 7 health timeouts.
+ * Returns no extra lines when the Tirith marker is absent so non-Tirith
+ * failures keep the existing terse error shape.
+ */
+export function collectHermesStartupDiagnostics(
+  sandboxName: string,
+  runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
+): string[] {
+  const output = runCaptureOpenshell(
+    ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", HERMES_STARTUP_DIAGNOSTICS_SCRIPT],
+    { ignoreError: true },
+  );
+  const redactedOutput = String(redact(output ?? ""));
+  const lines = redactedOutput
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+
+  const markerLine = lines.find((line) => line.startsWith("tirith marker:"));
+  if (!markerLine || markerLine === HERMES_TIRITH_MARKER_ABSENT) {
+    return [];
+  }
+  return ["Hermes startup diagnostics:", ...lines.slice(0, 140)];
+}
+
+/**
  * Record and print an agent setup failure before exiting the onboarding flow.
  */
-function failAgentSetup(sandboxName: string, agent: AgentDefinition, message: string): never {
-  onboardSession.markStepFailed("agent_setup", message);
+function failAgentSetup(
+  sandboxName: string,
+  agent: AgentDefinition,
+  message: string,
+  details: string[] = [],
+): never {
+  onboardSession.markStepFailed(
+    "agent_setup",
+    details.length > 0 ? `${message}\n${details.join("\n")}` : message,
+  );
   console.error(`  \u2717 ${message}`);
+  for (const line of details) {
+    console.error(`    ${line}`);
+  }
   console.error(`    Check: ${agentCliName(agent)} ${sandboxName} logs --follow`);
   process.exit(1);
 }
@@ -404,10 +477,15 @@ export async function handleAgentSetup(
     if (healthy) {
       console.log(`  \u2713 ${agent.displayName} gateway is healthy`);
     } else {
+      const diagnostics =
+        agent.name === "hermes"
+          ? collectHermesStartupDiagnostics(sandboxName, runCaptureOpenshell)
+          : [];
       failAgentSetup(
         sandboxName,
         agent,
         `${agent.displayName} gateway did not respond within ${timeoutSecs}s`,
+        diagnostics,
       );
     }
   } else {

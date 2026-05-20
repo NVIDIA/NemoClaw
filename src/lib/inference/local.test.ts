@@ -11,8 +11,8 @@ import {
   DEFAULT_OLLAMA_MODEL,
   LARGE_OLLAMA_MIN_MEMORY_MB,
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
-  OLLAMA_CONTAINER_PORT,
   QWEN3_6_OLLAMA_MODEL,
+  getOllamaContainerPort,
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
@@ -48,14 +48,14 @@ describe("local inference helpers", () => {
 
   it("returns the expected base URL for ollama-local (via auth proxy or direct)", () => {
     expect(getLocalProviderBaseUrl("ollama-local")).toBe(
-      `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/v1`,
+      `http://host.openshell.internal:${getOllamaContainerPort()}/v1`,
     );
   });
 
   it("can target sandbox loopback for host-network Docker GPU sandboxes", () => {
     process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV] = "http://127.0.0.1";
     expect(getLocalProviderBaseUrl("ollama-local")).toBe(
-      `http://127.0.0.1:${OLLAMA_CONTAINER_PORT}/v1`,
+      `http://127.0.0.1:${getOllamaContainerPort()}/v1`,
     );
     expect(getLocalProviderBaseUrl("vllm-local")).toBe("http://127.0.0.1:8000/v1");
   });
@@ -125,7 +125,7 @@ describe("local inference helpers", () => {
       "/dev/null",
       "-w",
       "%{http_code}",
-      `http://host.openshell.internal:${OLLAMA_CONTAINER_PORT}/api/tags`,
+      `http://host.openshell.internal:${getOllamaContainerPort()}/api/tags`,
     ]);
   });
 
@@ -191,7 +191,7 @@ describe("local inference helpers", () => {
     const result = validateLocalProvider("ollama-local", mockCapture, noopSleep);
     expect(result.ok).toBe(false);
     expect(result.message).toMatch(
-      new RegExp(`host\\.openshell\\.internal:${OLLAMA_CONTAINER_PORT}`),
+      new RegExp(`host\\.openshell\\.internal:${getOllamaContainerPort()}`),
     );
     expect(result.message).toMatch(/Docker container reachability check failed/);
     expect(result.message).toMatch(/sandbox uses a different network path/);

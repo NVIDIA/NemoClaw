@@ -402,6 +402,132 @@ const { setupNim } = require(${onboardPath});
     assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
   });
 
+  it("surfaces a precise error when NEMOCLAW_PROVIDER=install-vllm but no vLLM profile is detected (#3765)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-no-profile-"));
+    const scriptPath = path.join(tmpDir, "install-vllm-no-profile-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const vllmPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "vllm.js"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const vllm = require(${vllmPath});
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("Unexpected ensureApiKey call in non-interactive test");
+};
+vllm.installVllm = async () => {
+  console.error("INSTALL_VLLM_CALLED");
+  return { ok: false };
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+// gpu=null forces detectVllmProfile to return null, the scenario the bug
+// reports: explicit env-var opt-in with no profile detected.
+(async () => {
+  await setupNim(null, null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_EXPERIMENTAL: "1",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    // The fix routes the explicit opt-in through the install-vllm dispatcher,
+    // which emits a precise message instead of the generic "Requested provider
+    // 'install-vllm' is not available in this environment." that hid the cause.
+    assert.match(result.stderr, /No vLLM install profile available for this host\./);
+    assert.doesNotMatch(result.stderr, /Requested provider 'install-vllm' is not available/);
+    assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
+  });
+
+  it("logs a note when NEMOCLAW_PROVIDER=install-vllm is overridden by a running vLLM server (#3765)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-running-"));
+    const scriptPath = path.join(tmpDir, "install-vllm-running-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("Unexpected ensureApiKey call in non-interactive test");
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  // vLLM probe succeeds → vllmRunning becomes true.
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return '{"data":[]}';
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  try {
+    await setupNim({ type: "nvidia" }, null);
+  } catch (e) {
+    // Downstream paths (model probe, gateway, etc.) are not mocked here; we
+    // only care about the menu-build log emitted before any failure.
+  }
+})();
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_EXPERIMENTAL: "1",
+      },
+    });
+
+    assert.match(
+      result.stdout,
+      /NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:8000 — selecting the running instance\./,
+    );
+  });
+
   it("does not label NVIDIA Endpoints as recommended in the provider list", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-no-recommended-label-"));
@@ -1298,7 +1424,7 @@ runner.runShell = (command, opts = {}) => {
         "[Install]",
         "WantedBy=multi-user.target",
         "",
-      ].join("\\n"),
+      ].join("\n"),
     };
   }
   const match = command.match(/(?:sudo(?: -n)? )?install -D -m 0644 '([^']+)'/);
@@ -1370,10 +1496,18 @@ const { setupNim } = require(${onboardPath});
 
     const repairedHost = 'Environment="OLLAMA_HOST=127.0.0.1:11434"';
     const oldHost = 'Environment="OLLAMA_HOST=0.0.0.0:11434"';
-    assert.ok(payload.installedBody.includes(oldHost), "existing override content is preserved");
+    assert.ok(payload.installedBody.includes(repairedHost), "loopback host should be installed");
     assert.ok(
-      payload.installedBody.lastIndexOf(repairedHost) > payload.installedBody.lastIndexOf(oldHost),
-      "loopback repair should override earlier OLLAMA_HOST settings",
+      !payload.installedBody.includes(oldHost),
+      "legacy 0.0.0.0 OLLAMA_HOST line should be removed, not just shadowed (#3342)",
+    );
+    assert.ok(
+      payload.installedBody.includes('Environment="OLLAMA_MODELS=/srv/ollama"'),
+      "non-OLLAMA_HOST settings should be preserved",
+    );
+    assert.ok(
+      payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'),
+      "other Environment= settings should be preserved",
     );
   });
 
@@ -5109,6 +5243,295 @@ const { setupNim } = require(${onboardPath});
         line.includes("Using Ollama on host.docker.internal:11434"),
       ),
     );
+  });
+
+  it("uses the Windows-host start path when install-windows-ollama is requested but Ollama is already installed", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-install-to-start-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "windows-ollama-install-to-start-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const windowsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "windows.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+platform.isWsl = () => true;
+
+const installedPath = "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe";
+const installCalls = [];
+const setupCalls = [];
+const runCommands = [];
+credentials.prompt = async () => "";
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) return installedPath;
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama")) return "";
+  if (cmd.includes("api/tags")) {
+    if (setupCalls.length > 0) {
+      return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+    }
+    return "";
+  }
+  if (cmd.includes("api/show")) return JSON.stringify({ capabilities: ["completion", "tools"] });
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  return "";
+};
+runner.run = (command) => {
+  runCommands.push(Array.isArray(command) ? command.join(" ") : String(command));
+  return { status: 0 };
+};
+runner.runShell = (command) => {
+  runCommands.push(command);
+  return { status: 0 };
+};
+
+const local = require(${localPath});
+local.resetOllamaHostCache();
+
+const windows = require(${windowsPath});
+windows.installOllamaOnWindowsHost = async () => {
+  installCalls.push(true);
+  return { ok: false, path: "" };
+};
+windows.setupWindowsOllamaWith0000Binding = (opts) => {
+  setupCalls.push(opts || {});
+  local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
+  return true;
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("windows-install-to-start-test", null);
+    originalLog(JSON.stringify({ result, installCalls, setupCalls, lines, runCommands }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-windows-ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+        NEMOCLAW_YES: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
+    assert.notEqual(result.stdout.trim(), "", result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.equal(payload.result.model, "qwen3:8b");
+    assert.equal(payload.installCalls.length, 0);
+    assert.deepEqual(payload.setupCalls, [{ announceStop: false }]);
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Using Ollama on host.docker.internal:11434"),
+      ),
+    );
+  });
+
+  it("does not satisfy start-windows-ollama with WSL-local Ollama", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-no-wsl-fallback-"),
+    );
+    const scriptPath = path.join(tmpDir, "windows-ollama-no-wsl-fallback-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const windowsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "windows.js"),
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+platform.isWsl = () => true;
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  if (cmd.includes("host.docker.internal:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) return "";
+  return "";
+};
+
+const local = require(${localPath});
+local.resetOllamaHostCache();
+
+const windows = require(${windowsPath});
+windows.setupWindowsOllamaWith0000Binding = () => {
+  console.error("WINDOWS_SETUP_CALLED");
+  return false;
+};
+windows.switchToWindowsOllamaHost = () => {
+  console.error("WINDOWS_SWITCH_CALLED");
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim("windows-no-wsl-fallback-test", null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "start-windows-ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+        NEMOCLAW_YES: "1",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Requested provider 'start-windows-ollama' is not available/);
+    assert.doesNotMatch(result.stderr, /WINDOWS_SETUP_CALLED|WINDOWS_SWITCH_CALLED/);
+  });
+
+  it("does not satisfy install-windows-ollama with non-WSL local Ollama", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-no-linux-fallback-"),
+    );
+    const scriptPath = path.join(tmpDir, "windows-ollama-no-linux-fallback-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const windowsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "windows.js"),
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+platform.isWsl = () => false;
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  return "";
+};
+
+const local = require(${localPath});
+local.resetOllamaHostCache();
+
+const windows = require(${windowsPath});
+windows.installOllamaOnWindowsHost = async () => {
+  console.error("WINDOWS_INSTALL_CALLED");
+  return { ok: false, path: "" };
+};
+windows.setupWindowsOllamaWith0000Binding = () => {
+  console.error("WINDOWS_SETUP_CALLED");
+  return false;
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim("windows-no-linux-fallback-test", null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-windows-ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+        NEMOCLAW_YES: "1",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Requested provider 'install-windows-ollama' is not available/);
+    assert.doesNotMatch(result.stderr, /WINDOWS_INSTALL_CALLED|WINDOWS_SETUP_CALLED/);
   });
 
   it("honours NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for compatible-endpoint during inference setup (#2403)", () => {

@@ -81,6 +81,7 @@ function baseSession(overrides: Partial<Session> = {}): Session {
     messagingChannelConfig: null,
     disabledChannels: null,
     migratedLegacyValueHashes: null,
+    hermesToolGateways: null,
     gpuPassthrough: false,
     telegramConfig: null,
     wechatConfig: null,

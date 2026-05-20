@@ -8,8 +8,10 @@
 
 # Messaging Credential Provider E2E Tests
 #
-# Validates that messaging credentials (Telegram, Discord) flow correctly
-# through the OpenShell provider/placeholder/L7-proxy pipeline. Tests every
+# Validates that messaging credentials (Telegram, Discord, Slack, WeChat)
+# flow correctly through the OpenShell provider/placeholder/L7-proxy pipeline,
+# and holds WhatsApp's QR-only channel to the same config/policy/no-secret
+# standard even though it has no host-side token provider. Tests every
 # layer of the chain introduced in PR #1081:
 #
 #   1. Provider creation — openshell stores the real token
@@ -20,6 +22,8 @@
 #   5. Network reachability — Node.js can reach messaging APIs through proxy
 #   6. Native Discord gateway path — WebSocket L7 path is tested hermetically
 #   7. L7 proxy rewriting — placeholder is rewritten to real token at egress
+#   8. WhatsApp QR-only parity — channel add/rebuild applies policy, bakes
+#      openclaw.json, creates no providers, and leaks no token placeholders
 #
 # Uses fake tokens by default (no external accounts needed). With fake tokens,
 # the API returns 401 — proving the full chain worked (request reached the
@@ -44,6 +48,7 @@
 #   DISCORD_BOT_TOKEN_REAL                 — optional: enables Phase 6 real round-trip
 #   SLACK_BOT_TOKEN                        — defaults to fake token (xoxb-fake-...)
 #   SLACK_APP_TOKEN                        — defaults to fake token (xapp-fake-...)
+#   SLACK_ALLOWED_USERS                    — comma-separated Slack user IDs for DM and channel @mention allowlisting
 #   SLACK_BOT_TOKEN_REVOKED                — optional: revoked xoxb- token to test auth pre-validation (#2340)
 #   SLACK_APP_TOKEN_REVOKED                — optional: paired xapp- token for the revoked bot token
 #   WECHAT_BOT_TOKEN                       — defaults to fake token; presence skips host-side QR login
@@ -51,6 +56,10 @@
 #   WECHAT_BASE_URL                        — defaults to fake iLink baseUrl (per-account API host)
 #   WECHAT_USER_ID                         — defaults to fake operator wechat user ID (seeds DM allowlist)
 #   WECHAT_ALLOWED_IDS                     — optional: comma-separated DM allowlist for wechat
+#   WhatsApp                               — QR-only; the test enables it via `channels add whatsapp`
+#   WHATSAPP_TOKEN / WHATSAPP_BOT_TOKEN / WHATSAPP_SESSION_SECRET
+#                                          — overwritten with fake decoys to prove NemoClaw ignores host-side
+#                                            WhatsApp credential-shaped env vars
 #   TELEGRAM_CHAT_ID_E2E                   — optional: enables sendMessage test
 #   NEMOCLAW_OPENSHELL_BIN                 — optional OpenShell binary under test
 #   NEMOCLAW_FRESH=1                       — auto-set to discard interrupted onboard sessions
@@ -104,6 +113,7 @@ fi
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-msg-provider}"
 OPENSHELL_BIN="${NEMOCLAW_OPENSHELL_BIN:-openshell}"
+REGISTRY="$HOME/.nemoclaw/sandboxes.json"
 
 openshell() {
   if [ "$OPENSHELL_BIN" = "openshell" ]; then
@@ -111,6 +121,32 @@ openshell() {
   else
     "$OPENSHELL_BIN" "$@"
   fi
+}
+
+registry_field() {
+  local field="$1"
+  if [ ! -f "$REGISTRY" ]; then
+    echo "null"
+    return
+  fi
+  if command -v jq >/dev/null 2>&1; then
+    jq -c --arg name "$SANDBOX_NAME" --arg field "$field" \
+      '.sandboxes[$name][$field]' "$REGISTRY" 2>/dev/null || echo "null"
+  else
+    node -e "
+const r = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+const v = (r.sandboxes || {})[process.argv[2]]?.[process.argv[3]];
+process.stdout.write(JSON.stringify(v ?? null));
+" "$REGISTRY" "$SANDBOX_NAME" "$field" 2>/dev/null || echo "null"
+  fi
+}
+
+registry_array_contains() {
+  local field="$1"
+  local item="$2"
+  local value
+  value="$(registry_field "$field")"
+  printf '%s' "$value" | grep -Fq "\"${item}\""
 }
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
@@ -123,6 +159,7 @@ DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
 SLACK_TOKEN="${SLACK_BOT_TOKEN:-xoxb-fake-slack-token-e2e}"
 SLACK_APP="${SLACK_APP_TOKEN:-xapp-fake-slack-app-token-e2e}"
 TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
+SLACK_IDS="${SLACK_ALLOWED_USERS-U0AR85ATALW,U09E2ESLACK}"
 # WeChat: pre-seeding WECHAT_BOT_TOKEN + the per-account metadata env vars lets
 # the non-interactive onboard path (src/lib/onboard.ts:8433) treat wechat as
 # "already configured" and skip the host-qr handler entirely. Fake values are
@@ -133,16 +170,24 @@ WECHAT_ACCOUNT="${WECHAT_ACCOUNT_ID:-e2e-fake-account-12345}"
 WECHAT_BASE="${WECHAT_BASE_URL:-https://ilinkai-fake-e2e.wechat.com}"
 WECHAT_USER="${WECHAT_USER_ID:-wxid_e2efakeoperator}"
 WECHAT_IDS="${WECHAT_ALLOWED_IDS:-${WECHAT_USER}}"
+# WhatsApp is QR-only, but seed host-side decoys to prove they are ignored.
+WHATSAPP_TOKEN_DECOY="test-fake-whatsapp-token-e2e"
+WHATSAPP_BOT_TOKEN_DECOY="test-fake-whatsapp-bot-token-e2e"
+WHATSAPP_SESSION_SECRET_DECOY="test-fake-whatsapp-session-secret-e2e"
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
 export SLACK_BOT_TOKEN="$SLACK_TOKEN"
 export SLACK_APP_TOKEN="$SLACK_APP"
 export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
+export SLACK_ALLOWED_USERS="$SLACK_IDS"
 export WECHAT_BOT_TOKEN="$WECHAT_TOKEN"
 export WECHAT_ACCOUNT_ID="$WECHAT_ACCOUNT"
 export WECHAT_BASE_URL="$WECHAT_BASE"
 export WECHAT_USER_ID="$WECHAT_USER"
 export WECHAT_ALLOWED_IDS="$WECHAT_IDS"
+export WHATSAPP_TOKEN="$WHATSAPP_TOKEN_DECOY"
+export WHATSAPP_BOT_TOKEN="$WHATSAPP_BOT_TOKEN_DECOY"
+export WHATSAPP_SESSION_SECRET="$WHATSAPP_SESSION_SECRET_DECOY"
 
 # Run a command inside the sandbox via stdin (avoids exposing sensitive args in process list)
 sandbox_exec_stdin() {
@@ -214,6 +259,15 @@ info "Telegram token: ${TELEGRAM_TOKEN:0:10}... (${#TELEGRAM_TOKEN} chars)"
 info "Discord token: ${DISCORD_TOKEN:0:10}... (${#DISCORD_TOKEN} chars)"
 info "Slack bot token: configured (${#SLACK_TOKEN} chars)"
 info "Slack app token: configured (${#SLACK_APP} chars)"
+slack_allowed_user_count=0
+if [ -n "$SLACK_IDS" ]; then
+  IFS=',' read -ra _slack_allowed_ids <<<"$SLACK_IDS"
+  for _sid in "${_slack_allowed_ids[@]}"; do
+    _sid="${_sid//[[:space:]]/}"
+    [ -n "$_sid" ] && ((slack_allowed_user_count++))
+  done
+fi
+info "Slack allowed users configured: ${slack_allowed_user_count} ID(s)"
 info "WeChat token: configured (${#WECHAT_TOKEN} chars), account=${WECHAT_ACCOUNT}"
 info "Sandbox name: $SANDBOX_NAME"
 
@@ -389,6 +443,76 @@ if echo "$sandbox_list" | grep -q "$SANDBOX_NAME.*Ready"; then
   pass "M0b: Sandbox '$SANDBOX_NAME' is Ready"
 else
   fail "M0b: Sandbox '$SANDBOX_NAME' not Ready (list: ${sandbox_list:0:200})"
+  exit 1
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 1b: Enable WhatsApp QR-only channel
+# ══════════════════════════════════════════════════════════════════
+section "Phase 1b: Enable WhatsApp QR-only channel"
+
+WHATSAPP_ADD_LOG="/tmp/nemoclaw-e2e-whatsapp-add.log"
+if nemoclaw "$SANDBOX_NAME" channels add whatsapp >"$WHATSAPP_ADD_LOG" 2>&1; then
+  whatsapp_add_exit=0
+else
+  whatsapp_add_exit=$?
+fi
+cat "$WHATSAPP_ADD_LOG"
+
+if [ "$whatsapp_add_exit" -eq 0 ] && grep -q "Enabled whatsapp channel" "$WHATSAPP_ADD_LOG"; then
+  pass "M-WA0: channels add whatsapp registered QR-only channel"
+else
+  fail "M-WA0: channels add whatsapp failed or did not register channel"
+  tail -30 "$WHATSAPP_ADD_LOG" 2>/dev/null || true
+  exit 1
+fi
+
+if openshell provider get "${SANDBOX_NAME}-whatsapp-bridge" >/dev/null 2>&1; then
+  fail "M-WA1: Unexpected WhatsApp bridge provider exists in gateway"
+else
+  pass "M-WA1: WhatsApp QR-only channel creates no bridge provider"
+fi
+
+if registry_array_contains messagingChannels "whatsapp"; then
+  pass "M-WA2: registry.messagingChannels contains whatsapp after channel add"
+else
+  fail "M-WA2: registry.messagingChannels missing whatsapp after channel add ($(registry_field messagingChannels))"
+fi
+
+whatsapp_policy_pre=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)
+if echo "$whatsapp_policy_pre" | grep -q "web.whatsapp.com" \
+  && echo "$whatsapp_policy_pre" | grep -q "whatsapp.net" \
+  && echo "$whatsapp_policy_pre" | grep -q "raw.githubusercontent.com"; then
+  pass "M-WA3: WhatsApp policy preset applied before rebuild"
+else
+  fail "M-WA3: WhatsApp policy preset missing expected endpoints before rebuild"
+fi
+
+WHATSAPP_REBUILD_LOG="/tmp/nemoclaw-e2e-whatsapp-rebuild.log"
+info "Rebuilding sandbox so WhatsApp is baked into openclaw.json..."
+if nemoclaw "$SANDBOX_NAME" rebuild --yes >"$WHATSAPP_REBUILD_LOG" 2>&1; then
+  pass "M-WA4: Rebuild completed after WhatsApp channel add"
+else
+  fail "M-WA4: Rebuild failed after WhatsApp channel add"
+  tail -50 "$WHATSAPP_REBUILD_LOG" 2>/dev/null || true
+  exit 1
+fi
+
+whatsapp_policy_post=$(openshell policy get --full "$SANDBOX_NAME" 2>/dev/null || true)
+if echo "$whatsapp_policy_post" | grep -q "web.whatsapp.com" \
+  && echo "$whatsapp_policy_post" | grep -q "whatsapp.net" \
+  && echo "$whatsapp_policy_post" | grep -q "raw.githubusercontent.com" \
+  && { echo "$whatsapp_policy_post" | grep -q "/usr/local/bin/node" || echo "$whatsapp_policy_post" | grep -q "/usr/bin/node"; }; then
+  pass "M-WA5: WhatsApp policy preset survived rebuild with Node binary scope"
+else
+  fail "M-WA5: WhatsApp policy preset missing expected endpoints/binaries after rebuild"
+fi
+
+sandbox_list=$(openshell sandbox list 2>&1 || true)
+if echo "$sandbox_list" | grep -q "$SANDBOX_NAME.*Ready"; then
+  pass "M-WA6: Sandbox '$SANDBOX_NAME' is Ready after WhatsApp rebuild"
+else
+  fail "M-WA6: Sandbox '$SANDBOX_NAME' not Ready after WhatsApp rebuild (list: ${sandbox_list:0:200})"
   exit 1
 fi
 
@@ -683,6 +807,43 @@ else
   skip "M-W3d: No WeChat placeholder to verify (provider-only mode)"
 fi
 
+# ── WhatsApp QR-only isolation ────────────────────────────────────
+# WhatsApp is deliberately tokenless from NemoClaw's perspective. The operator
+# pairs inside the sandbox, and mutable QR session state is allowed in durable
+# agent state. There must be no host-side WhatsApp credential provider,
+# placeholder, or token env for OpenShell to rewrite.
+
+if [ -z "$sandbox_env_all" ]; then
+  skip "M-WA7a: Environment variable list is empty"
+elif echo "$sandbox_env_all" | grep -qE '(^|[[:space:]])WHATSAPP_.*(TOKEN|SECRET|AUTH|SESSION)='; then
+  fail "M-WA7a: WhatsApp credential-like env var found in sandbox environment"
+else
+  pass "M-WA7a: No WhatsApp credential-like env var present in sandbox environment"
+fi
+
+if [ -z "$sandbox_ps" ]; then
+  skip "M-WA7b: Process list is empty"
+elif echo "$sandbox_ps" | grep -qE 'WHATSAPP_.*(TOKEN|SECRET|AUTH|SESSION)|openshell:resolve:env:WHATSAPP'; then
+  fail "M-WA7b: WhatsApp credential placeholder found in sandbox process list"
+else
+  pass "M-WA7b: No WhatsApp credential placeholder present in sandbox process list"
+fi
+
+sandbox_fs_wa=$(sandbox_exec "
+  {
+    grep -rIlm1 -E '(^|[^A-Z0-9_])WHATSAPP_[A-Z0-9_]*(TOKEN|SECRET|AUTH|SESSION)[A-Z0-9_]*=' /sandbox /home /etc /tmp /var 2>/dev/null || true
+    grep -rIlm1 -F 'openshell:resolve:env:WHATSAPP' /sandbox /home /etc /tmp /var 2>/dev/null || true
+    grep -rIlm1 -F '$WHATSAPP_TOKEN_DECOY' /sandbox /home /etc /tmp /var 2>/dev/null || true
+    grep -rIlm1 -F '$WHATSAPP_BOT_TOKEN_DECOY' /sandbox /home /etc /tmp /var 2>/dev/null || true
+    grep -rIlm1 -F '$WHATSAPP_SESSION_SECRET_DECOY' /sandbox /home /etc /tmp /var 2>/dev/null || true
+  } | sort -u
+")
+if [ -n "$sandbox_fs_wa" ]; then
+  fail "M-WA7c: WhatsApp host credential material found on sandbox filesystem: ${sandbox_fs_wa}"
+else
+  pass "M-WA7c: No WhatsApp host credential material found on sandbox filesystem"
+fi
+
 # ══════════════════════════════════════════════════════════════════
 # Phase 3: Config Patching — openclaw.json channels
 # ══════════════════════════════════════════════════════════════════
@@ -863,6 +1024,85 @@ print('yes' if 'slack' in d else 'no')
   if [ "$slack_configured" = "yes" ]; then
     pass "M11e: Slack channel configured with placeholder tokens (guard needed)"
 
+    # M11f/M11g/M11h: SLACK_ALLOWED_USERS should authorize both DMs and
+    # channel @mentions from the same users. Config lives on the Slack account
+    # because OpenClaw supports multi-account Slack channel policy.
+    sl_dm_policy=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+account = d.get('slack', {}).get('accounts', {}).get('default', {})
+print(account.get('dmPolicy', ''))
+" 2>/dev/null || true)
+    if [ "$sl_dm_policy" = "allowlist" ]; then
+      pass "M11f: Slack dmPolicy is 'allowlist'"
+    elif [ -n "$sl_dm_policy" ]; then
+      fail "M11f: Slack dmPolicy is '$sl_dm_policy' (expected 'allowlist')"
+    else
+      skip "M11f: Slack dmPolicy not set"
+    fi
+
+    sl_group_policy=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+account = d.get('slack', {}).get('accounts', {}).get('default', {})
+print(account.get('groupPolicy', ''))
+" 2>/dev/null || true)
+    if [ "$sl_group_policy" = "allowlist" ]; then
+      pass "M11g: Slack groupPolicy is 'allowlist'"
+    elif [ -n "$sl_group_policy" ]; then
+      fail "M11g: Slack groupPolicy is '$sl_group_policy' (expected 'allowlist')"
+    else
+      skip "M11g: Slack groupPolicy not set"
+    fi
+
+    sl_channel_users=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+account = d.get('slack', {}).get('accounts', {}).get('default', {})
+wildcard = account.get('channels', {}).get('*', {})
+if wildcard.get('enabled') is not True:
+    print('BAD_ENABLED')
+elif wildcard.get('requireMention') is not True:
+    print('BAD_REQUIRE_MENTION')
+else:
+    users = wildcard.get('users', [])
+    if not isinstance(users, list):
+        print('BAD_USERS_TYPE')
+    elif len(users) == 0:
+        print('EMPTY_USERS')
+    else:
+        print(','.join(str(i) for i in users))
+" 2>/dev/null || true)
+    if [ "$sl_channel_users" = "BAD_ENABLED" ]; then
+      fail "M11h: Slack wildcard channel config is not enabled"
+    elif [ "$sl_channel_users" = "BAD_REQUIRE_MENTION" ]; then
+      fail "M11h: Slack wildcard channel config does not require mention"
+    elif [ "$sl_channel_users" = "BAD_USERS_TYPE" ]; then
+      fail "M11h: Slack wildcard channel users is not a list"
+    elif [ "$sl_channel_users" = "EMPTY_USERS" ]; then
+      fail "M11h: Slack wildcard channel users is empty"
+    elif [ -n "$sl_channel_users" ]; then
+      IFS=',' read -ra expected_slack_ids <<<"$SLACK_IDS"
+      missing_slack_ids=()
+      expected_slack_id_count=0
+      sl_channel_users_csv=",${sl_channel_users//[[:space:]]/},"
+      for sid in "${expected_slack_ids[@]}"; do
+        sid="${sid//[[:space:]]/}"
+        [ -z "$sid" ] && continue
+        ((expected_slack_id_count++))
+        if [[ "$sl_channel_users_csv" != *",$sid,"* ]]; then
+          missing_slack_ids+=("$sid")
+        fi
+      done
+      if [ ${#missing_slack_ids[@]} -eq 0 ]; then
+        pass "M11h: Slack wildcard channel @mention allowlist contains expected user count (${expected_slack_id_count})"
+      else
+        fail "M11h: Slack wildcard channel users missing ${#missing_slack_ids[@]} expected ID(s)"
+      fi
+    else
+      skip "M11h: Slack wildcard channel users not set"
+    fi
+
     # Diagnostics: check if the guard was installed and what NODE_OPTIONS looks like
     info "Checking guard installation diagnostics:"
     guard_exists=$(openshell sandbox exec --name "$SANDBOX_NAME" -- ls -la /tmp/nemoclaw-slack-channel-guard.js 2>/dev/null || echo "EXEC_FAILED")
@@ -871,6 +1111,73 @@ print('yes' if 'slack' in d else 'no')
     info "  NODE_OPTIONS: $node_opts"
   else
     skip "M11e: No Slack channel in config"
+  fi
+
+  # M-WA8/M-WA9: WhatsApp is QR-only, but it still needs a real channel block
+  # baked into openclaw.json after `channels add whatsapp` + rebuild. There
+  # should be no token, auth, or OpenShell placeholder field in that account.
+  whatsapp_account_json=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+account = d.get('whatsapp', {}).get('accounts', {}).get('default', {})
+print(json.dumps(account, sort_keys=True))
+" 2>/dev/null || true)
+  whatsapp_enabled=$(echo "$whatsapp_account_json" | python3 -c "
+import json, sys
+try:
+    account = json.load(sys.stdin)
+    print(account.get('enabled', False))
+except Exception:
+    print(False)
+" 2>/dev/null || true)
+  whatsapp_health_monitor=$(echo "$whatsapp_account_json" | python3 -c "
+import json, sys
+try:
+    account = json.load(sys.stdin)
+    print(account.get('healthMonitor', {}).get('enabled', None))
+except Exception:
+    print(None)
+" 2>/dev/null || true)
+
+  if [ "$whatsapp_enabled" = "True" ]; then
+    pass "M-WA8: WhatsApp account is enabled in openclaw.json"
+  else
+    fail "M-WA8: WhatsApp account missing or disabled in openclaw.json (${whatsapp_account_json:0:200})"
+  fi
+
+  if [ "$whatsapp_health_monitor" = "False" ]; then
+    pass "M-WA8a: WhatsApp health monitor is disabled for unpaired QR session"
+  else
+    fail "M-WA8a: WhatsApp health monitor is not disabled (${whatsapp_account_json:0:200})"
+  fi
+
+  whatsapp_secret_fields=$(echo "$whatsapp_account_json" | python3 -c "
+import json, sys
+try:
+    account = json.load(sys.stdin)
+except Exception:
+    print('BAD_JSON')
+    sys.exit(0)
+bad = []
+def walk(value, path=''):
+    if isinstance(value, dict):
+        for key, child in value.items():
+            next_path = f'{path}.{key}' if path else key
+            if any(word in key.lower() for word in ('token', 'secret', 'auth', 'session')):
+                bad.append(next_path)
+            walk(child, next_path)
+    elif isinstance(value, list):
+        for idx, child in enumerate(value):
+            walk(child, f'{path}[{idx}]')
+    elif isinstance(value, str) and 'openshell:resolve:env:WHATSAPP' in value:
+        bad.append(path)
+walk(account)
+print(','.join(bad))
+" 2>/dev/null || true)
+  if [ -z "$whatsapp_secret_fields" ]; then
+    pass "M-WA9: WhatsApp config has no token/auth/session provider placeholders"
+  else
+    fail "M-WA9: WhatsApp config contains secret-like fields: ${whatsapp_secret_fields}"
   fi
 
   # M-W8: WeChat channel registered under channels.openclaw-weixin with the
@@ -1329,6 +1636,37 @@ console.log("OK");
 NODE
 }
 
+check_fake_slack_capture_message() {
+  local path="$1"
+  local expected_channel="$2"
+  local expected_text="$3"
+  node - "$FAKE_SLACK_API_CAPTURE_FILE" "$path" "$expected_channel" "$expected_text" <<'NODE'
+const fs = require("fs");
+const [file, path, expectedChannel, expectedText] = process.argv.slice(2);
+const rows = fs
+  .readFileSync(file, "utf8")
+  .trim()
+  .split(/\n+/)
+  .filter(Boolean)
+  .map((line) => JSON.parse(line))
+  .filter((row) => row.event === "request" && row.path === path);
+const last = rows.at(-1);
+if (!last) {
+  console.log(`NO_REQUEST ${path}`);
+  process.exit(2);
+}
+if (last.channel !== expectedChannel) {
+  console.log(`BAD_CHANNEL ${last.channel}`);
+  process.exit(3);
+}
+if (last.text !== expectedText) {
+  console.log(`BAD_TEXT ${last.text}`);
+  process.exit(4);
+}
+console.log("OK");
+NODE
+}
+
 info "Calling fake Slack /api/auth.test from inside sandbox with Bolt-shape placeholder..."
 sl_api=""
 if [ "$fake_slack_ready" = "1" ]; then
@@ -1488,6 +1826,43 @@ elif echo "$sl_app_canonical" | grep -qF 'openshell:resolve:env:'; then
   fail "M-S16b: L7 proxy passed canonical placeholder through unchanged for SLACK_APP_TOKEN"
 else
   fail "M-S16b: Unexpected response (status=$sl_app_canon_status): ${sl_app_canonical:0:200}"
+fi
+
+# M-S17: Slack channel @mention allowlist proof (#3729). This runs inside the
+# sandbox, imports OpenClaw's installed Slack test API, and verifies:
+#   - the configured Slack user can prepare a channel app_mention
+#   - another user is denied by channels.*.users
+#   - sendMessageSlack posts back to the channel through the hermetic fake API
+info "Running Slack channel @mention allowlist proof through installed OpenClaw..."
+sl_channel_proof=""
+sl_allowed_user="${SLACK_IDS%%,*}"
+sl_allowed_user="${sl_allowed_user//[[:space:]]/}"
+if [ "$fake_slack_ready" = "1" ] && [ -n "$sl_allowed_user" ]; then
+  sl_channel_proof=$(run_fake_slack_channel_mention_proof "$FAKE_SLACK_API_PORT" "$sl_allowed_user" "U999DENIED" || true)
+fi
+
+info "Slack channel @mention proof response: ${sl_channel_proof:0:500}"
+if echo "$sl_channel_proof" | grep -q '"ok":true' \
+  && echo "$sl_channel_proof" | grep -q '"deniedPrepared":true'; then
+  pass "M-S17: Slack channel @mention allowlist accepts configured user and denies another user"
+  sl_post_capture=$(check_fake_slack_capture_token "/api/chat.postMessage" "$SLACK_TOKEN" || true)
+  if [ "$sl_post_capture" = "OK" ]; then
+    pass "M-S17a: fake Slack saw host-side bot token for channel reply"
+  else
+    fail "M-S17a: fake Slack capture did not prove channel reply token rewrite: ${sl_post_capture:0:300}"
+  fi
+  sl_message_capture=$(check_fake_slack_capture_message "/api/chat.postMessage" "C0E2ESLACK" "NemoClaw Slack channel mention proof" || true)
+  if [ "$sl_message_capture" = "OK" ]; then
+    pass "M-S17b: fake Slack captured non-secret channel/text metadata for channel reply"
+  else
+    fail "M-S17b: fake Slack did not capture expected channel reply metadata: ${sl_message_capture:0:300}"
+  fi
+elif [ "$fake_slack_ready" != "1" ]; then
+  skip "M-S17: fake Slack API was not ready"
+elif [ -z "$sl_allowed_user" ]; then
+  skip "M-S17: SLACK_ALLOWED_USERS is empty"
+else
+  fail "M-S17: Slack channel @mention proof failed: ${sl_channel_proof:0:500}"
 fi
 
 # ══════════════════════════════════════════════════════════════════

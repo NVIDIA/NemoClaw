@@ -21,7 +21,7 @@ on:
       jobs:
         description: >-
           Comma-separated regression job names to run (empty = all).
-          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,onboard-inference-smoke-e2e,model-router-provider-routed-inference-e2e
+          Valid: dashboard-remote-bind-e2e,gateway-health-honest-e2e,gateway-drift-preflight-e2e,openshell-version-pin-e2e,onboard-inference-smoke-e2e,model-router-provider-routed-inference-e2e,openclaw-plugin-runtime-exdev-e2e
         required: false
         type: string
         default: ""
@@ -50,6 +50,7 @@ jobs:
       openshell_version_pin: ${{ steps.select.outputs.openshell_version_pin }}
       onboard_inference_smoke: ${{ steps.select.outputs.onboard_inference_smoke }}
       model_router_provider_routed_inference: ${{ steps.select.outputs.model_router_provider_routed_inference }}
+      openclaw_plugin_runtime_exdev: ${{ steps.select.outputs.openclaw_plugin_runtime_exdev }}
     steps:
       - id: select
         env:
@@ -99,6 +100,12 @@ jobs:
             echo "model_router_provider_routed_inference=true" >> "$GITHUB_OUTPUT"
           else
             echo "model_router_provider_routed_inference=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ -z "$normalized" ] || includes_job "openclaw-plugin-runtime-exdev-e2e"; then
+            echo "openclaw_plugin_runtime_exdev=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "openclaw_plugin_runtime_exdev=false" >> "$GITHUB_OUTPUT"
           fi
 
   dashboard-remote-bind-e2e:
@@ -289,4 +296,38 @@ jobs:
             /tmp/nemoclaw-e2e-model-router-onboard.log
             /tmp/nemoclaw-e2e-model-router-health.log
             /tmp/nemoclaw-e2e-model-router-response.log
+          if-no-files-found: ignore
+
+  # ── OpenClaw plugin runtime-deps EXDEV E2E ─────────────────────
+  # Coverage guard for #3513 / #3127. On Ubuntu/OpenShell sandbox layouts
+  # where /tmp and /sandbox can live on different filesystems, OpenClaw's
+  # first CLI bootstrap must not fail plugin runtime dependency installation
+  # with EXDEV cross-device rename errors.
+  openclaw-plugin-runtime-exdev-e2e:
+    needs: select_regression_jobs
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      needs.select_regression_jobs.outputs.openclaw_plugin_runtime_exdev == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Run OpenClaw plugin runtime-deps EXDEV E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash test/e2e/test-openclaw-plugin-runtime-exdev.sh
+
+      - name: Upload OpenClaw plugin runtime-deps EXDEV logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: openclaw-plugin-runtime-exdev-logs
+          path: |
+            /tmp/nemoclaw-e2e-openclaw-plugin-exdev-onboard.log
+            /tmp/nemoclaw-e2e-openclaw-plugin-exdev-agent.log
+            /tmp/nemoclaw-e2e-openclaw-plugin-exdev-df.log
           if-no-files-found: ignore

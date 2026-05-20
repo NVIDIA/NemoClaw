@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import {
   parseCustomPolicySource,
   parsePolicyAddArgs,
+  parsePolicyAddOptions,
   shouldSkipPolicyConfirmation,
 } from "./policy-channel";
 
@@ -46,6 +47,20 @@ describe("policy channel helpers", () => {
       dryRun: true,
       skipConfirm: true,
       source: { kind: "none" },
+      presetArg: "github",
+    });
+  });
+
+  it("parses policy add options without reconstructing CLI argv", () => {
+    expect(
+      parsePolicyAddOptions(
+        { preset: "github", dryRun: true, yes: true, fromFile: "preset.yaml" },
+        {},
+      ),
+    ).toEqual({
+      dryRun: true,
+      skipConfirm: true,
+      source: { kind: "file", path: "preset.yaml" },
       presetArg: "github",
     });
   });
