@@ -335,8 +335,8 @@ The onboard wizard starts a background port forward to the sandbox dashboard, th
 The default host port is `18789`.
 If that port is already taken, NemoClaw uses the next free dashboard port, such as `18790`, and prints that port in the final URL.
 If the chosen port becomes occupied after the sandbox build starts, onboarding rolls back the newly-created sandbox and asks you to retry instead of printing an unreachable dashboard URL.
-The gateway token is not printed in the install transcript.
-If authentication is required, use the `dashboard-url --quiet` command to print a complete URL explicitly.
+The install transcript does not print the gateway token.
+If the browser requires authentication, use the `dashboard-url --quiet` command to print a complete URL explicitly.
 
 ```text
 nemoclaw my-gpt-claw dashboard-url --quiet
