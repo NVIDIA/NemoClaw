@@ -142,6 +142,10 @@ fi
 . "${SCRIPT_DIR}/lib/env.sh"
 # shellcheck source=lib/context.sh
 . "${SCRIPT_DIR}/lib/context.sh"
+# shellcheck source=lib/negative.sh
+. "${SCRIPT_DIR}/lib/negative.sh"
+# shellcheck source=lib/port-holder.sh
+. "${SCRIPT_DIR}/lib/port-holder.sh"
 # shellcheck source=../nemoclaw_scenarios/install/dispatch.sh
 . "${E2E_ROOT}/nemoclaw_scenarios/install/dispatch.sh"
 # shellcheck source=../nemoclaw_scenarios/onboard/dispatch.sh
