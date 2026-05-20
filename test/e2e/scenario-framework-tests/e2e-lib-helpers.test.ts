@@ -435,3 +435,34 @@ describe("Phase 1.E install dispatcher splits", () => {
     expect(r.stdout + r.stderr).not.toMatch(/install-repo|install-curl|install-ollama/);
   });
 });
+
+describe("baseline onboarding validation helper", () => {
+  it("baseline_helper_should_source_under_strict_shell_options", () => {
+    const r = runBash(`set -euo pipefail; source "${VALIDATION_SUITES}/lib/baseline_onboarding.sh"`);
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  it("baseline_cli_assertions_should_use_mocked_binaries", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "baseline-cli-"));
+    try {
+      const bin = path.join(tmp, "bin");
+      const ctx = path.join(tmp, "ctx");
+      fs.mkdirSync(bin); fs.mkdirSync(ctx);
+      fs.writeFileSync(path.join(ctx, "context.env"), "E2E_SANDBOX_NAME=sb1\nE2E_PROVIDER=nvidia\nE2E_INFERENCE_ROUTE=inference-local\n");
+      fs.writeFileSync(path.join(bin, "nemoclaw"), "#!/usr/bin/env bash\n[[ $1 == --help ]] && echo help && exit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(bin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+      const r = runBash(`
+        set -euo pipefail
+        source "${VALIDATION_SUITES}/lib/baseline_onboarding.sh"
+        baseline_onboarding_load_context
+        baseline_assert_nemoclaw_on_path
+        baseline_assert_openshell_on_path
+        baseline_assert_nemoclaw_help_exits_zero
+      `, { E2E_CONTEXT_DIR: ctx, PATH: `${bin}:${process.env.PATH}` });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("PASS: validation.baseline_onboarding.nemoclaw_on_path");
+      expect(r.stdout).toContain("PASS: validation.baseline_onboarding.openshell_on_path");
+      expect(r.stdout).toContain("PASS: validation.baseline_onboarding.nemoclaw_help_exits_zero");
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+});

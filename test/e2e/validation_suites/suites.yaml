@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 suites:
   smoke:
     requires_state: &id001
@@ -30,6 +33,17 @@ suites:
     steps: &id008
     - id: credentials-present
       script: security/credentials/00-credentials-present.sh
+  baseline-onboarding:
+    requires_state:
+      cli.installed: true
+      sandbox.status: running
+    steps:
+    - id: cli-and-openshell
+      script: baseline-onboarding/00-cli-and-openshell.sh
+    - id: sandbox-state
+      script: baseline-onboarding/01-sandbox-state.sh
+    - id: route-and-smoke
+      script: baseline-onboarding/02-route-and-smoke.sh
   onboarding-state:
     requires_state:
       sandbox.status: running
