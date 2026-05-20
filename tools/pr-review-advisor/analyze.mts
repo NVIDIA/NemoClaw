@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { getChangedFiles, getCommits, getDiff, getDiffStat, getHeadSha, gitOutput } from "../advisors/git.mts";
 import { githubGraphql, githubRest, githubRestPaginated } from "../advisors/github.mts";
@@ -16,6 +16,13 @@ const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
 const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
 const ADVISOR_CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
+const SECURITY_REVIEW_SKILL_PATH = ".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md";
+const TRUSTED_SECURITY_REVIEW_SKILL_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  SECURITY_REVIEW_SKILL_PATH,
+);
 const SECURITY_CATEGORIES = [
   "Secrets and Credentials",
   "Input Validation and Data Sanitization",
@@ -206,8 +213,9 @@ async function main(): Promise<void> {
   const diff = getDiff(baseRef, headRef, 160000);
   const deterministic = await collectDeterministicContext({ baseRef, headRef, changedFiles, diff });
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
-  const systemPrompt = buildSystemPrompt(schema);
-  const prompt = buildPrompt({ metadata, diff });
+  const securityReviewSkill = readTrustedSecurityReviewSkill();
+  const systemPrompt = buildSystemPrompt(schema, securityReviewSkill);
+  const prompt = buildPrompt({ metadata, diff, securityReviewSkill });
   fs.writeFileSync(artifacts.prompt, prompt);
 
   const writeFailure = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, true);
@@ -550,7 +558,17 @@ query($owner: String!, $name: String!, $number: Int!) {
 }`;
 }
 
-function buildSystemPrompt(schema: Record<string, unknown>): string {
+export function readTrustedSecurityReviewSkill(): string {
+  try {
+    return fs.readFileSync(TRUSTED_SECURITY_REVIEW_SKILL_PATH, "utf8");
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error(`Security review skill unavailable at ${TRUSTED_SECURITY_REVIEW_SKILL_PATH}: ${reason}`);
+    return "";
+  }
+}
+
+export function buildSystemPrompt(schema: Record<string, unknown>, securityReviewSkill = ""): string {
   return [
     "You are the NemoClaw PR Review Advisor for GitHub Actions.",
     "NemoClaw runs OpenClaw assistants inside OpenShell sandboxes. Security boundaries, workflows, credentials, network policy, SSRF validation, Dockerfiles, installers, and sandbox lifecycle code are high risk.",
@@ -560,7 +578,11 @@ function buildSystemPrompt(schema: Record<string, unknown>): string {
     "Review rubric:",
     "1. Start with codebase drift: is the PR patching code that still exists, and does it overlap or contradict active work?",
     "2. Hard gates: CI latest SHA, mergeability, unresolved review/CodeRabbit threads, risky code tests.",
-    "3. Security: secrets, input validation, authz, deps, logging, crypto, config, security tests, holistic posture. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
+    "3. Security: use the trusted security code review skill embedded below as the authoritative security rubric. Apply every category with PASS/WARNING/FAIL evidence. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
+    "Trusted security review skill from main checkout:",
+    "```markdown",
+    securityReviewSkill || "Security review skill was unavailable; fall back to the built-in 9-category security review.",
+    "```",
     "4. Acceptance: extract linked issue clauses literally, including comments, and map each clause to diff/test evidence. Named list items are separate clauses.",
     "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
@@ -573,7 +595,7 @@ function buildSystemPrompt(schema: Record<string, unknown>): string {
   ].join("\n");
 }
 
-function buildPrompt({ metadata, diff }: { metadata: ReviewMetadata; diff: string }): string {
+function buildPrompt({ metadata, diff, securityReviewSkill }: { metadata: ReviewMetadata; diff: string; securityReviewSkill: string }): string {
   return `Return a NemoClaw PR review advisor result for this PR.
 
 Set these fields exactly:
@@ -587,6 +609,9 @@ Deterministic context gathered by trusted code:
 \`\`\`json
 ${JSON.stringify(metadata.deterministic, null, 2)}
 \`\`\`
+
+Trusted security review skill path: ${SECURITY_REVIEW_SKILL_PATH}
+Trusted security review skill loaded: ${securityReviewSkill ? "yes" : "no"}
 
 Git diff, truncated if large:
 \`\`\`diff

@@ -740,8 +740,8 @@ describe("regression guards", () => {
           return 0
         }
         export -f curl
-        shasum() { cat >/dev/null; echo "checksum OK"; return 0; }
-        export -f shasum
+        sha256sum() { cat >/dev/null; echo "checksum OK"; return 0; }
+        export -f sha256sum
         strings() { echo "request-body-credential-rewrite websocket-credential-rewrite"; }
         export -f strings
         tar() { return 0; }; export -f tar
@@ -765,7 +765,7 @@ describe("regression guards", () => {
     it("install-openshell.sh gh-present-but-fails path falls back to curl", () => {
       const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
-      const checksumLog = path.join(tmpBin, "shasum.log");
+      const checksumLog = path.join(tmpBin, "sha256sum.log");
       const ghStub = path.join(tmpBin, "gh");
       fs.writeFileSync(ghStub, "#!/bin/sh\nexit 4\n");
       fs.chmodSync(ghStub, 0o755);
@@ -777,8 +777,8 @@ describe("regression guards", () => {
         export PATH="${tmpBin}:/usr/bin:/bin"
         curl() { echo "CURL_FALLBACK $*"; return 0; }
         export -f curl
-        shasum() { echo "SHASUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
-        export -f shasum
+        sha256sum() { echo "SHA256SUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
+        export -f sha256sum
         strings() { echo "request-body-credential-rewrite websocket-credential-rewrite"; }
         export -f strings
         tar() { return 0; }; export -f tar
@@ -793,7 +793,7 @@ describe("regression guards", () => {
         const out = (result.stdout || "") + (result.stderr || "");
         expect(out).toContain("falling back to curl");
         expect(out).toContain("CURL_FALLBACK");
-        expect(fs.readFileSync(checksumLog, "utf-8")).toContain("SHASUM -a 256 -c -");
+        expect(fs.readFileSync(checksumLog, "utf-8")).toContain("SHA256SUM -c -");
       } finally {
         fs.rmSync(tmpBin, { recursive: true, force: true });
       }
