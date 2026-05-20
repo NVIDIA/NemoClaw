@@ -36,6 +36,7 @@ network_policies:
     binaries:
       - { path: /usr/bin/curl }
       - { path: /usr/bin/git }
+      - { path: /usr/local/bin/brew }
       - { path: /home/linuxbrew/.linuxbrew/bin/brew }
       - { path: /home/linuxbrew/.linuxbrew/bin/* }
       - { path: /home/linuxbrew/.linuxbrew/Homebrew/bin/* }

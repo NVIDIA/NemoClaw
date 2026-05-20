@@ -1255,6 +1255,25 @@ exit 1
       expect(parsed.filesystem_policy.read_write).toContain("/home/linuxbrew");
     });
 
+    it("brew preset whitelists the PATH shim and Homebrew-managed entrypoints (#3913)", () => {
+      const content = requirePresetContent(policies.loadPreset("brew"));
+      const parsed = YAML.parse(content);
+      const brewPolicy = parsed.network_policies?.brew as
+        | { binaries?: Array<{ path?: string }> }
+        | undefined;
+      const binaries = (brewPolicy?.binaries ?? []).map((binary) => binary.path).sort();
+      expect(binaries).toEqual(
+        [
+          "/home/linuxbrew/.linuxbrew/Homebrew/bin/*",
+          "/home/linuxbrew/.linuxbrew/bin/*",
+          "/home/linuxbrew/.linuxbrew/bin/brew",
+          "/usr/bin/curl",
+          "/usr/bin/git",
+          "/usr/local/bin/brew",
+        ].sort(),
+      );
+    });
+
     it("telegram REST preset relies on automatic TLS handling", () => {
       const content = requirePresetContent(policies.loadPreset("telegram"));
       expect(content).toBeTruthy();

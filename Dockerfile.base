@@ -230,9 +230,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 #
 # Image-build runs as root, so we create the prefix, chown it to the
 # sandbox user, clone Homebrew core under it as the sandbox user, and
-# symlink the brew entry point. After this, every sandbox starts with a
-# working `brew` on PATH (via /home/linuxbrew/.linuxbrew/bin) and the
-# preset's binary whitelist is honored.
+# symlink the brew entry point into the Homebrew prefix and /usr/local/bin.
+# /usr/local/bin is already on the locked sandbox PATH, so users can run
+# `brew` without adding the sandbox-writable Homebrew prefix to privileged
+# startup PATH.
 #
 # Companion change: /home/linuxbrew is added to filesystem_policy.read_write
 # in nemoclaw-blueprint/policies/openclaw-sandbox.yaml so brew can write
@@ -252,4 +253,6 @@ RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
         /home/linuxbrew/.linuxbrew/Homebrew \
     && ln -s /home/linuxbrew/.linuxbrew/Homebrew/bin/brew \
         /home/linuxbrew/.linuxbrew/bin/brew \
-    && gosu sandbox /home/linuxbrew/.linuxbrew/bin/brew --version
+    && ln -s /home/linuxbrew/.linuxbrew/Homebrew/bin/brew \
+        /usr/local/bin/brew \
+    && gosu sandbox brew --version
