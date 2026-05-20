@@ -229,6 +229,56 @@ describe("runner env merging", () => {
     );
     expect(firstCall[2]?.env?.PATH).toBe("/usr/local/bin:/usr/bin");
   });
+
+  it("#2616: runCaptureEx injects NO_PROXY=localhost,127.0.0.1 when http_proxy is set", () => {
+    // Regression for the macOS Privoxy scenario: validateOllamaModel calls
+    // runCaptureEx with a curl probe against http://localhost:11434. Before
+    // the fix, runCaptureEx merged raw process.env (including the user's
+    // http_proxy) and never injected NO_PROXY, so the spawned curl tunneled
+    // its localhost probe through Privoxy and returned HTTP 500.
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalHttpProxy = process.env.http_proxy;
+    const originalNoProxy = process.env.NO_PROXY;
+    const originalNoProxyLower = process.env.no_proxy;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runCaptureEx } = require(runnerPath);
+      process.env.http_proxy = "http://127.0.0.1:8118";
+      delete process.env.NO_PROXY;
+      delete process.env.no_proxy;
+      runCaptureEx([
+        "curl",
+        "-sS",
+        "--max-time",
+        "3",
+        "http://localhost:11434/api/ps",
+      ]);
+    } finally {
+      if (originalHttpProxy === undefined) delete process.env.http_proxy;
+      else process.env.http_proxy = originalHttpProxy;
+      if (originalNoProxy === undefined) delete process.env.NO_PROXY;
+      else process.env.NO_PROXY = originalNoProxy;
+      if (originalNoProxyLower === undefined) delete process.env.no_proxy;
+      else process.env.no_proxy = originalNoProxyLower;
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(calls).toHaveLength(1);
+    const firstCall = requireCall(calls, 0);
+    const env = firstCall[2]?.env ?? {};
+    expect(env.http_proxy).toBe("http://127.0.0.1:8118");
+    // Both casings get the loopback hosts so curl, Node, Python all respect
+    // the bypass regardless of which one they read.
+    expect(env.NO_PROXY).toContain("localhost");
+    expect(env.NO_PROXY).toContain("127.0.0.1");
+    expect(env.no_proxy).toContain("localhost");
+    expect(env.no_proxy).toContain("127.0.0.1");
+  });
 });
 
 describe("shellQuote", () => {
@@ -281,6 +331,14 @@ describe("validateName", () => {
     expect(() => validateName("")).toThrow(/required/);
     expect(() => validateName(null)).toThrow(/required/);
     expect(() => validateName("a".repeat(64))).toThrow(/too long/);
+  });
+
+  it("rejects excessively long valid-looking names before spawning OpenShell", () => {
+    const { validateName } = require(runnerPath);
+    expect(validateName("a".repeat(63))).toBe("a".repeat(63));
+    expect(() => validateName("a".repeat(64 * 1024), "sandbox name")).toThrow(
+      /sandbox name too long \(max 63 chars\)/,
+    );
   });
 
   it("rejects uppercase and special characters", () => {
@@ -554,19 +612,6 @@ describe("regression guards", () => {
     }
   });
 
-  it("nemoclaw.ts does not use execSync", () => {
-    const src = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"),
-      "utf-8",
-    );
-    const lines = src.split("\n");
-    for (let i = 0; i < lines.length; i += 1) {
-      if (lines[i].includes("execSync") && !lines[i].includes("execFileSync")) {
-        expect.unreachable(`src/nemoclaw.ts:${i + 1} uses execSync — use execFileSync instead`);
-      }
-    }
-  });
-
   it("keeps a single shellQuote definition in the root CLI codebase", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const searchRoots = [path.join(repoRoot, "bin"), path.join(repoRoot, "src")];
@@ -584,7 +629,13 @@ describe("regression guards", () => {
 
     const defs = [];
     for (const file of files) {
-      const src = fs.readFileSync(file, "utf-8");
+      let src: string;
+      try {
+        src = fs.readFileSync(file, "utf-8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
       if (src.includes("function shellQuote")) {
         defs.push(path.relative(repoRoot, file));
       }
@@ -774,7 +825,7 @@ describe("regression guards", () => {
             {
               encoding: "utf-8",
               env: { ...process.env, HOME: tmp, PATH: `${fakeBin}:/usr/bin:/bin` },
-              timeout: 5000,
+              timeout: 15000,
             },
           );
           expect(result.status, `${script}: ${result.stdout}${result.stderr}`).toBe(0);

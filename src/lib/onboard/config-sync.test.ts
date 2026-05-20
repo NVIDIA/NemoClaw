@@ -38,6 +38,27 @@ describe("sandbox config sync helpers", () => {
     expect(script).toMatch(/^\s*exit$/m);
   });
 
+  it("keeps Bedrock Runtime adapter credentials out of sandbox selection config", () => {
+    const script = buildSandboxConfigSyncScript({
+      endpointType: "custom",
+      endpointUrl: "https://inference.local/v1",
+      ncpPartner: null,
+      model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+      profile: "inference-local",
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      provider: "compatible-anthropic-endpoint",
+      providerLabel: "Other Anthropic-compatible endpoint",
+    });
+
+    expect(script).toContain('"endpointUrl": "https://inference.local/v1"');
+    expect(script).toContain('"credentialEnv": "COMPATIBLE_ANTHROPIC_API_KEY"');
+    expect(script).not.toContain("NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN");
+    expect(script).not.toContain("AWS_BEARER_TOKEN_BEDROCK");
+    expect(script).not.toContain("adapter-token");
+    expect(script).not.toContain("bedrock-bearer");
+    expect(script).not.toContain("bedrock-runtime.us-east-1.amazonaws.com");
+  });
+
   it("writes sandbox sync scripts to a mkdtemp-backed temp file", () => {
     const scriptFile = writeSandboxConfigSyncFile("echo test");
     try {

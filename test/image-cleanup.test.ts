@@ -22,8 +22,6 @@ import { help as renderRootHelp } from "../src/lib/actions/root-help";
 import { COMMANDS, globalCommandTokens } from "../src/lib/cli/command-registry";
 import { getRegisteredOclifCommandMetadata } from "../src/lib/cli/oclif-metadata";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
-
 describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
   it("removes sandbox images before deleting the registry entry", () => {
     const calls: string[] = [];
@@ -142,49 +140,6 @@ describe("image cleanup: sandbox destroy removes Docker image (#2086)", () => {
   it("state-dir helper resolves ~/.nemoclaw/state from a single shared helper", () => {
     const resolved = resolveNemoclawStateDir("/tmp/example-home");
     expect(resolved).toBe(path.join("/tmp/example-home", ".nemoclaw", "state"));
-  });
-});
-
-describe("image cleanup: onboard records imageTag in registry (#2086)", () => {
-  const onboardSrc = fs.readFileSync(path.join(ROOT, "src/lib/onboard.ts"), "utf-8");
-
-  it("buildId is captured before patchStagedDockerfile", () => {
-    // buildId should be a named variable, not an inline Date.now()
-    expect(onboardSrc).toContain("const buildId = String(Date.now())");
-  });
-
-  it("registerSandbox uses resolvedImageTag parsed from build output", () => {
-    expect(onboardSrc).toContain("resolvedImageTag");
-    expect(onboardSrc).toMatch(/sandbox-from:\\d\+/);
-    expect(onboardSrc).toMatch(/imageTag:\s*resolvedImageTag/);
-    expect(onboardSrc).toMatch(/buildId/);
-    expect(onboardSrc).toMatch(/console\.warn/);
-  });
-
-  it("onboard recreate path cleans up old image", () => {
-    // When recreating, the old image should be removed
-    const match = onboardSrc.match(/if \(previousEntry\?\.imageTag\)[\s\S]*?^\s*}/m);
-    expect(match).toBeTruthy();
-    if (!match) throw new Error("Expected previousEntry image cleanup block in src/lib/onboard.ts");
-    expect(match[0]).toMatch(/dockerRmi\(|docker.*\.rmi\(/);
-  });
-});
-
-describe("image cleanup: registry stores imageTag (#2086)", () => {
-  const registrySrc = fs.readFileSync(path.join(ROOT, "src/lib/state/registry.ts"), "utf-8");
-
-  it("SandboxEntry interface includes imageTag field", () => {
-    expect(registrySrc).toMatch(/imageTag\?:\s*string\s*\|\s*null/);
-  });
-
-  it("registerSandbox persists imageTag", () => {
-    // The registerSandbox function should include imageTag in the stored entry
-    const registerMatch = registrySrc.match(/function registerSandbox[\s\S]*?^}/m);
-    expect(registerMatch).toBeTruthy();
-    if (!registerMatch) {
-      throw new Error("Expected registerSandbox() in src/lib/state/registry.ts");
-    }
-    expect(registerMatch[0]).toContain("imageTag");
   });
 });
 

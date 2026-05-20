@@ -11,11 +11,11 @@
       "./dist/index.js"
     ],
     "compat": {
-      "pluginApi": ">=2026.5.10-beta.1",
-      "minGatewayVersion": "2026.5.10-beta.1"
+      "pluginApi": ">=2026.4.24",
+      "minGatewayVersion": "2026.4.24"
     },
     "build": {
-      "openclawVersion": "2026.5.10-beta.1"
+      "openclawVersion": "2026.4.24"
     }
   },
   "scripts": {
@@ -30,7 +30,6 @@
     "clean": "rm -rf dist/"
   },
   "dependencies": {
-    "commander": "^13.1.0",
     "execa": "^9.6.1",
     "json5": "^2.2.3",
     "tar": "^7.0.0",

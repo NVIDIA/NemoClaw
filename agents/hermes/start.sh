@@ -230,6 +230,28 @@ start_gateway_log_stream() {
   GATEWAY_LOG_TAIL_PID=$!
 }
 
+retry_tirith_marker_if_needed() {
+  local marker="${HERMES_DIR}/.tirith-install-failed"
+  local reason
+
+  [ -e "$marker" ] || return 0
+  if [ -L "$marker" ] || [ ! -f "$marker" ]; then
+    echo "[tirith-bootstrap] WARNING: unsafe Tirith install marker at ${marker}; not reading it" >&2
+    return 0
+  fi
+
+  reason="$(head -n 1 "$marker" 2>/dev/null | tr -d '\r\n' || true)"
+  if [ "$reason" != "download_failed" ]; then
+    echo "[tirith-bootstrap] WARNING: Tirith install marker reason '${reason:-unknown}' is not retryable; Hermes gateway startup will continue" >&2
+    return 0
+  fi
+
+  echo "[tirith-bootstrap] download_failed marker present; letting Hermes runtime fallback retry Tirith" >&2
+  if ! rm -f "$marker" 2>/dev/null; then
+    echo "[tirith-bootstrap] WARNING: could not remove retryable Tirith marker; Hermes gateway startup will continue" >&2
+  fi
+}
+
 # ── socat forwarder ──────────────────────────────────────────────
 # Hermes API server binds to 127.0.0.1 regardless of config (upstream bug).
 # OpenShell needs the port accessible on 0.0.0.0 for port forwarding.
@@ -585,7 +607,12 @@ if [ "$(id -u)" -ne 0 ]; then
   export HOME=/sandbox
   export HERMES_HOME="${HERMES_DIR}"
 
-  if ! verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"; then
+  # macOS VM startup currently runs this entrypoint as the sandbox user and
+  # remaps rootfs ownership to the host uid. In that mode the strict /etc hash
+  # cannot remain a root-owned trust anchor, so use the same locked-aware
+  # mutable-default verifier as OpenClaw. The root path below keeps strict
+  # verification against /etc/nemoclaw/hermes.config-hash.
+  if ! verify_config_integrity_if_locked "${HERMES_DIR}"; then
     echo "[SECURITY] Config integrity check failed — refusing to start (non-root mode)" >&2
     exit 1
   fi
@@ -596,6 +623,8 @@ if [ "$(id -u)" -ne 0 ]; then
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
   fi
+
+  retry_tirith_marker_if_needed
 
   prepare_restricted_log /tmp/gateway.log "" 600
 
@@ -628,6 +657,7 @@ fi
 
 # ── Root path (full privilege separation via setpriv) ──────────
 
+export HERMES_HOME="${HERMES_DIR}"
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
 refresh_hermes_provider_placeholders
 install_configure_guard
@@ -636,6 +666,8 @@ configure_messaging_channels
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
 fi
+
+retry_tirith_marker_if_needed
 
 # SECURITY: Protect gateway log from sandbox user tampering
 prepare_restricted_log /tmp/gateway.log gateway:gateway 600

@@ -195,6 +195,28 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.channels.telegram).toBeDefined();
   });
 
+  it("emits a tokenless WhatsApp config block for QR-paired channels", () => {
+    const channels = Buffer.from(JSON.stringify(["whatsapp"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.whatsapp).toBeDefined();
+    const account = config.channels.whatsapp.accounts.default;
+    expect(account.enabled).toBe(true);
+    expect(account.healthMonitor).toEqual({ enabled: false });
+    expect(account.token).toBeUndefined();
+    expect(account.botToken).toBeUndefined();
+    expect(account.appToken).toBeUndefined();
+  });
+
+  it("keeps WhatsApp config alongside token-based channels in the same run", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram", "whatsapp"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.telegram.accounts.default.botToken).toBe(
+      "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+    );
+    expect(config.channels.whatsapp.accounts.default.enabled).toBe(true);
+    expect(config.channels.whatsapp.accounts.default.botToken).toBeUndefined();
+  });
+
   it("emits groups with requireMention when TELEGRAM_REQUIRE_MENTION is true (#3022)", () => {
     const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
     const telegramConfig = Buffer.from(JSON.stringify({ requireMention: true })).toString("base64");
@@ -226,6 +248,98 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.channels.telegram.groups).toBeUndefined();
   });
 
+  it("does not seed channels.openclaw-weixin before the base plugin install registry exists", () => {
+    const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
+    const wechatConfig = Buffer.from(
+      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
+    ).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
+    });
+    expect(config.channels?.["openclaw-weixin"]).toBeUndefined();
+    // The "wechat" alias is the NemoClaw channel name, not an OpenClaw
+    // channel id — must never appear under channels.
+    expect(config.channels?.wechat).toBeUndefined();
+  });
+
+  it("seeds channels.openclaw-weixin when the base plugin install registry exists", () => {
+    const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
+    const installEntry = {
+      source: "npm",
+      spec: "@tencent-weixin/openclaw-weixin@2.4.2",
+    };
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ plugins: { installs: { "openclaw-weixin": installEntry } } }),
+    );
+
+    const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
+    const wechatConfig = Buffer.from(
+      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
+    ).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
+    });
+
+    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
+    expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
+      enabled: true,
+    });
+    expect(config.channels?.wechat).toBeUndefined();
+
+    const accountFile = path.join(
+      tmpDir,
+      ".openclaw",
+      "openclaw-weixin",
+      "accounts",
+      "primary.json",
+    );
+    const account = JSON.parse(fs.readFileSync(accountFile, "utf-8"));
+    expect(account).toMatchObject({
+      token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+      baseUrl: "https://example",
+      userId: "u1",
+    });
+  });
+
+  it("omits channels.openclaw-weixin when no accountId was captured", () => {
+    // No QR-login result → seed step bails on the empty accountId and
+    // leaves openclaw.json untouched, so the bridge stays dormant.
+    const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels?.["openclaw-weixin"]).toBeUndefined();
+    expect(config.channels?.wechat).toBeUndefined();
+  });
+
+  it("enables the openclaw-weixin plugin entry unconditionally", () => {
+    // The plugin ships in the base image, so we activate the entry on every
+    // build. With no seeded account, the upstream auth/accounts.ts no-ops
+    // and the bridge never starts.
+    const config = runConfigScript({});
+    expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
+  });
+
+  it("preserves base-image plugin install registry entries", () => {
+    const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    const installEntry = {
+      source: "npm",
+      spec: "@tencent-weixin/openclaw-weixin@2.4.2",
+    };
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ plugins: { installs: { "openclaw-weixin": installEntry } } }),
+    );
+
+    const config = runConfigScript({});
+
+    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
+    expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
+  });
+
   it("emits canonical openshell:resolve:env: placeholders for non-Slack channels", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
@@ -249,6 +363,28 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(slack.appToken).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
     expect(slack.botToken).toMatch(/^xoxb-[A-Za-z0-9_-]+$/);
     expect(slack.appToken).toMatch(/^xapp-[A-Za-z0-9_-]+$/);
+  });
+
+  it("uses Slack allowed IDs for DMs and channel mention allowlisting (#3729)", () => {
+    const allowedUsers = ["U01ABC2DEF3", "U04GHI5JKL6"];
+    const channels = Buffer.from(JSON.stringify(["slack"])).toString("base64");
+    const allowedIds = Buffer.from(JSON.stringify({ slack: allowedUsers })).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: allowedIds,
+    });
+    const slack = config.channels.slack.accounts.default;
+
+    expect(slack.dmPolicy).toBe("allowlist");
+    expect(slack.allowFrom).toEqual(allowedUsers);
+    expect(slack.groupPolicy).toBe("allowlist");
+    expect(slack.channels).toEqual({
+      "*": {
+        enabled: true,
+        requireMention: true,
+        users: allowedUsers,
+      },
+    });
   });
 
   it("enables web search when env is '1'", () => {
@@ -374,6 +510,70 @@ describe("generate-openclaw-config.py: config generation", () => {
       maxTokensField: "max_tokens",
       requiresToolResultName: true,
     });
+  });
+
+  // #2747: Ollama's OpenAI-compatible streaming API omits the usage chunk
+  // unless `stream_options.include_usage` is set on the request. OpenClaw
+  // gates that on `model.compat.supportsUsageInStreaming`. NemoClaw routes
+  // ollama-local through the standardised `inference.local` URL, which
+  // OpenClaw's own Ollama detector does not recognise — so we force the
+  // flag here. Cloud providers and other local backends must not be
+  // affected.
+  it("enables supportsUsageInStreaming for Ollama provider keys (#2747)", () => {
+    for (const providerKey of ["ollama", "ollama-local"]) {
+      const config = runConfigScript({
+        NEMOCLAW_MODEL: "qwen2.5:7b",
+        NEMOCLAW_PROVIDER_KEY: providerKey,
+        NEMOCLAW_PRIMARY_MODEL_REF: "qwen2.5:7b",
+        NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+        NEMOCLAW_INFERENCE_API: "openai-completions",
+      });
+      const model = config.models.providers[providerKey].models[0];
+      expect(model.compat?.supportsUsageInStreaming).toBe(true);
+    }
+  });
+
+  it("does not enable supportsUsageInStreaming for non-Ollama providers (#2747)", () => {
+    const cases = [
+      { NEMOCLAW_PROVIDER_KEY: "openai", NEMOCLAW_INFERENCE_BASE_URL: "https://api.openai.com/v1" },
+      {
+        NEMOCLAW_PROVIDER_KEY: "anthropic",
+        NEMOCLAW_INFERENCE_BASE_URL: "https://api.anthropic.com",
+      },
+      { NEMOCLAW_PROVIDER_KEY: "vllm", NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1" },
+      {
+        NEMOCLAW_PROVIDER_KEY: "nim-local",
+        NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      },
+    ];
+
+    for (const envCase of cases) {
+      const config = runConfigScript({
+        NEMOCLAW_MODEL: "test-model",
+        NEMOCLAW_PRIMARY_MODEL_REF: "test-ref",
+        NEMOCLAW_INFERENCE_API: "openai-completions",
+        ...envCase,
+      });
+      const model = config.models.providers[envCase.NEMOCLAW_PROVIDER_KEY].models[0];
+      expect(model.compat?.supportsUsageInStreaming).toBeUndefined();
+    }
+  });
+
+  // If a future model-specific-setup manifest declares
+  // supportsUsageInStreaming explicitly, that decision should win over our
+  // ollama-keyed default — including when a manifest opts the flag *off*.
+  it("respects existing supportsUsageInStreaming from inference compat (#2747)", () => {
+    const config = runConfigScript({
+      NEMOCLAW_MODEL: "qwen2.5:7b",
+      NEMOCLAW_PROVIDER_KEY: "ollama",
+      NEMOCLAW_PRIMARY_MODEL_REF: "qwen2.5:7b",
+      NEMOCLAW_INFERENCE_BASE_URL: "https://inference.local/v1",
+      NEMOCLAW_INFERENCE_API: "openai-completions",
+      NEMOCLAW_INFERENCE_COMPAT_B64: Buffer.from(
+        JSON.stringify({ supportsUsageInStreaming: false }),
+      ).toString("base64"),
+    });
+    expect(config.models.providers.ollama.models[0].compat.supportsUsageInStreaming).toBe(false);
   });
 
   it("does not activate the OpenClaw Kimi setup for non-matching routes", () => {

@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: onboard-entrypoint-budget
+name: CI / Onboard Entrypoint Budget
 
 # pull_request_target runs in the base repo context, so this policy cannot be
 # bypassed by editing workflow files or scripts in the PR. Keep this workflow

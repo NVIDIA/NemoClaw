@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: macos-e2e
+name: E2E / macOS
 
 on:
   workflow_dispatch:
@@ -40,10 +40,10 @@ jobs:
     timeout-minutes: 30
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Node.js
-        uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: "22"
           cache: npm
@@ -69,9 +69,6 @@ jobs:
           cd nemoclaw
           npm ci --ignore-scripts
           npm run build
-
-      - name: Run vitest suite
-        run: npx vitest run --testTimeout 60000
 
       - name: Detect Docker availability
         id: docker
@@ -100,7 +97,7 @@ jobs:
         if: steps.docker.outputs.docker_ok != 'true'
         run: |
           echo 'Skipping macOS full E2E because Docker is unavailable on this runner.'
-          echo 'The workflow still validated the NemoClaw build and vitest suite on macOS (Apple Silicon).'
+          echo 'The workflow still validated the NemoClaw build on macOS (Apple Silicon).'
 
       - name: Upload logs on failure
         if: failure()

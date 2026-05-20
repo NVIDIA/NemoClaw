@@ -25,7 +25,14 @@ function isOclifParseError(error: unknown): boolean {
     error && typeof error === "object"
       ? (error as { constructor?: { name?: string } }).constructor?.name
       : "";
-  return name === "NonExistentFlagsError" || name === "UnexpectedArgsError" || name === "CLIError";
+  const message = error instanceof Error ? error.message : "";
+  return (
+    name === "NonExistentFlagsError" ||
+    name === "RequiredArgsError" ||
+    name === "UnexpectedArgsError" ||
+    name === "CLIError" ||
+    message.startsWith("Parsing --")
+  );
 }
 
 function isOclifExitError(error: unknown): boolean {
@@ -66,7 +73,10 @@ function applyBrandedBin(config: OclifConfig): void {
   }
 }
 
-export async function runRegisteredOclifCommand(
+// Direct command-id execution for routes that cannot safely go through oclif's
+// flexible-taxonomy argv resolver. Prefer runOclifArgv() for normal execution
+// so oclif owns command lookup, parsing, help, and error handling.
+export async function runOclifCommandById(
   commandId: string,
   args: string[],
   opts: OclifCommandRunOptions,
@@ -115,5 +125,13 @@ export async function runRegisteredOclifCommand(
 }
 
 export async function runOclifArgv(args: string[], opts: OclifCommandRunOptions): Promise<void> {
-  await executeOclif({ args, dir: opts.rootDir });
+  const config = await OclifConfig.load(opts.rootDir);
+  applyBrandedBin(config);
+  await executeOclif({
+    args,
+    loadOptions: {
+      root: opts.rootDir,
+      pjson: config.pjson,
+    },
+  });
 }

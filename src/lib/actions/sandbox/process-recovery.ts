@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT } from "../../core/ports";
 import { ROOT, shellQuote } from "../../runner";
 import {
@@ -21,17 +22,17 @@ import { parseForwardList } from "../../state/sandbox-session";
 import { G, R } from "../../cli/terminal-style";
 import { sleepSeconds } from "../../core/wait";
 
-const agentRuntime = require("../../../../bin/lib/agent-runtime");
-
 export type SandboxCommandResult = {
   status: number;
   stdout: string;
   stderr: string;
 };
 
+type SandboxPortAgent = { forwardPort?: unknown } | null;
+
 type SandboxPortDeps = {
   getSandbox?: typeof registry.getSandbox;
-  getSessionAgent?: typeof agentRuntime.getSessionAgent;
+  getSessionAgent?: (sandboxName?: string) => SandboxPortAgent;
 };
 
 export type SandboxForwardListEntry = {
@@ -217,6 +218,51 @@ export async function isSandboxGatewayRunningForStatus(
   const probeUrl = getSandboxHealthProbeUrl(sandboxName);
   const command = `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 3 ${shellQuote(probeUrl)} 2>/dev/null || echo 000); case "$HTTP_CODE" in 200|401) echo RUNNING ;; *) echo STOPPED ;; esac`;
   return parseSandboxGatewayProbe(await executeSandboxExecCommandForStatus(sandboxName, command));
+}
+
+/**
+ * Probe the full inference chain by curling `https://inference.local/v1/models`
+ * from inside the sandbox via `openshell sandbox exec`. This is the path agent
+ * traffic actually takes (openclaw gateway → auth proxy → backend). Any HTTP
+ * response (including 401) means routing works; 000 / no response means DNS,
+ * proxy, or gateway is broken. The optional 3rd line in #3265.
+ *
+ * Injectable via `execImpl` for tests.
+ */
+export async function probeSandboxInferenceGatewayHealth(
+  sandboxName: string,
+  options: {
+    execImpl?: (sandboxName: string, command: string) => Promise<SandboxCommandResult | null>;
+  } = {},
+): Promise<{
+  ok: boolean;
+  endpoint: string;
+  httpStatus: number;
+  detail: string;
+} | null> {
+  const endpoint = "https://inference.local/v1/models";
+  const command =
+    `HTTP_CODE=$(curl -so /dev/null -w '%{http_code}' --max-time 5 ${shellQuote(endpoint)} 2>/dev/null || echo 000); echo "$HTTP_CODE"`;
+  const exec = options.execImpl ?? executeSandboxExecCommandForStatus;
+  const result = await exec(sandboxName, command);
+  if (!result || result.status !== 0) return null;
+  const status = Number.parseInt(result.stdout.trim(), 10) || 0;
+  if (status > 0) {
+    return {
+      ok: true,
+      endpoint,
+      httpStatus: status,
+      detail: `Inference gateway responded HTTP ${status} on ${endpoint} (full chain reachable).`,
+    };
+  }
+  return {
+    ok: false,
+    endpoint,
+    httpStatus: 0,
+    detail:
+      `Inference gateway unreachable on ${endpoint} from inside the sandbox. ` +
+      `DNS may have failed or the openclaw gateway / auth proxy is not running.`,
+  };
 }
 
 /**

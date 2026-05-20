@@ -20,16 +20,40 @@ describe("buildDockerDriverGatewayEnv", () => {
         platform: "linux",
         stateDir: "/tmp/nemoclaw-gateway",
         getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:0.0.37",
-        resolveVmDriverBin: () => null,
         resolveSandboxBin: () => "/usr/bin/openshell-sandbox",
       }),
     ).toMatchObject({
+      OPENSHELL_DRIVERS: "docker",
       OPENSHELL_BIND_ADDRESS: "127.0.0.1",
       OPENSHELL_SERVER_PORT: "8080",
       OPENSHELL_GRPC_ENDPOINT: "http://127.0.0.1:8080",
       OPENSHELL_SSH_GATEWAY_HOST: "127.0.0.1",
       OPENSHELL_SSH_GATEWAY_PORT: "8080",
+      OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.37",
+      OPENSHELL_DOCKER_SUPERVISOR_BIN: "/usr/bin/openshell-sandbox",
     });
+  });
+
+  it("uses the Docker driver on macOS without VM helper state", () => {
+    const env = buildDockerDriverGatewayEnv({
+      platform: "darwin",
+      stateDir: "/tmp/nemoclaw-gateway",
+      getDockerSupervisorImage: () => "ghcr.io/nvidia/openshell/supervisor:0.0.37",
+      resolveSandboxBin: () => "/usr/local/bin/openshell-sandbox",
+    });
+
+    expect(env).toMatchObject({
+      OPENSHELL_DRIVERS: "docker",
+      OPENSHELL_BIND_ADDRESS: "127.0.0.1",
+      OPENSHELL_SERVER_PORT: "8080",
+      OPENSHELL_GRPC_ENDPOINT: "http://127.0.0.1:8080",
+      OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+      OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.37",
+    });
+    expect(env.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBeUndefined();
+    expect(env.OPENSHELL_VM_DRIVER_STATE_DIR).toBeUndefined();
+    expect(env.OPENSHELL_DRIVER_DIR).toBeUndefined();
   });
 });
 
@@ -54,6 +78,7 @@ describe("buildDockerGatewayDebEnvFile", () => {
         OPENSHELL_SSH_GATEWAY_PORT: "8990",
         OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
         OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "new",
+        OPENSHELL_VM_DRIVER_STATE_DIR: "/tmp/old-vm-driver",
       },
     );
 
@@ -61,8 +86,24 @@ describe("buildDockerGatewayDebEnvFile", () => {
     expect(next).toContain("OPENSHELL_BIND_ADDRESS=0.0.0.0\n");
     expect(next).toContain("OPENSHELL_SERVER_PORT=8990\n");
     expect(next).toContain("OPENSHELL_DOCKER_SUPERVISOR_IMAGE=new\n");
+    expect(next).toContain("OPENSHELL_VM_DRIVER_STATE_DIR=/tmp/old-vm-driver\n");
     expect(next).not.toContain("OPENSHELL_BIND_ADDRESS=127.0.0.1");
     expect(next).not.toContain("OPENSHELL_DOCKER_SUPERVISOR_IMAGE=old");
+  });
+
+  it("removes stale VM driver env keys when writing a Docker-driver env file", () => {
+    const next = buildDockerGatewayDebEnvFile(
+      [
+        "OPENSHELL_DRIVERS=vm",
+        "OPENSHELL_VM_DRIVER_STATE_DIR=/tmp/old-vm-driver",
+        "OPENSHELL_DRIVER_DIR=/tmp/old-driver-dir",
+      ].join("\n"),
+      {
+        OPENSHELL_DRIVERS: "docker",
+      },
+    );
+
+    expect(next).toBe("OPENSHELL_DRIVERS=docker\n");
   });
 
   it("rejects multiline managed values", () => {

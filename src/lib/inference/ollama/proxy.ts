@@ -5,8 +5,6 @@
 // Ollama auth-proxy lifecycle: token persistence, PID management,
 // proxy start/stop, model pull and validation.
 
-const fs = require("fs");
-const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const http = require("http");
@@ -26,10 +24,25 @@ const {
 const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
 const { promptManualModelId } = require("../model-prompts");
+const {
+  formatOllamaProxyUnreachableMessage,
+  probeOllamaProxySandboxReachability,
+} = require("../../onboard/ollama-proxy-reachability");
+const {
+  DEFAULT_LOCAL_ADAPTER_STATE_DIR,
+  isLocalAdapterProcess,
+  killLocalAdapterPid,
+  loadLocalAdapterPid,
+  persistLocalAdapterPid,
+  readLocalAdapterTextFile,
+  removeLocalAdapterFile,
+  spawnDetachedNodeAdapter,
+  writeLocalAdapterSecretFile,
+} = require("../local-adapter-lifecycle");
 
 // ── State ────────────────────────────────────────────────────────
 
-const PROXY_STATE_DIR = path.join(os.homedir(), ".nemoclaw");
+const PROXY_STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
 const PROXY_TOKEN_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-token");
 const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
 
@@ -39,95 +52,105 @@ function sleep(seconds) {
   spawnSync("sleep", [String(seconds)]);
 }
 
-// ── Proxy state dir ──────────────────────────────────────────────
-
-function ensureProxyStateDir(): void {
-  if (!fs.existsSync(PROXY_STATE_DIR)) {
-    fs.mkdirSync(PROXY_STATE_DIR, { recursive: true });
-  }
-}
-
 // ── Token persistence ────────────────────────────────────────────
 
 function persistProxyToken(token: string): void {
-  ensureProxyStateDir();
-  fs.writeFileSync(PROXY_TOKEN_PATH, token, { mode: 0o600 });
-  // mode only applies on creation; ensure permissions on existing files too
-  fs.chmodSync(PROXY_TOKEN_PATH, 0o600);
+  writeLocalAdapterSecretFile(PROXY_TOKEN_PATH, token);
+}
+
+// Persist the proxy token then probe sandbox → proxy reachability. Runs
+// before `inference set` so isInferenceRouteReady() stays false on failure
+// and a retry (including --resume) re-enters setupInference and re-probes.
+// A tcp_failed result prints the UFW remediation and exits 1; probe_unavailable
+// (Docker Desktop, DNS, missing network) is non-fatal.
+async function persistAndProbeOllamaProxy(token: string): Promise<void> {
+  persistProxyToken(token);
+  const reach = await probeOllamaProxySandboxReachability();
+  if (!reach.ok && reach.reason === "tcp_failed") {
+    console.error(formatOllamaProxyUnreachableMessage(reach));
+    process.exit(1);
+  }
 }
 
 function loadPersistedProxyToken(): string | null {
-  try {
-    if (fs.existsSync(PROXY_TOKEN_PATH)) {
-      const token = fs.readFileSync(PROXY_TOKEN_PATH, "utf-8").trim();
-      return token || null;
-    }
-  } catch {
-    /* ignore */
+  return readLocalAdapterTextFile(PROXY_TOKEN_PATH);
+}
+
+function curlAuthHeaderConfig(token: string): string {
+  const escaped = String(token).replace(/[\r\n]/g, "").replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+  return `header = "Authorization: Bearer ${escaped}"\n`;
+}
+
+function runCurlWithAuthConfig(args: string[], endpoint: string, token: string | null = null) {
+  const curlArgs = [...args];
+  const options: {
+    cwd: string;
+    encoding: "utf8";
+    env: Record<string, string>;
+    input?: string;
+  } = {
+    cwd: ROOT,
+    encoding: "utf8",
+    env: buildSubprocessEnv(),
+  };
+  if (token) {
+    curlArgs.push("--config", "-");
+    options.input = curlAuthHeaderConfig(token);
   }
-  return null;
+  curlArgs.push(endpoint);
+
+  // The only dynamic value is a 0600 local auth token for a fixed loopback proxy endpoint.
+  // codeql[js/request-forgery]
+  return spawnSync("curl", curlArgs, options);
+}
+
+function runCurlCaptureWithAuthConfig(args: string[], endpoint: string, token: string | null = null): string {
+  const result = runCurlWithAuthConfig(args, endpoint, token);
+  return result.status === 0 ? String(result.stdout || "") : "";
 }
 
 // ── PID persistence ──────────────────────────────────────────────
 
 function persistProxyPid(pid: number | null | undefined): void {
-  if (!Number.isInteger(pid) || pid <= 0) return;
-  ensureProxyStateDir();
-  fs.writeFileSync(PROXY_PID_PATH, `${pid}\n`, { mode: 0o600 });
-  fs.chmodSync(PROXY_PID_PATH, 0o600);
+  persistLocalAdapterPid(PROXY_PID_PATH, pid);
 }
 
 function loadPersistedProxyPid(): number | null {
-  try {
-    if (!fs.existsSync(PROXY_PID_PATH)) return null;
-    const raw = fs.readFileSync(PROXY_PID_PATH, "utf-8").trim();
-    const pid = Number.parseInt(raw, 10);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
-  }
+  return loadLocalAdapterPid(PROXY_PID_PATH);
 }
 
 function clearPersistedProxyPid(): void {
-  try {
-    if (fs.existsSync(PROXY_PID_PATH)) {
-      fs.unlinkSync(PROXY_PID_PATH);
-    }
-  } catch {
-    /* ignore */
-  }
+  removeLocalAdapterFile(PROXY_PID_PATH);
 }
 
 // ── Process management ───────────────────────────────────────────
 
 function isOllamaProxyProcess(pid: number | null | undefined): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
-  const cmdline = runCapture(["ps", "-p", String(pid), "-o", "args="], { ignoreError: true });
-  return Boolean(cmdline && cmdline.includes("ollama-auth-proxy.js"));
+  return isLocalAdapterProcess(pid, "ollama-auth-proxy.js", runCapture);
 }
 
 function spawnOllamaAuthProxy(token: string): number | null {
-  const child = spawn(process.execPath, [path.join(SCRIPTS, "ollama-auth-proxy.js")], {
-    detached: true,
-    stdio: "ignore",
-    env: buildSubprocessEnv({
+  const child = spawnDetachedNodeAdapter({
+    scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.js"),
+    env: {
       OLLAMA_PROXY_TOKEN: token,
       OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
       OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
-    }),
+    },
+    buildEnv: buildSubprocessEnv,
   });
-  child.unref();
   persistProxyPid(child.pid);
   return child.pid ?? null;
 }
 
 function killStaleProxy(): void {
   try {
-    const persistedPid = loadPersistedProxyPid();
-    if (isOllamaProxyProcess(persistedPid)) {
-      run(["kill", String(persistedPid)], { ignoreError: true, suppressOutput: true });
-    }
-    clearPersistedProxyPid();
+    killLocalAdapterPid({
+      pidPath: PROXY_PID_PATH,
+      processNeedle: "ollama-auth-proxy.js",
+      run,
+      runCapture,
+    });
 
     // Best-effort cleanup for older proxy processes created before the PID file
     // existed. Only kill processes that are actually the auth proxy, not
@@ -181,8 +204,7 @@ function startOllamaAuthProxy(): boolean {
  * 502 still proves the token was accepted, while 401 means token mismatch.
  */
 function probeProxyToken(token: string): "accepted" | "rejected" | "unreachable" {
-  const result = spawnSync(
-    "curl",
+  const result = runCurlWithAuthConfig(
     [
       "-sS",
       "-o",
@@ -191,11 +213,9 @@ function probeProxyToken(token: string): "accepted" | "rejected" | "unreachable"
       "%{http_code}",
       "--max-time",
       "3",
-      "-H",
-      `Authorization: Bearer ${token}`,
-      `http://localhost:${OLLAMA_PROXY_PORT}/v1/models`,
     ],
-    { encoding: "utf8" },
+    `http://localhost:${OLLAMA_PROXY_PORT}/v1/models`,
+    token,
   );
   if (result.status !== 0) return "unreachable";
 
@@ -264,18 +284,93 @@ function isProxyHealthy(): boolean {
   //    is missing or stale (e.g., after a manual restart).
   const proxyUrl = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/api/tags`;
   const token = loadPersistedProxyToken();
-  const probeCmd = token
-    ? ["curl", "-sf", "--connect-timeout", "3", "--max-time", "5",
-       "-H", `Authorization: Bearer ${token}`, proxyUrl]
-    : ["curl", "-sf", "--connect-timeout", "3", "--max-time", "5", proxyUrl];
-
-  const output = runCapture(probeCmd, { ignoreError: true });
+  const output = runCurlCaptureWithAuthConfig(
+    ["-sf", "--connect-timeout", "3", "--max-time", "5"],
+    proxyUrl,
+    token,
+  );
   if (output) return true;
 
   // HTTP probe failed — fall back to PID as a weaker signal.
   // This covers edge cases where the probe transiently fails but the
   // process is confirmed alive.
   return hasValidPid;
+}
+
+function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: string } {
+  const endpoint = `http://127.0.0.1:${OLLAMA_PROXY_PORT}/v1/models`;
+  const token = loadPersistedProxyToken();
+  if (!token) {
+    return {
+      ok: false,
+      endpoint,
+      detail:
+        "Ollama auth proxy token is missing. Re-run NemoClaw onboarding for the Ollama-local sandbox.",
+    };
+  }
+
+  const result = runCurlWithAuthConfig(
+    [
+      "-sS",
+      "-o",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      "--connect-timeout",
+      "3",
+      "--max-time",
+      "5",
+    ],
+    endpoint,
+    token,
+  );
+
+  const status = Number(String(result.stdout || "").trim());
+  if (result.status === 0 && Number.isFinite(status) && status >= 200 && status < 300) {
+    return {
+      ok: true,
+      endpoint,
+      detail: `Ollama auth proxy is reachable on ${endpoint}.`,
+    };
+  }
+
+  if (status === 401) {
+    return {
+      ok: false,
+      endpoint,
+      detail:
+        "Ollama auth proxy rejected the persisted token. Re-run NemoClaw onboarding for the Ollama-local sandbox.",
+    };
+  }
+
+  if (Number.isFinite(status) && status >= 300 && status < 500) {
+    return {
+      ok: false,
+      endpoint,
+      detail:
+        `Ollama auth proxy is reachable on ${endpoint}, but returned HTTP ${status}. ` +
+        "Check auth, route, and proxy configuration.",
+    };
+  }
+
+  if (Number.isFinite(status) && status >= 500) {
+    return {
+      ok: false,
+      endpoint,
+      detail:
+        `Ollama auth proxy is running on ${endpoint}, but its backend returned HTTP ${status}. ` +
+        `Verify host Ollama on localhost:${OLLAMA_PORT} and retry.`,
+    };
+  }
+
+  const failure = String(result.stderr || result.error?.message || "").trim();
+  return {
+    ok: false,
+    endpoint,
+    detail: failure
+      ? `Ollama auth proxy is not reachable on ${endpoint}. (${failure})`
+      : `Ollama auth proxy is not reachable on ${endpoint}.`,
+  };
 }
 
 async function promptOllamaModel(gpu = null) {
@@ -378,7 +473,12 @@ function pullOllamaModelViaHttp(model) {
         body,
         url,
       ],
-      { stdio: ["ignore", "pipe", "pipe"] },
+      {
+        stdio: ["ignore", "pipe", "pipe"],
+        // #2616: inject NO_PROXY=localhost so the streamed pull against the
+        // local Ollama daemon doesn't tunnel through the user's host proxy.
+        env: buildSubprocessEnv(),
+      },
     );
 
     const readline = require("readline");
@@ -652,7 +752,9 @@ function unloadOllamaModels() {
     const psResult = spawnSync(
       "curl",
       ["-sS", "--max-time", "3", `http://localhost:${OLLAMA_PORT}/api/ps`],
-      { encoding: "utf8" },
+      // #2616: env-sanitize so http_proxy=127.0.0.1:8118 (Privoxy) doesn't
+      // hijack this localhost probe.
+      { encoding: "utf8", env: buildSubprocessEnv() },
     );
     if (psResult.status !== 0) return;
 
@@ -682,7 +784,8 @@ function unloadOllamaModels() {
           JSON.stringify({ model: entry.name, keep_alive: 0 }),
           `http://localhost:${OLLAMA_PORT}/api/generate`,
         ],
-        { encoding: "utf8" },
+        // #2616: env-sanitize so http_proxy doesn't hijack the unload call.
+        { encoding: "utf8", env: buildSubprocessEnv() },
       );
     }
   } catch {
@@ -697,11 +800,13 @@ export {
   getOllamaPullTimeoutMs,
   isProxyHealthy,
   killStaleProxy,
+  persistAndProbeOllamaProxy,
   persistProxyToken,
-  startOllamaAuthProxy,
-  promptOllamaModel,
-  printOllamaExposureWarning,
-  pullOllamaModel,
   prepareOllamaModel,
+  printOllamaExposureWarning,
+  probeOllamaAuthProxyHealth,
+  promptOllamaModel,
+  pullOllamaModel,
+  startOllamaAuthProxy,
   unloadOllamaModels,
 };

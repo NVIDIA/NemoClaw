@@ -12,7 +12,7 @@ import path from "path";
 import { dockerBuild, dockerImageInspect } from "../adapters/docker";
 import { getAgentBranding } from "../cli/branding";
 import { getProviderSelectionConfig } from "../inference/config";
-import type { JsonObject as LooseObject, JsonValue as LooseValue } from "../core/json-types";
+import type { JsonObject as LooseObject } from "../core/json-types";
 import * as onboardSession from "../state/onboard-session";
 import { ROOT, redact, run, shellQuote } from "../runner";
 import {
@@ -178,13 +178,6 @@ export function getAgentPolicyPath(agent: AgentDefinition): string | null {
 }
 
 /**
- * Get the agent-specific permissive policy path, or null to use the global fallback.
- */
-export function getAgentPermissivePolicyPath(agent: AgentDefinition): string | null {
-  return agent.policyPermissivePath || null;
-}
-
-/**
  * Sleep for the requested number of seconds using the shared wait helper.
  */
 function sleep(seconds: number): void {
@@ -216,6 +209,42 @@ type AgentBinaryAvailability =
     };
 
 const AGENT_BINARY_CHECK_PREFIX = "NEMOCLAW_AGENT_BINARY_CHECK:";
+const HERMES_TIRITH_MARKER_ABSENT = "tirith marker: absent";
+const HERMES_STARTUP_DIAGNOSTICS_SCRIPT = `
+set +e
+marker=/sandbox/.hermes/.tirith-install-failed
+if [ ! -e "$marker" ]; then
+  echo "${HERMES_TIRITH_MARKER_ABSENT}"
+  exit 0
+fi
+if [ -L "$marker" ]; then
+  echo "tirith marker: symlink (not read)"
+else
+  printf "tirith marker: "
+  head -c 200 "$marker" 2>/dev/null || printf "unreadable"
+  printf "\\n"
+fi
+
+tirith=/sandbox/.hermes/bin/tirith
+if [ -x "$tirith" ] && [ ! -L "$tirith" ]; then
+  echo "tirith binary: present executable ($tirith)"
+elif [ -e "$tirith" ]; then
+  echo "tirith binary: present but not executable ($tirith)"
+else
+  echo "tirith binary: missing ($tirith)"
+fi
+
+for log in /tmp/nemoclaw-start.log /tmp/gateway.log; do
+  if [ -f "$log" ] && [ ! -L "$log" ]; then
+    echo "--- tail: $log ---"
+    tail -n 40 "$log" 2>/dev/null || echo "(tail unavailable)"
+  elif [ -L "$log" ]; then
+    echo "--- tail: $log skipped (symlink) ---"
+  else
+    echo "--- tail: $log unavailable ---"
+  fi
+done
+`.trim();
 
 /**
  * Check whether the selected agent binary is available inside the sandbox.
@@ -293,11 +322,48 @@ function describeAgentBinaryFailure(
 }
 
 /**
+ * Collect read-only Hermes startup diagnostics for Step 7 health timeouts.
+ * Returns no extra lines when the Tirith marker is absent so non-Tirith
+ * failures keep the existing terse error shape.
+ */
+export function collectHermesStartupDiagnostics(
+  sandboxName: string,
+  runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
+): string[] {
+  const output = runCaptureOpenshell(
+    ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", HERMES_STARTUP_DIAGNOSTICS_SCRIPT],
+    { ignoreError: true },
+  );
+  const redactedOutput = String(redact(output ?? ""));
+  const lines = redactedOutput
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+
+  const markerLine = lines.find((line) => line.startsWith("tirith marker:"));
+  if (!markerLine || markerLine === HERMES_TIRITH_MARKER_ABSENT) {
+    return [];
+  }
+  return ["Hermes startup diagnostics:", ...lines.slice(0, 140)];
+}
+
+/**
  * Record and print an agent setup failure before exiting the onboarding flow.
  */
-function failAgentSetup(sandboxName: string, agent: AgentDefinition, message: string): never {
-  onboardSession.markStepFailed("agent_setup", message);
+function failAgentSetup(
+  sandboxName: string,
+  agent: AgentDefinition,
+  message: string,
+  details: string[] = [],
+): never {
+  onboardSession.markStepFailed(
+    "agent_setup",
+    details.length > 0 ? `${message}\n${details.join("\n")}` : message,
+  );
   console.error(`  \u2717 ${message}`);
+  for (const line of details) {
+    console.error(`    ${line}`);
+  }
   console.error(`    Check: ${agentCliName(agent)} ${sandboxName} logs --follow`);
   process.exit(1);
 }
@@ -305,7 +371,7 @@ function failAgentSetup(sandboxName: string, agent: AgentDefinition, message: st
 /**
  * Interpret an agent health-probe response as healthy or unhealthy.
  */
-function isHealthProbeOk(result: string | null | undefined): boolean {
+export function isHealthProbeOk(result: string | null | undefined): boolean {
   const body = (result ?? "").trim();
   if (body === "ok") {
     return true;
@@ -335,7 +401,6 @@ export async function handleAgentSetup(
   const {
     step,
     runCaptureOpenshell,
-    openshellShellCommand,
     openshellBinary: openshellBin,
     buildSandboxConfigSyncScript,
     writeSandboxConfigSyncFile,
@@ -412,10 +477,15 @@ export async function handleAgentSetup(
     if (healthy) {
       console.log(`  \u2713 ${agent.displayName} gateway is healthy`);
     } else {
+      const diagnostics =
+        agent.name === "hermes"
+          ? collectHermesStartupDiagnostics(sandboxName, runCaptureOpenshell)
+          : [];
       failAgentSetup(
         sandboxName,
         agent,
         `${agent.displayName} gateway did not respond within ${timeoutSecs}s`,
+        diagnostics,
       );
     }
   } else {

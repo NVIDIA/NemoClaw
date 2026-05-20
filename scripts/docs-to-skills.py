@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Convert documentation files into Agent Skills (agentskills.io spec).
 
-Reads a directory of Markdown documentation, parses YAML frontmatter and
-content structure, groups related pages into coherent skill units, and
+Reads a directory of Markdown or Fern MDX documentation, parses YAML frontmatter
+and content structure, groups related pages into coherent skill units, and
 generates SKILL.md files following the Agent Skills specification:
 https://agentskills.io/specification
 
@@ -11,11 +11,11 @@ Usage:
 Make sure to run this script using the following command to generate the skills and keep the locations and names consistent.
 
 ```bash
-python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
+python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
 ```
 
 What it does:
-  1. Scans a docs directory for Markdown files with YAML frontmatter.
+  1. Scans a docs directory for Markdown or Fern MDX files with YAML frontmatter.
   2. Classifies each page by content type (how_to, concept, reference,
      get_started) using the frontmatter `content.type` field.
   3. Groups pages into skills using one of three strategies:
@@ -46,11 +46,11 @@ Naming:
   override specific names when the heuristic doesn't produce the right result.
 
 Usage:
-    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
-    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
-    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --strategy individual --prefix nemoclaw-user
-    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --name-map about=overview
-    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --exclude "release-notes.md"
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx --dry-run
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --strategy individual --prefix nemoclaw-user --doc-platform fern-mdx
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --name-map about=overview --doc-platform fern-mdx
+    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --exclude "release-notes.mdx" --doc-platform fern-mdx
 """
 
 from __future__ import annotations
@@ -140,12 +140,23 @@ def normalize_heading_levels(text: str) -> str:
             old_prefix = m.group(1)
             lines[idx] = "#" * new_level + lines[idx][len(old_prefix) :]
 
-    return "\n".join(lines)
+    return space_anchor_headings("\n".join(lines))
+
+
+def space_anchor_headings(text: str) -> str:
+    """Keep standalone HTML anchors from tripping heading spacing lint."""
+    return re.sub(r'(?m)^(<a\s+id="[^"]+"></a>)\n(#{1,6}\s)', r"\1\n\n\2", text)
 
 
 # ---------------------------------------------------------------------------
 # Frontmatter / doc parsing
 # ---------------------------------------------------------------------------
+
+DOC_PLATFORMS = ("myst-md", "fern-mdx")
+DOC_EXTENSIONS = {
+    "myst-md": ".md",
+    "fern-mdx": ".mdx",
+}
 
 
 @dataclass
@@ -252,45 +263,147 @@ def _current_dict(root: dict, stack: list[tuple[str, dict, int]]) -> dict:
     return d
 
 
-def parse_doc(path: Path) -> DocPage:
-    """Parse a documentation file into a DocPage."""
-    raw = path.read_text(encoding="utf-8")
-    fm, body = parse_yaml_frontmatter(raw)
+def _as_string(value: object) -> str:
+    """Return a stripped string for scalar frontmatter values."""
+    return str(value or "").strip()
 
-    page = DocPage(path=path, raw=raw, frontmatter=fm, body=body)
 
-    # Extract metadata from frontmatter
+def _as_list(value: object) -> list[str]:
+    """Normalize YAML scalar/list frontmatter values into a string list."""
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    return []
+
+
+def _title_from_body(body: str, fallback: str) -> str:
+    """Read the first H1 from a page body, falling back to the file stem."""
+    match = re.search(r"^#\s+(.+)$", body, flags=re.MULTILINE)
+    return match.group(1).strip() if match else fallback
+
+
+def strip_commented_out_blocks(text: str) -> str:
+    """Remove hidden Markdown/MDX comments while preserving fenced examples."""
+    chunks: list[tuple[bool, str]] = []
+    current: list[str] = []
+    in_fence = False
+
+    for line in text.splitlines(keepends=True):
+        if line.lstrip().startswith("```"):
+            if not in_fence:
+                if current:
+                    chunks.append((False, "".join(current)))
+                    current = []
+                in_fence = True
+            current.append(line)
+            if in_fence and len(current) > 1:
+                chunks.append((True, "".join(current)))
+                current = []
+                in_fence = False
+            continue
+        current.append(line)
+
+    if current:
+        chunks.append((in_fence, "".join(current)))
+
+    def _strip(chunk: str) -> str:
+        chunk = re.sub(r"<!--.*?-->", "", chunk, flags=re.DOTALL)
+        chunk = re.sub(r"\{/\*.*?\*/\}", "", chunk, flags=re.DOTALL)
+        chunk = re.sub(r"<!--.*\Z", "", chunk, flags=re.DOTALL)
+        chunk = re.sub(r"\{/\*.*\Z", "", chunk, flags=re.DOTALL)
+        return chunk
+
+    return "".join(chunk if is_fence else _strip(chunk) for is_fence, chunk in chunks)
+
+
+def _populate_myst_markdown_fields(page: DocPage, fm: dict, body: str) -> None:
+    """Populate DocPage fields from legacy MyST Markdown frontmatter."""
     title_block = fm.get("title", {})
     if isinstance(title_block, dict):
-        page.title = title_block.get("page", title_block.get("nav", ""))
+        page.title = _as_string(title_block.get("page") or title_block.get("nav"))
     elif isinstance(title_block, str):
-        page.title = title_block
+        page.title = title_block.strip()
+    if not page.title:
+        page.title = _title_from_body(body, page.path.stem)
 
     desc = fm.get("description", "")
     if isinstance(desc, dict):
-        main = str(desc.get("main") or "").strip()
-        agent = str(desc.get("agent") or "").strip()
+        main = _as_string(desc.get("main"))
+        agent = _as_string(desc.get("agent"))
         if agent:
             page.description = agent
             page.description_is_agent = True
         else:
             page.description = main
     else:
-        page.description = str(desc or "").strip()
-    page.keywords = fm.get("keywords", [])
-    page.tags = fm.get("tags", [])
+        page.description = _as_string(desc)
+
+    page.keywords = _as_list(fm.get("keywords", []))
+    page.tags = _as_list(fm.get("tags", []))
 
     content = fm.get("content", {})
     if isinstance(content, dict):
-        page.content_type = content.get("type", "")
-        page.difficulty = content.get("difficulty", "")
-        page.audience = content.get("audience", [])
+        page.content_type = _as_string(content.get("type"))
+        page.difficulty = _as_string(content.get("difficulty"))
+        page.audience = _as_list(content.get("audience", []))
 
     skill = fm.get("skill", {})
     if isinstance(skill, dict):
-        page.skill_priority = _parse_skill_priority(skill.get("priority"), path)
+        page.skill_priority = _parse_skill_priority(skill.get("priority"), page.path)
     else:
-        page.skill_priority = _parse_skill_priority(fm.get("skill_priority"), path)
+        page.skill_priority = _parse_skill_priority(fm.get("skill_priority"), page.path)
+
+
+def _populate_fern_mdx_fields(page: DocPage, fm: dict, body: str) -> None:
+    """Populate DocPage fields from Fern MDX frontmatter.
+
+    Fern pages use flat metadata. ``description-agent`` is the Fern equivalent
+    of legacy MyST ``description.agent`` and should drive skill routing.
+    """
+    page.title = _as_string(fm.get("title") or fm.get("sidebar-title"))
+    if not page.title:
+        page.title = _title_from_body(body, page.path.stem)
+
+    agent_description = _as_string(
+        fm.get("description-agent") or fm.get("description_agent")
+    )
+    if agent_description:
+        page.description = agent_description
+        page.description_is_agent = True
+    else:
+        page.description = _as_string(fm.get("description"))
+
+    page.keywords = _as_list(fm.get("keywords", []))
+    page.tags = _as_list(fm.get("tags", []))
+
+    content = fm.get("content", {})
+    if isinstance(content, dict):
+        page.content_type = _as_string(content.get("type"))
+        page.difficulty = _as_string(content.get("difficulty"))
+        page.audience = _as_list(content.get("audience", []))
+
+    skill = fm.get("skill", {})
+    if isinstance(skill, dict):
+        page.skill_priority = _parse_skill_priority(skill.get("priority"), page.path)
+    else:
+        page.skill_priority = _parse_skill_priority(fm.get("skill_priority"), page.path)
+
+
+def parse_doc(path: Path, doc_platform: str = "myst-md") -> DocPage:
+    """Parse a documentation file into a DocPage."""
+    raw = path.read_text(encoding="utf-8")
+    fm, body = parse_yaml_frontmatter(raw)
+    body = strip_commented_out_blocks(body)
+
+    page = DocPage(path=path, raw=raw, frontmatter=fm, body=body)
+
+    if doc_platform == "myst-md":
+        _populate_myst_markdown_fields(page, fm, body)
+    elif doc_platform == "fern-mdx":
+        _populate_fern_mdx_fields(page, fm, body)
+    else:
+        raise ValueError(f"unsupported doc platform: {doc_platform}")
 
     page.category = path.parent.name if path.parent.name != "docs" else "root"
     page.sections = _extract_sections(body)
@@ -339,8 +452,98 @@ def _extract_sections(body: str) -> list[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 
 
+def _format_admonition(title: str, body: str) -> str:
+    """Format an admonition-like block as portable markdown."""
+    clean_title = title.strip() or "Note"
+    lines = [
+        line
+        for line in body.strip().split("\n")
+        if not re.match(r"^\s*:[a-z_-]+:", line)
+    ]
+    while lines and not lines[0].strip():
+        lines.pop(0)
+    while lines and not lines[-1].strip():
+        lines.pop()
+    if not lines:
+        return f"**{clean_title}**"
+    return f"**{clean_title}:**\n\n" + "\n".join(lines).strip()
+
+
+def _format_markdown_table(rows: list[list[str]], header_rows: int = 1) -> str:
+    """Format parsed directive table rows as standard Markdown."""
+    if not rows:
+        return ""
+    width = max(len(row) for row in rows)
+    normalized_rows = [row + [""] * (width - len(row)) for row in rows]
+    header = normalized_rows[0] if header_rows else [""] * width
+    body_rows = normalized_rows[1:] if header_rows else normalized_rows
+
+    lines = [
+        "| " + " | ".join(cell.strip() for cell in header) + " |",
+        "| " + " | ".join("---" for _ in range(width)) + " |",
+    ]
+    for row in body_rows:
+        lines.append("| " + " | ".join(cell.strip() for cell in row) + " |")
+    return "\n".join(lines)
+
+
+def _format_myst_list_table(block: str) -> str:
+    """Convert a MyST ``list-table`` directive into a Markdown table."""
+    option_lines: list[str] = []
+    content_lines: list[str] = []
+    for line in block.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith(":"):
+            option_lines.append(stripped)
+        else:
+            content_lines.append(line)
+
+    header_rows = 1
+    for option in option_lines:
+        if option.startswith(":header-rows:"):
+            _, _, value = option.partition(":header-rows:")
+            try:
+                header_rows = int(value.strip())
+            except ValueError:
+                header_rows = 1
+
+    rows: list[list[str]] = []
+    current_row: list[str] | None = None
+    for line in content_lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("* - "):
+            current_row = [stripped[4:].strip()]
+            rows.append(current_row)
+        elif stripped.startswith("- ") and current_row is not None:
+            current_row.append(stripped[2:].strip())
+        elif current_row is not None:
+            current_row[-1] = f"{current_row[-1]} {stripped}".strip()
+
+    return _format_markdown_table(rows, header_rows=header_rows)
+
+
+def _format_myst_figure(block: str) -> str:
+    """Convert a MyST ``figure`` directive into Markdown image syntax."""
+    first_line, _, rest = block.partition("\n")
+    image_path = first_line.strip()
+    alt = ""
+    for line in rest.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith(":alt:"):
+            alt = stripped[len(":alt:") :].strip()
+            break
+    return f"![{alt}]({image_path})"
+
+
 def clean_myst_directives(text: str) -> str:
     """Convert MyST/Sphinx directives to standard markdown equivalents."""
+    text = strip_commented_out_blocks(text)
+
+    # MyST explicit anchors -> HTML anchors, matching Fern MDX source.
+    text = re.sub(r"(?m)^\(([-A-Za-z0-9_:.]+)\)=\s*$", r'<a id="\1"></a>', text)
+
     # Multi-line {include} directives with :start-after: etc.
     text = re.sub(
         r"```\{include\}\s*([^\n]+)\n(?::[^\n]+\n)*```",
@@ -352,6 +555,13 @@ def clean_myst_directives(text: str) -> str:
     text = re.sub(
         r"```\{include\}\s*([^\n]+)\n```",
         r"> *Content included from \1 — see the original doc for full text.*",
+        text,
+    )
+
+    # {figure} blocks -> standard image syntax.
+    text = re.sub(
+        r"```\{figure\}\s*([^\n]+(?:\n(?::[^\n]+|[ \t]*))*?)\n```",
+        lambda m: _format_myst_figure(m.group(1)),
         text,
     )
 
@@ -369,55 +579,55 @@ def clean_myst_directives(text: str) -> str:
         text,
     )
 
-    def _format_admonition(title: str, body: str) -> str:
-        """Format an admonition as a blockquote, stripping directive lines."""
-        lines = [
-            line
-            for line in body.strip().split("\n")
-            if not re.match(r"^\s*:[a-z_-]+:", line)
-        ]
-        while lines and not lines[0].strip():
-            lines.pop(0)
-        while lines and not lines[-1].strip():
-            lines.pop()
-        if not lines:
-            return f"> **{title}**"
-        result = f"> **{title}:** {lines[0].strip()}"
-        for line in lines[1:]:
-            result += f"\n> {line}" if line.strip() else "\n>"
-        return result
+    # :::{list-table} ... ::: -> Markdown table.
+    text = re.sub(
+        r":{3,}\{list-table\}[^\n]*\n(.*?)\n:{3,}",
+        lambda m: _format_myst_list_table(m.group(1)),
+        text,
+        flags=re.DOTALL,
+    )
 
     # :::{admonition} with optional :class: etc. — must come before note/tip/warning
     text = re.sub(
-        r":::\{admonition\}\s*([^\n]*)\n(.*?)\n:::",
+        r":{3,}\{admonition\}\s*([^\n]*)\n(.*?)\n:{3,}",
         lambda m: _format_admonition(m.group(1).strip(), m.group(2)),
         text,
         flags=re.DOTALL,
     )
 
-    # :::{note} ... ::: -> > **Note:** ...
+    # :::{note} ... ::: -> **Note:** ...
     text = re.sub(
-        r":::\{note\}\s*\n(.*?)\n:::",
-        lambda m: _format_admonition("Note", m.group(1)),
+        r":{3,}\{note\}[ \t]*([^\n]*)\n(.*?)\n:{3,}",
+        lambda m: _format_admonition(m.group(1).strip() or "Note", m.group(2)),
         text,
         flags=re.DOTALL,
     )
     text = re.sub(
-        r":::\{tip\}\s*\n(.*?)\n:::",
-        lambda m: _format_admonition("Tip", m.group(1)),
+        r":{3,}\{tip\}[ \t]*([^\n]*)\n(.*?)\n:{3,}",
+        lambda m: _format_admonition(m.group(1).strip() or "Tip", m.group(2)),
         text,
         flags=re.DOTALL,
     )
     text = re.sub(
-        r":::\{warning\}\s*\n(.*?)\n:::",
-        lambda m: _format_admonition("Warning", m.group(1)),
+        r":{3,}\{warning\}[ \t]*([^\n]*)\n(.*?)\n:{3,}",
+        lambda m: _format_admonition(m.group(1).strip() or "Warning", m.group(2)),
+        text,
+        flags=re.DOTALL,
+    )
+    text = re.sub(
+        r":{3,}\{caution\}[ \t]*([^\n]*)\n(.*?)\n:{3,}",
+        lambda m: _format_admonition(m.group(1).strip() or "Warning", m.group(2)),
         text,
         flags=re.DOTALL,
     )
 
-    # Remove SPDX and markdownlint comment blocks
-    text = re.sub(r"<!--\s*SPDX-.*?-->", "", text, flags=re.DOTALL)
-    text = re.sub(r"<!--\s*markdownlint-.*?-->", "", text, flags=re.DOTALL)
+    # :::{dropdown} ... ::: -> bold titled details block.
+    text = re.sub(
+        r":{3,}\{dropdown\}[ \t]*([^\n]*)\n(.*?)\n:{3,}",
+        lambda m: _format_admonition(m.group(1).strip() or "Details", m.group(2)),
+        text,
+        flags=re.DOTALL,
+    )
 
     # Strip "Contents" TOC sections (navigation artifacts, not content)
     text = re.sub(
@@ -430,6 +640,45 @@ def clean_myst_directives(text: str) -> str:
     # Clean up excessive blank lines
     text = re.sub(r"\n{3,}", "\n\n", text)
 
+    return text.strip()
+
+
+def _mdx_title_attr(attrs: str, default: str) -> str:
+    """Extract a simple Fern component title attr."""
+    match = re.search(
+        r"""\btitle=(?:"([^"]+)"|'([^']+)'|\{["']([^"']+)["']\})""",
+        attrs,
+    )
+    if not match:
+        return default
+    for group in match.groups():
+        if group:
+            return group
+    return default
+
+
+def clean_fern_mdx(text: str) -> str:
+    """Convert Fern MDX components to portable markdown equivalents."""
+    text = strip_commented_out_blocks(text)
+
+    for component, default_title in (
+        ("Warning", "Warning"),
+        ("Tip", "Tip"),
+        ("Note", "Note"),
+        ("Info", "Note"),
+        ("Accordion", "Details"),
+    ):
+        text = re.sub(
+            rf"<{component}\b((?:\"[^\"]*\"|'[^']*'|[^'\">])*)>\s*(.*?)\s*</{component}>",
+            lambda m, default=default_title: _format_admonition(
+                _mdx_title_attr(m.group(1), default), m.group(2)
+            ),
+            text,
+            flags=re.DOTALL,
+        )
+
+    # Collapse excess blank lines.
+    text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
@@ -492,6 +741,7 @@ def rewrite_doc_paths(
     docs_dir: Path,
     doc_to_skill: dict[str, str],
     html_baseurl: str | None = None,
+    doc_platform: str = "myst-md",
 ) -> str:
     """Resolve relative doc paths to skill cross-refs or published URLs.
 
@@ -500,8 +750,8 @@ def rewrite_doc_paths(
     repo). Rewrite precedence for each Markdown link ``[text](path)``:
 
     1. If the target is an external URL, an anchor, or a ``mailto:``
-       reference, or the target is not a ``.md`` / ``.html`` file, leave
-       it untouched.
+       reference, or the target is not a recognized doc link for the selected
+       platform, leave it untouched.
     2. If the target resolves to a doc that has a generated skill,
        replace the whole link with ``text (use the `<skill>` skill)``.
     3. If the target is a page inside ``docs/``, emit
@@ -517,6 +767,8 @@ def rewrite_doc_paths(
     repo_root = docs_dir.parent
     source_dir = source_page.path.parent
 
+    doc_extension = DOC_EXTENSIONS.get(doc_platform, ".md")
+
     def _to_html_url(resolved: Path, frag: str) -> str | None:
         """Published URL for a doc under ``docs/``; ``None`` otherwise."""
         if not html_baseurl:
@@ -527,6 +779,32 @@ def rewrite_doc_paths(
             return None
         html_path = rel_to_docs.with_suffix(".html").as_posix()
         return f"{html_baseurl}{html_path}{frag}"
+
+    def _candidate_doc_paths(path_no_frag: str) -> list[Path]:
+        """Resolve a Markdown/Fern link target to possible source files."""
+        if doc_platform == "fern-mdx":
+            route = path_no_frag.lstrip("/")
+            if path_no_frag.startswith("/"):
+                if not route:
+                    return []
+                base = docs_dir / route
+            else:
+                base = source_dir / path_no_frag
+            if base.suffix:
+                return [base.resolve()]
+            return [
+                base.with_suffix(doc_extension).resolve(),
+                (base / f"index{doc_extension}").resolve(),
+            ]
+
+        suffix = Path(path_no_frag).suffix
+        if suffix not in {".md", ".mdx", ".html", ".png", ".jpg", ".jpeg", ".svg"}:
+            return []
+
+        resolved = (source_dir / path_no_frag).resolve()
+        if suffix == ".html":
+            return [resolved.with_suffix(doc_extension)]
+        return [resolved]
 
     def _resolve_link(match: re.Match) -> str:
         link_text = match.group(1)
@@ -544,31 +822,35 @@ def rewrite_doc_paths(
             path_no_frag = raw_path
             frag = ""
 
-        # Skip non-doc files
-        if not path_no_frag.endswith(".md") and not path_no_frag.endswith(".html"):
-            return match.group(0)
+        if "?" in path_no_frag:
+            path_no_frag, _, _query = path_no_frag.partition("?")
 
-        # Resolve relative path against the source doc's directory
-        resolved = (source_dir / path_no_frag).resolve()
-        try:
-            rel_to_repo = resolved.relative_to(repo_root)
-        except ValueError:
+        candidates = _candidate_doc_paths(path_no_frag)
+        if not candidates:
             return match.group(0)
 
         # Check if target doc maps to a generated skill
-        rel_str = str(rel_to_repo)
-        if rel_str in doc_to_skill:
-            skill_name = doc_to_skill[rel_str]
-            return f"{link_text} (use the `{skill_name}` skill)"
+        for resolved in candidates:
+            try:
+                rel_to_repo = resolved.relative_to(repo_root)
+            except ValueError:
+                continue
+            rel_str = rel_to_repo.as_posix()
+            if rel_str in doc_to_skill:
+                skill_name = doc_to_skill[rel_str]
+                return f"{link_text} (use the `{skill_name}` skill)"
 
         # Self-contained fallback: published URL or strip the hyperlink.
-        url = _to_html_url(resolved, frag)
-        if url is not None:
-            return f"[{link_text}]({url})"
+        for resolved in candidates:
+            url = _to_html_url(resolved, frag)
+            if url is not None:
+                return f"[{link_text}]({url})"
         return link_text
 
-    # Rewrite markdown links: [text](path)
-    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _resolve_link, text)
+    # Rewrite markdown links: [text](path). Keep matches on one line so
+    # ordinary bracketed prose, such as version ranges, cannot consume a later
+    # link and corrupt the generated skill text.
+    text = re.sub(r"\[([^\[\]\n]+)\]\(([^)\n]+)\)", _resolve_link, text)
 
     # Rewrite include placeholders: "Content included from <path>"
     def _resolve_include(match: re.Match) -> str:
@@ -669,14 +951,29 @@ def _split_description_trigger(desc: str) -> tuple[str, str]:
     return covers, trigger
 
 
-_WARNING_BLOCK_RE = re.compile(
-    r":::\{warning\}(?:[ \t]+([^\n]+))?\n(.*?)\n:::",
+_MYST_WARNING_BLOCK_RE = re.compile(
+    r":{3,}\{(?:warning|caution)\}(?:[ \t]+([^\n]+))?\n(.*?)\n:{3,}",
     re.DOTALL,
 )
+_FERN_WARNING_BLOCK_RE = re.compile(r"<Warning\b([^>]*)>(.*?)</Warning>", re.DOTALL)
 
 
-def _extract_gotchas(pages: list[DocPage]) -> list[str]:
-    """Pull ``:::{warning}`` admonitions out of the source pages.
+def _warning_blocks(page: DocPage, doc_platform: str) -> list[tuple[str, str]]:
+    """Return ``(title, body)`` pairs for warning-like source blocks."""
+    body = strip_commented_out_blocks(page.body)
+    if doc_platform == "fern-mdx":
+        return [
+            (_mdx_title_attr(m.group(1), ""), m.group(2))
+            for m in _FERN_WARNING_BLOCK_RE.finditer(body)
+        ]
+    return [
+        ((m.group(1) or "").strip(), m.group(2))
+        for m in _MYST_WARNING_BLOCK_RE.finditer(body)
+    ]
+
+
+def _extract_gotchas(pages: list[DocPage], doc_platform: str = "myst-md") -> list[str]:
+    """Pull warning admonitions out of the source pages.
 
     Returns a list of markdown bullets suitable for a top-level
     ``## Gotchas`` section. The admonition stays in place inline, but
@@ -692,9 +989,9 @@ def _extract_gotchas(pages: list[DocPage]) -> list[str]:
     bullets: list[str] = []
     seen: set[str] = set()
     for page in pages:
-        for m in _WARNING_BLOCK_RE.finditer(page.body):
-            title = (m.group(1) or "").strip().rstrip(".!?")
-            body = m.group(2).strip()
+        for raw_title, raw_body in _warning_blocks(page, doc_platform):
+            title = raw_title.strip().rstrip(".!?")
+            body = raw_body.strip()
             # Strip any directive metadata lines such as ``:class: ...``
             body_lines = [
                 ln
@@ -1104,6 +1401,15 @@ def markdown_spdx_header() -> str:
     )
 
 
+def canonicalize_leading_h1(body: str, title: str) -> str:
+    """Replace a source page's leading H1 with the canonical frontmatter title."""
+    if not title:
+        return body
+    if re.match(r"^#\s+.+(?:\n|$)", body):
+        return re.sub(r"^#\s+.+(?:\n|$)", f"# {title}\n", body, count=1)
+    return f"# {title}\n\n{body}".rstrip()
+
+
 def partition_skill_pages(
     pages: list[DocPage],
 ) -> tuple[list[DocPage], list[DocPage], list[DocPage], list[DocPage]]:
@@ -1145,6 +1451,7 @@ def generate_skill(
     docs_dir: Path | None = None,
     doc_to_skill: dict[str, str] | None = None,
     html_baseurl: str | None = None,
+    doc_platform: str = "myst-md",
     dry_run: bool = False,
 ) -> dict:
     """Generate a complete skill directory from a group of doc pages.
@@ -1159,7 +1466,10 @@ def generate_skill(
     """
     def _clean(text: str, source: DocPage) -> str:
         """Apply directive cleanup and path rewriting for a source page."""
-        result = clean_myst_directives(text)
+        if doc_platform == "fern-mdx":
+            result = clean_fern_mdx(text)
+        else:
+            result = clean_myst_directives(text)
         if docs_dir and doc_to_skill is not None:
             result = rewrite_doc_paths(
                 result,
@@ -1167,6 +1477,7 @@ def generate_skill(
                 docs_dir,
                 doc_to_skill,
                 html_baseurl=html_baseurl,
+                doc_platform=doc_platform,
             )
         return result
 
@@ -1207,7 +1518,7 @@ def generate_skill(
     # pages at the top so the agent sees non-obvious corrections before it
     # commits to a path through the steps. The warnings stay in place
     # inline; this section is a directed summary, not a replacement.
-    gotchas = _extract_gotchas(procedures)
+    gotchas = _extract_gotchas(procedures, doc_platform=doc_platform)
     if gotchas:
         lines.append("## Gotchas")
         lines.append("")
@@ -1241,8 +1552,7 @@ def generate_skill(
             lines.append(item)
         lines.append("")
 
-    # Procedural steps from how_to and get_started pages
-    step_num = 0
+    # Procedural sections from how_to and get_started pages
     skip_sections = {"prerequisites", "before you begin", "troubleshooting"}
     related_sections = {"related topics", "next steps"}
     collected_related: list[str] = []  # raw content from related sections
@@ -1266,9 +1576,8 @@ def generate_skill(
                     lines.append("")
                 continue
 
-            step_num += 1
             cleaned_content = _clean(content, pp)
-            lines.append(f"## Step {step_num}: {heading}")
+            lines.append(f"## {heading}")
             lines.append("")
             lines.append(cleaned_content)
             lines.append("")
@@ -1334,7 +1643,12 @@ def generate_skill(
     ref_files: dict[str, str] = {}
     for rp in deferred_procedures + reference_pages + context_pages:
         ref_name = rp.path.stem + ".md"
-        body = normalize_heading_levels(_clean(rp.body, rp))
+        body = _clean(rp.body, rp)
+        if doc_platform == "myst-md" and rp.title:
+            body = canonicalize_leading_h1(body, rp.title)
+        elif doc_platform == "fern-mdx" and rp.title and not body.startswith("# "):
+            body = f"# {rp.title}\n\n{body}".rstrip()
+        body = normalize_heading_levels(body)
         ref_files[ref_name] = body
 
     # --- Write output ---
@@ -1436,33 +1750,43 @@ EXCLUDED_PATTERNS = {
 }
 
 
-def scan_docs(docs_dir: Path) -> list[DocPage]:
+def _is_excluded_doc(path: Path, doc_platform: str) -> bool:
+    """Return whether a page should be skipped for the selected source format."""
+    if path.name in EXCLUDED_PATTERNS:
+        return True
+    if doc_platform == "fern-mdx" and path.with_suffix(".md").name in EXCLUDED_PATTERNS:
+        return True
+    return False
+
+
+def scan_docs(docs_dir: Path, doc_platform: str = "myst-md") -> list[DocPage]:
     """Recursively scan a directory for documentation markdown files."""
     pages: list[DocPage] = []
-    docs_root_index = (docs_dir / "index.md").resolve()
-    for md_path in sorted(docs_dir.rglob("*.md")):
+    doc_extension = DOC_EXTENSIONS[doc_platform]
+    docs_root_index = (docs_dir / f"index{doc_extension}").resolve()
+    for doc_path in sorted(docs_dir.rglob(f"*{doc_extension}")):
         # Skip excluded files
-        if md_path.name in EXCLUDED_PATTERNS:
+        if _is_excluded_doc(doc_path, doc_platform):
             continue
         # Skip the top-level docs/index.md (Sphinx landing page — mostly
         # boilerplate). Subdirectory index.md files (for example
         # docs/get-started/platform-setup/index.md) are hub pages with
         # real content and should be included so links to them can
         # resolve to a generated skill instead of a file path.
-        if md_path.resolve() == docs_root_index:
+        if doc_path.resolve() == docs_root_index:
             continue
         # Skip include fragments and templates
-        if md_path.parent.name.startswith("_"):
+        if doc_path.parent.name.startswith("_"):
             continue
         # Skip build artifacts
-        if "_build" in md_path.parts:
+        if "_build" in doc_path.parts:
             continue
 
         try:
-            page = parse_doc(md_path)
+            page = parse_doc(doc_path, doc_platform=doc_platform)
             pages.append(page)
         except Exception as e:
-            print(f"  warning: failed to parse {md_path}: {e}", file=sys.stderr)
+            print(f"  warning: failed to parse {doc_path}: {e}", file=sys.stderr)
 
     return pages
 
@@ -1484,10 +1808,10 @@ def main():
                           defer siblings
 
             Examples:
-              %(prog)s docs/ .agents/skills/ --prefix nemoclaw-user
-              %(prog)s docs/ .agents/skills/ --strategy individual --prefix nemoclaw-user
-              %(prog)s docs/ .agents/skills/ --prefix nemoclaw-user --name-map about=overview
-              %(prog)s docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
+              %(prog)s docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
+              %(prog)s docs/ .agents/skills/ --strategy individual --prefix nemoclaw-user --doc-platform fern-mdx
+              %(prog)s docs/ .agents/skills/ --prefix nemoclaw-user --name-map about=overview --doc-platform fern-mdx
+              %(prog)s docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx --dry-run
         """),
     )
     parser.add_argument(
@@ -1504,6 +1828,12 @@ def main():
         choices=list(STRATEGIES.keys()),
         default="smart",
         help="Grouping strategy (default: smart)",
+    )
+    parser.add_argument(
+        "--doc-platform",
+        choices=DOC_PLATFORMS,
+        default="myst-md",
+        help="Documentation source format to parse (default: myst-md)",
     )
     parser.add_argument(
         "--dry-run",
@@ -1555,8 +1885,8 @@ def main():
         PROJECT_STOP.update(args.prefix.lower().split("-"))
         PROJECT_STOP.update(args.prefix.lower().split("_"))
 
-    print(f"Scanning {args.docs_dir}...")
-    pages = scan_docs(args.docs_dir)
+    print(f"Scanning {args.docs_dir} as {args.doc_platform}...")
+    pages = scan_docs(args.docs_dir, doc_platform=args.doc_platform)
     print(f"  Found {len(pages)} documentation pages")
 
     # Resolve {include} directives so inlined content is available for
@@ -1603,7 +1933,7 @@ def main():
         for page in group_pages:
             try:
                 rel = page.path.resolve().relative_to(repo_root)
-                doc_to_skill[str(rel)] = sname
+                doc_to_skill[rel.as_posix()] = sname
             except ValueError:
                 pass
 
@@ -1633,6 +1963,7 @@ def main():
             docs_dir=docs_dir_resolved,
             doc_to_skill=doc_to_skill,
             html_baseurl=html_baseurl,
+            doc_platform=args.doc_platform,
             dry_run=args.dry_run,
         )
         summaries.append(summary)

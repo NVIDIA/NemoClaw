@@ -50,6 +50,7 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Python Package Index | `pypi` |
 | Slack messaging | `slack` |
 | Telegram Bot API | `telegram` |
+| WhatsApp Web messaging | `whatsapp` |
 
 Preview the endpoints before applying:
 
@@ -109,7 +110,7 @@ If delivery fails, open the TUI and send a test message to the bot:
 $ openshell term
 ```
 
-The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, or `slack`).
+The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, `slack`, or `whatsapp`).
 
 ## Slack or Discord Messaging
 
@@ -255,5 +256,5 @@ Use `nemoclaw my-assistant policy-add` for maintained NemoClaw presets.
 
 - Approve or Deny Agent Network Requests (use the `nemoclaw-user-manage-policy` skill) for the interactive OpenShell TUI flow.
 - Customize the Sandbox Network Policy (use the `nemoclaw-user-manage-policy` skill) for static policy edits and raw OpenShell policy files.
-- Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) for Telegram, Discord, and Slack channel configuration.
+- Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) for Telegram, Discord, Slack, and WhatsApp channel configuration.
 - Commands (use the `nemoclaw-user-reference` skill) for the full `policy-add`, `policy-list`, `policy-remove`, and `channels` command reference.

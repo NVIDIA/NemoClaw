@@ -5,6 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { githubApi } from "../advisors/github.mts";
+import { parseArgs, readJson, readJsonIfExists, writeJson } from "../advisors/io.mts";
+
 const DEFAULT_TARGET_WORKFLOW = "nightly-e2e.yaml";
 const DEFAULT_DISPATCH_REF = "main";
 const DEFAULT_ALLOWED_AUTHOR_ASSOCIATIONS = "OWNER,MEMBER";
@@ -15,6 +18,7 @@ type PullRequestPayload = {
   number?: number;
   author_association?: string;
   draft?: boolean;
+  user?: { login?: string };
   head?: {
     ref?: string;
     sha?: string;
@@ -43,6 +47,7 @@ type DispatchInputs = {
   jobs: string;
   target_ref: string;
   pr_number: string;
+  advisor_dispatch_id?: string;
 };
 
 type DispatchPlan = {
@@ -58,15 +63,13 @@ type DispatchPlan = {
   dispatchableJobCount?: number;
   prNumber?: number;
   targetRef?: string;
+  advisorDispatchId?: string;
+  runId?: number;
+  runUrl?: string;
   authorAssociation?: string;
+  authorLogin?: string;
   allowedAuthorAssociations?: string[];
-};
-
-type ParsedArgs = {
-  result?: string;
-  workflowPath?: string;
-  workflow?: string;
-  outDir?: string;
+  allowedByAuthorAllowlist?: boolean;
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -114,10 +117,24 @@ async function main(): Promise<void> {
           inputs: plan.inputs,
           token,
         });
+        let run: { id: number; url: string } | undefined;
+        try {
+          run = await findDispatchedWorkflowRun({
+            repo: plan.repository || "",
+            workflow: plan.workflow,
+            ref: plan.ref,
+            advisorDispatchId: plan.advisorDispatchId || "",
+            token,
+          });
+        } catch (error: unknown) {
+          console.warn(`Could not look up dispatched nightly run: ${error instanceof Error ? error.message : String(error)}`);
+        }
         output = {
           ...plan,
           status: "dispatched",
           reason: `Dispatched ${plan.workflow} for ${plan.jobs?.length || 0} required E2E job(s)`,
+          runId: run?.id,
+          runUrl: run?.url,
         };
       }
     }
@@ -134,37 +151,9 @@ async function main(): Promise<void> {
   }
 
   const summary = renderDispatchSummary(output);
-  fs.writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`);
+  writeJson(outputPath, output);
   fs.writeFileSync(summaryPath, summary);
   console.log(summary);
-}
-
-function parseArgs(argv: string[]): ParsedArgs {
-  const parsed: Record<string, string | undefined> = {};
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg.startsWith("--")) {
-      const key = arg.slice(2).replace(/-([a-z])/g, (_, char: string) => char.toUpperCase());
-      const next = argv[i + 1];
-      if (!next || next.startsWith("--")) {
-        parsed[key] = undefined;
-        continue;
-      }
-      parsed[key] = next;
-      i += 1;
-    }
-  }
-  return parsed;
-}
-
-function readJson<T>(filePath: string): T {
-  return JSON.parse(fs.readFileSync(path.resolve(filePath), "utf8")) as T;
-}
-
-function readJsonIfExists<T>(filePath: string | undefined): T | undefined {
-  if (!filePath) return undefined;
-  const resolved = path.resolve(filePath);
-  return fs.existsSync(resolved) ? readJson<T>(resolved) : undefined;
 }
 
 export function planAutoDispatch({
@@ -219,13 +208,18 @@ export function planAutoDispatch({
   }
 
   const authorAssociation = pr.author_association || "";
+  const authorLogin = pr.user?.login || "";
   const allowedAssociations = parseCsv(env.E2E_ADVISOR_AUTO_DISPATCH_AUTHOR_ASSOCIATIONS || DEFAULT_ALLOWED_AUTHOR_ASSOCIATIONS);
-  if (!allowedAssociations.includes(authorAssociation)) {
+  const allowedAuthorLogins = parseCsv(env.E2E_ADVISOR_AUTO_DISPATCH_ALLOWED_AUTHORS).map(normalizeLogin);
+  const allowedByAssociation = allowedAssociations.includes(authorAssociation);
+  const allowedByAuthorAllowlist = Boolean(authorLogin && allowedAuthorLogins.includes(normalizeLogin(authorLogin)));
+  if (!allowedByAssociation && !allowedByAuthorAllowlist) {
     return {
       ...base,
-      reason: `PR author association ${authorAssociation || "<unknown>"} is not allowed`,
+      reason: `PR author association ${authorAssociation || "<unknown>"} is not allowed and PR author ${authorLogin || "<unknown>"} is not allowlisted`,
       prNumber: pr.number,
       authorAssociation,
+      authorLogin,
       allowedAuthorAssociations: allowedAssociations,
     };
   }
@@ -236,6 +230,8 @@ export function planAutoDispatch({
       reason: "advisor confidence was low",
       prNumber: pr.number,
       authorAssociation,
+      authorLogin,
+      allowedByAuthorAllowlist,
     };
   }
 
@@ -246,6 +242,8 @@ export function planAutoDispatch({
       reason: "advisor did not require any E2E jobs",
       prNumber: pr.number,
       authorAssociation,
+      authorLogin,
+      allowedByAuthorAllowlist,
     };
   }
 
@@ -260,30 +258,22 @@ export function planAutoDispatch({
       reason: "no required advisor recommendations matched dispatchable jobs in the target workflow",
       prNumber: pr.number,
       authorAssociation,
+      authorLogin,
+      allowedByAuthorAllowlist,
       dispatchableJobCount: dispatchableJobs.length,
       recommendedJobs,
       ignoredJobs,
     };
   }
 
-  const maxJobs = Number.parseInt(env.E2E_ADVISOR_AUTO_DISPATCH_MAX_JOBS || "0", 10);
-  if (Number.isFinite(maxJobs) && maxJobs > 0 && jobs.length > maxJobs) {
-    return {
-      ...base,
-      reason: `advisor recommended ${jobs.length} dispatchable jobs, above E2E_ADVISOR_AUTO_DISPATCH_MAX_JOBS=${maxJobs}`,
-      prNumber: pr.number,
-      authorAssociation,
-      jobs,
-      ignoredJobs,
-    };
-  }
-
   const targetRef = pr.head?.sha || pr.head?.ref || "";
   const dispatchRef = env.E2E_ADVISOR_AUTO_DISPATCH_REF || pr.base?.ref || DEFAULT_DISPATCH_REF;
+  const advisorDispatchId = buildAdvisorDispatchId(pr.number, env);
   const inputs = {
     jobs: jobs.join(","),
     target_ref: targetRef,
     pr_number: String(pr.number || ""),
+    advisor_dispatch_id: advisorDispatchId,
   };
 
   return {
@@ -298,8 +288,11 @@ export function planAutoDispatch({
     dispatchableJobCount: dispatchableJobs.length,
     prNumber: pr.number,
     targetRef,
+    advisorDispatchId,
     authorAssociation,
+    authorLogin,
     allowedAuthorAssociations: allowedAssociations,
+    allowedByAuthorAllowlist,
   };
 }
 
@@ -351,6 +344,16 @@ function unique(values: string[]): string[] {
   return [...new Set(values)];
 }
 
+function normalizeLogin(login: string): string {
+  return login.trim().toLowerCase();
+}
+
+function buildAdvisorDispatchId(prNumber: number | undefined, env: StringMap): string {
+  const runId = env.GITHUB_RUN_ID || "local";
+  const attempt = env.GITHUB_RUN_ATTEMPT ? `-${env.GITHUB_RUN_ATTEMPT}` : "";
+  return `advisor-${prNumber || "unknown"}-${runId}${attempt}`;
+}
+
 async function dispatchWorkflow({
   repo,
   workflow,
@@ -368,28 +371,76 @@ async function dispatchWorkflow({
   const safeWorkflow = validateWorkflowFile(workflow);
   const safeRef = validateGitRef(ref);
   const safeInputs = validateDispatchInputs(inputs);
-  const dispatchUrl = `https://api.github.com/repos/${safeRepo}/actions/workflows/${encodeURIComponent(safeWorkflow)}/dispatches`;
-
   // lgtm[js/file-access-to-http] The request body is constructed only after
   // same-repository/OWNER-or-MEMBER gating and strict validation of the target
   // workflow, ref, PR number, and comma-separated E2E job names.
-  const response = await fetch(dispatchUrl, {
-    method: "POST",
-    headers: {
-      "Accept": "application/vnd.github+json",
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "nemoclaw-e2e-advisor-dispatcher",
-    },
-    body: JSON.stringify({ ref: safeRef, inputs: safeInputs }),
-  });
-
-  if (!response.ok) {
+  try {
+    await githubApi<void>(`repos/${safeRepo}/actions/workflows/${encodeURIComponent(safeWorkflow)}/dispatches`, token, {
+      method: "POST",
+      body: { ref: safeRef, inputs: safeInputs },
+      userAgent: "nemoclaw-e2e-advisor-dispatcher",
+    });
+  } catch {
     // Do not include the response body in thrown errors. GitHub API error text
     // is network-controlled and this script records failures to artifact files.
-    throw new Error(`GitHub workflow dispatch failed with HTTP ${response.status}`);
+    throw new Error("GitHub workflow dispatch failed");
   }
+}
+
+type WorkflowRunSearchResult = {
+  workflow_runs?: Array<{
+    id?: number;
+    html_url?: string;
+    display_title?: string;
+    event?: string;
+  }>;
+};
+
+async function findDispatchedWorkflowRun({
+  repo,
+  workflow,
+  ref,
+  advisorDispatchId,
+  token,
+}: {
+  repo: string;
+  workflow: string;
+  ref: string;
+  advisorDispatchId: string;
+  token: string;
+}): Promise<{ id: number; url: string } | undefined> {
+  if (!advisorDispatchId) return undefined;
+
+  const safeRepo = validateRepository(repo);
+  const safeWorkflow = validateWorkflowFile(workflow);
+  const safeRef = validateGitRef(ref);
+  const params = new URLSearchParams({
+    event: "workflow_dispatch",
+    branch: safeRef,
+    per_page: "20",
+  });
+  const runsPath = `repos/${safeRepo}/actions/workflows/${encodeURIComponent(safeWorkflow)}/runs?${params}`;
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    if (attempt > 0) await delay(2000);
+    let data: WorkflowRunSearchResult;
+    try {
+      data = await githubApi<WorkflowRunSearchResult>(runsPath, token, { userAgent: "nemoclaw-e2e-advisor-dispatcher" });
+    } catch (error: unknown) {
+      console.warn(`Could not look up dispatched nightly run: ${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }
+    const match = data.workflow_runs?.find(
+      (run) => run.event === "workflow_dispatch" && run.display_title?.includes(advisorDispatchId),
+    );
+    if (match?.id && match.html_url) return { id: match.id, url: match.html_url };
+  }
+
+  return undefined;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function validateRepository(repo: string): string {
@@ -419,10 +470,15 @@ export function validateDispatchInputs(inputs: DispatchInputs): DispatchInputs {
   if (!/^\d+$/.test(inputs.pr_number)) {
     throw new Error("Refusing to dispatch unsafe pr_number input");
   }
+  const advisorDispatchId = inputs.advisor_dispatch_id;
+  if (advisorDispatchId !== undefined && !/^[A-Za-z0-9_-]{1,100}$/.test(advisorDispatchId)) {
+    throw new Error("Refusing to dispatch unsafe advisor_dispatch_id input");
+  }
   return {
     jobs: jobs.join(","),
     target_ref: inputs.target_ref,
     pr_number: inputs.pr_number,
+    ...(advisorDispatchId ? { advisor_dispatch_id: advisorDispatchId } : {}),
   };
 }
 
@@ -443,6 +499,8 @@ function renderDispatchSummary(result: DispatchPlan): string {
   if (result.workflow) lines.push(`Workflow: \`${result.workflow}\``);
   if (result.ref) lines.push(`Dispatch ref: \`${result.ref}\``);
   if (result.targetRef) lines.push(`Target ref: \`${result.targetRef}\``);
+  if (result.advisorDispatchId) lines.push(`Trace ID: \`${result.advisorDispatchId}\``);
+  if (result.runUrl) lines.push(`Nightly run: ${result.runUrl}`);
   if (Array.isArray(result.jobs) && result.jobs.length > 0) {
     lines.push(`Jobs: ${result.jobs.map((job) => `\`${job}\``).join(", ")}`);
   }

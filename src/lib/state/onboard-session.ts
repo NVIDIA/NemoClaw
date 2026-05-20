@@ -7,6 +7,7 @@
  * step-level progress tracking and file-based locking.
  */
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -82,9 +83,18 @@ export interface Session {
   routerPid: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
+  hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingChannels: string[] | null;
   messagingChannelConfig: MessagingChannelConfig | null;
+  // Channels the operator paused via `nemoclaw <sb> channels stop <ch>`.
+  // Mirrors `SandboxEntry.disabledChannels` so that `rebuild` — which
+  // destroys the registry entry before calling `onboard --resume` —
+  // can carry the paused set across the destroy/recreate window.
+  // Without this mirror, the disabledChannels filter inside createSandbox
+  // reads back `[]` from the freshly-empty registry and the channel
+  // comes back live after rebuild. See #(channels-stop-rebuild bug).
+  disabledChannels: string[] | null;
   // SHA-256 hex digest of every legacy credential value successfully
   // written to the OpenShell gateway during this onboard session, keyed by
   // env-name. Persisted across process restarts so a `--resume` run that
@@ -99,12 +109,25 @@ export interface Session {
   migratedLegacyValueHashes: Record<string, string> | null;
   gpuPassthrough: boolean;
   telegramConfig: TelegramConfig | null;
+  wechatConfig: WechatConfig | null;
   metadata: SessionMetadata;
   steps: Record<string, StepState>;
 }
 
 export interface TelegramConfig {
   requireMention: boolean;
+}
+
+export interface WechatConfig {
+  // Stable per-account id returned by iLink (`ilink_bot_id`). Non-secret.
+  accountId?: string;
+  // Per-account base URL. Rotates via IDC redirects, so a change here is a
+  // signal that we are now talking to a different gateway and the sandbox
+  // must be rebuilt.
+  baseUrl?: string;
+  // WeChat user id of the operator who scanned the QR. PII-adjacent but not
+  // secret — added to the DM allowlist by default.
+  userId?: string;
 }
 
 export interface LockInfo {
@@ -137,12 +160,15 @@ export interface SessionUpdates {
   routerPid?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
-  policyPresets?: string[];
-  messagingChannels?: string[];
+  hermesToolGateways?: string[] | null;
+  policyPresets?: string[] | null;
+  messagingChannels?: string[] | null;
   messagingChannelConfig?: MessagingChannelConfig | null;
+  disabledChannels?: string[] | null;
   migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
+  wechatConfig?: WechatConfig | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
 
@@ -162,6 +188,7 @@ export interface DebugSessionSummary {
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
   nimContainer: string | null;
+  hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   gpuPassthrough: boolean;
   lastStepStarted: string | null;
@@ -178,10 +205,6 @@ function ensureSessionDir(): void {
 
 export function sessionPath(): string {
   return SESSION_FILE;
-}
-
-export function lockPath(): string {
-  return LOCK_FILE;
 }
 
 function defaultSteps(): Record<string, StepState> {
@@ -249,6 +272,18 @@ function parseTelegramConfig(value: unknown): TelegramConfig | null {
   return null;
 }
 
+function parseWechatConfig(value: unknown): WechatConfig | null {
+  if (!isObject(value)) return null;
+  const result: WechatConfig = {};
+  const accountId = readString(value.accountId);
+  const baseUrl = readString(value.baseUrl);
+  const userId = readString(value.userId);
+  if (accountId) result.accountId = accountId;
+  if (baseUrl) result.baseUrl = baseUrl;
+  if (userId) result.userId = userId;
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
   if (!isObject(value)) return undefined;
   return {
@@ -294,17 +329,13 @@ export function sanitizeFailure(
   return step || message ? { step, message, recordedAt } : null;
 }
 
-export function validateStep(step: SessionJsonValue | undefined): boolean {
-  return parseStepState(step) !== null;
-}
-
 // ── Session CRUD ─────────────────────────────────────────────────
 
 export function createSession(overrides: Partial<Session> = {}): Session {
   const now = new Date().toISOString();
   return {
     version: SESSION_VERSION,
-    sessionId: overrides.sessionId ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    sessionId: overrides.sessionId ?? `${Date.now()}-${randomUUID()}`,
     resumable: true,
     status: "in_progress",
     mode: overrides.mode ?? "interactive",
@@ -326,14 +357,17 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig:
       overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
+    hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
     messagingChannelConfig: sanitizeMessagingChannelConfig(overrides.messagingChannelConfig),
+    disabledChannels: readStringArray(overrides.disabledChannels),
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
       : null,
     gpuPassthrough: overrides.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(overrides.telegramConfig),
+    wechatConfig: parseWechatConfig(overrides.wechatConfig),
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
@@ -365,12 +399,15 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
+    hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
     messagingChannelConfig: sanitizeMessagingChannelConfig(data.messagingChannelConfig),
+    disabledChannels: readStringArray(data.disabledChannels),
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),
+    wechatConfig: parseWechatConfig(data.wechatConfig),
     lastStepStarted: readString(data.lastStepStarted),
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
@@ -409,7 +446,7 @@ export function saveSession(session: Session): Session {
   ensureSessionDir();
   const tmpFile = path.join(
     SESSION_DIR,
-    `.onboard-session.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`,
+    `.onboard-session.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
   );
   fs.writeFileSync(tmpFile, JSON.stringify(normalized, null, 2), { mode: 0o600 });
   fs.renameSync(tmpFile, SESSION_FILE);
@@ -776,10 +813,21 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (updates.webSearchConfig === null) {
     safe.webSearchConfig = null;
   }
-  if (Array.isArray(updates.policyPresets)) {
+  if (updates.hermesToolGateways === null) {
+    safe.hermesToolGateways = null;
+  } else if (Array.isArray(updates.hermesToolGateways)) {
+    safe.hermesToolGateways = updates.hermesToolGateways.filter(
+      (value) => typeof value === "string",
+    );
+  }
+  if (updates.policyPresets === null) {
+    safe.policyPresets = null;
+  } else if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }
-  if (Array.isArray(updates.messagingChannels)) {
+  if (updates.messagingChannels === null) {
+    safe.messagingChannels = null;
+  } else if (Array.isArray(updates.messagingChannels)) {
     safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
   }
   if (updates.messagingChannelConfig === null) {
@@ -787,6 +835,13 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else {
     const messagingChannelConfig = sanitizeMessagingChannelConfig(updates.messagingChannelConfig);
     if (messagingChannelConfig) safe.messagingChannelConfig = messagingChannelConfig;
+  }
+  if (updates.disabledChannels === null) {
+    safe.disabledChannels = null;
+  } else if (Array.isArray(updates.disabledChannels)) {
+    safe.disabledChannels = updates.disabledChannels.filter(
+      (value) => typeof value === "string",
+    );
   }
   if (isObject(updates.migratedLegacyValueHashes)) {
     const cleaned: Record<string, string> = {};
@@ -802,6 +857,12 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     safe.telegramConfig = { requireMention: updates.telegramConfig.requireMention };
   } else if (updates.telegramConfig === null) {
     safe.telegramConfig = null;
+  }
+  if (isObject(updates.wechatConfig)) {
+    const parsed = parseWechatConfig(updates.wechatConfig);
+    if (parsed) safe.wechatConfig = parsed;
+  } else if (updates.wechatConfig === null) {
+    safe.wechatConfig = null;
   }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {
@@ -910,6 +971,7 @@ export function summarizeForDebug(
     hermesAuthMethod: session.hermesAuthMethod,
     preferredInferenceApi: session.preferredInferenceApi,
     nimContainer: session.nimContainer,
+    hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
     gpuPassthrough: session.gpuPassthrough,
     lastStepStarted: session.lastStepStarted,

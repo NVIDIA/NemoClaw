@@ -17,16 +17,32 @@ export type TelegramConfig = {
   requireMention?: boolean;
 };
 
+// Non-secret per-account metadata captured by the host-side iLink QR login
+// during onboard (src/lib/onboard/wechat-config.ts). The bot token itself
+// stays in the OpenShell credential store; only these fields are serialized
+// into the build arg, so the in-sandbox adapter can hydrate WEIXIN_ACCOUNT_ID
+// and WEIXIN_BASE_URL without a fresh QR scan on rebuild.
+export type WechatConfig = {
+  accountId?: string;
+  baseUrl?: string;
+  userId?: string;
+};
+
 export type HermesBuildSettings = {
   model: string;
   baseUrl: string;
   providerKey: string;
   inferenceApi: string;
+  managedToolGateways: {
+    brokerEnabled: boolean;
+    presets: string[];
+  };
   messaging: {
     enabledChannels: Set<string>;
     allowedIds: MessagingAllowedIds;
     discordGuilds: DiscordGuilds;
     telegramConfig: TelegramConfig;
+    wechatConfig: WechatConfig;
   };
 };
 
@@ -39,6 +55,14 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
     baseUrl,
     providerKey: env.NEMOCLAW_PROVIDER_KEY || "custom",
     inferenceApi: env.NEMOCLAW_INFERENCE_API || "",
+    managedToolGateways: {
+      brokerEnabled: env.NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER === "1",
+      presets: readBase64Json<string[]>(
+        env,
+        "NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64",
+        "W10=",
+      ),
+    },
     messaging: {
       enabledChannels: new Set(
         readBase64Json<string[]>(env, "NEMOCLAW_MESSAGING_CHANNELS_B64", "W10="),
@@ -54,6 +78,7 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
         "NEMOCLAW_TELEGRAM_CONFIG_B64",
         "e30=",
       ),
+      wechatConfig: readBase64Json<WechatConfig>(env, "NEMOCLAW_WECHAT_CONFIG_B64", "e30="),
     },
   };
 }

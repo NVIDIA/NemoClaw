@@ -4,7 +4,7 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
-import { ROOT } from "./runner";
+import { ROOT, redact } from "./runner";
 import {
   dockerBuild,
   dockerCapture,
@@ -14,7 +14,6 @@ import {
 } from "./adapters/docker";
 
 export const OPENCLAW_SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/sandbox-base";
-export const HERMES_SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/hermes-sandbox-base";
 export const SANDBOX_BASE_TAG = "latest";
 export const OPENSHELL_SANDBOX_MIN_GLIBC = "2.39";
 
@@ -36,6 +35,29 @@ export type SandboxBaseImageResolution = {
   source: "override" | "source-sha" | "latest" | "local";
   glibcVersion: string | null;
 };
+
+const BASE_IMAGE_INPUT_PATHS = ["Dockerfile.base", "nemoclaw-blueprint/blueprint.yaml"];
+
+/**
+ * Combine stderr + stdout from a captured `dockerBuild` failure and pass them
+ * through the runner's redaction so secrets in build output never reach the
+ * terminal. BuildKit splits diagnostics across both streams depending on the
+ * backend and progress mode, so taking only stderr can hide the actual reason
+ * a build failed.
+ */
+export function formatBuildFailureDiagnostics(
+  buildResult: { stderr?: unknown; stdout?: unknown },
+): string {
+  const streams = [buildResult.stderr, buildResult.stdout]
+    .map((stream) => {
+      if (stream == null) return "";
+      if (Buffer.isBuffer(stream)) return stream.toString("utf8");
+      return String(stream);
+    })
+    .map((text) => text.trim())
+    .filter((text) => text.length > 0);
+  return streams.length > 0 ? redact(streams.join("\n")) : "";
+}
 
 export function parseGlibcVersion(output: string | null | undefined): string | null {
   const text = String(output || "");
@@ -93,6 +115,93 @@ export function getSourceShortShaTags(rootDir = ROOT, env: NodeJS.ProcessEnv = p
   if (git.status === 0) push(git.stdout);
 
   return Array.from(new Set(values));
+}
+
+function gitStatus(rootDir: string, args: string[], env: NodeJS.ProcessEnv = process.env): number | null {
+  const git = spawnSync("git", ["-C", rootDir, ...args], {
+    encoding: "utf-8",
+    stdio: "ignore",
+    timeout: 5_000,
+    env,
+  });
+  return git.status;
+}
+
+function gitRefExists(rootDir: string, ref: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return gitStatus(rootDir, ["rev-parse", "--verify", `${ref}^{commit}`], env) === 0;
+}
+
+function gitFetchRemoteBranch(
+  rootDir: string,
+  remote: string,
+  branch: string,
+  localRef: string,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  const normalizedBranch = String(branch || "").trim();
+  if (!normalizedBranch) return;
+
+  spawnSync(
+    "git",
+    [
+      "-C",
+      rootDir,
+      "fetch",
+      "--no-tags",
+      "--depth=1",
+      remote,
+      `+refs/heads/${normalizedBranch}:${localRef}`,
+    ],
+    {
+      encoding: "utf-8",
+      stdio: "ignore",
+      timeout: 30_000,
+      env: { ...env, GIT_TERMINAL_PROMPT: "0" },
+    },
+  );
+}
+
+function gitHasPathDiff(
+  rootDir: string,
+  args: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): boolean | null {
+  const status = gitStatus(rootDir, [...args, "--", ...BASE_IMAGE_INPUT_PATHS], env);
+  if (status === 0) return false;
+  if (status === 1) return true;
+  return null;
+}
+
+export function baseImageInputsChangedSinceMain(
+  rootDir = ROOT,
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const worktreeDiff = gitHasPathDiff(rootDir, ["diff", "--quiet"], env);
+  if (worktreeDiff === true) return true;
+
+  const stagedDiff = gitHasPathDiff(rootDir, ["diff", "--cached", "--quiet"], env);
+  if (stagedDiff === true) return true;
+
+  const baseBranch = String(env.GITHUB_BASE_REF || "main").trim() || "main";
+  const baseRemoteRef = `origin/${baseBranch}`;
+  if (!gitRefExists(rootDir, baseRemoteRef, env)) {
+    gitFetchRemoteBranch(rootDir, "origin", baseBranch, `refs/remotes/origin/${baseBranch}`, env);
+  }
+
+  const candidates = [
+    baseRemoteRef,
+    "origin/main",
+    "upstream/main",
+    "main",
+  ].filter((ref): ref is string => !!ref);
+
+  for (const ref of Array.from(new Set(candidates))) {
+    if (!gitRefExists(rootDir, ref, env)) continue;
+    const diff = gitHasPathDiff(rootDir, ["diff", "--quiet", ref, "HEAD"], env);
+    if (diff != null) return diff;
+  }
+
+  return false;
 }
 
 function localBuildAllowed(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -187,20 +296,38 @@ function resolveLocalCandidate(
 
   if (!localBuildAllowed(options.env)) return null;
 
+  const label = options.label || "sandbox base image";
   console.warn(
-    `  Building ${options.label || "sandbox base image"} locally because no compatible ` +
-      `published base image was found.`,
+    `  Building ${label} locally because no compatible published base image was found.`,
   );
-  dockerBuild(options.dockerfilePath, imageRef, options.rootDir || ROOT, {
-    stdio: ["ignore", "inherit", "inherit"],
+  console.warn("  This is a one-time step and can take several minutes.");
+  // Suppress the full BuildKit log (apt-get output, layer hashes, debconf
+  // warnings) on success — same approach as #3311 for the [2/8] gateway
+  // setup leak. `--quiet` collapses normal output to just the image hash;
+  // `suppressOutput` keeps captured stdio out of the user's terminal.
+  // On failure, surface the captured stderr so the user still gets a
+  // useful diagnostic.
+  const buildResult = dockerBuild(options.dockerfilePath, imageRef, options.rootDir || ROOT, {
+    quiet: true,
+    ignoreError: true,
+    suppressOutput: true,
   });
+  if (buildResult.error || buildResult.status !== 0) {
+    const diagnostics = formatBuildFailureDiagnostics(buildResult);
+    if (diagnostics) console.error(diagnostics);
+    const detail = buildResult.error
+      ? `: ${buildResult.error.message}`
+      : ` (exit ${buildResult.status ?? "unknown"})`;
+    console.error(`  Failed to build ${label}${detail}`);
+    return null;
+  }
 
   const check = options.requireOpenshellSandboxAbi
     ? imageMeetsMinimumGlibc(imageRef, options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC)
     : { ok: true, version: null };
   if (!check.ok) {
     console.error(
-      `  Local ${options.label || "sandbox base image"} ${imageRef} has glibc ` +
+      `  Local ${label} ${imageRef} has glibc ` +
         `${check.version || "unknown"}; expected >= ` +
         `${options.minGlibcVersion || OPENSHELL_SANDBOX_MIN_GLIBC}.`,
     );
@@ -227,6 +354,18 @@ export function resolveSandboxBaseImage(
       if (resolved) return resolved;
     }
 
+    if (baseImageInputsChangedSinceMain(options.rootDir || ROOT, env)) {
+      const local = resolveLocalCandidate(options);
+      if (local) return local;
+      // The base Dockerfile changed, so fail closed instead of silently using stale :latest.
+      return {
+        ref: options.localTag,
+        digest: null,
+        source: "local",
+        glibcVersion: null,
+      };
+    }
+
     const latestRef = `${options.imageName}:${SANDBOX_BASE_TAG}`;
     const resolved = resolvePulledCandidate(options.imageName, latestRef, "latest", options);
     if (resolved) return resolved;
@@ -245,8 +384,4 @@ export function buildLocalBaseTag(prefix: string, rootDir = ROOT, env = process.
 
 export function defaultOpenclawBaseDockerfile(rootDir = ROOT): string {
   return path.join(rootDir, "Dockerfile.base");
-}
-
-export function defaultHermesBaseDockerfile(rootDir = ROOT): string {
-  return path.join(rootDir, "agents", "hermes", "Dockerfile.base");
 }

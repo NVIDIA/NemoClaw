@@ -12,7 +12,7 @@ NC='\033[0m'
 info() { echo -e "${GREEN}[install]${NC} $1"; }
 warn() { echo -e "${YELLOW}[install]${NC} $1"; }
 fail() {
-  echo -e "${RED}[install]${NC} $1"
+  echo -e "${RED}[install]${NC} $1" >&2
   exit 1
 }
 
@@ -39,7 +39,10 @@ MIN_VERSION="0.0.39"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
 MAX_VERSION="0.0.39"
-# Pin fresh installs to this version instead of pulling "latest".
+# Pin fresh installs to this version. The TS installer normally overrides this
+# via NEMOCLAW_OPENSHELL_PIN_VERSION after resolving the highest published
+# OpenShell release that satisfies the blueprint's max_openshell_version
+# (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
 DEV_MIN_VERSION="0.0.39"
 
@@ -53,6 +56,44 @@ if [ "$CHANNEL" = "auto" ]; then
   RESOLVED_CHANNEL="stable"
 else
   RESOLVED_CHANNEL="$CHANNEL"
+fi
+
+# Honour the TS installer's blueprint-derived env overrides only on the stable
+# channel — the dev channel installs from the `dev` tag and uses DEV_MIN_VERSION
+# instead, so a malformed override should not abort a dev install (#3446 review).
+# The TS layer passes MIN/MAX/PIN from the blueprint so a single source of truth
+# (nemoclaw-blueprint/blueprint.yaml) drives the install (#3404).
+#
+# Validation is inlined (rather than wrapped in a helper that returns via
+# $(...)) so a `fail` triggered here is not captured into the variable
+# assignment. `fail` now writes to stderr (#3446 CodeRabbit), but keeping
+# the validation outside of $(...) avoids relying on that.
+if [ "$RESOLVED_CHANNEL" != "dev" ]; then
+  if [ -n "${NEMOCLAW_OPENSHELL_MIN_VERSION:-}" ]; then
+    if [[ "$NEMOCLAW_OPENSHELL_MIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      MIN_VERSION="$NEMOCLAW_OPENSHELL_MIN_VERSION"
+    else
+      fail "NEMOCLAW_OPENSHELL_MIN_VERSION='$NEMOCLAW_OPENSHELL_MIN_VERSION' is not a valid X.Y.Z version."
+    fi
+  fi
+  if [ -n "${NEMOCLAW_OPENSHELL_MAX_VERSION:-}" ]; then
+    if [[ "$NEMOCLAW_OPENSHELL_MAX_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      MAX_VERSION="$NEMOCLAW_OPENSHELL_MAX_VERSION"
+      # Intentionally do NOT default PIN_VERSION to the overridden MAX here.
+      # If the TS resolver couldn't reach GitHub (rate-limited / offline) it
+      # only sets MIN/MAX, never PIN — falling through to the script's
+      # hardcoded PIN_VERSION is the known-good safe path (#3446 CodeRabbit).
+    else
+      fail "NEMOCLAW_OPENSHELL_MAX_VERSION='$NEMOCLAW_OPENSHELL_MAX_VERSION' is not a valid X.Y.Z version."
+    fi
+  fi
+  if [ -n "${NEMOCLAW_OPENSHELL_PIN_VERSION:-}" ]; then
+    if [[ "$NEMOCLAW_OPENSHELL_PIN_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+      PIN_VERSION="$NEMOCLAW_OPENSHELL_PIN_VERSION"
+    else
+      fail "NEMOCLAW_OPENSHELL_PIN_VERSION='$NEMOCLAW_OPENSHELL_PIN_VERSION' is not a valid X.Y.Z version."
+    fi
+  fi
 fi
 
 if [ "$RESOLVED_CHANNEL" = "dev" ]; then
@@ -81,7 +122,7 @@ required_driver_bins_present() {
       command -v openshell-gateway >/dev/null 2>&1 && command -v openshell-sandbox >/dev/null 2>&1
       ;;
     Darwin)
-      command -v openshell-gateway >/dev/null 2>&1 && command -v openshell-driver-vm >/dev/null 2>&1
+      command -v openshell-gateway >/dev/null 2>&1
       ;;
     *)
       return 0
@@ -229,14 +270,11 @@ if command -v openshell >/dev/null 2>&1; then
   else
     if version_gte "$INSTALLED_VERSION" "$MIN_VERSION"; then
       if ! version_gte "$MAX_VERSION" "$INSTALLED_VERSION"; then
-        fail "openshell $INSTALLED_VERSION is above the maximum ($MAX_VERSION) supported by this NemoClaw release. Upgrade NemoClaw first."
-      fi
-      if ! required_driver_bins_present; then
+        warn "openshell $INSTALLED_VERSION is above the maximum ($MAX_VERSION) supported by this NemoClaw release — reinstalling pinned OpenShell ${PIN_VERSION}..."
+      elif ! required_driver_bins_present; then
         warn "openshell $INSTALLED_VERSION is missing Docker-driver binaries — reinstalling pinned OpenShell ${PIN_VERSION}..."
       elif ! openshell_has_required_messaging_features; then
         fail "${OPENSHELL_FEATURE_CHECK_ERROR:-openshell $INSTALLED_VERSION is missing required messaging credential rewrite support. Install an OpenShell build that includes provider aliases, WebSocket text rewrite, and request-body credential rewrite.}"
-      elif ! repair_existing_macos_vm_driver; then
-        warn "openshell $INSTALLED_VERSION has an unsigned macOS VM driver that could not be repaired in place — reinstalling pinned OpenShell ${PIN_VERSION}..."
       else
         info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION, <= $MAX_VERSION, messaging rewrite capable)"
         exit 0
@@ -271,9 +309,7 @@ case "$OS" in
     case "$ARCH_LABEL" in
       aarch64)
         ASSETS+=("openshell-gateway-aarch64-apple-darwin.tar.gz")
-        ASSETS+=("openshell-driver-vm-aarch64-apple-darwin.tar.gz")
         CHECKSUM_FILES+=("openshell-gateway-checksums-sha256.txt")
-        CHECKSUM_FILES+=("openshell-checksums-sha256.txt")
         ;;
       x86_64)
         fail "OpenShell ${PIN_VERSION} does not publish macOS x86_64 standalone gateway assets."

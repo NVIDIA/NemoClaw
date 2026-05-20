@@ -21,7 +21,7 @@ const nimImages = require("../../../bin/lib/nim-images.json");
 
 import { VLLM_PORT } from "../core/ports";
 
-const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier"];
+const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
 
 export interface NimModel {
@@ -30,7 +30,7 @@ export interface NimModel {
   minGpuMemoryMB: number;
 }
 
-export type NvidiaPlatform = "spark" | "station" | "linux";
+export type NvidiaPlatform = "spark" | "station" | "jetson" | "linux";
 
 export interface NimGpu {
   name: string;
@@ -140,6 +140,53 @@ function readPlatformModel(): string {
   return "";
 }
 
+function readHostMemoryMB(): number {
+  try {
+    const freeOut = runCapture(["free", "-m"], { ignoreError: true });
+    if (freeOut) {
+      const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
+      if (memLine) {
+        const parts = memLine.split(/\s+/);
+        return parseInt(parts[1], 10) || 0;
+      }
+    }
+  } catch {
+    /* ignored */
+  }
+  return 0;
+}
+
+function hostPathExists(path: string): boolean {
+  try {
+    return fs.existsSync(path);
+  } catch {
+    return false;
+  }
+}
+
+function hasTegraDeviceNodeSignal(): boolean {
+  return [
+    "/dev/nvhost-gpu",
+    "/dev/nvhost-ctrl-gpu",
+    "/dev/nvhost-ctrl",
+    "/dev/nvmap",
+  ].some(hostPathExists);
+}
+
+function detectTegraHostGpu(): { name: string; platform: NvidiaPlatform } | null {
+  const model = readPlatformModel();
+  const modelLooksTegra = /Jetson|Tegra|Thor|Orin|Xavier/i.test(model);
+  if (!modelLooksTegra && !hasTegraDeviceNodeSignal()) return null;
+
+  let name = model.replace(/^NVIDIA\s+/i, "").trim();
+  if (!name) name = "Jetson/Tegra";
+  if (!/^NVIDIA\b/i.test(name)) name = `NVIDIA ${name}`;
+  if (!/Jetson|Tegra|Thor|Orin|Xavier/i.test(name)) {
+    name = "NVIDIA Jetson/Tegra GPU";
+  }
+  return { name, platform: "jetson" };
+}
+
 export function detectNvidiaPlatform(): NvidiaPlatform {
   const model = readPlatformModel();
   if (/DGX[_\s-]+Spark/i.test(model)) return "spark";
@@ -149,6 +196,9 @@ export function detectNvidiaPlatform(): NvidiaPlatform {
     (/Station/i.test(model) && /GB300/i.test(model))
   ) {
     return "station";
+  }
+  if (/Jetson|Tegra|Thor|Orin|Xavier/i.test(model) || hasTegraDeviceNodeSignal()) {
+    return "jetson";
   }
   return "linux";
 }
@@ -264,23 +314,21 @@ export function detectGpu(): GpuDetection | null {
       .split("\n")
       .map((line: string) => line.trim())
       .filter(Boolean);
-    const unifiedGpuNames = gpuNames.filter((name: string) =>
+    // Cross-check the firmware model up front. On DGX Spark, nvidia-smi may
+    // identify the GPU as something like "NVIDIA JMJWOA-Generic-GPU" that
+    // matches none of UNIFIED_MEMORY_GPU_TAGS, even though the device is a
+    // unified-memory one (#3510). When firmware confirms a unified-memory
+    // platform, accept whatever name nvidia-smi reports.
+    const firmwarePlatform = detectNvidiaPlatform();
+    const firmwareIsUnifiedMemory =
+      firmwarePlatform === "spark" || firmwarePlatform === "jetson";
+    const taggedNames = gpuNames.filter((name: string) =>
       UNIFIED_MEMORY_GPU_TAGS.some((tag) => new RegExp(tag, "i").test(name)),
     );
+    const unifiedGpuNames =
+      taggedNames.length > 0 ? taggedNames : firmwareIsUnifiedMemory ? gpuNames : [];
     if (unifiedGpuNames.length > 0) {
-      let totalMemoryMB = 0;
-      try {
-        const freeOut = runCapture(["free", "-m"], { ignoreError: true });
-        if (freeOut) {
-          const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
-          if (memLine) {
-            const parts = memLine.split(/\s+/);
-            totalMemoryMB = parseInt(parts[1], 10) || 0;
-          }
-        }
-      } catch {
-        /* ignored */
-      }
+      const totalMemoryMB = readHostMemoryMB();
       const count = unifiedGpuNames.length;
       const perGpuMB = count > 0 ? Math.floor(totalMemoryMB / count) : totalMemoryMB;
       const firstUnifiedName = unifiedGpuNames[0] ?? "";
@@ -291,13 +339,14 @@ export function detectGpu(): GpuDetection | null {
         !!firstUnifiedName && unifiedGpuNames.every((n: string) => n === firstUnifiedName);
       // Cross-check the firmware model against the GPU name. Spark must have
       // a GB10; falling through to firmware lets us classify Station too.
-      const firmwarePlatform = detectNvidiaPlatform();
       const hasGb10 = unifiedGpuNames.some((name: string) => /GB10/i.test(name));
       const platform: NvidiaPlatform =
         firmwarePlatform === "spark" || hasGb10
           ? "spark"
           : firmwarePlatform === "station"
             ? "station"
+            : firmwarePlatform === "jetson"
+              ? "jetson"
             : "linux";
       // Memory.total is not available on unified-memory devices, so we split
       // the host RAM evenly across the named GPUs for the per-GPU breakdown.
@@ -317,6 +366,25 @@ export function detectGpu(): GpuDetection | null {
     }
   } catch {
     /* ignored */
+  }
+
+  // Jetson/Tegra hosts often do not ship nvidia-smi, but still expose the
+  // integrated NVIDIA GPU through firmware and Tegra device nodes.
+  const tegraGpu = detectTegraHostGpu();
+  if (tegraGpu) {
+    const totalMemoryMB = readHostMemoryMB();
+    return {
+      type: "nvidia",
+      name: tegraGpu.name,
+      gpus: [{ name: tegraGpu.name, memoryMB: totalMemoryMB }],
+      count: 1,
+      totalMemoryMB,
+      perGpuMB: totalMemoryMB,
+      nimCapable: canRunNimWithMemory(totalMemoryMB),
+      unifiedMemory: true,
+      spark: false,
+      platform: tegraGpu.platform,
+    };
   }
 
   // macOS: detect Apple Silicon or discrete GPU
@@ -414,16 +482,6 @@ export function pullNimImage(model: string): string {
 
 export interface NimStartOptions {
   ngcApiKey?: string;
-}
-
-export function startNimContainer(
-  sandboxName: string,
-  model: string,
-  port = VLLM_PORT,
-  opts: NimStartOptions = {},
-): string {
-  const name = containerName(sandboxName);
-  return startNimContainerByName(name, model, port, opts);
 }
 
 export function startNimContainerByName(

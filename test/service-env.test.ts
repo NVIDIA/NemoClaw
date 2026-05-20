@@ -11,7 +11,6 @@ import { mkdtempSync, writeFileSync, unlinkSync, readFileSync, lstatSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveOpenshell } from "../dist/lib/adapters/openshell/resolve";
-import { parseAllowedChatIds, isChatAllowed } from "../dist/lib/chat-filter.js";
 
 const NEMOCLAW_START_SCRIPT = join(import.meta.dirname, "../scripts/nemoclaw-start.sh");
 
@@ -162,34 +161,6 @@ describe("service environment", () => {
         },
       ).trim();
       expect(result).toBe("default");
-    });
-  });
-
-  describe("chat-filter module", () => {
-    it("parseAllowedChatIds parses comma-separated IDs with whitespace", () => {
-      expect(parseAllowedChatIds("111, 222 , 333")).toEqual(["111", "222", "333"]);
-    });
-
-    it("isChatAllowed filters blocked chat IDs", () => {
-      const allowed = parseAllowedChatIds("111,222");
-      expect(isChatAllowed(allowed, "111")).toBe(true);
-      expect(isChatAllowed(allowed, "222")).toBe(true);
-      expect(isChatAllowed(allowed, "333")).toBe(false);
-      expect(isChatAllowed(allowed, "999")).toBe(false);
-    });
-
-    it("parseAllowedChatIds handles single chat ID (no commas)", () => {
-      expect(parseAllowedChatIds("111")).toEqual(["111"]);
-    });
-
-    it("parseAllowedChatIds filters empty entries from trailing commas", () => {
-      expect(parseAllowedChatIds("111,,222,")).toEqual(["111", "222"]);
-    });
-
-    it("parseAllowedChatIds returns null when unset, isChatAllowed allows all", () => {
-      expect(parseAllowedChatIds(undefined)).toBeNull();
-      expect(parseAllowedChatIds("")).toBeNull();
-      expect(isChatAllowed(null, "anyid")).toBe(true);
     });
   });
 
