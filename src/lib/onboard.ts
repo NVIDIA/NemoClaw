@@ -7520,6 +7520,7 @@ async function setupInference(
         {
           upsertProvider,
           providerExistsInGateway,
+          isMutableEndpointProvider: onboardProviders.isMutableEndpointProvider,
           isNonInteractive,
           promptValidationRecovery,
           classifyApplyFailure,

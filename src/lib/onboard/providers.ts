@@ -267,6 +267,39 @@ function providerExistsInGateway(name, _runOpenshell) {
   return result.status === 0;
 }
 
+const MUTABLE_ENDPOINT_PROVIDERS = new Set([
+  "compatible-endpoint",
+  "compatible-anthropic-endpoint",
+]);
+
+function isMutableEndpointProvider(name) {
+  return MUTABLE_ENDPOINT_PROVIDERS.has(name);
+}
+
+function lookupProviderInGateway(name, _runOpenshell) {
+  const result = _runOpenshell(["provider", "get", name], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (result.status === 0) {
+    return { kind: "exists" };
+  }
+  const stderr = String(result.stderr || "").trim();
+  const stdout = String(result.stdout || "").trim();
+  const haystack = `${stderr} ${stdout}`.toLowerCase();
+  const looksLikeNotFound =
+    /not found|does not exist|no such provider|unknown provider/.test(haystack) ||
+    (result.status === 1 && !stderr && !stdout);
+  if (looksLikeNotFound) {
+    return { kind: "missing" };
+  }
+  const message =
+    compactText(redact(stderr)) ||
+    compactText(redact(stdout)) ||
+    `openshell provider get exited with status ${result.status}`;
+  return { kind: "lookup_failed", message };
+}
+
 /**
  * Create or update an OpenShell provider in the gateway.
  *
@@ -337,6 +370,8 @@ module.exports = {
   buildProviderArgs,
   upsertProvider,
   providerExistsInGateway,
+  lookupProviderInGateway,
+  isMutableEndpointProvider,
   upsertMessagingProviders,
   getSandboxInferenceConfig,
 };

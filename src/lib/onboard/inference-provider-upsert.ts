@@ -42,6 +42,7 @@ export interface InferenceProviderUpsertHandlers {
     env: Record<string, string>,
   ) => UpsertResult;
   providerExistsInGateway: (name: string) => boolean;
+  isMutableEndpointProvider: (name: string) => boolean;
   isNonInteractive: () => boolean;
   promptValidationRecovery: (
     label: string,
@@ -56,7 +57,11 @@ export async function reuseGatewayOrUpsertInferenceProvider(
   spec: InferenceProviderUpsertSpec,
   handlers: InferenceProviderUpsertHandlers,
 ): Promise<UpsertOutcome> {
-  if (!spec.credentialValue && handlers.providerExistsInGateway(spec.provider)) {
+  if (
+    !spec.credentialValue &&
+    !handlers.isMutableEndpointProvider(spec.provider) &&
+    handlers.providerExistsInGateway(spec.provider)
+  ) {
     return { kind: "ok" };
   }
   const result = handlers.upsertProvider(

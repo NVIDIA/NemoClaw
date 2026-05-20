@@ -54,6 +54,7 @@ function createFixture(opts: {
   providerCredentialHashes?: Record<string, string>;
   dockerBuildExitCode?: number;
   providerRegistered?: boolean;
+  providerLookupErrors?: boolean;
 }) {
   const {
     sandboxName = "my-assistant",
@@ -67,6 +68,7 @@ function createFixture(opts: {
     providerCredentialHashes,
     dockerBuildExitCode = 0,
     providerRegistered = true,
+    providerLookupErrors = false,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -212,7 +214,7 @@ if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"${provider}","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
-if (a[0]==="provider" && a[1]==="get")       { process.exit(${providerRegistered ? 0 : 1}); }
+if (a[0]==="provider" && a[1]==="get")       { ${providerLookupErrors ? "process.stderr.write('openshell: connection refused\\\\n'); process.exit(2);" : `process.exit(${providerRegistered ? 0 : 1});`} }
 if (a[0]==="provider")                       { process.exit(0); }
 if (a[0]==="forward")                        { process.exit(0); }
 process.exit(0);
@@ -585,6 +587,47 @@ describe("Issue #2273: atomic rebuild", () => {
         expect(output).not.toContain("Missing credential: NOUS_API_KEY");
         expect(output).not.toContain("provider credential not found");
         expect(output).toContain("Backing up sandbox state");
+      },
+    );
+
+    it(
+      "surfaces a gateway connectivity error when provider lookup fails (#3918 review)",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          credentialEnv: "NVIDIA_API_KEY",
+          providerLookupErrors: true,
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(result.status).not.toBe(0);
+        expect(output).toContain("gateway lookup");
+        expect(output).toContain("openshell status");
+        expect(output).not.toContain("Missing credential: NVIDIA_API_KEY");
+        expect(registryHasSandbox(f)).toBe(true);
+      },
+    );
+
+    it(
+      "does not reuse the gateway credential for mutable-endpoint providers (#3918 review)",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          provider: "compatible-endpoint",
+          credentialEnv: "COMPATIBLE_API_KEY",
+          providerRegistered: true,
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(result.status).not.toBe(0);
+        expect(output).toContain("preflight failed");
+        expect(output).toContain("COMPATIBLE_API_KEY");
+        expect(output).not.toContain("already registered in the OpenShell gateway");
+        expect(registryHasSandbox(f)).toBe(true);
       },
     );
 
