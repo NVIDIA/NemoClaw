@@ -8,7 +8,7 @@
 <!-- start-badges -->
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE)
 [![Security Policy](https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red)](https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md)
-[![Project Status](https://img.shields.io/badge/status-alpha-orange)](https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.md)
+[![Project Status](https://img.shields.io/badge/status-alpha-orange)](https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.mdx)
 [![Discord](https://img.shields.io/badge/Discord-Join-7289da)](https://discord.gg/XFpfPv9Uvx)
 <!-- end-badges -->
 
@@ -93,6 +93,13 @@ The script installs Node.js if it is not already present, then runs the guided o
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+The piped installer prompts through your terminal. In headless scripts or CI,
+pass explicit acceptance to the `bash` side of the pipe:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```
+
 If you use nvm or fnm to manage Node.js, the installer may not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
 
@@ -107,6 +114,10 @@ Run:         nemoclaw my-assistant connect
 Status:      nemoclaw my-assistant status
 Logs:        nemoclaw my-assistant logs --follow
 ──────────────────────────────────────────────────
+
+To change settings later:
+  Model:       nemoclaw inference get
+               nemoclaw inference set --model <model> --provider <provider> --sandbox my-assistant
 
 [INFO]  === Installation complete ===
 ```
@@ -131,6 +142,58 @@ Alternatively, send a single message and print the response:
 openclaw agent --agent main --local -m "hello" --session-id test
 ```
 
+### Model Router (Experimental)
+
+NemoClaw includes an optional model router that automatically picks the most efficient model for each query. Instead of sending every request to a single large model, the router uses a lightweight encoder to predict which model in a pool can handle each query correctly, then routes to the cheapest one that meets an accuracy threshold.
+
+The router uses the [NVIDIA LLM Router v3](https://github.com/NVIDIA-AI-Blueprints/llm-router/tree/v3) prefill routing engine and runs on the host as a LiteLLM proxy. The sandbox reaches it through the OpenShell gateway and continues to call `https://inference.local/v1`; do not probe `localhost:4000` or `host.openshell.internal` directly from inside the sandbox.
+
+#### Enable during onboard
+
+Select **Model Router (experimental)** during the onboard wizard, or set `NEMOCLAW_PROVIDER=routed` for non-interactive mode:
+
+```bash
+NEMOCLAW_PROVIDER=routed nemoclaw onboard --non-interactive
+```
+
+The onboard wizard starts the router, configures the OpenShell provider, and creates the sandbox. The router process runs on the host on port 4000.
+
+#### Configure the model pool
+
+Edit `nemoclaw-blueprint/router/pool-config.yaml` to define which models the router can choose from:
+
+```yaml
+routing:
+  method: prefill
+  checkpoint: llm-router/checkpoints/prefill_router_qwen08b.pt
+  tolerance: 0.20
+  encoder: Qwen/Qwen3.5-0.8B
+
+models:
+  - name: nano
+    litellm_model: "openai/nvidia/nvidia/Nemotron-3-Nano-30B-A3B"
+    cost_per_m_input_tokens: 0.05
+    api_base: "https://inference-api.nvidia.com"
+
+  - name: super
+    litellm_model: "openai/nvidia/nvidia/nemotron-3-super-v3"
+    cost_per_m_input_tokens: 0.10
+    api_base: "https://inference-api.nvidia.com"
+```
+
+The `tolerance` parameter controls the accuracy-cost tradeoff: 0.0 always picks the most accurate model, 1.0 always picks the cheapest, and 0.20 (default) allows up to 20 percentage points below the best for a cheaper model.
+
+#### Architecture
+
+The router runs on the host, not inside the sandbox:
+
+```text
+Sandbox (OpenClaw) ──> OpenShell Gateway (L7 proxy) ──> Model Router (:4000) ──> NVIDIA API
+                                                         └── PrefillRouter selects model
+```
+
+Credentials flow through the OpenShell provider system. The sandbox never sees raw API keys.
+
 ### Uninstall
 
 To remove NemoClaw and all resources created during setup, run the CLI's built-in uninstall command:
@@ -142,7 +205,7 @@ nemoclaw uninstall
 | Flag               | Effect                                              |
 |--------------------|-----------------------------------------------------|
 | `--yes`            | Skip the confirmation prompt.                       |
-| `--keep-openshell` | Leave the `openshell` binary installed.              |
+| `--keep-openshell` | Leave OpenShell binaries installed.                  |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
 
 `nemoclaw uninstall` runs the version-pinned `uninstall.sh` shipped with your installed CLI, with no network fetch at uninstall time.
@@ -166,8 +229,9 @@ Refer to the following pages on the official documentation website for more info
 | Page | Description |
 |------|-------------|
 | [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html) | What NemoClaw does and how it fits together. |
-| [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) | Plugin, blueprint, sandbox lifecycle, and protection layers. |
-| [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html) | Plugin structure, blueprint lifecycle, sandbox environment, and host-side state. |
+| [Architecture Overview](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) | High-level overview of Plugin, blueprint, sandbox lifecycle, and protection layers. |
+| [Ecosystem](https://docs.nvidia.com/nemoclaw/latest/about/ecosystem.html) | How OpenClaw, OpenShell, and NemoClaw form a stack and when to use NemoClaw versus OpenShell alone. |
+| [Architecture Details](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html) | Detailed description of Plugin structure, blueprint lifecycle, sandbox environment, and host-side state. |
 | [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) | Hardware, software, and supported platforms, with any platform-specific pre-setup. |
 | [Inference Options](https://docs.nvidia.com/nemoclaw/latest/inference/inference-options.html) | Supported providers, validation, and routed inference configuration. |
 | [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html) | Baseline rules, operator approval flow, and egress control. |
@@ -176,6 +240,23 @@ Refer to the following pages on the official documentation website for more info
 | [Sandbox Hardening](https://docs.nvidia.com/nemoclaw/latest/deployment/sandbox-hardening.html) | Container security measures, capability drops, process limits. |
 | [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) | Full NemoClaw CLI command reference. |
 | [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html) | Common issues and resolution steps. |
+
+### Build Docs Locally
+
+The public documentation site is built with Fern.
+The repo pins the Fern CLI version in `fern/fern.config.json`.
+Use the npm scripts so every docs command uses that pinned version.
+
+```bash
+npm run docs
+npm run docs:live
+```
+
+To publish a branch-based Fern preview whenever docs files change, run:
+
+```bash
+npm run docs:preview:watch
+```
 
 ## Project Structure
 
@@ -190,9 +271,13 @@ NemoClaw/
 │       ├── commands/     # Slash commands, migration state
 │       └── onboard/      # Onboarding config
 ├── nemoclaw-blueprint/   # Blueprint YAML and network policies
+│   └── router/
+│       ├── pool-config.yaml  # Model pool and routing config
+│       └── llm-router/      # LLM Router v3 submodule (prefill routing engine)
 ├── scripts/          # Install helpers, setup, automation
 ├── test/             # Integration and E2E tests
-└── docs/             # User-facing docs (Sphinx/MyST)
+├── fern/             # Fern site configuration and shared assets
+└── docs/             # User-facing docs (Fern MDX plus legacy MyST source during migration)
 ```
 
 ## Community

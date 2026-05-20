@@ -11,7 +11,7 @@
 # user setup, openclaw CLI). The production Dockerfile layers PR-specific
 # code on top via: FROM ghcr.io/nvidia/nemoclaw/sandbox-base:<tag>
 
-name: base-image
+name: Images / Base Images
 
 on:
   push:
@@ -47,7 +47,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up QEMU (arm64 emulation)
         uses: docker/setup-qemu-action@v4
@@ -65,10 +65,12 @@ jobs:
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=,format=short
 
       - name: Validate OpenClaw version input
@@ -95,7 +97,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up QEMU (arm64 emulation)
         uses: docker/setup-qemu-action@v4
@@ -113,10 +115,12 @@ jobs:
       - name: Extract metadata
         id: meta
         uses: docker/metadata-action@v6
+        env:
+          DOCKER_METADATA_SHORT_SHA_LENGTH: 8
         with:
           images: ${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base
           tags: |
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
             type=sha,prefix=,format=short
 
       - name: Build and push

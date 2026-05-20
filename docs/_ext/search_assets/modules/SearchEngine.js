@@ -496,18 +496,32 @@ class SearchEngine {
     }
 
     /**
+     * Extract safe Lunr query terms from user input.
+     */
+    getSafeSearchTerms(query) {
+        const matches = String(query || '').toLowerCase().match(/[a-z0-9][a-z0-9._-]{0,63}/g);
+        return matches ? matches.slice(0, 10) : [];
+    }
+
+    /**
      * Perform search with multiple strategies
      */
     performMultiStrategySearch(query) {
+        const terms = this.getSafeSearchTerms(query);
+        if (terms.length === 0) return [];
+
+        const phrase = terms.join(' ');
+        const wildcardTerms = terms.map(term => `${term}*`).join(' ');
+        const fuzzyTerms = terms.map(term => `${term}~2`).join(' ');
         const strategies = [
             // Exact phrase search with wildcards
-            `"${query}" ${query}*`,
+            `"${phrase}" ${wildcardTerms}`,
             // Fuzzy search with wildcards
-            `${query}* ${query}~2`,
+            `${wildcardTerms} ${fuzzyTerms}`,
             // Individual terms with boost
-            query.split(/\s+/).map(term => `${term}*`).join(' '),
-            // Fallback: just the query
-            query
+            wildcardTerms,
+            // Fallback: sanitized terms only
+            phrase
         ];
 
         let allResults = [];

@@ -1,0 +1,217 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: CI / Platform Vitest Main Watch
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/workflows/docs-preview-*.yaml"
+      - "ISSUE_TEMPLATE/**"
+      - ".github/ISSUE_TEMPLATE/**"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platform-vitest-main-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos-vitest:
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Show environment
+        run: |
+          set -euo pipefail
+          echo "Runner: $(uname -a)"
+          echo "Arch:   $(uname -m)"
+          sw_vers
+          node --version
+          npm --version
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          cd nemoclaw
+          npm ci --ignore-scripts
+
+      - name: Build CLI and plugin
+        run: |
+          npm run build:cli
+          cd nemoclaw
+          npm run build
+
+      - name: Run full Vitest suite on macOS
+        run: npx vitest run --testTimeout 60000
+
+  wsl-vitest:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      WSL_DISTRO: Ubuntu
+    steps:
+      - name: Force LF line endings for checkout
+        shell: powershell
+        run: git config --global core.autocrlf false
+
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Resolve workspace paths for WSL
+        shell: powershell
+        run: |
+          $winPath = "${{ github.workspace }}"
+          $drive = $winPath.Substring(0,1).ToLower()
+          $rest = $winPath.Substring(2).Replace('\','/')
+          $wslCheckoutPath = "/mnt/$drive$rest"
+          $wslWorkdir = "/tmp/nemoclaw-wsl-vitest/${env:GITHUB_RUN_ID}-${env:GITHUB_RUN_ATTEMPT}"
+          "WSL_CHECKOUT_DIR=$wslCheckoutPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "WSL_WORKDIR=$wslWorkdir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          Write-Host "WSL_CHECKOUT_DIR=$wslCheckoutPath"
+          Write-Host "WSL_WORKDIR=$wslWorkdir"
+
+      - name: Ensure Ubuntu WSL exists
+        shell: powershell
+        run: |
+          wsl --list --verbose 2>&1 | Out-Default
+          $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            $maxAttempts = 3
+            $installed = $false
+            for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+              Write-Host "Ubuntu not found - installing via wsl --install (attempt $attempt/$maxAttempts)"
+              wsl --install -d $env:WSL_DISTRO --no-launch --web-download
+              $installExitCode = $LASTEXITCODE
+              if ($installExitCode -eq 0) {
+                wsl -d $env:WSL_DISTRO -- bash -c 'echo distro initialised'
+                if ($LASTEXITCODE -eq 0) {
+                  $installed = $true
+                  break
+                }
+              }
+
+              $null = wsl -d $env:WSL_DISTRO -- echo ok 2>&1
+              if ($LASTEXITCODE -eq 0) {
+                $installed = $true
+                break
+              }
+
+              if ($attempt -lt $maxAttempts) {
+                $null = wsl --unregister $env:WSL_DISTRO 2>&1
+                Start-Sleep -Seconds ([Math]::Min(60, 20 * $attempt))
+              }
+            }
+
+            if (-not $installed) {
+              throw ("failed to install and initialize $env:WSL_DISTRO after $maxAttempts attempts")
+            }
+          }
+          wsl --set-default $env:WSL_DISTRO
+          if ($LASTEXITCODE -ne 0) {
+            throw ('wsl --set-default failed with exit code ' + $LASTEXITCODE)
+          }
+
+      - name: Install Ubuntu dependencies
+        shell: powershell
+        run: |
+          $script = @'
+          set -euo pipefail
+          export DEBIAN_FRONTEND=noninteractive
+          printf '%s\n' \
+            'Acquire::ForceIPv4 "true";' \
+            'Acquire::Retries "5";' \
+            >/etc/apt/apt.conf.d/99github-actions-network
+          apt-get update
+          apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip rsync tar unzip xz-utils
+          '@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+
+      - name: Install Node.js 22 in WSL
+        shell: powershell
+        run: |
+          $script = @'
+          set -euo pipefail
+          curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
+          apt-get install -y nodejs
+          node --version
+          npm --version
+          '@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+
+      - name: Copy checkout into WSL ext4 workspace
+        shell: powershell
+        run: |
+          $checkout = $env:WSL_CHECKOUT_DIR
+          $workdir = $env:WSL_WORKDIR
+          $workdirParent = $workdir.Substring(0, $workdir.LastIndexOf('/'))
+          $script = @"
+          set -euo pipefail
+          rm -rf '$workdir'
+          mkdir -p '$workdirParent'
+          rsync -a --no-owner --no-group --delete \
+            --exclude '/node_modules/' \
+            --exclude '/nemoclaw/node_modules/' \
+            --exclude '/nemoclaw-blueprint/.venv/' \
+            '$checkout'/ '$workdir'/
+          git config --global --add safe.directory '$workdir'
+          git -C '$workdir' reset --hard HEAD
+          git -C '$workdir' clean -ffdx
+          "@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+
+      - name: Install dependencies and build in WSL
+        shell: powershell
+        run: |
+          $script = @"
+          set -euo pipefail
+          cd '$env:WSL_WORKDIR'
+          npm ci --ignore-scripts
+          npm run build:cli
+          cd nemoclaw
+          npm ci --ignore-scripts
+          npm run build
+          "@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
+
+      - name: Run full Vitest suite in WSL
+        shell: powershell
+        run: |
+          $script = @"
+          set -euo pipefail
+          cd '$env:WSL_WORKDIR'
+          export NEMOCLAW_EXEC_TIMEOUT=60000
+          export NEMOCLAW_TEST_TIMEOUT=60000
+          npx vitest run --testTimeout 60000
+          "@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp

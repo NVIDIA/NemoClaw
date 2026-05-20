@@ -79,13 +79,6 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
   $ openshell term
   ```
 
-- Change the live gateway inference route:
-
-  ```console
-  $ openshell inference set -g nemoclaw --provider <provider> --model <model>
-  $ openshell inference get -g nemoclaw
-  ```
-
 - Manage dashboard or service port forwards:
 
   ```console
@@ -162,13 +155,20 @@ Approved endpoints are session-scoped unless you also add them to the policy thr
 
 ### Change Models or Providers
 
-For a same-provider model switch, change the live OpenShell inference route:
+Use the NemoClaw commands for model or provider inspection and switches so the OpenShell route and the running agent config stay consistent:
 
 ```console
-$ openshell inference set -g nemoclaw --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
+$ nemoclaw inference get
+$ nemoclaw inference set --provider nvidia-prod --model nvidia/nemotron-3-super-120b-a12b
 ```
 
-For a provider-family change or a build-time OpenClaw setting change, rerun onboarding so the sandbox configuration is recreated consistently:
+For Hermes sandboxes, use the alias; it updates the route and `/sandbox/.hermes/config.yaml` without a rebuild or restart:
+
+```console
+$ nemohermes inference set --provider hermes-provider --model openai/gpt-5.4-mini
+```
+
+For a build-time agent setting change, rerun onboarding so the sandbox configuration is recreated consistently:
 
 ```console
 $ nemoclaw onboard --resume --recreate-sandbox

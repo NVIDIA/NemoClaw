@@ -19,3 +19,4 @@ network_policies:
     binaries:
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
+      - { path: /usr/bin/curl }

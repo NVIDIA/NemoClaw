@@ -248,7 +248,14 @@ info "Phase 8: Checking snapshots for leaked credentials..."
 
 BACKUP_DIR="$HOME/.nemoclaw/rebuild-backups/${SANDBOX_NAME}"
 if [ -d "$BACKUP_DIR" ]; then
-  CRED_LEAKS=$(find "$BACKUP_DIR" \( -name "*.json" -o -name "*.env" -o -name ".env" \) -exec grep -l "nvapi-\|sk-\|Bearer " {} \; 2>/dev/null || true)
+  CRED_LEAKS=$(find "$BACKUP_DIR" \
+    \( -name "*.json" -o -name "*.env" -o -name ".env" \) \
+    ! -name "package-lock.json" \
+    ! -name "npm-shrinkwrap.json" \
+    ! -name "yarn.lock" \
+    ! -name "pnpm-lock.yaml" \
+    ! -name "pnpm-lock.yml" \
+    -exec grep -l "nvapi-\|sk-\|Bearer " {} \; 2>/dev/null || true)
   if [ -z "$CRED_LEAKS" ]; then
     pass "No credentials in snapshot directories"
   else

@@ -6,11 +6,12 @@ import type {
   SpawnSyncOptionsWithStringEncoding,
   SpawnSyncReturns,
 } from "node:child_process";
-import { NAME_ALLOWED_FORMAT } from "./name-validation";
+import { NAME_ALLOWED_FORMAT, NAME_MAX_LENGTH } from "./name-validation";
 
 const { spawnSync } = require("child_process");
 const path = require("path");
 const { detectDockerHost } = require("./platform");
+const { buildSubprocessEnv } = require("./subprocess-env") as typeof import("./subprocess-env");
 
 const ROOT = path.resolve(__dirname, "..", "..");
 const SCRIPTS = path.join(ROOT, "scripts");
@@ -31,6 +32,16 @@ type SpawnResult = SpawnSyncReturns<string | Buffer>;
 const dockerHost = detectDockerHost();
 if (dockerHost) {
   process.env.DOCKER_HOST = dockerHost.dockerHost;
+}
+
+function buildRunnerEnv(extraEnv?: NodeJS.ProcessEnv): Record<string, string> {
+  const normalizedExtra: Record<string, string> = {};
+  if (extraEnv) {
+    for (const [key, value] of Object.entries(extraEnv)) {
+      if (value !== undefined) normalizedExtra[key] = value;
+    }
+  }
+  return buildSubprocessEnv(normalizedExtra);
 }
 
 function logOpenshellRuntimeHint(file: string, renderedCommand = ""): void {
@@ -59,7 +70,7 @@ function spawnAndHandle(
     ...opts,
     stdio,
     cwd: ROOT,
-    env: { ...process.env, ...opts.env },
+    env: buildRunnerEnv(opts.env),
   });
   if (!opts.suppressOutput) {
     writeRedactedResult(result, stdio);
@@ -129,11 +140,13 @@ function runArrayCmd(
 
   const stdio = stdioCfg ?? defaultStdio;
 
+  // run() always uses argv arrays and rejects `shell: true` above.
+  // codeql[js/indirect-command-line-injection]
   const result = spawnSync(exe, args, {
     ...spawnOpts,
     stdio,
     cwd: ROOT,
-    env: { ...process.env, ...extraEnv },
+    env: buildRunnerEnv(extraEnv),
   });
   if (!suppressOutput) {
     writeRedactedResult(result, stdio);
@@ -218,10 +231,12 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
   }
 
   try {
+    // runCapture() always uses argv arrays and rejects `shell: true` above.
+    // codeql[js/indirect-command-line-injection]
     const result = spawnSync(exe, args, {
       ...spawnOpts,
       cwd: ROOT,
-      env: { ...process.env, ...extraEnv },
+      env: buildRunnerEnv(extraEnv),
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });
@@ -246,7 +261,54 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
 }
 
 // Unified redaction — see redact.ts (#2381).
-const { redact, redactError, writeRedactedResult } = require("./redact");
+const { redact, redactError, writeRedactedResult } = require("./security/redact");
+
+/** Structured result returned by runCaptureEx. */
+export interface CaptureResult {
+  stdout: string;
+  exitCode: number | null;
+  /** True when spawnSync sets result.error due to a timeout (ETIMEDOUT). */
+  timedOut: boolean;
+}
+
+/**
+ * Like runCapture but returns a structured result instead of throwing or
+ * collapsing errors to an empty string.  Use this when the caller needs to
+ * distinguish a real timeout (curl exit 28 / spawn ETIMEDOUT) from other
+ * failures such as connection-refused.
+ */
+function runCaptureEx(cmd: readonly string[], opts: Omit<CaptureOptions, "ignoreError"> = {}): CaptureResult {
+  if (!Array.isArray(cmd) || cmd.length === 0) {
+    throw new Error("runCaptureEx: cmd must be a non-empty argv array");
+  }
+  const exe = cmd[0];
+  const args = cmd.slice(1);
+  const { env: extraEnv, stdio: _stdio, ...spawnOpts } = opts as CaptureOptions;
+  try {
+    const result = spawnSync(exe, args, {
+      ...spawnOpts,
+      cwd: ROOT,
+      // #2616: route via buildRunnerEnv so subprocess env is sanitized and
+      // NO_PROXY=localhost,127.0.0.1 is injected when HTTP_PROXY is set.
+      // Otherwise curl probes against localhost (Ollama validation, etc.)
+      // tunnel through the user's host proxy and fail with HTTP 500.
+      env: buildRunnerEnv(extraEnv),
+      stdio: ["pipe", "pipe", "pipe"],
+      encoding: "utf-8",
+    });
+    const timedOut =
+      (result.error != null && (result.error as NodeJS.ErrnoException).code === "ETIMEDOUT") ||
+      result.status === 28;
+    const stdout = result.stdout || "";
+    return {
+      stdout: (typeof stdout === "string" ? stdout : stdout.toString("utf-8")).trim(),
+      exitCode: result.status,
+      timedOut,
+    };
+  } catch (err) {
+    throw redactError(err);
+  }
+}
 
 /**
  * Shell-quote a value for safe interpolation into bash -c strings.
@@ -264,9 +326,9 @@ function validateName(name: string, label = "name"): string {
   if (!name || typeof name !== "string") {
     throw new Error(`${label} is required. Allowed format: ${NAME_ALLOWED_FORMAT}.`);
   }
-  if (name.length > 63) {
+  if (name.length > NAME_MAX_LENGTH) {
     throw new Error(
-      `${label} too long (max 63 chars): '${name.slice(0, 20)}...'. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
+      `${label} too long (max ${NAME_MAX_LENGTH} chars): '${name.slice(0, 20)}...'. Allowed format: ${NAME_ALLOWED_FORMAT}.`,
     );
   }
   if (!/^[a-z]([a-z0-9-]*[a-z0-9])?$/.test(name)) {
@@ -279,14 +341,15 @@ function validateName(name: string, label = "name"): string {
 
 export {
   ROOT,
-  SCRIPTS,
   redact,
   run,
-  runShell,
   runCapture,
+  runCaptureEx,
   runFile,
   runInteractive,
   runInteractiveShell,
+  runShell,
+  SCRIPTS,
   shellQuote,
   validateName,
 };

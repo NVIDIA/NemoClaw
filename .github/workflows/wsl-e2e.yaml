@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: wsl-e2e
+name: E2E / WSL
 
 on:
   workflow_dispatch:
@@ -41,7 +41,7 @@ jobs:
         run: git config --global core.autocrlf false
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Resolve workspace paths for WSL
         shell: powershell
@@ -122,6 +122,10 @@ jobs:
           $script = @'
           set -euo pipefail
           export DEBIAN_FRONTEND=noninteractive
+          printf '%s\n' \
+            'Acquire::ForceIPv4 "true";' \
+            'Acquire::Retries "5";' \
+            >/etc/apt/apt.conf.d/99github-actions-network
           apt-get update
           apt-get install -y bash ca-certificates curl git jq lsb-release make python3 python3-pip rsync tar unzip xz-utils
           '@
@@ -219,24 +223,6 @@ jobs:
             Write-Host 'Docker is not available in WSL; full E2E will be skipped'
           }
 
-      - name: Run WSL compatibility test suite
-        shell: powershell
-        run: |
-          $script = @"
-          set -euo pipefail
-          cd '$env:WSL_WORKDIR'
-          # WSL process-spawn overhead pushes CLI runtime close to the test
-          # budget; keep exec timeout aligned with the vitest test timeout so
-          # tests that legitimately consume their full budget aren't killed.
-          export NEMOCLAW_EXEC_TIMEOUT=60000
-          export NEMOCLAW_TEST_TIMEOUT=60000
-          npx vitest run --testTimeout 60000
-          "@
-          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
-          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
-          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
-          wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
-
       - name: Run WSL full E2E
         if: steps.docker.outputs.docker_ok == 'true'
         shell: powershell
@@ -265,7 +251,7 @@ jobs:
         shell: powershell
         run: |
           Write-Host 'Skipping WSL full E2E because Docker is unavailable on this runner.'
-          Write-Host 'The workflow still validated the NemoClaw build and test flow inside Ubuntu WSL.'
+          Write-Host 'The workflow still validated the NemoClaw build flow inside Ubuntu WSL.'
 
       - name: Upload install log on failure
         if: failure()

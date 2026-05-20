@@ -12,6 +12,7 @@ Usage:
 
 Environment variables:
     CHAT_UI_URL                         Dashboard URL (default: http://127.0.0.1:18789)
+    NEMOCLAW_DASHBOARD_PORT            Dashboard/gateway port (default: 18789)
     NEMOCLAW_MODEL                      Model identifier
     NEMOCLAW_PROVIDER_KEY               Provider key for model config
     NEMOCLAW_PRIMARY_MODEL_REF          Primary model reference
@@ -22,11 +23,15 @@ Environment variables:
     NEMOCLAW_MAX_TOKENS                 Max tokens (default: 4096)
     NEMOCLAW_REASONING                  Enable reasoning (default: false)
     NEMOCLAW_AGENT_TIMEOUT              Per-request timeout seconds (default: 600)
+    NEMOCLAW_AGENT_HEARTBEAT_EVERY      OpenClaw agent heartbeat cadence (e.g. "30m", "0m" to
+                                        disable). Empty/unset preserves the OpenClaw default.
     NEMOCLAW_INFERENCE_COMPAT_B64       Base64-encoded inference compat JSON
     NEMOCLAW_MESSAGING_CHANNELS_B64     Base64-encoded channel list
-    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map
+    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map (Slack IDs cover
+                                        DMs and channel @mentions)
     NEMOCLAW_DISCORD_GUILDS_B64         Base64-encoded Discord guild config
     NEMOCLAW_TELEGRAM_CONFIG_B64        Base64-encoded Telegram config (e.g. {"requireMention": true})
+    NEMOCLAW_WECHAT_CONFIG_B64          Base64-encoded WeChat config (e.g. {"accountId": "...", "baseUrl": "...", "userId": "..."})
     NEMOCLAW_DISABLE_DEVICE_AUTH        Set to "1" to force-disable device auth
     NEMOCLAW_PROXY_HOST                 Egress proxy host (default: 10.200.0.1)
     NEMOCLAW_PROXY_PORT                 Egress proxy port (default: 3128)
@@ -39,8 +44,19 @@ import base64
 import json
 import os
 import re
+import runpy
 import sys
+from pathlib import Path
 from urllib.parse import urlparse
+
+KNOWN_MODEL_SETUP_AGENTS = {"openclaw", "hermes"}
+MODEL_SETUP_EFFECT_KEYS = {
+    "openclaw": {"openclawCompat", "openclawPlugins"},
+    "hermes": {"hermesCompat"},
+}
+DEFAULT_DASHBOARD_PORT = 18789
+MIN_DASHBOARD_PORT = 1024
+MAX_DASHBOARD_PORT = 65535
 
 
 def _coerce_positive_int(env: dict, name: str, default: int) -> int:
@@ -62,13 +78,267 @@ def _coerce_positive_int(env: dict, name: str, default: int) -> int:
 def is_loopback(hostname: str) -> bool:
     """Check if a hostname is a loopback address.
 
-    Mirrors isLoopbackHostname() from src/lib/url-utils.ts.
+    Mirrors isLoopbackHostname() from src/lib/core/url-utils.ts.
     Returns True for localhost, ::1, and 127.x.x.x addresses.
     """
     normalized = (hostname or "").strip().lower().strip("[]")
     if normalized == "localhost" or normalized == "::1":
         return True
     return bool(re.match(r"^127(?:\.\d{1,3}){3}$", normalized))
+
+
+def _normalize_url_for_parse(raw_url: str) -> str:
+    if raw_url and not re.match(r"^[a-z][a-z0-9+.-]*://", raw_url, re.IGNORECASE):
+        return f"http://{raw_url}"
+    return raw_url
+
+
+def _validate_dashboard_port(raw: str, env_name: str) -> int:
+    stripped = raw.strip()
+    if not re.match(r"^\d+$", stripped):
+        raise ValueError(f"{env_name} must be an integer between 1024 and 65535")
+    value = int(stripped)
+    if value < MIN_DASHBOARD_PORT or value > MAX_DASHBOARD_PORT:
+        raise ValueError(f"{env_name} must be an integer between 1024 and 65535")
+    return value
+
+
+def _chat_ui_url_port(chat_ui_url: str) -> int | None:
+    try:
+        port = urlparse(_normalize_url_for_parse(chat_ui_url)).port
+    except ValueError:
+        return None
+    if port is None:
+        return None
+    if port < MIN_DASHBOARD_PORT or port > MAX_DASHBOARD_PORT:
+        return None
+    return port
+
+
+def _resolve_gateway_port(env: dict, chat_ui_url: str) -> int:
+    raw_dashboard_port = env.get("NEMOCLAW_DASHBOARD_PORT") or ""
+    if raw_dashboard_port.strip():
+        return _validate_dashboard_port(raw_dashboard_port, "NEMOCLAW_DASHBOARD_PORT")
+    return _chat_ui_url_port(chat_ui_url) or DEFAULT_DASHBOARD_PORT
+
+
+def _registry_roots(env: dict) -> list[Path]:
+    roots: list[Path] = []
+    explicit = env.get("NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR")
+    if explicit:
+        roots.append(Path(explicit))
+
+    script_dir = Path(__file__).resolve().parent
+    roots.extend(
+        [
+            Path("/opt/nemoclaw-blueprint/model-specific-setup"),
+            Path("/sandbox/.nemoclaw/blueprints/0.1.0/model-specific-setup"),
+            script_dir.parent / "nemoclaw-blueprint" / "model-specific-setup",
+            Path.cwd() / "nemoclaw-blueprint" / "model-specific-setup",
+        ]
+    )
+
+    unique_roots: list[Path] = []
+    seen: set[str] = set()
+    for root in roots:
+        key = str(root)
+        if key not in seen:
+            unique_roots.append(root)
+            seen.add(key)
+    return unique_roots
+
+
+def _find_registry_root(env: dict) -> Path | None:
+    explicit = env.get("NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR")
+    if explicit:
+        explicit_path = Path(explicit)
+        if not explicit_path.is_dir():
+            raise ValueError(
+                "NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR must point to an existing directory: "
+                f"{explicit}"
+            )
+        return explicit_path
+
+    for root in _registry_roots(env):
+        if root.is_dir():
+            return root
+    return None
+
+
+def _validate_manifest_payload(payload: object, manifest_path: Path) -> dict:
+    if not isinstance(payload, dict):
+        raise ValueError(f"{manifest_path}: manifest must be a JSON object")
+
+    setup_id = payload.get("id")
+    if not isinstance(setup_id, str) or not setup_id.strip():
+        raise ValueError(f"{manifest_path}: field 'id' must be a non-empty string")
+
+    agent = payload.get("agent")
+    if not isinstance(agent, str) or not agent.strip():
+        raise ValueError(f"{manifest_path}: field 'agent' is required")
+    if agent not in KNOWN_MODEL_SETUP_AGENTS:
+        raise ValueError(f"{manifest_path}: unknown agent '{agent}'")
+
+    description = payload.get("description")
+    if not isinstance(description, str) or not description.strip():
+        raise ValueError(f"{manifest_path}: field 'description' must be a non-empty string")
+
+    match = payload.get("match")
+    if not isinstance(match, dict):
+        raise ValueError(f"{manifest_path}: field 'match' must be an object")
+    if not match:
+        raise ValueError(f"{manifest_path}: field 'match' must be a non-empty object")
+    allowed_match_keys = {"modelIds", "providerKey", "inferenceApi", "baseUrl"}
+    unknown_match_keys = sorted(set(match) - allowed_match_keys)
+    if unknown_match_keys:
+        raise ValueError(
+            f"{manifest_path}: unknown match keys: {', '.join(unknown_match_keys)}"
+        )
+    model_ids = match.get("modelIds")
+    if model_ids is not None and (
+        not isinstance(model_ids, list)
+        or not model_ids
+        or not all(isinstance(model_id, str) and model_id.strip() for model_id in model_ids)
+    ):
+        raise ValueError(f"{manifest_path}: match.modelIds must be a non-empty string array")
+    for key in ("providerKey", "inferenceApi", "baseUrl"):
+        value = match.get(key)
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"{manifest_path}: match.{key} must be a non-empty string")
+
+    effects = payload.get("effects")
+    if not isinstance(effects, dict) or not effects:
+        raise ValueError(f"{manifest_path}: field 'effects' must be a non-empty object")
+
+    return payload
+
+
+def _validate_selected_agent_effects(payload: dict, manifest_path: Path, registry_root: Path) -> None:
+    agent = payload["agent"]
+    effects = payload["effects"]
+    allowed_effect_keys = MODEL_SETUP_EFFECT_KEYS[agent]
+    unknown_effect_keys = sorted(set(effects) - allowed_effect_keys)
+    if unknown_effect_keys:
+        raise ValueError(
+            f"{manifest_path}: unknown effects for agent '{agent}': "
+            f"{', '.join(unknown_effect_keys)}"
+        )
+
+    if agent == "openclaw":
+        compat = effects.get("openclawCompat")
+        if compat is not None and not isinstance(compat, dict):
+            raise ValueError(f"{manifest_path}: effects.openclawCompat must be an object")
+
+        plugins = effects.get("openclawPlugins", [])
+        if not isinstance(plugins, list):
+            raise ValueError(f"{manifest_path}: effects.openclawPlugins must be an array")
+        for index, plugin in enumerate(plugins):
+            if not isinstance(plugin, dict):
+                raise ValueError(
+                    f"{manifest_path}: effects.openclawPlugins[{index}] must be an object"
+                )
+            for key in ("id", "path", "loadPath"):
+                value = plugin.get(key)
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"{manifest_path}: effects.openclawPlugins[{index}].{key} "
+                        "must be a non-empty string"
+                    )
+            source_path = Path(plugin["path"])
+            if source_path.is_absolute() or ".." in source_path.parts:
+                raise ValueError(
+                    f"{manifest_path}: effects.openclawPlugins[{index}].path "
+                    "must be relative to nemoclaw-blueprint"
+                )
+            if not (registry_root.parent / source_path).exists():
+                raise ValueError(
+                    f"{manifest_path}: effects.openclawPlugins[{index}].path does not exist: "
+                    f"{plugin['path']}"
+                )
+            expected_load_path = f"/usr/local/share/nemoclaw/{plugin['path'].strip('/')}"
+            if plugin["loadPath"].rstrip("/") != expected_load_path:
+                raise ValueError(
+                    f"{manifest_path}: effects.openclawPlugins[{index}].loadPath "
+                    f"must be '{expected_load_path}'"
+                )
+
+    if agent == "hermes":
+        compat = effects.get("hermesCompat")
+        if compat is not None and not isinstance(compat, dict):
+            raise ValueError(f"{manifest_path}: effects.hermesCompat must be an object")
+
+
+def _model_setup_matches(payload: dict, context: dict) -> bool:
+    match = payload["match"]
+    model_ids = match.get("modelIds")
+    if model_ids and context["model"].strip().lower() not in {
+        model_id.strip().lower() for model_id in model_ids
+    }:
+        return False
+
+    provider_key = match.get("providerKey")
+    if provider_key and context["providerKey"] != provider_key:
+        return False
+
+    inference_api = match.get("inferenceApi")
+    if inference_api and context["inferenceApi"] != inference_api:
+        return False
+
+    base_url = match.get("baseUrl")
+    if base_url and context["baseUrl"].rstrip("/") != base_url.rstrip("/"):
+        return False
+
+    return True
+
+
+def _matching_model_specific_setups(agent: str, context: dict, env: dict) -> list[dict]:
+    registry_root = _find_registry_root(env)
+    if registry_root is None:
+        return []
+
+    manifests: list[dict] = []
+    for manifest_path in sorted(registry_root.glob("**/*.json")):
+        if manifest_path.name == "schema.json":
+            continue
+        with open(manifest_path, "r", encoding="utf-8") as manifest_file:
+            payload = _validate_manifest_payload(json.load(manifest_file), manifest_path)
+        if payload["agent"] != agent:
+            continue
+        _validate_selected_agent_effects(payload, manifest_path, registry_root)
+        if _model_setup_matches(payload, context):
+            manifests.append(payload)
+    return manifests
+
+
+def _coerce_compat_dict(value: object) -> dict:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    raise ValueError("NEMOCLAW_INFERENCE_COMPAT_B64 must decode to a JSON object or null")
+
+
+def _apply_openclaw_setup_effects(
+    setup: dict, inference_compat: dict, openclaw_plugins: list[dict], plugin_ids: set[str]
+) -> None:
+    effects = setup["effects"]
+    for key, value in effects.get("openclawCompat", {}).items():
+        if key in inference_compat and inference_compat[key] != value:
+            raise ValueError(
+                "model-specific setup "
+                f"'{setup['id']}' conflicts with inference compat key '{key}'"
+            )
+        inference_compat[key] = value
+
+    for plugin in effects.get("openclawPlugins", []):
+        plugin_id = plugin["id"]
+        if plugin_id in plugin_ids:
+            raise ValueError(
+                "model-specific setup "
+                f"'{setup['id']}' declares duplicate OpenClaw plugin '{plugin_id}'"
+            )
+        plugin_ids.add(plugin_id)
+        openclaw_plugins.append(plugin)
 
 
 def build_config(env: dict | None = None) -> dict:
@@ -90,7 +360,14 @@ def build_config(env: dict | None = None) -> dict:
     proxy_port = env.get("NEMOCLAW_PROXY_PORT") or "3128"
     proxy_url = f"http://{proxy_host}:{proxy_port}"
     model = env["NEMOCLAW_MODEL"]
-    chat_ui_url = env.get("CHAT_UI_URL") or "http://127.0.0.1:18789"
+    raw_chat_ui_url = env.get("CHAT_UI_URL") or ""
+    chat_ui_url = raw_chat_ui_url or f"http://127.0.0.1:{DEFAULT_DASHBOARD_PORT}"
+    gateway_port = _resolve_gateway_port(env, chat_ui_url)
+    if (env.get("NEMOCLAW_DASHBOARD_PORT") or "").strip() and (
+        not raw_chat_ui_url
+        or raw_chat_ui_url == f"http://127.0.0.1:{DEFAULT_DASHBOARD_PORT}"
+    ):
+        chat_ui_url = f"http://127.0.0.1:{gateway_port}"
     provider_key = env["NEMOCLAW_PROVIDER_KEY"]
     primary_model_ref = env["NEMOCLAW_PRIMARY_MODEL_REF"]
     inference_base_url = env["NEMOCLAW_INFERENCE_BASE_URL"]
@@ -110,9 +387,61 @@ def build_config(env: dict | None = None) -> dict:
         raise ValueError("NEMOCLAW_AGENT_TIMEOUT must be a positive integer")
     agent_timeout = int(_raw_agent_timeout)
 
-    inference_compat = json.loads(
-        base64.b64decode(env["NEMOCLAW_INFERENCE_COMPAT_B64"]).decode("utf-8")
+    # NemoClaw#2880: expose OpenClaw's agents.defaults.heartbeat.every so users
+    # can disable the periodic heartbeat (e.g. "0m") without editing
+    # openclaw.json by hand. Accept a Go-style duration string (digits + a
+    # required s/m/h suffix — OpenClaw docs always show the suffixed form).
+    # Empty/unset preserves the OpenClaw default.
+    _raw_heartbeat = (env.get("NEMOCLAW_AGENT_HEARTBEAT_EVERY") or "").strip()
+    if _raw_heartbeat and not re.match(r"^\d+(s|m|h)$", _raw_heartbeat):
+        print(
+            f'[SECURITY] NEMOCLAW_AGENT_HEARTBEAT_EVERY must match ^\\d+(s|m|h)$, '
+            f'got "{_raw_heartbeat}" — skipping override, preserving OpenClaw default',
+            file=sys.stderr,
+        )
+        _raw_heartbeat = ""
+    agent_heartbeat = _raw_heartbeat
+
+    model_specific_setups = _matching_model_specific_setups(
+        "openclaw",
+        {
+            "model": model,
+            "providerKey": provider_key,
+            "baseUrl": inference_base_url,
+            "inferenceApi": inference_api,
+        },
+        env,
     )
+
+    inference_compat = _coerce_compat_dict(
+        json.loads(
+            base64.b64decode(env["NEMOCLAW_INFERENCE_COMPAT_B64"]).decode("utf-8")
+        )
+    )
+    openclaw_plugins: list[dict] = []
+    openclaw_plugin_ids: set[str] = set()
+    for setup in model_specific_setups:
+        _apply_openclaw_setup_effects(
+            setup, inference_compat, openclaw_plugins, openclaw_plugin_ids
+        )
+
+    # Ollama's OpenAI-compatible /v1/chat/completions stream omits the
+    # `usage` chunk by default; OpenAI clients have to send
+    # `stream_options.include_usage: true` to receive it. OpenClaw gates
+    # that request flag on `model.compat.supportsUsageInStreaming`
+    # (src/agents/openai-transport-stream.ts) and its Ollama extension
+    # only opts in when its own detector recognises the endpoint as
+    # Ollama. NemoClaw routes ollama-local traffic via the standardised
+    # `https://inference.local/v1` URL through the OpenShell gateway, so
+    # the upstream detector misses it and the TUI token counter stays
+    # `?` indefinitely (#2747). Set the flag here so the request is sent
+    # with `stream_options.include_usage: true` regardless of how
+    # OpenClaw resolves the provider id. Mirrors the LM Studio extension
+    # workaround (`withLmstudioUsageCompat` in
+    # extensions/lmstudio/src/stream.ts). Keep the set of provider keys
+    # in sync with `_bundled_provider_plugins["ollama"]` below.
+    if provider_key in {"ollama", "ollama-local"}:
+        inference_compat.setdefault("supportsUsageInStreaming", True)
 
     msg_channels = json.loads(
         base64.b64decode(
@@ -134,8 +463,18 @@ def build_config(env: dict | None = None) -> dict:
             env.get("NEMOCLAW_TELEGRAM_CONFIG_B64", "e30=") or "e30="
         ).decode("utf-8")
     )
+    # NEMOCLAW_WECHAT_CONFIG_B64 is intentionally not decoded here. The
+    # WeChat plugin's per-account state (accountId/baseUrl/userId) is read by
+    # seed-wechat-accounts.py, which the Dockerfile invokes separately after
+    # `openclaw plugins install` registers the openclaw-weixin channel id.
+    # Decoding it here too would create a misleading second consumer that
+    # nothing acts on.
 
-    _token_keys = {"discord": "token", "telegram": "botToken", "slack": "botToken"}
+    _token_keys = {
+        "discord": "token",
+        "telegram": "botToken",
+        "slack": "botToken",
+    }
     _env_keys = {
         "discord": "DISCORD_BOT_TOKEN",
         "telegram": "TELEGRAM_BOT_TOKEN",
@@ -145,9 +484,8 @@ def build_config(env: dict | None = None) -> dict:
     # Slack's Bolt SDK validates token shape at App construction (^xoxb-…$ /
     # ^xapp-…$) before any HTTP call leaves the process, so the canonical
     # openshell:resolve:env:VAR placeholder is rejected synchronously. Emit a
-    # Bolt-regex-compatible placeholder instead; the slack-token-rewriter
-    # Node preload translates it to canonical form on outbound HTTP, where
-    # OpenShell's L7 proxy substitutes the real token from env.
+    # Bolt-regex-compatible placeholder instead; OpenShell resolves the
+    # provider-shaped alias directly at the egress boundary.
     def _placeholder(channel: str, env_key: str) -> str:
         if channel == "slack" and env_key == "SLACK_BOT_TOKEN":
             return f"xoxb-OPENSHELL-RESOLVE-ENV-{env_key}"
@@ -157,6 +495,16 @@ def build_config(env: dict | None = None) -> dict:
 
     _ch_cfg = {}
     for ch in msg_channels:
+        if ch == "whatsapp":
+            _ch_cfg[ch] = {
+                "accounts": {
+                    "default": {
+                        "enabled": True,
+                        "healthMonitor": {"enabled": False},
+                    }
+                }
+            }
+            continue
         if ch not in _token_keys:
             continue
         account = {
@@ -166,33 +514,60 @@ def build_config(env: dict | None = None) -> dict:
         }
         if ch == "slack":
             account["appToken"] = _placeholder(ch, "SLACK_APP_TOKEN")
-        if ch in ("telegram", "discord"):
+        if ch == "telegram":
             account["proxy"] = proxy_url
         if ch == "telegram":
-            account["groupPolicy"] = (
-                "mentions" if _telegram_config.get("requireMention") else "open"
-            )
+            account["groupPolicy"] = "open"
         if ch in _allowed_ids and _allowed_ids[ch]:
             account["dmPolicy"] = "allowlist"
             account["allowFrom"] = _allowed_ids[ch]
+            if ch == "slack":
+                account["groupPolicy"] = "allowlist"
+                account["channels"] = {
+                    "*": {
+                        "enabled": True,
+                        "requireMention": True,
+                        "users": _allowed_ids[ch],
+                    }
+                }
         _ch_cfg[ch] = {"accounts": {"default": account}}
+
+    # WeChat (openclaw-weixin) is NOT added to channels.* here — writing
+    # channels.openclaw-weixin upfront makes `openclaw plugins install` fail
+    # with "unknown channel id: openclaw-weixin" because the plugin registry
+    # hasn't seen the channel yet (chicken-and-egg). The block is written
+    # AFTER `openclaw plugins install` runs, by scripts/seed-wechat-accounts.py,
+    # which adds:
+    #   channels.openclaw-weixin.channelConfigUpdatedAt = <ISO timestamp>
+    #   channels.openclaw-weixin.accounts.<accountId>.enabled = true
+    # The upstream plugin's auth/accounts.ts reads that block at boot to
+    # decide which accounts to start; without enabled=true the bridge no-ops.
+    #
+    # Per-account secrets (token, baseUrl, userId) still live in the plugin's
+    # own state dir at <stateDir>/openclaw-weixin/accounts/<accountId>.json
+    # (also seeded by seed-wechat-accounts.py). DM allowlist uses the
+    # framework allowFrom file at credentials/openclaw-weixin-{accountId}-
+    # allowFrom.json — not the openclaw.json accounts.<id>.allowFrom mechanism
+    # that telegram/discord/slack use.
 
     if "discord" in _ch_cfg and _discord_guilds:
         _ch_cfg["discord"].update(
             {"groupPolicy": "allowlist", "guilds": _discord_guilds}
         )
 
+    if "telegram" in _ch_cfg and _telegram_config.get("requireMention"):
+        _ch_cfg["telegram"]["groups"] = {"*": {"requireMention": True}}
+
     # Normalize schemeless URLs before parsing — urlparse("remote-host:18789")
     # misclassifies hostname as scheme. Mirrors ensureScheme() in dashboard-contract.ts.
-    _normalized_url = chat_ui_url
-    if chat_ui_url and not re.match(r"^[a-z][a-z0-9+.-]*://", chat_ui_url, re.IGNORECASE):
-        _normalized_url = f"http://{chat_ui_url}"
+    _normalized_url = _normalize_url_for_parse(chat_ui_url)
 
     parsed = urlparse(_normalized_url)
+    loopback_origin = f"http://127.0.0.1:{gateway_port}"
     chat_origin = (
         f"{parsed.scheme}://{parsed.netloc}"
         if parsed.scheme and parsed.netloc
-        else "http://127.0.0.1:18789"
+        else loopback_origin
     )
     # When onboard injects an internal port (e.g. :18789) into a URL that the
     # user provided without an explicit port, the browser origin from a reverse
@@ -208,9 +583,7 @@ def build_config(env: dict | None = None) -> dict:
         portless_origin = f"{parsed.scheme}://{host_part}"
     else:
         portless_origin = None
-    origins = list(dict.fromkeys(
-        filter(None, ["http://127.0.0.1:18789", chat_origin, portless_origin])
-    ))
+    origins = list(dict.fromkeys(filter(None, [loopback_origin, chat_origin, portless_origin])))
 
     # Auto-disable device auth when CHAT_UI_URL is non-loopback — terminal-based
     # pairing is impossible when the user only has web access (Brev Launchable,
@@ -256,6 +629,12 @@ def build_config(env: dict | None = None) -> dict:
         "acpx": {"enabled": False},
         "bonjour": {"enabled": False},
         "qqbot": {"enabled": False},
+        # The @tencent-weixin/openclaw-weixin plugin is pre-installed in the
+        # base image (Dockerfile.base) so onboarding does not depend on the
+        # public npm registry for it. Enable the entry unconditionally — the
+        # bridge no-ops at startup unless seed-wechat-accounts.py has also
+        # registered an accountId under channels.openclaw-weixin.accounts.
+        "openclaw-weixin": {"enabled": True},
     }
     _bundled_provider_plugins = {
         "amazon-bedrock": {"amazon-bedrock", "bedrock"},
@@ -274,11 +653,25 @@ def build_config(env: dict | None = None) -> dict:
         if provider_key not in _provider_keys:
             plugin_entries[_plugin_id] = {"enabled": False}
 
+    plugins = {"entries": plugin_entries}
+    plugin_load_paths: list[str] = []
+    for plugin in openclaw_plugins:
+        plugin_entries[plugin["id"]] = {"enabled": True}
+        if plugin["loadPath"] not in plugin_load_paths:
+            plugin_load_paths.append(plugin["loadPath"])
+    if plugin_load_paths:
+        plugins["load"] = {"paths": plugin_load_paths}
+
     config = {
         "agents": {
             "defaults": {
                 "model": {"primary": primary_model_ref},
                 "timeoutSeconds": agent_timeout,
+                **(
+                    {"heartbeat": {"every": agent_heartbeat}}
+                    if agent_heartbeat
+                    else {}
+                ),
                 # NemoClaw sandboxes are provisioned non-interactively and the
                 # E2E CLI contract expects the first agent turn to answer the
                 # caller's prompt. OpenClaw 2026.4.24 seeds BOOTSTRAP.md by
@@ -317,9 +710,10 @@ def build_config(env: dict | None = None) -> dict:
         # Provider plugins with staged runtime dependencies are disabled above
         # unless they match NEMOCLAW_PROVIDER_KEY. That keeps the baked image
         # limited to the provider selected during onboard.
-        "plugins": {"entries": plugin_entries},
+        "plugins": plugins,
         "gateway": {
             "mode": "local",
+            "port": gateway_port,
             "controlUi": {
                 "allowInsecureAuth": allow_insecure,
                 "dangerouslyDisableDeviceAuth": disable_device_auth,
@@ -345,14 +739,61 @@ def build_config(env: dict | None = None) -> dict:
     return config
 
 
+def _preserve_existing_plugin_installs(config: dict, path: str) -> None:
+    try:
+        with open(path) as f:
+            existing = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return
+
+    if not isinstance(existing, dict):
+        return
+    existing_plugins = existing.get("plugins")
+    if not isinstance(existing_plugins, dict):
+        return
+    existing_installs = existing_plugins.get("installs")
+    if not isinstance(existing_installs, dict) or not existing_installs:
+        return
+
+    plugins = config.setdefault("plugins", {})
+    current_installs = plugins.get("installs")
+    if not isinstance(current_installs, dict):
+        current_installs = {}
+    plugins["installs"] = {**existing_installs, **current_installs}
+
+
+def _has_plugin_install(config: dict, plugin_id: str) -> bool:
+    plugins = config.get("plugins")
+    if not isinstance(plugins, dict):
+        return False
+    installs = plugins.get("installs")
+    return isinstance(installs, dict) and plugin_id in installs
+
+
+def _seed_wechat_accounts_if_installed(config: dict) -> None:
+    if not _has_plugin_install(config, "openclaw-weixin"):
+        return
+
+    seed_script = Path(__file__).resolve().with_name("seed-wechat-accounts.py")
+    namespace = runpy.run_path(str(seed_script))
+    main = namespace.get("main")
+    if not callable(main):
+        raise RuntimeError(f"{seed_script} does not expose main()")
+    exit_code = main()
+    if exit_code not in (None, 0):
+        raise SystemExit(exit_code)
+
+
 def main() -> None:
     """Generate openclaw.json from environment variables."""
     config = build_config()
     path = os.path.expanduser("~/.openclaw/openclaw.json")
+    _preserve_existing_plugin_installs(config, path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         json.dump(config, f, indent=2)
     os.chmod(path, 0o600)
+    _seed_wechat_accounts_if_installed(config)
 
 
 if __name__ == "__main__":

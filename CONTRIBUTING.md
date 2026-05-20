@@ -1,3 +1,8 @@
+<!--
+  SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+  SPDX-License-Identifier: Apache-2.0
+-->
+
 # Contributing to NVIDIA NemoClaw
 
 Thank you for your interest in contributing to NVIDIA NemoClaw. This guide covers how to set up your development environment, run tests, and submit changes.
@@ -73,11 +78,13 @@ These are the primary `make` and `npm` targets for day-to-day development:
 | `make check` | Run all linters (TypeScript + Python) |
 | `make lint` | Same as `make check` |
 | `make format` | Auto-format TypeScript and Python source |
-| `npm run typecheck:cli` | Type-check CLI TypeScript (`bin/`, `scripts/`) |
+| `npm run typecheck:cli` | Type-check CLI TypeScript using `tsconfig.cli.json` (`bin/`, `scripts/`, `src/`, `test/`, `nemoclaw-blueprint/scripts/`) |
 | `npm test` | Run root-level tests (`test/*.test.js`) |
 | `cd nemoclaw && npm test` | Run plugin unit tests (Vitest) |
-| `make docs` | Build documentation (Sphinx/MyST) |
-| `make docs-live` | Serve docs locally with auto-rebuild |
+| `npm run docs` | Validate Fern documentation with the pinned Fern CLI version |
+| `npm run docs:live` | Serve Fern docs locally with auto-rebuild |
+| `npm run docs:preview:watch` | Publish branch-based Fern previews when docs files change |
+| `npm run docs:deps` | Print the pinned Fern CLI version used by docs commands |
 | `npx prek run --all-files` | Run all hooks from `.pre-commit-config.yaml` — see below |
 
 ### Git hooks (prek)
@@ -86,15 +93,31 @@ All git hooks are managed by [prek](https://prek.j178.dev/), a fast, single-bina
 
 | Hook | What runs |
 |------|-----------|
-| **pre-commit** | File fixers, formatters, linters, doc-to-skills dry run, Vitest (plugin) |
+| **pre-commit** | File fixers, formatters, linters, docs-to-skills dry-run validation, Vitest (plugin) |
 | **commit-msg** | commitlint (Conventional Commits) |
 | **pre-push** | TypeScript type check (`tsc --noEmit` for plugin, JS, and CLI) |
 
 For a full manual check: `npx prek run --all-files`. For scoped runs: `npx prek run --from-ref <base> --to-ref HEAD`.
 
+For TypeScript changes under `src/`, `test/`, `scripts/`, `bin/`, or
+`nemoclaw-blueprint/scripts/` (and for `tsconfig.cli.json` updates), also run
+`npm run typecheck:cli` before opening a PR. CI runs this unconditionally, and the
+pre-push hook runs it with `tsconfig.cli.json` before pushes.
+
 If you still have `core.hooksPath` set from an old Husky setup, Git will ignore `.git/hooks`. Run `git config --unset core.hooksPath` in this repo, then `npm install` so `prek install` (via `prepare`) can register the hooks.
 
 `make check` remains the primary documented linter entry point.
+
+For doc-only changes, you do not need to run the full test suite by default.
+Run the docs and hook checks instead:
+
+```bash
+npx prek run --all-files
+npm run docs
+```
+
+Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
+Run `npm test` when the change touches code, generated behavior, or anything that affects runtime behavior.
 
 ## Project Structure
 
@@ -107,7 +130,8 @@ The repository is organized as follows.
 | `bin/` | CLI entry point (`nemoclaw.js`) |
 | `scripts/` | Install helpers and automation scripts |
 | `test/` | Root-level integration tests |
-| `docs/` | User-facing documentation (Sphinx/MyST) |
+| `docs/` | User-facing documentation (Fern MDX plus legacy MyST source during migration) |
+| `fern/` | Fern site configuration, theme, and assets |
 
 ## Language Policy
 
@@ -122,65 +146,23 @@ Shell scripts (`scripts/*.sh`) must pass ShellCheck and use `shfmt` formatting.
 If your change affects user-facing behavior (new commands, changed defaults, new features, bug fixes that contradict existing docs), update the relevant pages under `docs/` in the same PR.
 
 If you use an AI coding agent (Cursor, Claude Code, Codex, etc.), the repo includes the `nemoclaw-contributor-update-docs` skill that drafts doc updates. Use it before writing from scratch and follow the style guide in [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
+During release prep, run that skill first, make any doc version bumps, regenerate user skills, then open the docs refresh PR.
 
 To build and preview docs locally:
 
-```bash
-make docs       # build the docs
-make docs-live  # serve locally with auto-rebuild
+```console
+$ npm run docs                 # validate Fern docs with the pinned Fern CLI version
+$ npm run docs:live            # serve Fern docs locally with auto-rebuild
+$ npm run docs:preview:watch   # publish branch-based Fern previews on file changes
 ```
+
+Use these npm scripts when validating docs for a PR.
 
 See [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md) for the full style guide and writing conventions.
 
 ### Doc-to-Skills Pipeline
 
-The `docs/` directory is the source of truth for user-facing documentation.
-The script `scripts/docs-to-skills.py` converts doc pages into agent skills under `.agents/skills/`.
-These generated skills let AI agents answer user questions and walk through procedures without reading raw doc pages.
-
-Always edit pages in `docs/`.
-Never edit generated skill files under `.agents/skills/nemoclaw-user-*/` — your changes will be overwritten on the next run.
-
-Pull requests that change docs should normally include only the source pages under `docs/`, not the generated `.agents/skills/nemoclaw-user-*` output. Local hooks and PR CI run `scripts/docs-to-skills.py --dry-run` to confirm the docs still convert cleanly without writing files.
-
-After a docs change merges to `main`, the `Docs to Skills` workflow regenerates `.agents/skills/nemoclaw-user-*` from `docs/` and publishes the generated update. The workflow pushes the generated commit directly when branch protection allows it; otherwise it opens or updates a small sync PR for maintainers to merge.
-
-To regenerate skills manually (for example, when reviewing the sync workflow output), run from the repo root:
-
-```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
-```
-
-Always use this exact output path (`.agents/skills/`) and prefix (`nemoclaw-user`) so skill names and locations stay consistent.
-
-Preview what would change before writing files:
-
-```bash
-python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --dry-run
-```
-
-Other useful flags:
-
-| Flag | Purpose |
-|------|---------|
-| `--strategy <name>` | Grouping strategy: `smart` (default), `grouped`, or `individual`. |
-| `--name-map CAT=NAME` | Override a generated skill name (e.g. `--name-map about=overview`). |
-| `--exclude <file>` | Skip specific files (e.g. `--exclude "release-notes.md"`). |
-
-#### Generated skill structure
-
-Each skill directory contains:
-
-```text
-.agents/skills/<skill-name>/
-├── SKILL.md              # Frontmatter + procedures + related skills
-└── references/           # Detailed concept and reference content (loaded on demand)
-    ├── <concept-page>.md
-    └── <reference-page>.md
-```
-
-Agents load the `references/` directory only when needed (progressive disclosure).
-The `SKILL.md` itself stays under 500 lines so agents can read it quickly.
+For user-skill definitions, docs-to-skills validation, release-prep regeneration, and script flags, see [Doc-to-Skills Pipeline](docs/CONTRIBUTING.md#doc-to-skills-pipeline).
 
 ## Pull Requests
 
@@ -205,7 +187,7 @@ Follow these steps to submit a pull request.
 
 1. Create a feature branch from `main`.
 2. Make your changes with tests.
-3. Run `make check` and `npm test` to verify.
+3. Run the relevant checks. For code changes, run `make check` and `npm test`. For doc-only changes, run `npx prek run --all-files` and `npm run docs`.
 4. Open a PR.
 
 ### Commit Messages

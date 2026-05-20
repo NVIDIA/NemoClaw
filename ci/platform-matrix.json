@@ -116,6 +116,12 @@
       "notes": "Uses Google's OpenAI-compatible endpoint"
     },
     {
+      "name": "Hermes Provider",
+      "status": "hermes only",
+      "endpoint_type": "OpenAI-compatible route",
+      "notes": "Available when onboarding Hermes Agent through `nemohermes`"
+    },
+    {
       "name": "Local Ollama",
       "status": "caveated",
       "endpoint_type": "Local Ollama API",
@@ -128,10 +134,16 @@
       "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable GPU"
     },
     {
-      "name": "Local vLLM",
+      "name": "Local vLLM (already running)",
+      "status": "caveated",
+      "endpoint_type": "Local OpenAI-compatible",
+      "notes": "Appears in the onboarding menu when NemoClaw detects a server already on `localhost:8000`. No flag required."
+    },
+    {
+      "name": "Local vLLM (managed install/start)",
       "status": "experimental",
       "endpoint_type": "Local OpenAI-compatible",
-      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` and a server already running on `localhost:8000`"
+      "notes": "Requires `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. NemoClaw pulls/starts a vLLM container on a supported NVIDIA GPU host."
     }
   ]
 }

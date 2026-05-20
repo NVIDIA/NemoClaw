@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Inference Options
+# NemoClaw Inference Options
 
 NemoClaw supports multiple inference providers.
 During onboarding, the `nemoclaw onboard` wizard presents a numbered list of providers to choose from.
@@ -19,7 +19,6 @@ NemoClaw uses provider-specific local tokens for those routes, and rebuilds of l
 
 ## Provider Status
 
-<!-- provider-status:begin -->
 | Provider | Status | Endpoint type | Notes |
 |----------|--------|---------------|-------|
 | NVIDIA Endpoints | Tested | OpenAI-compatible | Hosted models on integrate.api.nvidia.com |
@@ -28,16 +27,19 @@ NemoClaw uses provider-specific local tokens for those routes, and rebuilds of l
 | Anthropic | Tested | Native Anthropic | Uses anthropic-messages |
 | Other Anthropic-compatible endpoint | Tested | Custom Anthropic-compatible | For Claude proxies and compatible gateways |
 | Google Gemini | Tested | OpenAI-compatible | Uses Google's OpenAI-compatible endpoint |
+| Hermes Provider | Hermes only | OpenAI-compatible route | Available when onboarding Hermes Agent through `nemohermes` |
 | Local Ollama | Caveated | Local Ollama API | Available when Ollama is installed or running on the host |
 | Local NVIDIA NIM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable GPU |
-| Local vLLM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a server already running on `localhost:8000` |
-<!-- provider-status:end -->
+| Local vLLM (already running) | Caveated | Local OpenAI-compatible | Appears in the onboarding menu when NemoClaw detects a server already on `localhost:8000`. No flag required. |
+| Local vLLM (managed install/start) | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. NemoClaw pulls/starts a vLLM container on a supported NVIDIA GPU host. |
 
 ## Provider Options
 
 The onboard wizard presents the following provider options by default.
 The first six are always available.
 Ollama appears when it is installed or running on the host.
+Experimental local vLLM appears when NemoClaw detects a running vLLM server.
+The managed install/start vLLM entry appears when you opt in and NemoClaw detects a supported NVIDIA GPU host profile.
 
 | Option | Description | Curated models |
 |--------|-------------|----------------|
@@ -47,7 +49,9 @@ Ollama appears when it is installed or running on the host.
 | Anthropic | Routes to the Anthropic Messages API. Set `ANTHROPIC_API_KEY`. | `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6` |
 | Other Anthropic-compatible endpoint | Routes to any server that implements the Anthropic Messages API (`/v1/messages`). The wizard prompts for a base URL and model name. Set `COMPATIBLE_ANTHROPIC_API_KEY`. | You provide the model name. |
 | Google Gemini | Routes to Google's OpenAI-compatible endpoint. NemoClaw prefers `/responses` only when the endpoint proves it can handle tool calling in a way OpenClaw uses; otherwise it falls back to `/chat/completions`. Set `GEMINI_API_KEY`. | `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` |
+| Hermes Provider | Routes Hermes Agent through the host OpenShell provider registered by NemoClaw when onboarding Hermes Agent. | Curated Hermes Provider models such as `moonshotai/kimi-k2.6`, `openai/gpt-5.4-mini`, and `z-ai/glm-5.1`. |
 | Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill). |
+| Model Router | Starts a host-side router on port `4000`, registers it as an OpenAI-compatible provider, and keeps the sandbox pointed at `inference.local`. Set `NEMOCLAW_PROVIDER=routed` for non-interactive setup. | The router pool defines the model names. |
 
 ## Choosing the Right Option for Nemotron
 
@@ -63,14 +67,51 @@ NVIDIA Nemotron models expose OpenAI-compatible APIs across every supported depl
 
 For Option 3, the API key environment variable is `COMPATIBLE_API_KEY`. Set it to whatever credential your endpoint expects, or any non-empty placeholder if your endpoint does not require auth.
 
+## Model Router
+
+The Model Router option uses the `routed` inference profile in `nemoclaw-blueprint/blueprint.yaml`.
+When you select it, NemoClaw starts the router proxy on the host, waits for its health endpoint, registers the `nvidia-router` provider with OpenShell, and creates the sandbox with the same `inference.local` route the agent uses for other providers.
+The sandbox does not call the router port directly.
+
+The router model pool lives in `nemoclaw-blueprint/router/pool-config.yaml`.
+The default pool routes between NVIDIA-hosted Nemotron models and uses the `tolerance` value to choose the lowest-cost model whose predicted quality stays within the configured threshold.
+To use the router in scripted setup, set:
+
+```console
+$ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
+```
+
+### Host Python requirement
+
+The Model Router runs in a host-side virtual environment that NemoClaw creates during onboarding.
+NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, and adopts the first interpreter that satisfies both of:
+
+- Version inside `[3.10, 3.14)`.
+- `ensurepip`, `pyexpat`, `ssl`, and `venv` all import without error.
+
+If no candidate qualifies, onboarding aborts and prints the real failure for each candidate.
+This surfaces issues like Homebrew `python@3.14` whose `pyexpat` extension fails to dlopen against the older system `libexpat` on macOS.
+
+To pin a specific interpreter, set `NEMOCLAW_MODEL_ROUTER_PYTHON` to its absolute path before running `nemoclaw onboard`:
+
+```console
+$ NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemoclaw onboard
+```
+
+The pin is strict.
+NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to a different python on `PATH`.
+Relative command names such as `python3.12` are rejected; use `command -v python3.12` to find the absolute path.
+If `python -m venv` itself fails for a probe-clean interpreter (for example, a corrupt ensurepip seed), NemoClaw retries with the next healthy candidate when no pin is set; with a pin set, the failure stops onboarding so you can fix or repoint the pinned python.
+
 ## Experimental Options
 
-The following local inference options require `NEMOCLAW_EXPERIMENTAL=1` and, when prerequisites are met, appear in the onboarding selection list.
+The following local inference options are experimental.
+Local NIM and managed vLLM install/start require `NEMOCLAW_EXPERIMENTAL=1`; an already-running vLLM server appears directly in the onboarding selection list.
 
 | Option | Condition | Notes |
 |--------|-----------|-------|
 | Local NVIDIA NIM | NIM-capable GPU detected | Pulls and manages a NIM container. |
-| Local vLLM | vLLM running on `localhost:8000` | Auto-detects the loaded model. |
+| Local vLLM | vLLM running on `localhost:8000`, or a supported DGX Spark, DGX Station, or Linux NVIDIA GPU profile | Auto-detects the loaded model when vLLM is already running. Can install or start a managed vLLM container for supported profiles after experimental opt-in. |
 
 For setup instructions, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
 
@@ -78,6 +119,7 @@ For setup instructions, refer to Use a Local Inference Server (use the `nemoclaw
 
 NemoClaw validates the selected provider and model before creating the sandbox.
 If credential validation fails, the wizard asks whether to re-enter the API key, choose a different provider, retry, or exit.
+Transient upstream validation failures are retried before the wizard reports a provider failure.
 The `nvapi-` prefix check applies only to `NVIDIA_API_KEY`.
 Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, and compatible endpoint keys, use provider-aware validation during retry.
 
@@ -95,4 +137,5 @@ Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMI
 ## Next Steps
 
 - Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill) for Ollama, vLLM, NIM, and compatible-endpoint setup details.
+- Tool-Calling Reliability (use the `nemoclaw-user-configure-inference` skill) for deciding when Ollama is enough and when vLLM with a parser is safer.
 - Switch Inference Models (use the `nemoclaw-user-configure-inference` skill) for changing the model at runtime without re-onboarding.

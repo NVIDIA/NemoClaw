@@ -3,7 +3,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 
-import type { SandboxEntry } from "./registry";
+import type { SandboxEntry } from "./state/registry";
 import {
   backfillMessagingChannels,
   findAllOverlaps,
@@ -93,6 +93,24 @@ describe("findChannelConflicts", () => {
     const registry = makeRegistry([{ name: "alice", messagingChannels: ["telegram"] }]);
     expect(findChannelConflicts("bob", [], registry)).toEqual([]);
   });
+
+  it("ignores a stopped (disabled) channel — its credential is not in use (#3381)", () => {
+    const registry = makeRegistry([
+      {
+        name: "alice",
+        messagingChannels: ["telegram"],
+        disabledChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
+      },
+    ]);
+    expect(
+      findChannelConflicts(
+        "bob",
+        [{ channel: "telegram", credentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" } }],
+        registry,
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("findAllOverlaps", () => {
@@ -161,6 +179,23 @@ describe("findAllOverlaps", () => {
     ]);
     expect(findAllOverlaps(registry)).toEqual([]);
   });
+
+  it("ignores stopped (disabled) channels so nemoclaw status does not report phantom overlaps (#3381)", () => {
+    const registry = makeRegistry([
+      {
+        name: "alice",
+        messagingChannels: ["telegram"],
+        disabledChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
+      },
+      {
+        name: "bob",
+        messagingChannels: ["telegram"],
+        providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "hash-a" },
+      },
+    ]);
+    expect(findAllOverlaps(registry)).toEqual([]);
+  });
 });
 
 describe("backfillMessagingChannels", () => {
@@ -178,6 +213,33 @@ describe("backfillMessagingChannels", () => {
     expect(probe.providerExists).toHaveBeenCalledWith("alice-telegram-bridge");
     expect(probe.providerExists).toHaveBeenCalledWith("alice-discord-bridge");
     expect(probe.providerExists).toHaveBeenCalledWith("alice-slack-bridge");
+    expect(probe.providerExists).toHaveBeenCalledWith("alice-wechat-bridge");
+  });
+
+  it("backfills wechat when only the wechat bridge provider is present", () => {
+    // The probe-by-suffix mechanism relies on every channel having an entry
+    // in PROVIDER_SUFFIXES; if wechat were ever dropped from that map, this
+    // test starts catching the absent provider.
+    const registry = makeRegistry([{ name: "alice" }]);
+    const probe: ConflictProbe = {
+      providerExists: vi.fn<ProviderExists>((name) =>
+        name === "alice-wechat-bridge" ? "present" : "absent",
+      ),
+    };
+    backfillMessagingChannels(registry, probe);
+    expect(registry.updateSandbox).toHaveBeenCalledWith("alice", {
+      messagingChannels: ["wechat"],
+    });
+  });
+
+  it("surfaces a wechat conflict when two sandboxes share the channel without hashes", () => {
+    const registry = makeRegistry([
+      { name: "alice", messagingChannels: ["wechat"] },
+      { name: "bob", messagingChannels: [] },
+    ]);
+    expect(findChannelConflicts("bob", ["wechat"], registry)).toEqual([
+      { channel: "wechat", sandbox: "alice", reason: "unknown-token" },
+    ]);
   });
 
   it("leaves entries with existing messagingChannels alone", () => {

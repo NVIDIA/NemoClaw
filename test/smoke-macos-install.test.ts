@@ -102,7 +102,7 @@ describe.skip("macOS smoke install script guardrails", () => {
       wait "$feeder_pid"
     `;
 
-    const result = spawnSync("bash", ["-lc", script], {
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
       env: { ...process.env, NVIDIA_API_KEY: "nvapi-test" },

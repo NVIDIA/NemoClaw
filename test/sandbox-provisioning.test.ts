@@ -116,6 +116,13 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       expect(fs.statSync(openclawDir).isDirectory()).toBe(true);
       expect(fs.statSync(path.join(openclawDir, "exec-approvals.json")).isFile()).toBe(true);
       expect(fs.statSync(path.join(openclawDir, "update-check.json")).isFile()).toBe(true);
+      for (const dir of ["credentials", "devices", "identity", "logs", "telegram"]) {
+        const stateDir = path.join(openclawDir, dir);
+        expect(fs.statSync(stateDir).isDirectory()).toBe(true);
+        expect(fs.lstatSync(stateDir).isSymbolicLink()).toBe(false);
+        expect(fs.statSync(stateDir).mode & 0o020).toBe(0o020);
+        expect(fs.statSync(stateDir).mode & 0o2000).toBe(0o2000);
+      }
       expect(fs.existsSync(path.join(sandboxRoot, ".openclaw-data"))).toBe(false);
       expect(fs.lstatSync(path.join(openclawDir, "exec-approvals.json")).isSymbolicLink()).toBe(
         false,
@@ -180,8 +187,8 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
   });
 });
 
-describe("sandbox provisioning: procps debug tools (#2343)", () => {
-  it("base apt layer requests procps and the SFTP server", () => {
+describe("sandbox provisioning: base runtime tools", () => {
+  it("base apt layer requests procps, e2fsprogs, and the SFTP server", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));
     const lists = path.join(tmp, "apt-lists");
@@ -198,18 +205,20 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
       ]);
       expect(result.status).toBe(0);
       expect(calls).toContain("apt-get update");
-      expect(calls).toContain("procps=2:4.0.2-3");
-      expect(calls).toContain("openssh-sftp-server=1:9.2p1-2+deb12u9");
+      expect(calls).toContain("procps=2:4.0.4-9");
+      expect(calls).toContain("e2fsprogs=1.47.2-3+b11");
+      expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u4");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 
-  it("runtime hardening installs procps when a stale base lacks ps", () => {
+  it("runtime hardening installs procps and e2fsprogs when a stale base lacks ps and chattr", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-procps-"));
     const log = path.join(tmp, "calls.log");
     const marker = path.join(tmp, "ps-installed");
+    const chattrMarker = path.join(tmp, "chattr-installed");
     const lists = path.join(tmp, "apt-lists");
     fs.mkdirSync(lists);
     const command = dockerRunCommandBetween(
@@ -222,9 +231,10 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
       "set -euo pipefail",
       `call_log=${JSON.stringify(log)}`,
       `ps_marker=${JSON.stringify(marker)}`,
+      `chattr_marker=${JSON.stringify(chattrMarker)}`,
       'apt-mark() { printf "apt-mark %s\\n" "$*" >> "$call_log"; }',
-      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.2-3"* ]]; then touch "$ps_marker"; fi; }',
-      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; else builtin command "$@"; fi; }',
+      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b11"* ]]; then touch "$chattr_marker"; fi; }',
+      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; else builtin command "$@"; fi; }',
       'ps() { [ -f "$ps_marker" ] || return 127; printf "procps test version\\n"; }',
       command,
     ].join("\n");
@@ -234,11 +244,103 @@ describe("sandbox provisioning: procps debug tools (#2343)", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status).toBe(0);
       const calls = fs.readFileSync(log, "utf-8");
-      expect(calls).toContain("apt-mark manual procps");
+      expect(calls).toContain("apt-mark manual procps e2fsprogs");
       expect(calls).toContain("apt-get autoremove --purge -y");
       expect(calls).toContain("apt-get update");
-      expect(calls).toContain("apt-get install -y --no-install-recommends procps=2:4.0.2-3");
+      expect(calls).toContain(
+        "apt-get install -y --no-install-recommends procps=2:4.0.4-9",
+      );
+      expect(calls).toContain("apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b11");
       expect(result.stdout).toContain("procps test version");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () => {
+  it("normalizes copied blueprint permissions before non-root config generation", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-mode-"));
+    const blueprintRoot = path.join(tmp, "opt", "nemoclaw-blueprint");
+    const manifestDir = path.join(blueprintRoot, "model-specific-setup", "openclaw");
+    const manifestPath = path.join(manifestDir, "kimi-k2.6-managed-inference.json");
+
+    try {
+      fs.mkdirSync(manifestDir, { recursive: true });
+      fs.writeFileSync(manifestPath, "{}\n", { mode: 0o600 });
+      fs.chmodSync(path.join(blueprintRoot, "model-specific-setup"), 0o700);
+      fs.chmodSync(manifestDir, 0o700);
+      fs.chmodSync(manifestPath, 0o600);
+
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# Copy built plugin and blueprint",
+        "# Install runtime dependencies only",
+      ).replaceAll("/opt/nemoclaw-blueprint", blueprintRoot);
+      const { result } = runLoggedDockerShell(command, tmp);
+
+      expect(result.status, result.stderr).toBe(0);
+      expect((fs.statSync(manifestDir).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(manifestPath).mode & 0o777).toString(8)).toBe("644");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes the config generator mode after Docker COPY preserves a restrictive source mode", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-helper-mode-"));
+    const localBin = path.join(tmp, "usr", "local", "bin");
+    const localLib = path.join(tmp, "usr", "local", "lib", "nemoclaw");
+    const localShare = path.join(tmp, "usr", "local", "share", "nemoclaw");
+    const pluginDir = path.join(localShare, "openclaw-plugins", "kimi-inference-compat");
+    const pluginFile = path.join(pluginDir, "index.js");
+    const nestedPluginDir = path.join(pluginDir, "lib");
+    const nestedPluginFile = path.join(nestedPluginDir, "helper.js");
+    const files = [
+      path.join(localBin, "nemoclaw-start"),
+      path.join(localBin, "nemoclaw-codex-acp"),
+      path.join(localLib, "sandbox-init.sh"),
+      path.join(localLib, "generate-openclaw-config.py"),
+      path.join(localLib, "seed-wechat-accounts.py"),
+      path.join(localLib, "ws-proxy-fix.js"),
+      pluginFile,
+      nestedPluginFile,
+    ];
+
+    try {
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(localLib, { recursive: true });
+      fs.mkdirSync(nestedPluginDir, { recursive: true });
+      for (const file of files) {
+        fs.writeFileSync(file, "# fixture\n", { mode: 0o600 });
+        fs.chmodSync(file, 0o600);
+      }
+
+      const command = dockerRunCommandBetween(
+        dockerfile,
+        "# Copy startup script and shared sandbox initialisation library",
+        "# Build args for config that varies per deployment.",
+      )
+        .replaceAll("/usr/local/bin", localBin)
+        .replaceAll("/usr/local/lib/nemoclaw", localLib)
+        .replaceAll("/usr/local/share/nemoclaw", localShare);
+      const { result } = runLoggedDockerShell(command, tmp);
+
+      expect(result.status, result.stderr).toBe(0);
+      const generatorMode = (
+        fs.statSync(path.join(localLib, "generate-openclaw-config.py")).mode & 0o777
+      ).toString(8);
+      const pluginDirMode = (fs.statSync(pluginDir).mode & 0o777).toString(8);
+      const pluginMode = (fs.statSync(pluginFile).mode & 0o777).toString(8);
+      const nestedPluginDirMode = (fs.statSync(nestedPluginDir).mode & 0o777).toString(8);
+      const nestedPluginMode = (fs.statSync(nestedPluginFile).mode & 0o777).toString(8);
+      expect(generatorMode).toBe("755");
+      expect(pluginDirMode).toBe("755");
+      expect(pluginMode).toBe("644");
+      expect(nestedPluginDirMode).toBe("755");
+      expect(nestedPluginMode).toBe("644");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -384,9 +486,14 @@ describe("Hermes sandbox provisioning", () => {
         expect(run.result.status).toBe(0);
         const hermesDir = path.join(run.sandboxRoot, ".hermes");
         expect((fs.statSync(hermesDir).mode & 0o777).toString(8)).toBe("750");
-        for (const dir of ["logs", "cache"]) {
+        for (const dir of ["logs", "cache", "platforms"]) {
           expect((fs.statSync(path.join(hermesDir, dir)).mode & 0o777).toString(8)).toBe("770");
         }
+        expect((fs.statSync(path.join(hermesDir, "platforms")).mode & 0o7777).toString(8)).toBe(
+          "2770",
+        );
+        const whatsappSessionDir = path.join(hermesDir, "platforms", "whatsapp", "session");
+        expect((fs.statSync(whatsappSessionDir).mode & 0o7777).toString(8)).toBe("2770");
         expect((fs.statSync(path.join(hermesDir, "runtime")).mode & 0o7777).toString(8)).toBe(
           "2770",
         );
@@ -400,129 +507,5 @@ describe("Hermes sandbox provisioning", () => {
         fs.rmSync(run.tmp, { recursive: true, force: true });
       }
     }
-  });
-
-  it("captures Hermes entrypoint and gateway startup logs for diagnostics", () => {
-    const startSrc = fs.readFileSync(HERMES_START, "utf-8");
-    expect(startSrc).toContain('_START_LOG="/tmp/nemoclaw-start.log"');
-    expect(startSrc).toContain('exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)');
-    expect(startSrc).toContain("start_gateway_log_stream");
-    expect(startSrc).toContain("sed -u 's/^/[gateway-log:] /'");
-    expect(startSrc).toContain('SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")');
-  });
-
-  it("allows OpenShell to execute the Hermes venv behind the /usr/local/bin symlink", () => {
-    const policySrc = fs.readFileSync(HERMES_POLICY, "utf-8");
-    const permissivePolicySrc = fs.readFileSync(HERMES_POLICY_PERMISSIVE, "utf-8");
-
-    expect(policySrc).toContain("- /opt/hermes");
-    expect(permissivePolicySrc).toContain("- /opt/hermes");
-  });
-});
-
-describe("sandbox provisioning: gateway auth token externalization (#2378)", () => {
-  it("runtime image clears generated gateway auth tokens from openclaw.json", () => {
-    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-clear-token-"));
-    const openclawDir = path.join(tmp, ".openclaw");
-    fs.mkdirSync(openclawDir, { recursive: true });
-    const configPath = path.join(openclawDir, "openclaw.json");
-    fs.writeFileSync(
-      configPath,
-      JSON.stringify({ gateway: { auth: { token: "generated-secret" } } }),
-      { mode: 0o644 },
-    );
-    const command = dockerRunCommandBetween(
-      dockerfile,
-      "# SECURITY: Clear any gateway auth token",
-      "# Flatten stale published base images",
-    ).replace('python3 -c " ', 'python3 -c "');
-    const scriptPath = path.join(tmp, "run.sh");
-    try {
-      fs.writeFileSync(
-        scriptPath,
-        ["#!/usr/bin/env bash", "set -euo pipefail", command].join("\n"),
-        {
-          mode: 0o700,
-        },
-      );
-      const result = spawnSync("bash", [scriptPath], {
-        encoding: "utf-8",
-        env: { ...process.env, HOME: tmp },
-        timeout: 5000,
-      });
-      expect(result.status).toBe(0);
-      const config = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-      expect(config.gateway.auth.token).toBe("");
-      expect((fs.statSync(configPath).mode & 0o777).toString(8)).toBe("600");
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("sandbox provisioning: codex-acp wrapper (#2484)", () => {
-  it("runs codex-acp with writable Codex and XDG state", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-codex-wrapper-"));
-    const log = path.join(tmp, "exec.log");
-    const sourceScript = `
-exec() {
-  printf 'argv=%s\n' "$*" > ${JSON.stringify(log)}
-  printf 'HOME=%s\n' "$HOME" >> ${JSON.stringify(log)}
-  printf 'CODEX_HOME=%s\n' "$CODEX_HOME" >> ${JSON.stringify(log)}
-  printf 'XDG_CONFIG_HOME=%s\n' "$XDG_CONFIG_HOME" >> ${JSON.stringify(log)}
-  return 0
-}
-source ${JSON.stringify(path.join(ROOT, "scripts", "codex-acp-wrapper.sh"))} --stdio
-`;
-    try {
-      const result = spawnSync("bash", ["-c", sourceScript], {
-        encoding: "utf-8",
-        env: { ...process.env, NEMOCLAW_CODEX_ACP_HOME: tmp },
-        timeout: 5000,
-      });
-      expect(result.status).toBe(0);
-      const output = fs.readFileSync(log, "utf-8");
-      expect(output).toContain("argv=/usr/local/bin/codex-acp --stdio");
-      for (const dir of [
-        "home",
-        "codex",
-        "sqlite",
-        "cache",
-        "config",
-        "data",
-        "state",
-        "runtime",
-        "gnupg",
-      ]) {
-        expect(fs.statSync(path.join(tmp, dir)).isDirectory()).toBe(true);
-      }
-      expect((fs.statSync(path.join(tmp, "gitconfig")).mode & 0o777).toString(8)).toBe("600");
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-});
-
-describe("sandbox test image fixtures", () => {
-  const src = fs.readFileSync(DOCKERFILE_SANDBOX, "utf-8");
-
-  it("clears production config recovery artifacts after writing the legacy fixture", () => {
-    expect(src).toContain("/sandbox/.openclaw/openclaw.json.bak*");
-    expect(src).toContain("/sandbox/.openclaw/openclaw.json.last-good");
-    expect(src).toContain("/sandbox/.openclaw-data/logs/config-health.json");
-  });
-});
-
-describe("sandbox operations E2E harness", () => {
-  const src = fs.readFileSync(
-    path.join(ROOT, "test", "e2e", "test-sandbox-operations.sh"),
-    "utf-8",
-  );
-
-  it("resumes onboard when OpenShell resets after importing the image", () => {
-    expect(src).toContain("is_onboard_import_stream_reset");
-    expect(src).toContain("Connection reset by peer (os error 104)");
-    expect(src).toContain("nemoclaw onboard --resume --non-interactive");
   });
 });

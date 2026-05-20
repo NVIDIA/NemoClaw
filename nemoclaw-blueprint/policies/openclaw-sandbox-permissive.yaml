@@ -78,6 +78,29 @@ network_policies:
     binaries:
       - { path: "/**" }
 
+  # ── Managed inference route ──────────────────────────────────────────
+  # Mirror of the `managed_inference` block in openclaw-sandbox.yaml.
+  # `inference.local` is the OpenShell gateway's internal virtual hostname;
+  # the gateway proxies it to the configured provider. OpenShell currently
+  # applies an implicit allow for this route when a managed inference
+  # binding exists, so inference functionally works under permissive mode
+  # even without this entry. We list it explicitly anyway for:
+  #   1. Consistency with the base policy (easier mental model).
+  #   2. Defense-in-depth if the implicit allow is ever tightened.
+  #   3. Self-documentation — readers of this file should not need to
+  #      discover the implicit behaviour empirically.
+  # Ref: https://github.com/NVIDIA/NemoClaw/issues/2663, #2513
+  managed_inference:
+    name: managed_inference
+    endpoints:
+      - host: inference.local
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        access: full
+    binaries:
+      - { path: "/**" }
+
   github:
     name: github
     endpoints:
@@ -166,9 +189,20 @@ network_policies:
         access: full
       - host: gateway.discord.gg
         port: 443
-        protocol: rest
+        protocol: websocket
         enforcement: enforce
-        access: full
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+      - host: "*.discord.gg"
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
       - host: cdn.discordapp.com
         port: 443
         protocol: rest
@@ -189,27 +223,36 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         access: full
       - host: api.slack.com
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         access: full
       - host: hooks.slack.com
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         access: full
       - host: wss-primary.slack.com
         port: 443
-        protocol: rest
+        protocol: websocket
         enforcement: enforce
-        access: full
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
       - host: wss-backup.slack.com
         port: 443
-        protocol: rest
+        protocol: websocket
         enforcement: enforce
-        access: full
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
     binaries:
       - { path: "/**" }
 

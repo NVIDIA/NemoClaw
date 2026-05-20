@@ -20,18 +20,28 @@ The sandbox image is approximately 2.4 GB compressed. During image push, the Doc
 |------------|----------------------------------|
 | Node.js    | 22.16 or later |
 | npm        | 10 or later |
+| Docker     | Docker Engine, Docker Desktop, or Colima on a tested platform |
 | Platform   | See [Platforms](#platforms) below |
 
-:::{warning} OpenShell Lifecycle
+On Linux, the installer can install Docker, start the Docker service, and add your user to the `docker` group.
+If the group change is not active in the current shell, the installer exits with `newgrp docker` guidance before it starts onboarding.
+If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
+
+On Debian and Ubuntu, NemoClaw installs `zstd` with `apt-get` if it is missing; on other Linux distributions, install `zstd` before onboarding.
+
+On macOS, NemoClaw uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
+You do not need to install or sign a separate OpenShell VM driver helper for standard macOS onboarding.
+
+**OpenShell Lifecycle:**
+
 For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
 Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
-:::
 
-:::{note} Docker storage driver
+**Docker storage driver:**
+
 On Linux hosts running Docker 26 or later with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) enabled (the install-time default for fresh `docker-ce` installations on Ubuntu 24.04 and similar distros), `nemoclaw onboard` transparently builds a `fuse-overlayfs`-enabled cluster image to bypass a kernel-level nested-overlay limitation in k3s.
 No manual setup is required.
 See the troubleshooting guide (use the `nemoclaw-user-reference` skill) for the override knobs and a manual `daemon.json` alternative.
-:::
 
 ## Platforms
 
