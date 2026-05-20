@@ -50,6 +50,30 @@ describe("selectDockerDriverSandboxContainer", () => {
     ).toBe("openshell-demo");
   });
 
+  it("refuses to fall back through a prefix collision with another registered sandbox", () => {
+    // sandbox `demo-prod` is registered; its canonical container
+    // `openshell-demo-prod` must never be returned when resolving `demo`.
+    expect(
+      selectDockerDriverSandboxContainer(
+        "demo",
+        "docker",
+        "openshell-demo-prod\n",
+        ["demo", "demo-prod"],
+      ),
+    ).toBeNull();
+  });
+
+  it("still falls back to a prefix match for non-conflicting suffixes", () => {
+    expect(
+      selectDockerDriverSandboxContainer(
+        "demo",
+        "docker",
+        "openshell-demo-helper\n",
+        ["demo"],
+      ),
+    ).toBe("openshell-demo-helper");
+  });
+
   it("returns null for the legacy kubernetes driver", () => {
     expect(
       selectDockerDriverSandboxContainer("demo", "kubernetes", "openshell-demo\n"),

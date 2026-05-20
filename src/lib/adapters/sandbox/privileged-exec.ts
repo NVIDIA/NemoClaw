@@ -21,6 +21,7 @@ export function selectDockerDriverSandboxContainer(
   sandboxName: string,
   openshellDriver: string | null | undefined,
   containerNames: string,
+  knownSandboxNames: readonly string[] = [],
 ): string | null {
   if (openshellDriver !== "docker") return null;
   const prefix = `openshell-${sandboxName}-`;
@@ -29,11 +30,30 @@ export function selectDockerDriverSandboxContainer(
     .split("\n")
     .map((line) => line.trim())
     .filter((name) => name.length > 0);
-  return (
-    trimmed.find((name) => name === exact) ??
-    trimmed.find((name) => name.startsWith(prefix)) ??
-    null
+
+  const exactMatch = trimmed.find((name) => name === exact);
+  if (exactMatch) return exactMatch;
+
+  // The prefix `openshell-<sandboxName>-` alone can collide with other
+  // sandboxes whose names share that prefix (e.g. sandbox `demo` vs.
+  // sandbox `demo-prod` → `openshell-demo-prod` would otherwise be
+  // accepted as a container for `demo`). Exclude any candidate that
+  // exact-matches a different registered sandbox so brew/shields/config's
+  // privileged exec channel can't be misrouted across sandboxes.
+  const otherExactContainers = new Set(
+    knownSandboxNames
+      .filter((name) => name !== sandboxName)
+      .map((name) => `openshell-${name}`),
   );
+  const knownSandboxSet = new Set(knownSandboxNames);
+  for (const candidate of trimmed) {
+    if (!candidate.startsWith(prefix)) continue;
+    if (otherExactContainers.has(candidate)) continue;
+    const candidateSandbox = candidate.slice("openshell-".length);
+    if (candidateSandbox !== sandboxName && knownSandboxSet.has(candidateSandbox)) continue;
+    return candidate;
+  }
+  return null;
 }
 
 export function resolveDockerDriverSandboxContainer(sandboxName: string): string | null {
@@ -45,7 +65,20 @@ export function resolveDockerDriverSandboxContainer(sandboxName: string): string
   }
   if (openshellDriver !== "docker") return null;
   const output = dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true });
-  return selectDockerDriverSandboxContainer(sandboxName, openshellDriver, output);
+  let knownSandboxNames: string[] = [];
+  try {
+    knownSandboxNames = registry
+      .listSandboxes?.()
+      .sandboxes.map((entry) => entry.name) ?? [];
+  } catch {
+    knownSandboxNames = [];
+  }
+  return selectDockerDriverSandboxContainer(
+    sandboxName,
+    openshellDriver,
+    output,
+    knownSandboxNames,
+  );
 }
 
 function withUserPrefix(cmd: readonly string[], user: string): string[] {

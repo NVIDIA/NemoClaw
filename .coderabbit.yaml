@@ -341,6 +341,31 @@ reviews:
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=shields-config-e2e
         ```
 
+    - path: "src/lib/actions/sandbox/brew.ts"
+      instructions: &e2e-brew-command |
+        This file owns the `nemoclaw <name> brew {init,install,uninstall,deinit}`
+        lifecycle: Linuxbrew bootstrap, formula install/uninstall via the
+        linuxbrew user, profile.d PATH write, and prefix teardown. Changes
+        here affect every brew subcommand.
+
+        **E2E test recommendation:**
+        - `brew-command-e2e` — TC-BREW-01..07: init/install/uninstall/deinit
+          + idempotent init + shields-up refusal + install-without-init refusal
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=brew-command-e2e
+        ```
+
+    - path: "src/commands/sandbox/brew/**"
+      instructions: *e2e-brew-command
+
+    - path: "src/commands/sandbox/brew.ts"
+      instructions: *e2e-brew-command
+
+    - path: "test/e2e/test-brew-command.sh"
+      instructions: *e2e-brew-command
+
     - path: "agents/hermes/**"
       instructions: |
         This directory contains the Hermes agent. Changes affect
