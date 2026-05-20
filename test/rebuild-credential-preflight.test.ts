@@ -314,13 +314,15 @@ function registryHasSandbox(fixture: ReturnType<typeof createFixture>): boolean 
 describe("Issue #2273: atomic rebuild", () => {
   describe("Layer 2: preflight credential check", () => {
     it(
-      "aborts rebuild BEFORE destroying sandbox when credential is missing",
+      "aborts rebuild BEFORE destroying sandbox when credential is missing and gateway has no provider",
       { timeout: 60_000 },
       () => {
-        // No credential in env or credentials.json
+        // No credential in env or credentials.json AND no gateway provider —
+        // the only configuration that should still bail preflight after #3895.
         const f = createFixture({
           credentialEnv: "NVIDIA_API_KEY",
           // no savedCredential
+          providerRegistered: false,
         });
 
         const result = runRebuild(f);
@@ -333,6 +335,32 @@ describe("Issue #2273: atomic rebuild", () => {
         expect(output).toContain("untouched");
         // Sandbox should still be in the registry (not destroyed)
         expect(registryHasSandbox(f)).toBe(true);
+      },
+    );
+
+    it(
+      "proceeds when credential is missing in env but provider is already registered in OpenShell (#3895)",
+      { timeout: 60_000 },
+      () => {
+        // Regression for #3895: a sandbox onboarded with NVIDIA Endpoints
+        // and later modified (e.g. channel add → auto-rebuild) used to fail
+        // preflight when NVIDIA_API_KEY was no longer in the operator's
+        // shell, even though the credential was already stored in the
+        // OpenShell gateway. Rebuild now reuses the gateway-stored
+        // credential and proceeds without re-prompting.
+        const f = createFixture({
+          credentialEnv: "NVIDIA_API_KEY",
+          // no savedCredential, no env var
+          providerRegistered: true,
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(output).not.toContain("preflight failed");
+        expect(output).not.toContain("Missing credential: NVIDIA_API_KEY");
+        expect(output).toContain("already registered in the OpenShell gateway");
+        expect(output).toContain("Backing up sandbox state");
       },
     );
 
@@ -471,14 +499,15 @@ describe("Issue #2273: atomic rebuild", () => {
     );
 
     it(
-      "preflight works for non-NVIDIA providers (OpenAI, Anthropic, etc.)",
+      "preflight aborts for non-NVIDIA providers when both env var and gateway provider are missing",
       { timeout: 60_000 },
       () => {
-        // OpenAI provider with no credential — should abort
+        // OpenAI provider with no credential anywhere — should abort.
         const f = createFixture({
           provider: "openai-api",
           credentialEnv: "OPENAI_API_KEY",
           // no savedCredential
+          providerRegistered: false,
         });
 
         const result = runRebuild(f);
@@ -489,6 +518,33 @@ describe("Issue #2273: atomic rebuild", () => {
         expect(output).toContain("untouched");
         expect(registryHasSandbox(f)).toBe(true);
       },
+    );
+
+    it.each([
+      ["openai-api", "OPENAI_API_KEY"],
+      ["anthropic-prod", "ANTHROPIC_API_KEY"],
+      ["gemini-api", "GEMINI_API_KEY"],
+    ])(
+      "reuses the OpenShell gateway provider for %s when env var is missing (#3895)",
+      (provider, credentialEnv) => {
+        // #3895 fix extends gateway credential reuse to every remote provider
+        // that registers an OpenShell provider during onboard, not just NVIDIA.
+        const f = createFixture({
+          provider,
+          credentialEnv,
+          providerRegistered: true,
+          // no savedCredential
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(output).not.toContain("preflight failed");
+        expect(output).not.toContain(`Missing credential: ${credentialEnv}`);
+        expect(output).toContain("already registered in the OpenShell gateway");
+        expect(output).toContain("Backing up sandbox state");
+      },
+      60_000,
     );
 
     it(
@@ -595,14 +651,17 @@ describe("Issue #2273: atomic rebuild", () => {
     );
 
     it(
-      "preflight failure exits non-zero when credential is missing",
+      "preflight failure exits non-zero when credential is missing and gateway has no provider",
       { timeout: 60_000 },
       () => {
         // Verifies that missing credentials cause rebuild to exit non-zero.
         // This is the observable CLI behavior — the preflight check fails
         // and bail() calls process.exit with a non-zero code.
+        // After #3895 the gateway-registered provider is reused if present,
+        // so this assertion only holds when the gateway also has nothing.
         const f = createFixture({
           credentialEnv: "NVIDIA_API_KEY",
+          providerRegistered: false,
           // No credential — preflight will fail and exit non-zero
         });
 

@@ -7503,31 +7503,35 @@ async function setupInference(
         resolvedCredentialEnv && credentialValue
           ? { [resolvedCredentialEnv]: credentialValue }
           : {};
-      const providerResult = upsertProvider(
-        provider,
-        config.providerType,
-        resolvedCredentialEnv,
-        resolvedEndpointUrl,
-        env,
-      );
-      if (!providerResult.ok) {
-        console.error(`  ${providerResult.message}`);
-        if (isNonInteractive()) {
+      const skipUpsertReusingGatewayCredential =
+        !credentialValue && providerExistsInGateway(provider);
+      if (!skipUpsertReusingGatewayCredential) {
+        const providerResult = upsertProvider(
+          provider,
+          config.providerType,
+          resolvedCredentialEnv,
+          resolvedEndpointUrl,
+          env,
+        );
+        if (!providerResult.ok) {
+          console.error(`  ${providerResult.message}`);
+          if (isNonInteractive()) {
+            process.exit(providerResult.status || 1);
+          }
+          const retry = await promptValidationRecovery(
+            config.label,
+            classifyApplyFailure(providerResult.message),
+            resolvedCredentialEnv,
+            config.helpUrl,
+          );
+          if (retry === "credential" || retry === "retry") {
+            continue;
+          }
+          if (retry === "selection" || retry === "model") {
+            return { retry: "selection" };
+          }
           process.exit(providerResult.status || 1);
         }
-        const retry = await promptValidationRecovery(
-          config.label,
-          classifyApplyFailure(providerResult.message),
-          resolvedCredentialEnv,
-          config.helpUrl,
-        );
-        if (retry === "credential" || retry === "retry") {
-          continue;
-        }
-        if (retry === "selection" || retry === "model") {
-          return { retry: "selection" };
-        }
-        process.exit(providerResult.status || 1);
       }
       const args = ["inference", "set"];
       if (config.skipVerify) {

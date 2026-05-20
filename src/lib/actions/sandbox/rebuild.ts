@@ -23,9 +23,14 @@ const hermesProviderAuth = require("../../hermes-provider-auth") as {
     baseUrl?: string,
   ) => void;
 };
-const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("../../onboard/providers") as {
+const {
+  LOCAL_INFERENCE_PROVIDERS,
+  REMOTE_PROVIDER_CONFIG,
+  providerExistsInGateway,
+} = require("../../onboard/providers") as {
   LOCAL_INFERENCE_PROVIDERS: string[];
   REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
+  providerExistsInGateway: (name: string, runOpenshellFn: typeof runOpenshell) => boolean;
 };
 
 import {
@@ -363,20 +368,37 @@ export async function rebuildSandbox(
       `Preflight credential check: ${rebuildCredentialEnv} → ${credentialValue ? "present" : "MISSING"}`,
     );
     if (!credentialValue) {
-      console.error("");
-      console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
-      console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
-      console.error("  but it is not set in the environment.");
-      console.error("");
-      console.error("  To fix, do one of:");
-      console.error(`    export ${rebuildCredentialEnv}=<your-key>`);
-      console.error(`    ${CLI_NAME} onboard          # re-enter the key interactively`);
-      console.error("");
-      console.error("  Sandbox is untouched — no data was lost.");
-      bail(`Missing credential: ${rebuildCredentialEnv}`);
-      return;
+      const gatewayProviderName = rebuildProvider || null;
+      const gatewayHasProvider =
+        Boolean(gatewayProviderName) &&
+        providerExistsInGateway(gatewayProviderName as string, runOpenshell);
+      log(
+        `Preflight credential check: gateway provider '${gatewayProviderName || "(none)"}' → ${gatewayHasProvider ? "registered" : "missing"}`,
+      );
+      if (gatewayHasProvider) {
+        console.log(
+          `  ${D}Note: '${gatewayProviderName}' is already registered in the OpenShell gateway. ` +
+            `Skipping host env credential check; the gateway will reuse the stored credential. ` +
+            `To rotate, export ${rebuildCredentialEnv}=<new-key> before rebuild.${R}`,
+        );
+        rebuildCredentialEnv = null;
+      } else {
+        console.error("");
+        console.error(`  ${_RD}Rebuild preflight failed:${R} provider credential not found.`);
+        console.error(`  The non-interactive recreate step requires ${rebuildCredentialEnv},`);
+        console.error("  but it is not set in the environment.");
+        console.error("");
+        console.error("  To fix, do one of:");
+        console.error(`    export ${rebuildCredentialEnv}=<your-key>`);
+        console.error(`    ${CLI_NAME} onboard          # re-enter the key interactively`);
+        console.error("");
+        console.error("  Sandbox is untouched — no data was lost.");
+        bail(`Missing credential: ${rebuildCredentialEnv}`);
+        return;
+      }
     }
-  } else {
+  }
+  if (!rebuildCredentialEnv) {
     // No credentialEnv in session — local inference (Ollama/vLLM) or
     // session was lost.  Either way, skip the credential preflight;
     // onboard will handle it.
