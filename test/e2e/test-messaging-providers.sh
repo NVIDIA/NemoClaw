@@ -1438,9 +1438,8 @@ else
 fi
 
 # M13b-M13g: Hermetic Discord Gateway over OpenShell's native WebSocket L7 path.
-# M9b proves the generated OpenClaw Discord account points its Gateway client at
-# this proxy path; this block proves the proxy path can carry Discord HELLO,
-# IDENTIFY, READY, heartbeat ACK, and credential rewrite to a fake Gateway.
+# M13d-config drives the fake Gateway using the proxy URL from the generated
+# OpenClaw Discord account, which is the exact wiring #3894 depends on.
 fake_gateway_ready=0
 if start_fake_discord_gateway "$DISCORD_TOKEN"; then
   fake_gateway_ready=1
@@ -1454,6 +1453,26 @@ if [ "$fake_gateway_ready" = "1" ] \
   pass "M13c: Applied native WebSocket policy with credential rewrite for fake Discord Gateway"
 else
   fail "M13c: Failed to apply fake Discord Gateway policy: $(tail -20 /tmp/nemoclaw-fake-discord-policy.log 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
+fi
+
+dc_ws_account_proxy=""
+if [ "$fake_gateway_ready" = "1" ] && [ -n "$dc_proxy" ]; then
+  dc_ws_account_proxy=$(run_fake_discord_gateway_node_client "$FAKE_DISCORD_GATEWAY_PORT" "openshell:resolve:env:DISCORD_BOT_TOKEN" "$dc_proxy" || true)
+fi
+info "OpenClaw-config fake Discord Gateway probe: ${dc_ws_account_proxy:0:500}"
+
+if [ "$fake_gateway_ready" != "1" ]; then
+  skip "M13d-config: Fake Discord Gateway unavailable; skipping OpenClaw account proxy proof"
+elif [ -z "$dc_proxy" ]; then
+  skip "M13d-config: No Discord account proxy in openclaw.json to exercise against fake Gateway"
+elif echo "$dc_ws_account_proxy" | grep -q "^UPGRADE$" \
+  && echo "$dc_ws_account_proxy" | grep -q "^HELLO$" \
+  && echo "$dc_ws_account_proxy" | grep -q "^IDENTIFY_SENT_PLACEHOLDER$" \
+  && echo "$dc_ws_account_proxy" | grep -q "^READY$" \
+  && echo "$dc_ws_account_proxy" | grep -q "^HEARTBEAT_ACK$"; then
+  pass "M13d-config: Discord account proxy from openclaw.json reaches fake Gateway through OpenShell"
+else
+  fail "M13d-config: Discord account proxy from openclaw.json failed against fake Gateway: ${dc_ws_account_proxy:0:400}"
 fi
 
 dc_ws_native=""
