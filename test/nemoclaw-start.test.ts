@@ -2125,6 +2125,7 @@ describe("Telegram diagnostics (#2766)", () => {
         'install_slack_channel_guard() { :; }',
         'verify_no_slack_secrets_on_disk() { :; }',
         'seed_default_workspace_templates() { :; }',
+        'seed_default_workspace_templates_as_sandbox() { seed_default_workspace_templates; }',
         'write_auth_profile() { :; }',
         'harden_auth_profiles() { :; }',
         'chown() { :; }',
