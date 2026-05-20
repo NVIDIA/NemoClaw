@@ -1619,7 +1619,7 @@ selectForRemoval(items, options)
       expect(result.stdout).toMatch(
         /curl is not in the preset binary allowlist, so curl probes can fail/,
       );
-      expect(result.stdout).toMatch(/https:\/\/discord\.com\/api\/v10\/gateway/);
+      expect(result.stdout).toContain("https://discord.com/api/v10/gateway");
       expect(result.stdout).toMatch(/dns\.resolve\("gateway\.discord\.gg"\)/);
       const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
       expect(calls).toContainEqual({
