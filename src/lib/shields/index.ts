@@ -1268,6 +1268,7 @@ export {
   parseDuration,
   lockAgentConfig,
   unlockAgentConfig,
+  resolveDockerDriverSandboxContainer,
   MAX_TIMEOUT_SECONDS,
   DEFAULT_TIMEOUT_SECONDS,
 };

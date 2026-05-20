@@ -184,7 +184,7 @@ function renderDoctorReport(report: DoctorReport, asJson: boolean): number {
   return doctorReportExitCode(report);
 }
 
-function dockerInspectGateway(containerName: string): DoctorCheck[] {
+function dockerInspectGateway(containerName: string, skipPortCheck: boolean = false): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
   const inspect = captureHostCommand(
     "docker",
@@ -220,6 +220,8 @@ function dockerInspectGateway(containerName: string): DoctorCheck[] {
     hint: running ? undefined : "restart the gateway with `openshell gateway start --name nemoclaw`",
   });
 
+  // docker-driver mode: gateway runs on host, no port mapping on container
+  if (skipPortCheck) return checks;
   const port = captureHostCommand("docker", ["port", containerName, "30051/tcp"], 5000);
   if (port.status === 0 && port.stdout.trim()) {
     const mapping = oneLine(port.stdout);
@@ -463,7 +465,8 @@ export async function runSandboxDoctor(
     hint: openshellBin ? undefined : "install OpenShell before using sandbox commands",
   });
 
-  checks.push(...dockerInspectGateway(`openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`));
+  const _dockerDriverContainer = shields.resolveDockerDriverSandboxContainer(sandboxName);
+  checks.push(...dockerInspectGateway(_dockerDriverContainer || `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`, !!_dockerDriverContainer));
 
   let openshellConnected = false;
   if (openshellBin) {
