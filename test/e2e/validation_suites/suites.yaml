@@ -154,20 +154,53 @@ suites:
     requires_state: *id003
     steps: *id004
   sandbox-lifecycle:
-    requires_state: *id001
-    steps: *id002
+    requires_state:
+      gateway.health: healthy
+      sandbox.status: running
+    steps:
+    - id: gateway-health
+      script: sandbox/lifecycle/00-gateway-health.sh
+    - id: gateway-recovery
+      script: sandbox/lifecycle/01-gateway-recovery.sh
   sandbox-operations:
-    requires_state: *id001
-    steps: *id002
+    requires_state:
+      gateway.health: healthy
+      sandbox.status: running
+    steps:
+    - id: list-and-status
+      script: sandbox/operations/00-list-and-status.sh
+    - id: logs-and-exec
+      script: sandbox/operations/01-logs-and-exec.sh
   snapshot:
-    requires_state: *id001
-    steps: *id002
+    requires_state:
+      gateway.health: healthy
+      sandbox.status: running
+    steps:
+    - id: snapshot-list
+      script: smoke/02-sandbox-listed.sh
+  snapshot-lifecycle:
+    requires_state:
+      gateway.health: healthy
+      sandbox.status: running
+    steps:
+    - id: create-list-restore
+      script: sandbox/snapshot/00-create-list-restore.sh
   rebuild:
     requires_state: *id001
-    steps: *id002
+    steps:
+    - id: rebuild-state-preserved
+      script: rebuild_upgrade/00-state-preserved.sh
+    - id: rebuild-agent-version-upgraded
+      script: rebuild_upgrade/01-agent-version-upgraded.sh
+    - id: rebuild-post-inference
+      script: rebuild_upgrade/02-post-rebuild-inference.sh
+    - id: rebuild-policy-config-preserved
+      script: rebuild_upgrade/03-policy-config-preserved.sh
   upgrade:
     requires_state: *id001
-    steps: *id002
+    steps:
+    - id: upgrade-survivor-reachable
+      script: rebuild_upgrade/04-upgrade-survivor-reachable.sh
   diagnostics:
     requires_state: *id001
     steps: *id002

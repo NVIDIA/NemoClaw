@@ -4791,190 +4791,274 @@ scripts:
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Docker is not running
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: Docker daemon
     - legacy: Docker running
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: Docker daemon
     - legacy: NVIDIA_API_KEY not set or invalid
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: NVIDIA_API_KEY set
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: NEMOCLAW_NON_INTERACTIVE=1 and NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 are required
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Required env vars set
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: cd $REPO_ROOT
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'install.sh failed (exit $install_exit). Last 30 lines:'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: install.sh + onboard completed
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: nemoclaw not on PATH after install
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: nemoclaw on PATH
-      status: mapped
-      id: legacy.issue.2478.crash.loop.recovery.nemoclaw.on.path
+      status: deferred
+      reason: prerequisite coverage is not asserted by validation.sandbox_lifecycle.gateway_health
+      owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Gateway never came up after onboard
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Gateway up (pid=$INIT_PID)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Initial gateway has guard chain active (proxy-env exports + gateway preloads loaded)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "Initial gateway missing library guard chain \u2014 fix is not deployed?"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Initial gateway serves inference API (https://inference.local/v1/models responds)
       status: mapped
-      id: legacy.issue.2478.crash.loop.recovery.initial.gateway.serves.inference.api.https.inference.local.v1.models.responds
+      id: validation.sandbox_lifecycle.gateway_health
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      owner: e2e-maintainers
+      reusable: true
     - legacy: "Initial gateway alive but not serving inference \u2014 recovery is incomplete from user POV"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: 'Cycle $cycle: connect --probe-only did not leave /tmp/gateway.log evidence'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Cycle $cycle: gateway did not respawn within 45s'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "Cycle $cycle: PID unchanged ($new_pid) \u2014 kill did not land"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "Cycle $cycle: gateway respawned (pid $prev_pid \u2192 $new_pid)"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Cycle $cycle: respawned gateway retains guard chain (proxy-env + gateway preloads loaded)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "Cycle $cycle: respawned gateway LOST guard chain \u2014 recovery hardening regressed"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Cycle $cycle: respawned gateway serves inference API'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Cycle $cycle: gateway up + guards active but inference API not serving'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "proxy-env.sh is empty/missing already \u2014 cannot run negative case"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Recovery emitted [gateway-recovery] WARNING when proxy-env.sh missing
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Recovery silently launched without warning (regression of #2478 fix)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Recovery warning was logged, but gateway did not respawn within 45s
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'proxy-env.sh restore failed: expected $SNAPSHOT_SIZE bytes, got ''${restored_size}'''
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Gateway not up entering soak phase
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "Gateway up but guards not active entering soak \u2014 restore did not take"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Gateway alive + guards active but inference API not serving entering soak
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: Gateway healthy with guards active and inference API serving (pid=$SOAK_START_PID)
       status: mapped
-      id: legacy.issue.2478.crash.loop.recovery.gateway.healthy.with.guards.active.and.inference.api.serving.pid.soak.start.pid
+      id: validation.sandbox_lifecycle.gateway_recovers
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      owner: e2e-maintainers
+      reusable: true
     - legacy: No crash-loop detected during soak ($distinct distinct PIDs, $empty_samples empty samples)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Crash-loop signature: $distinct distinct PIDs and $empty_samples empty samples in ${SOAK_SECONDS}s'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Inference API available throughout soak ($inference_probes/$inference_probes probes succeeded)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Inference API unavailable during soak ($inference_failures/$inference_probes probes failed)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
   test-kimi-inference-compat.sh:
     scenario: ubuntu-repo-cloud-openclaw
@@ -8373,10 +8457,8 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Gateway server reports OpenShell ${CURRENT_OPENSHELL_VERSION} after upgrade
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.upgrade.gateway_version_upgraded
     - legacy: Current installer backed up the old running claw before replacing OpenShell
       status: retired
       reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
@@ -8398,10 +8480,9 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Durable OpenClaw workspace state was restored after gateway upgrade
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.workspace_state_preserved
+      reusable: true
     - legacy: OpenClaw agent is not installed/configured after gateway upgrade
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8413,30 +8494,26 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: NemoClaw registry retained survivor sandbox after gateway upgrade
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.upgrade.sandbox_registry_preserved
+      reusable: true
     - legacy: NemoClaw registry lost survivor sandbox after gateway upgrade
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: nemoclaw list still shows survivor sandbox after gateway upgrade
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.upgrade.sandbox_registry_preserved
+      reusable: true
     - legacy: 'nemoclaw list does not show survivor sandbox after gateway upgrade: ${list_output:0:200}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Survivor claw state remained reachable after OpenShell gateway upgrade
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.upgrade.survivor_agent_reachable
     - legacy: Skipping live Docker-driver gateway restart regression on non-Linux host
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8448,6 +8525,24 @@ scripts:
       reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
       reviewer: e2e-maintainers
       approved_at: '2026-05-13'
+
+    # inventory-exact: Marker verification failed: got '${VERIFY}'
+    # inventory-exact: Marker file lost: got '${RESTORED}', expected '${MARKER_CONTENT}'
+    # stable-id: suite.rebuild.hermes_config_preserved
+    # inventory-exact: Registry agentVersion not updated: got '${REGISTRY_VERSION}', expected != '${OLD_OPENCLAW_VERSION}'
+    # inventory-exact: npm preset LOST after rebuild — issue #1952
+    # inventory-exact: pypi preset LOST after rebuild — issue #1952
+    # inventory-exact: npm preset not in live gateway policy after rebuild — issue #1952
+    # inventory-exact: pypi preset not in live gateway policy after rebuild — issue #1952
+    # inventory-exact: Backup manifest missing expected policyPresets (npm,pypi): got '${MANIFEST_PRESETS}' — issue #1952
+    # inventory-exact: Hermes binary version mismatch: expected output to contain '${EXPECTED_HERMES_VERSION}'
+    # inventory-exact: Registry agentVersion not updated: got '${REGISTRY_VERSION}', expected != '${OLD_HERMES_REGISTRY_VERSION}'
+    # inventory-exact: upgrade-sandboxes --check says all up to date — stale sandbox NOT detected (#1904)
+    # inventory-exact: Sandbox still running old OpenClaw ${OLD_OPENCLAW_VERSION} after rebuild — #1904 NOT fixed
+    # inventory-exact: Phase 7: upgrade-sandboxes --check did not report 'up to date' after rebuild
+    # inventory-exact: current NemoClaw install did not upgrade OpenShell to ${CURRENT_OPENSHELL_VERSION}: $(openshell --version 2>&1 || true)
+    # inventory-exact: survivor marker changed after gateway upgrade: got '${marker}'
+    # inventory-exact: Current NemoClaw installer upgraded old ${OLD_NEMOCLAW_REF} claw, restored state, and kept OpenClaw running on OpenShell ${CURRENT_OPENSHELL_VERSION}
   test-overlayfs-autofix.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
@@ -8723,10 +8818,9 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Marker file survived rebuild
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.workspace_state_preserved
+      reusable: true
     - legacy: 'Marker file lost: got ''${RESTORED}'', expected ''${MARKER_CONTENT}'''
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8738,10 +8832,8 @@ scripts:
       reviewer: e2e-maintainers
       approved_at: '2026-05-13'
     - legacy: Hermes binary reports expected version ${EXPECTED_HERMES_VERSION}
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.agent_version_upgraded
     - legacy: 'Hermes binary version mismatch: expected output to contain ''${EXPECTED_HERMES_VERSION}'''
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8768,10 +8860,8 @@ scripts:
       owner: e2e-maintainers
       secret_requirement: Discord test credentials
     - legacy: Inference works after rebuild (NVIDIA API key + provider chain intact)
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.inference_still_works
     - legacy: Registry agentVersion updated to ${REGISTRY_VERSION}
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8886,7 +8976,8 @@ scripts:
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: Policy presets applied and verified
       status: mapped
-      id: legacy.rebuild.openclaw.policy.presets.applied.and.verified
+      id: suite.rebuild.policy_presets_preserved
+      reusable: true
     - legacy: Failed to build current base image
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8908,10 +8999,8 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Marker file survived rebuild
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.workspace_state_preserved
     - legacy: 'Marker file lost: got ''${RESTORED}'', expected ''${MARKER_CONTENT}'''
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8928,10 +9017,8 @@ scripts:
       reviewer: e2e-maintainers
       approved_at: '2026-05-13'
     - legacy: 'OpenClaw version upgraded: ${NEW_VERSION}'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.agent_version_upgraded
     - legacy: Registry agentVersion updated to ${REGISTRY_VERSION}
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8959,40 +9046,36 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: npm preset survived rebuild (in registry)
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.policy_presets_preserved
+      reusable: true
     - legacy: "npm preset LOST after rebuild \u2014 issue #1952"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: pypi preset survived rebuild (in registry)
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.policy_presets_preserved
+      reusable: true
     - legacy: "pypi preset LOST after rebuild \u2014 issue #1952"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: npm preset active in gateway policy after rebuild
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.policy_presets_preserved
+      reusable: true
     - legacy: "npm preset not in live gateway policy after rebuild \u2014 issue #1952"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: pypi preset active in gateway policy after rebuild
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.policy_presets_preserved
+      reusable: true
     - legacy: "pypi preset not in live gateway policy after rebuild \u2014 issue #1952"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -9178,209 +9261,291 @@ scripts:
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-01: List Sandboxes'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-02: Connect & Chat'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "TC-SBX-02: Agent computed 6\xD77=42 through openclaw \u2192 inference.local"
       status: mapped
-      id: legacy.sandbox.operations.tc.sbx.02.agent.computed.6.7.42.through.openclaw.inference.local
+      id: validation.sandbox_operations.openshell_exec_ok
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      owner: e2e-maintainers
+      reusable: true
     - legacy: 'TC-SBX-02: Connect & Chat'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-03: Status output contains all expected fields'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      status: mapped
+      id: validation.sandbox_operations.status_fields_present
+      layer: validation
+      gap_domain: sandbox-lifecycle
       owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      reusable: true
     - legacy: 'TC-SBX-03: Status Fields'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-04: Log Streaming'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-04: Log streaming produced output ($(echo '
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      status: mapped
+      id: validation.sandbox_operations.logs_available
+      layer: validation
+      gap_domain: sandbox-lifecycle
       owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      reusable: true
     - legacy: 'TC-SBX-04: Log Streaming'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-04: Log --follow'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-04: Log --follow cleanup'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-04: Log --follow exited cleanly after kill'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "TC-SBX-07: Registry rebuilt \u2014 '$SANDBOX_A' found after deletion"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-07: Registry Rebuild'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-08: Process Recovery (status)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-08: Status detected and recovered dead OpenClaw process'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-08: Process Recovery (status)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-08: SSH works after process recovery'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-08: Process Recovery (SSH)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-05: Destroy ($target)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-05: Destroy ($target)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-05: ''$target'' removed from nemoclaw list'
       status: retired
       reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
       reviewer: e2e-maintainers
-      approved_at: '2026-05-13'
+      approved_at: '2026-05-20'
     - legacy: 'TC-SBX-05: Destroy ($target)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-05: ''$target'' removed from openshell sandbox list'
       status: retired
       reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
       reviewer: e2e-maintainers
-      approved_at: '2026-05-13'
+      approved_at: '2026-05-20'
     - legacy: 'TC-SBX-06: Gateway recovered after docker kill'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: Docker daemon
     - legacy: 'TC-SBX-06: Gateway Recovery'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-10: Multi-Sandbox'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-10: Both sandboxes visible in nemoclaw list'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-10: Multi-Sandbox'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-10: Both sandboxes have non-empty metadata'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-10: Multi-Sandbox Metadata'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "TC-SBX-11: Isolation (A\u2192B)"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-11: Sandbox A cannot reach sandbox B ($(echo '
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "TC-SBX-11: Isolation (A\u2192B)"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "TC-SBX-11: Isolation (A\u2192B)"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "TC-SBX-11: Isolation (B\u2192A)"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'TC-SBX-11: Sandbox B cannot reach sandbox A ($(echo '
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "TC-SBX-11: Isolation (B\u2192A)"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "TC-SBX-11: Isolation (B\u2192A)"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: $PASS${NC}
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: $FAIL${NC}
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
   test-sandbox-rebuild.sh:
     scenario: ubuntu-repo-cloud-openclaw
@@ -9475,377 +9640,546 @@ scripts:
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Gateway start command succeeded
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Docker is running
       status: mapped
-      id: legacy.sandbox.survival.docker.is.running
+      id: validation.sandbox_lifecycle.gateway_health
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      owner: e2e-maintainers
+      reusable: true
     - legacy: "Docker is not running \u2014 cannot continue"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: Docker daemon
     - legacy: NVIDIA_API_KEY is set (starts with nvapi-)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: "NVIDIA_API_KEY not set or invalid \u2014 required for live inference"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: Network access to integrate.api.nvidia.com
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: Cannot reach integrate.api.nvidia.com
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: NEMOCLAW_NON_INTERACTIVE=1 is required
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Cannot find install.sh at $REPO_ROOT/install.sh
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Repo root found: $REPO_ROOT'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Pre-cleanup complete
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Could not cd to repo root: $REPO_ROOT'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: install.sh completed (exit 0)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: install.sh failed (exit $install_exit)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'nemoclaw on PATH: $(command -v nemoclaw)'
-      status: mapped
-      id: legacy.sandbox.survival.nemoclaw.on.path.command.v.nemoclaw
+      status: deferred
+      reason: prerequisite coverage is not asserted by validation.sandbox_lifecycle.gateway_health
+      owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: nemoclaw not found on PATH after install
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: openshell not found on PATH after install
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: openshell $OPENSHELL_VERSION >= $MIN_OPENSHELL (gateway resume + SSH secret + state persistence)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "openshell $OPENSHELL_VERSION < $MIN_OPENSHELL \u2014 sandbox survival requires $MIN_OPENSHELL+"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: NemoClaw registry contains '$SANDBOX_NAME'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "NemoClaw registry missing '$SANDBOX_NAME' \u2014 onboard may have failed"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: nemoclaw list shows '$SANDBOX_NAME'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'nemoclaw list doesn''t show ''$SANDBOX_NAME'': ${list_output:0:200}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: openshell sandbox list shows '$SANDBOX_NAME'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'openshell sandbox list doesn''t show ''$SANDBOX_NAME'': ${os_list:0:200}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: nemoclaw $SANDBOX_NAME status exits 0
       status: mapped
-      id: legacy.sandbox.survival.nemoclaw.sandbox.name.status.exits.0
+      id: validation.sandbox_operations.status_fields_present
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      owner: e2e-maintainers
+      reusable: true
     - legacy: 'nemoclaw $SANDBOX_NAME status failed: ${status_output:0:200}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Could not get SSH config for sandbox
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: SSH config obtained
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: SSH into sandbox works (baseline)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "SSH into sandbox failed (baseline) \u2014 cannot continue"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: '[LIVE] Baseline: model responded with PONG through sandbox'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: '[LIVE] Baseline: expected PONG after 3 attempts, got: ${baseline_content:0:200}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: 'Planted workspace marker: /sandbox/.openclaw/.survival-marker-workspace'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Could not plant workspace marker
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Workspace marker verified before restart
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Workspace marker read-back mismatch: expected ''$MARKER_VALUE'', got ''$readback'''
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Planted agent data marker: /sandbox/.openclaw/.survival-marker'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Could not plant agent data marker
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Planted nested marker: /sandbox/.openclaw/test-data/nested-marker.txt'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Could not plant nested workspace marker
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Gateway runtime stopped
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Gateway runtime still appears to be running after stop
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Docker container confirmed stopped
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: Docker daemon
     - legacy: Docker container not running
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: Docker daemon
     - legacy: 'Docker container still running: state=$container_state'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: Docker daemon
     - legacy: Docker-driver gateway process is not running
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: Docker daemon
     - legacy: Gateway healthy after restart (attempt $attempt)
       status: mapped
-      id: legacy.sandbox.survival.gateway.healthy.after.restart.attempt.attempt
+      id: validation.sandbox_lifecycle.gateway_recovers
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      owner: e2e-maintainers
+      reusable: true
     - legacy: Gateway did not become healthy within 300 seconds
       status: mapped
-      id: legacy.sandbox.survival.gateway.did.not.become.healthy.within.300.seconds
+      id: validation.sandbox_lifecycle.gateway_recovers
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      owner: e2e-maintainers
+      reusable: true
     - legacy: openshell sandbox list shows '$SANDBOX_NAME' after restart
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'openshell sandbox list: ''$SANDBOX_NAME'' NOT FOUND after restart (#486)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Sandbox pod is '$sandbox_phase' after restart
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Sandbox pod did not reach Running/Ready after restart
       status: mapped
-      id: legacy.sandbox.survival.sandbox.pod.did.not.reach.running.ready.after.restart
+      id: validation.sandbox_operations.restart_pod_ready
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      owner: e2e-maintainers
     - legacy: NemoClaw registry still contains '$SANDBOX_NAME' after restart
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: NemoClaw registry lost '$SANDBOX_NAME' after restart (#486)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: nemoclaw list shows '$SANDBOX_NAME' after restart
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'nemoclaw list doesn''t show ''$SANDBOX_NAME'' after restart: ${list_output:0:200}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: nemoclaw $SANDBOX_NAME status exits 0 after restart (no re-onboard needed)
       status: mapped
-      id: legacy.sandbox.survival.nemoclaw.sandbox.name.status.exits.0.after.restart.no.re.onboard.needed
+      id: validation.sandbox_operations.status_fields_present.after.restart.no.re.onboard.needed
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      owner: e2e-maintainers
+      reusable: true
     - legacy: nemoclaw $SANDBOX_NAME status TIMED OUT after restart (port forward or SSH recovery hung)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'nemoclaw $SANDBOX_NAME status failed after restart (exit $status_exit): ${status_output:0:200}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Could not get SSH config after restart (#888 handshake failure?)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: SSH config available after restart
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "SSH into sandbox works after restart (attempt $ssh_attempt, no handshake failure \u2014 #888/#1086)"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "SSH into sandbox FAILED after restart \u2014 handshake verification likely failed (#888/#1086)"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Workspace marker survived restart: $MARKER_VALUE'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Workspace marker LOST: expected ''$MARKER_VALUE'', got ''${post_restart_marker:-<empty>}'' (#1086 state loss)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Agent data marker survived restart
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Agent data marker LOST: expected ''$MARKER_VALUE'', got ''${agent_marker:-<empty>}'' (agent state destroyed)'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Nested workspace marker survived restart
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Nested workspace marker LOST: expected ''$MARKER_VALUE'', got ''${nested_marker:-<empty>}'''
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Agent data directory still populated after restart
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Agent data directory is empty after restart (@Koneisto overlay wipe)
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: '[LIVE] Post-restart: model responded with PONG through sandbox'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: '[LIVE] Post-restart: expected PONG after 3 attempts, got: ${post_content:0:200}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: Sandbox '$SANDBOX_NAME' still in registry after destroy
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Sandbox '$SANDBOX_NAME' cleaned up
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
   test-shields-config.sh:
     scenario: ubuntu-repo-cloud-openclaw
@@ -10347,170 +10681,246 @@ scripts:
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: NEMOCLAW_NON_INTERACTIVE=1 is required
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: nemoclaw not found on PATH after install
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: openshell not found on PATH after install
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: NemoClaw installed
-      status: mapped
-      id: legacy.snapshot.commands.nemoclaw.installed
+      status: deferred
+      reason: prerequisite coverage is not asserted by validation.sandbox_snapshot.marker_written
+      owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Failed to write marker file
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Marker verification failed: got ''${VERIFY}'''
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Marker file written
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      status: mapped
+      id: validation.sandbox_snapshot.marker_written
+      layer: validation
+      gap_domain: sandbox-lifecycle
       owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      reusable: true
     - legacy: 'snapshot create exited with code $_CAPTURE_RC: ${SNAPSHOT_OUTPUT}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: snapshot create succeeded
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      status: mapped
+      id: validation.sandbox_snapshot.create_succeeds
+      layer: validation
+      gap_domain: sandbox-lifecycle
       owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      reusable: true
     - legacy: 'snapshot create did not report success: ${SNAPSHOT_OUTPUT}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'snapshot list exited with code $_CAPTURE_RC: ${LIST_OUTPUT}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: snapshot list shows snapshots
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      status: mapped
+      id: validation.sandbox_snapshot.list_shows_snapshot
+      layer: validation
+      gap_domain: sandbox-lifecycle
       owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      reusable: true
     - legacy: 'snapshot list shows no snapshots: ${LIST_OUTPUT}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Failed to parse a snapshot timestamp from list output: ${LIST_OUTPUT}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Failed to modify sandbox state
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'First marker should be deleted but got: ${GONE}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Second snapshot create failed (code $_CAPTURE_RC): ${_SECOND_SNAP}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: State modified, second snapshot created
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Failed to perturb sandbox before latest restore
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'snapshot restore exited with code $_CAPTURE_RC: ${RESTORE_OUTPUT}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'snapshot restore did not report success: ${RESTORE_OUTPUT}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Latest restore did not recover the second marker: ${SECOND_CHECK}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Latest snapshot restored expected state
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'targeted snapshot restore exited with code $_CAPTURE_RC: ${TARGETED_OUTPUT}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'targeted snapshot restore did not report success: ${TARGETED_OUTPUT}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'First snapshot did not restore the original marker: ${FIRST_CHECK}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: First snapshot should not contain the second marker
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: First snapshot restored expected state
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: No credentials in snapshot directories
-      status: mapped
-      id: legacy.snapshot.commands.no.credentials.in.snapshot.directories
+      status: deferred
+      reason: snapshot credential-leak coverage is not asserted by validation.sandbox_snapshot.create_succeeds
+      owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Credentials found: $CRED_LEAKS'
-      status: mapped
-      id: legacy.snapshot.commands.credentials.found.cred.leaks
+      status: deferred
+      reason: snapshot credential-leak coverage is not asserted by validation.sandbox_snapshot.create_succeeds
+      owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'Backup directory missing: $BACKUP_DIR'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'snapshot help exited with code $_CAPTURE_RC: ${HELP_OUTPUT}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: snapshot help shows create/list/restore
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'snapshot help incomplete: ${HELP_OUTPUT}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
+      layer: validation
+      gap_domain: sandbox-lifecycle
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
   test-spark-install.sh:
     scenario: ubuntu-repo-cloud-openclaw
@@ -11194,13 +11604,13 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "Sandbox still running old OpenClaw ${OLD_OPENCLAW_VERSION} after rebuild \u2014 #1904 NOT fixed"
-      status: mapped
-      id: legacy.upgrade.stale.sandbox.sandbox.still.running.old.openclaw.old.openclaw.version.after.rebuild.1904.not.fixed
-    - legacy: 'Phase 6: Sandbox upgraded from OpenClaw ${OLD_OPENCLAW_VERSION} to ${NEW_OPENCLAW_VERSION}'
       status: retired
-      reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
+      reason: negative stale-version failure covered by suite.rebuild.agent_version_upgraded success assertion
       reviewer: e2e-maintainers
-      approved_at: '2026-05-13'
+      approved_at: '2026-05-20'
+    - legacy: 'Phase 6: Sandbox upgraded from OpenClaw ${OLD_OPENCLAW_VERSION} to ${NEW_OPENCLAW_VERSION}'
+      status: mapped
+      id: suite.rebuild.agent_version_upgraded
     - legacy: 'Phase 7: All sandboxes up to date after rebuild'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking

@@ -12,6 +12,7 @@ const RUNTIME_LIB = path.join(REPO_ROOT, "test/e2e/runtime/lib");
 const VALIDATION_SUITES = path.join(REPO_ROOT, "test/e2e/validation_suites");
 const VALIDATION_LIB = path.join(VALIDATION_SUITES, "lib");
 const ASSERT = path.join(VALIDATION_SUITES, "assert");
+const REBUILD_UPGRADE_LIB = path.join(VALIDATION_SUITES, "lib/rebuild_upgrade.sh");
 const FIXTURES = path.join(REPO_ROOT, "test/e2e/nemoclaw_scenarios/fixtures");
 const INSTALL_DIR = path.join(REPO_ROOT, "test/e2e/nemoclaw_scenarios/install");
 const RUN_SCENARIO = path.join(REPO_ROOT, "test/e2e/runtime/run-scenario.sh");
@@ -135,6 +136,96 @@ describe("E2E shell helpers", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 1.A — Logging helpers (lib/logging.sh)
 // ─────────────────────────────────────────────────────────────────────────────
+
+describe("rebuild/upgrade validation helpers", () => {
+  it("rebuild_upgrade_library_should_source_without_side_effects", () => {
+    const r = runBash(`
+      set -euo pipefail
+      . "${REBUILD_UPGRADE_LIB}"
+      declare -F rebuild_upgrade_require_context >/dev/null
+    `);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout + r.stderr).not.toMatch(/install|onboard|rebuild/i);
+  });
+
+  it("rebuild_upgrade_context_should_fail_with_missing_key_name", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ru-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\n");
+      const r = runBash(
+        `
+        . "${REBUILD_UPGRADE_LIB}"
+        rebuild_upgrade_require_context
+      `,
+        { E2E_CONTEXT_DIR: tmp },
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/E2E_AGENT|E2E_SANDBOX_NAME|E2E_GATEWAY_URL/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rebuild_upgrade_context_should_pass_when_required_keys_present", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ru-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=test\nE2E_AGENT=openclaw\nE2E_SANDBOX_NAME=sb\nE2E_GATEWAY_URL=http://127.0.0.1\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${REBUILD_UPGRADE_LIB}"
+        rebuild_upgrade_require_context
+      `,
+        { E2E_CONTEXT_DIR: tmp },
+      );
+      expect(r.status, r.stderr).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rebuild_upgrade_checks_should_allow_command_fakes", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ru-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=test\nE2E_AGENT=openclaw\nE2E_SANDBOX_NAME=sb\nE2E_GATEWAY_URL=http://127.0.0.1\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        fake_sandbox() {
+          case "$*" in
+            *cat*) printf 'marker' ;;
+            *version*) printf 'OpenClaw 2.0.0' ;;
+            *models*) printf '{"data":[]}' ;;
+            *) true ;;
+          esac
+        }
+        . "${REBUILD_UPGRADE_LIB}"
+        rebuild_upgrade_assert_marker_preserved
+        rebuild_upgrade_assert_agent_version_upgraded
+        rebuild_upgrade_assert_inference_works
+      `,
+        {
+          E2E_CONTEXT_DIR: tmp,
+          REBUILD_UPGRADE_SANDBOX_CMD: "fake_sandbox",
+          E2E_REBUILD_MARKER_EXPECTED: "marker",
+          E2E_OLD_AGENT_VERSION: "1.0.0",
+        },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("suite.rebuild.workspace_state_preserved");
+      expect(r.stdout).toContain("suite.rebuild.agent_version_upgraded");
+      expect(r.stdout).toContain("suite.rebuild.inference_still_works");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("Phase 1.A logging helpers", () => {
   it("logging_should_emit_stable_pass_marker_when_e2e_pass_called", () => {
@@ -547,6 +638,8 @@ describe("Phase 1.E install dispatcher splits", () => {
   });
 });
 
+
+
 describe("baseline onboarding validation helper", () => {
   it("baseline_helper_should_source_under_strict_shell_options", () => {
     const r = runBash(`set -euo pipefail; source "${VALIDATION_SUITES}/lib/baseline_onboarding.sh"`);
@@ -574,6 +667,54 @@ describe("baseline onboarding validation helper", () => {
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.nemoclaw_on_path");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.openshell_on_path");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.nemoclaw_help_exits_zero");
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+});
+
+describe("sandbox lifecycle validation helper", () => {
+  it("test_should_load_context_from_e2e_context_dir", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-life-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SANDBOX_NAME=sb1\nE2E_GATEWAY_URL=http://127.0.0.1:1\n");
+      const r = runBash(`set -euo pipefail; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_load_context; echo "$E2E_SANDBOX_NAME $E2E_GATEWAY_URL"`, { E2E_CONTEXT_DIR: tmp });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("sb1 http://127.0.0.1:1");
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  it("test_should_emit_stable_pass_and_fail_ids", () => {
+    const r = runBash(`. "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_pass validation.sandbox_lifecycle.gateway_health ok; sandbox_lifecycle_fail validation.sandbox_operations.logs_available nope`);
+    expect(r.status).not.toBe(0);
+    expect(r.stdout).toMatch(/PASS: validation\.sandbox_lifecycle\.gateway_health/);
+    expect(r.stderr).toMatch(/FAIL: validation\.sandbox_operations\.logs_available/);
+  });
+
+  it("test_should_apply_timeout_to_command_execution", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-life-timeout-"));
+    try {
+      const bin = path.join(tmp, "bin"); fs.mkdirSync(bin);
+      fs.writeFileSync(path.join(bin, "timeout"), "#!/usr/bin/env bash\necho timed out >&2\nexit 124\n", { mode: 0o755 });
+      const r = runBash(`set -e; unset E2E_DRY_RUN; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_run_with_timeout 1 bash -c 'sleep 5'`, { PATH: `${bin}:${process.env.PATH}` });
+      expect(r.status).toBe(124);
+      expect(r.stderr).toMatch(/timed out/);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  it("test_should_validate_list_status_logs_exec_with_mocked_commands", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-life-mock-"));
+    try {
+      const bin = path.join(tmp, "bin"); fs.mkdirSync(bin);
+      fs.writeFileSync(path.join(bin, "nemoclaw"), `#!/usr/bin/env bash
+case "$1" in list) echo sb1;; status) echo 'status running gateway healthy sandbox running';; logs) echo logline;; esac
+`, { mode: 0o755 });
+      fs.writeFileSync(path.join(bin, "openshell"), `#!/usr/bin/env bash
+echo lifecycle-ok
+`, { mode: 0o755 });
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SANDBOX_NAME=sb1\nE2E_GATEWAY_URL=http://127.0.0.1:1\n");
+      const r = runBash(`set -euo pipefail; . "${VALIDATION_SUITES}/lib/sandbox_lifecycle.sh"; sandbox_lifecycle_load_context; sandbox_lifecycle_assert_nemoclaw_list_contains_sandbox; sandbox_lifecycle_assert_status_fields_present; sandbox_lifecycle_assert_logs_available; sandbox_lifecycle_assert_openshell_exec_ok`, { E2E_CONTEXT_DIR: tmp, PATH: `${bin}:${process.env.PATH}` });
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toMatch(/validation\.sandbox_operations\.sandbox_listed/);
+      expect(r.stdout).toMatch(/validation\.sandbox_operations\.openshell_exec_ok/);
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
 });
