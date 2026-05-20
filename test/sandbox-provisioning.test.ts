@@ -116,6 +116,13 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       expect(fs.statSync(openclawDir).isDirectory()).toBe(true);
       expect(fs.statSync(path.join(openclawDir, "exec-approvals.json")).isFile()).toBe(true);
       expect(fs.statSync(path.join(openclawDir, "update-check.json")).isFile()).toBe(true);
+      for (const dir of ["credentials", "devices", "identity", "logs", "telegram"]) {
+        const stateDir = path.join(openclawDir, dir);
+        expect(fs.statSync(stateDir).isDirectory()).toBe(true);
+        expect(fs.lstatSync(stateDir).isSymbolicLink()).toBe(false);
+        expect(fs.statSync(stateDir).mode & 0o020).toBe(0o020);
+        expect(fs.statSync(stateDir).mode & 0o2000).toBe(0o2000);
+      }
       expect(fs.existsSync(path.join(sandboxRoot, ".openclaw-data"))).toBe(false);
       expect(fs.lstatSync(path.join(openclawDir, "exec-approvals.json")).isSymbolicLink()).toBe(
         false,

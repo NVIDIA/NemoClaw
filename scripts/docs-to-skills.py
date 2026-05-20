@@ -847,8 +847,10 @@ def rewrite_doc_paths(
                 return f"[{link_text}]({url})"
         return link_text
 
-    # Rewrite markdown links: [text](path)
-    text = re.sub(r"\[([^\]]+)\]\(([^)]+)\)", _resolve_link, text)
+    # Rewrite markdown links: [text](path). Keep matches on one line so
+    # ordinary bracketed prose, such as version ranges, cannot consume a later
+    # link and corrupt the generated skill text.
+    text = re.sub(r"\[([^\[\]\n]+)\]\(([^)\n]+)\)", _resolve_link, text)
 
     # Rewrite include placeholders: "Content included from <path>"
     def _resolve_include(match: re.Match) -> str:
@@ -1550,8 +1552,7 @@ def generate_skill(
             lines.append(item)
         lines.append("")
 
-    # Procedural steps from how_to and get_started pages
-    step_num = 0
+    # Procedural sections from how_to and get_started pages
     skip_sections = {"prerequisites", "before you begin", "troubleshooting"}
     related_sections = {"related topics", "next steps"}
     collected_related: list[str] = []  # raw content from related sections
@@ -1575,9 +1576,8 @@ def generate_skill(
                     lines.append("")
                 continue
 
-            step_num += 1
             cleaned_content = _clean(content, pp)
-            lines.append(f"## Step {step_num}: {heading}")
+            lines.append(f"## {heading}")
             lines.append("")
             lines.append(cleaned_content)
             lines.append("")

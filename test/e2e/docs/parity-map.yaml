@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 scripts:
   brev-e2e.test.ts:
     scenario: ''
@@ -30,6 +33,307 @@ scripts:
       reason: regression guard validates fix PR #3594 before migration to scenario framework
       owner: e2e-maintainers
       runner_requirement: local CLI build with mocked OpenShell runner
+  test-bedrock-runtime-compatible-anthropic.sh:
+    scenario: ubuntu-repo-cloud-openclaw
+    status: deferred
+    bucket: providers-messaging
+    assertions:
+    - legacy: 'B0: sudo is required to edit /etc/hosts for Bedrock hostname mapping'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: passwordless sudo is required to edit /etc/hosts for Bedrock hostname mapping'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: Bedrock Runtime hostname maps to localhost'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: Bedrock Runtime hostname did not resolve to localhost after hosts edit'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B1: onboard completed for Bedrock Runtime compatible Anthropic endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B1: onboard failed for Bedrock Runtime compatible Anthropic endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B2: onboard state keeps provider identity as compatible-anthropic-endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B2: onboard state did not preserve compatible-anthropic-endpoint identity: ${probe:0:500}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B3: Bedrock Runtime adapter health endpoint failed'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B3: Bedrock Runtime adapter health reports fake endpoint and us-east-1'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B3: Bedrock Runtime adapter health payload was not the expected fake endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B4: openshell inference get failed: ${route:0:300}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B4: OpenShell route points at compatible-anthropic-endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B4: OpenShell route did not point at compatible-anthropic-endpoint: ${plain_route:0:400}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B5: OpenShell provider registry contains compatible-anthropic-endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B5: OpenShell provider registry did not expose compatible-anthropic-endpoint'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B6: OpenClaw config uses only managed inference.local provider'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B6: OpenClaw config did not use the expected inference.local provider shape'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B6: could not read Hermes config.yaml: ${config:0:240}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B6: Hermes config.yaml was not patched correctly: ${probe:0:400}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B6: Hermes config uses inference.local without OpenShell/OpenClaw provider blocks'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B7: sandbox inference.local chat completion returned PONG'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B7: sandbox inference.local chat completion failed: ${response:0:400}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B8: OpenClaw agent turn hit a provider or transport error'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B8: OpenClaw agent completed a Bedrock-backed turn through inference.local'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B8: OpenClaw agent did not return PONG through Bedrock adapter'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B8: Hermes local chat API completed a Bedrock-backed turn through inference.local'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B8: Hermes local chat API did not return PONG through Bedrock adapter: ${response:0:400}'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B9: fake Bedrock Runtime endpoint observed authenticated Converse traffic'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B9: fake Bedrock Runtime endpoint did not observe authenticated Converse traffic'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B10: fake Bedrock Runtime endpoint observed authenticated ConverseStream traffic'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B10: fake Bedrock Runtime endpoint did not observe OpenClaw streamed traffic'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B11: adapter token file was not created on the host'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B11: Bedrock Runtime adapter host log was not written'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B11: Bedrock Runtime adapter host log records safe Converse and ConverseStream breadcrumbs'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B11: Bedrock Runtime adapter host log did not record a ConverseStream breadcrumb'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B11: Bedrock Runtime adapter host log records safe Converse breadcrumbs'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B11: Bedrock Runtime adapter host log did not record expected request breadcrumbs'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B12: sandbox configs, env, proc, and logs contain no Bedrock token or hostname leaks'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B12: leak scan found forbidden Bedrock token or hostname locations'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'Docker is running'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'Docker is not running'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'python3 is available'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'python3 not found'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'NEMOCLAW_NON_INTERACTIVE=1'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'NEMOCLAW_NON_INTERACTIVE=1 is required'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'third-party software acceptance is set'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: source CLI and OpenShell are ready'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: source CLI/OpenShell preparation failed'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: fake Bedrock Runtime endpoint started'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+    - legacy: 'B0: fake Bedrock Runtime endpoint failed to start'
+      status: deferred
+      reason: live legacy behavior requires Docker, sudo hosts edit, and OpenShell; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: Docker + sudo hosts edit + OpenShell
+  test-onboard-negative-paths.sh:
+    scenario: ubuntu-repo-cloud-openclaw-custom-policies
+    status: migrated
+    bucket: onboarding-negative-paths
+    assertions:
+    - legacy: NEMOCLAW_POLICY_MODE=restricted falls back to suggested presets
+      status: deferred
+      reason: pure policy fallback behavior belongs in focused TypeScript behavior tests
+      owner: e2e-maintainers
+      runner_requirement: local CLI build
+    - legacy: NEMOCLAW_POLICY_MODE=nonexistent falls back to suggested presets
+      status: deferred
+      reason: pure policy fallback behavior belongs in focused TypeScript behavior tests
+      owner: e2e-maintainers
+      runner_requirement: local CLI build
+    - legacy: Invalid NVIDIA API key exits cleanly with an explicit message and no stack trace
+      status: migrated
+      scenario: ubuntu-invalid-nvidia-key-negative
+      assertion_id: expected-state.failure.invalid-nvidia-api-key
+    - legacy: Non-NVIDIA provider key prefixes are accepted by provider-aware credential validation
+      status: deferred
+      reason: provider-aware prefix validation is pure validation logic and does not require live scenario coverage
+      owner: e2e-maintainers
+      runner_requirement: local CLI build
+    - legacy: Occupied onboard gateway port returns a user-friendly conflict error and no stack trace
+      status: migrated
+      scenario: ubuntu-gateway-port-conflict-negative
+      assertion_id: expected-state.failure.gateway-port-conflict
+    - legacy: Non-interactive onboard honors explicit NEMOCLAW_POLICY_PRESETS
+      status: migrated
+      scenario: ubuntu-repo-cloud-openclaw-custom-policies
+      assertion_id: onboarding-state.registry-provider-model-policies
+    - legacy: Non-interactive onboard honors NEMOCLAW_PROVIDER=cloud plus the requested model
+      status: migrated
+      scenario: ubuntu-repo-cloud-openclaw-custom-policies
+      assertion_id: onboarding-state.session-provider-model-policies
   test-brave-search-e2e.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
@@ -410,6 +714,241 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       secret_requirement: NVIDIA_API_KEY secret and network egress
+  test-channels-add-remove.sh:
+    scenario: ubuntu-repo-cloud-openclaw
+    status: not-started
+    bucket: providers-messaging
+    assertions:
+    - legacy: 'C0: NVIDIA_API_KEY is required'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NVIDIA_API_KEY is set'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NEMOCLAW_NON_INTERACTIVE=1 is required'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NEMOCLAW_NON_INTERACTIVE=1 is set'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is required'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C0: NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 is set'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1a: Pre-cleanup complete'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1b: install.sh + onboard completed (exit 0)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1b: install.sh failed (exit $install_exit)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1c: openshell not on PATH after install'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1c: openshell installed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1d: nemoclaw not on PATH after install'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1d: nemoclaw installed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1e: Sandbox ''${SANDBOX_NAME}'' is Ready'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C1e: Sandbox ''${SANDBOX_NAME}'' not Ready'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2a: Provider ''${SANDBOX_NAME}-telegram-bridge'' unexpectedly exists at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2a: No telegram-bridge provider at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2b: openclaw.json unexpectedly contains ''telegram'' at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2b: could not read openclaw.json inside sandbox at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2b: openclaw.json has no ''telegram'' channel block at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2c: ''telegram'' preset unexpectedly applied at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C2c: ''telegram'' preset not applied at baseline'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C3a: channels add telegram registered the bridge'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C3a: channels add telegram did not register'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C3b: rebuild (post-add) completed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C3b: rebuild (post-add) failed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4a: ''telegram'' preset present in policy list after add+rebuild (#3437 fixed)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: "C4a: REGRESSION \u2014 'telegram' preset missing from policy list after add+rebuild (#3437)"
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4b: openclaw.json contains ''telegram'' channel block after add+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4b: could not read openclaw.json inside sandbox post-add'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4b: openclaw.json missing ''telegram'' channel after add+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4c: telegram-bridge provider exists in gateway after add+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4c: telegram-bridge provider missing in gateway after add+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4d: egress to api.telegram.org reaches Telegram through L7 proxy'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C4d: egress to api.telegram.org blocked by proxy (preset not in effect)'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C5a: channels remove telegram unregistered the bridge'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C5a: channels remove telegram did not unregister'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C5b: rebuild (post-remove) completed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C5b: rebuild (post-remove) failed'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6a: openclaw.json still contains ''telegram'' after remove+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6a: could not read openclaw.json inside sandbox post-remove'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6a: openclaw.json excludes ''telegram'' after remove+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6b: telegram-bridge provider still exists in gateway after remove+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6b: telegram-bridge provider removed from gateway after remove+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: "C6c: REGRESSION \u2014 'telegram' preset still applied after remove+rebuild (#3671)"
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
+    - legacy: 'C6c: ''telegram'' preset removed from policy list after remove+rebuild'
+      status: deferred
+      reason: new regression test (issue #3462 Test 2); pending scenario-framework migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs and NVIDIA_API_KEY
   test-channels-stop-start.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: deferred
@@ -4778,6 +5317,136 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA0: channels add whatsapp registered QR-only channel'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA0: channels add whatsapp failed or did not register channel'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA1: Unexpected WhatsApp bridge provider exists in gateway'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA1: WhatsApp QR-only channel creates no bridge provider'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA2: registry.messagingChannels contains whatsapp after channel add'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA2: registry.messagingChannels missing whatsapp after channel add ($(registry_field messagingChannels))'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA3: WhatsApp policy preset applied before rebuild'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA3: WhatsApp policy preset missing expected endpoints before rebuild'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA4: Rebuild completed after WhatsApp channel add'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA4: Rebuild failed after WhatsApp channel add'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA5: WhatsApp policy preset survived rebuild with Node binary scope'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA5: WhatsApp policy preset missing expected endpoints/binaries after rebuild'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA6: Sandbox ''$SANDBOX_NAME'' is Ready after WhatsApp rebuild'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA6: Sandbox ''$SANDBOX_NAME'' not Ready after WhatsApp rebuild (list: ${sandbox_list:0:200})'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA7a: WhatsApp credential-like env var found in sandbox environment'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA7a: No WhatsApp credential-like env var present in sandbox environment'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA7b: WhatsApp credential placeholder found in sandbox process list'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA7b: No WhatsApp credential placeholder present in sandbox process list'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA7c: WhatsApp host credential material found on sandbox filesystem: ${sandbox_fs_wa}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA7c: No WhatsApp host credential material found on sandbox filesystem'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA8: WhatsApp account is enabled in openclaw.json'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA8: WhatsApp account missing or disabled in openclaw.json (${whatsapp_account_json:0:200})'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA8a: WhatsApp health monitor is disabled for unpaired QR session'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA8a: WhatsApp health monitor is not disabled (${whatsapp_account_json:0:200})'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA9: WhatsApp config has no token/auth/session provider placeholders'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'M-WA9: WhatsApp config contains secret-like fields: ${whatsapp_secret_fields}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: 'M1: Provider ''${SANDBOX_NAME}-telegram-bridge'' exists in gateway'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -5680,6 +6349,136 @@ scripts:
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       secret_requirement: WeChat test credentials
+    - legacy: 'M-WA0: channels add whatsapp registered QR-only channel'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA0: channels add whatsapp failed or did not register channel'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA1: Unexpected WhatsApp bridge provider exists in gateway'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA1: WhatsApp QR-only channel creates no bridge provider'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA2: registry.messagingChannels contains whatsapp after channel add'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA2: registry.messagingChannels missing whatsapp after channel add ($(registry_field messagingChannels))'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA3: WhatsApp policy preset applied before rebuild'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA3: WhatsApp policy preset missing expected endpoints before rebuild'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA4: Rebuild completed after WhatsApp channel add'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA4: Rebuild failed after WhatsApp channel add'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA5: WhatsApp policy preset survived rebuild with Node binary scope'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA5: WhatsApp policy preset missing expected endpoints/binaries after rebuild'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA6: Sandbox ''$SANDBOX_NAME'' is Ready after WhatsApp rebuild'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA6: Sandbox ''$SANDBOX_NAME'' not Ready after WhatsApp rebuild (list: ${sandbox_list:0:200})'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA7a: WhatsApp credential-like env var found in sandbox environment'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA7a: No WhatsApp credential-like env var present in sandbox environment'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA7b: WhatsApp credential placeholder found in sandbox process list'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA7b: No WhatsApp credential placeholder present in sandbox process list'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA7c: WhatsApp host credential material found on sandbox filesystem: ${sandbox_fs_wa}'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA7c: No WhatsApp host credential material found on sandbox filesystem'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA8: WhatsApp account is enabled in openclaw.json'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA8: WhatsApp account missing or disabled in openclaw.json (${whatsapp_account_json:0:200})'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA8a: WhatsApp health monitor is disabled for unpaired QR session'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA8a: WhatsApp health monitor is not disabled (${whatsapp_account_json:0:200})'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA9: WhatsApp config has no token/auth/session provider placeholders'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
+    - legacy: 'M-WA9: WhatsApp config contains secret-like fields: ${whatsapp_secret_fields}'
+      status: deferred
+      reason: live WhatsApp QR-only behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with WhatsApp QR channel support
   test-network-policy.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
@@ -6850,6 +7649,306 @@ scripts:
       reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
       reviewer: e2e-maintainers
       approved_at: '2026-05-13'
+  test-openclaw-slack-pairing.sh:
+    scenario: ubuntu-repo-cloud-openclaw
+    status: deferred
+    bucket: providers-messaging
+    assertions:
+    - legacy: 'NVIDIA_API_KEY not set'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'NVIDIA_API_KEY is set'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Docker is not running'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Docker is running'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Pre-cleanup complete'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Slack network policy pre-merged into base policy'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Cannot pre-merge Slack policy: missing base policy or preset file'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Install completed'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'install.sh failed (exit $install_exit)'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: "Sandbox '$SANDBOX_NAME' is Ready"
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: "Sandbox '$SANDBOX_NAME' not Ready (list: ${sandbox_list:0:300})"
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Slack bot/app providers exist in OpenShell'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Slack bot/app providers missing in OpenShell'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Connect-shell OpenClaw env resolves to /sandbox/.openclaw'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Connect-shell OpenClaw env does not resolve to the shared state root'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'openclaw pairing list slack works in connect shell'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'openclaw pairing list slack failed before request creation: ${pairing_list_empty:0:300}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Hermetic fake Slack API started on host port ${FAKE_SLACK_API_PORT}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Failed to start hermetic fake Slack API'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Applied REST policy for fake Slack chat.postMessage'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: "Failed to apply fake Slack REST policy: $(tail -20 /tmp/nemoclaw-fake-slack-pairing-rest-policy.log 2>/dev/null | tr '\\n' ' ' | cut -c1-300)"
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Applied websocket policy for fake Slack Socket Mode'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: "Failed to apply fake Slack websocket policy: $(tail -20 /tmp/nemoclaw-fake-slack-pairing-ws-policy.log 2>/dev/null | tr '\\n' ' ' | cut -c1-300)"
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'OpenShell-tracked Slack Socket Mode handler created a pairing request'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'OpenShell-tracked Slack Socket Mode pairing request creation failed'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Pairing code extracted from fake Slack reply path'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Failed to extract pairing code'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Fake Slack saw rewritten xapp websocket frame and xoxb chat.postMessage'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Fake Slack capture did not prove Slack token rewriting: ${capture_check:0:300}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Runtime-created Slack pending request is in the shared OpenClaw state root'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Slack pending request missing from /sandbox/.openclaw/credentials/slack-pairing.json'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Connect-shell openclaw pairing list sees runtime-created Slack request'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Connect-shell openclaw pairing list does not see the Slack request'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Connect-shell openclaw pairing approve approved the Slack request'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Connect-shell openclaw pairing approve failed: ${approve_output:0:500}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'openclaw pairing list slack failed after approval: ${pairing_list_after:0:300}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Approved Slack pairing code is still pending'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Approved Slack pairing code was consumed'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Slack allowFrom store contains the approved user'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Slack allowFrom store missing approved user'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Second approval fails closed after request consumption'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: 'Second approval did not report missing pending request: ${repeat_approve:0:300}'
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: "Cleanup: Sandbox '$SANDBOX_NAME' intentionally kept"
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: "Cleanup: Sandbox '$SANDBOX_NAME' still present after cleanup"
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+    - legacy: "Cleanup: Sandbox '$SANDBOX_NAME' removed"
+      status: deferred
+      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+  test-openclaw-plugin-runtime-exdev.sh:
+    scenario: ''
+    status: deferred
+    bucket: openclaw-plugin-runtime-exdev
+    assertions:
+    - legacy: Docker is running
+      status: deferred
+      reason: regression guard validates #3513 before migration to scenario framework
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with Docker and NemoClaw/OpenShell CLIs
+    - legacy: Docker is not running
+      status: deferred
+      reason: prerequisite failure for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with Docker and NemoClaw/OpenShell CLIs
+    - legacy: NVIDIA_API_KEY is set
+      status: deferred
+      reason: regression guard validates #3513 with live provider credentials before scenario migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NVIDIA_API_KEY
+    - legacy: NVIDIA_API_KEY is required and must start with nvapi-
+      status: deferred
+      reason: prerequisite failure for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with NVIDIA_API_KEY
+    - legacy: 'nemoclaw is available: $(nemoclaw --version 2>/dev/null || echo unknown)'
+      status: deferred
+      reason: regression guard validates checkout install before scenario migration
+      owner: e2e-maintainers
+      runner_requirement: local CLI build with installer
+    - legacy: nemoclaw not found after install
+      status: deferred
+      reason: prerequisite failure for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: local CLI build with installer
+    - legacy: fresh sandbox onboard completed
+      status: deferred
+      reason: regression guard validates #3513 on a fresh sandbox before scenario migration
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with Docker and OpenShell
+    - legacy: fresh sandbox onboard failed (exit ${onboard_rc}); see ${ONBOARD_LOG}
+      status: deferred
+      reason: setup failure evidence for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with Docker and OpenShell
+    - legacy: 'OpenClaw-style plugin runtime deps replacement hit #3513 EXDEV failure'
+      status: deferred
+      reason: executable red assertion for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with cross-filesystem /dev/shm and /sandbox paths
+    - legacy: runtime deps replacement exited ${agent_rc}; see ${AGENT_LOG}
+      status: deferred
+      reason: runtime failure evidence for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with OpenShell exec
+    - legacy: OpenClaw-style plugin runtime-deps replacement completed across filesystems
+      status: deferred
+      reason: expected green assertion after #3513 fix before migration to scenario framework
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with cross-filesystem /dev/shm and /sandbox paths
+    - legacy: runtime deps replacement exited 0 but success marker was missing; see ${AGENT_LOG}
+      status: deferred
+      reason: runtime success-marker failure evidence for #3513 regression guard
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with OpenShell exec
+    - legacy: OpenClaw plugin runtime-deps EXDEV guard passed
+      status: deferred
+      reason: expected green summary after #3513 fix before migration to scenario framework
+      owner: e2e-maintainers
+      runner_requirement: sandbox runner with OpenShell exec
   test-openshell-gateway-upgrade.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated

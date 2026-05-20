@@ -18,7 +18,11 @@ import * as policies from "../../policy";
 const { HOST_QR_LOGIN_HANDLERS } = require("../../host-qr-handlers") as typeof import("../../host-qr-handlers");
 const onboardSession = require("../../state/onboard-session") as typeof import("../../state/onboard-session");
 
-import { parsePolicyAddArgs } from "../../domain/policy-channel";
+import {
+  parsePolicyAddOptions,
+  type PolicyAddOptions,
+  type PolicyRemoveOptions,
+} from "../../domain/policy-channel";
 import * as registry from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { rebuildSandbox } from "./rebuild";
@@ -33,6 +37,11 @@ import {
   persistChannelTokens,
 } from "../../sandbox/channels";
 import type { HostQrLoginResult } from "../../host-qr-handlers";
+
+type ChannelMutationOptions = {
+  channel?: string;
+  dryRun?: boolean;
+};
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -51,8 +60,11 @@ const YW = useColor ? "\x1b[1;33m" : "";
  * order and aborts at the first failure (already-applied presets are not
  * rolled back).
  */
-export async function addSandboxPolicy(sandboxName: string, args: string[] = []): Promise<void> {
-  const { dryRun, skipConfirm, source, presetArg } = parsePolicyAddArgs(args);
+export async function addSandboxPolicy(
+  sandboxName: string,
+  options: PolicyAddOptions = {},
+): Promise<void> {
+  const { dryRun, skipConfirm, source, presetArg } = parsePolicyAddOptions(options);
 
   if (source.kind === "error") {
     console.error(`  ${source.message}`);
@@ -618,9 +630,12 @@ async function acquireHostQrChannel(
   console.log(`  ${G}✓${R} ${channelArg} token saved${suffix}.`);
 }
 
-export async function addSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
-  const dryRun = args.includes("--dry-run");
-  const rawChannelArg = args.find((arg) => !arg.startsWith("-"));
+export async function addSandboxChannel(
+  sandboxName: string,
+  options: ChannelMutationOptions = {},
+): Promise<void> {
+  const dryRun = Boolean(options.dryRun);
+  const rawChannelArg = options.channel;
   if (!rawChannelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels add <channel> [--dry-run]`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
@@ -751,9 +766,12 @@ function removeChannelPresetIfPresent(sandboxName: string, channelName: string):
   }
 }
 
-export async function removeSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
-  const dryRun = args.includes("--dry-run");
-  const rawChannelArg = args.find((arg) => !arg.startsWith("-"));
+export async function removeSandboxChannel(
+  sandboxName: string,
+  options: ChannelMutationOptions = {},
+): Promise<void> {
+  const dryRun = Boolean(options.dryRun);
+  const rawChannelArg = options.channel;
   if (!rawChannelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels remove <channel> [--dry-run]`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
@@ -794,12 +812,12 @@ export async function removeSandboxChannel(sandboxName: string, args: string[] =
 
 async function sandboxChannelsSetEnabled(
   sandboxName: string,
-  args: string[],
+  options: ChannelMutationOptions,
   disabled: boolean,
 ): Promise<void> {
   const verb = disabled ? "stop" : "start";
-  const dryRun = args.includes("--dry-run");
-  const channelArg = args.find((arg) => !arg.startsWith("-"));
+  const dryRun = Boolean(options.dryRun);
+  const channelArg = options.channel;
   if (!channelArg) {
     console.error(`  Usage: ${CLI_NAME} <sandbox> channels ${verb} <channel> [--dry-run]`);
     console.error(`  Valid channels: ${knownChannelNames().join(", ")}`);
@@ -836,22 +854,28 @@ async function sandboxChannelsSetEnabled(
   await promptAndRebuild(sandboxName, `${verb} '${normalized}'`);
 }
 
-export async function stopSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
-  await sandboxChannelsSetEnabled(sandboxName, args, true);
+export async function stopSandboxChannel(
+  sandboxName: string,
+  options: ChannelMutationOptions = {},
+): Promise<void> {
+  await sandboxChannelsSetEnabled(sandboxName, options, true);
 }
 
-export async function startSandboxChannel(sandboxName: string, args: string[] = []): Promise<void> {
-  await sandboxChannelsSetEnabled(sandboxName, args, false);
+export async function startSandboxChannel(
+  sandboxName: string,
+  options: ChannelMutationOptions = {},
+): Promise<void> {
+  await sandboxChannelsSetEnabled(sandboxName, options, false);
 }
 
-
-export async function removeSandboxPolicy(sandboxName: string, args: string[] = []): Promise<void> {
-  const dryRun = args.includes("--dry-run");
-  const skipConfirm =
-    args.includes("--yes") ||
-    args.includes("-y") ||
-    args.includes("--force") ||
-    process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+export async function removeSandboxPolicy(
+  sandboxName: string,
+  options: PolicyRemoveOptions = {},
+): Promise<void> {
+  const dryRun = Boolean(options.dryRun);
+  const skipConfirm = Boolean(
+    options.yes || options.force || process.env.NEMOCLAW_NON_INTERACTIVE === "1",
+  );
 
   // Remove-able presets = built-in presets + custom presets applied via
   // --from-file / --from-dir (tracked in registry.customPolicies).
@@ -860,7 +884,7 @@ export async function removeSandboxPolicy(sandboxName: string, args: string[] = 
   const allPresets = [...builtinPresets, ...customPresets];
   const applied = policies.getAppliedPresets(sandboxName);
 
-  const presetArg = args.find((arg) => !arg.startsWith("-"));
+  const presetArg = options.preset;
   let answer = null;
   if (presetArg) {
     const normalized = presetArg.trim().toLowerCase();

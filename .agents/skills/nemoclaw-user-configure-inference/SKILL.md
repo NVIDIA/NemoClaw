@@ -6,7 +6,7 @@ description: "Connects NemoClaw to a local inference server. Use when setting up
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Use a Local Inference Server with NemoClaw
+# Use a Local Inference Server
 
 ## Gotchas
 
@@ -24,7 +24,7 @@ All approaches use the same `inference.local` routing model.
 The agent inside the sandbox never connects to your model server directly.
 OpenShell intercepts inference traffic and forwards it to the local endpoint you configure.
 
-## Step 1: Ollama
+## Ollama
 
 Ollama is the default local inference option.
 The onboard wizard detects Ollama automatically when it is installed or running on the host.
@@ -146,7 +146,7 @@ Run onboard without `--non-interactive` to get the interactive `[y/N]` prompt th
 | `NEMOCLAW_MODEL` | Ollama model tag to use. Optional. |
 | `NEMOCLAW_YES` | Set to `1` to auto-accept the model-download confirmation prompt. Optional. |
 
-## Step 2: OpenAI-Compatible Server
+## OpenAI-Compatible Server
 
 This option works with any server that implements `/v1/chat/completions`, including vLLM, TensorRT-LLM, llama.cpp, LocalAI, and others.
 For compatible endpoints, NemoClaw uses `/v1/chat/completions` by default.
@@ -224,7 +224,7 @@ If you already onboarded and the sandbox is failing at runtime, re-run
 into the image.
 Refer to Switch Inference Models (use the `nemoclaw-user-configure-inference` skill) for details.
 
-## Step 3: Anthropic-Compatible Server
+## Anthropic-Compatible Server
 
 If your local server implements the Anthropic Messages API (`/v1/messages`), choose **Other Anthropic-compatible endpoint** during onboarding instead.
 
@@ -242,7 +242,7 @@ $ NEMOCLAW_PROVIDER=anthropicCompatible \
   nemoclaw onboard --non-interactive
 ```
 
-## Step 4: vLLM (Experimental)
+## vLLM (Experimental)
 
 When vLLM is already running on `localhost:8000`, NemoClaw can detect it automatically and query the `/v1/models` endpoint to determine the loaded model.
 On supported Linux hosts with NVIDIA GPUs, the onboard wizard can also install or start a managed vLLM container for you.
@@ -321,7 +321,7 @@ $ NEMOCLAW_EXPERIMENTAL=1 \
 `HUGGING_FACE_HUB_TOKEN` is accepted as an alternative.
 The token check runs on the host before any docker pull, so a missing or empty token aborts onboarding before bandwidth is spent on a 401.
 
-## Step 5: NVIDIA NIM (Experimental)
+## NVIDIA NIM (Experimental)
 
 NemoClaw can pull, start, and manage a NIM container on hosts with a NIM-capable NVIDIA GPU.
 
@@ -357,7 +357,7 @@ $ NEMOCLAW_EXPERIMENTAL=1 \
 
 To select a specific model, set `NEMOCLAW_MODEL`.
 
-## Step 6: Timeout Configuration
+## Timeout Configuration
 
 Local inference requests use a default timeout of 180 seconds.
 Large prompts on hardware such as DGX Spark can exceed shorter timeouts, so NemoClaw sets a higher default for Ollama, vLLM, NIM, and compatible-endpoint setup.
@@ -385,7 +385,7 @@ $ nemoclaw onboard
 
 If onboard ends with `Sandbox '<name>' was created but did not become ready within 180s`, refer to Troubleshooting (use the `nemoclaw-user-reference` skill).
 
-## Step 7: Verify the Configuration
+## Verify the Configuration
 
 After onboarding completes, confirm the active provider and model.
 
@@ -397,7 +397,7 @@ The output shows the provider label (for example, "Local vLLM" or "Other OpenAI-
 For Local Ollama, status also checks the authenticated proxy when a proxy token is available.
 If `Inference` is healthy but `Inference (auth proxy)` is not, rerun onboarding to repair the proxy path that sandbox requests use.
 
-## Step 8: Switch Models at Runtime
+## Switch Models at Runtime
 
 You can change the model without re-running onboard.
 Refer to Switch Inference Models (use the `nemoclaw-user-configure-inference` skill) for the full procedure.

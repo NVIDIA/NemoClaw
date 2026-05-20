@@ -13,13 +13,14 @@ import {
   sandboxActionTokens,
   GROUP_ORDER,
 } from "./command-registry";
+import { getRegisteredOclifCommandsMetadata } from "./oclif-metadata";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 59 commands", () => {
-      // 26 global (21 visible + 5 hidden help/version aliases)
+    it("should contain exactly 60 commands", () => {
+      // 27 global (21 visible + 6 hidden help/version aliases)
       // 33 sandbox (27 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(59);
+      expect(COMMANDS).toHaveLength(60);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -38,9 +39,9 @@ describe("command-registry", () => {
   });
 
   describe("globalCommands()", () => {
-    it("should return exactly 26 entries", () => {
-      // 21 visible + 5 hidden (help, --help, -h, --version, -v)
-      expect(globalCommands()).toHaveLength(26);
+    it("should return exactly 27 entries", () => {
+      // 21 visible + 6 hidden (help, --help, -h, version, --version, -v)
+      expect(globalCommands()).toHaveLength(27);
     });
 
     it("every entry has scope global", () => {
@@ -64,8 +65,8 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 11 hidden commands (48 visible)", () => {
-      // 5 hidden global (help, --help, -h, --version, -v) +
+    it("should exclude 12 hidden commands (48 visible)", () => {
+      // 6 hidden global (help, --help, -h, version, --version, -v) +
       // 6 hidden sandbox (shields×3, config get/set/rotate-token)
       expect(visibleCommands()).toHaveLength(48);
     });
@@ -78,9 +79,9 @@ describe("command-registry", () => {
   });
 
   describe("hidden commands", () => {
-    it("exactly 11 hidden commands: help/version aliases + shields + config", () => {
+    it("exactly 12 hidden commands: help/version aliases + shields + config", () => {
       const hidden = COMMANDS.filter((c) => c.hidden);
-      expect(hidden).toHaveLength(11);
+      expect(hidden).toHaveLength(12);
       const usages = hidden.map((c) => c.usage).sort();
       expect(usages).toEqual([
         "nemoclaw --help",
@@ -94,7 +95,32 @@ describe("command-registry", () => {
         "nemoclaw <name> shields status",
         "nemoclaw <name> shields up",
         "nemoclaw help",
+        "nemoclaw version",
       ]);
+    });
+  });
+
+  describe("oclif discovery coverage", () => {
+    it("requires public leaf commands to have display metadata", () => {
+      const metadataById = getRegisteredOclifCommandsMetadata();
+      const discoveredIds = Object.keys(metadataById).sort();
+      const displayCommandIds = new Set(COMMANDS.map((command) => command.commandId));
+
+      for (const commandId of discoveredIds) {
+        if (commandId.startsWith("internal:")) continue;
+
+        const hasSubcommands = discoveredIds.some((id) => id.startsWith(`${commandId}:`));
+        if (hasSubcommands) continue;
+
+        expect(displayCommandIds.has(commandId), commandId).toBe(true);
+      }
+    });
+
+    it("keeps every public display entry attached to a discovered oclif command", () => {
+      const discoveredIds = new Set(Object.keys(getRegisteredOclifCommandsMetadata()));
+      for (const command of COMMANDS) {
+        expect(discoveredIds.has(command.commandId), command.usage).toBe(true);
+      }
     });
   });
 
@@ -145,7 +171,7 @@ describe("command-registry", () => {
   });
 
   describe("globalCommandTokens()", () => {
-    it("returns the exact set of 22 tokens matching the global dispatch commands", () => {
+    it("returns the exact set of 23 tokens matching the global dispatch commands", () => {
       const tokens = globalCommandTokens();
       const expected = new Set([
         "onboard",
@@ -166,6 +192,7 @@ describe("command-registry", () => {
         "gc",
         "inference",
         "help",
+        "version",
         "--help",
         "-h",
         "--version",

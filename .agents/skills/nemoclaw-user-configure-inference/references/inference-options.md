@@ -30,7 +30,8 @@ NemoClaw uses provider-specific local tokens for those routes, and rebuilds of l
 | Hermes Provider | Hermes only | OpenAI-compatible route | Available when onboarding Hermes Agent through `nemohermes` |
 | Local Ollama | Caveated | Local Ollama API | Available when Ollama is installed or running on the host |
 | Local NVIDIA NIM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a NIM-capable GPU |
-| Local vLLM | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` and a server already running on `localhost:8000` |
+| Local vLLM (already running) | Caveated | Local OpenAI-compatible | Appears in the onboarding menu when NemoClaw detects a server already on `localhost:8000`. No flag required. |
+| Local vLLM (managed install/start) | Experimental | Local OpenAI-compatible | Requires `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. NemoClaw pulls/starts a vLLM container on a supported NVIDIA GPU host. |
 
 ## Provider Options
 
@@ -79,6 +80,28 @@ To use the router in scripted setup, set:
 ```console
 $ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
 ```
+
+### Host Python requirement
+
+The Model Router runs in a host-side virtual environment that NemoClaw creates during onboarding.
+NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, and adopts the first interpreter that satisfies both of:
+
+- Version inside `[3.10, 3.14)`.
+- `ensurepip`, `pyexpat`, `ssl`, and `venv` all import without error.
+
+If no candidate qualifies, onboarding aborts and prints the real failure for each candidate.
+This surfaces issues like Homebrew `python@3.14` whose `pyexpat` extension fails to dlopen against the older system `libexpat` on macOS.
+
+To pin a specific interpreter, set `NEMOCLAW_MODEL_ROUTER_PYTHON` to its absolute path before running `nemoclaw onboard`:
+
+```console
+$ NEMOCLAW_MODEL_ROUTER_PYTHON=/opt/homebrew/bin/python3.12 nemoclaw onboard
+```
+
+The pin is strict.
+NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to a different python on `PATH`.
+Relative command names such as `python3.12` are rejected; use `command -v python3.12` to find the absolute path.
+If `python -m venv` itself fails for a probe-clean interpreter (for example, a corrupt ensurepip seed), NemoClaw retries with the next healthy candidate when no pin is set; with a pin set, the failure stops onboarding so you can fix or repoint the pinned python.
 
 ## Experimental Options
 

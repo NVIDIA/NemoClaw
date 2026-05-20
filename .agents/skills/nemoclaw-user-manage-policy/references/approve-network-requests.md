@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Approve or Deny NemoClaw Agent Network Requests
+# Approve or Deny Agent Network Requests
 
 Review and act on network requests that the agent makes to endpoints not listed in the sandbox policy.
 OpenShell intercepts these requests and presents them in the TUI for operator approval.
@@ -44,17 +44,18 @@ The TUI presents an approval prompt for each blocked request.
 
 Approved endpoints remain in the running policy until the sandbox stops.
 They are not persisted to the baseline policy file.
+To keep an endpoint allowed after a restart, update the policy YAML or apply a preset as described in Customize the Sandbox Network Policy (use the `nemoclaw-user-manage-policy` skill).
 
 ## Run the Walkthrough
 
-To observe the approval flow in a guided session, run the walkthrough script:
+From the NemoClaw repository root, run the walkthrough script after you have onboarded at least one sandbox and it is reachable:
 
 ```console
 $ ./scripts/walkthrough.sh
 ```
 
 This script opens a split tmux session with the TUI on the left and the agent on the right.
-The walkthrough requires tmux and the `NVIDIA_API_KEY` environment variable.
+The walkthrough requires tmux and the `NVIDIA_API_KEY` environment variable, and it assumes an existing sandbox to attach to.
 
 ## Related Topics
 

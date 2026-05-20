@@ -497,7 +497,7 @@ export function showStatusCommand(deps: ShowStatusCommandDeps): void {
           );
         }
         log(
-          "    Another sandbox is likely polling with the same bot token. See docs/reference/troubleshooting.md.",
+          "    Another sandbox is likely polling with the same bot token. See docs/reference/troubleshooting.mdx.",
         );
 
         // Surface gateway log tail for Hermes sandboxes when messaging is degraded.

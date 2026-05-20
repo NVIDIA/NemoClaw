@@ -484,6 +484,7 @@ exit 98
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
     expect(output).toMatch(/NEMOCLAW_POLICY_MODE/);
     expect(output).toMatch(/NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt/);
+    expect(output).toMatch(/NEMOCLAW_NO_EXPRESS=1/);
     expect(output).toMatch(/NEMOCLAW_SANDBOX_NAME/);
     expect(output).toMatch(/nvidia\.com\/nemoclaw\.sh/);
   });
@@ -3081,7 +3082,11 @@ exit 0`,
 });
 
 describe("installer express install prompt (sourced)", () => {
-  function runExpressPromptWithTty(answer: string, stdinMode: "pipe" | "tty") {
+  function runExpressPromptWithTty(
+    answer: string,
+    stdinMode: "pipe" | "tty",
+    platform = "DGX Spark",
+  ) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
     const python =
       spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], { encoding: "utf-8" }).stdout.trim() ||
@@ -3097,9 +3102,10 @@ import time
 installer = sys.argv[1]
 answer = sys.argv[2].encode()
 stdin_mode = sys.argv[3]
+platform = sys.argv[4]
 script = r'''
 source "$INSTALLER_UNDER_TEST" >/dev/null
-detect_express_platform() { printf "DGX Spark"; }
+detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
 NON_INTERACTIVE=""
 NEMOCLAW_PROVIDER=""
 NEMOCLAW_NO_EXPRESS=""
@@ -3110,6 +3116,7 @@ printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YE
 '''
 env = dict(os.environ)
 env["INSTALLER_UNDER_TEST"] = installer
+env["EXPRESS_PLATFORM"] = platform
 pid, fd = pty.fork()
 if pid == 0:
     if stdin_mode == "pipe":
@@ -3159,16 +3166,20 @@ except OSError:
 sys.stdout.buffer.write(output)
 sys.exit(exit_code)
 `;
-    return spawnSync(python, ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode], {
-      cwd: tmp,
-      encoding: "utf-8",
-      timeout: 15_000,
-      killSignal: "SIGKILL",
-      env: {
-        HOME: tmp,
-        PATH: TEST_SYSTEM_PATH,
+    return spawnSync(
+      python,
+      ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode, platform],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        timeout: 15_000,
+        killSignal: "SIGKILL",
+        env: {
+          HOME: tmp,
+          PATH: TEST_SYSTEM_PATH,
+        },
       },
-    });
+    );
   }
 
   it("offers express install when curl-piped stdin still has a controlling TTY", () => {
@@ -3180,6 +3191,44 @@ sys.exit(exit_code)
     expect(output).toMatch(/Using express install for DGX Spark/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-ollama MODEL=qwen3\.6:35b POLICY=suggested YES=1/,
+    );
+  });
+
+  it("detects Windows WSL as an express install platform", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform
+`,
+      ],
+      {
+        cwd: path.join(import.meta.dirname, ".."),
+        encoding: "utf-8",
+        env: {
+          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-wsl-detect-")),
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          WSL_DISTRO_NAME: "Ubuntu",
+        },
+      },
+    );
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("Windows WSL");
+  });
+
+  it("maps Windows WSL express install to Windows-host Ollama", () => {
+    const result = runExpressPromptWithTty("\n", "pipe", "Windows WSL");
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Detected Windows WSL/);
+    expect(output).toMatch(/Run express install/);
+    expect(output).toMatch(/Using express install for Windows WSL/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-windows-ollama MODEL= POLICY=suggested YES=1/,
     );
   });
 

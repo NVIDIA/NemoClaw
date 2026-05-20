@@ -265,6 +265,12 @@ If the `nemoclaw` CLI is missing or broken, fall back to the hosted script:
 curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
 ```
 
+The same `--yes`, `--keep-openshell`, and `--delete-models` flags listed above also apply to the hosted script. Pass them after `bash -s --`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes --delete-models
+```
+
 For a full comparison of the two forms, including what they fetch, what they trust, and when to prefer each, see [`nemoclaw uninstall` vs. the hosted `uninstall.sh`](/reference/commands#nemoclaw-uninstall-vs-the-hosted-uninstallsh).
 
 ## Related Topics

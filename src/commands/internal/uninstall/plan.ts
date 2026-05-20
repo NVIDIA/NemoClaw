@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Flags } from "@oclif/core";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../../lib/cli/branding";
+import { jsonFlag } from "../../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import { buildHostUninstallPlan } from "../../../lib/actions/uninstall/plan";
-import { CLI_DISPLAY_NAME, CLI_NAME } from "../../../lib/cli/branding";
 
 export default class InternalUninstallPlanCommand extends NemoClawCommand {
   static hidden = true;
@@ -15,7 +16,7 @@ export default class InternalUninstallPlanCommand extends NemoClawCommand {
   static usage = ["internal uninstall plan [--json] [--delete-models] [--keep-openshell]"];
   static examples = [`${CLI_NAME} internal uninstall plan --json --yes`];
   static flags = {
-    json: Flags.boolean({ description: "Print the uninstall plan as JSON" }),
+    json: jsonFlag("Print the uninstall plan as JSON"),
     yes: Flags.boolean({ description: "Accepted for parity with run-plan; ignored while planning" }),
     "delete-models": Flags.boolean({ description: `Plan removal of ${CLI_DISPLAY_NAME}-pulled Ollama models` }),
     "keep-openshell": Flags.boolean({ description: "Keep the openshell binary installed" }),

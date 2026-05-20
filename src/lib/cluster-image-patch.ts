@@ -274,7 +274,7 @@ export function ensurePatchedClusterImage(opts: EnsurePatchedClusterImageOpts): 
       throw new ClusterImagePatchError(
         `cannot reach upstream registry for ${opts.upstreamImage} ` +
           `(docker manifest inspect exit ${probeResult.status} within ${inspectTimeoutMs} ms). ` +
-          "See docs/reference/troubleshooting.md for the manual daemon.json workaround.",
+          "See docs/reference/troubleshooting.mdx for the manual daemon.json workaround.",
       );
     }
 
