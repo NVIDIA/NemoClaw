@@ -331,12 +331,20 @@ describe("sandbox provisioning: base runtime tools", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));
     const lists = path.join(tmp, "apt-lists");
+    const fakePy3 = path.join(tmp, "usr-bin", "python3");
+    const fakePyLink = path.join(tmp, "usr-local-bin", "python");
     fs.mkdirSync(lists);
+    fs.mkdirSync(path.dirname(fakePy3), { recursive: true });
+    fs.mkdirSync(path.dirname(fakePyLink), { recursive: true });
+    fs.writeFileSync(fakePy3, "#!/bin/sh\n", { mode: 0o755 });
     const command = dockerRunCommandBetween(
       dockerfile,
       "RUN apt-get update",
       "# gosu for privilege separation",
-    ).replaceAll("/var/lib/apt/lists", lists);
+    )
+      .replaceAll("/var/lib/apt/lists", lists)
+      .replaceAll("/usr/local/bin/python", fakePyLink)
+      .replaceAll("/usr/bin/python3", fakePy3);
 
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
@@ -347,6 +355,38 @@ describe("sandbox provisioning: base runtime tools", () => {
       expect(calls).toContain("procps=2:4.0.4-9");
       expect(calls).toContain("e2fsprogs=1.47.2-3+b11");
       expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u4");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("symlinks bare `python` to python3 so agent tool calls don't fail with command-not-found (#1452)", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-pysymlink-"));
+    const lists = path.join(tmp, "apt-lists");
+    const fakePy3 = path.join(tmp, "usr-bin", "python3");
+    const fakePyLink = path.join(tmp, "usr-local-bin", "python");
+    fs.mkdirSync(lists, { recursive: true });
+    fs.mkdirSync(path.dirname(fakePy3), { recursive: true });
+    fs.mkdirSync(path.dirname(fakePyLink), { recursive: true });
+    fs.writeFileSync(fakePy3, "#!/bin/sh\necho 3.13\n", { mode: 0o755 });
+
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "RUN apt-get update",
+      "# gosu for privilege separation",
+    )
+      .replaceAll("/var/lib/apt/lists", lists)
+      .replaceAll("/usr/local/bin/python", fakePyLink)
+      .replaceAll("/usr/bin/python3", fakePy3);
+
+    try {
+      const { result } = runLoggedDockerShell(command, tmp, [
+        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+      ]);
+      expect(result.status).toBe(0);
+      expect(fs.lstatSync(fakePyLink).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(fakePyLink)).toBe(fakePy3);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

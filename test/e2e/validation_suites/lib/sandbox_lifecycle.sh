@@ -78,8 +78,10 @@ sandbox_lifecycle_assert_status_fields_present() {
     return 1
   }
   if [[ "${E2E_DRY_RUN:-0}" != "1" ]]; then
+    local status_output_lower
+    status_output_lower="$(printf '%s' "${SANDBOX_LIFECYCLE_LAST_OUTPUT}" | tr '[:upper:]' '[:lower:]')"
     for field in status gateway sandbox; do
-      [[ "${SANDBOX_LIFECYCLE_LAST_OUTPUT,,}" == *"${field}"* ]] || {
+      [[ "${status_output_lower}" == *"${field}"* ]] || {
         sandbox_lifecycle_fail "${id}" "missing status field: ${field}"
         return 1
       }
