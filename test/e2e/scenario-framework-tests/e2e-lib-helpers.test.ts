@@ -566,6 +566,7 @@ describe("baseline onboarding validation helper", () => {
 case "$*" in
   --help) echo help;;
   "sb1 status") echo 'status running gateway healthy sandbox running';;
+  "sb1 logs") echo baseline-log;;
   *) echo "unexpected nemoclaw args: $*" >&2; exit 64;;
 esac
 `, { mode: 0o755 });
@@ -578,12 +579,14 @@ esac
         baseline_assert_openshell_on_path
         baseline_assert_nemoclaw_help_exits_zero
         baseline_assert_sandbox_status_exits_zero
+        baseline_assert_logs_produce_output
       `, { E2E_CONTEXT_DIR: ctx, PATH: `${bin}:${process.env.PATH}` });
       expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.nemoclaw_on_path");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.openshell_on_path");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.nemoclaw_help_exits_zero");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.sandbox_status");
+      expect(r.stdout).toContain("PASS: validation.baseline_onboarding.logs_available");
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
 });
@@ -625,7 +628,7 @@ describe("sandbox lifecycle validation helper", () => {
 case "$*" in
   list) echo sb1;;
   "sb1 status") echo 'status running gateway healthy sandbox running';;
-  "logs sb1") echo logline;;
+  "sb1 logs") echo logline;;
   *) echo "unexpected nemoclaw args: $*" >&2; exit 64;;
 esac
 `, { mode: 0o755 });

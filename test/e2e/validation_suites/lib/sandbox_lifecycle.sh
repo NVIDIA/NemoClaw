@@ -90,7 +90,7 @@ sandbox_lifecycle_assert_status_fields_present() {
 
 sandbox_lifecycle_assert_logs_available() {
   local id="validation.sandbox_operations.logs_available"
-  sandbox_lifecycle_run_with_timeout 20 nemoclaw logs "${E2E_SANDBOX_NAME}" >/dev/null || {
+  sandbox_lifecycle_run_with_timeout 20 nemoclaw "${E2E_SANDBOX_NAME}" logs >/dev/null || {
     sandbox_lifecycle_fail "${id}" "nemoclaw logs failed"
     return 1
   }
