@@ -1977,10 +1977,9 @@ describe("seed_default_workspace_templates (#3240)", () => {
         "set -euo pipefail",
         `STEP_DOWN_LOG=${JSON.stringify(stepDownLog)}`,
         `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$0" >"$STEP_DOWN_LOG"; exec "$@"' sandbox-step-down)`,
-        extractShellFunctionFromSource(src, "seed_default_workspace_templates").replaceAll(
-          "$(npm root -g 2>/dev/null || true)",
-          JSON.stringify(tmpDir),
-        ),
+        `npm() { if [ "$1" = "root" ] && [ "\${2:-}" = "-g" ]; then printf '%s\\n' ${JSON.stringify(tmpDir)}; else command npm "$@"; fi; }`,
+        "export -f npm",
+        extractShellFunctionFromSource(src, "seed_default_workspace_templates"),
         seedAsSandbox,
         "seed_default_workspace_templates_as_sandbox",
       ].join("\n"),
