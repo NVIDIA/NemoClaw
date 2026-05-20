@@ -218,3 +218,38 @@ WORKDIR /
 # will still report healthy.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD node -e "process.exit(0)"
+
+# Bake Homebrew core (Linuxbrew) into the sandbox base image (#3913).
+#
+# Without this, applying the `brew` policy preset and trying to install
+# Homebrew at runtime fails: /home/linuxbrew is not in the sandbox
+# filesystem write paths, AND the install script's first step is `sudo`
+# to create + chown /home/linuxbrew/.linuxbrew, which the unprivileged
+# sandbox user cannot grant. The preset's binary whitelist for
+# /home/linuxbrew/.linuxbrew/bin/* is then dead code.
+#
+# Image-build runs as root, so we create the prefix, chown it to the
+# sandbox user, clone Homebrew core under it as the sandbox user, and
+# symlink the brew entry point. After this, every sandbox starts with a
+# working `brew` on PATH (via /home/linuxbrew/.linuxbrew/bin) and the
+# preset's binary whitelist is honored.
+#
+# Companion change: /home/linuxbrew is added to filesystem_policy.read_write
+# in nemoclaw-blueprint/policies/openclaw-sandbox.yaml so brew can write
+# formulae under the prefix at runtime.
+#
+# Cost: ~80 to 150 MB (Homebrew core only; formulae download on demand).
+#
+# HOMEBREW_VERSION pins the exact upstream Homebrew tag we ship, so the
+# base image layer is reproducible across rebuilds. Bump on demand; the
+# base-image workflow re-runs on push to main. Latest stable tags are
+# at https://github.com/Homebrew/brew/releases.
+ARG HOMEBREW_VERSION=5.1.12
+RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
+    && chown -R sandbox:sandbox /home/linuxbrew \
+    && gosu sandbox git clone --depth=1 --branch="${HOMEBREW_VERSION}" \
+        https://github.com/Homebrew/brew.git \
+        /home/linuxbrew/.linuxbrew/Homebrew \
+    && ln -s /home/linuxbrew/.linuxbrew/Homebrew/bin/brew \
+        /home/linuxbrew/.linuxbrew/bin/brew \
+    && gosu sandbox /home/linuxbrew/.linuxbrew/bin/brew --version
