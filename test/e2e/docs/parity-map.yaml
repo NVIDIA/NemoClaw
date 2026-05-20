@@ -2652,7 +2652,7 @@ scripts:
       gap_domain: baseline-onboarding
     - legacy: '[LIVE] Direct API: model responded with PONG'
       status: mapped
-      id: validation.baseline_onboarding.sandbox_inference_local_chat
+      id: validation.baseline_onboarding.direct_api_inference_local_chat
       layer: validation
       gap_domain: baseline-onboarding
       owner: e2e-maintainers
