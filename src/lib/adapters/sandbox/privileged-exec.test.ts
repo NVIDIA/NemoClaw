@@ -165,13 +165,11 @@ describe("privilegedSandboxExecArgv", () => {
     dockerCapture.mockReset();
   });
 
-  it("uses docker exec --user when the driver is docker", () => {
+  it("runs as the container's USER (root) when the driver is docker", () => {
     getSandbox.mockReturnValue({ openshellDriver: "docker" });
     dockerCapture.mockReturnValue("openshell-alpha\n");
     expect(privilegedSandboxExecArgv("alpha", ["whoami"])).toEqual([
       "exec",
-      "--user",
-      "root",
       "openshell-alpha",
       "whoami",
     ]);
@@ -185,16 +183,18 @@ describe("privilegedSandboxExecArgv", () => {
     expect(argv).toContain("kubectl");
   });
 
-  it("threads user through the docker --user flag", () => {
+  it("wraps non-root users with runuser so HOME is set to the target user's home", () => {
     getSandbox.mockReturnValue({ openshellDriver: "docker" });
     dockerCapture.mockReturnValue("openshell-alpha\n");
     expect(
       privilegedSandboxExecArgv("alpha", ["brew", "install", "hello"], { user: "linuxbrew" }),
     ).toEqual([
       "exec",
-      "--user",
-      "linuxbrew",
       "openshell-alpha",
+      "runuser",
+      "-u",
+      "linuxbrew",
+      "--",
       "brew",
       "install",
       "hello",

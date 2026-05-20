@@ -131,7 +131,17 @@ export function privilegedSandboxExecArgv(
   const { stdin = false, user = "root" } = options;
   const dockerDriverContainer = resolveDockerDriverSandboxContainer(sandboxName);
   if (dockerDriverContainer) {
-    return ["exec", ...(stdin ? ["-i"] : []), "--user", user, dockerDriverContainer, ...cmd];
+    // Don't use docker's `--user` flag for non-root targets — it switches
+    // UID but inherits HOME from the calling shell, which causes tools
+    // like Homebrew to write to /root/.cache and trip EACCES. `runuser`
+    // (already used on the kubectl path) sets HOME to the target user's
+    // home, so we get a clean per-user environment.
+    return [
+      "exec",
+      ...(stdin ? ["-i"] : []),
+      dockerDriverContainer,
+      ...withUserPrefix(cmd, user),
+    ];
   }
   return kubectlExecArgv(sandboxName, cmd, { stdin, user });
 }
