@@ -1456,14 +1456,15 @@ else
 fi
 
 dc_ws_account_proxy=""
-if [ "$fake_gateway_ready" = "1" ] && [ -n "$dc_proxy" ]; then
-  dc_ws_account_proxy=$(run_fake_discord_gateway_node_client "$FAKE_DISCORD_GATEWAY_PORT" "openshell:resolve:env:DISCORD_BOT_TOKEN" "$dc_proxy" || true)
+dc_proxy_safe="${dc_proxy:-}"
+if [ "$fake_gateway_ready" = "1" ] && [ -n "$dc_proxy_safe" ]; then
+  dc_ws_account_proxy=$(run_fake_discord_gateway_node_client "$FAKE_DISCORD_GATEWAY_PORT" "openshell:resolve:env:DISCORD_BOT_TOKEN" "$dc_proxy_safe" || true)
 fi
 info "OpenClaw-config fake Discord Gateway probe: ${dc_ws_account_proxy:0:500}"
 
 if [ "$fake_gateway_ready" != "1" ]; then
   skip "M13d-config: Fake Discord Gateway unavailable; skipping OpenClaw account proxy proof"
-elif [ -z "$dc_proxy" ]; then
+elif [ -z "$dc_proxy_safe" ]; then
   skip "M13d-config: No Discord account proxy in openclaw.json to exercise against fake Gateway"
 elif echo "$dc_ws_account_proxy" | grep -q "^UPGRADE$" \
   && echo "$dc_ws_account_proxy" | grep -q "^HELLO$" \
