@@ -16,6 +16,9 @@ const {
   setOnboardBrandingAgent,
 }: typeof import("./onboard/branding") = require("./onboard/branding");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
+const {
+  reuseGatewayOrUpsertInferenceProvider,
+}: typeof import("./onboard/inference-provider-upsert") = require("./onboard/inference-provider-upsert");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const { looksLikeForwardPortConflict, runBackgroundForwardStartWithPortReleaseRetries }: typeof import("./onboard/forward-start") = require("./onboard/forward-start");
 const {
@@ -7503,36 +7506,28 @@ async function setupInference(
         resolvedCredentialEnv && credentialValue
           ? { [resolvedCredentialEnv]: credentialValue }
           : {};
-      const skipUpsertReusingGatewayCredential =
-        !credentialValue && providerExistsInGateway(provider);
-      if (!skipUpsertReusingGatewayCredential) {
-        const providerResult = upsertProvider(
+      const upsertOutcome = await reuseGatewayOrUpsertInferenceProvider(
+        {
           provider,
-          config.providerType,
-          resolvedCredentialEnv,
-          resolvedEndpointUrl,
+          providerType: config.providerType,
+          credentialEnv: resolvedCredentialEnv,
+          endpointUrl: resolvedEndpointUrl,
           env,
-        );
-        if (!providerResult.ok) {
-          console.error(`  ${providerResult.message}`);
-          if (isNonInteractive()) {
-            process.exit(providerResult.status || 1);
-          }
-          const retry = await promptValidationRecovery(
-            config.label,
-            classifyApplyFailure(providerResult.message),
-            resolvedCredentialEnv,
-            config.helpUrl,
-          );
-          if (retry === "credential" || retry === "retry") {
-            continue;
-          }
-          if (retry === "selection" || retry === "model") {
-            return { retry: "selection" };
-          }
-          process.exit(providerResult.status || 1);
-        }
-      }
+          credentialValue,
+          label: config.label,
+          helpUrl: config.helpUrl,
+        },
+        {
+          upsertProvider,
+          providerExistsInGateway,
+          isNonInteractive,
+          promptValidationRecovery,
+          classifyApplyFailure,
+        },
+      );
+      if (upsertOutcome.kind === "exit") process.exit(upsertOutcome.code);
+      if (upsertOutcome.kind === "retry") continue;
+      if (upsertOutcome.kind === "selection") return { retry: "selection" };
       const args = ["inference", "set"];
       if (config.skipVerify) {
         args.push("--no-verify");
