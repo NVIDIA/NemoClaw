@@ -125,7 +125,10 @@ function runInit(sandboxName: string): void {
     input: brewInitScript(),
     timeout: 900_000,
   });
-  registry.updateSandbox(sandboxName, { brewInitialised: true });
+  if (!registry.updateSandbox(sandboxName, { brewInitialised: true })) {
+    console.error(`  Failed to persist Homebrew state for '${sandboxName}'.`);
+    brewExit(1);
+  }
   console.log(`  Homebrew installed at ${LINUXBREW_PREFIX}.`);
   console.log(`  Install formulae with: ${CLI_NAME} ${sandboxName} brew install <formula>...`);
 }
@@ -168,7 +171,10 @@ function runDeinit(sandboxName: string): void {
     input: brewDeinitScript(),
     timeout: 180_000,
   });
-  registry.updateSandbox(sandboxName, { brewInitialised: false });
+  if (!registry.updateSandbox(sandboxName, { brewInitialised: false })) {
+    console.error(`  Failed to persist Homebrew state for '${sandboxName}'.`);
+    brewExit(1);
+  }
   console.log(`  Homebrew removed.`);
 }
 

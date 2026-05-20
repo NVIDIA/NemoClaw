@@ -33,6 +33,7 @@ describe("runSandboxBrew", () => {
     privilegedSandboxExec.mockReset();
     getSandbox.mockReset();
     updateSandbox.mockReset();
+    updateSandbox.mockReturnValue(true);
     vi.spyOn(console, "log").mockImplementation(() => {});
     vi.spyOn(console, "error").mockImplementation(() => {});
   });
@@ -73,9 +74,19 @@ describe("runSandboxBrew", () => {
       expect(name).toBe("alpha");
       expect(cmd).toEqual(["bash", "-s"]);
       expect(opts?.input).toMatch(/useradd -m -s \/bin\/bash linuxbrew/);
-      expect(opts?.input).toMatch(/raw.githubusercontent\.com\/Homebrew\/install/);
+      expect(opts?.input).toContain("https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh");
       expect(opts?.input).toMatch(/\/etc\/profile\.d\/nemoclaw-linuxbrew\.sh/);
       expect(updateSandbox).toHaveBeenCalledWith("alpha", { brewInitialised: true });
+    });
+
+    it("fails when the registry write fails", async () => {
+      getSandbox.mockReturnValue({ name: "alpha" });
+      isShieldsDown.mockReturnValue(true);
+      privilegedSandboxExec.mockReturnValue("");
+      updateSandbox.mockReturnValue(false);
+      await expect(runSandboxBrew("alpha", { kind: "init" })).rejects.toBeInstanceOf(
+        BrewCommandError,
+      );
     });
   });
 

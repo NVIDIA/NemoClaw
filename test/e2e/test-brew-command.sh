@@ -275,23 +275,23 @@ test_install_without_init_refused() {
 }
 
 main() {
+  trap 'nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true' EXIT
   log "============================================================"
   log "NemoClaw brew-command E2E (#3757)"
   log "============================================================"
   preflight
   setup_sandbox
-  test_brew_init
-  test_brew_install_hello
-  test_brew_uninstall_hello
-  test_init_twice_idempotent
-  test_shields_up_refuses
-  test_brew_deinit
-  test_install_without_init_refused
+  test_brew_init || true
+  test_brew_install_hello || true
+  test_brew_uninstall_hello || true
+  test_init_twice_idempotent || true
+  test_shields_up_refuses || true
+  test_brew_deinit || true
+  test_install_without_init_refused || true
   log ""
   log "============================================================"
   log "Summary: PASS=$PASS FAIL=$FAIL SKIP=$SKIP TOTAL=$TOTAL"
   log "============================================================"
-  nemoclaw "$SANDBOX_NAME" destroy --yes 2>/dev/null || true
   if [[ "$FAIL" -gt 0 ]]; then
     exit 1
   fi

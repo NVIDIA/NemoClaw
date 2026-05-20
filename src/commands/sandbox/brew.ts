@@ -10,7 +10,7 @@ export default class BrewCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Show brew usage";
   static description = "Show brew usage for init, deinit, install, and uninstall subcommands.";
-  static usage = ["<init|deinit|install|uninstall> <name>"];
+  static usage = ["<name>"];
   static examples = [
     "<%= config.bin %> sandbox brew init alpha",
     "<%= config.bin %> sandbox brew install alpha hello jq",
