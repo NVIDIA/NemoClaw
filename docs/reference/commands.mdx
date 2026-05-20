@@ -719,6 +719,18 @@ $ nemoclaw my-assistant brew install hello
 $ nemoclaw my-assistant brew install jq curl
 ```
 
+| Flag | Description |
+|------|-------------|
+| `--yes`, `-y` | When set together with `NEMOCLAW_NON_INTERACTIVE=1`, auto-run `brew init` first if Homebrew is not yet installed in the sandbox. |
+
+For unattended automation:
+
+```console
+$ NEMOCLAW_NON_INTERACTIVE=1 nemoclaw my-assistant brew install hello --yes
+```
+
+`--yes` alone (without `NEMOCLAW_NON_INTERACTIVE=1`) keeps the explicit-init requirement, so the auto-init only triggers in scripted contexts that already opt into non-interactive behaviour repo-wide.
+
 ### `nemoclaw <name> brew uninstall`
 
 Uninstall one or more Homebrew formulae via the `linuxbrew` user.

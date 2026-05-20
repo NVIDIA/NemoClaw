@@ -47,6 +47,16 @@ describe("brew oclif commands", () => {
     expect(runSandboxBrew).toHaveBeenCalledWith("alpha", {
       kind: "install",
       packages: ["hello", "jq"],
+      yes: undefined,
+    });
+  });
+
+  it("install threads --yes through to the action", async () => {
+    await BrewInstallCommand.run(["alpha", "hello", "--yes"], rootDir);
+    expect(runSandboxBrew).toHaveBeenCalledWith("alpha", {
+      kind: "install",
+      packages: ["hello"],
+      yes: true,
     });
   });
 

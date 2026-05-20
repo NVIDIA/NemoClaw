@@ -18,7 +18,7 @@ export type BrewRequest =
   | { kind: "help" }
   | { kind: "init" }
   | { kind: "deinit" }
-  | { kind: "install"; packages: readonly string[] }
+  | { kind: "install"; packages: readonly string[]; yes?: boolean }
   | { kind: "uninstall"; packages: readonly string[] };
 
 export class BrewCommandError extends Error {
@@ -57,10 +57,17 @@ function assertShieldsDown(name: string): void {
 function assertBrewInitialised(entry: SandboxEntry, sandboxName: string): void {
   if (entry.brewInitialised !== true) {
     console.error(
-      `  Homebrew is not installed in '${sandboxName}'. Run '${CLI_NAME} ${sandboxName} brew init' first.`,
+      `  Homebrew is not installed in '${sandboxName}'. Run '${CLI_NAME} ${sandboxName} brew init' first,`,
+    );
+    console.error(
+      `  or pass --yes with NEMOCLAW_NON_INTERACTIVE=1 to auto-initialise before install.`,
     );
     brewExit(1);
   }
+}
+
+function isNonInteractive(): boolean {
+  return process.env.NEMOCLAW_NON_INTERACTIVE === "1";
 }
 
 function assertFormulae(packages: readonly string[]): void {
@@ -77,10 +84,10 @@ function assertFormulae(packages: readonly string[]): void {
 
 function printHelp(sandboxName: string): void {
   console.log(`  Usage:`);
-  console.log(`    ${CLI_NAME} ${sandboxName} brew init                 Bootstrap Homebrew (Linuxbrew) in the sandbox`);
-  console.log(`    ${CLI_NAME} ${sandboxName} brew install <pkg>...     Install one or more formulae`);
-  console.log(`    ${CLI_NAME} ${sandboxName} brew uninstall <pkg>...   Uninstall one or more formulae`);
-  console.log(`    ${CLI_NAME} ${sandboxName} brew deinit               Remove Homebrew from the sandbox`);
+  console.log(`    ${CLI_NAME} ${sandboxName} brew init                       Bootstrap Homebrew (Linuxbrew) in the sandbox`);
+  console.log(`    ${CLI_NAME} ${sandboxName} brew install <pkg>... [--yes]   Install one or more formulae (--yes + NEMOCLAW_NON_INTERACTIVE=1 auto-runs init)`);
+  console.log(`    ${CLI_NAME} ${sandboxName} brew uninstall <pkg>...         Uninstall one or more formulae`);
+  console.log(`    ${CLI_NAME} ${sandboxName} brew deinit                     Remove Homebrew from the sandbox`);
 }
 
 function brewInitScript(): string {
@@ -133,11 +140,24 @@ function runInit(sandboxName: string): void {
   console.log(`  Install formulae with: ${CLI_NAME} ${sandboxName} brew install <formula>...`);
 }
 
-function runInstall(sandboxName: string, packages: readonly string[]): void {
+function runInstall(
+  sandboxName: string,
+  packages: readonly string[],
+  yes: boolean,
+): void {
   const entry = assertSandboxRegistered(sandboxName);
   assertShieldsDown(sandboxName);
-  assertBrewInitialised(entry, sandboxName);
   assertFormulae(packages);
+  if (entry.brewInitialised !== true) {
+    if (yes && isNonInteractive()) {
+      console.log(
+        `  Homebrew is not installed in '${sandboxName}'. --yes + NEMOCLAW_NON_INTERACTIVE=1 set; auto-initialising.`,
+      );
+      runInit(sandboxName);
+    } else {
+      assertBrewInitialised(entry, sandboxName);
+    }
+  }
   console.log(`  Installing ${packages.length} formula(e) into '${sandboxName}': ${packages.join(", ")}`);
   privilegedSandboxExec(sandboxName, [BREW_BIN, "install", ...packages], {
     user: "linuxbrew",
@@ -193,7 +213,7 @@ export async function runSandboxBrew(
       runDeinit(sandboxName);
       return;
     case "install":
-      runInstall(sandboxName, request.packages);
+      runInstall(sandboxName, request.packages, request.yes === true);
       return;
     case "uninstall":
       runUninstall(sandboxName, request.packages);

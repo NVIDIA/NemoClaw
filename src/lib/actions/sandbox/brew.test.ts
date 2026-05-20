@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const isShieldsDown = vi.hoisted(() => vi.fn());
 const privilegedSandboxExec = vi.hoisted(() => vi.fn());
@@ -141,6 +141,61 @@ describe("runSandboxBrew", () => {
         "jq",
       ]);
       expect(opts?.user).toBe("linuxbrew");
+    });
+
+    describe("auto-init when --yes + NEMOCLAW_NON_INTERACTIVE=1", () => {
+      let originalNonInteractive: string | undefined;
+
+      beforeEach(() => {
+        originalNonInteractive = process.env.NEMOCLAW_NON_INTERACTIVE;
+      });
+
+      afterEach(() => {
+        if (originalNonInteractive === undefined) {
+          delete process.env.NEMOCLAW_NON_INTERACTIVE;
+        } else {
+          process.env.NEMOCLAW_NON_INTERACTIVE = originalNonInteractive;
+        }
+      });
+
+      it("auto-runs init then install when yes + non-interactive and brew is missing", async () => {
+        process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+        getSandbox.mockReturnValue({ name: "alpha" });
+        isShieldsDown.mockReturnValue(true);
+        privilegedSandboxExec.mockReturnValue("");
+        await runSandboxBrew("alpha", { kind: "install", packages: ["hello"], yes: true });
+        expect(privilegedSandboxExec).toHaveBeenCalledTimes(2);
+        const initCall = privilegedSandboxExec.mock.calls[0] ?? fail("missing init call");
+        const installCall = privilegedSandboxExec.mock.calls[1] ?? fail("missing install call");
+        expect(initCall[1]).toEqual(["bash", "-s"]);
+        expect((initCall[2] as { input?: string })?.input).toMatch(/useradd -m -s \/bin\/bash linuxbrew/);
+        expect(installCall[1]).toEqual([
+          "/home/linuxbrew/.linuxbrew/bin/brew",
+          "install",
+          "hello",
+        ]);
+        expect(updateSandbox).toHaveBeenCalledWith("alpha", { brewInitialised: true });
+      });
+
+      it("refuses when --yes is set without NEMOCLAW_NON_INTERACTIVE", async () => {
+        delete process.env.NEMOCLAW_NON_INTERACTIVE;
+        getSandbox.mockReturnValue({ name: "alpha" });
+        isShieldsDown.mockReturnValue(true);
+        await expect(
+          runSandboxBrew("alpha", { kind: "install", packages: ["hello"], yes: true }),
+        ).rejects.toBeInstanceOf(BrewCommandError);
+        expect(privilegedSandboxExec).not.toHaveBeenCalled();
+      });
+
+      it("refuses when NEMOCLAW_NON_INTERACTIVE is set without --yes", async () => {
+        process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+        getSandbox.mockReturnValue({ name: "alpha" });
+        isShieldsDown.mockReturnValue(true);
+        await expect(
+          runSandboxBrew("alpha", { kind: "install", packages: ["hello"] }),
+        ).rejects.toBeInstanceOf(BrewCommandError);
+        expect(privilegedSandboxExec).not.toHaveBeenCalled();
+      });
     });
   });
 
