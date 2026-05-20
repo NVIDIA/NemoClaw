@@ -514,7 +514,7 @@ Follow these steps to reconnect.
    $ nemoclaw tunnel start
    ```
 
-   OpenShell-managed channel messaging handles Telegram, Discord, Slack, WeChat, and WhatsApp at onboarding, not through a separate bridge process from `nemoclaw tunnel start`.
+   OpenShell-managed channel messaging handles Telegram, Discord, Slack, and WhatsApp at onboarding, not through a separate bridge process from `nemoclaw tunnel start`.
    To pause a single bridge without destroying the sandbox, use `nemoclaw <name> channels stop <channel>`.
 
 **If the sandbox does not recover:**
@@ -723,8 +723,8 @@ Run the equivalent host-side command instead:
 
 ```console
 $ nemoclaw <sandbox> channels list
-$ nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>
-$ nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
+$ nemoclaw <sandbox> channels add <telegram|discord|slack|whatsapp>
+$ nemoclaw <sandbox> channels remove <telegram|discord|slack|whatsapp>
 ```
 
 `channels add` registers credentials with the OpenShell gateway and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
@@ -733,7 +733,6 @@ In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the c
 WhatsApp pairs entirely inside the sandbox.
 NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes after you add the channel on the host.
 Run `openclaw channels login --channel whatsapp` inside OpenClaw sandboxes, or run `hermes whatsapp` inside Hermes sandboxes.
-WeChat captures its token via a host-side QR during the host-side `nemoclaw <sandbox> channels add wechat` flow, so it does not need an in-sandbox `channels login` step.
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
@@ -1191,7 +1190,7 @@ Skills that require macOS-only binaries cannot be enabled on Brev.
 Skills that require additional CLI binaries require a custom sandbox image rebuild.
 
 For credentials, use the supported host-side setup flow.
-Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack|wechat|whatsapp>` for messaging channels.
+Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack|whatsapp>` for messaging channels.
 To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
 
 ```console
