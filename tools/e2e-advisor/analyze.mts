@@ -2,41 +2,21 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import {
-  AuthStorage,
-  createAgentSession,
-  DefaultResourceLoader,
-  ModelRegistry,
-  SessionManager,
-  SettingsManager,
-} from "@earendil-works/pi-coding-agent";
+import { getChangedFiles, getDiff } from "../advisors/git.mts";
+import { advisorArtifactPaths, parseArgs, parsePositiveInt, readJson, writeJson, type AdvisorArtifactPaths } from "../advisors/io.mts";
+import { dropUndefinedValues, extractJson, recordItems, stringOrUndefined } from "../advisors/json.mts";
+import { DEFAULT_ADVISOR_MODEL, DEFAULT_ADVISOR_PROVIDER, READ_ONLY_TOOLS, type RunAdvisorResult, runReadOnlyAdvisor } from "../advisors/session.mts";
 
 const root = process.cwd();
-const ADVISOR_PROVIDER = "openai";
-const ADVISOR_MODEL = "openai/openai/gpt-5.5";
-const READ_ONLY_TOOLS = ["read", "grep", "find", "ls"];
+const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
+const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
+const ADVISOR_CREDENTIAL_ENV = ["E2E", "ADVISOR", "API", "KEY"].join("_");
 
-type ParsedArgs = Record<string, string | undefined>;
-type AdvisorProviderConfig = Parameters<ModelRegistry["registerProvider"]>[1];
-type RunAdvisorResult = {
-  text: string;
-  raw: string;
-};
-
-type ArtifactPaths = {
-  prompt: string;
-  raw: string;
-  result: string;
-  finalResult: string;
-  summary: string;
-  sessionHtml: string;
-};
+type ArtifactPaths = AdvisorArtifactPaths;
 
 type AdvisorSchema = Record<string, unknown>;
 type Confidence = "low" | "medium" | "high";
@@ -84,30 +64,11 @@ type AdvisorResult = {
   dispatchHint?: AdvisorDispatchHint;
 };
 
-const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
-const ADVISOR_PROVIDER_CONFIG: AdvisorProviderConfig = {
-  api: "openai-completions",
-  baseUrl: "https://inference-api.nvidia.com/v1",
-  models: [advisorModel("openai/openai/gpt-5.5", "GPT-5.5", 256000, 32768, true, ["text", "image"])],
-  ["api" + "Key"]: "E2E_ADVISOR_API_KEY",
-} as AdvisorProviderConfig;
-
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
     process.exit(1);
   });
-}
-
-function advisorModel(
-  id: string,
-  name: string,
-  contextWindow: number,
-  maxTokens: number,
-  reasoning: boolean,
-  input: ("text" | "image")[],
-): NonNullable<AdvisorProviderConfig["models"]>[number] {
-  return { id, name, reasoning, input, cost: ZERO_COST, contextWindow, maxTokens };
 }
 
 async function main(): Promise<void> {
@@ -147,11 +108,11 @@ async function main(): Promise<void> {
   }
 
   logProgress(`Launching advisor SDK: provider=${ADVISOR_PROVIDER} model=${ADVISOR_MODEL}`);
-  logProgress("Advisor tools enabled: read,grep,find,ls; repository commands remain disabled by prompt policy");
+  logProgress(`Advisor tools enabled: ${READ_ONLY_TOOLS.join(",")}; repository commands remain disabled by prompt policy`);
 
   let sdkResult: RunAdvisorResult | undefined;
   try {
-    sdkResult = await runAdvisor({
+    sdkResult = await runReadOnlyAdvisor({
       cwd: root,
       prompt,
       systemPrompt,
@@ -160,6 +121,9 @@ async function main(): Promise<void> {
       timeoutMs,
       heartbeatMs,
       maxCaptureBytes,
+      credentialEnv: ADVISOR_CREDENTIAL_ENV,
+      logPrefix: "e2e-advisor",
+      logProgress,
     });
     fs.writeFileSync(artifacts.raw, sdkResult.raw);
     logProgress(
@@ -177,7 +141,7 @@ async function main(): Promise<void> {
 
   let result: AdvisorResult;
   try {
-    result = normalizeAdvisorResult(extractJson(sdkResult.text || sdkResult.raw, artifacts.raw), metadata);
+    result = normalizeAdvisorResult(extractJson(sdkResult.text || sdkResult.raw, artifacts.raw, "e2e_advisor_json"), metadata);
   } catch (error: unknown) {
     writeFailure(error instanceof Error ? error.message : String(error));
     process.exit(1);
@@ -191,14 +155,7 @@ async function main(): Promise<void> {
 }
 
 function artifactPaths(outDir: string): ArtifactPaths {
-  return {
-    prompt: path.join(outDir, "e2e-advisor-prompt.md"),
-    raw: path.join(outDir, "e2e-advisor-raw-output.txt"),
-    result: path.join(outDir, "e2e-advisor-result.json"),
-    finalResult: path.join(outDir, "e2e-advisor-final-result.json"),
-    summary: path.join(outDir, "e2e-advisor-summary.md"),
-    sessionHtml: path.join(outDir, "e2e-advisor-session.html"),
-  };
+  return advisorArtifactPaths(outDir, "e2e-advisor");
 }
 
 function writeUnavailableArtifacts(paths: ArtifactPaths, metadata: AdvisorMetadata, reason: string, failed: boolean): void {
@@ -211,261 +168,8 @@ function writeUnavailableArtifacts(paths: ArtifactPaths, metadata: AdvisorMetada
   }
 }
 
-function writeJson(filePath: string, value: unknown): void {
-  fs.writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`);
-}
-
 function logProgress(message: string): void {
   console.log(`[e2e-advisor] ${new Date().toISOString()} ${message}`);
-}
-
-function parsePositiveInt(value: string | undefined, fallback: number): number {
-  const parsed = Number.parseInt(value ?? "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
-}
-
-async function runAdvisor(options: {
-  cwd: string;
-  prompt: string;
-  systemPrompt: string;
-  configDir: string;
-  htmlExportPath: string;
-  timeoutMs: number;
-  heartbeatMs: number;
-  maxCaptureBytes: number;
-}): Promise<RunAdvisorResult> {
-  fs.mkdirSync(options.configDir, { recursive: true });
-  const { authStorage, modelRegistry } = prepareAdvisorConfig();
-  const model = modelRegistry.find(ADVISOR_PROVIDER, ADVISOR_MODEL);
-  if (!model || !modelRegistry.hasConfiguredAuth(model)) {
-    throw new Error(`Could not configure advisor model ${ADVISOR_MODEL}`);
-  }
-
-  const settingsManager = SettingsManager.inMemory({
-    compaction: { enabled: false },
-    retry: { enabled: true, maxRetries: 2 },
-  });
-  const resourceLoader = new DefaultResourceLoader({
-    cwd: options.cwd,
-    agentDir: options.configDir,
-    settingsManager,
-    noExtensions: true,
-    noSkills: true,
-    noPromptTemplates: true,
-    noThemes: true,
-    noContextFiles: true,
-    systemPromptOverride: () => options.systemPrompt,
-    appendSystemPromptOverride: () => [],
-  });
-  await resourceLoader.reload();
-
-  const { session, modelFallbackMessage } = await createAgentSession({
-    cwd: options.cwd,
-    agentDir: options.configDir,
-    authStorage,
-    modelRegistry,
-    model,
-    thinkingLevel: "medium",
-    tools: READ_ONLY_TOOLS,
-    resourceLoader,
-    sessionManager: SessionManager.create(options.cwd, path.join(options.configDir, "sessions")),
-    settingsManager,
-  });
-
-  const rawHeader = [
-    modelFallbackMessage ? `[e2e-advisor] ${modelFallbackMessage}` : undefined,
-    `[e2e-advisor] model=${model.provider}/${model.id}`,
-    `[e2e-advisor] tools=${READ_ONLY_TOOLS.join(",")}`,
-    "--- ASSISTANT TEXT ---",
-  ].filter((line): line is string => Boolean(line));
-
-  const text = new CappedBuffer(options.maxCaptureBytes);
-  const raw = new CappedBuffer(options.maxCaptureBytes, `${rawHeader.join("\n")}\n`);
-
-  const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
-    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-      text.append(event.assistantMessageEvent.delta);
-      raw.append(event.assistantMessageEvent.delta);
-      return;
-    }
-    if (event.type === "tool_execution_start") {
-      raw.append(`\n[e2e-advisor] tool_start ${event.toolName}\n`);
-      return;
-    }
-    if (event.type === "tool_execution_end") {
-      raw.append(`[e2e-advisor] tool_end ${event.toolName} ${event.isError ? "error" : "ok"}\n`);
-      return;
-    }
-    if (event.type === "auto_retry_start") {
-      raw.append(`[e2e-advisor] retry ${event.attempt}/${event.maxAttempts}: ${event.errorMessage}\n`);
-    }
-  });
-
-  const startedAt = Date.now();
-  const heartbeat = setInterval(() => {
-    const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000);
-    logProgress(`Advisor SDK still running: elapsed=${elapsedSeconds}s timeout=${Math.round(options.timeoutMs / 1000)}s`);
-  }, Math.max(options.heartbeatMs, 1000));
-  heartbeat.unref?.();
-
-  let timeout: NodeJS.Timeout | undefined;
-  const timeoutPromise = new Promise<never>((_resolve, reject) => {
-    timeout = setTimeout(() => {
-      logProgress(`Advisor SDK exceeded timeoutMs=${options.timeoutMs}; aborting session`);
-      void session.abort();
-      reject(new Error(`timed out after ${options.timeoutMs} ms`));
-    }, options.timeoutMs);
-    timeout.unref?.();
-  });
-
-  try {
-    await Promise.race([session.prompt(options.prompt), timeoutPromise]);
-  } finally {
-    unsubscribe();
-    clearInterval(heartbeat);
-    if (timeout) {
-      clearTimeout(timeout);
-    }
-    try {
-      const exportedPath = await session.exportToHtml(options.htmlExportPath);
-      raw.append(`\n[e2e-advisor] exported_session_html=${exportedPath}\n`);
-      logProgress(`Exported advisor session HTML: ${exportedPath}`);
-    } catch (error: unknown) {
-      const reason = error instanceof Error ? error.message : String(error);
-      raw.append(`\n[e2e-advisor] failed_to_export_session_html=${reason}\n`);
-      logProgress(`Failed to export advisor session HTML: ${reason}`);
-    }
-    session.dispose();
-  }
-
-  const truncationNotes: string[] = [];
-  if (text.droppedBytes > 0) {
-    truncationNotes.push(`<assistant text truncated; dropped ${text.droppedBytes} byte(s)>`);
-  }
-  if (raw.droppedBytes > 0) {
-    truncationNotes.push(`<raw output truncated; dropped ${raw.droppedBytes} byte(s)>`);
-  }
-  if (truncationNotes.length > 0) {
-    raw.appendFooter(`\n${truncationNotes.join("\n")}\n`);
-  }
-
-  return {
-    text: text.toString(),
-    raw: raw.toStringWithTrailingNewline(),
-  };
-}
-
-class CappedBuffer {
-  private readonly maxBytes: number;
-  private value: string;
-  public droppedBytes = 0;
-
-  constructor(maxBytes: number, initialValue = "") {
-    this.maxBytes = maxBytes;
-    this.value = initialValue;
-    this.trimToMaxBytes();
-  }
-
-  append(chunk: string): void {
-    this.value += chunk;
-    this.trimToMaxBytes();
-  }
-
-  appendFooter(footer: string): void {
-    const footerBytes = Buffer.byteLength(footer, "utf8");
-    if (footerBytes >= this.maxBytes) {
-      this.value = trimHeadToBytes(footer, this.maxBytes);
-      return;
-    }
-    this.trimToMaxBytes(this.maxBytes - footerBytes);
-    this.value += footer;
-  }
-
-  toString(): string {
-    return this.value;
-  }
-
-  toStringWithTrailingNewline(): string {
-    return this.value.endsWith("\n") ? this.value : `${this.value}\n`;
-  }
-
-  private trimToMaxBytes(maxBytes = this.maxBytes): void {
-    if (Buffer.byteLength(this.value, "utf8") <= maxBytes) return;
-
-    const trimmed = trimHeadToBytes(this.value, maxBytes);
-    this.droppedBytes += Buffer.byteLength(this.value.slice(0, this.value.length - trimmed.length), "utf8");
-    this.value = trimmed;
-  }
-}
-
-function trimHeadToBytes(value: string, maxBytes: number): string {
-  let removeChars = Math.min(value.length, Math.max(1, Buffer.byteLength(value, "utf8") - maxBytes));
-  while (removeChars < value.length && Buffer.byteLength(value.slice(removeChars), "utf8") > maxBytes) {
-    removeChars += 1;
-  }
-  return value.slice(removeChars);
-}
-
-function parseArgs(argv: string[]): ParsedArgs {
-  const parsed: ParsedArgs = {};
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg.startsWith("--")) {
-      const key = arg.slice(2).replace(/-([a-z])/g, (_, char: string) => char.toUpperCase());
-      const next = argv[i + 1];
-      if (!next || next.startsWith("--")) {
-        parsed[key] = undefined;
-        continue;
-      }
-      parsed[key] = next;
-      i += 1;
-    }
-  }
-  return parsed;
-}
-
-function readJson<T>(relativeOrAbsolutePath: string): T {
-  return JSON.parse(fs.readFileSync(path.resolve(root, relativeOrAbsolutePath), "utf8")) as T;
-}
-
-function getChangedFiles(base: string, head: string): string[] {
-  const stdout = gitOutput(
-    [
-      ["diff", "--name-only", `${base}...${head}`],
-      ["diff", "--name-only", `${base}..${head}`],
-    ],
-    10 * 1024 * 1024,
-  );
-  if (stdout === undefined) {
-    throw new Error(`failed to diff ${base}..${head}; ensure both refs are fetched`);
-  }
-  return stdout
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .sort();
-}
-
-function getDiff(base: string, head: string, maxChars: number): string {
-  const stdout = gitOutput(
-    [
-      ["diff", "--find-renames", "--find-copies", "--unified=80", `${base}...${head}`],
-      ["diff", "--find-renames", "--find-copies", "--unified=80", `${base}..${head}`],
-    ],
-    20 * 1024 * 1024,
-  );
-  return stdout === undefined ? "" : truncate(stdout, maxChars);
-}
-
-function gitOutput(commands: string[][], maxBuffer: number): string | undefined {
-  for (const command of commands) {
-    try {
-      return execFileSync("git", command, { encoding: "utf8", maxBuffer });
-    } catch {
-      // Try next diff form. Some checkouts do not have a merge base locally.
-    }
-  }
-  return undefined;
 }
 
 function buildSystemPrompt(schema: AdvisorSchema): string {
@@ -520,41 +224,6 @@ Git diff, truncated if large:
 ${diff || "<no diff available>"}
 \`\`\`
 `;
-}
-
-function extractJson(text: string, rawPath: string): unknown {
-  const trimmed = text.trim();
-  const candidates = [trimmed, fenced(trimmed), tagged(trimmed, "e2e_advisor_json"), balancedObject(trimmed)].filter(
-    (candidate): candidate is string => Boolean(candidate),
-  );
-
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate);
-    } catch {
-      // Try next candidate.
-    }
-  }
-  throw new Error(`Could not parse JSON from advisor output; see ${rawPath}`);
-}
-
-function fenced(text: string): string | undefined {
-  const match = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  return match?.[1]?.trim();
-}
-
-function tagged(text: string, tag: string): string | undefined {
-  const match = text.match(new RegExp(`<${tag}>\\s*([\\s\\S]*?)\\s*</${tag}>`, "i"));
-  return match?.[1]?.trim();
-}
-
-function balancedObject(text: string): string | undefined {
-  const start = text.indexOf("{");
-  const end = text.lastIndexOf("}");
-  if (start === -1 || end === -1 || end <= start) {
-    return undefined;
-  }
-  return text.slice(start, end + 1);
 }
 
 function normalizeAdvisorResult(result: unknown, metadata: AdvisorMetadata): AdvisorResult {
@@ -628,22 +297,6 @@ function sanitizeDispatchHint(value: unknown): AdvisorDispatchHint | undefined {
   return { workflow: object.workflow, jobsInput: object.jobsInput };
 }
 
-function recordItems(value: unknown): Record<string, unknown>[] {
-  return Array.isArray(value) ? value.filter(isRecord) : [];
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function stringOrUndefined(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function dropUndefinedValues<T extends Record<string, unknown>>(object: T): T {
-  return Object.fromEntries(Object.entries(object).filter(([, value]) => value !== undefined)) as T;
-}
-
 function isConfidence(value: unknown): value is Confidence {
   return value === "low" || value === "medium" || value === "high";
 }
@@ -691,24 +344,6 @@ function renderSummary(result: AdvisorResult): string {
     lines.push("");
   }
   return `${lines.join("\n")}\n`;
-}
-
-function truncate(text: string, maxChars: number): string {
-  if (text.length <= maxChars) {
-    return text;
-  }
-  return `${text.slice(0, maxChars)}\n\n<diff truncated at ${maxChars} characters>`;
-}
-
-function prepareAdvisorConfig(): { authStorage: AuthStorage; modelRegistry: ModelRegistry } {
-  const authStorage = AuthStorage.inMemory();
-  const modelRegistry = ModelRegistry.inMemory(authStorage);
-  const apiKey = process.env.E2E_ADVISOR_API_KEY || process.env.OPENAI_API_KEY;
-  if (apiKey) {
-    authStorage.setRuntimeApiKey(ADVISOR_PROVIDER, apiKey);
-    modelRegistry.registerProvider(ADVISOR_PROVIDER, ADVISOR_PROVIDER_CONFIG);
-  }
-  return { authStorage, modelRegistry };
 }
 
 function unavailableResult(metadata: AdvisorMetadata, reason: string, failed: boolean): AdvisorResult {
