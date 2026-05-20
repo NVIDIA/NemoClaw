@@ -630,7 +630,7 @@ RUN chown root:root /sandbox/.nemoclaw \
     && chmod -R 755 /sandbox/.nemoclaw/blueprints \
     && mkdir -p /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
     && chown sandbox:sandbox /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
-    && touch /sandbox/.nemoclaw/config.json \
+    && printf '%s' '{}' > /sandbox/.nemoclaw/config.json \
     && chown sandbox:sandbox /sandbox/.nemoclaw/config.json
 
 # OpenShell 0.0.37's macOS VM backend currently remaps rootfs ownership to the
