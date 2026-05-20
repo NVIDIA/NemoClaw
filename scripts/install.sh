@@ -466,41 +466,22 @@ print_done() {
   printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
   if [[ "$ONBOARD_RAN" == true ]]; then
-    local sandbox_name agent_name
-    sandbox_name="$(resolve_default_sandbox_name)"
+    local agent_name
     agent_name="$(resolve_onboarded_agent)"
     if [[ "$_needs_cli_refresh" == true ]]; then
       printf "  ${C_YELLOW}%s installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
       printf "  ${C_DIM}Onboarding completed; refresh PATH before using the CLI from this terminal.${C_RESET}\n"
+      printf "\n"
+      printf "  ${C_GREEN}For this terminal:${C_RESET}\n"
+      print_cli_path_refresh_actions
     else
       if [[ "$agent_name" == "openclaw" || -z "$agent_name" ]]; then
         printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
       else
         printf "  ${C_GREEN}Your %s Sandbox is live.${C_RESET}\n" "$(agent_display_name "$agent_name")"
       fi
-      printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
+      printf "  ${C_DIM}Use the Start chatting section above for browser and terminal options.${C_RESET}\n"
     fi
-    printf "\n"
-    printf "  ${C_GREEN}Next:${C_RESET}\n"
-    if [[ "$_needs_cli_refresh" == true ]]; then
-      print_cli_path_refresh_actions
-    else
-      printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
-    fi
-    printf "  %s$%s %s %s connect\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN" "$sandbox_name"
-    local agent_cmd
-    case "$agent_name" in
-      hermes)
-        agent_cmd="hermes"
-        ;;
-      "" | openclaw)
-        agent_cmd="openclaw tui"
-        ;;
-      *)
-        agent_cmd="$agent_name"
-        ;;
-    esac
-    printf "  %ssandbox@%s$%s %s\n" "$C_GREEN" "$sandbox_name" "$C_RESET" "$agent_cmd"
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
     if [[ "$_needs_cli_refresh" == true ]]; then
       printf "  ${C_YELLOW}%s CLI is installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"

@@ -8886,81 +8886,68 @@ function printDashboard(
 
   const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
-  const wslAddr = getWslHostAddress();
-  const chain = buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: wslAddr });
-
-  // Build access info inline — uses chain instead of re-deriving from env
-  const dashboardAccess = buildControlUiUrls(token, chain.port, chain.accessUrl).map((url, i) => ({
-    label: i === 0 ? "Dashboard" : `Alt ${i}`,
-    url,
-  }));
-  if (wslAddr) {
-    const wslUrl = `http://${wslAddr}:${chain.port}/${token ? `#token=${encodeURIComponent(token)}` : ""}`;
-    const existing = dashboardAccess.find((a) => a.url === wslUrl);
-    if (existing) existing.label = "VS Code/WSL";
-    else dashboardAccess.push({ label: "VS Code/WSL", url: wslUrl });
-  }
-  const guidanceLines = [`Port ${chain.port} must be forwarded before opening these URLs.`];
-  if (isWsl())
-    guidanceLines.push(
-      "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
-    );
-  if (dashboardAccess.length === 0) guidanceLines.push("No dashboard URLs were generated.");
+  const chain = buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress() });
+  const dashboardBaseUrl = `${chain.accessUrl.replace(/\/$/, "")}/`;
+  const dashboardUrl = dashboardUrlForDisplay(
+    dashboardAccess.buildAuthenticatedDashboardUrl(dashboardBaseUrl, token),
+  );
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
-  // console.log(`  Dashboard    http://localhost:${DASHBOARD_PORT}/`);
-  console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
-  console.log(`  Model        ${model} (${providerLabel})`);
+  console.log(`  ${cliDisplayName()} is ready`);
+  console.log("");
+  console.log(`  Sandbox:  ${sandboxName}`);
+  console.log(`  Model:    ${model} (${providerLabel})`);
   if (showNim) {
-    console.log(`  NIM          ${nimLabel}`);
+    console.log(`  NIM:      ${nimLabel}`);
   }
-  console.log(`  ${"─".repeat(50)}`);
-  console.log(`  Run:         ${cliName()} ${sandboxName} connect`);
-  console.log(`  Status:      ${cliName()} ${sandboxName} status`);
-  console.log(`  Logs:        ${cliName()} ${sandboxName} logs --follow`);
   console.log("");
   if (agent) {
+    console.log("  Access");
+    console.log("");
     agentOnboard.printDashboardUi(sandboxName, token, agent, {
       note,
       buildControlUiUrls: (tokenValue: string | null, port: number) => {
         return buildControlUiUrls(tokenValue, port, chain.accessUrl);
       },
     });
+    console.log("");
+    console.log("  Terminal:");
+    console.log(`    ${cliName()} ${sandboxName} connect`);
   } else if (token) {
-    console.log(
-      `  ${agentProductName()} UI (auth token redacted from displayed URLs)`,
-    );
-    for (const line of guidanceLines) {
-      console.log(`  ${line}`);
-    }
-    for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${dashboardUrlForDisplay(entry.url)}`);
-    }
-    console.log(`  Token:       ${cliName()} ${sandboxName} gateway-token --quiet`);
-    console.log(`               append  #token=<token> locally if the browser asks for auth.`);
+    console.log("  Start chatting");
+    console.log("");
+    console.log("    Browser:");
+    console.log(`      ${dashboardUrl}`);
+    console.log("");
+    console.log("    Terminal:");
+    console.log(`      ${cliName()} ${sandboxName} connect`);
+    console.log("      then run: openclaw tui");
+    console.log("");
+    console.log("  Authenticated dashboard URL, if needed:");
+    console.log(`    ${cliName()} ${sandboxName} dashboard-url --quiet`);
   } else {
     note("  Could not read gateway token from the sandbox (download failed).");
-    console.log(`  ${agentProductName()} UI`);
-    for (const line of guidanceLines) {
-      console.log(`  ${line}`);
-    }
-    for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${dashboardUrlForDisplay(entry.url)}`);
-    }
-    console.log(
-      `  Token:       ${cliName()} ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`,
-    );
-    console.log(`               append  #token=<token>  to the URL locally if needed.`);
+    console.log("  Start chatting");
+    console.log("");
+    console.log("    Browser:");
+    console.log(`      ${dashboardUrl}`);
+    console.log("");
+    console.log("    Terminal:");
+    console.log(`      ${cliName()} ${sandboxName} connect`);
+    console.log("      then run: openclaw tui");
   }
-  console.log(`  ${"─".repeat(50)}`);
   console.log("");
-  console.log("  To change settings later:");
+  console.log("  Manage later");
+  console.log("");
+  console.log(`    Status:      ${cliName()} ${sandboxName} status`);
+  console.log(`    Logs:        ${cliName()} ${sandboxName} logs --follow`);
   console.log(
-    `    Model:       ${cliName()} inference get\n                 ${cliName()} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
+    `    Model:       ${cliName()} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
   );
   console.log(`    Policies:    ${cliName()} ${sandboxName} policy-add`);
-  console.log(`    Credentials: ${cliName()} credentials reset <KEY>  then  ${cliName()} onboard`);
+  console.log(`    Credentials: ${cliName()} credentials reset <KEY> && ${cliName()} onboard`);
+  console.log(`  ${"─".repeat(50)}`);
   console.log("");
 }
 
