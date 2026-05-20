@@ -5,6 +5,8 @@
 // Ollama auth-proxy lifecycle: token persistence, PID management,
 // proxy start/stop, model pull and validation.
 
+const fs = require("fs");
+const os = require("os");
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const http = require("http");
@@ -28,21 +30,10 @@ const {
   formatOllamaProxyUnreachableMessage,
   probeOllamaProxySandboxReachability,
 } = require("../../onboard/ollama-proxy-reachability");
-const {
-  DEFAULT_LOCAL_ADAPTER_STATE_DIR,
-  isLocalAdapterProcess,
-  killLocalAdapterPid,
-  loadLocalAdapterPid,
-  persistLocalAdapterPid,
-  readLocalAdapterTextFile,
-  removeLocalAdapterFile,
-  spawnDetachedNodeAdapter,
-  writeLocalAdapterSecretFile,
-} = require("../local-adapter-lifecycle");
 
 // ── State ────────────────────────────────────────────────────────
 
-const PROXY_STATE_DIR = DEFAULT_LOCAL_ADAPTER_STATE_DIR;
+const PROXY_STATE_DIR = path.join(os.homedir(), ".nemoclaw");
 const PROXY_TOKEN_PATH = path.join(PROXY_STATE_DIR, "ollama-proxy-token");
 const PROXY_PID_PATH = path.join(PROXY_STATE_DIR, "ollama-auth-proxy.pid");
 
@@ -52,10 +43,21 @@ function sleep(seconds) {
   spawnSync("sleep", [String(seconds)]);
 }
 
+// ── Proxy state dir ──────────────────────────────────────────────
+
+function ensureProxyStateDir(): void {
+  if (!fs.existsSync(PROXY_STATE_DIR)) {
+    fs.mkdirSync(PROXY_STATE_DIR, { recursive: true });
+  }
+}
+
 // ── Token persistence ────────────────────────────────────────────
 
 function persistProxyToken(token: string): void {
-  writeLocalAdapterSecretFile(PROXY_TOKEN_PATH, token);
+  ensureProxyStateDir();
+  fs.writeFileSync(PROXY_TOKEN_PATH, token, { mode: 0o600 });
+  // mode only applies on creation; ensure permissions on existing files too
+  fs.chmodSync(PROXY_TOKEN_PATH, 0o600);
 }
 
 // Persist the proxy token then probe sandbox → proxy reachability. Runs
@@ -73,7 +75,15 @@ async function persistAndProbeOllamaProxy(token: string): Promise<void> {
 }
 
 function loadPersistedProxyToken(): string | null {
-  return readLocalAdapterTextFile(PROXY_TOKEN_PATH);
+  try {
+    if (fs.existsSync(PROXY_TOKEN_PATH)) {
+      const token = fs.readFileSync(PROXY_TOKEN_PATH, "utf-8").trim();
+      return token || null;
+    }
+  } catch {
+    /* ignore */
+  }
+  return null;
 }
 
 function curlAuthHeaderConfig(token: string): string {
@@ -112,45 +122,63 @@ function runCurlCaptureWithAuthConfig(args: string[], endpoint: string, token: s
 // ── PID persistence ──────────────────────────────────────────────
 
 function persistProxyPid(pid: number | null | undefined): void {
-  persistLocalAdapterPid(PROXY_PID_PATH, pid);
+  if (!Number.isInteger(pid) || pid <= 0) return;
+  ensureProxyStateDir();
+  fs.writeFileSync(PROXY_PID_PATH, `${pid}\n`, { mode: 0o600 });
+  fs.chmodSync(PROXY_PID_PATH, 0o600);
 }
 
 function loadPersistedProxyPid(): number | null {
-  return loadLocalAdapterPid(PROXY_PID_PATH);
+  try {
+    if (!fs.existsSync(PROXY_PID_PATH)) return null;
+    const raw = fs.readFileSync(PROXY_PID_PATH, "utf-8").trim();
+    const pid = Number.parseInt(raw, 10);
+    return Number.isInteger(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
 }
 
 function clearPersistedProxyPid(): void {
-  removeLocalAdapterFile(PROXY_PID_PATH);
+  try {
+    if (fs.existsSync(PROXY_PID_PATH)) {
+      fs.unlinkSync(PROXY_PID_PATH);
+    }
+  } catch {
+    /* ignore */
+  }
 }
 
 // ── Process management ───────────────────────────────────────────
 
 function isOllamaProxyProcess(pid: number | null | undefined): boolean {
-  return isLocalAdapterProcess(pid, "ollama-auth-proxy.js", runCapture);
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  const cmdline = runCapture(["ps", "-p", String(pid), "-o", "args="], { ignoreError: true });
+  return Boolean(cmdline && cmdline.includes("ollama-auth-proxy.js"));
 }
 
 function spawnOllamaAuthProxy(token: string): number | null {
-  const child = spawnDetachedNodeAdapter({
-    scriptPath: path.join(SCRIPTS, "ollama-auth-proxy.js"),
-    env: {
+  const child = spawn(process.execPath, [path.join(SCRIPTS, "ollama-auth-proxy.js")], {
+    detached: true,
+    stdio: "ignore",
+    env: buildSubprocessEnv({
       OLLAMA_PROXY_TOKEN: token,
       OLLAMA_PROXY_PORT: String(OLLAMA_PROXY_PORT),
       OLLAMA_BACKEND_PORT: String(OLLAMA_PORT),
-    },
-    buildEnv: buildSubprocessEnv,
+    }),
   });
+  child.unref();
   persistProxyPid(child.pid);
   return child.pid ?? null;
 }
 
 function killStaleProxy(): void {
   try {
-    killLocalAdapterPid({
-      pidPath: PROXY_PID_PATH,
-      processNeedle: "ollama-auth-proxy.js",
-      run,
-      runCapture,
-    });
+    const persistedPid = loadPersistedProxyPid();
+    if (isOllamaProxyProcess(persistedPid)) {
+      run(["kill", String(persistedPid)], { ignoreError: true, suppressOutput: true });
+    }
+    clearPersistedProxyPid();
 
     // Best-effort cleanup for older proxy processes created before the PID file
     // existed. Only kill processes that are actually the auth proxy, not
@@ -181,7 +209,12 @@ function startOllamaAuthProxy(): boolean {
   // If the user backs out to a different provider, the token stays in memory
   // only and is discarded.
   const pid = spawnOllamaAuthProxy(proxyToken);
-  if (!waitForPort(OLLAMA_PROXY_PORT, 2)) {
+  // Allow CI/tests to override the proxy startup timeout via env var.
+  const rawProxyStartupTimeout = process.env.NEMOCLAW_OLLAMA_PROXY_STARTUP_TIMEOUT;
+  const parsedProxyStartupTimeout = Number.parseInt(rawProxyStartupTimeout || "10", 10);
+  const proxyStartupTimeout =
+    Number.isFinite(parsedProxyStartupTimeout) && parsedProxyStartupTimeout > 0 ? parsedProxyStartupTimeout : 10;
+  if (!waitForPort(OLLAMA_PROXY_PORT, proxyStartupTimeout)) {
     console.error(
       `  Error: Ollama auth proxy did not become ready on :${OLLAMA_PROXY_PORT} within timeout.`,
     );
@@ -473,12 +506,7 @@ function pullOllamaModelViaHttp(model) {
         body,
         url,
       ],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-        // #2616: inject NO_PROXY=localhost so the streamed pull against the
-        // local Ollama daemon doesn't tunnel through the user's host proxy.
-        env: buildSubprocessEnv(),
-      },
+      { stdio: ["ignore", "pipe", "pipe"] },
     );
 
     const readline = require("readline");
@@ -752,9 +780,7 @@ function unloadOllamaModels() {
     const psResult = spawnSync(
       "curl",
       ["-sS", "--max-time", "3", `http://localhost:${OLLAMA_PORT}/api/ps`],
-      // #2616: env-sanitize so http_proxy=127.0.0.1:8118 (Privoxy) doesn't
-      // hijack this localhost probe.
-      { encoding: "utf8", env: buildSubprocessEnv() },
+      { encoding: "utf8" },
     );
     if (psResult.status !== 0) return;
 
@@ -784,8 +810,7 @@ function unloadOllamaModels() {
           JSON.stringify({ model: entry.name, keep_alive: 0 }),
           `http://localhost:${OLLAMA_PORT}/api/generate`,
         ],
-        // #2616: env-sanitize so http_proxy doesn't hijack the unload call.
-        { encoding: "utf8", env: buildSubprocessEnv() },
+        { encoding: "utf8" },
       );
     }
   } catch {

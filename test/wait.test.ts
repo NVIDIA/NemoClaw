@@ -2,8 +2,36 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert";
+import net from "node:net";
 import { describe, it } from "vitest";
-import { sleepMs, sleepSeconds } from "../src/lib/core/wait.js";
+import { sleepMs, sleepSeconds, waitForPort } from "../src/lib/core/wait.js";
+
+function listenOnLoopback(server: net.Server): Promise<number> {
+  return new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", () => {
+      server.removeListener("error", reject);
+      const address = server.address();
+      if (!address || typeof address === "string") {
+        reject(new Error("Server did not bind to a numeric port"));
+        return;
+      }
+      resolve(address.port);
+    });
+  });
+}
+
+function closeServer(server: net.Server): Promise<void> {
+  return new Promise((resolve, reject) => {
+    server.close((error?: Error) => {
+      if (error) {
+        reject(error);
+        return;
+      }
+      resolve();
+    });
+  });
+}
 
 describe("wait utility", () => {
   it("sleepMs blocks for approximately the requested time", () => {
@@ -37,5 +65,22 @@ describe("wait utility", () => {
     const end = performance.now();
     const duration = end - start;
     assert.ok(duration < 50, `duration ${duration}ms > 50ms`);
+  });
+
+  it("waitForPort succeeds for an open localhost port", async () => {
+    const server = net.createServer();
+    const port = await listenOnLoopback(server);
+    try {
+      assert.equal(waitForPort(port, 1), true);
+    } finally {
+      await closeServer(server);
+    }
+  });
+
+  it("waitForPort returns false for a closed localhost port", async () => {
+    const server = net.createServer();
+    const port = await listenOnLoopback(server);
+    await closeServer(server);
+    assert.equal(waitForPort(port, 0.6), false);
   });
 });

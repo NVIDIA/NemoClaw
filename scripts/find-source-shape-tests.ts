@@ -1,4 +1,5 @@
 #!/usr/bin/env -S npx tsx
+/// <reference types="node" />
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -79,15 +80,28 @@ function isSkippedPath(absPath: string): boolean {
 function* walkFiles(dir: string): Generator<string> {
   if (!existsSync(dir) || isSkippedPath(dir)) return;
 
-  for (const entry of readdirSync(dir)) {
+  let entries: string[];
+  try {
+    entries = readdirSync(dir);
+  } catch (err: any) {
+    if (err.code === "ENOENT" || err.code === "EACCES") return;
+    throw err;
+  }
+
+  for (const entry of entries) {
     const abs = join(dir, entry);
     if (isSkippedPath(abs)) continue;
 
-    const stats = statSync(abs);
-    if (stats.isDirectory()) {
-      yield* walkFiles(abs);
-    } else if (stats.isFile()) {
-      yield abs;
+    try {
+      const stats = statSync(abs);
+      if (stats.isDirectory()) {
+        yield* walkFiles(abs);
+      } else if (stats.isFile()) {
+        yield abs;
+      }
+    } catch (err: any) {
+      if (err.code === "ENOENT" || err.code === "EACCES") continue;
+      throw err;
     }
   }
 }

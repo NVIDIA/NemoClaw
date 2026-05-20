@@ -38,6 +38,25 @@ function listMarkdownFiles(root: string): string[] {
 }
 
 describe("repo skill markdown files", () => {
+  const allowMissingGeneratedSkills =
+    process.env.NEMOCLAW_TEST_ALLOW_MISSING_GENERATED_SKILLS === "1";
+
+  if (!fs.existsSync(skillsRoot)) {
+    if (allowMissingGeneratedSkills) {
+      it("no generated skills present (explicit local opt-in)", () => {
+        expect(true).toBe(true);
+      });
+      return;
+    }
+
+    it("requires generated skills to be present", () => {
+      throw new Error(
+        "Missing .agents/skills generated content. Run docs-to-skills generation or set NEMOCLAW_TEST_ALLOW_MISSING_GENERATED_SKILLS=1 for local-only partial runs.",
+      );
+    });
+    return;
+  }
+
   const markdownFiles = listMarkdownFiles(skillsRoot);
   const generatedUserSkillFiles = markdownFiles.filter((file: string) =>
     path.relative(skillsRoot, file).startsWith("nemoclaw-user-"),

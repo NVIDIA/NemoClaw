@@ -17,11 +17,26 @@ runs:
       shell: bash
       run: |
         HADOLINT_VERSION="v2.14.0"
-        HADOLINT_URL="https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-linux-x86_64"
-        curl -fsSL -o /usr/local/bin/hadolint "$HADOLINT_URL"
-        EXPECTED=$(curl -fsSL "${HADOLINT_URL}.sha256" | awk '{print $1}')
-        ACTUAL=$(sha256sum /usr/local/bin/hadolint | awk '{print $1}')
-        [ "$EXPECTED" = "$ACTUAL" ] || { echo "::error::hadolint checksum mismatch"; exit 1; }
+        HADOLINT_URL="https://github.com/hadolint/hadolint/releases/download/${HADOLINT_VERSION}/hadolint-Linux-x86_64"
+        EXPECTED=""
+        ACTUAL=""
+        verified=0
+        # Retry download up to 3 times to tolerate transient network or cache issues
+        for attempt in 1 2 3; do
+          if curl -fsSL -o /usr/local/bin/hadolint "$HADOLINT_URL"; then
+            EXPECTED=$(curl -fsSL "${HADOLINT_URL}.sha256" | awk '{print $1}')
+            ACTUAL=$(sha256sum /usr/local/bin/hadolint | awk '{print $1}')
+            if [ -n "$EXPECTED" ] && [ "$EXPECTED" = "$ACTUAL" ]; then
+              verified=1
+              break
+            fi
+          fi
+          echo "hadolint download/check failed (attempt $attempt)"
+          sleep 1
+        done
+        if [ "$verified" -ne 1 ] || [ -z "$EXPECTED" ]; then
+          echo "::error::hadolint checksum mismatch after retries"; exit 1
+        fi
         chmod +x /usr/local/bin/hadolint
 
     - name: Install dependencies

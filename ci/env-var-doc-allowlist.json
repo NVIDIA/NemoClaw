@@ -16,18 +16,6 @@
     "reason": "Internal Vitest-only sentinel that prevents hermetic CLI tests with fake OpenShell binaries from reading the host's real Docker gateway image. Production users should not set it."
   },
   {
-    "name": "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
-    "reason": "Internal child-process setting used only when launching the hidden Bedrock Runtime adapter. Users should configure Bedrock through the existing custom Anthropic endpoint flow instead."
-  },
-  {
-    "name": "NEMOCLAW_BEDROCK_RUNTIME_ENDPOINT_URL",
-    "reason": "Internal child-process setting used only to pass the auto-detected Bedrock Runtime endpoint to the hidden local adapter. Not a public user-facing configuration knob."
-  },
-  {
-    "name": "NEMOCLAW_BEDROCK_RUNTIME_REGION",
-    "reason": "Internal child-process setting used only to pass the resolved Bedrock Runtime region to the hidden local adapter. Users should rely on the endpoint URL or standard AWS region environment variables."
-  },
-  {
     "name": "NEMOCLAW_RESTORE_LATEST_BACKUP_ON_RECREATE",
     "reason": "Internal installer sentinel exported only during OpenShell gateway replacement so onboard restores the pre-upgrade sandbox backup. Not user-facing."
   },
@@ -40,11 +28,27 @@
     "reason": "Test sentinel that bypasses real-time sleep() calls in onboard inference probes. Set to '1' only by Vitest tests; never user-set."
   },
   {
+    "name": "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+    "reason": "Internal child-process setting used only when launching the hidden Bedrock Runtime adapter. Users should configure Bedrock through the existing custom Anthropic endpoint flow instead."
+  },
+  {
+    "name": "NEMOCLAW_BEDROCK_RUNTIME_ENDPOINT_URL",
+    "reason": "Internal child-process setting used only to pass the auto-detected Bedrock Runtime endpoint to the hidden local adapter. Not a public user-facing configuration knob."
+  },
+  {
+    "name": "NEMOCLAW_BEDROCK_RUNTIME_REGION",
+    "reason": "Internal child-process setting used only to pass the resolved Bedrock Runtime region to the hidden local adapter. Users should rely on the endpoint URL or standard AWS region environment variables."
+  },
+  {
     "name": "NEMOCLAW_E2E_FAILURE_INJECTION",
     "reason": "Internal E2E-only sentinel that enables deterministic onboarding fault injection for resume/repair scripts. Never user-set in production."
   },
   {
     "name": "NEMOCLAW_E2E_FORCE_FAIL_AT_STEP",
     "reason": "Internal E2E-only selector naming the onboarding step where deterministic fault injection should exit. Used only with NEMOCLAW_E2E_FAILURE_INJECTION in test scripts."
+  },
+  {
+    "name": "NEMOCLAW_OLLAMA_PROXY_STARTUP_TIMEOUT",
+    "reason": "Internal CI/test escape hatch to increase host-side Ollama auth-proxy startup wait in slow environments (for example WSL runners). Not intended as a documented end-user setting."
   }
 ]

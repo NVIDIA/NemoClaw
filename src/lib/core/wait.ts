@@ -43,14 +43,28 @@ export function waitUntil(
  */
 export function waitForPort(port: number, timeoutSeconds = 5): boolean {
   const { spawnSync } = require("node:child_process");
+  const pollIntervalMs = 200;
   return waitUntil(() => {
     try {
-      const result = spawnSync("nc", ["-z", "127.0.0.1", String(port)], { stdio: "ignore" });
+      const probeScript = [
+        "const net = require('node:net');",
+        "const socket = net.connect({ host: '127.0.0.1', port: Number(process.argv[1]) });",
+        "let called = false;",
+        "const done = (code) => { if (called) return; called = true; try { socket.removeAllListeners(); socket.end(); } catch {} process.exit(code); };",
+        "socket.setTimeout(" + pollIntervalMs + ");",
+        "socket.once('connect', () => done(0));",
+        "socket.once('timeout', () => done(1));",
+        "socket.once('error', () => done(1));",
+      ].join(" ");
+      const result = spawnSync(process.execPath, ["-e", probeScript, String(port)], {
+        stdio: "ignore",
+        timeout: pollIntervalMs + 50,
+      });
       return result.status === 0;
     } catch {
       return false;
     }
-  }, timeoutSeconds, 200);
+  }, timeoutSeconds, pollIntervalMs);
 }
 
 /**
