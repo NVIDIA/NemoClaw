@@ -224,7 +224,7 @@ RUN set -eu; \
     # latency, or exposes the timeout as an unbounded env override. \
     hto_files="$(grep -RIlE --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3|6e4)' "$OC_DIST" || true)"; \
     test -n "$hto_files" || { echo "ERROR: handshake-timeout constant not found" >&2; exit 1; }; \
-    printf '%s\n' "$hto_files" | xargs sed -i -E 's|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4|g'; \
+    printf '%s\n' "$hto_files" | xargs sed -i -E 's#DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)#DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4#g'; \
     if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)' "$OC_DIST"; then echo "ERROR: Patch 5 left a short handshake-timeout constant" >&2; exit 1; fi; \
     if ! grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4' "$OC_DIST"; then echo "ERROR: Patch 5 did not find patched 6e4 constant" >&2; exit 1; fi
 
