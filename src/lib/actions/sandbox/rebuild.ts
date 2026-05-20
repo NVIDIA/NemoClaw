@@ -755,8 +755,25 @@ export async function rebuildSandbox(
   // Step 5.5: Restore policy presets (#1952)
   // Policy presets live in the gateway policy engine, not the sandbox filesystem.
   // They are lost when the sandbox is destroyed and recreated. Re-apply any
-  // presets that were captured in the backup manifest.
-  const savedPresets = backupManifest.policyPresets || [];
+  // presets that were captured in the backup manifest, after filtering out
+  // any built-in preset names that have since been removed from the
+  // blueprint (e.g. the legacy `brew` preset dropped in #3757).
+  const savedPresetsRaw = backupManifest.policyPresets || [];
+  const customNames = registry
+    .getCustomPolicies(sandboxName)
+    .map((p: { name: string }) => p.name);
+  const { known: savedPresets, stale: stalePresets } = policies.partitionKnownPresetNames(
+    savedPresetsRaw,
+    customNames,
+  );
+  if (stalePresets.length > 0) {
+    console.warn(
+      `  Warning: skipping ${stalePresets.length} stale preset(s) from backup manifest: ${stalePresets.join(", ")}.`,
+    );
+    console.warn(
+      "  These presets are no longer defined in the blueprint.",
+    );
+  }
   if (savedPresets.length > 0) {
     console.log("");
     console.log("  Restoring policy presets...");

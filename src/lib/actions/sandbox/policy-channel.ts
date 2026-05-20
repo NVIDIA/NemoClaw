@@ -219,6 +219,7 @@ async function applyExternalPreset(
 }
 
 export function listSandboxPolicies(sandboxName: string) {
+  policies.pruneStaleBuiltInPresets(sandboxName);
   const builtin = policies.listPresets();
   const custom = policies.listCustomPresets(sandboxName);
   const allPresets = [...builtin, ...custom];

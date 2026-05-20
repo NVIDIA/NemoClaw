@@ -865,6 +865,56 @@ function loadPresetFromFile(filePath: string): { presetName: string; content: st
 }
 
 /**
+ * Partition a list of preset names into ones still defined as built-in or
+ * sandbox-local custom presets vs. ones whose definition has been removed
+ * (e.g. a built-in preset deleted between NemoClaw versions).
+ */
+function partitionKnownPresetNames(
+  presetNames: readonly string[],
+  customNames: readonly string[],
+): { known: string[]; stale: string[] } {
+  const builtInSet = new Set(listPresets().map((p) => p.name));
+  const customSet = new Set(customNames);
+  const known: string[] = [];
+  const stale: string[] = [];
+  for (const name of presetNames) {
+    if (builtInSet.has(name) || customSet.has(name)) known.push(name);
+    else stale.push(name);
+  }
+  return { known, stale };
+}
+
+/**
+ * Drop policy names from the sandbox registry whose underlying preset
+ * definition no longer exists. Custom presets (`customPolicies`) are
+ * exempt; only built-in names that have vanished from
+ * `nemoclaw-blueprint/policies/presets/` get pruned. Warns to stderr and
+ * persists the cleaned list, so the warning only fires once per sandbox.
+ * Returns the pruned names for callers that want to surface them further.
+ */
+function pruneStaleBuiltInPresets(sandboxName: string): string[] {
+  const sandbox = registry.getSandbox(sandboxName);
+  if (!sandbox) return [];
+  const policies = sandbox.policies || [];
+  if (policies.length === 0) return [];
+
+  const customNames = (sandbox.customPolicies || []).map(
+    (p: { name: string }) => p.name,
+  );
+  const { known, stale } = partitionKnownPresetNames(policies, customNames);
+  if (stale.length === 0) return [];
+
+  console.warn(
+    `  Warning: dropping stale preset(s) from sandbox '${sandboxName}' registry: ${stale.join(", ")}.`,
+  );
+  console.warn(
+    "  These presets are no longer defined in the blueprint; the registry has been cleaned.",
+  );
+  registry.updateSandbox(sandboxName, { policies: known });
+  return stale;
+}
+
+/**
  * Return the list of preset names currently recorded as applied to the
  * sandbox (both built-in names and custom-preset names), or an empty array
  * if the sandbox is not tracked in the registry.
@@ -1094,6 +1144,8 @@ export {
   applyPermissivePolicy,
   resolvePermissivePolicyPath,
   getAppliedPresets,
+  partitionKnownPresetNames,
+  pruneStaleBuiltInPresets,
   getGatewayPresets,
   listCustomPresets,
   selectFromList,
