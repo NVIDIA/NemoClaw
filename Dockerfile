@@ -648,6 +648,16 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         chmod a+rw /sandbox/.nemoclaw/config.json; \
     fi
 
+# Health check: poll the gateway's /health endpoint so Docker (and Compose)
+# can detect and restart unhealthy containers in standalone deployments.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/1430
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+    CMD port="${NEMOCLAW_DASHBOARD_PORT:-${OPENCLAW_GATEWAY_PORT:-}}"; \
+        if [ -z "$port" ]; then \
+            port="$(python3 -c 'import os; from urllib.parse import urlparse; raw = os.environ.get("CHAT_UI_URL") or "http://127.0.0.1:18789"; raw = raw if "://" in raw else "http://" + raw; u = urlparse(raw); print(u.port or 18789)' 2>/dev/null || printf '18789')"; \
+        fi; \
+        curl -sf "http://127.0.0.1:${port}/health"
+
 # Entrypoint runs as root to start the gateway as the gateway user,
 # then drops to sandbox for agent commands. See nemoclaw-start.sh.
 ENTRYPOINT ["/usr/local/bin/nemoclaw-start"]

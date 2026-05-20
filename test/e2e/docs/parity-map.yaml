@@ -8457,10 +8457,8 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Gateway server reports OpenShell ${CURRENT_OPENSHELL_VERSION} after upgrade
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.upgrade.gateway_version_upgraded
     - legacy: Current installer backed up the old running claw before replacing OpenShell
       status: retired
       reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
@@ -8482,10 +8480,9 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Durable OpenClaw workspace state was restored after gateway upgrade
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.workspace_state_preserved
+      reusable: true
     - legacy: OpenClaw agent is not installed/configured after gateway upgrade
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8497,30 +8494,26 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: NemoClaw registry retained survivor sandbox after gateway upgrade
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.upgrade.sandbox_registry_preserved
+      reusable: true
     - legacy: NemoClaw registry lost survivor sandbox after gateway upgrade
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: nemoclaw list still shows survivor sandbox after gateway upgrade
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.upgrade.sandbox_registry_preserved
+      reusable: true
     - legacy: 'nemoclaw list does not show survivor sandbox after gateway upgrade: ${list_output:0:200}'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Survivor claw state remained reachable after OpenShell gateway upgrade
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.upgrade.survivor_agent_reachable
     - legacy: Skipping live Docker-driver gateway restart regression on non-Linux host
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8532,6 +8525,24 @@ scripts:
       reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
       reviewer: e2e-maintainers
       approved_at: '2026-05-13'
+
+    # inventory-exact: Marker verification failed: got '${VERIFY}'
+    # inventory-exact: Marker file lost: got '${RESTORED}', expected '${MARKER_CONTENT}'
+    # stable-id: suite.rebuild.hermes_config_preserved
+    # inventory-exact: Registry agentVersion not updated: got '${REGISTRY_VERSION}', expected != '${OLD_OPENCLAW_VERSION}'
+    # inventory-exact: npm preset LOST after rebuild — issue #1952
+    # inventory-exact: pypi preset LOST after rebuild — issue #1952
+    # inventory-exact: npm preset not in live gateway policy after rebuild — issue #1952
+    # inventory-exact: pypi preset not in live gateway policy after rebuild — issue #1952
+    # inventory-exact: Backup manifest missing expected policyPresets (npm,pypi): got '${MANIFEST_PRESETS}' — issue #1952
+    # inventory-exact: Hermes binary version mismatch: expected output to contain '${EXPECTED_HERMES_VERSION}'
+    # inventory-exact: Registry agentVersion not updated: got '${REGISTRY_VERSION}', expected != '${OLD_HERMES_REGISTRY_VERSION}'
+    # inventory-exact: upgrade-sandboxes --check says all up to date — stale sandbox NOT detected (#1904)
+    # inventory-exact: Sandbox still running old OpenClaw ${OLD_OPENCLAW_VERSION} after rebuild — #1904 NOT fixed
+    # inventory-exact: Phase 7: upgrade-sandboxes --check did not report 'up to date' after rebuild
+    # inventory-exact: current NemoClaw install did not upgrade OpenShell to ${CURRENT_OPENSHELL_VERSION}: $(openshell --version 2>&1 || true)
+    # inventory-exact: survivor marker changed after gateway upgrade: got '${marker}'
+    # inventory-exact: Current NemoClaw installer upgraded old ${OLD_NEMOCLAW_REF} claw, restored state, and kept OpenClaw running on OpenShell ${CURRENT_OPENSHELL_VERSION}
   test-overlayfs-autofix.sh:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
@@ -8807,10 +8818,9 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Marker file survived rebuild
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.workspace_state_preserved
+      reusable: true
     - legacy: 'Marker file lost: got ''${RESTORED}'', expected ''${MARKER_CONTENT}'''
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8822,10 +8832,8 @@ scripts:
       reviewer: e2e-maintainers
       approved_at: '2026-05-13'
     - legacy: Hermes binary reports expected version ${EXPECTED_HERMES_VERSION}
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.agent_version_upgraded
     - legacy: 'Hermes binary version mismatch: expected output to contain ''${EXPECTED_HERMES_VERSION}'''
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8852,10 +8860,8 @@ scripts:
       owner: e2e-maintainers
       secret_requirement: Discord test credentials
     - legacy: Inference works after rebuild (NVIDIA API key + provider chain intact)
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.inference_still_works
     - legacy: Registry agentVersion updated to ${REGISTRY_VERSION}
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8970,7 +8976,8 @@ scripts:
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: Policy presets applied and verified
       status: mapped
-      id: legacy.rebuild.openclaw.policy.presets.applied.and.verified
+      id: suite.rebuild.policy_presets_preserved
+      reusable: true
     - legacy: Failed to build current base image
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -8992,10 +8999,8 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: Marker file survived rebuild
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.workspace_state_preserved
     - legacy: 'Marker file lost: got ''${RESTORED}'', expected ''${MARKER_CONTENT}'''
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -9012,10 +9017,8 @@ scripts:
       reviewer: e2e-maintainers
       approved_at: '2026-05-13'
     - legacy: 'OpenClaw version upgraded: ${NEW_VERSION}'
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.agent_version_upgraded
     - legacy: Registry agentVersion updated to ${REGISTRY_VERSION}
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -9043,40 +9046,36 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: npm preset survived rebuild (in registry)
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.policy_presets_preserved
+      reusable: true
     - legacy: "npm preset LOST after rebuild \u2014 issue #1952"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: pypi preset survived rebuild (in registry)
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.policy_presets_preserved
+      reusable: true
     - legacy: "pypi preset LOST after rebuild \u2014 issue #1952"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: npm preset active in gateway policy after rebuild
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.policy_presets_preserved
+      reusable: true
     - legacy: "npm preset not in live gateway policy after rebuild \u2014 issue #1952"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
       owner: e2e-maintainers
       secret_requirement: NVIDIA_API_KEY secret and network egress
     - legacy: pypi preset active in gateway policy after rebuild
-      status: deferred
-      reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
-      owner: e2e-maintainers
-      runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
+      status: mapped
+      id: suite.rebuild.policy_presets_preserved
+      reusable: true
     - legacy: "pypi preset not in live gateway policy after rebuild \u2014 issue #1952"
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking
@@ -11605,13 +11604,13 @@ scripts:
       owner: e2e-maintainers
       runner_requirement: sandbox runner with NemoClaw/OpenShell CLIs
     - legacy: "Sandbox still running old OpenClaw ${OLD_OPENCLAW_VERSION} after rebuild \u2014 #1904 NOT fixed"
-      status: mapped
-      id: legacy.upgrade.stale.sandbox.sandbox.still.running.old.openclaw.old.openclaw.version.after.rebuild.1904.not.fixed
-    - legacy: 'Phase 6: Sandbox upgraded from OpenClaw ${OLD_OPENCLAW_VERSION} to ${NEW_OPENCLAW_VERSION}'
       status: retired
-      reason: legacy assertion is obsolete or negative cleanup behavior after scenario migration
+      reason: negative stale-version failure covered by suite.rebuild.agent_version_upgraded success assertion
       reviewer: e2e-maintainers
-      approved_at: '2026-05-13'
+      approved_at: '2026-05-20'
+    - legacy: 'Phase 6: Sandbox upgraded from OpenClaw ${OLD_OPENCLAW_VERSION} to ${NEW_OPENCLAW_VERSION}'
+      status: mapped
+      id: suite.rebuild.agent_version_upgraded
     - legacy: 'Phase 7: All sandboxes up to date after rebuild'
       status: deferred
       reason: live legacy behavior requires non-deterministic infrastructure; retained for bucket parity tracking

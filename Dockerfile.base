@@ -209,3 +209,11 @@ RUN openclaw plugins install '@tencent-weixin/openclaw-weixin@2.4.2' --pin \
 # hadolint ignore=DL3002
 USER root
 WORKDIR /
+
+# Baseline health check. The base image runs no service, so this only
+# verifies the Node.js runtime is functional. Child images that expose
+# a service (e.g. the production Dockerfile's gateway) MUST override
+# this with a service-specific probe; otherwise an unresponsive service
+# will still report healthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+    CMD node -e "process.exit(0)"

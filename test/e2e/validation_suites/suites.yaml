@@ -187,10 +187,20 @@ suites:
       script: sandbox/snapshot/00-create-list-restore.sh
   rebuild:
     requires_state: *id001
-    steps: *id002
+    steps:
+    - id: rebuild-state-preserved
+      script: rebuild_upgrade/00-state-preserved.sh
+    - id: rebuild-agent-version-upgraded
+      script: rebuild_upgrade/01-agent-version-upgraded.sh
+    - id: rebuild-post-inference
+      script: rebuild_upgrade/02-post-rebuild-inference.sh
+    - id: rebuild-policy-config-preserved
+      script: rebuild_upgrade/03-policy-config-preserved.sh
   upgrade:
     requires_state: *id001
-    steps: *id002
+    steps:
+    - id: upgrade-survivor-reachable
+      script: rebuild_upgrade/04-upgrade-survivor-reachable.sh
   diagnostics:
     requires_state: *id001
     steps: *id002
