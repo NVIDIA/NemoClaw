@@ -348,7 +348,7 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
   });
 
-  it("emits canonical openshell:resolve:env: placeholders for non-Slack channels", () => {
+  it("emits canonical placeholders and proxy routing for non-Slack channels", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     expect(config.channels.telegram.accounts.default.botToken).toBe(
@@ -358,7 +358,22 @@ describe("generate-openclaw-config.py: config generation", () => {
       "openshell:resolve:env:DISCORD_BOT_TOKEN",
     );
     expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://10.200.0.1:3128");
+  });
+
+  it("#3894: routes Discord gateway traffic through the configured OpenShell proxy", () => {
+    const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_PROXY_HOST: "10.201.0.9",
+      NEMOCLAW_PROXY_PORT: "43128",
+    });
+
+    expect(config.channels.discord.accounts.default).toMatchObject({
+      token: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+      enabled: true,
+      proxy: "http://10.201.0.9:43128",
+    });
   });
 
   it("emits Bolt-shape placeholders for Slack so the SDK's prefix regex passes", () => {
