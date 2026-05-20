@@ -1985,7 +1985,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
         env: { ...process.env, STEP_DOWN_LOG: stepDownLog },
         timeout: 5000,
       });
-      expect(result.status).toBe(0);
+      expect(result.status, result.stderr || result.stdout).toBe(0);
       expect(fs.readFileSync(stepDownLog, "utf-8").trim()).toBe("sandbox-step-down");
       expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
     } finally {
