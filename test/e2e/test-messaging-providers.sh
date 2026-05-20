@@ -916,6 +916,27 @@ print(account.get('token', ''))
     skip "M9: No Discord token to check"
   fi
 
+  # M9b: Discord Gateway WebSocket routing uses the OpenShell proxy.
+  # #3894 regressed because OpenClaw's Discord gateway client ignores proxy
+  # env vars and only uses the per-account proxy setting. The fake Gateway
+  # proof in M13b-M13g exercises that OpenShell WebSocket relay; this config
+  # assertion ensures the real OpenClaw Discord account is wired to the relay.
+  dc_proxy=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+accounts = d.get('discord', {}).get('accounts', {})
+account = accounts.get('default') or accounts.get('main') or {}
+print(account.get('proxy', ''))
+" 2>/dev/null || true)
+
+  if [ -n "$dc_token" ] && [ "$dc_proxy" = "http://10.200.0.1:3128" ]; then
+    pass "M9b: Discord account proxy is baked into openclaw.json for Gateway WebSocket routing"
+  elif [ -n "$dc_token" ]; then
+    fail "M9b: Discord account proxy missing or wrong; Gateway WebSocket may bypass OpenShell proxy (proxy='${dc_proxy}')"
+  else
+    skip "M9b: No Discord channel config to check"
+  fi
+
   # M10: Telegram enabled
   tg_enabled=$(echo "$channel_json" | python3 -c "
 import json, sys
@@ -1416,7 +1437,10 @@ else
   fail "M13-rest-e: Unexpected fake Discord REST capture counts: ${fake_rest_capture}"
 fi
 
-# M13b-M13f: Hermetic Discord Gateway over OpenShell's native WebSocket L7 path.
+# M13b-M13g: Hermetic Discord Gateway over OpenShell's native WebSocket L7 path.
+# M9b proves the generated OpenClaw Discord account points its Gateway client at
+# this proxy path; this block proves the proxy path can carry Discord HELLO,
+# IDENTIFY, READY, heartbeat ACK, and credential rewrite to a fake Gateway.
 fake_gateway_ready=0
 if start_fake_discord_gateway "$DISCORD_TOKEN"; then
   fake_gateway_ready=1
