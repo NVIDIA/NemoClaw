@@ -9,6 +9,7 @@ import type { SandboxEntry } from "../../state/registry";
 
 const LINUXBREW_PREFIX = "/home/linuxbrew/.linuxbrew";
 const BREW_BIN = `${LINUXBREW_PREFIX}/bin/brew`;
+const PROFILE_D_PATH = "/etc/profile.d/nemoclaw-linuxbrew.sh";
 const FORMULA_PATTERN = /^[a-z0-9][a-z0-9._@/+-]*$/;
 const HOMEBREW_INSTALL_URL =
   "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh";
@@ -92,12 +93,21 @@ function brewInitScript(): string {
     `chown -R linuxbrew:linuxbrew /home/linuxbrew`,
     `runuser -u linuxbrew -- env NONINTERACTIVE=1 /bin/bash -c '/bin/bash -c "$(curl -fsSL ${HOMEBREW_INSTALL_URL})"'`,
     `test -x ${BREW_BIN}`,
+    `cat >${PROFILE_D_PATH} <<'EOF'`,
+    `# NemoClaw: expose Homebrew (Linuxbrew) to interactive shells (#3757)`,
+    `if [ -d ${LINUXBREW_PREFIX}/bin ] && [ ":\${PATH}:" != *":${LINUXBREW_PREFIX}/bin:"* ]; then`,
+    `  PATH="${LINUXBREW_PREFIX}/bin:\${PATH}"`,
+    `  export PATH`,
+    `fi`,
+    `EOF`,
+    `chmod 444 ${PROFILE_D_PATH}`,
   ].join("\n");
 }
 
 function brewDeinitScript(): string {
   return [
     "set -eu",
+    `rm -f ${PROFILE_D_PATH}`,
     `rm -rf ${LINUXBREW_PREFIX} /home/linuxbrew`,
     `userdel linuxbrew 2>/dev/null || true`,
   ].join("\n");

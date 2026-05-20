@@ -25,11 +25,14 @@ export function selectDockerDriverSandboxContainer(
   if (openshellDriver !== "docker") return null;
   const prefix = `openshell-${sandboxName}-`;
   const exact = `openshell-${sandboxName}`;
+  const trimmed = containerNames
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((name) => name.length > 0);
   return (
-    containerNames
-      .split("\n")
-      .map((line) => line.trim())
-      .find((name) => name === exact || name.startsWith(prefix)) || null
+    trimmed.find((name) => name === exact) ??
+    trimmed.find((name) => name.startsWith(prefix)) ??
+    null
   );
 }
 

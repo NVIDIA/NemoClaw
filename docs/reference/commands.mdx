@@ -707,7 +707,7 @@ Refuses when shields are up — run `nemoclaw <name> shields down` first.
 $ nemoclaw my-assistant brew init
 ```
 
-Homebrew refuses to run as anyone other than the prefix owner, so the agent inside the sandbox cannot invoke `brew install` directly. Bottled binaries dropped by `brew install` (for example `/home/linuxbrew/.linuxbrew/bin/jq`) remain executable from the agent's PATH and survive `shields up`.
+Homebrew refuses to run as anyone other than the prefix owner, so the agent inside the sandbox cannot invoke `brew install` directly. Bottled binaries dropped by `brew install` (for example `/home/linuxbrew/.linuxbrew/bin/jq`) survive `shields up` and remain runnable by their absolute path. `brew init` also writes `/etc/profile.d/nemoclaw-linuxbrew.sh`, so new login shells inside the sandbox (e.g. `nemoclaw <name> connect` and `bash -lc ...`) pick up the linuxbrew prefix on `PATH`. Long-running processes started before `brew init` (including the OpenClaw agent) keep their original PATH; restart them or invoke the binaries by absolute path if they need access.
 
 ### `nemoclaw <name> brew install`
 

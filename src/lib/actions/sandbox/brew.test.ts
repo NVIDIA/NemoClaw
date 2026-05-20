@@ -74,6 +74,7 @@ describe("runSandboxBrew", () => {
       expect(cmd).toEqual(["bash", "-s"]);
       expect(opts?.input).toMatch(/useradd -m -s \/bin\/bash linuxbrew/);
       expect(opts?.input).toMatch(/raw.githubusercontent\.com\/Homebrew\/install/);
+      expect(opts?.input).toMatch(/\/etc\/profile\.d\/nemoclaw-linuxbrew\.sh/);
       expect(updateSandbox).toHaveBeenCalledWith("alpha", { brewInitialised: true });
     });
   });
@@ -161,13 +162,14 @@ describe("runSandboxBrew", () => {
       expect(privilegedSandboxExec).not.toHaveBeenCalled();
     });
 
-    it("removes /home/linuxbrew and clears the registry flag", async () => {
+    it("removes /home/linuxbrew, the profile.d hook, and clears the registry flag", async () => {
       getSandbox.mockReturnValue({ name: "alpha", brewInitialised: true });
       isShieldsDown.mockReturnValue(true);
       privilegedSandboxExec.mockReturnValue("");
       await runSandboxBrew("alpha", { kind: "deinit" });
       const [, cmd, opts] = privilegedSandboxExec.mock.calls[0] ?? fail("missing call");
       expect(cmd).toEqual(["bash", "-s"]);
+      expect(opts?.input).toMatch(/rm -f \/etc\/profile\.d\/nemoclaw-linuxbrew\.sh/);
       expect(opts?.input).toMatch(/rm -rf \/home\/linuxbrew\/\.linuxbrew \/home\/linuxbrew/);
       expect(opts?.input).toMatch(/userdel linuxbrew/);
       expect(updateSandbox).toHaveBeenCalledWith("alpha", { brewInitialised: false });

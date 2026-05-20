@@ -225,6 +225,7 @@ export function registerSandbox(entry: SandboxEntry): void {
           ? [...entry.disabledChannels]
           : undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
+      brewInitialised: entry.brewInitialised === true ? true : undefined,
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;

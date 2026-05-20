@@ -180,6 +180,15 @@ test_brew_install_hello() {
   else
     fail "TC-BREW-02" "hello binary did not print expected greeting: $hello_out"
   fi
+
+  log "=== TC-BREW-02b: profile.d puts the linuxbrew prefix on the login-shell PATH ==="
+  local path_out
+  path_out=$(sandbox_exec 'bash -lc "command -v hello" 2>&1 || true')
+  if echo "$path_out" | grep -q '^/home/linuxbrew/\.linuxbrew/bin/hello$'; then
+    pass "TC-BREW-02b"
+  else
+    fail "TC-BREW-02b" "command -v hello did not resolve via login-shell PATH: $path_out"
+  fi
 }
 
 test_brew_uninstall_hello() {

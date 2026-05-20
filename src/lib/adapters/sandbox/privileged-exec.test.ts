@@ -40,6 +40,16 @@ describe("selectDockerDriverSandboxContainer", () => {
     ).toBe("openshell-demo-abc");
   });
 
+  it("prefers an exact match over a prefix match even when the prefix appears first", () => {
+    expect(
+      selectDockerDriverSandboxContainer(
+        "demo",
+        "docker",
+        "openshell-demo-abc\nopenshell-demo\nopenshell-demo-xyz",
+      ),
+    ).toBe("openshell-demo");
+  });
+
   it("returns null for the legacy kubernetes driver", () => {
     expect(
       selectDockerDriverSandboxContainer("demo", "kubernetes", "openshell-demo\n"),
