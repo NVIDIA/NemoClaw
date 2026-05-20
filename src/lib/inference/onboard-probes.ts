@@ -814,7 +814,7 @@ function shouldSmokeOpenAiLikeOnboardRoute(provider) {
 }
 
 function verifyOnboardInferenceSmoke(options) {
-  if (!shouldSmokeOpenAiLikeOnboardRoute(options.provider)) return;
+  if (!options.forceOpenAiLike && !shouldSmokeOpenAiLikeOnboardRoute(options.provider)) return;
   if (process.env.VITEST === "true") return;
 
   const endpointUrl = options.endpointUrl || require("./config").INFERENCE_ROUTE_URL;

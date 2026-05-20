@@ -5,8 +5,10 @@
 Use NemoHermes when you want NemoClaw to create an OpenShell sandbox that runs Hermes instead of the default OpenClaw agent.
 The `nemohermes` command is an alias for `nemoclaw` with the Hermes agent pre-selected.
 
-> **Experimental Feature:** The Hermes agent option is experimental.
-> Interfaces, defaults, and supported features may change without notice, and it is not recommended for production use.
+**Experimental Feature:**
+
+The Hermes agent option is experimental.
+Interfaces, defaults, and supported features may change without notice, and it is not recommended for production use.
 
 Review the Prerequisites (use the `nemoclaw-user-get-started` skill) before starting.
 The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image if it is not already cached.
@@ -50,7 +52,9 @@ NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traff
 The Hermes image includes runtime dependencies for the supported NemoClaw messaging integrations, API service, and health endpoint.
 The base image does not include unsupported Hermes integrations.
 
-> **Note:** Hermes uses an agent-specific baseline policy that allows the Hermes binary and Python runtime to reach the required Nous Research service endpoints, PyPI, NVIDIA inference endpoints, and selected messaging APIs.
+**Note:**
+
+Hermes uses an agent-specific baseline policy that allows the Hermes binary and Python runtime to reach the required Nous Research service endpoints, PyPI, NVIDIA inference endpoints, and selected messaging APIs.
 
 ## Use Non-Interactive Setup
 

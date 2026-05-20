@@ -55,8 +55,9 @@ reviews:
           inline `code` formatting.
         - CLI code blocks must use the `console` language tag with `$` prompt
           prefix. Flag ```bash or ```shell for CLI examples.
-        - Use MyST admonitions (:::{tip}, :::{note}, :::{warning}) for callouts,
-          not bold text or blockquotes.
+        - Use Fern callout components (<Note>, <Tip>, <Warning>) for callouts
+          in MDX pages, not bold text or blockquotes. MyST admonitions are
+          acceptable only in legacy .md pages that have not migrated yet.
         - No nested admonitions.
         - Do not number section titles. Flag "Section 1: ...", "Step 3: ...", etc.
         - No colons in titles. Flag "Inference: Cloud and Local" — should be
@@ -130,10 +131,12 @@ reviews:
         - `sandbox-survival-e2e` — gateway restart recovery
         - `sandbox-operations-e2e` — process recovery after gateway kill
         - `cloud-e2e` — full onboard + cloud inference
+        - `openclaw-slack-pairing-e2e` — gateway/connect-shell OpenClaw
+          pairing state root parity for Slack
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=sandbox-survival-e2e,sandbox-operations-e2e,cloud-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=sandbox-survival-e2e,sandbox-operations-e2e,cloud-e2e,openclaw-slack-pairing-e2e
         ```
 
     - path: "scripts/lib/sandbox-init.sh"
@@ -187,6 +190,8 @@ reviews:
           rebuild with cached Telegram credentials
         - `messaging-compatible-endpoint-e2e` — Telegram + compatible endpoint
           inference.local regression
+        - `bedrock-runtime-compatible-anthropic-e2e` — Bedrock Runtime
+          compatible Anthropic endpoint adapter boundary
         - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
           isolation
         - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
@@ -195,9 +200,26 @@ reviews:
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,channels-stop-start-e2e,messaging-compatible-endpoint-e2e,hermes-discord-e2e,hermes-slack-e2e,openshell-gateway-upgrade-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,channels-stop-start-e2e,messaging-compatible-endpoint-e2e,bedrock-runtime-compatible-anthropic-e2e,hermes-discord-e2e,hermes-slack-e2e,openshell-gateway-upgrade-e2e
         ```
 
+    - path: "src/lib/onboard/bedrock-runtime.ts"
+      instructions: &e2e-bedrock-runtime-compatible-anthropic |
+        This file is part of the Bedrock Runtime compatible Anthropic endpoint
+        path. Changes affect endpoint classification, hidden adapter startup,
+        adapter-token isolation, and the sandbox-facing inference.local route.
+
+        **E2E test recommendation:**
+        - `bedrock-runtime-compatible-anthropic-e2e` — fake Bedrock Runtime
+          endpoint through OpenClaw and Hermes with sandbox leak checks
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=bedrock-runtime-compatible-anthropic-e2e
+        ```
+
+    - path: "src/lib/inference/bedrock-runtime*.ts"
+      instructions: *e2e-bedrock-runtime-compatible-anthropic
     - path: "src/lib/onboard/channel-state.ts"
       instructions: &e2e-channel-stop-start |
         This file controls disabled channel resolution used during onboard
@@ -220,7 +242,10 @@ reviews:
     - path: "src/lib/actions/sandbox/rebuild.ts"
       instructions: *e2e-channel-stop-start
 
-    - path: "src/lib/commands/sandbox/channels/**"
+    - path: "src/commands/sandbox/channels/**"
+      instructions: *e2e-channel-stop-start
+
+    - path: "src/lib/sandbox/channels-command-support.ts"
       instructions: *e2e-channel-stop-start
 
     - path: "test/e2e/test-channels-stop-start.sh"
@@ -348,6 +373,51 @@ reviews:
         To run selectively:
         ```
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-slack-e2e
+        ```
+
+    - path: "test/e2e/test-openclaw-slack-pairing.sh"
+      instructions: |
+        This script validates OpenClaw Slack DM pairing across the gateway
+        and connect-shell runtime contexts with a hermetic fake Slack Socket
+        Mode event and fake chat.postMessage reply.
+
+        **E2E test recommendation:**
+        - `openclaw-slack-pairing-e2e` - Slack pairing request approval and
+          allowFrom state root parity
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openclaw-slack-pairing-e2e
+        ```
+
+    - path: "test/e2e/lib/fake-slack-api.cjs"
+      instructions: |
+        This helper backs hermetic Slack REST and Socket Mode tests. Changes
+        can alter Slack credential rewrite assertions, fake Socket Mode
+        envelopes, or chat.postMessage capture.
+
+        **E2E test recommendation:**
+        - `messaging-providers-e2e` - Slack REST provider placeholder rewrite
+        - `openclaw-slack-pairing-e2e` - fake Slack Socket Mode pairing flow
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=messaging-providers-e2e,openclaw-slack-pairing-e2e
+        ```
+
+    - path: "test/e2e/lib/slack-api-proof.sh"
+      instructions: |
+        This helper applies hermetic Slack REST and Socket Mode policies for
+        messaging E2E scripts. Changes can affect REST credential rewrite
+        probes and native websocket policy coverage.
+
+        **E2E test recommendation:**
+        - `messaging-providers-e2e` - Slack REST provider placeholder rewrite
+        - `openclaw-slack-pairing-e2e` - fake Slack Socket Mode pairing flow
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=messaging-providers-e2e,openclaw-slack-pairing-e2e
         ```
 
     - path: "nemoclaw-blueprint/policies/**"
@@ -510,6 +580,9 @@ reviews:
     - path: "nemoclaw-blueprint/openclaw-plugins/kimi-inference-compat/**"
       instructions: *e2e-kimi-inference-compat
 
+    - path: "test/e2e/test-bedrock-runtime-compatible-anthropic.sh"
+      instructions: *e2e-bedrock-runtime-compatible-anthropic
+
     - path: "test/e2e/test-openshell-gateway-upgrade.sh"
       instructions: |
         This script validates the old OpenShell install upgrade guard for
@@ -548,13 +621,12 @@ reviews:
         This is the nightly E2E workflow definition. Changes here affect
         which tests run and how they are triggered.
 
-        If a new E2E job is added, verify a corresponding
-        `path_instructions` entry exists in `.coderabbit.yaml` for the
-        source files it covers. The cross-validation test in
-        `test/validate-e2e-coverage.test.ts` checks this automatically.
+        If a new E2E job is added, verify corresponding
+        `path_instructions` entries exist in `.coderabbit.yaml` for the
+        source files it covers.
 
-        If a job is renamed or removed, update the corresponding
-        `.coderabbit.yaml` path_instructions entries and the
-        `notify-on-failure` needs list.
+        If a job is renamed or removed, update the corresponding aggregate
+        job `needs` lists (`notify-on-failure`, `report-to-pr`, and
+        `scorecard`).
 chat:
   auto_reply: true

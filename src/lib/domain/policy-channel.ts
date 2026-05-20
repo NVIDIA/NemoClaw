@@ -15,6 +15,22 @@ export type PolicyAddArgs = {
   presetArg: string | null;
 };
 
+export type PolicyAddOptions = {
+  preset?: string;
+  dryRun?: boolean;
+  yes?: boolean;
+  force?: boolean;
+  fromFile?: string;
+  fromDir?: string;
+};
+
+export type PolicyRemoveOptions = {
+  preset?: string;
+  dryRun?: boolean;
+  yes?: boolean;
+  force?: boolean;
+};
+
 export function parseCustomPolicySource(args: readonly string[]): CustomPolicySource {
   const fromFileIdx = args.indexOf("--from-file");
   const fromDirIdx = args.indexOf("--from-dir");
@@ -63,5 +79,39 @@ export function parsePolicyAddArgs(
     skipConfirm: shouldSkipPolicyConfirmation(args, env),
     source: parseCustomPolicySource(args),
     presetArg: args.find((arg) => !arg.startsWith("-")) ?? null,
+  };
+}
+
+function customPolicySourceFromOptions(options: PolicyAddOptions): CustomPolicySource {
+  if (options.fromFile !== undefined && options.fromDir !== undefined) {
+    return { kind: "error", message: "--from-file and --from-dir are mutually exclusive." };
+  }
+
+  if (options.fromFile !== undefined) {
+    if (!options.fromFile) {
+      return { kind: "error", message: "--from-file requires a path argument." };
+    }
+    return { kind: "file", path: options.fromFile };
+  }
+
+  if (options.fromDir !== undefined) {
+    if (!options.fromDir) {
+      return { kind: "error", message: "--from-dir requires a directory path." };
+    }
+    return { kind: "dir", path: options.fromDir };
+  }
+
+  return { kind: "none" };
+}
+
+export function parsePolicyAddOptions(
+  options: PolicyAddOptions = {},
+  env: Record<string, string | undefined> = process.env,
+): PolicyAddArgs {
+  return {
+    dryRun: Boolean(options.dryRun),
+    skipConfirm: Boolean(options.yes || options.force || env.NEMOCLAW_NON_INTERACTIVE === "1"),
+    source: customPolicySourceFromOptions(options),
+    presetArg: options.preset ?? null,
   };
 }

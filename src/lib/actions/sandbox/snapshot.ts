@@ -16,8 +16,6 @@ import * as registry from "../../state/registry";
 import type { SandboxEntry } from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
 
-const { parseRestoreArgs } = sandboxState;
-
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
   useColor && (process.env.COLORTERM === "truecolor" || process.env.COLORTERM === "24bit");
@@ -28,22 +26,27 @@ const R = useColor ? "\x1b[0m" : "";
 
 const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
-function parseSnapshotCreateFlags(flags: string[]) {
-  const opts: { name: string | null } = { name: null };
-  for (let i = 0; i < flags.length; i++) {
-    const flag = flags[i];
-    if (flag === "--name") {
-      if (i + 1 >= flags.length || flags[i + 1].startsWith("--")) {
-        console.error("  --name requires a value");
-        process.exit(1);
-      }
-      opts.name = flags[++i];
-    } else {
-      console.error(`  Unknown flag: ${flag}`);
-      process.exit(1);
-    }
+export type SnapshotRequest =
+  | { kind: "help" }
+  | { kind: "create"; name?: string }
+  | { kind: "list" }
+  | { kind: "restore"; selector?: string; to?: string };
+
+export class SnapshotCommandError extends Error {
+  readonly lines: readonly string[];
+  readonly exitCode: number;
+
+  constructor(lines: string | readonly string[] = [], exitCode = 1) {
+    const normalized = Array.isArray(lines) ? lines : [lines];
+    super(normalized.join("\n") || `Snapshot command failed with exit ${exitCode}`);
+    this.name = "SnapshotCommandError";
+    this.lines = normalized;
+    this.exitCode = exitCode;
   }
-  return opts;
+}
+
+function snapshotExit(exitCode = 1): never {
+  throw new SnapshotCommandError([], exitCode);
 }
 
 function formatSnapshotVersion(b: unknown) {
@@ -119,7 +122,7 @@ function resolveSrcPodImage(srcName: string, srcEntry?: SandboxEntry | { name: s
 // Auto-create a sandbox that clones the image of an existing one.
 // Used by `snapshot restore --to <dst>` when dst does not exist yet: reuses
 // the source's baked image so the user does not have to re-run onboarding.
-// Returns true on success; on failure, logs and calls process.exit(1).
+// Returns true on success; on failure, logs and throws SnapshotCommandError.
 async function autoCreateSandboxFromSource(
   srcName: string,
   dstName: string,
@@ -134,7 +137,7 @@ async function autoCreateSandboxFromSource(
   if (!fromImage) {
     console.error(`  Cannot auto-create '${dstName}': could not resolve '${srcName}' pod image.`);
     console.error(`  Create '${dstName}' manually with '${CLI_NAME} onboard'.`);
-    process.exit(1);
+    snapshotExit(1);
   }
 
   const cmdParts = [
@@ -170,14 +173,14 @@ async function autoCreateSandboxFromSource(
     console.error(`  Failed to create sandbox '${dstName}' (exit ${createResult.status}).`);
     const tail = (createResult.output || "").slice(-600);
     if (tail) console.error(tail);
-    process.exit(1);
+    snapshotExit(1);
   }
 
   // Double-check Ready after stream exit.
   const verify = captureOpenshell(["sandbox", "list"], { ignoreError: true });
   if (verify.status !== 0 || !isSandboxReady(verify.output || "", dstName)) {
     console.error(`  Sandbox '${dstName}' did not reach Ready state after create.`);
-    process.exit(1);
+    snapshotExit(1);
   }
 
   // Set up DNS proxy in the new pod (same step onboard runs after sandbox create).
@@ -224,24 +227,25 @@ function probeGatewayRunning(sandboxName?: string): boolean {
   return result.status === 0 && String(result.stdout || "").trim() === "true";
 }
 
-export async function runSandboxSnapshot(sandboxName: string, subArgs: string[]) {
-  const subcommand = subArgs[0] || "help";
-  switch (subcommand) {
+export async function runSandboxSnapshot(
+  sandboxName: string,
+  request: SnapshotRequest = { kind: "help" },
+) {
+  switch (request.kind) {
     case "create": {
-      const opts = parseSnapshotCreateFlags(subArgs.slice(1));
       if (!probeGatewayRunning(sandboxName)) {
         console.error("  Failed to query live sandbox state from OpenShell.");
-        process.exit(1);
+        snapshotExit(1);
       }
       const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
       const liveNames = parseLiveSandboxNames(isLive.output || "");
       if (!liveNames.has(sandboxName)) {
         console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
-        process.exit(1);
+        snapshotExit(1);
       }
-      const label = opts.name ? ` (--name ${opts.name})` : "";
+      const label = request.name ? ` (--name ${request.name})` : "";
       console.log(`  Creating snapshot of '${sandboxName}'${label}...`);
-      const result = sandboxState.backupSandboxState(sandboxName, { name: opts.name });
+      const result = sandboxState.backupSandboxState(sandboxName, { name: request.name ?? null });
       if (result.success) {
         // Virtual snapshotVersion is only assigned by listBackups, so re-resolve
         // the just-created snapshot by its timestamp to get a valid v<N>.
@@ -266,7 +270,7 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
             console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
           }
         }
-        process.exit(1);
+        snapshotExit(1);
       }
       break;
     }
@@ -289,18 +293,12 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
       // sandbox. If `dst` is not yet live, it is auto-created by cloning the
       // source sandbox's baked image. Without `--to`, restore targets
       // sandboxName itself
-      const parsed = parseRestoreArgs(sandboxName, subArgs);
-      if (!parsed.ok) {
-        console.error(`  ${parsed.error}`);
-        process.exit(1);
-      }
+      const target = request.to ?? sandboxName;
       const targetSandbox =
-        parsed.targetSandbox === sandboxName
-          ? sandboxName
-          : validateName(parsed.targetSandbox, "target sandbox name");
+        target === sandboxName ? sandboxName : validateName(target, "target sandbox name");
       if (!probeGatewayRunning(sandboxName)) {
         console.error("  Failed to query live sandbox state from OpenShell.");
-        process.exit(1);
+        snapshotExit(1);
       }
       const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
       const liveNames = parseLiveSandboxNames(isLive.output || "");
@@ -308,7 +306,7 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
         // Self-restore: cannot auto-create, there is no source to clone from.
         if (targetSandbox === sandboxName) {
           console.error(`  Sandbox '${targetSandbox}' is not running. Cannot restore snapshot.`);
-          process.exit(1);
+          snapshotExit(1);
         }
         // Cross-sandbox restore into a sandbox that doesn't exist yet:
         // auto-create it by cloning the source's running pod image. The
@@ -319,12 +317,12 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
             `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' not found.`,
           );
           console.error(`  Create '${targetSandbox}' manually with '${CLI_NAME} onboard'.`);
-          process.exit(1);
+          snapshotExit(1);
         }
         const srcEntry = registry.getSandbox(sandboxName) || { name: sandboxName };
         await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry);
       }
-      const selector = parsed.selector;
+      const selector = request.selector ?? null;
       let backupPath;
       let resolvedSnapshot = null;
       if (selector) {
@@ -333,7 +331,7 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
           console.error(`  No snapshot matching '${selector}' found for '${sandboxName}'.`);
           console.error("  Selector must be an exact version (v<N>), name, or timestamp.");
           console.error(`  Run: ${CLI_NAME} ${sandboxName} snapshot list`);
-          process.exit(1);
+          snapshotExit(1);
         }
         backupPath = match.backupPath;
         resolvedSnapshot = match;
@@ -344,7 +342,7 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
         const latest = sandboxState.getLatestBackup(sandboxName);
         if (!latest) {
           console.error(`  No snapshots found for '${sandboxName}'.`);
-          process.exit(1);
+          snapshotExit(1);
         }
         backupPath = latest.backupPath;
         resolvedSnapshot = latest;
@@ -373,7 +371,7 @@ export async function runSandboxSnapshot(sandboxName: string, subArgs: string[])
         if (result.failedFiles.length > 0) {
           console.error(`  Failed files: ${result.failedFiles.join(", ")}`);
         }
-        process.exit(1);
+        snapshotExit(1);
       }
       // Reconcile the target's policy presets to match the snapshot manifest
       // exactly — add anything the snapshot recorded but the target is

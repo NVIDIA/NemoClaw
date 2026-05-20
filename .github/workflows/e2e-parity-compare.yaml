@@ -7,9 +7,10 @@
 # the same runner, collects PASS/FAIL per assertion from both, and fails
 # the job if any mapped assertion in test/e2e/docs/parity-map.yaml diverges.
 #
-# Manual-only (workflow_dispatch). Each migration phase dispatches this
-# workflow for every scenario it introduces and records zero-divergence
-# before marking the phase complete.
+# Manual-only (workflow_dispatch). This is also the source of truth for generated
+# parity reports: it regenerates the legacy assertion inventory and uploads it
+# as a workflow artifact instead of requiring every PR to commit regenerated
+# parity inventory churn.
 
 name: E2E / Parity Compare
 
@@ -94,6 +95,16 @@ jobs:
       - name: Install root dependencies
         run: npm ci --ignore-scripts
 
+      - name: Generate legacy assertion inventory
+        run: |
+          mkdir -p .e2e/parity
+          npx tsx scripts/e2e/extract-legacy-assertions.ts
+          cp test/e2e/docs/parity-inventory.generated.json .e2e/parity/parity-inventory.generated.json
+
+      - name: Validate parity map
+        run: |
+          npx tsx scripts/e2e/check-parity-map.ts --strict
+
       - name: Run legacy script
         id: legacy
         if: ${{ github.event.inputs.legacy_script != '' }}
@@ -149,6 +160,8 @@ jobs:
         run: |
           mkdir -p .e2e/parity
           bash test/e2e/runtime/coverage-report.sh > .e2e/parity/coverage-report.md
+          echo '## E2E parity and layered gap summary' >> "$GITHUB_STEP_SUMMARY"
+          cat .e2e/parity/coverage-report.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload parity artifacts
         if: always()

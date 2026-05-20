@@ -75,18 +75,48 @@ export interface ExpectedFailure {
   forbidden_side_effects?: ExpectedFailureSideEffect[];
 }
 
+export interface SkippedCapability extends AnyRecord {
+  id: string;
+  reason: string;
+  suites?: string[];
+}
+
+export interface BaseScenario extends AnyRecord {
+  platform: string;
+  install: string;
+  runtime: string;
+  runner_requirements?: string[];
+  expected_failure?: Partial<ExpectedFailure>;
+  skipped_capabilities?: SkippedCapability[];
+}
+
+export interface TestPlan extends AnyRecord {
+  base: string;
+  onboarding: string;
+  expected_state: string;
+  onboarding_assertions?: string[];
+  suites: string[];
+  overrides?: AnyRecord;
+  runner_requirements?: string[];
+  required_secrets?: string[];
+  expected_failure?: Partial<ExpectedFailure>;
+  skipped_capabilities?: SkippedCapability[];
+}
+
 export interface SetupScenario {
-  dimensions: {
+  alias_for_plan?: string;
+  dimensions?: {
     platform: string;
     install: string;
     runtime: string;
     onboarding: string;
   };
-  expected_state: string;
-  suites: string[];
+  expected_state?: string;
+  suites?: string[];
   overrides?: AnyRecord;
   /** Explicit CI/hardware requirements for non-default platforms. */
   runner_requirements?: string[];
+  skipped_capabilities?: SkippedCapability[];
   /**
    * Per-scenario override of the expected-state failure contract. Fields
    * present here win over the state-level `expected_failure`; absent
@@ -107,6 +137,10 @@ export interface ScenariosFile {
   runtimes: Record<string, RuntimeProfile>;
   onboarding: Record<string, OnboardingProfile>;
   setup_scenarios: Record<string, SetupScenario>;
+  base_scenarios?: Record<string, BaseScenario>;
+  onboarding_profiles?: Record<string, OnboardingProfile>;
+  test_plans?: Record<string, TestPlan>;
+  onboarding_assertions?: Record<string, AnyRecord>;
 }
 
 export type ExpectedStateConfig = AnyRecord;
@@ -147,6 +181,11 @@ export interface ResolvedExpectedState {
 
 export interface ResolvedPlan {
   scenario_id: string;
+  plan_id?: string;
+  legacy_scenario_id?: string;
+  base?: ResolvedDimension<BaseScenario>;
+  onboarding?: ResolvedDimension<OnboardingProfile>;
+  onboarding_assertions?: string[];
   dimensions: {
     platform: ResolvedDimension<PlatformProfile>;
     install: ResolvedDimension<InstallProfile>;
@@ -157,6 +196,7 @@ export interface ResolvedPlan {
   suites: ResolvedSuite[];
   overrides?: AnyRecord;
   runner_requirements?: string[];
+  required_secrets?: string[];
   /**
    * Present only for negative scenarios that declare an `expected_failure`
    * (either at scenario level or via their expected state). Absence means

@@ -75,6 +75,8 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT=120000 \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 RUN npm ci --omit=dev
+COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
+RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 
 # Upgrade OpenClaw if the base image is stale.
 #
@@ -222,6 +224,15 @@ RUN set -eu; \
     printf '%s\n' "$hto_files" | xargs sed -i -E 's|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4|g'; \
     if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4' "$OC_DIST"; then echo "ERROR: Patch 5 left a 1e4 constant" >&2; exit 1; fi
 
+# Patch OpenClaw's pinned 2026.4.24 compiled selection runtime to expose a
+# compact searchable tool catalog to the model while preserving the full
+# effective tool set behind tool_call. NEMOCLAW_TOOL_CATALOG=0 disables this
+# wrapper if an emergency rollback is needed. The script fails closed if the
+# pinned selection-*.js shape changes.
+# hadolint ignore=DL3059
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
+    /usr/local/lib/node_modules/openclaw/dist
+
 # Set up blueprint for local resolution.
 # Blueprints are immutable at runtime; DAC protection (root ownership) is applied
 # later since /sandbox/.nemoclaw is Landlock read_write for plugin state (#804).
@@ -282,8 +293,9 @@ ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=
 # so the L7 proxy can rewrite them at egress. Default: empty list.
 ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 # Base64-encoded JSON map of channel→allowed sender IDs for DM allowlisting
-# (e.g. {"telegram":["123456789"]}). Channels with IDs get dmPolicy=allowlist;
-# channels without IDs keep the OpenClaw default (pairing). Default: empty map.
+# (e.g. {"telegram":["123456789"]}). Channels with IDs get dmPolicy=allowlist.
+# Slack also uses those IDs for channel @mention allowlisting. Channels without
+# IDs keep the OpenClaw default (pairing). Default: empty map.
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
 # Base64-encoded JSON map of Discord guild configs keyed by server ID
 # (e.g. {"1234567890":{"requireMention":true,"users":["555"]}}).
@@ -381,19 +393,8 @@ USER sandbox
 # list of env vars and derivation rules.
 RUN python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
 
-# TEMPORARY: install the WeChat plugin here (was moved to Dockerfile.base in
-# e23486b but the wholesale rewrite by generate-openclaw-config.py above
-# blew away plugins.installs.openclaw-weixin from base's openclaw.json,
-# leaving the plugin unloadable at runtime and taking Telegram down with it).
-# Running the install AFTER generate-openclaw-config.py merges the registry
-# entry into the freshly-written config. Seed the per-account state right
-# after so the bridge picks up the captured iLink session.
 # hadolint ignore=DL3059,DL4006
-RUN (openclaw doctor --fix > /dev/null 2>&1 || true) \
-    && openclaw plugins install \
-        '@tencent-weixin/openclaw-weixin@2.4.2' --pin \
-    && openclaw config set plugins.entries.openclaw-weixin.enabled true \
-    && python3 /usr/local/lib/nemoclaw/seed-wechat-accounts.py
+RUN openclaw doctor --fix --non-interactive
 
 # Lock down npm: no further registry traffic in this image. Everything past
 # this point must resolve from local sources only.
@@ -402,11 +403,19 @@ ENV NPM_CONFIG_OFFLINE=true \
     NPM_CONFIG_FUND=false
 
 # Install NemoClaw plugin into OpenClaw (local /opt/nemoclaw, no network).
+# This must fail the image build if registration fails; otherwise the sandbox
+# can boot with a discoverable plugin manifest but without the /nemoclaw runtime
+# command registered in the active Gateway.
+# Re-apply WeChat account seeding after OpenClaw doctor/plugin-install touches
+# openclaw.json; the seed script no-ops unless WeChat is actively configured.
 # Prune non-runtime metadata from staged bundled plugin dependencies before
 # this layer is committed; deleting it in a later layer would not reduce the
 # OCI image imported by k3s.
 # hadolint ignore=DL3059,DL4006
-RUN (openclaw plugins install /opt/nemoclaw > /dev/null 2>&1 || true) \
+RUN openclaw plugins install /opt/nemoclaw \
+    && openclaw plugins enable nemoclaw \
+    && openclaw plugins inspect nemoclaw --json > /dev/null \
+    && python3 /usr/local/lib/nemoclaw/seed-wechat-accounts.py \
     && if [ -d /sandbox/.openclaw/plugin-runtime-deps ]; then \
         find /sandbox/.openclaw/plugin-runtime-deps -type f \( \
             -name '*.d.ts' -o -name '*.d.mts' -o -name '*.d.cts' -o \

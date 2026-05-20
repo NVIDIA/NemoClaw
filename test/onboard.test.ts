@@ -45,6 +45,16 @@ function parseStdoutJson<T>(stdout: string): T {
   return JSON.parse(line);
 }
 
+function stripMessagingEnv(source: NodeJS.ProcessEnv): Record<string, string | undefined> {
+  const env = { ...source } as Record<string, string | undefined>;
+  for (const key of Object.keys(env)) {
+    if (key.startsWith("DISCORD_") || key.startsWith("TELEGRAM_")) {
+      delete env[key];
+    }
+  }
+  return env;
+}
+
 type OnboardTestInternalsCandidate = Partial<OnboardTestInternals> | null;
 
 function isOnboardTestInternals(
@@ -430,6 +440,9 @@ startGateway(null).catch(() => {});
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw", "src"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw-blueprint", ".venv"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-start.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-tool-catalog.js"))).toBe(
+        true,
+      );
       expect(fs.existsSync(path.join(buildCtx, "scripts", "setup.sh"))).toBe(false);
       expect(fs.existsSync(path.join(buildCtx, "nemoclaw", "node_modules"))).toBe(false);
     } finally {
@@ -618,15 +631,374 @@ const { setupInference } = require(${onboardPath});
 
     expect(result.status).toBe(0);
     const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
-    assert.equal(commands.length, 3);
+    assert.equal(commands.length, 4);
     assert.match(commands[0].command, /gateway select nemoclaw/);
-    assert.match(commands[1].command, /provider get hermes-provider/);
-    assert.match(commands[2].command, /inference set --no-verify --provider hermes-provider/);
+    assert.match(commands[1].command, /provider list/);
+    assert.match(commands[2].command, /provider get hermes-provider/);
+    assert.match(commands[3].command, /inference set --no-verify --provider hermes-provider/);
     assert.ok(!commands.some((entry) => /provider (create|update)/.test(entry.command)));
     assert.ok(!commands.some((entry) => entry.env?.NOUS_API_KEY || entry.env?.OPENAI_API_KEY));
     assert.ok(
       !commands.some((entry) => /nous-host-secret|openai-host-secret/.test(entry.command)),
       "host credential values must not appear in argv",
+    );
+  });
+
+  it("routes Bedrock Runtime custom Anthropic endpoints through the hidden OpenAI adapter", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-bedrock-runtime-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-bedrock-runtime-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const adapterPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "bedrock-runtime-adapter.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const adapter = require(${adapterPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  if (normalized.includes("provider get compatible-anthropic-endpoint")) {
+    return { status: 1, stdout: "", stderr: "" };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  if (_n(command).includes("inference") && _n(command).includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: compatible-anthropic-endpoint",
+      "  Model: anthropic.claude-3-5-sonnet-20240620-v1:0",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+adapter.ensureBedrockRuntimeAdapter = async ({ classification, compatibleCredential }) => ({
+  baseUrl: "http://host.openshell.internal:11436/v1",
+  localBaseUrl: "http://127.0.0.1:11436/v1",
+  credentialEnv: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN",
+  token: "adapter-token",
+  region: classification.region,
+  compatibleCredential,
+});
+
+process.env.COMPATIBLE_ANTHROPIC_API_KEY = "bedrock-bearer";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference(
+    "test-box",
+    "anthropic.claude-3-5-sonnet-20240620-v1:0",
+    "compatible-anthropic-endpoint",
+    "https://bedrock-runtime.us-east-1.amazonaws.com",
+    "COMPATIBLE_ANTHROPIC_API_KEY",
+  );
+  console.log(JSON.stringify(commands));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const commands = parseStdoutJson<CommandEntry[]>(result.stdout);
+    const providerCommand = commands.find((entry) => /provider create/.test(entry.command));
+    assert.ok(providerCommand, "expected hidden adapter provider registration");
+    assert.match(providerCommand.command, /--name compatible-anthropic-endpoint/);
+    assert.match(providerCommand.command, /--type openai/);
+    assert.match(providerCommand.command, /--credential NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN/);
+    assert.match(
+      providerCommand.command,
+      /OPENAI_BASE_URL=http:\/\/host\.openshell\.internal:11436\/v1/,
+    );
+    assert.equal(providerCommand.env?.NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN, "adapter-token");
+    assert.ok(
+      !JSON.stringify(commands).includes("bedrock-bearer"),
+      "Bedrock bearer token must not appear in OpenShell argv or env",
+    );
+    const sandboxCommands = commands.filter((entry) => /\bsandbox\b/.test(entry.command));
+    assert.ok(
+      !sandboxCommands.some((entry) =>
+        JSON.stringify(entry).includes("NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_TOKEN"),
+      ),
+      "adapter credential env must not be passed to sandbox commands",
+    );
+    assert.ok(
+      !sandboxCommands.some((entry) => JSON.stringify(entry).includes("adapter-token")),
+      "adapter token must not be passed to sandbox commands",
+    );
+    assert.ok(
+      !result.stderr.includes("bedrock-bearer") && !result.stderr.includes("adapter-token"),
+      "Bedrock tokens must not appear in onboarding stderr",
+    );
+    assert.match(
+      commands.at(-1)?.command || "",
+      /inference set --no-verify --provider compatible-anthropic-endpoint --model anthropic\.claude-3-5-sonnet-20240620-v1:0/,
+    );
+  });
+
+  it("resolves a sandbox name before reconciling Hermes Provider on resume", { timeout: 60_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-hermes-resume-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "hermes-resume-sandbox-name-check.js");
+    const openshellPath = JSON.stringify(path.join(fakeBin, "openshell"));
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const sessionPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "state", "onboard-session.js"),
+    );
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const nimPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "nim.js"));
+    const gatewayStatePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "gateway.js"));
+    const dockerDriverPlatformPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "docker-driver-platform.js"),
+    );
+    const gatewayGpuPassthroughPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "gateway-gpu-passthrough.js"),
+    );
+    const onboardProbesPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "onboard-probes.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const onboardSession = require(${sessionPath});
+const credentials = require(${credentialsPath});
+const nim = require(${nimPath});
+const gatewayState = require(${gatewayStatePath});
+const dockerDriverPlatform = require(${dockerDriverPlatformPath});
+const gatewayGpuPassthrough = require(${gatewayGpuPassthroughPath});
+const onboardProbes = require(${onboardProbesPath});
+
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const commands = [];
+const prompts = [];
+const registryUpdates = [];
+const done = new Error("INFERENCE_STEP_DONE");
+let inferenceSessionSnapshot = null;
+
+delete process.env.NEMOCLAW_NON_INTERACTIVE;
+delete process.env.NEMOCLAW_SANDBOX_NAME;
+delete process.env.NOUS_API_KEY;
+for (const key of Object.keys(process.env)) {
+  if (key.startsWith("DISCORD_") || key.startsWith("TELEGRAM_")) {
+    delete process.env[key];
+  }
+}
+process.env.NEMOCLAW_OPENSHELL_BIN = ${openshellPath};
+process.env.OPENSHELL_GATEWAY = "nemoclaw";
+
+try {
+  Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+  Object.defineProperty(process.stdout, "isTTY", { value: true, configurable: true });
+} catch {
+  process.stdin.isTTY = true;
+  process.stdout.isTTY = true;
+}
+
+runner.run = (command, opts = {}) => {
+  const normalized = _n(command);
+  commands.push({ command: normalized, env: opts.env || null });
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  const normalized = _n(command);
+  if (normalized.includes("inference get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: hermes-provider",
+      "  Model: moonshotai/kimi-k2.6",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+
+registry.getSandbox = (name) =>
+  name === "hermes-resume"
+    ? {
+        name,
+        gpuEnabled: false,
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+        hermesToolGateways: [],
+        messagingChannels: [],
+        policies: ["nous-web"],
+      }
+    : null;
+registry.updateSandbox = (name, updates) => {
+  registryUpdates.push({ name, updates });
+  return true;
+};
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+
+credentials.prompt = async (question) => {
+  prompts.push(String(question));
+  if (String(question).includes("Sandbox name")) return "hermes-resume";
+  return "yes";
+};
+
+nim.detectGpu = () => null;
+gatewayState.getGatewayReuseState = () => "healthy";
+gatewayState.shouldSelectNamedGatewayForReuse = () => false;
+gatewayState.getSandboxStateFromOutputs = () => "ready";
+gatewayState.isGatewayHealthy = () => true;
+dockerDriverPlatform.isLinuxDockerDriverGatewayEnabled = () => false;
+gatewayGpuPassthrough.reconcileGatewayGpuReuseForGpuIntent = ({ gatewayReuseState }) => gatewayReuseState;
+onboardProbes.verifyOnboardInferenceSmoke = () => {};
+
+const complete = () => ({
+  status: "complete",
+  startedAt: new Date().toISOString(),
+  completedAt: new Date().toISOString(),
+  error: null,
+});
+onboardSession.saveSession(
+  onboardSession.createSession({
+    mode: "interactive",
+    agent: "hermes",
+    sandboxName: null,
+    provider: "hermes-provider",
+    model: "moonshotai/kimi-k2.6",
+    endpointUrl: "https://inference-api.nousresearch.com/v1",
+    credentialEnv: "NOUS_API_KEY",
+    hermesAuthMethod: "api_key",
+    hermesToolGateways: [],
+    policyPresets: ["nous-web"],
+    metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+    steps: {
+      preflight: complete(),
+      gateway: complete(),
+      provider_selection: complete(),
+    },
+  }),
+);
+
+const originalMarkStepComplete = onboardSession.markStepComplete;
+onboardSession.markStepComplete = (stepName, updates = {}) => {
+  const result = originalMarkStepComplete(stepName, updates);
+  if (stepName === "inference") {
+    inferenceSessionSnapshot = result;
+    throw done;
+  }
+  return result;
+};
+
+const { onboard } = require(${onboardPath});
+
+(async () => {
+  try {
+    await onboard({ resume: true, agent: "hermes", acceptThirdPartySoftware: true, noGpu: true });
+    throw new Error("Expected onboarding to reach the inference step");
+  } catch (error) {
+    if (error === done || error?.message === done.message) {
+      console.log(JSON.stringify({
+        commands,
+        prompts,
+        registryUpdates,
+        inferenceSessionSandboxName: inferenceSessionSnapshot?.sandboxName ?? null,
+      }));
+      return;
+    }
+    console.error(error);
+    process.exit(1);
+  }
+})();
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const env: Record<string, string | undefined> = {
+      ...stripMessagingEnv(process.env),
+      HOME: tmpDir,
+      PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_OPENSHELL_BIN: path.join(fakeBin, "openshell"),
+    };
+    delete env.NEMOCLAW_NON_INTERACTIVE;
+    delete env.NEMOCLAW_SANDBOX_NAME;
+    delete env.NOUS_API_KEY;
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.doesNotMatch(
+      `${result.stderr}\n${result.stdout}`,
+      /Hermes Provider requires a sandbox name/,
+    );
+    const payload = parseStdoutJson<{
+      commands: CommandEntry[];
+      prompts: string[];
+      registryUpdates: Array<{ name: string; updates: Record<string, unknown> }>;
+      inferenceSessionSandboxName: string | null;
+    }>(result.stdout);
+
+    assert.ok(
+      payload.prompts.some((question) => question.includes("Sandbox name")),
+      "resume should prompt for the missing sandbox name before Hermes inference reconciliation",
+    );
+    assert.ok(
+      payload.commands.some((entry) =>
+        /inference set --no-verify --provider hermes-provider/.test(entry.command),
+      ),
+      "resume should reach openshell inference set",
+    );
+    assert.ok(!payload.commands.some((entry) => /provider (create|update)/.test(entry.command)));
+    assert.equal(
+      payload.inferenceSessionSandboxName,
+      null,
+      "resume inference must not persist sandboxName before sandbox creation",
+    );
+    assert.ok(
+      payload.registryUpdates.some(
+        (call) =>
+          call.name === "hermes-resume" &&
+          call.updates.provider === "hermes-provider" &&
+          call.updates.model === "moonshotai/kimi-k2.6",
+      ),
+      "Hermes setup should reconcile inference against the resolved sandbox name",
     );
   });
 
@@ -811,6 +1183,126 @@ const { setupInference } = require(${onboardPath});
     assert.doesNotMatch(providerCommand.command, /--credential OPENAI_API_KEY/);
     assert.equal(providerCommand.env?.NEMOCLAW_VLLM_LOCAL_TOKEN, "dummy");
     assert.equal(payload.savedOpenAiKey, "sk-existing");
+  });
+
+  it("recovers the Ollama auth proxy on WSL when the sandbox needs proxy fronting", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-wsl-proxy-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "setup-ollama-wsl-proxy-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    );
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"),
+    );
+    const topologyPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "local-inference-topology.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const platform = require(${platformPath});
+const localInference = require(${localInferencePath});
+const proxy = require(${proxyPath});
+const topology = require(${topologyPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+
+const commands = [];
+const proxyCalls = [];
+runner.run = (command, opts = {}) => {
+  const cmd = _n(command);
+  commands.push({ command: cmd, env: opts.env || null });
+  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("inference") && cmd.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: ollama-local",
+      "  Model: qwen2.5:7b",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+platform.isWsl = () => true;
+topology.shouldFrontOllamaWithProxy = () => true;
+localInference.validateLocalProvider = () => ({
+  ok: false,
+  message: "container cannot reach Ollama",
+  diagnostic: "simulated WSL native Docker reachability failure",
+});
+localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:11435/v1";
+localInference.getOllamaWarmupCommand = () => ["true"];
+localInference.validateOllamaModel = () => ({ ok: true });
+proxy.ensureOllamaAuthProxy = () => {
+  proxyCalls.push("ensure");
+};
+proxy.isProxyHealthy = () => {
+  proxyCalls.push("healthy");
+  return true;
+};
+proxy.getOllamaProxyToken = () => "proxy-token";
+proxy.persistAndProbeOllamaProxy = async (token) => {
+  proxyCalls.push("persist:" + token);
+};
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  await setupInference("test-box", "qwen2.5:7b", "ollama-local");
+  console.log(JSON.stringify({ commands, proxyCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr || result.stdout);
+    const payload = parseStdoutJson<{ commands: CommandEntry[]; proxyCalls: string[] }>(
+      result.stdout,
+    );
+    assert.deepEqual(payload.proxyCalls, ["ensure", "healthy", "persist:proxy-token"]);
+    const providerCommand = payload.commands.find(
+      (entry) => entry.command.includes("provider create") && entry.command.includes("ollama-local"),
+    );
+    assert.ok(providerCommand, "expected ollama-local provider create command");
+    assert.match(providerCommand.command, /--credential NEMOCLAW_OLLAMA_PROXY_TOKEN/);
+    assert.equal(providerCommand.env?.NEMOCLAW_OLLAMA_PROXY_TOKEN, "proxy-token");
+    assert.doesNotMatch(providerCommand.command, /proxy-token/);
+    assert.ok(
+      payload.commands.some((entry) =>
+        entry.command.includes("inference set --no-verify --provider ollama-local"),
+      ),
+      "expected ollama-local inference route to be selected",
+    );
   });
 
   it("detects when the live inference route already matches the requested provider and model", () => {

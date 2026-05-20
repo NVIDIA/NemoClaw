@@ -1,4 +1,4 @@
-.PHONY: check lint format format-biome lint-ts format-ts check-installer-hash docs docs-strict docs-live docs-clean
+.PHONY: check lint format format-biome lint-ts format-ts check-installer-hash docs docs-deps docs-strict docs-live docs-preview-watch docs-clean
 
 check:
 	npm run check
@@ -29,11 +29,17 @@ check-installer-hash:
 docs:
 	npm run docs
 
+docs-deps:
+	npm run docs:deps
+
 docs-strict:
 	npm run docs:strict
 
 docs-live:
 	npm run docs:live
+
+docs-preview-watch:
+	npm run docs:preview:watch
 
 docs-clean:
 	npm run docs:clean

@@ -222,6 +222,10 @@ describe("nemoclaw-start non-root fallback", () => {
         'printf "OPENCLAW_GATEWAY_PORT=%s\\n" "$OPENCLAW_GATEWAY_PORT"',
         'printf "OPENCLAW_GATEWAY_URL=%s\\n" "$OPENCLAW_GATEWAY_URL"',
         'printf "SANDBOX_HOME=%s\\n" "$_SANDBOX_HOME"',
+        'printf "OPENCLAW_HOME=%s\\n" "$OPENCLAW_HOME"',
+        'printf "OPENCLAW_STATE_DIR=%s\\n" "$OPENCLAW_STATE_DIR"',
+        'printf "OPENCLAW_CONFIG_PATH=%s\\n" "$OPENCLAW_CONFIG_PATH"',
+        'printf "OPENCLAW_OAUTH_DIR=%s\\n" "$OPENCLAW_OAUTH_DIR"',
         'printf "CMD=%s\\n" "${NEMOCLAW_CMD[*]}"',
       ].join("\n");
       fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -247,6 +251,10 @@ describe("nemoclaw-start non-root fallback", () => {
       expect(injected.stdout).toContain("OPENCLAW_GATEWAY_PORT=19000");
       expect(injected.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:19000");
       expect(injected.stdout).toContain("SANDBOX_HOME=/sandbox");
+      expect(injected.stdout).toContain("OPENCLAW_HOME=/sandbox");
+      expect(injected.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
+      expect(injected.stdout).toContain("OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json");
+      expect(injected.stdout).toContain("OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials");
       expect(injected.stdout).toContain("CMD=openclaw agent --agent main");
 
       const bakedCustomPort = runScenario("set -- nemoclaw-start openclaw agent", {
@@ -257,6 +265,10 @@ describe("nemoclaw-start non-root fallback", () => {
       expect(bakedCustomPort.stdout).toContain("PUBLIC_PORT=18790");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_GATEWAY_PORT=18790");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18790");
+      expect(bakedCustomPort.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
+      expect(bakedCustomPort.stdout).toContain(
+        "OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials",
+      );
       expect(bakedCustomPort.stdout).toContain("CMD=openclaw agent");
 
       const baked = runScenario("set -- nemoclaw-start openclaw agent", {
@@ -268,7 +280,15 @@ describe("nemoclaw-start non-root fallback", () => {
       expect(baked.stdout).toContain("OPENCLAW_GATEWAY_PORT=18789");
       expect(baked.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789");
       expect(baked.stdout).toContain("SANDBOX_HOME=/sandbox");
+      expect(baked.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
       expect(baked.stdout).toContain("CMD=openclaw agent");
+
+      const invalidHighPort = runScenario("set -- nemoclaw-start openclaw agent", {
+        NEMOCLAW_DASHBOARD_PORT: "70000",
+      });
+      expect(invalidHighPort.status).toBe(1);
+      expect(invalidHighPort.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT='70000'");
+      expect(invalidHighPort.stderr).toContain("must be an integer between 1024 and 65535");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -487,6 +507,10 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
         `export OPENCLAW_GATEWAY_TOKEN=${JSON.stringify(initialToken)}`,
         `export OPENCLAW_GATEWAY_PORT=${JSON.stringify(port)}`,
         `export OPENCLAW_GATEWAY_URL=${JSON.stringify(`ws://127.0.0.1:${port}`)}`,
+        'export OPENCLAW_HOME="/sandbox"',
+        'export OPENCLAW_STATE_DIR="/sandbox/.openclaw"',
+        'export OPENCLAW_CONFIG_PATH="/sandbox/.openclaw/openclaw.json"',
+        'export OPENCLAW_OAUTH_DIR="/sandbox/.openclaw/credentials"',
         `PUBLIC_PORT=${JSON.stringify(port)}`,
         'CHAT_UI_URL="https://remote.example.test/ui"',
         'PROXY_HOST="10.200.0.1"',
@@ -561,6 +585,21 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN='token'");
+  });
+
+  it("#3730: writes OpenClaw state env for connect-shell pairing approval", () => {
+    const { result, envFile } = runGatewayTokenHarness(
+      JSON.stringify({ gateway: { auth: { token: "token" } } }),
+    );
+
+    expect(result.status).toBe(0);
+    expect(envFile).toContain("export OPENCLAW_HOME='/sandbox'");
+    expect(envFile).toContain("export OPENCLAW_STATE_DIR='/sandbox/.openclaw'");
+    expect(envFile).toContain("export OPENCLAW_CONFIG_PATH='/sandbox/.openclaw/openclaw.json'");
+    expect(envFile).toContain("export OPENCLAW_OAUTH_DIR='/sandbox/.openclaw/credentials'");
+    expect(envFile.indexOf("export OPENCLAW_STATE_DIR=")).toBeLessThan(
+      envFile.indexOf("export OPENCLAW_GATEWAY_TOKEN="),
+    );
   });
 
   it("#3256: generates a gateway token before writing the runtime shell env", () => {
@@ -764,7 +803,7 @@ describe("nemoclaw-start configure guard behavior", () => {
   it("#2592: blocks every (channel × op) mutating combo and surfaces the host-side hint", () => {
     const setup = writeProxyEnvWithGuard();
     try {
-      const channels = ["slack", "telegram", "discord"];
+      const channels = ["slack", "telegram", "discord", "wechat", "whatsapp"];
       const ops = ["add", "remove"];
       for (const op of ops) {
         for (const channel of channels) {
@@ -774,6 +813,46 @@ describe("nemoclaw-start configure guard behavior", () => {
           expect(result.stderr).toContain(`nemoclaw <sandbox> channels ${op}`);
         }
       }
+    } finally {
+      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // WhatsApp pairs entirely inside the sandbox via `openclaw channels login
+  // --channel whatsapp`, so the guard must allow that exact in-sandbox login
+  // path. WeChat completes pairing host-side and must stay blocked here so it
+  // cannot bypass NemoClaw's host-side registry/provider/rebuild path.
+  // `status` is read-only diagnostics and is similarly safe to allow.
+  it("allows only WhatsApp `channels login` and read-only `channels status` inside the sandbox", () => {
+    const setup = writeProxyEnvWithGuard();
+    try {
+      const allowed = [
+        ["channels", "login", "--channel", "whatsapp"],
+        ["channels", "login", "--channel=whatsapp"],
+        ["channels", "status", "--channel", "whatsapp"],
+        ["channels", "status"],
+      ];
+      for (const argv of allowed) {
+        const result = runGuardedOpenclaw(setup, argv);
+        expect(result.status, `${argv.join(" ")} should pass the guard`).toBe(0);
+      }
+
+      const blocked = [
+        ["channels", "login"],
+        ["channels", "login", "--channel", "wechat"],
+        ["channels", "login", "--channel=telegram"],
+      ];
+      for (const argv of blocked) {
+        const result = runGuardedOpenclaw(setup, argv);
+        expect(result.status, `${argv.join(" ")} should be blocked`).toBe(1);
+        expect(result.stderr).toContain("only supported inside the sandbox for WhatsApp");
+      }
+
+      const log = fs.readFileSync(setup.commandLog, "utf-8");
+      expect(log).toContain("channels login --channel whatsapp");
+      expect(log).toContain("channels login --channel=whatsapp");
+      expect(log).toContain("channels status");
+      expect(log).not.toContain("channels login --channel wechat");
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
@@ -1335,7 +1414,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nprintf 'state=%s oauth=%s home=%s config=%s\\n' "$OPENCLAW_STATE_DIR" "$OPENCLAW_OAUTH_DIR" "$OPENCLAW_HOME" "$OPENCLAW_CONFIG_PATH" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
       { mode: 0o755 },
     );
     fs.writeFileSync(
@@ -1351,6 +1430,10 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         "set -euo pipefail",
         `export PATH=${JSON.stringify(`${fakeBin}:${process.env.PATH || ""}`)}`,
         `OPENCLAW=${JSON.stringify(path.join(fakeBin, "openclaw"))}`,
+        "export OPENCLAW_HOME=/sandbox",
+        "export OPENCLAW_STATE_DIR=/sandbox/.openclaw",
+        "export OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json",
+        "export OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials",
         '_DASHBOARD_PORT="19000"',
         "start_persistent_gateway_log_mirror() { sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; }",
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
@@ -1391,6 +1474,9 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     const { result, openclaw, gateway } = runLaunchBlock("non-root");
     expect(result.status).toBe(0);
     expect(openclaw).toContain("gateway run --port 19000");
+    expect(openclaw).toContain(
+      "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
+    );
     expect(gateway).toContain("gateway stdout marker");
     expect(gateway).toContain("gateway stderr marker");
     expect(result.stdout).not.toContain("gateway stdout marker");
@@ -1406,10 +1492,13 @@ describe("nemoclaw-start gateway launch signal handling", () => {
   });
 
   it("launches the root gateway through gosu with the configured port and tracks child PIDs", () => {
-    const { result, gosu } = runLaunchBlock("root");
+    const { result, openclaw, gosu } = runLaunchBlock("root");
     expect(result.status).toBe(0);
     expect(gosu).toContain("user=gateway");
     expect(gosu).toContain("gateway run --port 19000");
+    expect(openclaw).toContain(
+      "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
+    );
     const gatewayPid = result.stdout.match(/GATEWAY_PID=(\d+)/)?.[1];
     expect(gatewayPid).toBeTruthy();
     expect(result.stdout).toContain(`WAIT_PID=${gatewayPid}`);

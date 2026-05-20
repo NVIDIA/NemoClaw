@@ -36,6 +36,7 @@ import {
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import { loadAgent } from "../../agent/defs";
+import * as agentRuntime from "../../agent/runtime";
 import { ensureAgentBaseImage } from "../../agent/onboard";
 import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
@@ -54,8 +55,6 @@ import {
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
-
-const agentRuntime = require("../../../../bin/lib/agent-runtime");
 
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
@@ -542,6 +541,26 @@ export async function rebuildSandbox(
     sessionMatchesSandbox ? sessionBefore?.messagingChannelConfig ?? null : null;
   const rebuildMessagingChannelConfig =
     sb.messagingChannelConfig ?? sessionMessagingChannelConfig ?? null;
+  const rebuildsHermesSandbox = rebuildAgent === "hermes";
+  let registryHermesToolGateways: string[] | null = null;
+  if (rebuildsHermesSandbox && Array.isArray(sb.hermesToolGateways)) {
+    registryHermesToolGateways = sb.hermesToolGateways.filter(
+      (value: unknown): value is string => typeof value === "string",
+    );
+  }
+  const sessionHermesToolGateways =
+    rebuildsHermesSandbox &&
+    sessionMatchesSandbox && Array.isArray(sessionBefore?.hermesToolGateways)
+      ? sessionBefore.hermesToolGateways.filter(
+          (value: unknown): value is string => typeof value === "string",
+        )
+      : null;
+  const rebuildHermesToolGateways = rebuildsHermesSandbox
+    ? registryHermesToolGateways ?? sessionHermesToolGateways ?? []
+    : [];
+  const hasRebuildHermesToolGateways =
+    rebuildsHermesSandbox &&
+    (registryHermesToolGateways !== null || sessionHermesToolGateways !== null);
   const hasRebuildMessagingChannels =
     registryMessagingChannels !== null || sessionMessagingChannels !== null;
   // Snapshot the operator's paused channel set BEFORE `removeSandboxRegistryEntry`
@@ -575,6 +594,7 @@ export async function rebuildSandbox(
     s.messagingChannels = rebuildMessagingChannels;
     s.messagingChannelConfig = rebuildMessagingChannelConfig;
     s.disabledChannels = rebuildDisabledChannels;
+    s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
     // Persist inference selection from the about-to-be-removed registry entry
     // so onboard --resume can recreate with the same provider/model in
     // non-interactive mode. Without this the registry is gone by the time
@@ -702,6 +722,9 @@ export async function rebuildSandbox(
     ...(hasRebuildMessagingChannels ? { messagingChannels: [...rebuildMessagingChannels] } : {}),
     disabledChannels:
       rebuildDisabledChannels.length > 0 ? [...rebuildDisabledChannels] : undefined,
+    ...(hasRebuildHermesToolGateways
+      ? { hermesToolGateways: [...rebuildHermesToolGateways] }
+      : {}),
     ...(sb.providerCredentialHashes ? { providerCredentialHashes: sb.providerCredentialHashes } : {}),
   };
   if (Object.keys(preservedRegistryFields).length > 0) {

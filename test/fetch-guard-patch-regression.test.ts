@@ -59,6 +59,28 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
 }
 
 describe("fetch-guard patch regression guard", () => {
+  it("fails the image build when the NemoClaw OpenClaw plugin cannot install", () => {
+    const command = dockerRunCommandBetween(
+      "# Install NemoClaw plugin into OpenClaw",
+      "# SECURITY: Clear any gateway auth token",
+    );
+    expect(command).toContain("openclaw plugins install /opt/nemoclaw");
+    expect(command).toContain("openclaw plugins enable nemoclaw");
+    expect(command).toContain("openclaw plugins inspect nemoclaw --json");
+    expect(command).not.toContain("--dangerously-force-unsafe-install");
+    expect(command).not.toMatch(/openclaw plugins install \/opt\/nemoclaw[^&|]*(?:\|\|\s*true|2>&1)/);
+
+    const script = [
+      "openclaw() {",
+      '  if [ "${1:-} ${2:-} ${3:-}" = "plugins install /opt/nemoclaw" ]; then return 42; fi',
+      "  return 0",
+      "}",
+      command,
+    ].join("\n");
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+    expect(result.status).toBe(42);
+  });
+
   it("upgrades stale OpenClaw from the blueprint minimum and leaves current installs alone", () => {
     const stale = runOpenClawUpgradeBlock("2026.3.11");
     expect(stale.result.status).toBe(0);

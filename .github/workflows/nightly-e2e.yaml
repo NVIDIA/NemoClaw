@@ -7,12 +7,18 @@
 #   messaging-providers-e2e  Validates messaging credential provider/placeholder/L7-proxy chain
 #                            for Telegram + Discord + Slack. Uses fake tokens. Slack additionally
 #                            exercises OpenShell provider-shaped alias resolution (#2085 follow-up).
+#   openclaw-slack-pairing-e2e
+#                            Validates hermetic Slack Socket Mode pairing request approval across
+#                            gateway and connect-shell OpenClaw state roots (#3730/#3737).
 #   messaging-compatible-endpoint-e2e
 #                            Validates Telegram + OpenAI-compatible endpoint inference routing
 #                            through inference.local with a hermetic local mock (#2766).
 #   kimi-inference-compat-e2e
 #                            Validates Kimi K2.6 safe exec splitting through OpenClaw trajectories
 #                            with a hermetic OpenAI-compatible mock (#2620).
+#   bedrock-runtime-compatible-anthropic-e2e
+#                            Validates the silent Bedrock Runtime custom Anthropic endpoint path
+#                            through a hermetic fake Bedrock Runtime host for OpenClaw and Hermes.
 #   token-rotation-e2e       Validates that rotating a messaging token and re-running onboard
 #                            propagates the new credential to the sandbox. Combined Telegram +
 #                            Discord + Slack coverage with cross-talk assertions. See issue #1903.
@@ -66,8 +72,10 @@ on:
           Comma-separated job names to run (empty = all).
           Valid: cloud-e2e, cloud-onboard-e2e, cloud-inference-e2e,
           skill-agent-e2e, docs-validation-e2e, messaging-providers-e2e,
+          openclaw-slack-pairing-e2e,
           messaging-compatible-endpoint-e2e,
           kimi-inference-compat-e2e,
+          bedrock-runtime-compatible-anthropic-e2e,
           token-rotation-e2e, sandbox-survival-e2e,
           openshell-gateway-upgrade-e2e,
           issue-2478-crash-loop-recovery-e2e, hermes-e2e,
@@ -79,7 +87,8 @@ on:
           snapshot-commands-e2e, shields-config-e2e, rebuild-openclaw-e2e,
           upgrade-stale-sandbox-e2e, rebuild-hermes-e2e,
           rebuild-hermes-stale-base-e2e, double-onboard-e2e,
-          onboard-repair-e2e, onboard-resume-e2e, runtime-overrides-e2e,
+          onboard-repair-e2e, onboard-resume-e2e, onboard-negative-paths-e2e,
+          runtime-overrides-e2e,
           credential-sanitization-e2e, telegram-injection-e2e,
           overlayfs-autofix-e2e, device-auth-health-e2e,
           launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
@@ -146,7 +155,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -185,7 +194,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: install-log-cloud-onboard
           path: /tmp/nemoclaw-e2e-cloud-onboard-install.log
@@ -219,7 +228,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: install-log-cloud-inference
           path: /tmp/nemoclaw-e2e-cloud-inference-install.log
@@ -253,14 +262,14 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: install-log-skill-agent
           path: /tmp/nemoclaw-e2e-skill-agent-install.log
           if-no-files-found: ignore
 
   # ── Docs Validation E2E ──────────────────────────────────────
-  # CLI/docs parity (nemoclaw --help vs commands.md) + markdown link validation.
+  # CLI/docs parity (nemoclaw --help vs commands.mdx) + markdown link validation.
   # Split from cloud-experimental-e2e monolith (#2644).
   docs-validation-e2e:
     if: >-
@@ -295,10 +304,10 @@ jobs:
           bash test/e2e/test-docs-validation.sh
 
   # ── Messaging Providers E2E ──────────────────────────────────
-  # Validates the full provider/placeholder/L7-proxy chain for messaging
-  # credentials (Telegram, Discord). Uses fake tokens by default — the L7
-  # proxy rewrites placeholders and the real API returns 401, proving the
-  # chain works. See: PR #1081
+  # Validates the full provider/placeholder/L7-proxy chain for token-backed
+  # messaging credentials, and the QR-only WhatsApp config/policy/no-provider
+  # path. Uses fake tokens by default — the L7 proxy rewrites placeholders and
+  # the real API returns 401, proving the chain works. See: PR #1081
   messaging-providers-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -306,7 +315,7 @@ jobs:
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',messaging-providers-e2e,'))
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -329,10 +338,49 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: install-log-messaging-providers
-          path: /tmp/nemoclaw-e2e-install.log
+          path: |
+            /tmp/nemoclaw-e2e-install.log
+            /tmp/nemoclaw-e2e-whatsapp-*.log
+          if-no-files-found: ignore
+
+  # ── OpenClaw Slack Pairing E2E (#3730/#3737) ──────────────────
+  # Hermetic Socket Mode inbound event + chat.postMessage reply path, then
+  # connect-shell `openclaw pairing approve slack <code>` against shared state.
+  openclaw-slack-pairing-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openclaw-slack-pairing-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run OpenClaw Slack pairing E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_POLICY_TIER: "open"
+          NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-slack-pairing"
+          GITHUB_TOKEN: ${{ github.token }}
+          SLACK_BOT_TOKEN: "xoxb-fake-slack-pairing-e2e"
+          SLACK_APP_TOKEN: "xapp-fake-slack-pairing-e2e"
+        run: bash test/e2e/test-openclaw-slack-pairing.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: install-log-openclaw-slack-pairing
+          path: /tmp/nemoclaw-e2e-openclaw-slack-pairing-install.log
           if-no-files-found: ignore
 
   # ── Messaging + compatible endpoint regression (#2766) ───────
@@ -365,7 +413,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: install-log-messaging-compatible-endpoint
           path: /tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log
@@ -375,7 +423,7 @@ jobs:
   # Regression coverage for #3453 (stop must disable across rebuild), #3381
   # (start must re-attach from cached credentials), and #3671 (remove must
   # detach/delete providers and survive rebuild with token env still present).
-  # Exercises OpenClaw and Hermes across telegram, discord, wechat, and slack.
+  # Exercises OpenClaw and Hermes across telegram, discord, wechat, slack, and whatsapp.
   channels-stop-start-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -416,7 +464,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: install-log-channels-stop-start
           path: |
@@ -462,7 +510,7 @@ jobs:
 
       - name: Upload onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: install-log-brave-search
           # The script scrubs $BRAVE_API_KEY from this log in place
@@ -498,7 +546,7 @@ jobs:
 
       - name: Upload onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: install-log-kimi-inference-compat
           path: /tmp/nemoclaw-e2e-kimi-inference-compat-onboard.log
@@ -506,7 +554,7 @@ jobs:
 
       - name: Upload build/setup log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: build-log-kimi-inference-compat
           path: /tmp/nemoclaw-e2e-kimi-inference-compat-build.log
@@ -514,10 +562,74 @@ jobs:
 
       - name: Upload agent log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: agent-log-kimi-inference-compat
           path: /tmp/nemoclaw-e2e-kimi-inference-compat-agent.log
+          if-no-files-found: ignore
+
+  # ── Bedrock Runtime compatible Anthropic endpoint (#3767) ─────
+  # Hermetic fake Bedrock Runtime endpoint path. The sandbox only sees
+  # inference.local; the host-side OpenShell provider owns the hidden adapter
+  # token and the upstream Bedrock bearer derived from the fake pasted key.
+  bedrock-runtime-compatible-anthropic-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',bedrock-runtime-compatible-anthropic-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        agent: [openclaw, hermes]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run Bedrock Runtime compatible Anthropic E2E test
+        env:
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_AGENT: ${{ matrix.agent }}
+          NEMOCLAW_SANDBOX_NAME: e2e-bedrock-${{ matrix.agent }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-bedrock-runtime-compatible-anthropic.sh
+
+      - name: Upload onboard log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: onboard-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
+          path: /tmp/nemoclaw-e2e-bedrock-runtime-${{ matrix.agent }}-onboard.log
+          if-no-files-found: ignore
+
+      - name: Upload build/setup log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
+          path: /tmp/nemoclaw-e2e-bedrock-runtime-${{ matrix.agent }}-build.log
+          if-no-files-found: ignore
+
+      - name: Upload fake Bedrock Runtime log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mock-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
+          path: /tmp/nemoclaw-e2e-bedrock-runtime-${{ matrix.agent }}-mock.log
+          if-no-files-found: ignore
+
+      - name: Upload Bedrock Runtime adapter log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: adapter-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
+          path: ~/.nemoclaw/bedrock-runtime-adapter.log
           if-no-files-found: ignore
 
   # ── Token rotation (credential propagation to L7 proxy) ─────
@@ -559,7 +671,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: install-log-token-rotation
           path: /tmp/nemoclaw-e2e-install.log
@@ -591,7 +703,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sandbox-survival-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -626,7 +738,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: issue-2478-crash-loop-recovery-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -663,7 +775,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: hermes-e2e-install-log
           path: /tmp/nemoclaw-e2e-hermes-install.log
@@ -700,7 +812,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: hermes-inference-switch-install-log
           path: /tmp/nemoclaw-e2e-hermes-inference-switch-install.log
@@ -742,7 +854,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: hermes-discord-e2e-install-log
           path: /tmp/nemoclaw-e2e-hermes-discord-install.log
@@ -782,7 +894,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: hermes-slack-e2e-install-log
           path: /tmp/nemoclaw-e2e-hermes-slack-install.log
@@ -1022,7 +1134,7 @@ jobs:
 
       - name: Upload sandbox gateway logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sandbox-operations-docker-logs
           path: docker-logs/
@@ -1030,7 +1142,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sandbox-operations-test-log
           path: test-sandbox-operations-*.log
@@ -1064,7 +1176,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: inference-routing-test-log
           path: test-inference-routing-*.log
@@ -1100,7 +1212,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: openclaw-inference-switch-install-log
           path: /tmp/nemoclaw-e2e-openclaw-inference-switch-install.log
@@ -1134,7 +1246,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: network-policy-test-log
           path: test-network-policy-*.log
@@ -1165,7 +1277,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: state-backup-restore-test-log
           path: test-state-backup-restore-*.log
@@ -1196,7 +1308,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: tunnel-lifecycle-test-log
           path: test-tunnel-lifecycle-*.log
@@ -1230,7 +1342,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: diagnostics-test-log
           path: test-diagnostics-*.log
@@ -1268,7 +1380,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: install-log-credential-migration
           path: /tmp/nemoclaw-e2e-install.log
@@ -1302,7 +1414,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: snapshot-commands-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -1336,7 +1448,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: shields-config-install-log
           path: /tmp/nemoclaw-e2e-shields-install.log
@@ -1370,7 +1482,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: rebuild-openclaw-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -1405,7 +1517,7 @@ jobs:
 
       - name: Upload install logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: upgrade-stale-sandbox-logs
           path: |
@@ -1445,7 +1557,7 @@ jobs:
 
       - name: Upload gateway upgrade logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: openshell-gateway-upgrade-logs
           path: |
@@ -1486,7 +1598,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: rebuild-hermes-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -1522,7 +1634,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: rebuild-hermes-stale-base-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -1542,6 +1654,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1561,7 +1674,7 @@ jobs:
           bash test/e2e/test-double-onboard.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: double-onboard-test-log
           path: test-double-onboard-*.log
@@ -1581,6 +1694,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1600,7 +1714,7 @@ jobs:
           bash test/e2e/test-onboard-repair.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: onboard-repair-test-log
           path: test-onboard-repair-*.log
@@ -1620,6 +1734,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1639,10 +1754,59 @@ jobs:
           bash test/e2e/test-onboard-resume.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: onboard-resume-test-log
           path: test-onboard-resume-*.log
+          if-no-files-found: ignore
+
+  # -- Onboard Negative Paths E2E -------------------------------
+  onboard-negative-paths-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',onboard-negative-paths-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
+      - name: Install NemoClaw
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: bash install.sh --non-interactive --yes-i-accept-third-party-software
+      - name: Run onboard negative-path E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+        run: |
+          set -euo pipefail
+          [ -f "$HOME/.bashrc" ] && source "$HOME/.bashrc" 2>/dev/null || true
+          export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+          [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+          [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+          npm ci --ignore-scripts
+          log_file="/tmp/nemoclaw-e2e-onboard-negative-paths.log"
+          : >"${log_file}"
+          for scenario in \
+            ubuntu-repo-cloud-openclaw-custom-policies \
+            ubuntu-invalid-nvidia-key-negative \
+            ubuntu-gateway-port-conflict-negative; do
+            bash test/e2e/runtime/run-scenario.sh "$scenario" 2>&1 | tee -a "${log_file}"
+          done
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: onboard-negative-paths-test-log
+          path: /tmp/nemoclaw-e2e-onboard-negative-paths.log
           if-no-files-found: ignore
 
   # ── Runtime Overrides E2E ──────────────────────────────────
@@ -1659,6 +1823,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
       - name: Install NemoClaw
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -1678,7 +1843,7 @@ jobs:
           bash test/e2e/test-runtime-overrides.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: runtime-overrides-test-log
           path: test-runtime-overrides-*.log
@@ -1721,7 +1886,7 @@ jobs:
           bash test/e2e/test-credential-sanitization.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: credential-sanitization-test-log
           path: test-credential-sanitization-*.log
@@ -1764,7 +1929,7 @@ jobs:
           bash test/e2e/test-telegram-injection.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: telegram-injection-test-log
           path: test-telegram-injection-*.log
@@ -1800,7 +1965,7 @@ jobs:
 
       - name: Upload onboard logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: overlayfs-autofix-logs
           path: |
@@ -1841,7 +2006,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: device-auth-health-install-log
           path: /tmp/nemoclaw-e2e-health-install.log
@@ -1880,7 +2045,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: launchable-smoke-install-log
           path: /tmp/nemoclaw-launchable-install.log
@@ -1888,7 +2053,7 @@ jobs:
 
       - name: Upload onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: launchable-smoke-onboard-log
           path: /tmp/nemoclaw-launchable-onboard.log
@@ -1896,7 +2061,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: launchable-smoke-test-log
           path: /tmp/nemoclaw-launchable-test.log
@@ -1942,7 +2107,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gpu-e2e-install-log
           path: /tmp/nemoclaw-gpu-e2e-install.log
@@ -1950,7 +2115,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gpu-e2e-test-log
           path: /tmp/nemoclaw-gpu-e2e-test.log
@@ -1997,7 +2162,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gpu-double-onboard-install-log
           path: /tmp/nemoclaw-gpu-double-onboard-install.log
@@ -2005,7 +2170,7 @@ jobs:
 
       - name: Upload re-onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gpu-double-onboard-reonboard-log
           path: /tmp/nemoclaw-gpu-double-onboard-reonboard.log
@@ -2013,7 +2178,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gpu-double-onboard-test-log
           path: /tmp/nemoclaw-gpu-double-onboard-test.log
@@ -2029,10 +2194,12 @@ jobs:
         skill-agent-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
+        openclaw-slack-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
+        bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
@@ -2058,6 +2225,7 @@ jobs:
         double-onboard-e2e,
         onboard-repair-e2e,
         onboard-resume-e2e,
+        onboard-negative-paths-e2e,
         runtime-overrides-e2e,
         credential-sanitization-e2e,
         telegram-injection-e2e,
@@ -2122,10 +2290,12 @@ jobs:
         skill-agent-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
+        openclaw-slack-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
+        bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
@@ -2151,6 +2321,7 @@ jobs:
         double-onboard-e2e,
         onboard-repair-e2e,
         onboard-resume-e2e,
+        onboard-negative-paths-e2e,
         runtime-overrides-e2e,
         credential-sanitization-e2e,
         telegram-injection-e2e,
@@ -2272,10 +2443,12 @@ jobs:
         skill-agent-e2e,
         docs-validation-e2e,
         messaging-providers-e2e,
+        openclaw-slack-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
+        bedrock-runtime-compatible-anthropic-e2e,
         token-rotation-e2e,
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
@@ -2301,6 +2474,7 @@ jobs:
         double-onboard-e2e,
         onboard-repair-e2e,
         onboard-resume-e2e,
+        onboard-negative-paths-e2e,
         runtime-overrides-e2e,
         credential-sanitization-e2e,
         telegram-injection-e2e,
@@ -2330,6 +2504,17 @@ jobs:
             // ── Gather results from the current run's needs context ─
             const needs = ${{ toJSON(needs) }};
             const today = formatDate(new Date());
+            const isDispatch = context.eventName === 'workflow_dispatch';
+            const requestedJobsRaw = isDispatch ? '${{ inputs.jobs }}'.trim() : '';
+            const requestedJobs = requestedJobsRaw
+              ? requestedJobsRaw.split(',').map((name) => name.trim()).filter(Boolean)
+              : [];
+            const isSelectiveDispatch = isDispatch && requestedJobs.length > 0;
+            const runMode = isSelectiveDispatch
+              ? 'Selective dispatch'
+              : isDispatch
+                ? 'Manual full run'
+                : 'Scheduled full nightly';
 
             const entries = Object.entries(needs).filter(([name]) => !EXCLUDED_JOBS.has(name));
             let success = 0;
@@ -2356,45 +2541,49 @@ jobs:
 
             // ── Fetch prior-day run for trend comparison ────────────
             let trendLine = '';
-            try {
-              const WORKFLOW_FILE = 'nightly-e2e.yaml';
-              const now = new Date();
-              const since48h = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
-              const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
+            if (isSelectiveDispatch) {
+              trendLine = 'Trend: ⊘ Not shown for selective dispatches';
+            } else {
+              try {
+                const WORKFLOW_FILE = 'nightly-e2e.yaml';
+                const now = new Date();
+                const since48h = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
+                const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
 
-              const { data } = await github.rest.actions.listWorkflowRuns({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: WORKFLOW_FILE,
-                created: `>=${since48h}`,
-                per_page: 50,
-              });
+                const { data } = await github.rest.actions.listWorkflowRuns({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: WORKFLOW_FILE,
+                  created: `>=${since48h}`,
+                  per_page: 50,
+                });
 
-              // Find completed scheduled runs from 24–48h ago
-              const priorRuns = data.workflow_runs.filter(r =>
-                r.status === 'completed' &&
-                r.event === 'schedule' &&
-                new Date(r.created_at) < new Date(since24h)
-              );
+                // Find completed scheduled runs from 24–48h ago
+                const priorRuns = data.workflow_runs.filter(r =>
+                  r.status === 'completed' &&
+                  r.event === 'schedule' &&
+                  new Date(r.created_at) < new Date(since24h)
+                );
 
-              if (priorRuns.length > 0) {
-                // Check the most recent prior run
-                const priorRun = priorRuns[0];
-                const priorPerfect = priorRun.conclusion === 'success';
-                if (perfect && priorPerfect) {
-                  trendLine = 'Trend: ➡️ Stable (perfect both days)';
-                } else if (perfect && !priorPerfect) {
-                  trendLine = 'Trend: ↗️ Improving (yesterday had failures → today perfect)';
-                } else if (!perfect && priorPerfect) {
-                  trendLine = 'Trend: ↘️ Degrading (yesterday perfect → today has failures)';
+                if (priorRuns.length > 0) {
+                  // Check the most recent prior run
+                  const priorRun = priorRuns[0];
+                  const priorPerfect = priorRun.conclusion === 'success';
+                  if (perfect && priorPerfect) {
+                    trendLine = 'Trend: ➡️ Stable (perfect both days)';
+                  } else if (perfect && !priorPerfect) {
+                    trendLine = 'Trend: ↗️ Improving (yesterday had failures → today perfect)';
+                  } else if (!perfect && priorPerfect) {
+                    trendLine = 'Trend: ↘️ Degrading (yesterday perfect → today has failures)';
+                  } else {
+                    trendLine = 'Trend: ➡️ Stable (failures both days)';
+                  }
                 } else {
-                  trendLine = 'Trend: ➡️ Stable (failures both days)';
+                  trendLine = 'Trend: ⊘ No prior-day data for comparison';
                 }
-              } else {
-                trendLine = 'Trend: ⊘ No prior-day data for comparison';
+              } catch (e) {
+                trendLine = `Trend: ⊘ Could not fetch prior-day data (${e.message})`;
               }
-            } catch (e) {
-              trendLine = `Trend: ⊘ Could not fetch prior-day data (${e.message})`;
             }
 
             // ── Build scorecard ─────────────────────────────────────
@@ -2402,12 +2591,20 @@ jobs:
             const lines = [
               `## 🌅 NemoClaw Nightly Scorecard — ${today}`,
               '',
+              `**Run mode:** ${runMode}`,
+            ];
+
+            if (isSelectiveDispatch) {
+              lines.push(`**Requested jobs:** ${requestedJobs.map((name) => `\`${name}\``).join(', ')}`);
+            }
+
+            lines.push(
               `**Jobs run:** ${ran} of ${total}`,
               `  ✅ ${success} passed`,
               `  ❌ ${failure} failed`,
               `  ⊘  ${cancelled} cancelled`,
               `  ⏭️  ${skipped} skipped`,
-            ];
+            );
 
             if (failedJobs.length > 0) {
               lines.push('');

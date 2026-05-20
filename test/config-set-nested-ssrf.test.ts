@@ -62,9 +62,9 @@ describe("config set nested URL SSRF enforcement", () => {
           key: "inference.endpoints",
           value: nestedValue,
         }),
-      ).rejects.toThrow("process.exit:1");
+      ).rejects.toThrow(/URL validation failed/);
 
-      expect(errorSpy).toHaveBeenCalledWith(expect.stringMatching(/URL validation failed/));
+      expect(errorSpy).not.toHaveBeenCalled();
       expect(execSpy).not.toHaveBeenCalled();
     } finally {
       exitSpy.mockRestore();
@@ -137,13 +137,11 @@ describe("config set nested URL SSRF enforcement", () => {
           key: "not.a.real.key",
           value: JSON.stringify({ primary: "http://example.com/v1" }),
         }),
-      ).rejects.toThrow("process.exit:1");
+      ).rejects.toThrow(/does not currently exist/);
 
       expect(lookupSpy).not.toHaveBeenCalled();
       expect(execSpy).not.toHaveBeenCalled();
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("does not currently exist"),
-      );
+      expect(errorSpy).not.toHaveBeenCalled();
     } finally {
       exitSpy.mockRestore();
       errorSpy.mockRestore();
@@ -436,16 +434,20 @@ describe("config set nested URL SSRF enforcement", () => {
         primary: "http://user:pass@127.0.0.1:8080/private/path?token=secret#frag",
       });
 
-      await expect(
-        configSet("sandbox-ssrf-test", {
+      let thrown = "";
+      try {
+        await configSet("sandbox-ssrf-test", {
           key: "inference.endpoints",
           value: nestedValue,
-        }),
-      ).rejects.toThrow("process.exit:1");
+        });
+      } catch (error) {
+        thrown = error instanceof Error ? error.message : String(error);
+      }
 
-      expect(errorSpy).toHaveBeenCalledWith(
-        expect.stringContaining("URL validation failed for http://127.0.0.1:8080/private/path"),
-      );
+      expect(thrown).toContain("URL validation failed for http://127.0.0.1:8080/private/path");
+      expect(thrown).not.toContain("user:pass");
+      expect(thrown).not.toContain("token=secret");
+      expect(thrown).not.toContain("#frag");
       const consoleOutput = [...errorSpy.mock.calls, ...logSpy.mock.calls]
         .flat()
         .map((entry) => String(entry))

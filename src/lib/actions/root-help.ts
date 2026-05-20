@@ -2,7 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
-import { commandsByGroup, visibleCommands, type CommandDef } from "../cli/command-registry";
+import {
+  brandedPublicText,
+  commandsByGroup,
+  visibleCommands,
+  type CommandDef,
+} from "../cli/command-registry";
 import { getRegisteredOclifCommandSummary } from "../cli/oclif-metadata";
 import { getVersion } from "../core/version";
 
@@ -23,7 +28,7 @@ function getDisplayDescription(command: CommandDef): string {
   if (hasDisplaySpecificDescription(command)) {
     return command.description;
   }
-  return getRegisteredOclifCommandSummary(command.commandId) ?? command.description;
+  return brandedPublicText(getRegisteredOclifCommandSummary(command.commandId) ?? command.description);
 }
 
 export function version(): void {

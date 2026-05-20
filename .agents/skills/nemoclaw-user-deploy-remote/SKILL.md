@@ -6,7 +6,7 @@ description: "Explains how to run NemoClaw on a remote GPU instance, including t
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Deploy NemoClaw to a Remote GPU Instance with Brev
+# Deploy NemoClaw to a Remote GPU Instance
 
 ## Gotchas
 
@@ -23,7 +23,7 @@ description: "Explains how to run NemoClaw on a remote GPU instance, including t
 Run NemoClaw on a remote GPU instance through [Brev](https://brev.nvidia.com).
 The preferred path is to provision the VM, run the standard NemoClaw installer on that host, and then run `nemoclaw onboard`.
 
-## Step 1: Quick Start
+## Quick Start
 
 If your Brev instance is already up and has already been onboarded with a sandbox, start with the standard sandbox chat flow:
 
@@ -37,10 +37,12 @@ If the VM is fresh, run the standard installer on that host and then run `nemocl
 
 If you are connecting from your local machine and still need to provision the remote VM, you can still use `nemoclaw deploy <instance-name>` as the legacy compatibility path described below.
 
-## Step 2: Deploy the Instance
+## Deploy the Instance
 
-> **Warning:** The `nemoclaw deploy` command is deprecated.
-> Prefer provisioning the remote host separately, then running the standard NemoClaw installer and `nemoclaw onboard` on that host.
+**Warning:**
+
+The `nemoclaw deploy` command is deprecated.
+Prefer provisioning the remote host separately, then running the standard NemoClaw installer and `nemoclaw onboard` on that host.
 
 Create a Brev instance and run the legacy compatibility flow:
 
@@ -63,7 +65,7 @@ The legacy compatibility flow performs the following steps on the VM:
 By default, the compatibility wrapper asks Brev to provision on `gcp`. Override this with `NEMOCLAW_BREV_PROVIDER` if you need a different Brev cloud provider.
 If you export `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`, the wrapper forwards those values to the VM so remote setup can pull gated Hugging Face model repositories.
 
-## Step 3: Connect to the Remote Sandbox
+## Connect to the Remote Sandbox
 
 After deployment finishes, the deploy command opens an interactive shell inside the remote sandbox.
 To reconnect after closing the session, run the command again:
@@ -72,7 +74,7 @@ To reconnect after closing the session, run the command again:
 $ nemoclaw deploy <instance-name>
 ```
 
-## Step 4: Monitor the Remote Sandbox
+## Monitor the Remote Sandbox
 
 SSH to the instance and run the OpenShell TUI to monitor activity and approve network requests:
 
@@ -80,7 +82,7 @@ SSH to the instance and run the OpenShell TUI to monitor activity and approve ne
 $ ssh <instance-name> 'cd ~/nemoclaw && set -a && . .env && set +a && openshell term'
 ```
 
-## Step 5: Verify Inference
+## Verify Inference
 
 Run a test agent prompt inside the remote sandbox:
 
@@ -88,7 +90,7 @@ Run a test agent prompt inside the remote sandbox:
 $ openclaw agent --agent main --local -m "Hello from the remote sandbox" --session-id test
 ```
 
-## Step 6: Remote Dashboard Access
+## Remote Dashboard Access
 
 The NemoClaw dashboard validates the browser origin against an allowlist baked
 into the sandbox image at build time.  By default the allowlist only contains
@@ -104,15 +106,17 @@ $ nemoclaw deploy <instance-name>
 For SSH port-forwarding, the origin is typically `http://127.0.0.1:18789` (the
 default), so no extra configuration is needed.
 
-> **Warning:** On Brev, set `CHAT_UI_URL` in the launchable environment configuration so it is
-> available when the installer builds the sandbox image. If `CHAT_UI_URL` is not
-> set on a headless host, the compatibility wrapper prints a warning.
->
-> `NEMOCLAW_DISABLE_DEVICE_AUTH` is also evaluated at image build time.
-> When `CHAT_UI_URL` points at a non-loopback origin, NemoClaw disables OpenClaw device pairing in the generated sandbox configuration because browser-only remote users cannot complete terminal-based pairing.
-> Any device that can reach the configured dashboard origin can connect without pairing, so avoid exposing that origin on internet-reachable or shared-network deployments.
+**Warning:**
 
-## Step 7: First-Run Readiness Budget
+On Brev, set `CHAT_UI_URL` in the launchable environment configuration so it is
+available when the installer builds the sandbox image. If `CHAT_UI_URL` is not
+set on a headless host, the compatibility wrapper prints a warning.
+
+`NEMOCLAW_DISABLE_DEVICE_AUTH` is also evaluated at image build time.
+When `CHAT_UI_URL` points at a non-loopback origin, NemoClaw disables OpenClaw device pairing in the generated sandbox configuration because browser-only remote users cannot complete terminal-based pairing.
+Any device that can reach the configured dashboard origin can connect without pairing, so avoid exposing that origin on internet-reachable or shared-network deployments.
+
+## First-Run Readiness Budget
 
 On a remote GPU host, the first `nemoclaw onboard` typically does the slowest work of the lifecycle: the sandbox image is built locally and uploaded into the OpenShell gateway, which can stream hundreds of MiB over the VM's link before the readiness wait even starts.
 The post-create readiness wait defaults to 180 seconds (`NEMOCLAW_SANDBOX_READY_TIMEOUT`), which is sized for warm-cache, workstation-class onboarding and can be exceeded on:
@@ -131,7 +135,7 @@ $ nemoclaw onboard
 If onboard ends with `Sandbox '<name>' was created but did not become ready within 180s`, onboard deletes the partially-created sandbox first, so the next attempt with the raised budget starts from a clean state.
 For the inference-probe budget that runs earlier in onboarding, see `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` (use the `nemoclaw-user-configure-inference` skill).
 
-## Step 8: Proxy Configuration
+## Proxy Configuration
 
 NemoClaw routes sandbox traffic through a gateway proxy that defaults to `10.200.0.1:3128`.
 If your network requires a different proxy, set `NEMOCLAW_PROXY_HOST` and `NEMOCLAW_PROXY_PORT` before onboarding:
@@ -148,7 +152,7 @@ Only alphanumeric characters, dots, hyphens, and colons are accepted for the hos
 The port must be numeric (0-65535).
 Changing the proxy after onboarding requires re-running `nemoclaw onboard`.
 
-## Step 9: GPU Configuration
+## GPU Configuration
 
 The deploy script uses the `NEMOCLAW_GPU` environment variable to select the GPU type.
 The default value is `a2-highgpu-1g:nvidia-tesla-a100:1`.

@@ -3,7 +3,11 @@
 
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
-import { printDashboardUi, verifyAgentBinaryAvailable } from "../../../dist/lib/agent/onboard";
+import {
+  collectHermesStartupDiagnostics,
+  printDashboardUi,
+  verifyAgentBinaryAvailable,
+} from "../../../dist/lib/agent/onboard";
 import type { AgentDefinition } from "./defs";
 
 function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
@@ -155,5 +159,62 @@ describe("handleAgentSetup guards", () => {
 
     expect(result).toEqual({ available: true });
     expect(script).toContain("NEMOCLAW_AGENT_BINARY_CHECK:ok");
+  });
+});
+
+describe("collectHermesStartupDiagnostics", () => {
+  it("includes Tirith marker content and binary state when the marker is present", () => {
+    const runCapture = vi.fn(() =>
+      [
+        "tirith marker: download_failed",
+        "tirith binary: missing (/sandbox/.hermes/bin/tirith)",
+        "--- tail: /tmp/nemoclaw-start.log ---",
+        "[tirith-bootstrap] Retrying Tirith install after download_failed marker",
+      ].join("\n"),
+    );
+
+    const diagnostics = collectHermesStartupDiagnostics("alpha", runCapture);
+
+    expect(runCapture).toHaveBeenCalledWith(
+      [
+        "sandbox",
+        "exec",
+        "-n",
+        "alpha",
+        "--",
+        "sh",
+        "-lc",
+        expect.stringContaining("/sandbox/.hermes/.tirith-install-failed"),
+      ],
+      { ignoreError: true },
+    );
+    expect(diagnostics.join("\n")).toContain("Hermes startup diagnostics:");
+    expect(diagnostics.join("\n")).toContain("tirith marker: download_failed");
+    expect(diagnostics.join("\n")).toContain(
+      "tirith binary: missing (/sandbox/.hermes/bin/tirith)",
+    );
+  });
+
+  it("returns no extra lines when the Tirith marker is absent", () => {
+    const runCapture = vi.fn(() => "tirith marker: absent\n");
+
+    expect(collectHermesStartupDiagnostics("alpha", runCapture)).toEqual([]);
+  });
+
+  it("redacts sensitive values from log tails", () => {
+    const slackToken = ["xoxb", "123456789012", "abcdefghijkl"].join("-");
+    const runCapture = vi.fn(() =>
+      [
+        "tirith marker: download_failed",
+        "tirith binary: present but not executable (/sandbox/.hermes/bin/tirith)",
+        "--- tail: /tmp/gateway.log ---",
+        `SLACK_BOT_TOKEN=${slackToken}`,
+      ].join("\n"),
+    );
+
+    const output = collectHermesStartupDiagnostics("alpha", runCapture).join("\n");
+
+    expect(output).toContain("SLACK_BOT_TOKEN=");
+    expect(output).not.toContain(slackToken);
   });
 });

@@ -142,6 +142,10 @@ fi
 . "${SCRIPT_DIR}/lib/env.sh"
 # shellcheck source=lib/context.sh
 . "${SCRIPT_DIR}/lib/context.sh"
+# shellcheck source=lib/negative.sh
+. "${SCRIPT_DIR}/lib/negative.sh"
+# shellcheck source=lib/port-holder.sh
+. "${SCRIPT_DIR}/lib/port-holder.sh"
 # shellcheck source=../nemoclaw_scenarios/install/dispatch.sh
 . "${E2E_ROOT}/nemoclaw_scenarios/install/dispatch.sh"
 # shellcheck source=../nemoclaw_scenarios/onboard/dispatch.sh
@@ -177,6 +181,11 @@ INSTALL_METHOD="$(read_plan_string dimensions.install.profile.method)"
 ONBOARDING_ID="$(read_plan_string dimensions.onboarding.id)"
 RUNTIME_ID="$(read_plan_string dimensions.runtime.id)"
 RUNTIME_CONTAINER_DAEMON="$(read_plan_string dimensions.runtime.profile.container_daemon)"
+EXPECTED_STATE_ID="$(read_plan_string expected_state.id)"
+FAILURE_STAGE="$(read_plan_string expected_state.config.failure.stage)"
+FAILURE_EXIT_CODE="$(read_plan_string expected_state.config.failure.exit_code)"
+FAILURE_MESSAGE_CONTAINS="$(read_plan_string expected_state.config.failure.message_contains)"
+FAILURE_NO_STACK_TRACE="$(read_plan_string expected_state.config.failure.no_stack_trace)"
 
 # Trace the dimension id so scenario-level assertions can identify the
 # configured install (e.g. repo-current); e2e_install internally traces
@@ -258,11 +267,15 @@ if [[ -n "${EXPECTED_FAILURE_PHASE}" ]]; then
   # schema but their forcing logic lands alongside the first consumer.
   case "${EXPECTED_FAILURE_PHASE}:${expected_error_class}" in
     preflight:docker-missing)
-      if DOCKER_HOST="unix:///tmp/nemoclaw-e2e-missing-docker.sock" \
-        e2e_onboard "${ONBOARDING_ID}" >"${negative_log}" 2>&1; then
-        echo "run-scenario: expected preflight failure, but onboarding succeeded" >&2
-        cat "${negative_log}" >&2
-        exit 4
+      if [[ "${DRY_RUN}" -eq 1 ]]; then
+        printf 'Cannot connect to the Docker daemon during preflight\n' >"${negative_log}"
+      else
+        if DOCKER_HOST="unix:///tmp/nemoclaw-e2e-missing-docker.sock" \
+          e2e_onboard "${ONBOARDING_ID}" >"${negative_log}" 2>&1; then
+          echo "run-scenario: expected preflight failure, but onboarding succeeded" >&2
+          cat "${negative_log}" >&2
+          exit 4
+        fi
       fi
       ;;
     *)
@@ -306,7 +319,79 @@ if [[ -n "${EXPECTED_FAILURE_PHASE}" ]]; then
   exit 0
 fi
 
+if [[ "${EXPECTED_STATE_ID}" == "preflight-failure-no-sandbox" ]]; then
+  negative_log="${E2E_CONTEXT_DIR}/negative-preflight.log"
+  sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    printf 'Cannot connect to the Docker daemon during preflight\n' >"${negative_log}"
+  elif DOCKER_HOST="unix:///tmp/nemoclaw-e2e-missing-docker.sock" e2e_onboard "${ONBOARDING_ID}" >"${negative_log}" 2>&1; then
+    echo "run-scenario: expected preflight failure, but onboarding succeeded" >&2
+    exit 4
+  fi
+  if ! grep -Eiq "docker|container|daemon|socket|preflight" "${negative_log}"; then
+    echo "run-scenario: negative preflight failed without a clear Docker/preflight reason" >&2
+    cat "${negative_log}" >&2
+    exit 4
+  fi
+  if openshell sandbox list 2>/dev/null | grep -Fq "${sandbox_name}"; then
+    echo "run-scenario: negative preflight left behind sandbox ${sandbox_name}" >&2
+    exit 4
+  fi
+  echo "run-scenario: negative preflight passed; Docker daemon unavailable and no sandbox was created"
+  exit 0
+fi
+
+if [[ "${FAILURE_STAGE}" == "onboarding" ]]; then
+  negative_log="${E2E_CONTEXT_DIR}/negative-onboarding.log"
+  sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
+  port_holder_started=0
+  onboard_env=(NEMOCLAW_SANDBOX_NAME="${sandbox_name}" NEMOCLAW_RECREATE_SANDBOX=1 NEMOCLAW_POLICY_MODE=skip)
+  case "${ONBOARDING_ID}" in
+    cloud-openclaw-invalid-nvidia-key)
+      onboard_env+=(NVIDIA_API_KEY=not-a-nvidia-key)
+      ;;
+    cloud-openclaw-gateway-port-conflict)
+      conflict_port="$(read_plan_string dimensions.onboarding.profile.gateway_port)"
+      : "${conflict_port:=18080}"
+      if e2e_port_holder_start "${conflict_port}"; then
+        port_holder_started=1
+      else
+        echo "run-scenario: could not start port holder on ${conflict_port}; continuing against any existing listener" >&2
+      fi
+      onboard_env+=(NEMOCLAW_GATEWAY_PORT="${conflict_port}")
+      ;;
+  esac
+  if [[ "${DRY_RUN}" -eq 1 ]]; then
+    printf '%s
+' "${FAILURE_MESSAGE_CONTAINS}" >"${negative_log}"
+    negative_status="${FAILURE_EXIT_CODE:-1}"
+  else
+    set +e
+    (
+      export "${onboard_env[@]}"
+      e2e_onboard "${ONBOARDING_ID}"
+    ) >"${negative_log}" 2>&1
+    negative_status=$?
+    set -e
+  fi
+  if [[ "${port_holder_started}" -eq 1 ]]; then
+    e2e_port_holder_stop
+  fi
+  if ! e2e_negative_assert_failure "${negative_log}" "${negative_status}" "${FAILURE_EXIT_CODE:-1}" "${FAILURE_MESSAGE_CONTAINS}" "$([[ "${FAILURE_NO_STACK_TRACE}" == "true" ]] && echo 1 || echo 0)"; then
+    exit 4
+  fi
+  if openshell sandbox list 2>/dev/null | grep -Fq "${sandbox_name}"; then
+    echo "run-scenario: negative onboarding left behind sandbox ${sandbox_name}" >&2
+    exit 4
+  fi
+  echo "run-scenario: negative onboarding ${ONBOARDING_ID} passed"
+  exit 0
+fi
+
+DOCKER_OPTIONAL_UNAVAILABLE=0
 if [[ "${RUNTIME_CONTAINER_DAEMON}" == "optional" ]] && ! docker info >/dev/null 2>&1; then
+  DOCKER_OPTIONAL_UNAVAILABLE=1
+  echo "SKIP: scenario.${SCENARIO_ID}.docker-dependent-suites Docker unavailable for optional runtime ${RUNTIME_ID}; gateway/sandbox/inference coverage skipped"
   echo "run-scenario: Docker unavailable for optional runtime ${RUNTIME_ID}; scaling back to platform-only suites"
 else
   onboard_log="${E2E_CONTEXT_DIR}/onboard.log"
@@ -373,6 +458,26 @@ done < <(node -e "
 if [[ "${#SUITE_IDS[@]}" -eq 0 ]]; then
   echo "run-scenario: no suites selected for ${SCENARIO_ID}" >&2
   exit 4
+fi
+
+if [[ "${DOCKER_OPTIONAL_UNAVAILABLE}" -eq 1 ]]; then
+  FILTERED_SUITE_IDS=()
+  for suite_id in "${SUITE_IDS[@]}"; do
+    case "${suite_id}" in
+      smoke | inference | credentials | hermes-specific | local-ollama-inference | ollama-proxy | gateway-health | sandbox-shell | cloud-inference | ollama-auth-proxy | security-credentials | messaging-telegram | messaging-discord | messaging-slack | security-shields | inference-routing | sandbox-lifecycle | sandbox-operations | snapshot | rebuild | upgrade | diagnostics | docs-validation | openai-compatible-inference | inference-switch | kimi-compatibility | messaging-token-rotation | security-policy | security-injection)
+        echo "SKIP: suite.${suite_id} skipped because optional Docker runtime ${RUNTIME_ID} is unavailable"
+        ;;
+      *)
+        FILTERED_SUITE_IDS+=("${suite_id}")
+        ;;
+    esac
+  done
+  SUITE_IDS=("${FILTERED_SUITE_IDS[@]}")
+fi
+
+if [[ "${#SUITE_IDS[@]}" -eq 0 ]]; then
+  echo "run-scenario: all suites skipped for ${SCENARIO_ID}" >&2
+  exit 0
 fi
 
 bash "${SCRIPT_DIR}/run-suites.sh" "${SUITE_IDS[@]}"

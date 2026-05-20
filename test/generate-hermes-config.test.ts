@@ -119,6 +119,53 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).toContain("API_SERVER_HOST=127.0.0.1\n");
   });
 
+  it("generates managed-tool gateway config and env for selected Nous presets", () => {
+    const { config, envFile } = runConfigScript({
+      NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
+      NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: encodeJson([
+        "nous-web",
+        "nous-audio",
+        "nous-browser",
+        "nous-image",
+        "nous-code",
+      ]),
+    });
+
+    expect(config.web).toEqual({ backend: "firecrawl", use_gateway: true });
+    expect(config.tts).toEqual({ provider: "openai", use_gateway: true });
+    expect(config.stt).toEqual({ provider: "openai", use_gateway: true });
+    expect(config.browser).toEqual({ cloud_provider: "browser-use", use_gateway: true });
+    expect(config.image_gen).toEqual({ use_gateway: true });
+    expect(config.terminal).toMatchObject({ backend: "modal", modal_mode: "managed" });
+    expect(envFile).toContain("NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=1\n");
+    expect(envFile).not.toContain("TOOL_GATEWAY_USER_TOKEN=");
+    expect(envFile).toContain(
+      "FIRECRAWL_GATEWAY_URL=http://host.openshell.internal:11436/firecrawl\n",
+    );
+    expect(envFile).toContain(
+      "OPENAI_AUDIO_GATEWAY_URL=http://host.openshell.internal:11436/openai-audio\n",
+    );
+    expect(envFile).toContain(
+      "BROWSER_USE_GATEWAY_URL=http://host.openshell.internal:11436/browser-use\n",
+    );
+    expect(envFile).toContain(
+      "FAL_QUEUE_GATEWAY_URL=http://host.openshell.internal:11436/fal-queue\n",
+    );
+    expect(envFile).toContain("MODAL_GATEWAY_URL=http://host.openshell.internal:11436/modal\n");
+  });
+
+  it("fails fast for unknown managed-tool gateway presets", () => {
+    const result = runConfigScriptRaw({
+      NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER: "1",
+      NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64: encodeJson(["nous-web", "nous-typo"]),
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stderr}\n${result.stdout}`).toContain(
+      "Unknown Hermes managed-tool gateway preset: nous-typo",
+    );
+  });
+
   it("writes Discord settings in Hermes' top-level schema and keeps tokens in .env", () => {
     const { config, envFile } = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["discord"]),
@@ -253,6 +300,30 @@ describe("agents/hermes/generate-config.ts", () => {
     // Operator's own WeChat user id from the QR login is prepended to the
     // allowlist so the bot can DM them back without an extra prompt.
     expect(envFile).toContain("WEIXIN_ALLOWED_USERS=operator_self_id,bot_other_friend\n");
+  });
+
+  it("enables Hermes WhatsApp without provider tokens or generic platform blocks", () => {
+    const { config, envFile } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["whatsapp"]),
+    });
+
+    expect(config.whatsapp).toBeUndefined();
+    expect(config.platforms.whatsapp).toBeUndefined();
+    expect(envFile).toContain("WHATSAPP_ENABLED=true\n");
+    expect(envFile).toContain("WHATSAPP_MODE=bot\n");
+    expect(envFile).not.toContain("WHATSAPP_BOT_TOKEN=");
+    expect(envFile).not.toContain("openshell:resolve:env:WHATSAPP");
+  });
+
+  it("emits Hermes WhatsApp allowed users when configured", () => {
+    const { envFile } = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: encodeJson(["whatsapp"]),
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: encodeJson({
+        whatsapp: ["15551234567", "15557654321"],
+      }),
+    });
+
+    expect(envFile).toContain("WHATSAPP_ALLOWED_USERS=15551234567,15557654321\n");
   });
 
   it("fails fast when WeChat is enabled without captured account metadata", () => {
