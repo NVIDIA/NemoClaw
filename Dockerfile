@@ -205,7 +205,7 @@ RUN set -eu; \
     sed -i 's/const baseLstat = await fs\.lstat(params\.installBaseDir)/const baseLstat = await fs.stat(params.installBaseDir)/' "$ipd_file"; \
     sed -i 's/baseLstat\.isSymbolicLink()/false \/* nemoclaw: symlink check disabled, realpath guards containment *\//' "$ipd_file"; \
     if grep -q 'fs\.lstat(params\.installBaseDir)' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left lstat in assertInstallBaseStable" >&2; exit 1; fi; \
-    if ! grep -q 'const baseLstat = await fs\.stat(params\.installBaseDir)' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) did not find patched baseLstat stat call" >&2; exit 1; fi; \
+    if ! grep -q 'const baseLstat = await fs\.stat(params\.installBaseDir)' "$ipd_file" && ! grep -q 'await fs\.stat(params\.installBaseDir)).isDirectory()' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) did not find patched/safe installBaseDir stat call" >&2; exit 1; fi; \
     if grep -q 'baseLstat\.isSymbolicLink()' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left baseLstat symlink check" >&2; exit 1; fi; \
     # --- Patch 5: bump default WS handshake timeout 10s -> 60s (#2484) --- \
     # OpenClaw's WS connect handshake has a hard-coded 10s timeout on both \
@@ -222,10 +222,10 @@ RUN set -eu; \
     # \
     # Removal criteria: drop when openclaw fixes the underlying connect \
     # latency, or exposes the timeout as an unbounded env override. \
-    hto_files="$(grep -RIlE --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|6e4)' "$OC_DIST" || true)"; \
+    hto_files="$(grep -RIlE --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3|6e4)' "$OC_DIST" || true)"; \
     test -n "$hto_files" || { echo "ERROR: handshake-timeout constant not found" >&2; exit 1; }; \
-    printf '%s\n' "$hto_files" | xargs sed -i -E 's|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4|g'; \
-    if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4' "$OC_DIST"; then echo "ERROR: Patch 5 left a 1e4 constant" >&2; exit 1; fi; \
+    printf '%s\n' "$hto_files" | xargs sed -i -E 's|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4|g'; \
+    if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)' "$OC_DIST"; then echo "ERROR: Patch 5 left a short handshake-timeout constant" >&2; exit 1; fi; \
     if ! grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4' "$OC_DIST"; then echo "ERROR: Patch 5 did not find patched 6e4 constant" >&2; exit 1; fi
 
 # Patch OpenClaw's pinned 2026.4.24 compiled selection runtime to expose a
