@@ -280,17 +280,31 @@ The example below shows the result if you picked an OpenAI-compatible endpoint d
 
 ```text
 ──────────────────────────────────────────────────
-Sandbox      my-gpt-claw (Landlock + seccomp + netns)
-Model        openai/openai/gpt-5.5 (Other OpenAI-compatible endpoint)
-──────────────────────────────────────────────────
-Run:         nemoclaw my-gpt-claw connect
-Status:      nemoclaw my-gpt-claw status
-Logs:        nemoclaw my-gpt-claw logs --follow
-──────────────────────────────────────────────────
+NemoClaw is ready
 
-To change settings later:
-  Model:       nemoclaw inference get
-               nemoclaw inference set --model <model> --provider <provider> --sandbox my-gpt-claw
+Sandbox:  my-gpt-claw
+Model:    openai/openai/gpt-5.5 (Other OpenAI-compatible endpoint)
+
+Start chatting
+
+  Browser:
+    http://127.0.0.1:18789/
+
+  Terminal:
+    nemoclaw my-gpt-claw connect
+    then run: openclaw tui
+
+Authenticated dashboard URL, if needed:
+  nemoclaw my-gpt-claw dashboard-url --quiet
+
+Manage later
+
+  Status:      nemoclaw my-gpt-claw status
+  Logs:        nemoclaw my-gpt-claw logs --follow
+  Model:       nemoclaw inference set --model <model> --provider <provider> --sandbox my-gpt-claw
+  Policies:    nemoclaw my-gpt-claw policy-add
+  Credentials: nemoclaw credentials reset <KEY> && nemoclaw onboard
+──────────────────────────────────────────────────
 
 [INFO]  === Installation complete ===
 ```
@@ -307,21 +321,16 @@ The onboard wizard starts a background port forward to the sandbox dashboard, th
 The default host port is `18789`.
 If that port is already taken, NemoClaw uses the next free dashboard port, such as `18790`, and prints that port in the final URL.
 If the chosen port becomes occupied after the sandbox build starts, onboarding rolls back the newly-created sandbox and asks you to retry instead of printing an unreachable dashboard URL.
-The gateway token is redacted from displayed output; retrieve it explicitly when the browser asks for authentication.
+The install transcript does not print the gateway token.
+If the browser requires authentication, use the `dashboard-url --quiet` command to print a complete URL explicitly.
 
 ```text
-──────────────────────────────────────────────────
-OpenClaw UI (auth token redacted from displayed URLs)
-Port 18790 must be forwarded before opening these URLs.
-Dashboard: http://127.0.0.1:18790/
-Token:       nemoclaw my-gpt-claw gateway-token --quiet
-             append  #token=<token> locally if the browser asks for auth.
-──────────────────────────────────────────────────
+nemoclaw my-gpt-claw dashboard-url --quiet
 ```
 
 Open the dashboard URL in your browser.
-If the browser asks for authentication, run the printed `gateway-token --quiet` command and append `#token=<token>` locally.
-Treat the token like a password.
+If the browser asks for authentication, run `nemoclaw my-gpt-claw dashboard-url --quiet` and open the returned URL.
+Treat the authenticated URL like a password.
 
 ### Chat with the Agent from the Terminal
 
@@ -329,12 +338,8 @@ Connect to the sandbox and use the OpenClaw CLI.
 
 ```bash
 nemoclaw my-assistant connect
-```
-
-In the sandbox shell, send a single message and print the response.
-
-```bash
-openclaw agent --agent main --local -m "hello" --session-id test
+# inside the sandbox:
+openclaw tui
 ```
 
 ## References
