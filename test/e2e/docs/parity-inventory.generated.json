@@ -8849,7 +8849,15 @@
         },
         {
           "script": "test/e2e/test-messaging-providers.sh",
-          "line": 1264,
+          "line": 1263,
+          "text": "M12: Node.js routed through proxy (proxy policy blocked destination: ${tg_reach:0:160})",
+          "polarity": "pass",
+          "normalized_id": "m12.node.js.routed.through.proxy.policy.blocked.destination",
+          "mapping_status": "deferred"
+        },
+        {
+          "script": "test/e2e/test-messaging-providers.sh",
+          "line": 1270,
           "text": "M12: Node.js could not reach api.telegram.org (${tg_reach:0:200})",
           "polarity": "fail",
           "normalized_id": "m12.node.js.could.not.reach.api.telegram.org.tg.reach.0.200",

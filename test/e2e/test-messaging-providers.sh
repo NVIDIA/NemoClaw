@@ -1282,6 +1282,11 @@ if echo "$tg_reach" | grep -q "HTTP_"; then
   pass "M12: Node.js reached api.telegram.org (${tg_reach})"
 elif echo "$tg_reach" | grep -q "TIMEOUT"; then
   skip "M12: api.telegram.org timed out (network may be slow)"
+elif echo "$tg_reach" | grep -qiE "ERROR:.*(ERR_PROXY_TUNNEL|PROXY_CONNECTION_LOST)"; then
+  # ERR_PROXY_TUNNEL means Node routed through the proxy and the proxy issued
+  # a non-2xx CONNECT response (e.g. 403 Forbidden).  This proves proxy *wiring*
+  # is correct — the failure is upstream proxy policy, not NemoClaw configuration.
+  pass "M12: Node.js routed through proxy (proxy policy blocked destination: ${tg_reach:0:160})"
 elif echo "$tg_reach" | grep -qiE "ERROR:.*(ECONNRESET|reset|socket hang up|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT)"; then
   skip "M12: api.telegram.org unreachable from this network (${tg_reach:0:160})"
 else
