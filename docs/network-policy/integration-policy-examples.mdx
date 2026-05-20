@@ -227,6 +227,21 @@ $ nemoclaw my-assistant policy-remove brew --yes
 $ nemoclaw my-assistant policy-remove huggingface --yes
 ```
 
+<a id="homebrew-bootstrap"></a>
+### Homebrew Bootstrap
+
+The `brew` preset whitelists network egress to the Homebrew registry and the binary paths under `/home/linuxbrew/.linuxbrew/`, but the sandbox base image does not ship the `brew` CLI itself. Apply the preset first, then install Homebrew inside the sandbox once before any `brew install <package>` workflow:
+
+```console
+$ nemoclaw my-assistant policy-add brew --yes
+$ nemoclaw my-assistant connect
+sandbox@...:~$ /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+sandbox@...:~$ eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+sandbox@...:~$ brew install hello
+```
+
+After the first install, `brew` is on the sandbox `PATH` and subsequent `brew install <package>` calls work directly. The bootstrap is per-sandbox; recreating the sandbox requires re-running the install.
+
 ## Local Inference
 
 Use `local-inference` when the sandbox needs access to host-side local inference services such as Ollama or vLLM through the OpenShell host gateway.

@@ -1,9 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+# Homebrew is not preinstalled in the sandbox image. The /home/linuxbrew/...
+# binary paths below are whitelisted so brew can run AFTER the user installs
+# it inside the sandbox. The bootstrap binaries (curl, git) cover the install
+# script itself. See NemoClaw issues #1767 and #3757.
+
 preset:
   name: brew
-  description: "Homebrew (Linuxbrew) package manager access"
+  description: "Homebrew (Linuxbrew) package manager access (requires Homebrew to be installed inside the sandbox first)"
 
 network_policies:
   brew:
@@ -34,8 +39,13 @@ network_policies:
         access: full
         tls: skip
     binaries:
+      # Bootstrap binaries: present in the sandbox image, used to fetch and
+      # run the Homebrew install script.
       - { path: /usr/bin/curl }
       - { path: /usr/bin/git }
+      # Linuxbrew paths: present only after the user installs Homebrew inside
+      # the sandbox. Whitelisting them up front avoids a second policy
+      # round-trip after install.
       - { path: /home/linuxbrew/.linuxbrew/bin/brew }
       - { path: /home/linuxbrew/.linuxbrew/bin/* }
       - { path: /home/linuxbrew/.linuxbrew/Homebrew/bin/* }
