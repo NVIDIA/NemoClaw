@@ -1426,8 +1426,12 @@ install_nemoclaw() {
     # floor. The source-checkout branch intentionally skips this — a developer
     # running ./scripts/install.sh manages their own openshell. The script is
     # idempotent on the happy path. See #2272.
-    spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
-    prefer_user_local_openshell
+    if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
+      info "Deferring OpenShell CLI installation until after pre-upgrade backup."
+    else
+      spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
+      prefer_user_local_openshell
+    fi
   fi
 
   refresh_path
@@ -1574,6 +1578,54 @@ resolve_existing_cli_runner() {
   fi
 
   return 1
+}
+
+prepare_current_cli_for_preupgrade_backup() {
+  local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-__unset__}"
+  info "Preparing current ${_CLI_DISPLAY} CLI for legacy OpenShell backup retry…"
+  export NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
+  install_nemoclaw
+  if [[ "$old_defer" == "__unset__" ]]; then
+    unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
+  else
+    export NEMOCLAW_DEFER_OPENSHELL_INSTALL="$old_defer"
+  fi
+  verify_nemoclaw
+}
+
+resolve_prepared_cli_runner() {
+  if [[ -n "${_CLI_PATH:-}" && -x "$_CLI_PATH" ]] && is_real_nemoclaw_cli "$_CLI_PATH" "$_CLI_BIN"; then
+    printf "%s" "$_CLI_PATH"
+    return 0
+  fi
+  resolve_existing_cli_runner
+}
+
+run_preupgrade_backup() {
+  local old_cli_runner="$1" old_openshell_version="$2"
+
+  if "$old_cli_runner" backup-all 2>&1; then
+    return 0
+  fi
+
+  if ! legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
+    return 1
+  fi
+
+  warn "Pre-upgrade backup with the existing ${_CLI_BIN} CLI failed."
+  warn "Retrying with the current ${_CLI_DISPLAY} CLI before retiring the legacy OpenShell gateway."
+  if ! prepare_current_cli_for_preupgrade_backup; then
+    warn "Could not prepare the current ${_CLI_DISPLAY} CLI for backup retry."
+    return 1
+  fi
+
+  local retry_cli_runner=""
+  if ! retry_cli_runner="$(resolve_prepared_cli_runner)"; then
+    warn "Could not locate the current ${_CLI_BIN} CLI for backup retry."
+    return 1
+  fi
+
+  "$retry_cli_runner" backup-all 2>&1
 }
 
 installed_openshell_version() {
@@ -1734,7 +1786,7 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
 
   info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
-  if ! "$old_cli_runner" backup-all 2>&1; then
+  if ! run_preupgrade_backup "$old_cli_runner" "$old_openshell_version"; then
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
     fi
