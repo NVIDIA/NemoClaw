@@ -200,6 +200,11 @@ async function autoCreateSandboxFromSource(
     // dst has its own lifecycle; don't inherit src's local NIM container
     // reference, or destroying dst would stop src's NIM.
     nimContainer: null,
+    // Sandbox-filesystem-bound state must not be inherited: snapshot only
+    // covers agent-declared state dirs/files, not /home/linuxbrew. The dst
+    // image ships without a Homebrew prefix until the operator runs
+    // `nemoclaw <dst> brew init` (#3757).
+    brewInitialised: false,
   });
 
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);

@@ -96,6 +96,7 @@ describe("policy.pruneStaleBuiltInPresets", () => {
     ]);
     expect(payload.warnings.join("\n")).toMatch(/dropping stale preset.*brew/);
     expect(payload.warnings.join("\n")).toMatch(/legacy-nope/);
+    expect(payload.warnings.join("\n")).toMatch(/nemoclaw alpha rebuild/);
   });
 
   it("preserves custom preset names even when they are absent from listPresets()", () => {

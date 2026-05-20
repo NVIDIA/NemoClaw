@@ -910,6 +910,9 @@ function pruneStaleBuiltInPresets(sandboxName: string): string[] {
   console.warn(
     "  These presets are no longer defined in the blueprint; the registry has been cleaned.",
   );
+  console.warn(
+    `  Note: any network rules these presets installed on the gateway may still be live. Run 'nemoclaw ${sandboxName} rebuild' to get a clean policy state.`,
+  );
   registry.updateSandbox(sandboxName, { policies: known });
   return stale;
 }
