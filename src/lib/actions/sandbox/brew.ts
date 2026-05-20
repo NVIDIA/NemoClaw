@@ -54,14 +54,16 @@ function assertShieldsDown(name: string): void {
   }
 }
 
-function assertBrewInitialised(entry: SandboxEntry, sandboxName: string): void {
+function assertBrewInitialised(
+  entry: SandboxEntry,
+  sandboxName: string,
+  extraHint?: string,
+): void {
   if (entry.brewInitialised !== true) {
     console.error(
-      `  Homebrew is not installed in '${sandboxName}'. Run '${CLI_NAME} ${sandboxName} brew init' first,`,
+      `  Homebrew is not installed in '${sandboxName}'. Run '${CLI_NAME} ${sandboxName} brew init' first.`,
     );
-    console.error(
-      `  or pass --yes with NEMOCLAW_NON_INTERACTIVE=1 to auto-initialise before install.`,
-    );
+    if (extraHint) console.error(`  ${extraHint}`);
     brewExit(1);
   }
 }
@@ -102,9 +104,11 @@ function brewInitScript(): string {
     `test -x ${BREW_BIN}`,
     `cat >${PROFILE_D_PATH} <<'EOF'`,
     `# NemoClaw: expose Homebrew (Linuxbrew) to interactive shells (#3757)`,
-    `if [ -d ${LINUXBREW_PREFIX}/bin ] && [ ":\${PATH}:" != *":${LINUXBREW_PREFIX}/bin:"* ]; then`,
-    `  PATH="${LINUXBREW_PREFIX}/bin:\${PATH}"`,
-    `  export PATH`,
+    `if [ -d ${LINUXBREW_PREFIX}/bin ]; then`,
+    `  case ":\${PATH}:" in`,
+    `    *":${LINUXBREW_PREFIX}/bin:"*) ;;`,
+    `    *) PATH="${LINUXBREW_PREFIX}/bin:\${PATH}"; export PATH ;;`,
+    `  esac`,
     `fi`,
     `EOF`,
     `chmod 444 ${PROFILE_D_PATH}`,
@@ -155,7 +159,11 @@ function runInstall(
       );
       runInit(sandboxName);
     } else {
-      assertBrewInitialised(entry, sandboxName);
+      assertBrewInitialised(
+        entry,
+        sandboxName,
+        "Or pass --yes with NEMOCLAW_NON_INTERACTIVE=1 to auto-initialise before install.",
+      );
     }
   }
   console.log(`  Installing ${packages.length} formula(e) into '${sandboxName}': ${packages.join(", ")}`);
