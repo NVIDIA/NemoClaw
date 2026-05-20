@@ -345,6 +345,9 @@ scripts:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
     bucket: providers-messaging
+    layer: post-onboard
+    gap_domain: web-search
+    owner: e2e-maintainers
     assertions:
     - legacy: 'B1: ${onboard_cmd_desc} completed for Brave Search-enabled onboard'
       status: deferred
@@ -1081,6 +1084,9 @@ scripts:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
     bucket: final-security-policy-platform-misc
+    layer: post-onboard
+    gap_domain: messaging-lifecycle
+    owner: e2e-maintainers
     assertions:
     - legacy: NVIDIA_API_KEY not set
       status: deferred
@@ -5321,6 +5327,9 @@ scripts:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
     bucket: providers-messaging
+    layer: post-onboard
+    gap_domain: messaging-compatible-endpoint
+    owner: e2e-maintainers
     assertions:
     - legacy: 'C1: ${onboard_cmd_desc} completed for compatible endpoint + Telegram'
       status: deferred
@@ -5463,6 +5472,9 @@ scripts:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
     bucket: providers-messaging
+    layer: post-onboard
+    gap_domain: messaging-provider
+    owner: e2e-maintainers
     assertions:
     - legacy: NVIDIA_API_KEY not set
       status: deferred
@@ -10592,6 +10604,9 @@ scripts:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
     bucket: providers-messaging
+    layer: post-onboard
+    gap_domain: telegram-injection
+    owner: e2e-maintainers
     assertions:
     - legacy: NVIDIA_API_KEY not set
       status: deferred
@@ -10743,6 +10758,9 @@ scripts:
     scenario: ubuntu-repo-cloud-openclaw
     status: migrated
     bucket: providers-messaging
+    layer: post-onboard
+    gap_domain: messaging-token-rotation
+    owner: e2e-maintainers
     assertions:
     - legacy: install.sh completed (exit 0)
       status: deferred

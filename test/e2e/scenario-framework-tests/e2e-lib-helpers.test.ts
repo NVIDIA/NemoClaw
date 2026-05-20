@@ -10,6 +10,7 @@ import path from "node:path";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUNTIME_LIB = path.join(REPO_ROOT, "test/e2e/runtime/lib");
 const VALIDATION_SUITES = path.join(REPO_ROOT, "test/e2e/validation_suites");
+const VALIDATION_LIB = path.join(VALIDATION_SUITES, "lib");
 const ASSERT = path.join(VALIDATION_SUITES, "assert");
 const FIXTURES = path.join(REPO_ROOT, "test/e2e/nemoclaw_scenarios/fixtures");
 const INSTALL_DIR = path.join(REPO_ROOT, "test/e2e/nemoclaw_scenarios/install");
@@ -388,6 +389,116 @@ describe("Phase 1.D assertion helpers", () => {
       exit $rc
     `);
     expect(r.status, r.stderr).toBe(0);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Issue #3810 Phase 1 — Messaging provider primitive library
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe("Issue #3810 messaging provider helper library", () => {
+  function withContext(values: Record<string, string>): string {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-msgctx-"));
+    fs.writeFileSync(
+      path.join(tmp, "context.env"),
+      Object.entries(values)
+        .map(([key, value]) => `${key}=${value}`)
+        .join("\n") + "\n",
+    );
+    return tmp;
+  }
+
+  it("should_source_messaging_provider_library_in_isolation", () => {
+    const r = runBash(`
+      set -euo pipefail
+      . "${VALIDATION_LIB}/messaging_providers.sh"
+      declare -F e2e_messaging_load_context
+    `);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("e2e_messaging_load_context");
+  });
+
+  it("should_fail_with_clear_diagnostic_when_context_missing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-msgmissing-"));
+    fs.rmSync(tmp, { recursive: true, force: true });
+    const r = runBash(
+      `
+        set -euo pipefail
+        . "${VALIDATION_LIB}/messaging_providers.sh"
+        e2e_messaging_load_context
+      `,
+      { E2E_CONTEXT_DIR: tmp },
+    );
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toMatch(/E2E_CONTEXT_DIR|context\.env/);
+  });
+
+  it("should_derive_provider_names_for_messaging_channels", () => {
+    const cases: Array<[string, Record<string, string>, string]> = [
+      ["telegram", { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "telegram" }, "telegram"],
+      ["discord", { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "discord" }, "discord"],
+      ["slack-bot", { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "slack", E2E_MESSAGING_CHANNEL: "bot" }, "slack-bot"],
+      ["slack-app", { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "slack", E2E_MESSAGING_CHANNEL: "app" }, "slack-app"],
+      ["whatsapp", { E2E_AGENT: "openclaw", E2E_MESSAGING_PROVIDER: "whatsapp" }, "whatsapp-qr"],
+    ];
+    for (const [name, values, expected] of cases) {
+      const ctx = withContext({ E2E_SANDBOX_NAME: "sb", ...values });
+      try {
+        const r = runBash(
+          `
+            set -euo pipefail
+            . "${VALIDATION_LIB}/messaging_providers.sh"
+            e2e_messaging_load_context >/dev/null
+            e2e_messaging_provider_name
+          `,
+          { E2E_CONTEXT_DIR: ctx },
+        );
+        expect(r.status, `${name}: ${r.stderr}`).toBe(0);
+        expect(r.stdout.trim()).toBe(expected);
+      } finally {
+        fs.rmSync(ctx, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("should_resolve_agent_config_paths", () => {
+    const cases: Array<[string, string]> = [
+      ["openclaw", "/sandbox/.openclaw/openclaw.json"],
+      ["hermes", "/sandbox/.hermes/.env"],
+    ];
+    for (const [agent, expected] of cases) {
+      const ctx = withContext({ E2E_SANDBOX_NAME: "sb", E2E_AGENT: agent, E2E_MESSAGING_PROVIDER: "discord" });
+      try {
+        const r = runBash(
+          `
+            set -euo pipefail
+            . "${VALIDATION_LIB}/messaging_providers.sh"
+            e2e_messaging_load_context >/dev/null
+            e2e_messaging_agent_config_path
+          `,
+          { E2E_CONTEXT_DIR: ctx },
+        );
+        expect(r.status, r.stderr).toBe(0);
+        expect(r.stdout.trim()).toBe(expected);
+      } finally {
+        fs.rmSync(ctx, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("should_expose_placeholder_and_secret_leak_interfaces_without_live_secrets", () => {
+    const r = runBash(`
+      set -euo pipefail
+      . "${VALIDATION_LIB}/messaging_providers.sh"
+      e2e_messaging_assert_placeholder_configured 'token=\${TELEGRAM_BOT_TOKEN}' 'TELEGRAM_BOT_TOKEN'
+      e2e_messaging_assert_no_secret_leak 'safe placeholder \${TELEGRAM_BOT_TOKEN}' 'raw-secret-123'
+      if e2e_messaging_assert_no_secret_leak 'oops raw-secret-123' 'raw-secret-123'; then
+        echo unexpected-pass
+        exit 1
+      fi
+    `);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).not.toContain("unexpected-pass");
   });
 });
 

@@ -108,13 +108,45 @@ suites:
     steps: *id008
   messaging-telegram:
     requires_state: *id001
-    steps: *id002
+    steps:
+    - id: messaging-provider-attached
+      script: messaging/common/00-provider-attached.sh
+    - id: messaging-placeholder-configured
+      script: messaging/common/01-placeholder-configured.sh
+    - id: messaging-no-secret-leak
+      script: messaging/common/02-no-secret-leak.sh
+    - id: messaging-bridge-reachable
+      script: messaging/common/03-bridge-reachable.sh
+    - id: telegram-injection-safety
+      script: messaging/telegram/00-telegram-injection-safety.sh
+    - id: telegram-injection-payload-classes
+      script: messaging/telegram/01-telegram-injection-payload-classes.sh
   messaging-discord:
     requires_state: *id001
-    steps: *id002
+    steps:
+    - id: messaging-provider-attached
+      script: messaging/common/00-provider-attached.sh
+    - id: messaging-placeholder-configured
+      script: messaging/common/01-placeholder-configured.sh
+    - id: messaging-no-secret-leak
+      script: messaging/common/02-no-secret-leak.sh
+    - id: messaging-bridge-reachable
+      script: messaging/common/03-bridge-reachable.sh
+    - id: discord-gateway-path
+      script: messaging/discord/00-discord-gateway-path.sh
   messaging-slack:
     requires_state: *id001
-    steps: *id002
+    steps:
+    - id: messaging-provider-attached
+      script: messaging/common/00-provider-attached.sh
+    - id: messaging-placeholder-configured
+      script: messaging/common/01-placeholder-configured.sh
+    - id: messaging-no-secret-leak
+      script: messaging/common/02-no-secret-leak.sh
+    - id: messaging-bridge-reachable
+      script: messaging/common/03-bridge-reachable.sh
+    - id: slack-provider-state
+      script: messaging/slack/00-slack-provider-state.sh
   security-shields:
     requires_state: *id007
     steps: *id008
@@ -153,7 +185,9 @@ suites:
     steps: *id004
   messaging-token-rotation:
     requires_state: *id001
-    steps: *id002
+    steps:
+    - id: provider-rotation-isolated
+      script: messaging/token-rotation/00-provider-rotation-isolated.sh
   security-policy:
     requires_state: *id007
     steps: *id008

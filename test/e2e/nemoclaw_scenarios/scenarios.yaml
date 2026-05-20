@@ -461,6 +461,7 @@ test_plans:
     - preflight-passed
     suites:
     - smoke
+    - messaging-telegram
   ubuntu-repo-docker__cloud-nvidia-openclaw-discord:
     base: ubuntu-repo-docker
     onboarding: cloud-nvidia-openclaw-discord
@@ -470,6 +471,7 @@ test_plans:
     - preflight-passed
     suites:
     - smoke
+    - messaging-discord
   ubuntu-repo-docker__cloud-nvidia-openclaw-slack:
     base: ubuntu-repo-docker
     onboarding: cloud-nvidia-openclaw-slack
@@ -479,6 +481,7 @@ test_plans:
     - preflight-passed
     suites:
     - smoke
+    - messaging-slack
   ubuntu-repo-docker__cloud-nvidia-hermes-discord:
     base: ubuntu-repo-docker
     onboarding: cloud-nvidia-hermes-discord
@@ -488,6 +491,7 @@ test_plans:
     - preflight-passed
     suites:
     - smoke
+    - messaging-discord
   ubuntu-repo-docker__cloud-nvidia-hermes-slack:
     base: ubuntu-repo-docker
     onboarding: cloud-nvidia-hermes-slack
@@ -497,6 +501,7 @@ test_plans:
     - preflight-passed
     suites:
     - smoke
+    - messaging-slack
   ubuntu-repo-docker__cloud-nvidia-openclaw-resume-after-interrupt:
     base: ubuntu-repo-docker
     onboarding: cloud-nvidia-openclaw-resume-after-interrupt
@@ -542,6 +547,7 @@ test_plans:
     - preflight-passed
     suites:
     - smoke
+    - messaging-token-rotation
 onboarding_assertions:
   base-installed:
     stage: base

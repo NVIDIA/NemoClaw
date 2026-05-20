@@ -44,6 +44,63 @@ function fullContext(): Record<string, string> {
   };
 }
 
+describe("Issue #3810 messaging suite wiring", () => {
+  it("should_define_real_steps_for_messaging_provider_suites", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-messaging-suites-"));
+    try {
+      const baseContext = {
+        ...fullContext(),
+        E2E_PROVIDER: "telegram",
+        E2E_MESSAGING_PROVIDER: "telegram",
+        E2E_MESSAGING_BRIDGE_URL: "http://127.0.0.1:18789",
+        E2E_MESSAGING_CONFIG_CONTENT: "TELEGRAM_BOT_TOKEN=PLACEHOLDER",
+      };
+      seedContext(tmp, baseContext);
+      const telegram = runSuites(["messaging-telegram"], {
+        E2E_CONTEXT_DIR: tmp,
+        E2E_DRY_RUN: "1",
+      });
+      expect(telegram.status, `stderr:${telegram.stderr}\nstdout:${telegram.stdout}`).toBe(0);
+      seedContext(tmp, {
+        ...baseContext,
+        E2E_MESSAGING_PROVIDER: "discord",
+        E2E_MESSAGING_CONFIG_CONTENT: "DISCORD_BOT_TOKEN=PLACEHOLDER",
+      });
+      const discord = runSuites(["messaging-discord"], {
+        E2E_CONTEXT_DIR: tmp,
+        E2E_DRY_RUN: "1",
+      });
+      expect(discord.status, `stderr:${discord.stderr}\nstdout:${discord.stdout}`).toBe(0);
+      seedContext(tmp, {
+        ...baseContext,
+        E2E_MESSAGING_PROVIDER: "slack",
+        E2E_MESSAGING_CHANNEL: "bot",
+        E2E_MESSAGING_CONFIG_CONTENT: "SLACK_BOT_TOKEN=PLACEHOLDER",
+      });
+      const slack = runSuites(["messaging-slack"], {
+        E2E_CONTEXT_DIR: tmp,
+        E2E_DRY_RUN: "1",
+      });
+      expect(slack.status, `stderr:${slack.stderr}\nstdout:${slack.stdout}`).toBe(0);
+      const output = `${telegram.stdout}\n${discord.stdout}\n${slack.stdout}`;
+      for (const id of [
+        "messaging-provider-attached",
+        "messaging-placeholder-configured",
+        "messaging-no-secret-leak",
+        "messaging-bridge-reachable",
+        "telegram-injection-safety",
+        "discord-gateway-path",
+        "slack-provider-state",
+      ]) {
+        expect(output).toContain(id);
+      }
+      expect(output).not.toContain("cli-available");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("run-suites.sh", () => {
   it("run_suites_should_run_steps_in_declared_order", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-suite-"));
