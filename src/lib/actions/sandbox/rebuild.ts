@@ -36,11 +36,12 @@ import {
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
 import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
 import { loadAgent } from "../../agent/defs";
-import * as agentRuntime from "../../agent/runtime";
 import { ensureAgentBaseImage } from "../../agent/onboard";
+import * as agentRuntime from "../../agent/runtime";
 import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
+import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import * as policies from "../../policy";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
@@ -756,7 +757,10 @@ export async function rebuildSandbox(
   // Policy presets live in the gateway policy engine, not the sandbox filesystem.
   // They are lost when the sandbox is destroyed and recreated. Re-apply any
   // presets that were captured in the backup manifest.
-  const savedPresets = backupManifest.policyPresets || [];
+  const savedPresets = pruneDisabledMessagingPolicyPresets(
+    backupManifest.policyPresets || [],
+    rebuildDisabledChannels,
+  );
   if (savedPresets.length > 0) {
     console.log("");
     console.log("  Restoring policy presets...");

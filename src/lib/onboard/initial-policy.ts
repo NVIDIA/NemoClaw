@@ -5,16 +5,13 @@ import fs from "node:fs";
 import YAML from "yaml";
 
 import * as policies from "../policy";
+import { requiredMessagingChannelPolicyPresets } from "./messaging-policy-presets";
 import { cleanupTempDir, secureTempFile } from "./temp-files";
 
 export type InitialSandboxPolicy = {
   policyPath: string;
   appliedPresets: string[];
   cleanup?: () => boolean;
-};
-
-const CREATE_TIME_POLICY_PRESETS_BY_CHANNEL: Record<string, string[]> = {
-  slack: ["slack"],
 };
 
 const PROC_PATH = "/proc";
@@ -176,9 +173,7 @@ export function prepareInitialSandboxCreatePolicy(
   const requestedCreateTimePresets = [
     ...new Set(
       [
-        ...activeMessagingChannels.flatMap(
-          (channel) => CREATE_TIME_POLICY_PRESETS_BY_CHANNEL[channel] || [],
-        ),
+        ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
         ...(options.additionalPresets || []),
       ],
     ),
