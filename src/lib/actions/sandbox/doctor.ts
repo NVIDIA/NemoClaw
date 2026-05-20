@@ -184,7 +184,8 @@ function renderDoctorReport(report: DoctorReport, asJson: boolean): number {
   return doctorReportExitCode(report);
 }
 
-function dockerInspectGateway(containerName: string, skipPortCheck: boolean = false): DoctorCheck[] {
+/** @internal — exported for unit tests; sole production consumer is runSandboxDoctor in this file. */
+export function dockerInspectGateway(containerName: string, skipPortCheck: boolean = false): DoctorCheck[] {
   const checks: DoctorCheck[] = [];
   const inspect = captureHostCommand(
     "docker",
