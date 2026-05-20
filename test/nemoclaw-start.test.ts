@@ -43,6 +43,14 @@ function nonRootFallbackBlock(src: string): string {
   return src.slice(start, end);
 }
 
+function earlyStartLogBlock(src: string): string {
+  const start = src.indexOf("# ── Early stderr/stdout capture");
+  const end = src.indexOf("# ── Source shared sandbox initialisation library", start);
+  expect(start).toBeGreaterThan(-1);
+  expect(end).toBeGreaterThan(start);
+  return src.slice(start, end);
+}
+
 function startScriptHeredoc(src: string, marker: string): string {
   const match = src.match(new RegExp(`<<'${marker}'[^\\n]*\\n([\\s\\S]*?)\\n${marker}`));
   expect(match).toBeTruthy();
@@ -108,6 +116,39 @@ function rootIntegrityGateBlock(src: string): string {
   const lineEnd = src.indexOf("\n", verifyStart);
   return src.slice(verifyStart, lineEnd === -1 ? undefined : lineEnd);
 }
+
+describe("nemoclaw-start early log hardening", () => {
+  it("replaces a pre-existing startup log symlink instead of following it", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-start-log-"));
+    const logPath = path.join(tmpDir, "nemoclaw-start.log");
+    const trustedPath = path.join(tmpDir, "trusted-config");
+    fs.writeFileSync(trustedPath, "trusted config\n");
+    fs.symlinkSync(trustedPath, logPath);
+
+    try {
+      const block = earlyStartLogBlock(src).replace(
+        '_START_LOG="/tmp/nemoclaw-start.log"',
+        `_START_LOG=${JSON.stringify(logPath)}`,
+      );
+      const script = ["set -euo pipefail", block, "printf 'entrypoint output\\n'", "sleep 0.1"].join(
+        "\n",
+      );
+
+      const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(trustedPath, "utf-8")).toBe("trusted config\n");
+      const logStat = fs.lstatSync(logPath);
+      expect(logStat.isSymbolicLink()).toBe(false);
+      expect(logStat.isFile()).toBe(true);
+      expect((fs.statSync(logPath).mode & 0o777).toString(8)).toBe("600");
+      expect(fs.readFileSync(logPath, "utf-8")).toContain("entrypoint output");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("nemoclaw-start non-root fallback", () => {
   it("exits before startup work when locked config integrity fails in non-root mode", () => {

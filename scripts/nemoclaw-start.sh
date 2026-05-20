@@ -45,13 +45,46 @@ export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 # SECURITY: restrict permissions before writing — startup diagnostics may
 # include dashboard URLs, but auth tokens must stay redacted in logs.
 _START_LOG="/tmp/nemoclaw-start.log"
+prepare_start_log() {
+  local path="$1"
+  local owner="${2:-}"
+  local mode="${3:-600}"
+  local dir base tmp
+
+  dir="$(dirname "$path")"
+  base="$(basename "$path")"
+  tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || return 1
+  : >"$tmp" || {
+    rm -f "$tmp"
+    return 1
+  }
+  if [ -n "$owner" ] && ! chown "$owner" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! chmod "$mode" "$tmp"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  # /tmp is sandbox-writable; unlink pre-existing symlinks before replacing
+  # the path so truncate/chown/chmod cannot be redirected onto trusted files.
+  if [ -d "$path" ] && [ ! -L "$path" ]; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! rm -f "$path"; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! mv -f "$tmp" "$path"; then
+    rm -f "$tmp"
+    return 1
+  fi
+}
 if [ "$(id -u)" -eq 0 ]; then
-  : >"$_START_LOG"
-  chown root:root "$_START_LOG"
-  chmod 600 "$_START_LOG"
+  prepare_start_log "$_START_LOG" root:root 600
 else
-  : >"$_START_LOG"
-  chmod 600 "$_START_LOG" 2>/dev/null || true
+  prepare_start_log "$_START_LOG" "" 600
 fi
 exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
 
