@@ -21,10 +21,13 @@ vi.mock("../docker/exec", () => ({
 
 import {
   K3S_CONTAINER,
+  OPENSHELL_SANDBOX_NAME_LABEL,
   kubectlExecArgv,
   privilegedSandboxExec,
   privilegedSandboxExecArgv,
+  resolveDockerDriverSandboxContainer,
   selectDockerDriverSandboxContainer,
+  selectLabelledSandboxContainer,
 } from "./privileged-exec";
 
 describe("selectDockerDriverSandboxContainer", () => {
@@ -34,44 +37,10 @@ describe("selectDockerDriverSandboxContainer", () => {
     ).toBe("openshell-demo");
   });
 
-  it("falls back to a prefix match", () => {
+  it("does not return a prefix-matching container — that would risk cross-sandbox routing", () => {
     expect(
       selectDockerDriverSandboxContainer("demo", "docker", "openshell-other\nopenshell-demo-abc"),
-    ).toBe("openshell-demo-abc");
-  });
-
-  it("prefers an exact match over a prefix match even when the prefix appears first", () => {
-    expect(
-      selectDockerDriverSandboxContainer(
-        "demo",
-        "docker",
-        "openshell-demo-abc\nopenshell-demo\nopenshell-demo-xyz",
-      ),
-    ).toBe("openshell-demo");
-  });
-
-  it("refuses to fall back through a prefix collision with another registered sandbox", () => {
-    // sandbox `demo-prod` is registered; its canonical container
-    // `openshell-demo-prod` must never be returned when resolving `demo`.
-    expect(
-      selectDockerDriverSandboxContainer(
-        "demo",
-        "docker",
-        "openshell-demo-prod\n",
-        ["demo", "demo-prod"],
-      ),
     ).toBeNull();
-  });
-
-  it("still falls back to a prefix match for non-conflicting suffixes", () => {
-    expect(
-      selectDockerDriverSandboxContainer(
-        "demo",
-        "docker",
-        "openshell-demo-helper\n",
-        ["demo"],
-      ),
-    ).toBe("openshell-demo-helper");
   });
 
   it("returns null for the legacy kubernetes driver", () => {
@@ -82,6 +51,68 @@ describe("selectDockerDriverSandboxContainer", () => {
 
   it("returns null when no container matches", () => {
     expect(selectDockerDriverSandboxContainer("demo", "docker", "openshell-other\n")).toBeNull();
+  });
+});
+
+describe("selectLabelledSandboxContainer", () => {
+  it("returns the canonical container when present", () => {
+    expect(
+      selectLabelledSandboxContainer("demo", "openshell-demo-sbx-abc\nopenshell-demo"),
+    ).toBe("openshell-demo");
+  });
+
+  it("falls back to the first labelled container when canonical name is absent", () => {
+    expect(selectLabelledSandboxContainer("demo", "openshell-demo-sbx-abc")).toBe(
+      "openshell-demo-sbx-abc",
+    );
+  });
+
+  it("returns null when no containers are labelled", () => {
+    expect(selectLabelledSandboxContainer("demo", "")).toBeNull();
+  });
+});
+
+describe("resolveDockerDriverSandboxContainer", () => {
+  beforeEach(() => {
+    getSandbox.mockReset();
+    dockerCapture.mockReset();
+  });
+
+  it("queries by label first and returns the labelled match", () => {
+    getSandbox.mockReturnValue({ openshellDriver: "docker" });
+    dockerCapture.mockImplementation((args: readonly string[]) => {
+      if (args.includes("--filter")) return "openshell-demo-sbx-abc\n";
+      return "";
+    });
+    expect(resolveDockerDriverSandboxContainer("demo")).toBe("openshell-demo-sbx-abc");
+    const labelCall = dockerCapture.mock.calls.find((args) =>
+      (args[0] as readonly string[]).includes("--filter"),
+    );
+    expect(labelCall?.[0]).toContain(`label=${OPENSHELL_SANDBOX_NAME_LABEL}=demo`);
+  });
+
+  it("falls back to an exact name match for pre-label sandboxes", () => {
+    getSandbox.mockReturnValue({ openshellDriver: "docker" });
+    dockerCapture.mockImplementation((args: readonly string[]) => {
+      if (args.includes("--filter")) return "";
+      return "openshell-other\nopenshell-demo\n";
+    });
+    expect(resolveDockerDriverSandboxContainer("demo")).toBe("openshell-demo");
+  });
+
+  it("does NOT misroute sandbox `demo` to sandbox `demo-prod`'s suffixed container", () => {
+    getSandbox.mockReturnValue({ openshellDriver: "docker" });
+    dockerCapture.mockImplementation((args: readonly string[]) => {
+      if (args.includes("--filter")) return "";
+      return "openshell-demo-prod-sbx-abc\n";
+    });
+    expect(resolveDockerDriverSandboxContainer("demo")).toBeNull();
+  });
+
+  it("returns null for non-docker drivers without calling docker ps", () => {
+    getSandbox.mockReturnValue({ openshellDriver: "kubernetes" });
+    expect(resolveDockerDriverSandboxContainer("demo")).toBeNull();
+    expect(dockerCapture).not.toHaveBeenCalled();
   });
 });
 

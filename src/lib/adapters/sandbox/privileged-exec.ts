@@ -17,43 +17,49 @@ export interface PrivilegedSandboxExecOptions extends PrivilegedSandboxExecArgvO
   timeout?: number;
 }
 
+export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
+
+/**
+ * Resolve a Docker-driver container by exact name only. The container that
+ * OpenShell labels with `openshell.ai/sandbox-name=<name>` lives under the
+ * canonical name `openshell-<name>`. Name-prefix inference is not safe — a
+ * container named `openshell-<name>-<sandbox-id>` shares the prefix of
+ * sandbox `<name>` even when it belongs to sandbox `<name>-<something>`.
+ * The label-aware live path in `resolveDockerDriverSandboxContainer` handles
+ * the version of OpenShell that tags containers; this helper exists for
+ * tests and for the compat path where no labelled match was found.
+ */
 export function selectDockerDriverSandboxContainer(
   sandboxName: string,
   openshellDriver: string | null | undefined,
   containerNames: string,
-  knownSandboxNames: readonly string[] = [],
 ): string | null {
   if (openshellDriver !== "docker") return null;
-  const prefix = `openshell-${sandboxName}-`;
   const exact = `openshell-${sandboxName}`;
+  const match = containerNames
+    .split("\n")
+    .map((line) => line.trim())
+    .find((name) => name === exact);
+  return match ?? null;
+}
+
+/**
+ * Pick the canonical container for `sandboxName` from a label-filtered
+ * `docker ps` output. When several containers share the label (e.g. helper
+ * containers), prefer the canonical `openshell-<name>`; otherwise the first
+ * one.
+ */
+export function selectLabelledSandboxContainer(
+  sandboxName: string,
+  containerNames: string,
+): string | null {
   const trimmed = containerNames
     .split("\n")
     .map((line) => line.trim())
-    .filter((name) => name.length > 0);
-
-  const exactMatch = trimmed.find((name) => name === exact);
-  if (exactMatch) return exactMatch;
-
-  // The prefix `openshell-<sandboxName>-` alone can collide with other
-  // sandboxes whose names share that prefix (e.g. sandbox `demo` vs.
-  // sandbox `demo-prod` → `openshell-demo-prod` would otherwise be
-  // accepted as a container for `demo`). Exclude any candidate that
-  // exact-matches a different registered sandbox so brew/shields/config's
-  // privileged exec channel can't be misrouted across sandboxes.
-  const otherExactContainers = new Set(
-    knownSandboxNames
-      .filter((name) => name !== sandboxName)
-      .map((name) => `openshell-${name}`),
-  );
-  const knownSandboxSet = new Set(knownSandboxNames);
-  for (const candidate of trimmed) {
-    if (!candidate.startsWith(prefix)) continue;
-    if (otherExactContainers.has(candidate)) continue;
-    const candidateSandbox = candidate.slice("openshell-".length);
-    if (candidateSandbox !== sandboxName && knownSandboxSet.has(candidateSandbox)) continue;
-    return candidate;
-  }
-  return null;
+    .filter((line) => line.length > 0);
+  if (trimmed.length === 0) return null;
+  const exact = `openshell-${sandboxName}`;
+  return trimmed.find((name) => name === exact) ?? trimmed[0] ?? null;
 }
 
 export function resolveDockerDriverSandboxContainer(sandboxName: string): string | null {
@@ -64,21 +70,29 @@ export function resolveDockerDriverSandboxContainer(sandboxName: string): string
     return null;
   }
   if (openshellDriver !== "docker") return null;
-  const output = dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true });
-  let knownSandboxNames: string[] = [];
-  try {
-    knownSandboxNames = registry
-      .listSandboxes?.()
-      .sandboxes.map((entry) => entry.name) ?? [];
-  } catch {
-    knownSandboxNames = [];
-  }
-  return selectDockerDriverSandboxContainer(
-    sandboxName,
-    openshellDriver,
-    output,
-    knownSandboxNames,
+
+  const labelled = dockerCapture(
+    [
+      "ps",
+      "--filter",
+      `label=${OPENSHELL_SANDBOX_NAME_LABEL}=${sandboxName}`,
+      "--format",
+      "{{.Names}}",
+    ],
+    { ignoreError: true },
   );
+  const labelMatch = selectLabelledSandboxContainer(sandboxName, labelled);
+  if (labelMatch) return labelMatch;
+
+  // Fallback: older OpenShell sandboxes (pre-label) only get the exact
+  // canonical name. We deliberately do not fall back to a name-prefix
+  // match because the OpenShell Docker driver names containers
+  // `openshell-<sandbox-name>-<sandbox-id>`, and that suffix can encode
+  // another sandbox's name (sandbox `demo-prod` lives under
+  // `openshell-demo-prod-<id>`, which would otherwise be accepted as a
+  // container for sandbox `demo`).
+  const output = dockerCapture(["ps", "--format", "{{.Names}}"], { ignoreError: true });
+  return selectDockerDriverSandboxContainer(sandboxName, openshellDriver, output);
 }
 
 function withUserPrefix(cmd: readonly string[], user: string): string[] {

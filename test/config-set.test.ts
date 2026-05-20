@@ -105,14 +105,14 @@ describe("selectDockerDriverSandboxContainer", () => {
     expect(selected).toBe("openshell-demo");
   });
 
-  it("falls back to the generated Docker-driver sandbox container prefix", () => {
-    const selected = selectDockerDriverSandboxContainer(
-      "demo",
-      "docker",
-      "openshell-other\nopenshell-demo-abc123\n",
-    );
-
-    expect(selected).toBe("openshell-demo-abc123");
+  it("does not select a prefix-matching container (label lookup is the supported path)", () => {
+    expect(
+      selectDockerDriverSandboxContainer(
+        "demo",
+        "docker",
+        "openshell-other\nopenshell-demo-abc123\n",
+      ),
+    ).toBeNull();
   });
 
   it("does not select a container for legacy gateway sandboxes", () => {
