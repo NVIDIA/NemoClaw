@@ -1972,15 +1972,9 @@ describe("seed_default_workspace_templates (#3240)", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         `STEP_DOWN_LOG=${JSON.stringify(stepDownLog)}`,
-        `TEMPLATES_DIR=${JSON.stringify(templatesDir)}`,
-        `STEP_DOWN_PREFIX_SANDBOX=(env STEP_DOWN_MARKER=sandbox-step-down)`,
-        extractShellFunctionFromSource(src, "seed_default_workspace_templates")
-          .replace("local templates_dir=\"${2:-}\"", 'local templates_dir="${2:-$TEMPLATES_DIR}"')
-          .replace(
-            "local workspace_dir=\"${1:-/sandbox/.openclaw/workspace}\"",
-            'printf "%s\\n" "$STEP_DOWN_MARKER" >"$STEP_DOWN_LOG"\n  local workspace_dir="${1:-/sandbox/.openclaw/workspace}"',
-          ),
-        seedAsSandbox.replace(" '' ", ' "$TEMPLATES_DIR" '),
+        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$0" >"$STEP_DOWN_LOG"; exec "$@"' sandbox-step-down)`,
+        extractShellFunctionFromSource(src, "seed_default_workspace_templates"),
+        seedAsSandbox.replace(" '' ", ` ${JSON.stringify(templatesDir)} `),
         "seed_default_workspace_templates_as_sandbox",
       ].join("\n"),
       { mode: 0o700 },
