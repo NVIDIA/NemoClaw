@@ -130,10 +130,11 @@ expected_states:
       policy_engine: supported
       shields: supported
 
-  # Negative preflight state. Introduced alongside its first consumer,
-  # `ubuntu-no-docker-preflight-negative` (deferred from Phase 1).
-  # Setup is expected to fail, and the runner must confirm that no
-  # gateway or sandbox ghost state was left behind.
+  # Negative preflight state. Setup is expected to fail and the runner
+  # must confirm that no gateway or sandbox ghost state was left behind.
+  # The `expected_failure` block (added for #3608) is the structured
+  # contract the runner matches against; the legacy `failure` block is
+  # retained as a drift guard while scenarios migrate.
   preflight-failure-no-sandbox:
     cli:
       installed: true
@@ -144,6 +145,15 @@ expected_states:
     failure:
       expected: true
       stage: preflight
+    expected_failure:
+      phase: preflight
+      error_class: docker-missing
+      # Docker, container, daemon, socket, or preflight - case insensitive.
+      message_pattern: "(?i)docker|container|daemon|socket|preflight"
+      forbidden_side_effects:
+        - sandbox-created
+        - gateway-started
+        - credentials-written
 
   onboarding-failure-invalid-nvidia-key:
     cli:
