@@ -2252,14 +2252,10 @@ if [ "$(id -u)" -ne 0 ]; then
 
   # In non-root mode, detach gateway stdout/stderr from the sandbox-create
   # stream so openshell sandbox create can return once the container is ready.
-  # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-  touch /tmp/gateway.log
-  chmod 644 /tmp/gateway.log
+  prepare_start_log /tmp/gateway.log "" 644
 
   # Separate log for auto-pair in non-root mode as well.
-  # TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-  touch /tmp/auto-pair.log
-  chmod 600 /tmp/auto-pair.log
+  prepare_start_log /tmp/auto-pair.log "" 600
 
   # Defence-in-depth: verify /tmp file permissions before launching services.
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
@@ -2374,16 +2370,10 @@ fi
 
 # Gateway log: owned by gateway user, world-readable for diagnostics.
 # The sandbox user can read but not truncate/overwrite (not owner, sticky /tmp).
-# TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-touch /tmp/gateway.log
-chown gateway:gateway /tmp/gateway.log
-chmod 644 /tmp/gateway.log
+prepare_start_log /tmp/gateway.log gateway:gateway 644
 
 # Separate log for auto-pair so sandbox user can write to it
-# TODO(#2277-P2): migrate to shared emit_restricted_log() helper
-touch /tmp/auto-pair.log
-chown sandbox:sandbox /tmp/auto-pair.log
-chmod 600 /tmp/auto-pair.log
+prepare_start_log /tmp/auto-pair.log sandbox:sandbox 600
 
 # Provision per-agent workspaces for multi-agent OpenClaw deployments.
 #

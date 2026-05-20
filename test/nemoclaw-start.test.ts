@@ -1823,14 +1823,25 @@ describe("Telegram diagnostics (#2766)", () => {
     return kind === "non-root" ? `${block}fi\n` : block;
   }
 
-  function runPreGatewaySetup(kind: "non-root" | "root") {
+  function runPreGatewaySetup(
+    kind: "non-root" | "root",
+    opts: { symlinkLogs?: boolean } = {},
+  ) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-telegram-${kind}-`));
     const configPath = path.join(tmpDir, "openclaw.json");
     const preloadPath = path.join(tmpDir, "telegram-diagnostics.js");
     const gatewayLog = path.join(tmpDir, "gateway.log");
     const autoPairLog = path.join(tmpDir, "auto-pair.log");
+    const gatewayTarget = path.join(tmpDir, "trusted-gateway-target");
+    const autoPairTarget = path.join(tmpDir, "trusted-auto-pair-target");
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.writeFileSync(configPath, '{"channels":{"telegram":{}}}\n');
+    if (opts.symlinkLogs) {
+      fs.writeFileSync(gatewayTarget, "trusted gateway\n");
+      fs.writeFileSync(autoPairTarget, "trusted auto-pair\n");
+      fs.symlinkSync(gatewayTarget, gatewayLog);
+      fs.symlinkSync(autoPairTarget, autoPairLog);
+    }
     fs.writeFileSync(
       scriptPath,
       [
@@ -1839,6 +1850,7 @@ describe("Telegram diagnostics (#2766)", () => {
         kind === "non-root"
           ? 'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; elif [ "${1:-}" = "-g" ]; then printf "1000"; else command id "$@"; fi; }'
           : 'id() { if [ "${1:-}" = "-u" ]; then printf "0"; elif [ "${1:-}" = "-g" ]; then printf "0"; else command id "$@"; fi; }',
+        extractShellFunctionFromSource(src, "prepare_start_log"),
         'emit_sandbox_sourced_file() { local target="$1"; cat > "$target"; chmod 444 "$target"; }',
         'recover_openclaw_config_if_empty() { :; }',
         'verify_config_integrity_if_locked() { echo "ORDER:verify"; }',
@@ -1890,8 +1902,29 @@ describe("Telegram diagnostics (#2766)", () => {
     const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
     const preloadExists = fs.existsSync(preloadPath);
     const preloadMode = preloadExists ? (fs.statSync(preloadPath).mode & 0o777).toString(8) : "";
+    let gatewayTargetContent = "";
+    let autoPairTargetContent = "";
+    let gatewayLogIsSymlink = false;
+    let autoPairLogIsSymlink = false;
+    if (opts.symlinkLogs && result.status === 0) {
+      fs.writeFileSync(gatewayLog, "gateway output\n");
+      fs.writeFileSync(autoPairLog, "auto-pair output\n");
+      gatewayTargetContent = fs.readFileSync(gatewayTarget, "utf-8");
+      autoPairTargetContent = fs.readFileSync(autoPairTarget, "utf-8");
+      gatewayLogIsSymlink = fs.lstatSync(gatewayLog).isSymbolicLink();
+      autoPairLogIsSymlink = fs.lstatSync(autoPairLog).isSymbolicLink();
+    }
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    return { result, preloadExists, preloadMode, preloadPath };
+    return {
+      result,
+      preloadExists,
+      preloadMode,
+      preloadPath,
+      gatewayTargetContent,
+      autoPairTargetContent,
+      gatewayLogIsSymlink,
+      autoPairLogIsSymlink,
+    };
   }
 
   it("installs a Telegram diagnostics preload only when Telegram is configured", () => {
@@ -2004,6 +2037,17 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
       expect(setup.result.stdout).toContain("ORDER:configure");
       expect(setup.result.stdout).toContain("VALIDATE:");
       expect(setup.result.stdout).toContain(setup.preloadPath);
+    }
+  });
+
+  it("replaces symlinked service logs before gateway launch in both entrypoint paths", () => {
+    for (const kind of ["non-root", "root"] as const) {
+      const setup = runPreGatewaySetup(kind, { symlinkLogs: true });
+      expect(setup.result.status).toBe(0);
+      expect(setup.gatewayLogIsSymlink).toBe(false);
+      expect(setup.autoPairLogIsSymlink).toBe(false);
+      expect(setup.gatewayTargetContent).toBe("trusted gateway\n");
+      expect(setup.autoPairTargetContent).toBe("trusted auto-pair\n");
     }
   });
 

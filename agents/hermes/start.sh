@@ -63,6 +63,16 @@ prepare_restricted_log() {
     rm -f "$tmp"
     return 1
   fi
+  # /tmp is sandbox-writable; unlink pre-existing symlinks before replacing
+  # the path so log setup cannot be redirected or left pointing at a directory.
+  if [ -d "$path" ] && [ ! -L "$path" ]; then
+    rm -f "$tmp"
+    return 1
+  fi
+  if ! rm -f "$path"; then
+    rm -f "$tmp"
+    return 1
+  fi
   if ! mv -f "$tmp" "$path"; then
     rm -f "$tmp"
     return 1

@@ -603,5 +603,41 @@ EOF
       }
     });
 
+    it("hermes restricted log setup replaces symlinks to directories", () => {
+      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
+      const helper = src.match(/prepare_restricted_log\(\) \{([\s\S]*?)^}/m);
+      if (!helper) {
+        throw new Error("Expected prepare_restricted_log helper in agents/hermes/start.sh");
+      }
+
+      const workDir = mkdtempSync(join(tmpdir(), "hermes-log-symlink-"));
+      const targetDir = join(workDir, "trusted-dir");
+      const logPath = join(workDir, "gateway.log");
+      const wrapperPath = join(workDir, "run.sh");
+      mkdirSync(targetDir);
+      symlinkSync(targetDir, logPath);
+      writeFileSync(
+        wrapperPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          `prepare_restricted_log() {${helper[1]}\n}`,
+          `prepare_restricted_log ${JSON.stringify(logPath)} "" 600`,
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      try {
+        execFileSync("bash", [wrapperPath], { encoding: "utf-8" });
+        const logStat = lstatSync(logPath);
+        expect(logStat.isSymbolicLink()).toBe(false);
+        expect(logStat.isFile()).toBe(true);
+        expect(getOctalPerms(logPath)).toBe("600");
+        expect(lstatSync(targetDir).isDirectory()).toBe(true);
+      } finally {
+        rmSync(workDir, { recursive: true, force: true });
+      }
+    });
+
   });
 });
