@@ -51,7 +51,7 @@ function namedStep(workflow: AnyRecord, jobId: string, stepName: string): Workfl
 
 function uploadArtifactStep(workflow: AnyRecord, jobId: string, stepName: string): WorkflowStep {
   const step = namedStep(workflow, jobId, stepName);
-  expect(step.uses).toBe("actions/upload-artifact@v4");
+  expect(step.uses).toMatch(/^actions\/upload-artifact@(?:v4|[a-f0-9]{40})$/);
   return step;
 }
 
@@ -80,7 +80,7 @@ describe("e2e-scenarios workflow", () => {
   it("e2e_scenarios_workflow_should_upload_artifacts", () => {
     const wf = loadWorkflow();
     const upload = uploadArtifactStep(wf, "run-scenario", "Upload scenario artifacts");
-    expect(upload.with?.name).toBe("e2e-scenario-${{ github.event.inputs.scenario }}");
+    expect(upload.with?.name).toBe("e2e-scenario-${{ inputs.scenario }}");
     expect(upload.with?.path).toContain(".e2e/");
     expect(upload.with?.["include-hidden-files"]).toBe(true);
   });

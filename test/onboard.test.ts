@@ -35,6 +35,10 @@ type OnboardTestInternals = {
     requestedSandboxName: string;
     recordedSandboxName: string;
   } | null>;
+  clearAgentScopedResumeState: <T extends Record<string, unknown>>(
+    session: T,
+    selectedAgentName: string,
+  ) => T;
   pullAndResolveBaseImageDigest: () => { digest: string | null; ref: string } | null;
   SANDBOX_BASE_IMAGE: string;
 };
@@ -80,6 +84,7 @@ const {
   getRequestedSandboxNameHint,
   getResumeConfigConflicts,
   getResumeSandboxConflict,
+  clearAgentScopedResumeState,
   SANDBOX_BASE_IMAGE,
 } = onboardTestInternals;
 
@@ -383,7 +388,7 @@ startGateway(null).catch(() => {});
     }
   });
 
-  it("detects resume conflicts when a different agent is requested", () => {
+  it("does not treat a requested agent change as a hard resume conflict", () => {
     expect(
       getResumeConfigConflicts(
         {
@@ -392,13 +397,7 @@ startGateway(null).catch(() => {});
         },
         { agent: "hermes" },
       ),
-    ).toEqual([
-      {
-        field: "agent",
-        requested: "hermes",
-        recorded: "openclaw",
-      },
-    ]);
+    ).toEqual([]);
   });
 
   it("allows resume when requested agent matches recorded agent", () => {
@@ -411,6 +410,62 @@ startGateway(null).catch(() => {});
         { agent: "hermes" },
       ),
     ).toEqual([]);
+  });
+
+  it("clears agent-scoped provider state when a resume switches from Hermes to OpenClaw", () => {
+    const completeStep = {
+      status: "complete",
+      startedAt: "2026-05-19T00:00:00.000Z",
+      completedAt: "2026-05-19T00:01:00.000Z",
+      error: null,
+    };
+    const session = {
+      agent: "hermes",
+      provider: "hermes-provider",
+      model: "moonshotai/kimi-k2.6",
+      endpointUrl: "https://inference-api.nousresearch.com/v1",
+      credentialEnv: "NOUS_API_KEY",
+      hermesAuthMethod: "oauth",
+      hermesToolGateways: ["nous-web"],
+      preferredInferenceApi: "openai-completions",
+      nimContainer: "nim-hermes",
+      routerPid: 123,
+      routerCredentialHash: "hash",
+      policyPresets: ["nous-web", "brave"],
+      lastCompletedStep: "policies",
+      lastStepStarted: "policies",
+      steps: {
+        preflight: { ...completeStep },
+        gateway: { ...completeStep },
+        provider_selection: { ...completeStep },
+        inference: { ...completeStep },
+        sandbox: { ...completeStep },
+        openclaw: { ...completeStep },
+        agent_setup: { ...completeStep },
+        policies: { ...completeStep },
+      },
+    };
+
+    const cleared = clearAgentScopedResumeState(session, "openclaw") as typeof session;
+
+    expect(cleared.agent).toBeNull();
+    expect(cleared.provider).toBeNull();
+    expect(cleared.model).toBeNull();
+    expect(cleared.endpointUrl).toBeNull();
+    expect(cleared.credentialEnv).toBeNull();
+    expect(cleared.hermesAuthMethod).toBeNull();
+    expect(cleared.hermesToolGateways).toBeNull();
+    expect(cleared.preferredInferenceApi).toBeNull();
+    expect(cleared.nimContainer).toBeNull();
+    expect(cleared.routerPid).toBeNull();
+    expect(cleared.routerCredentialHash).toBeNull();
+    expect(cleared.policyPresets).toBeNull();
+    expect(cleared.steps.gateway.status).toBe("complete");
+    expect(cleared.steps.provider_selection.status).toBe("pending");
+    expect(cleared.steps.sandbox.status).toBe("pending");
+    expect(cleared.steps.policies.status).toBe("pending");
+    expect(cleared.lastCompletedStep).toBe("gateway");
+    expect(cleared.lastStepStarted).toBeNull();
   });
 
   it("returns a future-shell PATH hint for user-local openshell installs", () => {

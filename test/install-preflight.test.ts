@@ -1180,6 +1180,13 @@ exit 99
     });
 
     expect(result.status, output).toBe(0);
+    expect(output).toMatch(
+      /NVIDIA GPU passthrough uses CDI specs so Docker\/OpenShell can request nvidia\.com\/gpu devices/,
+    );
+    expect(output).toMatch(/Docker is configured for CDI, but the nvidia\.com\/gpu spec is missing/);
+    expect(output).toMatch(
+      /You may be asked for your password to authorize these host-level admin changes/,
+    );
     expect(output).toMatch(/Trying NVIDIA CDI refresh service \(auto-generates GPU CDI specs\)/);
     expect(output).toMatch(/Enabled NVIDIA CDI refresh service/);
     expect(output).not.toMatch(/falling back to direct generation/);
@@ -1204,6 +1211,8 @@ exit 1
 
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Generating missing NVIDIA CDI device spec/);
+    expect(output).toMatch(/NemoClaw will first enable NVIDIA's CDI refresh service/);
+    expect(output).toMatch(/NemoClaw does not store your password/);
     expect(output).toMatch(/Generated NVIDIA CDI device spec/);
     expect(output).toMatch(/Trying NVIDIA CDI refresh service \(auto-generates GPU CDI specs\)/);
     expect(output).toMatch(/falling back to direct generation/);
@@ -1754,8 +1763,9 @@ exit 0
     expect(result.status).toBe(0);
     expect(output).not.toMatch(/current shell cannot resolve 'nemoclaw'/);
     expect(output).not.toMatch(/this shell needs PATH refresh/);
-    expect(output).toMatch(/\$ source /);
-    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).not.toMatch(/\$ source /);
+    expect(output).not.toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).toContain("Use the Start chatting section above");
   });
 
   it("makes current-shell PATH refresh obvious when the installer added the bin dir", () => {
@@ -1846,7 +1856,7 @@ fi`,
     expect(output).not.toContain(
       "Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.",
     );
-    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).not.toMatch(/\$ nemoclaw my-assistant connect/);
   });
 });
 
@@ -2854,6 +2864,11 @@ printf 'Linux\\n'
         "-c",
         `
 source "$INSTALLER_UNDER_TEST" >/dev/null
+# These tests validate the Linux Docker bootstrap branches. On a real WSL
+# runner the installer intentionally skips that bootstrap, so force the helper
+# under test to behave as a non-WSL Linux host while keeping uname/id/docker
+# stubbed through PATH.
+is_wsl_host() { return 1; }
 info() { printf 'INFO: %s\\n' "$*" >&2; }
 warn() { printf 'WARN: %s\\n' "$*" >&2; }
 error() { printf 'ERROR: %s\\n' "$*" >&2; exit 1; }
@@ -3187,6 +3202,10 @@ sys.exit(exit_code)
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Spark/);
+    expect(output).toMatch(
+      /Express install will configure managed local Ollama with model qwen3\.6:35b/,
+    );
+    expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for DGX Spark/);
     expect(output).toMatch(
@@ -3225,6 +3244,10 @@ detect_express_platform
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected Windows WSL/);
+    expect(output).toMatch(
+      /Express install will configure Windows-host Ollama through host\.docker\.internal/,
+    );
+    expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for Windows WSL/);
     expect(output).toMatch(

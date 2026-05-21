@@ -526,7 +526,7 @@ Follow these steps to reconnect.
    $ nemoclaw tunnel start
    ```
 
-   OpenShell-managed channel messaging handles Telegram, Discord, Slack, WeChat, and WhatsApp at onboarding, not through a separate bridge process from `nemoclaw tunnel start`.
+   OpenShell-managed channel messaging handles Telegram, Discord, Slack, and WhatsApp at onboarding, not through a separate bridge process from `nemoclaw tunnel start`.
    To pause a single bridge without destroying the sandbox, use `nemoclaw <name> channels stop <channel>`.
 
 <Warning title="If the sandbox does not recover">
@@ -736,8 +736,8 @@ Run the equivalent host-side command instead:
 
 ```console
 $ nemoclaw <sandbox> channels list
-$ nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>
-$ nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
+$ nemoclaw <sandbox> channels add <telegram|discord|slack|whatsapp>
+$ nemoclaw <sandbox> channels remove <telegram|discord|slack|whatsapp>
 ```
 
 `channels add` registers credentials with the OpenShell gateway and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
@@ -746,7 +746,6 @@ In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the c
 WhatsApp pairs entirely inside the sandbox.
 NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes after you add the channel on the host.
 Run `openclaw channels login --channel whatsapp` inside OpenClaw sandboxes, or run `hermes whatsapp` inside Hermes sandboxes.
-WeChat captures its token via a host-side QR during the host-side `nemoclaw <sandbox> channels add wechat` flow, so it does not need an in-sandbox `channels login` step.
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
@@ -813,6 +812,54 @@ In that case:
 - verify the sandbox was created with the Discord provider attached
 - inspect gateway logs and blocked requests with `openshell term`
 - treat the failure as a native Discord gateway problem, not as a bridge startup problem
+
+### Discord preset validation behind a proxy
+
+The built-in Discord policy preset intentionally allows the Node binaries used by the messaging runtime and does not allow `curl`.
+As a result, `curl -s https://discord.com` failing, hanging, or printing no output is not proof that the Discord preset is broken.
+
+Behind the OpenShell proxy, direct DNS-only checks can also be the wrong signal.
+For example, `dns.resolve("gateway.discord.gg")` can fail even when HTTPS requests routed through the proxy are healthy.
+
+Use Node HTTPS as the manual REST probe:
+
+```console
+$ node - <<'NODE'
+const https = require("node:https");
+
+https
+  .get("https://discord.com/api/v10/gateway", (res) => {
+    console.log(`${res.statusCode} ${res.statusMessage || ""}`.trim());
+    res.resume();
+  })
+  .on("error", (err) => {
+    console.error(err.message);
+    process.exitCode = 1;
+  });
+NODE
+```
+
+To check Discord CDN egress, use the same Node HTTPS path:
+
+```console
+$ node - <<'NODE'
+const https = require("node:https");
+
+https
+  .get("https://cdn.discordapp.com/", (res) => {
+    console.log(`${res.statusCode} ${res.statusMessage || ""}`.trim());
+    res.resume();
+  })
+  .on("error", (err) => {
+    console.error(err.message);
+    process.exitCode = 1;
+  });
+NODE
+```
+
+Any HTTP status from these probes means the Node process reached the endpoint; the exact status can vary by unauthenticated path.
+If the Node REST probe works but the Discord channel is still unhealthy, investigate the native gateway path instead of widening the preset.
+Check the gateway logs and blocked-request output with `openshell term`, and look for `gateway.discord.gg` connection or WebSocket upgrade failures.
 
 ### Messaging bridge appears running but no messages arrive
 
@@ -1202,7 +1249,7 @@ Skills that require macOS-only binaries cannot be enabled on Brev.
 Skills that require additional CLI binaries require a custom sandbox image rebuild.
 
 For credentials, use the supported host-side setup flow.
-Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack|wechat|whatsapp>` for messaging channels.
+Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack|whatsapp>` for messaging channels.
 To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
 
 ```console

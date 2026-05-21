@@ -57,6 +57,12 @@ describe("coverage report", () => {
     expect(md).toMatch(/empty-suite-scenario.*no suites|no suites.*empty-suite-scenario/s);
   });
 
+  it("coverage_report_should_include_rebuild_upgrade_parity_buckets", () => {
+    const meta = loadMetadataFromDir(E2E_DIR);
+    const md = renderCoverageReport(meta);
+    expect(md).toMatch(/rebuild-runtime/);
+  });
+
   it("coverage_report_should_include_legacy_parity_summary_when_inventory_exists", () => {
     const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-coverage-parity-"));
     try {
@@ -115,6 +121,16 @@ describe("coverage report", () => {
     } finally {
       fs.rmSync(sourceDir, { recursive: true, force: true });
     }
+  });
+
+
+  it("test_should_report_scoped_lifecycle_parity_sections", () => {
+    const meta = loadMetadataFromDir(E2E_DIR);
+    const md = renderCoverageReport(meta);
+    expect(md).toMatch(/lifecycle/);
+    expect(md).toMatch(/Mapped assertions:/);
+    expect(md).toMatch(/Deferred assertions:/);
+    expect(md).toMatch(/Retired assertions:/);
   });
 
   it("should_flag_expected_states_not_used_by_any_scenario", () => {

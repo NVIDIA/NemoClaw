@@ -42,6 +42,10 @@ const {
 const { resolveNemoclawStateDir } = require("../state/paths");
 const { appendAuditEntry } = require("./audit");
 const { resolveAgentConfig } = require("../sandbox/config");
+const {
+  buildRuntimePermissivePolicy,
+}: typeof import("./permissive-runtime") = require("./permissive-runtime");
+const { cleanupTempDir } = require("../onboard/temp-files");
 
 const STATE_DIR = resolveNemoclawStateDir();
 
@@ -902,8 +906,21 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
 
   // 2. Determine and apply relaxed policy
   let policyFile: string;
+  let policyFileIsTemp = false;
   if (policyName === "permissive") {
-    policyFile = resolvePermissivePolicyPath(sandboxName);
+    const basePath = resolvePermissivePolicyPath(sandboxName);
+    // Union the live sandbox's filesystem_policy.read_only/read_write into
+    // the static permissive baseline. OpenShell rejects removal of those
+    // paths on a live sandbox, and runtime-injected entries (/proc on
+    // GPU, /opt/hermes on Hermes, /home/linuxbrew on post-#3913 OpenClaw,
+    // etc.) are not present in the static YAML. See #3942, #3957, #3168.
+    // policyYaml is the pre-parsed body we already captured for the
+    // snapshot above — reuse it instead of re-fetching.
+    policyFile = buildRuntimePermissivePolicy(basePath, {
+      livePolicyYaml: policyYaml,
+      readBasePolicy: () => fs.readFileSync(basePath, "utf-8"),
+    });
+    policyFileIsTemp = policyFile !== basePath;
   } else if (fs.existsSync(policyName)) {
     policyFile = path.resolve(policyName);
   } else {
@@ -914,7 +931,13 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
   }
 
   console.log(`  Applying ${policyName} policy...`);
-  run(buildPolicySetCommand(policyFile, sandboxName));
+  try {
+    run(buildPolicySetCommand(policyFile, sandboxName));
+  } finally {
+    if (policyFileIsTemp) {
+      cleanupTempDir(policyFile, "nemoclaw-permissive-runtime");
+    }
+  }
 
   // 2b. Return config to default mutable state.
   //     OpenClaw uses sandbox:sandbox 0660/2770 here so the gateway UID, which
