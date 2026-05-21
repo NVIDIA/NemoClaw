@@ -143,7 +143,7 @@ $ BRAVE_API_KEY=... \
 
 `BRAVE_API_KEY` enables Brave Search in non-interactive mode and also enables `web_fetch`.
 If Brave Search key validation fails in non-interactive mode, onboarding prints a warning, skips web search setup, and continues with the rest of the sandbox setup.
-After fixing the key, re-enable web search with `nemoclaw config web-search`.
+After fixing the key, re-enable web search by running `nemoclaw <name> policy-add brave`.
 
 The wizard prompts for a sandbox name.
 Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
@@ -475,10 +475,22 @@ Treat the gateway token like a password.
 Do not log it, share it, or commit it to version control.
 </Warning>
 
+### `nemoclaw <name> shields`
+
+Lock the sandbox config and apply the captured restrictive policy.
+See [Runtime Controls](../manage-sandboxes/runtime-controls) for the full mutability matrix, the `shields down --timeout/--reason/--policy` flags, and the `shields status` output format.
+
+### `nemoclaw <name> config get`
+
+Read the sanitized agent configuration.
+Use `--key <dotpath>` to retrieve a specific value and `--format json|yaml` to specify the output format.
+
+```console
+$ nemoclaw <name> config get --key model --format yaml
+```
+
 ### `nemoclaw <name> destroy`
 
-Stop the NIM container, remove the host-side Docker image built during onboard, and delete the sandbox.
-This removes the sandbox from the registry.
 For Ollama-backed sandboxes, `destroy` also asks Ollama to unload currently loaded models and clears stale auth proxy state on a best-effort basis.
 
 <Warning>
@@ -655,7 +667,7 @@ When `NEMOCLAW_NON_INTERACTIVE=1` is set, any missing token fails fast and no re
 Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel.
 Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt.
 When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway.
-If the matching built-in policy preset is applied, such as `telegram`, `discord`, `slack`, or `whatsapp`, NemoClaw also removes that preset so the upstream API is no longer allow-listed after the channel is gone.
+NemoClaw also removes matching built-in policy presets, such as `telegram`, `discord`, `slack`, or `whatsapp`, so the upstream API no longer appears in the allow-list after the channel is removed.
 
 ```console
 $ nemoclaw my-assistant channels remove telegram

@@ -9,7 +9,7 @@ keywords: ["nemoclaw troubleshooting", "nemoclaw debug sandbox issues"]
 content:
   type: "reference"
 ---
-{/* markdownlint-disable MD014 */}
+<!-- markdownlint-disable MD014 -->
 
 # Troubleshooting
 
@@ -591,7 +591,7 @@ If sandbox creation reports a TLS or certificate mismatch, the OpenShell gateway
 Refresh the gateway trust and then resume onboarding:
 
 ```console
-$ openshell gateway trust -g nemoclaw
+$ openshell gateway login nemoclaw
 $ nemoclaw onboard --resume
 ```
 
@@ -1068,6 +1068,7 @@ $ nemoclaw <name> logs
 Use `--follow` to stream logs in real time while debugging.
 
 <a id="dgx-spark"></a>
+
 ## DGX Spark
 
 For an end-to-end Ollama walkthrough on DGX Spark, refer to the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw).
@@ -1080,11 +1081,11 @@ Run `fix-coredns.sh` to point CoreDNS at the container gateway IP instead, then 
 ### `k3s` cannot find a freshly built image
 
 After building a new sandbox image, `k3s` inside the gateway container sometimes fails to pull it even though the image exists on the host.
-Destroy and restart the gateway, then re-run setup.
+Remove the gateway with `openshell gateway remove nemoclaw`, then re-run onboarding with `nemoclaw onboard`.
 
 ```console
-$ openshell gateway destroy
-$ openshell gateway start
+$ openshell gateway remove nemoclaw
+$ nemoclaw onboard
 ```
 
 ### GPU passthrough on Spark
@@ -1160,6 +1161,7 @@ NVIDIA AI Workbench's Traefik proxy binds ports 3000 and 10000.
 If you run other services on Spark that expect port 3000, bind them to a different port.
 
 <a id="windows-wsl-2"></a>
+
 ## Windows Subsystem for Linux
 
 For environment setup steps, see [Windows Prerequisites](/get-started/windows-preparation).

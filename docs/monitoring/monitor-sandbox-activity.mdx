@@ -33,25 +33,27 @@ Key fields in the output include the following:
 
 - Sandbox details, which show the configured model, provider, GPU mode, and applied policy presets.
 - Gateway and process health, which show whether NemoClaw can still reach the OpenShell gateway and whether the in-sandbox agent process is running.
-- Inference health for local Ollama and local vLLM, which shows `healthy` or `unreachable` together with the probed local URL.
+- Inference health for local Ollama and local vLLM, which shows `healthy`, `unreachable`, or `not probed` (when the endpoint URL is unknown for compatible-* providers) together with the probed local URL.
 - NIM status, which shows whether a NIM container is running and healthy when that path is in use.
 
 Run `nemoclaw <name> status` on the host to check sandbox state.
 Use `openshell sandbox list` for the underlying sandbox details.
 
-## View Blueprint and Sandbox Logs
+## Run Diagnostics
+
+Run the `doctor` command to perform a grouped health check across the host, gateway, sandbox, inference, messaging, and local services:
+
+```console
+$ nemoclaw <name> doctor [--json]
+```
 
 Stream the most recent log output from the blueprint runner and sandbox:
 
 ```console
-$ nemoclaw <name> logs
+$ nemoclaw <name> logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]
 ```
 
-To follow the log output in real time:
-
-```console
-$ nemoclaw <name> logs --follow
-```
+The command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear alongside the gateway log stream.
 
 ## Monitor Network Activity in the TUI
 
