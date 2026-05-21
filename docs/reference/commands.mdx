@@ -475,19 +475,8 @@ Treat the gateway token like a password.
 Do not log it, share it, or commit it to version control.
 </Warning>
 
-### `nemoclaw <name> shields`
-
-Lock the sandbox config and apply the captured restrictive policy.
-See [Runtime Controls](../manage-sandboxes/runtime-controls) for the full mutability matrix, the `shields down --timeout/--reason/--policy` flags, and the `shields status` output format.
-
-### `nemoclaw <name> config get`
-
-Read the sanitized agent configuration.
-Use `--key <dotpath>` to retrieve a specific value and `--format json|yaml` to specify the output format.
-
-```console
-$ nemoclaw <name> config get --key model --format yaml
-```
+For runtime mutability controls and policy lock behavior, see
+[Runtime Controls](../manage-sandboxes/runtime-controls.mdx).
 
 ### `nemoclaw <name> destroy`
 
