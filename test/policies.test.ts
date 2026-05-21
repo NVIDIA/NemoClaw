@@ -1266,6 +1266,29 @@ exit 1
       expect(parsed.filesystem_policy.read_write).toContain("/home/linuxbrew");
     });
 
+    it("OpenClaw permissive policies preserve baseline read_write paths (#3916)", () => {
+      const baseline = YAML.parse(
+        fs.readFileSync(
+          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox.yaml"),
+          "utf-8",
+        ),
+      ) as { filesystem_policy?: { read_write?: string[] } };
+      const baselineReadWrite = baseline.filesystem_policy?.read_write ?? [];
+      const permissivePolicyPaths = [
+        "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+        "agents/openclaw/policy-permissive.yaml",
+      ];
+
+      for (const relativePath of permissivePolicyPaths) {
+        const parsed = YAML.parse(
+          fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf-8"),
+        ) as { filesystem_policy?: { read_write?: string[] } };
+        expect(parsed.filesystem_policy?.read_write, relativePath).toEqual(
+          expect.arrayContaining(baselineReadWrite),
+        );
+      }
+    });
+
     it("brew preset whitelists the PATH shim and Homebrew-managed entrypoints (#3913)", () => {
       const content = requirePresetContent(policies.loadPreset("brew"));
       const parsed = YAML.parse(content);
