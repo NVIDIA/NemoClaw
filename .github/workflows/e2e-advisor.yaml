@@ -173,6 +173,19 @@ jobs:
             --schema "$ADVISOR_DIR/tools/e2e-advisor/schema.json" \
             --out-dir "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
 
+      - name: Run deterministic scenario E2E advisor
+        id: scenario-analysis
+        continue-on-error: true
+        env:
+          BASE_REF: ${{ github.event_name == 'pull_request' && format('origin/{0}', github.base_ref) || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && format('target/{0}', inputs.target_base) || inputs.base_ref) }}
+          HEAD_REF: ${{ github.event_name == 'pull_request' && 'HEAD' || (github.event_name == 'workflow_dispatch' && inputs.target_repo != '' && inputs.target_pr != '' && 'HEAD' || inputs.head_ref) }}
+        run: |
+          cd "$ADVISOR_WORKDIR"
+          node --experimental-strip-types "$ADVISOR_DIR/tools/e2e-advisor/scenarios.mts" \
+            --base "$BASE_REF" \
+            --head "$HEAD_REF" \
+            --out-dir "$GITHUB_WORKSPACE/artifacts/e2e-advisor"
+
       - name: Publish job summary
         if: always()
         run: |
@@ -180,6 +193,9 @@ jobs:
             cat "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-advisor-summary.md" >> "$GITHUB_STEP_SUMMARY"
           else
             printf '# E2E Recommendation Advisor\n\nAdvisor analysis did not produce a summary. See raw artifacts/logs.\n' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-scenario-advisor-summary.md" ]; then
+            cat "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-scenario-advisor-summary.md" >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Auto-dispatch required E2E jobs
@@ -229,6 +245,23 @@ jobs:
             node "$ADVISOR_DIR/tools/e2e-advisor/comment.mjs" "${COMMENT_ARGS[@]}"
           else
             echo "Skipping E2E advisor comment: trusted main checkout does not contain comment.mts or comment.mjs"
+          fi
+
+      - name: Post E2E scenario advisor PR comment
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.E2E_ADVISOR_GITHUB_TOKEN || github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if [ -f "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-scenario-advisor-summary.md" ] && [ -f "$ADVISOR_DIR/tools/e2e-advisor/scenario-comment.mts" ]; then
+            node --experimental-strip-types "$ADVISOR_DIR/tools/e2e-advisor/scenario-comment.mts" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pr "$PR_NUMBER" \
+              --summary "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-scenario-advisor-summary.md" \
+              --result "$GITHUB_WORKSPACE/artifacts/e2e-advisor/e2e-scenario-advisor-result.json"
+          else
+            echo "Skipping E2E scenario advisor comment: summary or scenario-comment.mts missing"
           fi
 
       - name: Upload advisor artifacts

@@ -35,6 +35,7 @@ Environment variables:
     NEMOCLAW_DISABLE_DEVICE_AUTH        Set to "1" to force-disable device auth
     NEMOCLAW_PROXY_HOST                 Egress proxy host (default: 10.200.0.1)
     NEMOCLAW_PROXY_PORT                 Egress proxy port (default: 3128)
+    NEMOCLAW_DISCORD_PROXY_PORT         Loopback proxy port for Discord (default: 3128)
     NEMOCLAW_WEB_SEARCH_ENABLED         Set to "1" to enable web search tools
 """
 
@@ -359,6 +360,11 @@ def build_config(env: dict | None = None) -> dict:
     proxy_host = env.get("NEMOCLAW_PROXY_HOST") or "10.200.0.1"
     proxy_port = env.get("NEMOCLAW_PROXY_PORT") or "3128"
     proxy_url = f"http://{proxy_host}:{proxy_port}"
+    # OpenClaw's Discord channel accepts only loopback proxy URLs for REST and
+    # gateway traffic. NemoClaw starts a loopback bridge in nemoclaw-start.sh
+    # that forwards to the real OpenShell proxy.
+    discord_proxy_port = env.get("NEMOCLAW_DISCORD_PROXY_PORT") or "3128"
+    discord_proxy_url = f"http://127.0.0.1:{discord_proxy_port}"
     model = env["NEMOCLAW_MODEL"]
     raw_chat_ui_url = env.get("CHAT_UI_URL") or ""
     chat_ui_url = raw_chat_ui_url or f"http://127.0.0.1:{DEFAULT_DASHBOARD_PORT}"
@@ -514,7 +520,9 @@ def build_config(env: dict | None = None) -> dict:
         }
         if ch == "slack":
             account["appToken"] = _placeholder(ch, "SLACK_APP_TOKEN")
-        if ch in {"discord", "telegram"}:
+        if ch == "discord":
+            account["proxy"] = discord_proxy_url
+        elif ch == "telegram":
             account["proxy"] = proxy_url
         if ch == "telegram":
             account["groupPolicy"] = "open"

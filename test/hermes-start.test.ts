@@ -96,6 +96,84 @@ function runTirithMarkerBootstrap(opts: {
   }
 }
 
+function writeFakeProcCmdline(procRoot: string, pid: number, argv: string[]) {
+  const pidDir = path.join(procRoot, String(pid));
+  fs.mkdirSync(pidDir, { recursive: true });
+  fs.writeFileSync(path.join(pidDir, "cmdline"), Buffer.from(`${argv.join("\0")}\0`));
+}
+
+function runHermesGatewayRuntimeCleanup(opts: {
+  liveGateway?: boolean;
+  orphanSocat?: boolean;
+  staleLock?: boolean;
+  stalePid?: boolean;
+}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-cleanup-"));
+  const hermesHome = path.join(tmpDir, ".hermes");
+  const runtimeDir = path.join(hermesHome, "runtime");
+  const procRoot = path.join(tmpDir, "proc");
+  const killLog = path.join(tmpDir, "kill.log");
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const legacyPid = path.join(hermesHome, "gateway.pid");
+  const runtimePid = path.join(runtimeDir, "gateway.pid");
+  const runtimeLock = path.join(runtimeDir, "gateway.lock");
+
+  fs.mkdirSync(runtimeDir, { recursive: true });
+  fs.mkdirSync(procRoot, { recursive: true });
+  fs.symlinkSync("runtime/gateway.pid", legacyPid);
+  if (opts.stalePid !== false) fs.writeFileSync(runtimePid, "999999\n");
+  if (opts.staleLock !== false) fs.writeFileSync(runtimeLock, "stale lock");
+  if (opts.liveGateway) {
+    writeFakeProcCmdline(procRoot, 123, ["/usr/local/bin/hermes", "gateway", "run"]);
+  }
+  if (opts.orphanSocat) {
+    writeFakeProcCmdline(procRoot, 456, [
+      "socat",
+      "TCP-LISTEN:8642,bind=0.0.0.0,fork,reuseaddr",
+      "TCP:127.0.0.1:18642",
+    ]);
+  }
+
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "cmdline_is_hermes_gateway"),
+      extractShellFunctionFromSource(src, "has_live_hermes_gateway"),
+      extractShellFunctionFromSource(src, "cleanup_orphan_socat_forwarders"),
+      extractShellFunctionFromSource(src, "remove_stale_gateway_file"),
+      extractShellFunctionFromSource(src, "cleanup_stale_hermes_gateway_runtime"),
+      `KILL_LOG=${shellQuote(killLog)}`,
+      'kill() { printf "%s\\n" "$*" >>"$KILL_LOG"; return 0; }',
+      `HERMES_DIR=${shellQuote(hermesHome)}`,
+      `NEMOCLAW_PROC_ROOT=${shellQuote(procRoot)}`,
+      "PUBLIC_PORT=8642",
+      "INTERNAL_PORT=18642",
+      "cleanup_stale_hermes_gateway_runtime",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+    return {
+      result,
+      killLog: fs.existsSync(killLog) ? fs.readFileSync(killLog, "utf-8") : "",
+      runtimePidExists: fs.existsSync(runtimePid),
+      runtimeLockExists: fs.existsSync(runtimeLock),
+      legacyPidIsSymlink: fs.lstatSync(legacyPid).isSymbolicLink(),
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 function runRuntimeShellEnvBootstrap() {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-env-"));
   const envFile = path.join(tmpDir, "nemoclaw-proxy-env.sh");
@@ -178,6 +256,37 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     );
   });
 
+});
+
+describe("agents/hermes/start.sh gateway runtime cleanup", () => {
+  it("removes stale Hermes pid and lock files while preserving the compatibility pid symlink", () => {
+    const run = runHermesGatewayRuntimeCleanup({});
+
+    expect(run.result.status).toBe(0);
+    expect(run.runtimePidExists).toBe(false);
+    expect(run.runtimeLockExists).toBe(false);
+    expect(run.legacyPidIsSymlink).toBe(true);
+    expect(run.result.stderr).toContain("Removing stale Hermes PID file");
+    expect(run.result.stderr).toContain("Removing stale Hermes lock file");
+  });
+
+  it("kills orphaned socat forwarders when no Hermes gateway is alive", () => {
+    const run = runHermesGatewayRuntimeCleanup({ orphanSocat: true, staleLock: false, stalePid: false });
+
+    expect(run.result.status).toBe(0);
+    expect(run.killLog.trim()).toBe("456");
+    expect(run.result.stderr).toContain("Removing orphaned socat forwarder");
+  });
+
+  it("preserves Hermes runtime state when a gateway process is alive", () => {
+    const run = runHermesGatewayRuntimeCleanup({ liveGateway: true, orphanSocat: true });
+
+    expect(run.result.status).toBe(0);
+    expect(run.runtimePidExists).toBe(true);
+    expect(run.runtimeLockExists).toBe(true);
+    expect(run.killLog).toBe("");
+    expect(run.result.stderr).toContain("Existing Hermes gateway process detected");
+  });
 });
 
 describe("agents/hermes/start.sh Tirith marker bootstrap", () => {

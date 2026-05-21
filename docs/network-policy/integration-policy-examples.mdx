@@ -226,6 +226,18 @@ $ nemoclaw my-assistant policy-remove brew --yes
 $ nemoclaw my-assistant policy-remove huggingface --yes
 ```
 
+### Homebrew Specifics
+
+The sandbox base image includes Homebrew (Linuxbrew), so applying the `brew` preset is the only step needed before installing a formula.
+A `/usr/local/bin/brew` symlink puts the entry point on the sandbox `PATH`, so the agent can run `brew install <formula>` directly:
+
+```console
+$ nemoclaw my-assistant policy-add brew --yes
+$ nemoclaw my-assistant exec -- brew install <formula>
+```
+
+You do not need to bootstrap Homebrew, install build dependencies, or source `brew shellenv` inside the sandbox.
+
 ## Local Inference
 
 Use `local-inference` when the sandbox needs access to host-side local inference services such as Ollama or vLLM through the OpenShell host gateway.

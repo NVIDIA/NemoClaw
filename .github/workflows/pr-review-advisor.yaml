@@ -53,7 +53,7 @@ jobs:
     name: PR review advisor
     if: ${{ github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == 'NVIDIA/NemoClaw') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 40
     env:
       # Pin the Pi SDK to a known-good version. Updates should go through
       # normal dependency review so a compromised upstream release cannot run
@@ -61,6 +61,14 @@ jobs:
       PI_SDK_VERSION: "0.74.0"
       PR_REVIEW_ADVISOR_TIMEOUT_MS: "900000"
       PR_REVIEW_ADVISOR_HEARTBEAT_MS: "60000"
+      # This job is advisory and must not be configured as a required status
+      # check. It waits for required checks before model analysis so summaries
+      # are based on settled CI instead of an immediate pending snapshot.
+      PR_REVIEW_ADVISOR_WAIT_FOR_REQUIRED_CHECKS: "1"
+      PR_REVIEW_ADVISOR_WAIT_TIMEOUT_MS: "900000"
+      PR_REVIEW_ADVISOR_WAIT_POLL_MS: "30000"
+      PR_REVIEW_ADVISOR_WAIT_ADDITIONAL_CONTEXTS: "E2E recommendation"
+      PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS: "checks,commit-lint,dco-check,check-hash,changes"
       # Trusted implementation code is always checked out here. PR content is
       # only read as inert analysis data under ADVISOR_WORKDIR.
       ADVISOR_DIR: ${{ github.workspace }}/advisor

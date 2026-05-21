@@ -38,7 +38,7 @@ rebuild_upgrade_assert_sandbox_reachable() {
   fi
   local sandbox
   sandbox="$(_rebuild_upgrade_ctx E2E_SANDBOX_NAME)"
-  if _rebuild_upgrade_run REBUILD_UPGRADE_SANDBOX_CMD openshell sandbox exec "${sandbox}" -- true; then
+  if _rebuild_upgrade_run REBUILD_UPGRADE_SANDBOX_CMD openshell sandbox exec -n "${sandbox}" -- true; then
     e2e_pass "suite.upgrade.survivor_agent_reachable"
   else
     e2e_fail "suite.upgrade.survivor_agent_reachable"
@@ -55,7 +55,7 @@ rebuild_upgrade_assert_marker_preserved() {
   sandbox="$(_rebuild_upgrade_ctx E2E_SANDBOX_NAME)"
   marker_path="${E2E_REBUILD_MARKER_PATH:-/workspace/.nemoclaw-rebuild-marker}"
   expected="${E2E_REBUILD_MARKER_EXPECTED:-${E2E_STATE_MARKER_EXPECTED:-}}"
-  actual="$(_rebuild_upgrade_run REBUILD_UPGRADE_SANDBOX_CMD openshell sandbox exec "${sandbox}" -- cat "${marker_path}" 2>/dev/null || true)"
+  actual="$(_rebuild_upgrade_run REBUILD_UPGRADE_SANDBOX_CMD openshell sandbox exec -n "${sandbox}" -- cat "${marker_path}" 2>/dev/null || true)"
   if [[ -n "${actual}" && (-z "${expected}" || "${actual}" == "${expected}") ]]; then
     e2e_pass "suite.rebuild.workspace_state_preserved"
   else
@@ -74,7 +74,7 @@ rebuild_upgrade_assert_agent_version_upgraded() {
   old="${E2E_OLD_AGENT_VERSION:-}"
   expected="${E2E_EXPECTED_AGENT_VERSION:-}"
   cmd="${E2E_AGENT_VERSION_COMMAND:-openclaw --version}"
-  actual="$(_rebuild_upgrade_run REBUILD_UPGRADE_SANDBOX_CMD openshell sandbox exec "${sandbox}" -- bash -lc "${cmd}" 2>/dev/null || true)"
+  actual="$(_rebuild_upgrade_run REBUILD_UPGRADE_SANDBOX_CMD openshell sandbox exec -n "${sandbox}" -- bash -lc "${cmd}" 2>/dev/null || true)"
   if [[ -n "${actual}" && (-z "${old}" || "${actual}" != *"${old}"*) && (-z "${expected}" || "${actual}" == *"${expected}"*) ]]; then
     e2e_pass "suite.rebuild.agent_version_upgraded"
   else
@@ -91,7 +91,7 @@ rebuild_upgrade_assert_inference_works() {
   local sandbox cmd output
   sandbox="$(_rebuild_upgrade_ctx E2E_SANDBOX_NAME)"
   cmd="${E2E_INFERENCE_CHECK_COMMAND:-curl -fsS http://inference.local/v1/models}"
-  output="$(_rebuild_upgrade_run REBUILD_UPGRADE_SANDBOX_CMD openshell sandbox exec "${sandbox}" -- bash -lc "${cmd}" 2>/dev/null || true)"
+  output="$(_rebuild_upgrade_run REBUILD_UPGRADE_SANDBOX_CMD openshell sandbox exec -n "${sandbox}" -- bash -lc "${cmd}" 2>/dev/null || true)"
   if [[ -n "${output}" ]]; then
     e2e_pass "suite.rebuild.inference_still_works"
   else
@@ -129,7 +129,7 @@ rebuild_upgrade_assert_hermes_config_preserved() {
   fi
   local sandbox output
   sandbox="$(_rebuild_upgrade_ctx E2E_SANDBOX_NAME)"
-  output="$(_rebuild_upgrade_run REBUILD_UPGRADE_SANDBOX_CMD openshell sandbox exec "${sandbox}" -- bash -lc "grep -R 'platforms.discord\|DISCORD' ~/.hermes . 2>/dev/null" || true)"
+  output="$(_rebuild_upgrade_run REBUILD_UPGRADE_SANDBOX_CMD openshell sandbox exec -n "${sandbox}" -- bash -lc "grep -R 'platforms.discord\|DISCORD' ~/.hermes . 2>/dev/null" || true)"
   if [[ "${output}" == *"discord"* || "${output}" == *"DISCORD"* ]]; then
     e2e_pass "suite.rebuild.hermes_config_preserved"
   else

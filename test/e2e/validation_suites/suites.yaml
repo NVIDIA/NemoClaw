@@ -33,6 +33,8 @@ suites:
     steps: &id008
     - id: credentials-present
       script: security/credentials/00-credentials-present.sh
+    - id: no-plaintext-host-store
+      script: security/credentials/01-no-plaintext-host-store.sh
   baseline-onboarding:
     requires_state:
       cli.installed: true
@@ -102,10 +104,19 @@ suites:
     steps: *id004
   ollama-auth-proxy:
     requires_state: *id005
-    steps: *id006
+    steps:
+    - id: proxy-reachable
+      script: inference/ollama-auth-proxy/00-proxy-reachable.sh
+    - id: auth-enforcement
+      script: inference/ollama-auth-proxy/01-auth-enforcement.sh
   security-credentials:
-    requires_state: *id007
-    steps: *id008
+    requires_state:
+      credentials.expected: present
+    steps:
+    - id: credentials-present
+      script: security/credentials/00-credentials-present.sh
+    - id: no-plaintext-host-store
+      script: security/credentials/01-no-plaintext-host-store.sh
   messaging-telegram:
     requires_state: *id001
     steps:
@@ -148,11 +159,18 @@ suites:
     - id: slack-provider-state
       script: messaging/slack/00-slack-provider-state.sh
   security-shields:
-    requires_state: *id007
-    steps: *id008
+    requires_state:
+      sandbox.status: running
+    steps:
+    - id: shields-config-consistent
+      script: security/shields/00-config-consistent.sh
   inference-routing:
     requires_state: *id003
-    steps: *id004
+    steps:
+    - id: inference-local-chat-completion
+      script: inference/routing/00-inference-local-chat-completion.sh
+    - id: provider-route-health
+      script: inference/routing/01-provider-route-health.sh
   sandbox-lifecycle:
     requires_state:
       gateway.health: healthy
@@ -212,18 +230,41 @@ suites:
     steps: *id004
   inference-switch:
     requires_state: *id003
-    steps: *id004
+    steps:
+    - id: route-state-updated
+      script: inference/switch/00-route-state-updated.sh
+    - id: switched-inference-local-chat
+      script: inference/switch/01-switched-inference-local-chat.sh
   kimi-compatibility:
     requires_state: *id003
-    steps: *id004
+    steps:
+    - id: plugin-wiring
+      script: inference/kimi-compatibility/00-plugin-wiring.sh
+    - id: kimi-compatible-models-route
+      script: inference/kimi-compatibility/01-kimi-compatible-models-route.sh
+  model-router:
+    requires_state: *id003
+    steps:
+    - id: healthy-endpoint
+      script: inference/model-router/00-healthy-endpoint.sh
+    - id: provider-routed-completion
+      script: inference/model-router/01-provider-routed-completion.sh
   messaging-token-rotation:
     requires_state: *id001
     steps:
     - id: provider-rotation-isolated
       script: messaging/token-rotation/00-provider-rotation-isolated.sh
   security-policy:
-    requires_state: *id007
-    steps: *id008
+    requires_state:
+      sandbox.status: running
+    steps:
+    - id: telegram-preset-applied
+      script: security/policy/00-telegram-preset-applied.sh
+    - id: openshell-version-supports-credential-rewrite
+      script: security/policy/01-openshell-version-supports-credential-rewrite.sh
   security-injection:
-    requires_state: *id007
-    steps: *id008
+    requires_state:
+      sandbox.status: running
+    steps:
+    - id: telegram-message-not-shell-executed
+      script: security/injection/00-telegram-message-not-shell-executed.sh

@@ -52,6 +52,7 @@
 
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { execSync, execFileSync, spawnSync, type StdioOptions } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
 // Instance configuration
@@ -87,6 +88,9 @@ const BREV_SSH_READY_TIMEOUT_MS =
     : GPU_TEST_SUITE
       ? 1800
       : 900) * 1000;
+const OPENSHELL_GATEWAY_PORT = 8080;
+const OLLAMA_AUTH_PROXY_PORT = 11435;
+const DOCKER_DEFAULT_BRIDGE_POOL_CIDR = "172.16.0.0/12";
 
 function requireInstanceName(): string {
   if (!INSTANCE_NAME) {
@@ -724,26 +728,35 @@ function createBrevInstance(elapsed: () => string): void {
  * GPU Brev instances provide the host driver, but Docker may still need the
  * NVIDIA container runtime configured before sandbox containers can use GPUs.
  */
+function gpuDockerRuntimeSetupCommands(): string[] {
+  return [
+    `set -euo pipefail`,
+    `nvidia-smi`,
+    `sudo apt-get update -qq`,
+    `sudo apt-get install -y -qq ca-certificates curl gnupg >/dev/null`,
+    `sudo rm -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`,
+    `curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`,
+    `curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null`,
+    `sudo apt-get update -qq`,
+    `sudo apt-get install -y -qq nvidia-container-toolkit >/dev/null`,
+    `sudo nvidia-ctk runtime configure --runtime=docker`,
+    `sudo systemctl restart docker`,
+    `sudo chmod 666 /var/run/docker.sock`,
+    // Brev GPU branch-validation VMs are single-use CI hosts. The
+    // openshell-docker network is created later by gateway startup, so this
+    // setup cannot know the exact future bridge subnet. Allow Docker's default
+    // local bridge pool to the OpenShell host-service ports needed by the GPU
+    // path; product-side reachability checks still fail closed if the sandbox
+    // route is actually broken (#3959).
+    `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OPENSHELL_GATEWAY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW OpenShell gateway allow rule" >&2; fi`,
+    `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OLLAMA_AUTH_PROXY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW Ollama auth proxy allow rule" >&2; fi`,
+    `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`,
+  ];
+}
+
 function prepareGpuDockerRuntime(elapsed: () => string): void {
   console.log(`[${elapsed()}] Preparing NVIDIA Docker runtime on Brev GPU instance...`);
-  ssh(
-    [
-      `set -euo pipefail`,
-      `nvidia-smi`,
-      `sudo apt-get update -qq`,
-      `sudo apt-get install -y -qq ca-certificates curl gnupg >/dev/null`,
-      `sudo rm -f /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`,
-      `curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | sudo gpg --batch --yes --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg`,
-      `curl -fsSL https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | sudo tee /etc/apt/sources.list.d/nvidia-container-toolkit.list >/dev/null`,
-      `sudo apt-get update -qq`,
-      `sudo apt-get install -y -qq nvidia-container-toolkit >/dev/null`,
-      `sudo nvidia-ctk runtime configure --runtime=docker`,
-      `sudo systemctl restart docker`,
-      `sudo chmod 666 /var/run/docker.sock`,
-      `docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi`,
-    ].join(" && "),
-    { timeout: 900_000, stream: true },
-  );
+  ssh(gpuDockerRuntimeSetupCommands().join(" && "), { timeout: 900_000, stream: true });
   console.log(`[${elapsed()}] NVIDIA Docker runtime ready`);
 }
 
@@ -1040,6 +1053,32 @@ describe("Brev deploy input validation", () => {
     expect(output).not.toContain("Waiting for Brev instance readiness");
     expect(output).not.toContain("Waiting for SSH");
     expect(output).not.toContain("bash scripts/install.sh");
+  });
+});
+
+describe("Brev GPU runtime setup", () => {
+  it("allows Docker bridge traffic to reach OpenShell host-service ports", () => {
+    const setup = gpuDockerRuntimeSetupCommands().join("\n");
+
+    expect(setup).toContain(
+      `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OPENSHELL_GATEWAY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW OpenShell gateway allow rule" >&2; fi`,
+    );
+    expect(setup).toContain(
+      `if command -v ufw >/dev/null 2>&1; then sudo ufw allow from ${DOCKER_DEFAULT_BRIDGE_POOL_CIDR} to any port ${OLLAMA_AUTH_PROXY_PORT} proto tcp >/dev/null || echo "warning: could not add UFW Ollama auth proxy allow rule" >&2; fi`,
+    );
+  });
+
+  it("runs Docker GPU sandbox inference proof with the OpenShell proxy env", () => {
+    const script = fs.readFileSync(path.join(REPO_DIR, "test/e2e/test-gpu-e2e.sh"), "utf-8");
+
+    expect(script).toContain('[[ "$SANDBOX_INFERENCE_URL" == https://inference.local/* ]]');
+    expect(script).toContain('SANDBOX_INFERENCE_DOCKER_EXEC_ENV=(');
+    expect(script).toContain('--env "HTTPS_PROXY=${INFERENCE_PROXY_URL}"');
+    expect(script).toContain('INFERENCE_NO_PROXY="localhost,127.0.0.1,::1,${INFERENCE_PROXY_HOST}"');
+    expect(script).toContain("curl -skS --max-time 90");
+    expect(script).toContain(
+      'docker exec "${SANDBOX_INFERENCE_DOCKER_EXEC_ENV[@]}" "$sandbox_container_id"',
+    );
   });
 });
 

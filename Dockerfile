@@ -164,31 +164,89 @@ RUN set -eu; \
 #   target hostname allowlist for the proxy hostname check (or exposes config
 #   to disable the check).
 #
-# SYNC WITH OPENCLAW: these patches grep for specific exports and function
-# definitions in the compiled OpenClaw dist (withStrictGuardedFetchMode,
-# assertExplicitProxyAllowed). If OpenClaw renames, removes, or restructures
-# either symbol in a future release, the grep will fail and the build will
-# abort. When bumping OPENCLAW_VERSION, verify both symbols still exist in
-# the new dist and update the regex / sed replacement accordingly.
-#
-# Both patches fail-close: if grep finds no targets, the build aborts so
-# the next maintainer reviewing an OPENCLAW_VERSION bump knows to revisit.
+# SYNC WITH OPENCLAW: these patches classify the compiled OpenClaw dist at
+# build time. They apply the legacy patch when the old target exists, skip
+# only when the dist shape proves OpenClaw no longer needs that patch, and
+# fail with the OpenClaw version plus dist path for mixed or unknown shapes.
+# When bumping OPENCLAW_VERSION or min_openclaw_version, verify the new dist
+# takes the expected branch and update the regex / sed replacement if needed.
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
     OC_DIST=/usr/local/lib/node_modules/openclaw/dist; \
+    OC_VERSION="$(openclaw --version 2>/dev/null | awk '{print $2}' || true)"; \
+    OC_VERSION="${OC_VERSION:-unknown}"; \
+    patch_fail() { \
+        echo "ERROR: OpenClaw ${OC_VERSION} fetch-guard patch cannot classify this dist shape: $*" >&2; \
+        echo "       Inspect ${OC_DIST} and update the Dockerfile patch rules for this OpenClaw layout." >&2; \
+        exit 1; \
+    }; \
     # --- Patch 1: rewrite fetch-guard export --- \
-    fg_export="$(grep -RIlE --include='*.js' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' "$OC_DIST")"; \
-    test -n "$fg_export"; \
-    for f in $fg_export; do \
-        grep -q 'withTrustedEnvProxyGuardedFetchMode' "$f" || { echo "ERROR: $f missing withTrustedEnvProxyGuardedFetchMode"; exit 1; }; \
-    done; \
-    printf '%s\n' "$fg_export" | xargs sed -i -E 's|withStrictGuardedFetchMode as ([a-z])|withTrustedEnvProxyGuardedFetchMode as \1|g'; \
-    if grep -REq --include='*.js' 'withStrictGuardedFetchMode as [a-z]' "$OC_DIST"; then echo "ERROR: Patch 1 left strict-mode export alias" >&2; exit 1; fi; \
+    fg_export="$(grep -RIlE --include='*.js' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' "$OC_DIST" || true)"; \
+    if [ -n "$fg_export" ]; then \
+        for f in $fg_export; do \
+            grep -q 'withTrustedEnvProxyGuardedFetchMode' "$f" || patch_fail "Patch 1 target $f is missing withTrustedEnvProxyGuardedFetchMode"; \
+        done; \
+        printf '%s\n' "$fg_export" | xargs sed -i -E 's|withStrictGuardedFetchMode as ([a-z])|withTrustedEnvProxyGuardedFetchMode as \1|g'; \
+        if grep -REq --include='*.js' 'withStrictGuardedFetchMode as [a-z]' "$OC_DIST"; then echo "ERROR: Patch 1 left strict-mode export alias" >&2; exit 1; fi; \
+        echo "INFO: Patch 1 applied to OpenClaw ${OC_VERSION} strict fetch export"; \
+    else \
+        strict_refs="$(grep -RIl --include='*.js' 'withStrictGuardedFetchMode' "$OC_DIST" || true)"; \
+        trusted_refs="$(grep -RIl --include='*.js' 'withTrustedEnvProxyGuardedFetchMode' "$OC_DIST" || true)"; \
+        media_fetch_files="$(grep -RIl --include='*.js' 'fetchGuardedMediaResponse' "$OC_DIST" || true)"; \
+        trusted_media_fetch=0; \
+        untrusted_media_fetch=0; \
+        for f in $media_fetch_files; do \
+            if ! grep -q 'fetchWithSsrFGuard' "$f"; then \
+                continue; \
+            elif grep -E 'fetchWithSsrFGuard' "$f" | grep -q 'withTrustedEnvProxyGuardedFetchMode' \
+                && ! grep -E 'fetchWithSsrFGuard' "$f" | grep -vq 'withTrustedEnvProxyGuardedFetchMode'; then \
+                trusted_media_fetch=1; \
+            else \
+                echo "ERROR: Patch 1 unreviewed media fetch shape in $f" >&2; \
+                untrusted_media_fetch=1; \
+            fi; \
+        done; \
+        if [ "$OC_VERSION" != "unknown" ] && [ -z "$strict_refs" ] && [ -n "$trusted_refs" ] && [ "$trusted_media_fetch" = "1" ] && [ "$untrusted_media_fetch" = "0" ]; then \
+            echo "INFO: OpenClaw ${OC_VERSION} has no withStrictGuardedFetchMode references; Patch 1 not needed"; \
+        elif [ -z "$trusted_refs" ]; then \
+            patch_fail "Patch 1 target missing and withTrustedEnvProxyGuardedFetchMode is also absent"; \
+        else \
+            echo "ERROR: Patch 1 target missing but the fetch-guard shape is not a reviewed trusted-proxy-only layout:" >&2; \
+            if [ -n "$strict_refs" ]; then printf '%s\n' "$strict_refs" | head -n 5 >&2; fi; \
+            patch_fail "Patch 1 cannot safely skip"; \
+        fi; \
+    fi; \
     # --- Patch 2: neutralize assertExplicitProxyAllowed --- \
-    fg_assert="$(grep -RIlE --include='*.js' 'async function assertExplicitProxyAllowed' "$OC_DIST")"; \
-    test -n "$fg_assert"; \
-    printf '%s\n' "$fg_assert" | xargs sed -i -E 's|(async function assertExplicitProxyAllowed\([^)]*\) \{)|\1 if (process.env.OPENSHELL_SANDBOX === "1") return; /* nemoclaw: env-gated bypass, see Dockerfile */ |'; \
-    grep -REq --include='*.js' 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.OPENSHELL_SANDBOX === "1"\) return; /\* nemoclaw' "$OC_DIST"; \
+    fg_assert="$(grep -RIlE --include='*.js' 'async function assertExplicitProxyAllowed' "$OC_DIST" || true)"; \
+    if [ -n "$fg_assert" ]; then \
+        patched_assert=0; \
+        for f in $fg_assert; do \
+            if grep -q 'process.env.OPENSHELL_SANDBOX === "1"' "$f"; then \
+                echo "INFO: Patch 2 already present in $f"; \
+            else \
+                sed -i -E 's|(async function assertExplicitProxyAllowed\([^)]*\) \{)|\1 if (process.env.OPENSHELL_SANDBOX === "1") return; /* nemoclaw: env-gated bypass, see Dockerfile */ |' "$f"; \
+                grep -Eq 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.OPENSHELL_SANDBOX === "1"\) return; /\* nemoclaw' "$f" \
+                    || patch_fail "Patch 2 verification failed for $f"; \
+                patched_assert=1; \
+            fi; \
+        done; \
+        if [ "$patched_assert" = "1" ]; then \
+            echo "INFO: Patch 2 applied to OpenClaw ${OC_VERSION} explicit proxy validator"; \
+        fi; \
+    else \
+        proxy_hostname_checks="$(grep -RIlE --include='*.js' 'resolvePinnedHostnameWithPolicy' "$OC_DIST" | while IFS= read -r f; do \
+            if grep -Eq 'parsedProxyUrl|proxyUrl|proxyHostname|proxy.*[Hh]ostname|[Hh]ostname.*proxy|allowPrivateProxy' "$f"; then \
+                printf '%s\n' "$f"; \
+            fi; \
+        done || true)"; \
+        if [ -z "$proxy_hostname_checks" ]; then \
+            echo "INFO: OpenClaw ${OC_VERSION} has no assertExplicitProxyAllowed proxy hostname validator; Patch 2 not needed"; \
+        else \
+            echo "ERROR: Patch 2 target missing but proxy hostname validation references remain:" >&2; \
+            printf '%s\n' "$proxy_hostname_checks" | head -n 5 >&2; \
+            patch_fail "Patch 2 cannot safely skip"; \
+        fi; \
+    fi; \
     # --- Patch 3: follow symlinks in plugin-install path checks (#2203) --- \
     # OpenClaw's install-safe-path and install-package-dir reject symlinked \
     # directories via lstat. Changing lstat → stat in these two modules lets \
@@ -634,7 +692,7 @@ RUN chown root:root /sandbox/.nemoclaw \
     && chmod -R 755 /sandbox/.nemoclaw/blueprints \
     && mkdir -p /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
     && chown sandbox:sandbox /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
-    && touch /sandbox/.nemoclaw/config.json \
+    && printf '%s' '{}' > /sandbox/.nemoclaw/config.json \
     && chown sandbox:sandbox /sandbox/.nemoclaw/config.json
 
 # OpenShell 0.0.37's macOS VM backend currently remaps rootfs ownership to the

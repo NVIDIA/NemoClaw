@@ -84,6 +84,102 @@ function loadPreset(name: string): string | null {
   return fs.readFileSync(file, "utf-8");
 }
 
+function isPolicyObject(value: PolicyValue): value is PolicyObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseNetworkPolicies(content: string | null | undefined): PolicyObject | null {
+  if (!content) return null;
+  try {
+    const parsed = YAML.parse(content);
+    const networkPolicies = isPolicyDocument(parsed) ? parsed.network_policies : null;
+    return isPolicyObject(networkPolicies) ? networkPolicies : null;
+  } catch {
+    return null;
+  }
+}
+
+function parsePresetPolicyKeys(presetContent: string | null | undefined): string[] {
+  const presetEntries = extractPresetEntries(presetContent);
+  if (!presetEntries) return [];
+  return Object.keys(parseNetworkPolicies(`network_policies:\n${presetEntries}`) || {});
+}
+
+const AGENT_PRESET_KEY_ALIASES: Record<string, string[]> = {
+  wechat: ["wechat_bridge"],
+};
+
+function selectAgentPolicyKeys(
+  agentPolicies: PolicyObject,
+  presetName: string,
+  builtinPresetContent: string,
+): string[] {
+  const builtinKeys = parsePresetPolicyKeys(builtinPresetContent);
+  if (
+    builtinKeys.length > 0 &&
+    builtinKeys.every((key) => Object.prototype.hasOwnProperty.call(agentPolicies, key))
+  ) {
+    return builtinKeys;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(agentPolicies, presetName)) {
+    return [presetName];
+  }
+
+  const aliases = AGENT_PRESET_KEY_ALIASES[presetName] || [];
+  const aliasMatches = aliases.filter((key) =>
+    Object.prototype.hasOwnProperty.call(agentPolicies, key),
+  );
+  if (aliasMatches.length > 0) return aliasMatches;
+
+  return Object.entries(agentPolicies)
+    .filter(([, value]) => isPolicyObject(value) && value.name === presetName)
+    .map(([key]) => key);
+}
+
+function loadAgentPresetContent(
+  sandboxName: string,
+  presetName: string,
+  builtinPresetContent: string,
+): string | null {
+  try {
+    const sandbox = registry.getSandbox(sandboxName);
+    if (!sandbox?.agent) return null;
+
+    const agent = loadAgent(sandbox.agent);
+    if (!agent?.policyAdditionsPath || !fs.existsSync(agent.policyAdditionsPath)) return null;
+
+    const agentPolicies = parseNetworkPolicies(
+      fs.readFileSync(agent.policyAdditionsPath, "utf-8"),
+    );
+    if (!agentPolicies) return null;
+
+    const keys = selectAgentPolicyKeys(agentPolicies, presetName, builtinPresetContent);
+    if (keys.length === 0) return null;
+
+    const selectedPolicies: PolicyObject = {};
+    for (const key of keys) selectedPolicies[key] = agentPolicies[key];
+
+    return YAML.stringify({
+      preset: {
+        name: presetName,
+        description: `${agent.displayName} ${presetName} policy`,
+      },
+      network_policies: selectedPolicies,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function loadPresetForSandbox(sandboxName: string, presetName: string): string | null {
+  const builtinPresetContent = loadPreset(presetName);
+  if (!builtinPresetContent) return null;
+  return (
+    loadAgentPresetContent(sandboxName, presetName, builtinPresetContent) || builtinPresetContent
+  );
+}
+
 /**
  * Extract the bare hostnames declared in a preset YAML (anything matched by
  * `host: <value>`), with surrounding quotes stripped. Used to show the
@@ -440,7 +536,7 @@ function removePreset(sandboxName: string, presetName: string): boolean {
   // Resolve preset content: built-in first, then custom presets persisted
   // in the registry. `isCustom` controls which registry bucket to prune on
   // success.
-  let presetContent: string | null = loadPreset(presetName);
+  let presetContent: string | null = loadPresetForSandbox(sandboxName, presetName);
   let isCustom = false;
   if (!presetContent) {
     const custom = registry
@@ -679,7 +775,7 @@ function applyPreset(
   presetName: string,
   options: Record<string, unknown> = {},
 ): boolean {
-  const presetContent = loadPreset(presetName);
+  const presetContent = loadPresetForSandbox(sandboxName, presetName);
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
     return false;
@@ -716,7 +812,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   const endpointLogs: string[][] = [];
 
   for (const presetName of uniquePresetNames) {
-    const presetContent = loadPreset(presetName);
+    const presetContent = loadPresetForSandbox(sandboxName, presetName);
     if (!presetContent) {
       console.error(`  Cannot load preset: ${presetName}`);
       return false;
@@ -947,7 +1043,7 @@ function getGatewayPresets(sandboxName: string): string[] | null {
   const matched = [];
 
   for (const preset of listPresets()) {
-    const content = loadPreset(preset.name);
+    const content = loadPresetForSandbox(sandboxName, preset.name);
     if (!content) continue;
     const entries = extractPresetEntries(content);
     if (!entries) continue;

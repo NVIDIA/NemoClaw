@@ -171,6 +171,79 @@ retry_tirith_marker_if_needed() {
   fi
 }
 
+cmdline_is_hermes_gateway() {
+  local cmdline=" $1 "
+
+  case "$cmdline" in
+    *"/hermes gateway run "* | *" hermes gateway run "*) return 0 ;;
+  esac
+  return 1
+}
+
+has_live_hermes_gateway() {
+  local proc_root="${NEMOCLAW_PROC_ROOT:-/proc}"
+  local cmdline_file cmdline
+
+  for cmdline_file in "${proc_root}"/[0-9]*/cmdline; do
+    [ -r "$cmdline_file" ] || continue
+    cmdline="$(tr '\0' ' ' <"$cmdline_file" 2>/dev/null || true)"
+    if cmdline_is_hermes_gateway "$cmdline"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+cleanup_orphan_socat_forwarders() {
+  local proc_root="${NEMOCLAW_PROC_ROOT:-/proc}"
+  local cmdline_file pid cmdline
+
+  for cmdline_file in "${proc_root}"/[0-9]*/cmdline; do
+    [ -r "$cmdline_file" ] || continue
+    pid="$(basename "$(dirname "$cmdline_file")")"
+    cmdline="$(tr '\0' ' ' <"$cmdline_file" 2>/dev/null || true)"
+    case "$cmdline" in
+      *socat*"TCP-LISTEN:${PUBLIC_PORT}"*"TCP:127.0.0.1:${INTERNAL_PORT}"*)
+        echo "[gateway] Removing orphaned socat forwarder for ${PUBLIC_PORT}->${INTERNAL_PORT} (pid ${pid})" >&2
+        kill "$pid" 2>/dev/null || true
+        ;;
+    esac
+  done
+}
+
+remove_stale_gateway_file() {
+  local path="$1"
+  local label="$2"
+
+  if [ -L "$path" ]; then
+    echo "[gateway] Removing unsafe stale Hermes ${label} symlink: ${path}" >&2
+    rm -f "$path" 2>/dev/null || echo "[gateway] WARNING: could not remove stale ${label}: ${path}" >&2
+    return
+  fi
+  if [ -f "$path" ]; then
+    echo "[gateway] Removing stale Hermes ${label}: ${path}" >&2
+    rm -f "$path" 2>/dev/null || echo "[gateway] WARNING: could not remove stale ${label}: ${path}" >&2
+  fi
+}
+
+cleanup_stale_hermes_gateway_runtime() {
+  local runtime_dir="${HERMES_DIR}/runtime"
+
+  if has_live_hermes_gateway; then
+    echo "[gateway] Existing Hermes gateway process detected; preserving runtime lock state" >&2
+    return 0
+  fi
+
+  # Hermes can leave gateway.lock behind after Docker GPU recreation kills the
+  # old process namespace. Clear it only after confirming no gateway is alive.
+  remove_stale_gateway_file "${runtime_dir}/gateway.pid" "PID file"
+  if [ ! -L "${HERMES_DIR}/gateway.pid" ]; then
+    remove_stale_gateway_file "${HERMES_DIR}/gateway.pid" "legacy PID file"
+  fi
+  remove_stale_gateway_file "${runtime_dir}/gateway.lock" "lock file"
+  cleanup_orphan_socat_forwarders
+}
+
 # ── socat forwarder ──────────────────────────────────────────────
 # Hermes API server binds to 127.0.0.1 regardless of config (upstream bug).
 # OpenShell needs the port accessible on 0.0.0.0 for port forwarding.
@@ -569,6 +642,8 @@ if [ "$(id -u)" -ne 0 ]; then
 
   retry_tirith_marker_if_needed
 
+  cleanup_stale_hermes_gateway_runtime
+
   prepare_restricted_log /tmp/gateway.log "" 600
 
   # Defence-in-depth: verify /tmp file permissions before launching services.
@@ -610,6 +685,8 @@ if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
 fi
 
 retry_tirith_marker_if_needed
+
+cleanup_stale_hermes_gateway_runtime
 
 # SECURITY: Protect gateway log from sandbox user tampering
 prepare_restricted_log /tmp/gateway.log gateway:gateway 600

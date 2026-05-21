@@ -534,6 +534,160 @@ exit 1
         fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     });
+
+    it("uses agent-specific preset content for Hermes Discord", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-hermes-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      const policyOut = path.join(tmpDir, "policy.yaml");
+      const script = String.raw`
+const fs = require("node:fs");
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({ name: "hermes-sandbox", agent: "hermes", policies: [] });
+const result = policies.applyPresets("hermes-sandbox", ["discord"]);
+process.stdout.write("\n__RESULT__" + JSON.stringify({
+  result,
+  policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
+  registry: registry.getSandbox("hermes-sandbox"),
+}));
+`;
+      fs.writeFileSync(
+        fakeOpenshell,
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1 $2" = "policy get" ]; then
+  printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  exit 0
+fi
+if [ "$1 $2" = "policy set" ]; then
+  policy_file=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      policy_file="$2"
+      break
+    fi
+    shift
+  done
+  cp "$policy_file" ${JSON.stringify(policyOut)}
+  printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
+  exit 0
+fi
+exit 1
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const result = spawnSync(process.execPath, ["-e", script], {
+          cwd: REPO_ROOT,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
+            POLICY_OUT: policyOut,
+          },
+        });
+
+        expect(result.status).toBe(0);
+        const marker = "__RESULT__";
+        const markerIndex = result.stdout.indexOf(marker);
+        expect(markerIndex).toBeGreaterThanOrEqual(0);
+        const payload = JSON.parse(result.stdout.slice(markerIndex + marker.length));
+        const parsed = YAML.parse(payload.policy);
+        const discordPolicy = parsed.network_policies.discord;
+        const binaries = discordPolicy.binaries.map((entry: { path: string }) => entry.path);
+        expect(binaries).toContain("/usr/bin/python3*");
+        expect(binaries).toContain("/opt/hermes/.venv/bin/python");
+        const discordCom = discordPolicy.endpoints.find(
+          (endpoint: { host?: string }) => endpoint.host === "discord.com",
+        );
+        const mutationRules = discordCom.rules
+          .map((rule: { allow?: { method?: string; path?: string } }) => rule.allow)
+          .filter((rule: { method?: string } | undefined) =>
+            ["PUT", "PATCH", "DELETE"].includes(rule?.method || ""),
+          );
+        expect(mutationRules).toContainEqual({
+          method: "PATCH",
+          path: "/api/v*/channels/*/messages/*",
+        });
+        expect(mutationRules).not.toContainEqual({ method: "PATCH", path: "/**" });
+        expect(payload.registry.policies).toEqual(["discord"]);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
+    it("uses agent-specific preset aliases for Hermes WeChat", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-hermes-wechat-"));
+      const fakeOpenshell = path.join(tmpDir, "openshell");
+      const policyOut = path.join(tmpDir, "policy.yaml");
+      const script = String.raw`
+const fs = require("node:fs");
+const registry = require(${REGISTRY_PATH});
+const policies = require(${POLICIES_PATH});
+registry.registerSandbox({ name: "hermes-sandbox", agent: "hermes", policies: [] });
+const result = policies.applyPresets("hermes-sandbox", ["wechat"]);
+process.stdout.write("\n__RESULT__" + JSON.stringify({
+  result,
+  policy: fs.readFileSync(process.env.POLICY_OUT, "utf-8"),
+  registry: registry.getSandbox("hermes-sandbox"),
+}));
+`;
+      fs.writeFileSync(
+        fakeOpenshell,
+        `#!/usr/bin/env bash
+set -euo pipefail
+if [ "$1 $2" = "policy get" ]; then
+  printf 'Version: 1\nHash: test\n---\nversion: 1\n\nnetwork_policies: {}\n'
+  exit 0
+fi
+if [ "$1 $2" = "policy set" ]; then
+  policy_file=""
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--policy" ]; then
+      policy_file="$2"
+      break
+    fi
+    shift
+  done
+  cp "$policy_file" ${JSON.stringify(policyOut)}
+  printf 'Policy version 2 submitted\nPolicy version 2 loaded\n'
+  exit 0
+fi
+exit 1
+`,
+        { mode: 0o755 },
+      );
+
+      try {
+        const result = spawnSync(process.execPath, ["-e", script], {
+          cwd: REPO_ROOT,
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            HOME: tmpDir,
+            NEMOCLAW_OPENSHELL_BIN: fakeOpenshell,
+            POLICY_OUT: policyOut,
+          },
+        });
+
+        expect(result.status).toBe(0);
+        const marker = "__RESULT__";
+        const markerIndex = result.stdout.indexOf(marker);
+        expect(markerIndex).toBeGreaterThanOrEqual(0);
+        const payload = JSON.parse(result.stdout.slice(markerIndex + marker.length));
+        const parsed = YAML.parse(payload.policy);
+        expect(parsed.network_policies.wechat).toBeUndefined();
+        const wechatPolicy = parsed.network_policies.wechat_bridge;
+        const binaries = wechatPolicy.binaries.map((entry: { path: string }) => entry.path);
+        expect(binaries).toContain("/usr/bin/python3*");
+        expect(binaries).toContain("/opt/hermes/.venv/bin/python");
+        expect(payload.registry.policies).toEqual(["wechat"]);
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("applyPreset disclosure logging", () => {
@@ -1264,6 +1418,29 @@ exit 1
         ),
       );
       expect(parsed.filesystem_policy.read_write).toContain("/home/linuxbrew");
+    });
+
+    it("OpenClaw permissive policies preserve baseline read_write paths (#3916)", () => {
+      const baseline = YAML.parse(
+        fs.readFileSync(
+          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox.yaml"),
+          "utf-8",
+        ),
+      ) as { filesystem_policy?: { read_write?: string[] } };
+      const baselineReadWrite = baseline.filesystem_policy?.read_write ?? [];
+      const permissivePolicyPaths = [
+        "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+        "agents/openclaw/policy-permissive.yaml",
+      ];
+
+      for (const relativePath of permissivePolicyPaths) {
+        const parsed = YAML.parse(
+          fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf-8"),
+        ) as { filesystem_policy?: { read_write?: string[] } };
+        expect(parsed.filesystem_policy?.read_write, relativePath).toEqual(
+          expect.arrayContaining(baselineReadWrite),
+        );
+      }
     });
 
     it("brew preset whitelists the PATH shim and Homebrew-managed entrypoints (#3913)", () => {

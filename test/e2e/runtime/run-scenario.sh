@@ -464,7 +464,7 @@ if [[ "${DOCKER_OPTIONAL_UNAVAILABLE}" -eq 1 ]]; then
   FILTERED_SUITE_IDS=()
   for suite_id in "${SUITE_IDS[@]}"; do
     case "${suite_id}" in
-      smoke | inference | credentials | hermes-specific | local-ollama-inference | ollama-proxy | gateway-health | sandbox-shell | cloud-inference | ollama-auth-proxy | security-credentials | messaging-telegram | messaging-discord | messaging-slack | security-shields | inference-routing | sandbox-lifecycle | sandbox-operations | snapshot | rebuild | upgrade | diagnostics | docs-validation | openai-compatible-inference | inference-switch | kimi-compatibility | messaging-token-rotation | security-policy | security-injection)
+      smoke | inference | credentials | hermes-specific | local-ollama-inference | ollama-proxy | gateway-health | sandbox-shell | cloud-inference | ollama-auth-proxy | security-credentials | messaging-telegram | messaging-discord | messaging-slack | security-shields | inference-routing | sandbox-lifecycle | sandbox-operations | snapshot | rebuild | upgrade | diagnostics | docs-validation | openai-compatible-inference | inference-switch | kimi-compatibility | messaging-token-rotation | security-policy | security-injection | model-router)
         echo "SKIP: suite.${suite_id} skipped because optional Docker runtime ${RUNTIME_ID} is unavailable"
         ;;
       *)

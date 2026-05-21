@@ -40,6 +40,14 @@ function requireDebugSummary(
   return summary;
 }
 
+function normalizeLegacySession(
+  legacy: unknown,
+): ReturnType<OnboardSessionModule["normalizeSession"]> {
+  return session.normalizeSession(
+    legacy as Parameters<OnboardSessionModule["normalizeSession"]>[0],
+  );
+}
+
 beforeEach(() => {
   // Recreate tmpDir per test so lock artifacts (and any other on-disk state)
   // from a previous test cannot leak into this one. Without this, malformed
@@ -74,12 +82,21 @@ describe("onboard session", () => {
   });
 
   it("creates and persists a session with restrictive permissions", () => {
-    const created = session.createSession({ mode: "non-interactive" });
+    const created = session.createSession({
+      mode: "non-interactive",
+      startedAt: "2026-01-01T00:00:00.000Z",
+    });
     const saved = session.saveSession(created);
     const stat = fs.statSync(session.SESSION_FILE);
     const dirStat = fs.statSync(path.dirname(session.SESSION_FILE));
 
     expect(saved.mode).toBe("non-interactive");
+    expect(saved.machine).toMatchObject({
+      version: 1,
+      state: "init",
+      revision: 0,
+    });
+    expect(saved.machine.stateEnteredAt).toBe("2026-01-01T00:00:00.000Z");
     expect(fs.existsSync(session.SESSION_FILE)).toBe(true);
     expect(stat.mode & 0o777).toBe(0o600);
     expect(dirStat.mode & 0o777).toBe(0o700);
@@ -124,6 +141,107 @@ describe("onboard session", () => {
     }
     expect(loaded.failure.step).toBe("sandbox");
     expect(loaded.failure.message).toMatch(/Sandbox creation failed/);
+    expect(loaded.machine.state).toBe("failed");
+  });
+
+  it("persists a compact machine snapshot across step boundaries", () => {
+    session.saveSession(session.createSession());
+    let loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
+
+    session.markStepStarted("preflight");
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.machine).toMatchObject({ state: "preflight", revision: 1 });
+    expect(loaded.machine.stateEnteredAt).toBe(loaded.steps.preflight.startedAt);
+
+    session.markStepComplete("preflight");
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.machine).toMatchObject({ state: "gateway", revision: 2 });
+    expect(loaded.machine.stateEnteredAt).toBe(loaded.steps.preflight.completedAt);
+
+    session.markStepComplete("gateway");
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.machine).toMatchObject({ state: "provider_selection", revision: 3 });
+
+    session.completeSession();
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.machine).toMatchObject({ state: "complete", revision: 4 });
+    expect(requireDebugSummary(session.summarizeForDebug()).machine).toEqual(loaded.machine);
+  });
+
+  it("normalizes old sessions without machine snapshots", () => {
+    type LegacySession = Omit<ReturnType<OnboardSessionModule["createSession"]>, "machine"> & {
+      machine?: unknown;
+    };
+    const legacy = session.createSession({
+      sessionId: "legacy-session",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:05:00.000Z",
+    }) as unknown as LegacySession;
+    delete legacy.machine;
+    legacy.steps.gateway.status = "in_progress";
+    legacy.steps.gateway.startedAt = "2026-01-01T00:02:00.000Z";
+    legacy.lastStepStarted = "gateway";
+
+    let normalized = requireLoadedSession(normalizeLegacySession(legacy));
+    expect(normalized.machine).toEqual({
+      version: 1,
+      state: "gateway",
+      stateEnteredAt: "2026-01-01T00:02:00.000Z",
+      revision: 0,
+    });
+
+    legacy.steps.gateway.status = "complete";
+    legacy.steps.gateway.completedAt = "2026-01-01T00:03:00.000Z";
+    legacy.lastCompletedStep = "gateway";
+    normalized = requireLoadedSession(normalizeLegacySession(legacy));
+    expect(normalized.machine).toEqual({
+      version: 1,
+      state: "provider_selection",
+      stateEnteredAt: "2026-01-01T00:03:00.000Z",
+      revision: 0,
+    });
+
+    legacy.status = "failed";
+    legacy.failure = {
+      step: "gateway",
+      message: "boom",
+      recordedAt: "2026-01-01T00:04:00.000Z",
+    };
+    normalized = requireLoadedSession(normalizeLegacySession(legacy));
+    expect(normalized.machine).toEqual({
+      version: 1,
+      state: "failed",
+      stateEnteredAt: "2026-01-01T00:04:00.000Z",
+      revision: 0,
+    });
+
+    legacy.status = "complete";
+    normalized = requireLoadedSession(normalizeLegacySession(legacy));
+    expect(normalized.machine.state).toBe("complete");
+  });
+
+  it("normalizes invalid machine snapshots from old sessions", () => {
+    type LegacySession = Omit<ReturnType<OnboardSessionModule["createSession"]>, "machine"> & {
+      machine?: unknown;
+    };
+    const legacy = session.createSession({ lastCompletedStep: "policies" }) as unknown as LegacySession;
+    legacy.steps.policies.status = "complete";
+    legacy.steps.policies.completedAt = "2026-01-01T00:08:00.000Z";
+    legacy.machine = {
+      version: 1,
+      state: "not-a-state",
+      stateEnteredAt: "2026-01-01T00:09:00.000Z",
+      revision: -1,
+    };
+
+    const normalized = requireLoadedSession(normalizeLegacySession(legacy));
+    expect(normalized.machine).toEqual({
+      version: 1,
+      state: "finalizing",
+      stateEnteredAt: "2026-01-01T00:08:00.000Z",
+      revision: 0,
+    });
   });
 
   it("emits redacted structured machine events for session step mutations", () => {

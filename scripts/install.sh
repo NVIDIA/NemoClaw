@@ -1824,9 +1824,15 @@ repair_installer_nvidia_cdi_spec() {
 
   local sudo_cmd=()
   info "Generating missing NVIDIA CDI device spec at ${spec_path}."
+  info "NVIDIA GPU passthrough uses CDI specs so Docker/OpenShell can request nvidia.com/gpu devices."
+  info "Docker is configured for CDI, but the nvidia.com/gpu spec is missing."
+  info "Without it, OpenShell gateway startup would fail before the sandbox can use the GPU."
+  info "NemoClaw will first enable NVIDIA's CDI refresh service."
+  info "If that service does not generate the spec, NemoClaw will run nvidia-ctk cdi generate directly."
   if [[ "$(id -u)" -ne 0 ]]; then
     sudo_cmd=(sudo)
-    info "This host is missing NVIDIA CDI device specs. The next steps use sudo to repair them."
+    info "You may be asked for your password to authorize these host-level admin changes."
+    info "NemoClaw does not store your password."
     if ! sudo -v; then
       warn "Could not obtain sudo credentials for NVIDIA CDI device spec generation."
       return 0
@@ -2126,7 +2132,10 @@ ensure_docker() {
   # need to run usermod.
   if ! id -nG "$current_user" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
     info "Your user '$current_user' is not in the docker group."
-    info "The next step uses sudo to add you to the group so docker works without sudo. You may be prompted for your password."
+    info "NemoClaw needs Docker access. On personal Linux development machines, adding your user to the docker group is the standard way to run Docker without sudo."
+    info "Docker group members can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path."
+    info "Background: https://docs.docker.com/engine/security/#docker-daemon-attack-surface"
+    info "You may be prompted for your password."
     sudo usermod -aG docker "$current_user"
     needs_group_refresh=1
   fi
@@ -2193,6 +2202,50 @@ detect_express_platform() {
 # non-interactive + provider/model env vars when accepted. Skipped when
 # the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
 # no TTY.
+describe_express_install() {
+  local platform="$1"
+  local inference_summary=""
+  local tier="${NEMOCLAW_POLICY_TIER:-balanced}"
+  local policy_summary=""
+
+  case "$platform" in
+    "DGX Spark")
+      inference_summary="managed local Ollama with model qwen3.6:35b"
+      ;;
+    "DGX Station")
+      inference_summary="managed local vLLM"
+      ;;
+    "Windows WSL")
+      inference_summary="Windows-host Ollama through host.docker.internal"
+      ;;
+    *)
+      inference_summary="managed local inference"
+      ;;
+  esac
+
+  case "$tier" in
+    balanced)
+      policy_summary="base sandbox policy plus npm, pypi, huggingface, brew, brave when supported"
+      policy_summary="${policy_summary}, and local-inference access when needed"
+      ;;
+    restricted)
+      policy_summary="base sandbox policy, plus local-inference access when needed"
+      ;;
+    open)
+      policy_summary="base sandbox policy plus broad third-party presets"
+      policy_summary="${policy_summary}, and local-inference access when needed"
+      ;;
+    *)
+      policy_summary="base sandbox policy plus tier presets supported by the active agent"
+      policy_summary="${policy_summary}, and local-inference access when needed"
+      ;;
+  esac
+
+  printf "  Express install will configure %s.\n" "$inference_summary"
+  printf "  It runs onboarding non-interactively, but still prompts for sudo when host setup needs it.\n"
+  printf "  Sandbox policy: suggested mode, tier '%s'. This uses the %s.\n" "$tier" "$policy_summary"
+}
+
 maybe_offer_express_install() {
   local platform
   platform="$(detect_express_platform)"
@@ -2217,14 +2270,16 @@ maybe_offer_express_install() {
   local reply=""
   if [ -t 0 ]; then
     info "Detected ${platform}."
-    printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
+    describe_express_install "$platform"
+    printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply; then
       info "Skipping express install (unable to read from TTY)."
       return 0
     fi
   elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Detected ${platform}."
-    printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
+    describe_express_install "$platform"
+    printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply <&3; then
       exec 3<&-
       info "Skipping express install (unable to read from TTY)."
@@ -2309,6 +2364,8 @@ main() {
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
+  print_banner
+
   # Fail-fast license-acceptance check (#2671). Headless curl|bash still exits
   # before phase 1 so it cannot leave a half-install behind. Piped installs from
   # a real terminal are different: stdin is the script pipe, but /dev/tty can
@@ -2317,15 +2374,14 @@ main() {
 
   ensure_docker
 
-  # Offer express install on supported platforms (DGX Spark / Station). Runs
-  # AFTER the third-party notice so the user has explicitly accepted the
+  # Offer express install on supported platforms (DGX Spark / Station / WSL).
+  # Runs AFTER the third-party notice so the user has explicitly accepted the
   # license before opting into the unattended path. Express only sets the
   # provider/model/policy + non-interactive vars; license acceptance is
   # already recorded by preflight above.
   maybe_offer_express_install
 
   _INSTALL_START=$SECONDS
-  print_banner
   bash "${SCRIPT_DIR}/setup-jetson.sh"
 
   step 1 "Node.js"

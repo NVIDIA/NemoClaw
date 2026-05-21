@@ -80,6 +80,13 @@ On Linux, if the Docker daemon is running but you see "permission denied" errors
 The installer can add your user to the group, but Linux does not activate that membership in the current shell automatically.
 Add your user and activate the group in the current shell:
 
+<Warning title="Docker group access">
+NemoClaw needs Docker access.
+On personal Linux development machines, adding your user to the `docker` group is the standard way to run Docker without sudo.
+Members of the `docker` group can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path.
+For background, review Docker's [daemon attack surface guidance](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
+</Warning>
+
 ```console
 $ sudo usermod -aG docker $USER
 $ newgrp docker
@@ -1189,6 +1196,20 @@ $ wsl --shutdown
 $ wsl -d Ubuntu
 $ docker info
 ```
+
+### Windows-host Ollama is installed but not shown during onboarding
+
+When NemoClaw runs inside WSL, it checks both the Windows-host Ollama HTTP endpoint and the Windows `ollama.exe` process.
+If Ollama is installed but the daemon is not reachable through `host.docker.internal:11434`, the wizard should still offer a start or restart action.
+
+If the Windows-host option does not appear, confirm that PowerShell interop is enabled in WSL and that Windows can locate Ollama:
+
+```console
+$ powershell.exe -NoProfile -Command "Get-Process ollama -ErrorAction SilentlyContinue"
+```
+
+If the process is missing, start Ollama from Windows and rerun onboarding.
+If the process exists but the endpoint is unreachable, use the restart action when the wizard offers it, or restart Ollama from Windows with `OLLAMA_HOST=0.0.0.0:11434`.
 
 ### Ollama inference fails or hangs in WSL
 

@@ -104,6 +104,20 @@ describe("Issue #3810 messaging suite wiring", () => {
 });
 
 describe("run-suites.sh", () => {
+  it("security_credentials_suite_should_emit_stable_assertion_ids", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-security-credentials-"));
+    try {
+      seedContext(tmp, { ...fullContext(), E2E_CREDENTIALS_EXPECTED: "present" });
+      const r = runSuites(["security-credentials"], { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1", HOME: tmp });
+      expect(r.status, `stderr:${r.stderr}\nstdout:${r.stdout}`).toBe(0);
+      expect(r.stdout).toContain("post-onboard.credentials.gateway-list-redacts-values");
+      expect(r.stdout).toContain("post-onboard.credentials.no-plaintext-host-store");
+      expect(r.stdout).not.toMatch(/no-credentials-leaked|assert\//);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("run_suites_should_run_steps_in_declared_order", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-suite-"));
     try {

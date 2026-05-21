@@ -49,7 +49,8 @@ $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 On DGX Spark, DGX Station, and Windows WSL, an interactive installer offers express install after you accept the third-party software notice.
-Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, applies the suggested security policy, and selects the managed local inference path for that platform.
+Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
+Unless `NEMOCLAW_POLICY_TIER` is set, it applies sandbox policy in `suggested` mode with the `balanced` tier by default, using the base sandbox policy plus supported package, model, web-search, and local-inference presets.
 On WSL, express install selects the Windows-host Ollama setup path.
 Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer when you want to choose a provider yourself.
 

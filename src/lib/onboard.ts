@@ -17,6 +17,7 @@ const {
 }: typeof import("./onboard/branding") = require("./onboard/branding");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
+const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
 const { looksLikeForwardPortConflict, runBackgroundForwardStartWithPortReleaseRetries }: typeof import("./onboard/forward-start") = require("./onboard/forward-start");
 const {
   ensureOllamaLoopbackSystemdOverride,
@@ -82,6 +83,9 @@ const {
   toSessionWechatConfig,
 } = require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
 const {
+  clearAgentScopedResumeState,
+}: typeof import("./onboard/agent-resume-state") = require("./onboard/agent-resume-state");
+const {
   setupSelectedMessagingChannels,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") =
@@ -90,6 +94,15 @@ const { buildVllmMenuEntries }: typeof import("./onboard/vllm-menu") = require("
 const {
   prepareModelRouterVenv,
 }: typeof import("./onboard/model-router-python") = require("./onboard/model-router-python");
+const {
+  isProcessRunning,
+  isRouterHealthy,
+  stopModelRouterProcess,
+  stopTrackedModelRouterForAgentChange,
+}: typeof import("./onboard/model-router-process") = require("./onboard/model-router-process");
+const {
+  detectWindowsHostOllama,
+}: typeof import("./onboard/windows-host-ollama") = require("./onboard/windows-host-ollama");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -380,9 +393,10 @@ import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
 import { getSuggestedPolicyPresets } from "./onboard/policy-presets";
 import {
   computeSetupPresetSuggestions as computeSetupPresetSuggestionsImpl,
-  setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
+  isStaleBuiltinBravePolicyPreset,
   type SetupPolicySelectionOptions,
   type SetupPresetSuggestionOptions,
+  setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
 } from "./onboard/policy-selection";
 import {
   getResumeSandboxGpuOverrides,
@@ -390,6 +404,11 @@ import {
   type SandboxGpuConfig,
   type SandboxGpuFlag,
 } from "./onboard/sandbox-gpu-mode";
+import {
+  exitOnSandboxGpuConfigErrors,
+  sandboxGpuRemediationLines,
+  validateSandboxGpuPreflight,
+} from "./onboard/sandbox-gpu-preflight";
 import type { SelectionDrift } from "./onboard/selection-drift";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
 import type {
@@ -613,7 +632,7 @@ function getSandboxReuseState(sandboxName: string | null) {
 function repairRecordedSandbox(sandboxName: string | null): void {
   if (!sandboxName) return;
   note(`  [resume] Cleaning up recorded sandbox '${sandboxName}' before recreating it.`);
-  runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+  bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
   runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
   registry.removeSandbox(sandboxName);
 }
@@ -738,7 +757,6 @@ function loadBlueprintProfile(
 
 const ROUTER_HEALTH_RETRIES = 15;
 const ROUTER_HEALTH_INTERVAL_MS = 2000;
-const ROUTER_HEALTH_TIMEOUT_MS = 3000;
 const MODEL_ROUTER_RELATIVE_DIR = path.join("nemoclaw-blueprint", "router", "llm-router");
 const MODEL_ROUTER_VENV_DIR = path.join(os.homedir(), ".nemoclaw", "model-router-venv");
 const MODEL_ROUTER_FINGERPRINT_FILE = ".nemoclaw-source-fingerprint";
@@ -757,59 +775,6 @@ const MODEL_ROUTER_FINGERPRINT_IGNORED_NAMES = new Set([
   "venv",
 ]);
 const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_API_KEY";
-
-async function isRouterHealthy(port: number, timeoutMs = ROUTER_HEALTH_TIMEOUT_MS): Promise<boolean> {
-  const http = require("http");
-  return new Promise<boolean>((resolve) => {
-    let settled = false;
-    const settle = (healthy: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve(healthy);
-    };
-    const request = http
-      .get(`http://127.0.0.1:${port}/health`, (res: import("node:http").IncomingMessage) => {
-        res.resume();
-        settle((res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300);
-      })
-      .on("error", () => settle(false));
-    request.setTimeout(timeoutMs, () => {
-      request.destroy();
-      settle(false);
-    });
-  });
-}
-
-function isProcessRunning(pid: number | null | undefined): boolean {
-  if (!Number.isInteger(pid) || Number(pid) <= 0) return false;
-  try {
-    process.kill(Number(pid), 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function stopModelRouterProcess(pid: number, port: number): Promise<void> {
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    return;
-  }
-  for (let attempt = 0; attempt < 10; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (!isProcessRunning(pid) && !(await isRouterHealthy(port, 1000))) return;
-  }
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // already stopped
-  }
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (!isProcessRunning(pid) && !(await isRouterHealthy(port, 1000))) return;
-  }
-}
 
 function resolveHostCommandPath(commandName: string): string | null {
   const result = runCapture(["sh", "-c", 'command -v "$1"', "--", commandName], {
@@ -1240,35 +1205,6 @@ function resolveSandboxGpuFlagFromOptions(
   if (requestedGpuPassthrough) return "enable";
   if (optedOutGpuPassthrough) return "disable";
   return null;
-}
-
-function sandboxGpuRemediationLines(): string[] {
-  return [
-    "Install/configure NVIDIA Container Toolkit CDI, then restart Docker:",
-    "  sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml",
-    "  sudo systemctl restart docker",
-    "Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.",
-  ];
-}
-
-function validateSandboxGpuPreflight(config: SandboxGpuConfig): void {
-  if (config.errors.length > 0) {
-    console.error("");
-    for (const error of config.errors) console.error(`  ✗ ${error}`);
-    process.exit(1);
-  }
-  if (!config.sandboxGpuEnabled) return;
-  if (process.platform !== "linux") return;
-
-  const cdiSpecDirs = getDockerCdiSpecDirs();
-  const cdiSpecFiles = findReadableNvidiaCdiSpecFiles(cdiSpecDirs);
-  if (cdiSpecFiles.length === 0) {
-    console.error("");
-    console.error("  ✗ Docker CDI GPU support was not detected.");
-    for (const line of sandboxGpuRemediationLines()) console.error(`    ${line}`);
-    process.exit(1);
-  }
-  console.log(`  ✓ Docker CDI GPU support detected (${cdiSpecFiles.join(", ")})`);
 }
 
 // ── Base image resolution ───────────────────────────────────────
@@ -2443,16 +2379,6 @@ function getResumeConfigConflicts(
     });
   }
 
-  const requestedAgent = opts.agent || process.env.NEMOCLAW_AGENT || null;
-  const recordedAgent = session?.agent || null;
-  if (requestedAgent && recordedAgent && requestedAgent !== recordedAgent) {
-    conflicts.push({
-      field: "agent",
-      requested: requestedAgent,
-      recorded: recordedAgent,
-    });
-  }
-
   return conflicts;
 }
 
@@ -2642,7 +2568,7 @@ function stopLegacyGatewayClusterContainer(): boolean {
 }
 
 function retireLegacyGatewayForDockerDriverUpgrade(): void {
-  runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+  bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
   stopDockerDriverGatewayProcess();
   const stoppedLegacyContainer = stopLegacyGatewayClusterContainer();
   removeDockerDriverGatewayRegistration();
@@ -3358,8 +3284,16 @@ async function preflight(
   }
   console.log("  ✓ Docker is running");
   require("./onboard/http-proxy-preflight").warnIfHostProxyMissesLoopback();
+  const gpu = nim.detectGpu();
+  const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
+    flag: resolveSandboxGpuFlagFromOptions(preflightOpts),
+    device: preflightOpts.sandboxGpuDevice ?? null,
+  });
+  exitOnSandboxGpuConfigErrors(sandboxGpuConfig);
   const optedOutGpuPassthrough =
-    preflightOpts.optedOutGpuPassthrough === true || preflightOpts.noGpu === true;
+    preflightOpts.optedOutGpuPassthrough === true ||
+    preflightOpts.noGpu === true ||
+    !sandboxGpuConfig.sandboxGpuEnabled;
   assertCdiNvidiaGpuSpecPresent(host, optedOutGpuPassthrough);
 
   // DNS resolution from inside containers (#2101). A corp firewall that
@@ -3609,7 +3543,7 @@ async function preflight(
     const containerState = verifyGatewayContainerRunning(GATEWAY_NAME);
     if (containerState === "missing") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
-      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
       gatewayReuseState = destroyGatewayForReuse(
         destroyGateway,
         "  ✓ Stale gateway metadata cleaned up",
@@ -3643,7 +3577,7 @@ async function preflight(
       console.log(
         `  Gateway container is running but ${getGatewayLocalEndpoint()}/ is not responding. Recreating...`,
       );
-      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
       gatewayReuseState = destroyGatewayForReuse(
         destroyGateway,
         "  ✓ Stale gateway cleaned up",
@@ -3672,7 +3606,7 @@ async function preflight(
       gatewayReuseState = "missing";
       console.log("  ✓ Previous session cleaned up");
     } else {
-      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+      bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
       gatewayReuseState = destroyGatewayForReuse(
         destroyGateway,
         "  ✓ Previous session cleaned up",
@@ -3818,7 +3752,6 @@ async function preflight(
   dockerDriverGatewayEnv.warnIfGatewayWildcardBindAddress();
 
   // GPU
-  const gpu = nim.detectGpu();
   if (gpu && gpu.type === "nvidia") {
     const lines = nim.formatNvidiaGpuPreflightLines(gpu);
     console.log(`  ✓ ${lines[0]}`);
@@ -3837,10 +3770,6 @@ async function preflight(
     console.log("  ⓘ Local NIM unavailable — no GPU detected");
   }
 
-  const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
-    flag: resolveSandboxGpuFlagFromOptions(preflightOpts),
-    device: preflightOpts.sandboxGpuDevice ?? null,
-  });
   validateSandboxGpuPreflight(sandboxGpuConfig);
   if (sandboxGpuConfig.sandboxGpuEnabled) {
     console.log(
@@ -5138,7 +5067,15 @@ async function createSandbox(
     }
 
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
-    const decision = decidePolicyCarryForward(previousEntry?.policies, process.env, isNonInteractive());
+    const previousPoliciesForCarryForward = recreateForAgentDrift ? null : previousEntry?.policies;
+    if (recreateForAgentDrift && previousEntry?.policies && previousEntry.policies.length > 0) {
+      note("  Agent type changed; refreshing policy presets instead of carrying them forward.");
+    }
+    const decision = decidePolicyCarryForward(
+      previousPoliciesForCarryForward,
+      process.env,
+      isNonInteractive(),
+    );
     onboardSession.updateSession((c: Session) => {
       c.policyPresets = decision.newPresets;
       return c;
@@ -5544,19 +5481,19 @@ async function createSandbox(
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
+  const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
   const createCommand = `${openshellShellCommand([
     "sandbox",
     "create",
     ...createArgs,
     "--",
-    "env",
-    ...envArgs,
-    "nemoclaw-start",
+    ...sandboxStartupCommand,
   ])} 2>&1`;
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
     enabled: useDockerGpuPatch,
     sandboxName,
     gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
+    openshellSandboxCommand: sandboxStartupCommand,
     timeoutSecs: sandboxReadyTimeoutSecs,
     deps: { runOpenshell, runCaptureOpenshell, sleep },
   });
@@ -6100,7 +6037,7 @@ async function setupNim(
   preferredInferenceApi: string | null;
   nimContainer: string | null;
 }> {
-  step(3, 8, "Configuring inference (NIM)");
+  step(3, 8, "Configuring inference provider");
 
   let model: string | null = null;
   let provider: string = REMOTE_PROVIDER_CONFIG.build.providerName;
@@ -6132,43 +6069,15 @@ async function setupNim(
     docker.dockerCapture(["images", "-q", vllmProfile.image], { ignoreError: true }).trim()
   );
   // Probed even when WSL has its own Ollama: users may prefer the Windows
-  // instance for GPU access and a unified model cache.
-  let hasWindowsOllama = false;
-  if (isWsl()) {
-    const winOllamaPath = runCapture(
-      [
-        "powershell.exe",
-        "-Command",
-        "Get-Command ollama.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source",
-      ],
-      { ignoreError: true },
-    ).trim();
-    hasWindowsOllama = winOllamaPath.length > 0;
-  }
-
-  let winOllamaLoopbackOnly = false;
-  if (isWsl() && hasWindowsOllama) {
-    const winPid = runCapture(
-      [
-        "powershell.exe",
-        "-Command",
-        "Get-Process ollama -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id",
-      ],
-      { ignoreError: true },
-    ).trim();
-    if (winPid) {
-      const listenAddrs = runCapture(
-        [
-          "powershell.exe",
-          "-Command",
-          "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalAddress",
-        ],
-        { ignoreError: true },
-      );
-      winOllamaLoopbackOnly =
-        /127\.0\.0\.1/.test(listenAddrs) && !/0\.0\.0\.0|^::\s*$/m.test(listenAddrs);
-    }
-  }
+  // instance for GPU access and a unified model cache. See
+  // src/lib/onboard/windows-host-ollama.ts for the probe semantics, in
+  // particular the Get-Process fallback for service-style installs
+  // (#3949) and the strict path-recovery requirement before flagging
+  // the install as restartable.
+  const winOllamaState = detectWindowsHostOllama();
+  const hasWindowsOllama = winOllamaState.installed;
+  const winOllamaInstalledPath = winOllamaState.installedPath;
+  const winOllamaLoopbackOnly = winOllamaState.loopbackOnly;
 
   // Independent of findReachableOllamaHost: when WSL Ollama wins the cache
   // on 127.0.0.1, Windows-host may also be running on 0.0.0.0 and we want
@@ -7108,7 +7017,16 @@ async function setupNim(
           }
           console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
         } else {
-          if (!setupWindowsOllamaWith0000Binding({ announceStop: isRestart })) {
+          // Pass the verified executable path so windows.ts can target
+          // it directly instead of falling back to the calling shell's
+          // Windows PATH — which is the broken case for service-style
+          // installs that #3949 surfaces.
+          if (
+            !setupWindowsOllamaWith0000Binding({
+              announceStop: isRestart,
+              installedPath: winOllamaInstalledPath || undefined,
+            })
+          ) {
             printWindowsOllamaTimeoutDiagnostics();
             if (isNonInteractive()) process.exit(1);
             continue selectionLoop;
@@ -7159,9 +7077,9 @@ async function setupNim(
           ensureOllamaLinuxExtractionDependencies();
           console.log(
             "  The Ollama installer creates a system user, a systemd service, and writes to /usr/local. " +
-              "It uses sudo for those steps; you may be prompted for your password.",
+              "It uses sudo, may ask for your password, and can take a few minutes; installer output will stream below.",
           );
-          runShell("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
+          runShell("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh", { stdio: "inherit" });
           // Give the just-started ollama.service a moment to bind port
           // 11434 before we probe or apply the systemd drop-in override.
           sleep(2);
@@ -8607,10 +8525,9 @@ function getRunningForwardPorts(forwardListOutput: string | null | undefined): s
 function stopAllDashboardForwards(): void {
   const forwardList = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
   for (const port of getRunningForwardPorts(forwardList)) {
-    runOpenshell(["forward", "stop", port], { ignoreError: true });
+    bestEffortForwardStop(runOpenshell, port);
   }
 }
-
 
 /**
  * Build the actionable error lines printed when the just-created openshell
@@ -8662,7 +8579,7 @@ function ensureDashboardForward(
     preferredEntry &&
     (preferredEntry.sandboxName === sandboxName || !isLiveForwardStatus(preferredEntry.status))
   ) {
-    runOpenshell(["forward", "stop", String(preferredPort)], { ignoreError: true });
+    bestEffortForwardStop(runOpenshell, preferredPort);
     existingForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
   }
   let actualPort: number;
@@ -8718,7 +8635,7 @@ function ensureDashboardForward(
   const occupied = getOccupiedPorts(existingForwards);
   for (const [port, owner] of occupied.entries()) {
     if (owner === sandboxName && Number(port) !== actualPort) {
-      runOpenshell(["forward", "stop", port], { ignoreError: true });
+      bestEffortForwardStop(runOpenshell, port);
     }
   }
 
@@ -8726,14 +8643,14 @@ function ensureDashboardForward(
   const parsedUrl = new URL(chatUiUrl.includes("://") ? chatUiUrl : `http://${chatUiUrl}`);
   parsedUrl.port = String(actualPort);
   const actualTarget = getDashboardForwardTarget(parsedUrl.toString());
-  runOpenshell(["forward", "stop", String(actualPort)], { ignoreError: true });
+  bestEffortForwardStop(runOpenshell, actualPort);
   const { result: fwdResult, diagnostic: fwdDiagnostic } = runBackgroundForwardStartWithPortReleaseRetries(
     (stdio, timeout) =>
       runOpenshell(
         ["forward", "start", "--background", actualTarget, sandboxName],
         { ignoreError: true, suppressOutput: true, stdio, timeout },
       ),
-    () => { sleep(1); runOpenshell(["forward", "stop", String(actualPort)], { ignoreError: true }); },
+    () => { sleep(1); bestEffortForwardStop(runOpenshell, actualPort); },
   );
   if (fwdResult && fwdResult.status !== 0) {
     const looksLikePortConflict = looksLikeForwardPortConflict(fwdDiagnostic);
@@ -9029,7 +8946,7 @@ function startRecordedStep(
 const ONBOARD_STEP_INDEX: Record<string, { number: number; title: string }> = {
   preflight: { number: 1, title: "Preflight checks" },
   gateway: { number: 2, title: "Starting OpenShell gateway" },
-  provider_selection: { number: 3, title: "Configuring inference (NIM)" },
+  provider_selection: { number: 3, title: "Configuring inference provider" },
   inference: { number: 4, title: "Setting up inference provider" },
   messaging: { number: 5, title: "Messaging channels" },
   sandbox: { number: 6, title: "Creating sandbox" },
@@ -9355,8 +9272,27 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       canPrompt: !cannotPrompt,
     });
+    const selectedAgentName = normalizeSandboxAgentName(agent?.name);
+    const recordedAgentName = normalizeSandboxAgentName(session?.agent);
+    let resumeAgentChanged = false;
+    let forceProviderSelectionForAgentChange = false;
+    if (resume && session && recordedAgentName !== selectedAgentName) {
+      resumeAgentChanged = true;
+      forceProviderSelectionForAgentChange = true;
+      note(
+        `  Agent changed from ${formatSandboxAgentName(recordedAgentName)} to ${formatSandboxAgentName(selectedAgentName)}; refreshing provider selection.`,
+      );
+      // Agent changes are recoverable resume drift: refresh scoped state instead of rejecting --resume.
+      await stopTrackedModelRouterForAgentChange(
+        session,
+        loadBlueprintProfile("routed")?.router.port || 4000,
+      );
+      onboardSession.updateSession((current: Session) =>
+        clearAgentScopedResumeState(current, selectedAgentName),
+      );
+    }
     setOnboardBrandingAgent(agent?.name || "openclaw");
-    onboardSession.updateSession((s: Session) => {
+    session = onboardSession.updateSession((s: Session) => {
       s.agent = agent?.name ?? null;
       return s;
     });
@@ -9391,6 +9327,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     if (resumePreflight) {
       skippedStepMessage("preflight", "cached");
       gpu = nim.detectGpu();
+      const resumeSandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
+        flag: effectiveSandboxGpuFlag,
+        device: effectiveSandboxGpuDevice,
+      });
+      exitOnSandboxGpuConfigErrors(resumeSandboxGpuConfig);
       // Re-check the CDI spec gap on resume (#3152). The cached preflight
       // result does not capture host CDI state, and the original onboard
       // attempt that wrote the cache likely aborted at gateway-start with
@@ -9400,14 +9341,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       // does not need to re-pass `--no-gpu` to keep that intent (the same
       // resolution is replayed a few lines below for `gpuPassthrough`).
       const resumeOptedOutGpuPassthrough =
-        opts.noGpu === true || (opts.gpu !== true && session?.gpuPassthrough === false);
+        opts.noGpu === true ||
+        (opts.gpu !== true && session?.gpuPassthrough === false) ||
+        !resumeSandboxGpuConfig.sandboxGpuEnabled;
       assertCdiNvidiaGpuSpecPresent(assessHost(), resumeOptedOutGpuPassthrough);
-      validateSandboxGpuPreflight(
-        resolveSandboxGpuConfig(gpu, {
-          flag: effectiveSandboxGpuFlag,
-          device: effectiveSandboxGpuDevice,
-        }),
-      );
+      validateSandboxGpuPreflight(resumeSandboxGpuConfig);
     } else {
       startRecordedStep("preflight");
       gpu = await preflight({ ...opts, optedOutGpuPassthrough: opts.noGpu === true });
@@ -9465,7 +9403,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       const containerState = verifyGatewayContainerRunning(GATEWAY_NAME);
       if (containerState === "missing") {
         console.log("  Gateway metadata is stale (container not running). Cleaning up...");
-        runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+        bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
         gatewayReuseState = destroyGatewayForReuse(
           destroyGateway,
           "  ✓ Stale gateway metadata cleaned up",
@@ -9504,7 +9442,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         console.log(
           `  Gateway container is running but ${getGatewayLocalEndpoint()}/ is not responding. Recreating...`,
         );
-        runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+        bestEffortForwardStop(runOpenshell, DASHBOARD_PORT);
         gatewayReuseState = destroyGatewayForReuse(
           destroyGateway,
           "  ✓ Stale gateway cleaned up",
@@ -9531,6 +9469,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       gpuPassthrough,
       gatewayName: GATEWAY_NAME,
       currentSandboxName: recordedSandboxName || requestedSandboxName,
+      hostGpuPlatform: gpu?.platform ?? null,
       recreateSandbox: isRecreateSandbox(),
       confirmedDockerDriverGateway:
         isLinuxDockerDriverGatewayEnabled() &&
@@ -9601,7 +9540,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     let preferredInferenceApi = session?.preferredInferenceApi || null;
     let nimContainer = session?.nimContainer || null;
     let webSearchConfig = session?.webSearchConfig || null;
-    let forceProviderSelection = false;
+    let forceProviderSelection = forceProviderSelectionForAgentChange;
     while (true) {
       const resumeProviderSelection =
         !forceProviderSelection &&
@@ -9824,6 +9763,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     );
     const resumeSandbox =
       resume &&
+      !resumeAgentChanged &&
       !webSearchConfigChanged &&
       !telegramConfigChanged &&
       !sandboxGpuConfigChanged &&
@@ -9840,7 +9780,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       skippedStepMessage("sandbox", sandboxName);
     } else {
       if (resume && session?.steps?.sandbox?.status === "complete") {
-        if (webSearchConfigChanged) {
+        if (resumeAgentChanged) {
+          note(
+            "  [resume] Agent selection changed; revalidating sandbox compatibility.",
+          );
+        } else if (webSearchConfigChanged) {
           note("  [resume] Web Search configuration changed; recreating sandbox.");
           if (sandboxName) {
             registry.removeSandbox(sandboxName);
@@ -10035,6 +9979,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       selectablePolicyPresetsForSupport,
       policyPresetSupportOptions,
       customPolicyPresetNames,
+    );
+    recordedPolicyPresetsForSupport = recordedPolicyPresetsForSupport.filter(
+      (name) =>
+        !isStaleBuiltinBravePolicyPreset(name, {
+          webSearchConfig,
+          customPresetNames: customPolicyPresetNames,
+        }),
     );
     if (recordedPolicyPresets) {
       recordedPolicyPresetsForSupport = mergeRequiredHermesToolGatewayPolicyPresets(
@@ -10241,6 +10192,7 @@ module.exports = {
   hasStaleGateway,
   getRequestedSandboxNameHint,
   getResumeSandboxConflict,
+  clearAgentScopedResumeState,
   getSandboxReuseState,
   getSandboxStateFromOutputs,
   getPortConflictServiceHints,

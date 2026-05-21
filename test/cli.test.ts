@@ -282,6 +282,7 @@ function createCloudflaredServiceDir(prefix: string): { sandboxName: string; ser
 function createDebugCommandTestEnv(prefix: string): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
+  const sandboxName = `${prefix}${process.pid.toString(36)}-${Date.now().toString(36)}`;
   fs.mkdirSync(localBin, { recursive: true });
   fs.writeFileSync(
     path.join(localBin, "openshell"),
@@ -299,8 +300,15 @@ function createDebugCommandTestEnv(prefix: string): Record<string, string> {
   fs.writeFileSync(path.join(localBin, "docker"), ["#!/bin/sh", "exit 0"].join("\n"), {
     mode: 0o755,
   });
+  fs.writeFileSync(
+    path.join(localBin, "dmesg"),
+    ["#!/bin/sh", "echo 'nemoclaw test kernel message'", "exit 0"].join("\n"),
+    { mode: 0o755 },
+  );
   return {
     HOME: home,
+    NEMOCLAW_HOME: path.join(home, ".nemoclaw"),
+    NEMOCLAW_SANDBOX: sandboxName,
     PATH: `${localBin}:${process.env.PATH || ""}`,
   };
 }
@@ -1401,6 +1409,33 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Onboard Session")).toBeTruthy();
     expect(r.out.includes("Done")).toBeTruthy();
   });
+
+  it(
+    "debug --quick explains restricted dmesg instead of printing raw stderr",
+    testTimeoutOptions(30_000),
+    () => {
+      const env = createDebugCommandTestEnv("nemoclaw-cli-debug-dmesg-");
+      const localBin = env.PATH?.split(path.delimiter)[0];
+      if (!localBin) throw new Error("Expected debug test PATH to include a fake bin dir");
+      fs.writeFileSync(
+        path.join(localBin, "dmesg"),
+        [
+          "#!/bin/sh",
+          "echo 'dmesg: read kernel buffer failed: Operation not permitted' >&2",
+          "exit 1",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("debug --quick", env, 30000);
+
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("Kernel Messages");
+      expect(r.out).toContain("kernel messages skipped");
+      expect(r.out).toContain("dmesg access is restricted");
+      expect(r.out).not.toContain("dmesg: read kernel buffer failed: Operation not permitted");
+    },
+  );
 
   it("debug exits 1 on unknown option", () => {
     const r = run("debug --quik");
