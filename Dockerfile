@@ -234,7 +234,11 @@ RUN set -eu; \
             echo "INFO: Patch 2 applied to OpenClaw ${OC_VERSION} explicit proxy validator"; \
         fi; \
     else \
-        proxy_hostname_checks="$(grep -RIl --include='*.js' 'resolvePinnedHostnameWithPolicy(parsedProxyUrl.hostname' "$OC_DIST" || true)"; \
+        proxy_hostname_checks="$(grep -RIlE --include='*.js' 'resolvePinnedHostnameWithPolicy' "$OC_DIST" | while IFS= read -r f; do \
+            if grep -Eq 'parsedProxyUrl|proxyUrl|proxyHostname|proxy.*[Hh]ostname|[Hh]ostname.*proxy|allowPrivateProxy' "$f"; then \
+                printf '%s\n' "$f"; \
+            fi; \
+        done || true)"; \
         if [ -z "$proxy_hostname_checks" ]; then \
             echo "INFO: OpenClaw ${OC_VERSION} has no assertExplicitProxyAllowed proxy hostname validator; Patch 2 not needed"; \
         else \
