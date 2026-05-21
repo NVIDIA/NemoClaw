@@ -146,6 +146,88 @@ function runLoggedDockerShell(
   return { result, calls };
 }
 
+function runOpenclawRepairLayoutCase(legacy: boolean) {
+  const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+  const cleanupBlock = dockerRunCommandBetween(
+    dockerfile,
+    "# Flatten stale published base images",
+    "# Stale-base fallback for the gateway-in-sandbox-group setup",
+  );
+  const permissionBlock = dockerRunCommandBetween(
+    dockerfile,
+    "# Keep the image readable to the root entrypoint",
+    "# System-wide proxy hooks",
+  );
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-repair-"));
+  const sandboxRoot = path.join(tmp, "sandbox");
+  const openclawDir = path.join(sandboxRoot, ".openclaw");
+  const dataDir = path.join(sandboxRoot, ".openclaw-data");
+  const marker = path.join(tmp, "legacy-marker");
+  const rootNpm = path.join(tmp, "root-npm");
+  const sandboxNpm = path.join(sandboxRoot, ".npm");
+  const relativePath = (entry: string) => path.relative(openclawDir, entry) || ".";
+  const listRelativeEntries = (dir: string, kind: "directory" | "file"): string[] => {
+    const entries: string[] = [];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (kind === "directory") {
+          entries.push(relativePath(entryPath));
+        }
+        entries.push(...listRelativeEntries(entryPath, kind));
+      } else if (kind === "file" && entry.isFile()) {
+        entries.push(relativePath(entryPath));
+      }
+    }
+    return entries.sort();
+  };
+  const rewrite = (command: string) =>
+    command
+      .replaceAll("/sandbox/.openclaw-data", "__NEMOCLAW_TEST_OPENCLAW_DATA__")
+      .replaceAll("/sandbox/.openclaw", "__NEMOCLAW_TEST_OPENCLAW_DIR__")
+      .replaceAll("/sandbox/.npm", "__NEMOCLAW_TEST_SANDBOX_NPM__")
+      .replaceAll("/tmp/nemoclaw-legacy-openclaw-layout", marker)
+      .replaceAll("/root/.npm", rootNpm)
+      .replaceAll("__NEMOCLAW_TEST_OPENCLAW_DATA__", dataDir)
+      .replaceAll("__NEMOCLAW_TEST_OPENCLAW_DIR__", openclawDir)
+      .replaceAll("__NEMOCLAW_TEST_SANDBOX_NPM__", sandboxNpm);
+  const functionDefs = [
+    'install() { printf "install %s\\n" "$*" >> "$call_log"; local target="${*: -1}"; mkdir -p "$target"; }',
+    'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
+    'chmod() { printf "chmod %s\\n" "$*" >> "$call_log"; command chmod "$@"; }',
+    'find() { printf "find %s\\n" "$*" >> "$call_log"; command find "$@"; }',
+  ];
+
+  fs.mkdirSync(openclawDir, { recursive: true });
+  if (legacy) {
+    fs.mkdirSync(path.join(dataDir, "extensions"), { recursive: true });
+    fs.writeFileSync(path.join(dataDir, "extensions", "legacy-plugin.json"), "{}\n");
+  }
+
+  const cleanup = runLoggedDockerShell(rewrite(cleanupBlock), tmp, functionDefs);
+  const markerExistsAfterCleanup = fs.existsSync(marker);
+  const dirsAfterCleanup = [".", ...listRelativeEntries(openclawDir, "directory")];
+  const filesAfterCleanup = listRelativeEntries(openclawDir, "file");
+  fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n");
+  const permission = runLoggedDockerShell(rewrite(permissionBlock), tmp, functionDefs);
+  const markerExistsAfterPermission = fs.existsSync(marker);
+
+  try {
+    return {
+      cleanup,
+      dirsAfterCleanup,
+      filesAfterCleanup,
+      markerExistsAfterCleanup,
+      markerExistsAfterPermission,
+      openclawDir,
+      permission,
+      pluginRuntimeDeps: path.join(openclawDir, "plugin-runtime-deps"),
+    };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
 describe("sandbox provisioning: image health checks (#1430)", () => {
   it.each([
     ["default dashboard URL", {}, "http://127.0.0.1:18789/health"],
@@ -236,84 +318,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
 
 describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
   it("uses targeted permission repair unless legacy migration ran", () => {
-    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
-    const cleanupBlock = dockerRunCommandBetween(
-      dockerfile,
-      "# Flatten stale published base images",
-      "# Stale-base fallback for the gateway-in-sandbox-group setup",
-    );
-    const permissionBlock = dockerRunCommandBetween(
-      dockerfile,
-      "# Keep the image readable to the root entrypoint",
-      "# System-wide proxy hooks",
-    );
-
-    const runLayoutCase = (legacy: boolean) => {
-      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-repair-"));
-      const sandboxRoot = path.join(tmp, "sandbox");
-      const openclawDir = path.join(sandboxRoot, ".openclaw");
-      const dataDir = path.join(sandboxRoot, ".openclaw-data");
-      const marker = path.join(tmp, "legacy-marker");
-      const rootNpm = path.join(tmp, "root-npm");
-      const relativePath = (entry: string) => path.relative(openclawDir, entry) || ".";
-      const listRelativeEntries = (dir: string, kind: "directory" | "file"): string[] => {
-        const entries: string[] = [];
-        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-          const entryPath = path.join(dir, entry.name);
-          if (entry.isDirectory()) {
-            if (kind === "directory") {
-              entries.push(relativePath(entryPath));
-            }
-            entries.push(...listRelativeEntries(entryPath, kind));
-          } else if (kind === "file" && entry.isFile()) {
-            entries.push(relativePath(entryPath));
-          }
-        }
-        return entries.sort();
-      };
-      const rewrite = (command: string) =>
-        command
-          .replaceAll("/sandbox", sandboxRoot)
-          .replaceAll("/tmp/nemoclaw-legacy-openclaw-layout", marker)
-          .replaceAll("/root/.npm", rootNpm);
-      const functionDefs = [
-        'install() { printf "install %s\\n" "$*" >> "$call_log"; local target="${*: -1}"; mkdir -p "$target"; }',
-        'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
-        'chmod() { printf "chmod %s\\n" "$*" >> "$call_log"; command chmod "$@"; }',
-        'find() { printf "find %s\\n" "$*" >> "$call_log"; command find "$@"; }',
-      ];
-
-      fs.mkdirSync(openclawDir, { recursive: true });
-      if (legacy) {
-        fs.mkdirSync(path.join(dataDir, "extensions"), { recursive: true });
-        fs.writeFileSync(path.join(dataDir, "extensions", "legacy-plugin.json"), "{}\n");
-      }
-
-      const cleanup = runLoggedDockerShell(rewrite(cleanupBlock), tmp, functionDefs);
-      const markerExistsAfterCleanup = fs.existsSync(marker);
-      const dirsAfterCleanup = [".", ...listRelativeEntries(openclawDir, "directory")];
-      const filesAfterCleanup = listRelativeEntries(openclawDir, "file");
-      fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n");
-      const permission = runLoggedDockerShell(rewrite(permissionBlock), tmp, functionDefs);
-      const markerExistsAfterPermission = fs.existsSync(marker);
-
-      try {
-        return {
-          cleanup,
-          dirsAfterCleanup,
-          filesAfterCleanup,
-          markerExistsAfterCleanup,
-          markerExistsAfterPermission,
-          openclawDir,
-          permission,
-          pluginRuntimeDeps: path.join(openclawDir, "plugin-runtime-deps"),
-        };
-      } finally {
-        fs.rmSync(tmp, { recursive: true, force: true });
-      }
-    };
-
-    const modern = runLayoutCase(false);
+    const modern = runOpenclawRepairLayoutCase(false);
     expect(modern.cleanup.result.status).toBe(0);
     expect(modern.permission.result.status).toBe(0);
     expect(modern.markerExistsAfterCleanup).toBe(false);
@@ -354,7 +359,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       `chmod 660 ${path.join(modern.openclawDir, "openclaw.json")}`,
     ]);
 
-    const legacy = runLayoutCase(true);
+    const legacy = runOpenclawRepairLayoutCase(true);
     expect(legacy.cleanup.result.status).toBe(0);
     expect(legacy.permission.result.status).toBe(0);
     expect(legacy.markerExistsAfterCleanup).toBe(true);
