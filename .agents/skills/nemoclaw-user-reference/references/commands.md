@@ -1122,6 +1122,21 @@ NemoClaw reads the following environment variables to configure service ports, o
 Set them before running `nemoclaw onboard` or any command that starts services.
 All ports must be non-privileged integers between 1024 and 65535.
 
+### At a Glance
+
+Every documented `NEMOCLAW_*` environment variable, grouped by category.
+Use this table to find the appropriate variable; see the subsection below for default, format, and effect.
+
+| Category | Variables |
+|----------|-----------|
+| [Service Ports](#environment-variables) | `NEMOCLAW_GATEWAY_PORT`, `NEMOCLAW_GATEWAY_BIND_ADDRESS`, `NEMOCLAW_DASHBOARD_PORT`, `NEMOCLAW_DASHBOARD_BIND`, `NEMOCLAW_VLLM_PORT`, `NEMOCLAW_OLLAMA_PORT`, `NEMOCLAW_OLLAMA_PROXY_PORT` |
+| [Onboarding Configuration](#onboarding-configuration) | `NEMOCLAW_PROVIDER`, `NEMOCLAW_HERMES_AUTH_METHOD`, `NEMOCLAW_HERMES_AUTH`, `NEMOCLAW_NOUS_AUTH_METHOD`, `NEMOCLAW_ENDPOINT_URL`, `NEMOCLAW_PREFERRED_API`, `NEMOCLAW_INFERENCE_INPUTS`, `NEMOCLAW_AGENT_TIMEOUT`, `NEMOCLAW_CONTEXT_WINDOW`, `NEMOCLAW_MAX_TOKENS`, `NEMOCLAW_REASONING`, `NEMOCLAW_AGENT_HEARTBEAT_EVERY`, `NEMOCLAW_OLLAMA_REQUIRE_TOOLS`, `NEMOCLAW_PROXY_HOST`, `NEMOCLAW_PROXY_PORT`, `NEMOCLAW_OPENSHELL_BIN`, `NEMOCLAW_SANDBOX`, `NEMOCLAW_INSTALL_REF`, `NEMOCLAW_INSTALL_TAG`, `NEMOCLAW_VLLM_MODEL` |
+| [Onboarding Behavior Flags](#onboarding-behavior-flags) | `NEMOCLAW_YES`, `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE`, `NEMOCLAW_NO_EXPRESS`, `NEMOCLAW_EXPERIMENTAL`, `NEMOCLAW_IGNORE_RUNTIME_RESOURCES`, `NEMOCLAW_DISABLE_OVERLAY_FIX`, `NEMOCLAW_OVERLAY_SNAPSHOTTER`, `NEMOCLAW_SKIP_TELEGRAM_REACHABILITY`, `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH`, `NEMOCLAW_SANDBOX_GPU`, `NEMOCLAW_SANDBOX_GPU_DEVICE`, `NEMOCLAW_DOCKER_GPU_PATCH`, `NEMOCLAW_OPENSHELL_GATEWAY_BIN`, `NEMOCLAW_OPENSHELL_SANDBOX_BIN`, `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR`, `NEMOCLAW_DISABLE_VM_DNS_MONKEYPATCH`, `NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH`, `NEMOCLAW_DARWIN_VM_COMPAT`, `NEMOCLAW_DOCKER_GPU_PATCH_NETWORK` |
+| [Probe Timeouts](#probe-timeouts) | `NEMOCLAW_SANDBOX_EXEC_TIMEOUT_MS`, `NEMOCLAW_STATUS_PROBE_TIMEOUT_MS` |
+| [Onboard Timeouts](#onboard-timeouts) | `NEMOCLAW_OLLAMA_PULL_TIMEOUT`, `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT`, `NEMOCLAW_SANDBOX_READY_TIMEOUT` |
+| [Gateway Lifecycle Tunables](#gateway-lifecycle-tunables) | `NEMOCLAW_GATEWAY_START_TIMEOUT`, `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS`, `NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS`, `NEMOCLAW_HEALTH_POLL_COUNT`, `NEMOCLAW_HEALTH_POLL_INTERVAL`, `NEMOCLAW_LOGS_PROBE_TIMEOUT_MS`, `NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT` |
+| [Lifecycle Behavior Flags](#lifecycle-behavior-flags) | `NEMOCLAW_CLEANUP_GATEWAY`, `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` |
+
 | Variable | Default | Service |
 |----------|---------|---------|
 | `NEMOCLAW_GATEWAY_PORT` | 8080 | OpenShell gateway port |
@@ -1210,6 +1225,10 @@ These flags toggle optional behaviors during onboarding; set them before running
 | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by the Linux Docker-driver gateway. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary passed to the Linux Docker-driver gateway supervisor. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway pid file and SQLite state directory. Defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`. |
+| `NEMOCLAW_DISABLE_VM_DNS_MONKEYPATCH` | `1` to enable | Skips the macOS VM-driver DNS monkeypatch that rewrites in-sandbox `host.docker.internal` lookups to the host bridge. Use only when troubleshooting DNS interactions on macOS. |
+| `NEMOCLAW_FORCE_VM_DNS_MONKEYPATCH` | `1` to enable | Forces the macOS VM-driver DNS monkeypatch on non-Darwin platforms. Linux defaults already route through the Docker bridge; use this override only to reproduce the macOS DNS path on a non-Darwin host. |
+| `NEMOCLAW_DARWIN_VM_COMPAT` | `0` or `1` (build-time `ARG`) | macOS VM-driver compatibility flag baked into the sandbox Dockerfile by `nemoclaw onboard` based on platform detection. Override only when rebuilding a sandbox image with a custom Dockerfile. |
+| `NEMOCLAW_DOCKER_GPU_PATCH_NETWORK` | `host` or `preserve` (default) | Selects the Docker network mode used by the Linux Docker-driver GPU sandbox patch. `host` clones the gateway's host-networking endpoint for the patched container; `preserve` (default) keeps the original network mode. Set `host` only when the GPU patch needs the gateway endpoint exposed on the loopback path. |
 
 ### Probe Timeouts
 
@@ -1241,6 +1260,26 @@ $ nemoclaw onboard
 If a timeout fires, onboarding emits the elapsed budget plus a hint to raise the relevant variable.
 The Ollama pull preserves its partial download for the next attempt.
 The readiness wait deletes the orphaned sandbox first so the next `nemoclaw onboard` starts clean.
+
+### Gateway Lifecycle Tunables
+
+These variables tune the polling and timeout budgets used by gateway-recovery and health-check paths.
+The default values target typical local development; raise them on slow links, large image pulls, or remote-deployed hosts where round-trip latency to the gateway is high.
+
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `NEMOCLAW_GATEWAY_START_TIMEOUT` | `600` (seconds) | Wall-clock timeout for OpenShell gateway start during onboarding. Multiplied by 1000 internally to drive the underlying spawn timeout. Raise when the gateway start path spans large image pulls or slow first-time setup. |
+| `NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS` | `30` | Total wait budget for `nemoclaw <name> connect` recovery to confirm the gateway is back up after a respawn. Raise when the gateway's first-paint latency is bounded by network or disk rather than CPU. |
+| `NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS` | `3` | Sleep interval between recovery readiness probes. The probe runs `ceil(NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS / NEMOCLAW_GATEWAY_RECOVERY_POLL_INTERVAL_SECONDS)` times. |
+| `NEMOCLAW_HEALTH_POLL_COUNT` | `12` (`30` on arm64; lower per-call-site overrides exist) | Number of health-poll attempts the gateway and sandbox readiness probes perform before giving up. Defaults are tuned per call site; this var overrides the standard path used by `nemoclaw onboard` and `nemoclaw <name> connect`. |
+| `NEMOCLAW_HEALTH_POLL_INTERVAL` | `5` (`10` on arm64; `2` for some lifecycle probes) | Sleep interval between health-poll attempts (seconds). Pairs with `NEMOCLAW_HEALTH_POLL_COUNT` to bound total wait. |
+| `NEMOCLAW_LOGS_PROBE_TIMEOUT_MS` | `5000` | Milliseconds the `nemoclaw <name> logs` probe waits for the sandbox to start emitting log lines before reporting an empty stream. Non-positive or non-numeric values fall back to the default. |
+| `NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT` | `900` (seconds) | Maximum wait for the Linux Docker-driver GPU supervisor to reconnect after the GPU sandbox is patched. The value is clamped to a minimum of `1` second; the default is sized for cold GPU device attach on first onboard. |
+
+```console
+$ NEMOCLAW_GATEWAY_RECOVERY_WAIT_SECONDS=60 nemoclaw <name> connect
+$ NEMOCLAW_HEALTH_POLL_COUNT=60 NEMOCLAW_HEALTH_POLL_INTERVAL=5 nemoclaw onboard
+```
 
 ### Lifecycle Behavior Flags
 
