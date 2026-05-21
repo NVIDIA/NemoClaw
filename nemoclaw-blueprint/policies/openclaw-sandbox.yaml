@@ -35,6 +35,11 @@ filesystem_policy:
     - /sandbox/.nemoclaw            # Plugin state and config (state.ts, config.ts).
                                     # Blueprints are root-owned; sticky bit (1755)
                                     # on parent prevents rename/delete (#1607).
+    - /home/linuxbrew               # Homebrew prefix. The brew core is baked into
+                                    # the sandbox base image at /home/linuxbrew/
+                                    # .linuxbrew (#3913); runtime writes here let
+                                    # `brew install <formula>` extract bottles
+                                    # and manage Cellar/opt symlinks.
 
 # TODO: evaluate landlock enforce mode — currently best_effort because
 # enforce can break things in unpredictable ways. Needs thorough testing

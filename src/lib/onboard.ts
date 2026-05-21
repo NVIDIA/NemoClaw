@@ -82,6 +82,9 @@ const {
   toSessionWechatConfig,
 } = require("./onboard/wechat-config") as typeof import("./onboard/wechat-config");
 const {
+  clearAgentScopedResumeState,
+}: typeof import("./onboard/agent-resume-state") = require("./onboard/agent-resume-state");
+const {
   setupSelectedMessagingChannels,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") =
@@ -90,6 +93,12 @@ const { buildVllmMenuEntries }: typeof import("./onboard/vllm-menu") = require("
 const {
   prepareModelRouterVenv,
 }: typeof import("./onboard/model-router-python") = require("./onboard/model-router-python");
+const {
+  isProcessRunning,
+  isRouterHealthy,
+  stopModelRouterProcess,
+  stopTrackedModelRouterForAgentChange,
+}: typeof import("./onboard/model-router-process") = require("./onboard/model-router-process");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -380,6 +389,7 @@ import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
 import { getSuggestedPolicyPresets } from "./onboard/policy-presets";
 import {
   computeSetupPresetSuggestions as computeSetupPresetSuggestionsImpl,
+  isStaleBuiltinBravePolicyPreset,
   setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
   type SetupPolicySelectionOptions,
   type SetupPresetSuggestionOptions,
@@ -738,7 +748,6 @@ function loadBlueprintProfile(
 
 const ROUTER_HEALTH_RETRIES = 15;
 const ROUTER_HEALTH_INTERVAL_MS = 2000;
-const ROUTER_HEALTH_TIMEOUT_MS = 3000;
 const MODEL_ROUTER_RELATIVE_DIR = path.join("nemoclaw-blueprint", "router", "llm-router");
 const MODEL_ROUTER_VENV_DIR = path.join(os.homedir(), ".nemoclaw", "model-router-venv");
 const MODEL_ROUTER_FINGERPRINT_FILE = ".nemoclaw-source-fingerprint";
@@ -757,59 +766,6 @@ const MODEL_ROUTER_FINGERPRINT_IGNORED_NAMES = new Set([
   "venv",
 ]);
 const DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV = "NVIDIA_API_KEY";
-
-async function isRouterHealthy(port: number, timeoutMs = ROUTER_HEALTH_TIMEOUT_MS): Promise<boolean> {
-  const http = require("http");
-  return new Promise<boolean>((resolve) => {
-    let settled = false;
-    const settle = (healthy: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve(healthy);
-    };
-    const request = http
-      .get(`http://127.0.0.1:${port}/health`, (res: import("node:http").IncomingMessage) => {
-        res.resume();
-        settle((res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300);
-      })
-      .on("error", () => settle(false));
-    request.setTimeout(timeoutMs, () => {
-      request.destroy();
-      settle(false);
-    });
-  });
-}
-
-function isProcessRunning(pid: number | null | undefined): boolean {
-  if (!Number.isInteger(pid) || Number(pid) <= 0) return false;
-  try {
-    process.kill(Number(pid), 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function stopModelRouterProcess(pid: number, port: number): Promise<void> {
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    return;
-  }
-  for (let attempt = 0; attempt < 10; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (!isProcessRunning(pid) && !(await isRouterHealthy(port, 1000))) return;
-  }
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // already stopped
-  }
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (!isProcessRunning(pid) && !(await isRouterHealthy(port, 1000))) return;
-  }
-}
 
 function resolveHostCommandPath(commandName: string): string | null {
   const result = runCapture(["sh", "-c", 'command -v "$1"', "--", commandName], {
@@ -2440,16 +2396,6 @@ function getResumeConfigConflicts(
       field: "fromDockerfile",
       requested: requestedFrom,
       recorded: recordedFrom,
-    });
-  }
-
-  const requestedAgent = opts.agent || process.env.NEMOCLAW_AGENT || null;
-  const recordedAgent = session?.agent || null;
-  if (requestedAgent && recordedAgent && requestedAgent !== recordedAgent) {
-    conflicts.push({
-      field: "agent",
-      requested: requestedAgent,
-      recorded: recordedAgent,
     });
   }
 
@@ -5138,7 +5084,15 @@ async function createSandbox(
     }
 
     const previousEntry: SandboxEntry | null = registry.getSandbox(sandboxName);
-    const decision = decidePolicyCarryForward(previousEntry?.policies, process.env, isNonInteractive());
+    const previousPoliciesForCarryForward = recreateForAgentDrift ? null : previousEntry?.policies;
+    if (recreateForAgentDrift && previousEntry?.policies && previousEntry.policies.length > 0) {
+      note("  Agent type changed; refreshing policy presets instead of carrying them forward.");
+    }
+    const decision = decidePolicyCarryForward(
+      previousPoliciesForCarryForward,
+      process.env,
+      isNonInteractive(),
+    );
     onboardSession.updateSession((c: Session) => {
       c.policyPresets = decision.newPresets;
       return c;
@@ -6123,8 +6077,7 @@ async function setupNim(
     ["curl", "-sf", ...localProbeCurlArgs, `http://127.0.0.1:${VLLM_PORT}/v1/models`],
     { ignoreError: true },
   );
-  // Pick a vLLM install recipe for this host. Profiles live in inference/vllm.ts;
-  // null means "no supported platform" (vLLM stays behind EXPERIMENTAL).
+  // Pick a vLLM install recipe for this host. Profiles live in inference/vllm.ts.
   const vllmProfile = detectVllmProfile(gpu);
   // If the profile's image is already cached, the install path is really a
   // "start" — docker pull is a no-op and the container can come up in seconds.
@@ -6236,6 +6189,7 @@ async function setupNim(
       vllmRunning,
       vllmProfile,
       experimental: EXPERIMENTAL,
+      platform: gpu?.platform,
       hasVllmImage,
     }),
   );
@@ -8886,81 +8840,68 @@ function printDashboard(
 
   const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
   const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
-  const wslAddr = getWslHostAddress();
-  const chain = buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: wslAddr });
-
-  // Build access info inline — uses chain instead of re-deriving from env
-  const dashboardAccess = buildControlUiUrls(token, chain.port, chain.accessUrl).map((url, i) => ({
-    label: i === 0 ? "Dashboard" : `Alt ${i}`,
-    url,
-  }));
-  if (wslAddr) {
-    const wslUrl = `http://${wslAddr}:${chain.port}/${token ? `#token=${encodeURIComponent(token)}` : ""}`;
-    const existing = dashboardAccess.find((a) => a.url === wslUrl);
-    if (existing) existing.label = "VS Code/WSL";
-    else dashboardAccess.push({ label: "VS Code/WSL", url: wslUrl });
-  }
-  const guidanceLines = [`Port ${chain.port} must be forwarded before opening these URLs.`];
-  if (isWsl())
-    guidanceLines.push(
-      "WSL detected: if localhost fails in Windows, use the WSL host IP shown by `hostname -I`.",
-    );
-  if (dashboardAccess.length === 0) guidanceLines.push("No dashboard URLs were generated.");
+  const chain = buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress() });
+  const dashboardBaseUrl = `${chain.accessUrl.replace(/\/$/, "")}/`;
+  const dashboardUrl = dashboardUrlForDisplay(
+    dashboardAccess.buildAuthenticatedDashboardUrl(dashboardBaseUrl, token),
+  );
 
   console.log("");
   console.log(`  ${"─".repeat(50)}`);
-  // console.log(`  Dashboard    http://localhost:${DASHBOARD_PORT}/`);
-  console.log(`  Sandbox      ${sandboxName} (Landlock + seccomp + netns)`);
-  console.log(`  Model        ${model} (${providerLabel})`);
+  console.log(`  ${cliDisplayName()} is ready`);
+  console.log("");
+  console.log(`  Sandbox:  ${sandboxName}`);
+  console.log(`  Model:    ${model} (${providerLabel})`);
   if (showNim) {
-    console.log(`  NIM          ${nimLabel}`);
+    console.log(`  NIM:      ${nimLabel}`);
   }
-  console.log(`  ${"─".repeat(50)}`);
-  console.log(`  Run:         ${cliName()} ${sandboxName} connect`);
-  console.log(`  Status:      ${cliName()} ${sandboxName} status`);
-  console.log(`  Logs:        ${cliName()} ${sandboxName} logs --follow`);
   console.log("");
   if (agent) {
+    console.log("  Access");
+    console.log("");
     agentOnboard.printDashboardUi(sandboxName, token, agent, {
       note,
       buildControlUiUrls: (tokenValue: string | null, port: number) => {
         return buildControlUiUrls(tokenValue, port, chain.accessUrl);
       },
     });
+    console.log("");
+    console.log("  Terminal:");
+    console.log(`    ${cliName()} ${sandboxName} connect`);
   } else if (token) {
-    console.log(
-      `  ${agentProductName()} UI (auth token redacted from displayed URLs)`,
-    );
-    for (const line of guidanceLines) {
-      console.log(`  ${line}`);
-    }
-    for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${dashboardUrlForDisplay(entry.url)}`);
-    }
-    console.log(`  Token:       ${cliName()} ${sandboxName} gateway-token --quiet`);
-    console.log(`               append  #token=<token> locally if the browser asks for auth.`);
+    console.log("  Start chatting");
+    console.log("");
+    console.log("    Browser:");
+    console.log(`      ${dashboardUrl}`);
+    console.log("");
+    console.log("    Terminal:");
+    console.log(`      ${cliName()} ${sandboxName} connect`);
+    console.log("      then run: openclaw tui");
+    console.log("");
+    console.log("  Authenticated dashboard URL, if needed:");
+    console.log(`    ${cliName()} ${sandboxName} dashboard-url --quiet`);
   } else {
     note("  Could not read gateway token from the sandbox (download failed).");
-    console.log(`  ${agentProductName()} UI`);
-    for (const line of guidanceLines) {
-      console.log(`  ${line}`);
-    }
-    for (const entry of dashboardAccess) {
-      console.log(`  ${entry.label}: ${dashboardUrlForDisplay(entry.url)}`);
-    }
-    console.log(
-      `  Token:       ${cliName()} ${sandboxName} connect  →  jq -r '.gateway.auth.token' /sandbox/.openclaw/openclaw.json`,
-    );
-    console.log(`               append  #token=<token>  to the URL locally if needed.`);
+    console.log("  Start chatting");
+    console.log("");
+    console.log("    Browser:");
+    console.log(`      ${dashboardUrl}`);
+    console.log("");
+    console.log("    Terminal:");
+    console.log(`      ${cliName()} ${sandboxName} connect`);
+    console.log("      then run: openclaw tui");
   }
-  console.log(`  ${"─".repeat(50)}`);
   console.log("");
-  console.log("  To change settings later:");
+  console.log("  Manage later");
+  console.log("");
+  console.log(`    Status:      ${cliName()} ${sandboxName} status`);
+  console.log(`    Logs:        ${cliName()} ${sandboxName} logs --follow`);
   console.log(
-    `    Model:       ${cliName()} inference get\n                 ${cliName()} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
+    `    Model:       ${cliName()} inference set --model <model> --provider <provider> --sandbox ${sandboxName}`,
   );
   console.log(`    Policies:    ${cliName()} ${sandboxName} policy-add`);
-  console.log(`    Credentials: ${cliName()} credentials reset <KEY>  then  ${cliName()} onboard`);
+  console.log(`    Credentials: ${cliName()} credentials reset <KEY> && ${cliName()} onboard`);
+  console.log(`  ${"─".repeat(50)}`);
   console.log("");
 }
 
@@ -9368,8 +9309,27 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       canPrompt: !cannotPrompt,
     });
+    const selectedAgentName = normalizeSandboxAgentName(agent?.name);
+    const recordedAgentName = normalizeSandboxAgentName(session?.agent);
+    let resumeAgentChanged = false;
+    let forceProviderSelectionForAgentChange = false;
+    if (resume && session && recordedAgentName !== selectedAgentName) {
+      resumeAgentChanged = true;
+      forceProviderSelectionForAgentChange = true;
+      note(
+        `  Agent changed from ${formatSandboxAgentName(recordedAgentName)} to ${formatSandboxAgentName(selectedAgentName)}; refreshing provider selection.`,
+      );
+      // Agent changes are recoverable resume drift: refresh scoped state instead of rejecting --resume.
+      await stopTrackedModelRouterForAgentChange(
+        session,
+        loadBlueprintProfile("routed")?.router.port || 4000,
+      );
+      onboardSession.updateSession((current: Session) =>
+        clearAgentScopedResumeState(current, selectedAgentName),
+      );
+    }
     setOnboardBrandingAgent(agent?.name || "openclaw");
-    onboardSession.updateSession((s: Session) => {
+    session = onboardSession.updateSession((s: Session) => {
       s.agent = agent?.name ?? null;
       return s;
     });
@@ -9614,7 +9574,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     let preferredInferenceApi = session?.preferredInferenceApi || null;
     let nimContainer = session?.nimContainer || null;
     let webSearchConfig = session?.webSearchConfig || null;
-    let forceProviderSelection = false;
+    let forceProviderSelection = forceProviderSelectionForAgentChange;
     while (true) {
       const resumeProviderSelection =
         !forceProviderSelection &&
@@ -9837,6 +9797,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     );
     const resumeSandbox =
       resume &&
+      !resumeAgentChanged &&
       !webSearchConfigChanged &&
       !telegramConfigChanged &&
       !sandboxGpuConfigChanged &&
@@ -9853,7 +9814,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       skippedStepMessage("sandbox", sandboxName);
     } else {
       if (resume && session?.steps?.sandbox?.status === "complete") {
-        if (webSearchConfigChanged) {
+        if (resumeAgentChanged) {
+          note(
+            "  [resume] Agent selection changed; revalidating sandbox compatibility.",
+          );
+        } else if (webSearchConfigChanged) {
           note("  [resume] Web Search configuration changed; recreating sandbox.");
           if (sandboxName) {
             registry.removeSandbox(sandboxName);
@@ -10048,6 +10013,13 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       selectablePolicyPresetsForSupport,
       policyPresetSupportOptions,
       customPolicyPresetNames,
+    );
+    recordedPolicyPresetsForSupport = recordedPolicyPresetsForSupport.filter(
+      (name) =>
+        !isStaleBuiltinBravePolicyPreset(name, {
+          webSearchConfig,
+          customPresetNames: customPolicyPresetNames,
+        }),
     );
     if (recordedPolicyPresets) {
       recordedPolicyPresetsForSupport = mergeRequiredHermesToolGatewayPolicyPresets(
@@ -10254,6 +10226,7 @@ module.exports = {
   hasStaleGateway,
   getRequestedSandboxNameHint,
   getResumeSandboxConflict,
+  clearAgentScopedResumeState,
   getSandboxReuseState,
   getSandboxStateFromOutputs,
   getPortConflictServiceHints,

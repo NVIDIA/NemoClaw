@@ -82,7 +82,7 @@ flowchart TB
 | Layer | What it protects | Enforcement point | Changeable at runtime |
 | --- | --- | --- | --- |
 | Network | Unauthorized outbound connections and data exfiltration. | OpenShell gateway | Yes. Use `openshell policy set` or operator approval. |
-| Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Config lockdown posture: yes, with host-side shields commands. |
+| Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Use host-side NemoClaw commands for durable config changes. |
 | Process | Privilege escalation, fork bombs, syscall abuse. | Container runtime (Docker/K8s `securityContext`) | No. Requires sandbox re-creation. |
 | Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use `nemoclaw inference set`. |
 
@@ -461,13 +461,13 @@ Different inference providers have different trust and cost profiles.
 
 ### Experimental Providers
 
-The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM and the managed vLLM install/start path. An already-running vLLM server on `localhost:8000` is offered in the menu without a flag, because selecting it is an explicit user action.
+The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM and generic Linux managed vLLM install/start. DGX Spark and DGX Station managed vLLM entries are offered by default, and an already-running vLLM server on `localhost:8000` is offered in the menu without a flag, because selecting either is an explicit user action.
 
 | Aspect | Detail |
 |---|---|
-| Default | Local NVIDIA NIM and managed vLLM install/start are hidden. Already-running vLLM on `localhost:8000` is offered when detected. |
-| What you can change | Set `NEMOCLAW_EXPERIMENTAL=1` before running `nemoclaw onboard` to surface Local NIM and managed vLLM. To request only the managed vLLM path non-interactively, set `NEMOCLAW_PROVIDER=install-vllm`. |
-| Risk if relaxed | NemoClaw has not fully validated these providers. NIM requires a NIM-capable GPU. The managed vLLM path pulls a container image and starts it on a supported NVIDIA GPU host. Misconfiguration can cause failed inference or unexpected behavior. |
+| Default | Local NVIDIA NIM and generic Linux managed vLLM install/start are hidden. DGX Spark and DGX Station managed vLLM entries, plus already-running vLLM on `localhost:8000`, are offered when detected. |
+| What you can change | Set `NEMOCLAW_EXPERIMENTAL=1` before running `nemoclaw onboard` to surface Local NIM and generic Linux managed vLLM. To request only the managed vLLM path non-interactively, set `NEMOCLAW_PROVIDER=install-vllm`. |
+| Risk if selected | NemoClaw has not fully validated these providers. NIM requires a NIM-capable GPU. The managed vLLM path pulls a container image and starts it on a supported NVIDIA GPU host. Misconfiguration can cause failed inference or unexpected behavior. |
 | Recommendation | Use experimental providers only for evaluation. Do not rely on them for always-on assistants. |
 
 ## Posture Profiles

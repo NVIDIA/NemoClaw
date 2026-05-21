@@ -916,6 +916,27 @@ print(account.get('token', ''))
     skip "M9: No Discord token to check"
   fi
 
+  # M9b: Discord Gateway WebSocket routing uses the OpenShell proxy.
+  # #3894 regressed because OpenClaw's Discord gateway client ignores proxy
+  # env vars and only uses the per-account proxy setting. The fake Gateway
+  # proof in M13b-M13g exercises that OpenShell WebSocket relay; this config
+  # assertion ensures the real OpenClaw Discord account is wired to the relay.
+  dc_proxy=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+accounts = d.get('discord', {}).get('accounts', {})
+account = accounts.get('default') or accounts.get('main') or {}
+print(account.get('proxy', ''))
+" 2>/dev/null || true)
+
+  if [ -n "$dc_token" ] && [ "$dc_proxy" = "http://10.200.0.1:3128" ]; then
+    pass "M9b: Discord account proxy is baked into openclaw.json for Gateway WebSocket routing"
+  elif [ -n "$dc_token" ]; then
+    fail "M9b: Discord account proxy missing or wrong; Gateway WebSocket may bypass OpenShell proxy (proxy='${dc_proxy}')"
+  else
+    skip "M9b: No Discord channel config to check"
+  fi
+
   # M10: Telegram enabled
   tg_enabled=$(echo "$channel_json" | python3 -c "
 import json, sys
@@ -1416,7 +1437,9 @@ else
   fail "M13-rest-e: Unexpected fake Discord REST capture counts: ${fake_rest_capture}"
 fi
 
-# M13b-M13f: Hermetic Discord Gateway over OpenShell's native WebSocket L7 path.
+# M13b-M13g: Hermetic Discord Gateway over OpenShell's native WebSocket L7 path.
+# M13d-config drives the fake Gateway using the proxy URL from the generated
+# OpenClaw Discord account, which is the exact wiring #3894 depends on.
 fake_gateway_ready=0
 if start_fake_discord_gateway "$DISCORD_TOKEN"; then
   fake_gateway_ready=1
@@ -1430,6 +1453,27 @@ if [ "$fake_gateway_ready" = "1" ] \
   pass "M13c: Applied native WebSocket policy with credential rewrite for fake Discord Gateway"
 else
   fail "M13c: Failed to apply fake Discord Gateway policy: $(tail -20 /tmp/nemoclaw-fake-discord-policy.log 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
+fi
+
+dc_ws_account_proxy=""
+dc_proxy_safe="${dc_proxy:-}"
+if [ "$fake_gateway_ready" = "1" ] && [ -n "$dc_proxy_safe" ]; then
+  dc_ws_account_proxy=$(run_fake_discord_gateway_node_client "$FAKE_DISCORD_GATEWAY_PORT" "openshell:resolve:env:DISCORD_BOT_TOKEN" "$dc_proxy_safe" || true)
+fi
+info "OpenClaw-config fake Discord Gateway probe: ${dc_ws_account_proxy:0:500}"
+
+if [ "$fake_gateway_ready" != "1" ]; then
+  skip "M13d-config: Fake Discord Gateway unavailable; skipping OpenClaw account proxy proof"
+elif [ -z "$dc_proxy_safe" ]; then
+  skip "M13d-config: No Discord account proxy in openclaw.json to exercise against fake Gateway"
+elif echo "$dc_ws_account_proxy" | grep -q "^UPGRADE$" \
+  && echo "$dc_ws_account_proxy" | grep -q "^HELLO$" \
+  && echo "$dc_ws_account_proxy" | grep -q "^IDENTIFY_SENT_PLACEHOLDER$" \
+  && echo "$dc_ws_account_proxy" | grep -q "^READY$" \
+  && echo "$dc_ws_account_proxy" | grep -q "^HEARTBEAT_ACK$"; then
+  pass "M13d-config: Discord account proxy from openclaw.json reaches fake Gateway through OpenShell"
+else
+  fail "M13d-config: Discord account proxy from openclaw.json failed against fake Gateway: ${dc_ws_account_proxy:0:400}"
 fi
 
 dc_ws_native=""

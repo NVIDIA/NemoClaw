@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import yaml from "js-yaml";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const CHECK_BIN = path.join(REPO_ROOT, "scripts/e2e/check-parity-map.ts");
@@ -48,6 +49,46 @@ function runCheck(root: string, args: string[] = []) {
     timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
   });
 }
+
+describe("rebuild/upgrade parity map records", () => {
+  it("parity_map_should_classify_all_rebuild_upgrade_legacy_assertions", () => {
+    const inventory = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "test/e2e/docs/parity-inventory.generated.json"), "utf8")) as {
+      entrypoints: Array<{ script: string; assertions: Array<{ text: string }> }>;
+    };
+    const parityMap = yaml.load(fs.readFileSync(path.join(REPO_ROOT, "test/e2e/docs/parity-map.yaml"), "utf8")) as {
+      scripts: Record<string, { assertions?: Array<{ legacy?: string; id?: string }> }>;
+    };
+    const expectedIds = new Set([
+      "suite.rebuild.workspace_state_preserved",
+      "suite.rebuild.agent_version_upgraded",
+      "suite.rebuild.inference_still_works",
+      "suite.rebuild.policy_presets_preserved",
+      "suite.upgrade.sandbox_registry_preserved",
+      "suite.upgrade.gateway_version_upgraded",
+      "suite.upgrade.survivor_agent_reachable",
+    ]);
+    const mappedIds = new Set<string>();
+    for (const script of [
+      "test-rebuild-openclaw.sh",
+      "test-rebuild-hermes.sh",
+      "test-upgrade-stale-sandbox.sh",
+      "test-openshell-gateway-upgrade.sh",
+    ]) {
+      const entry = inventory.entrypoints.find((item) => path.basename(item.script) === script);
+      expect(entry, `missing inventory for ${script}`).toBeTruthy();
+      const scriptMap = parityMap.scripts[script];
+      expect(scriptMap, `missing parity map entry for ${script}`).toBeTruthy();
+      const mappedLegacyAssertions = new Set((scriptMap.assertions ?? []).map((assertion) => assertion.legacy));
+      for (const assertion of entry?.assertions ?? []) {
+        expect(mappedLegacyAssertions, `${script} missing ${assertion.text}`).toContain(assertion.text);
+      }
+      for (const assertion of scriptMap.assertions ?? []) {
+        if (assertion.id) mappedIds.add(assertion.id);
+      }
+    }
+    for (const id of expectedIds) expect(mappedIds).toContain(id);
+  });
+});
 
 describe("parity map schema validation", () => {
   let tmp: string;

@@ -364,10 +364,17 @@ else
 fi
 
 info "Verifying SHA-256 checksum..."
+if command -v sha256sum >/dev/null 2>&1; then
+  SHA_CMD="sha256sum"
+elif command -v shasum >/dev/null 2>&1; then
+  SHA_CMD="shasum -a 256"
+else
+  fail "No SHA-256 tool available (sha256sum/shasum)"
+fi
 for i in "${!ASSETS[@]}"; do
   asset_name="${ASSETS[$i]}"
   checksum_file="${CHECKSUM_FILES[$i]}"
-  (cd "$tmpdir" && grep -F "$asset_name" "$checksum_file" | shasum -a 256 -c -) \
+  (cd "$tmpdir" && grep -F "$asset_name" "$checksum_file" | $SHA_CMD -c -) \
     || fail "SHA-256 checksum verification failed for $asset_name"
 done
 
