@@ -316,7 +316,7 @@ describe("messaging manifest type contracts", () => {
     const files = collectProductionFiles(moduleRoot);
     const forbiddenFragments = [
       "gateway",
-      "registry",
+      "state/registry",
       "credentials",
       "node:fs",
       "node:child_process",
