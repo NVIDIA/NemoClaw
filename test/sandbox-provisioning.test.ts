@@ -235,6 +235,40 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
 });
 
 describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
+  it("keeps broad .openclaw permission repair on the legacy migration path only", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const cleanupBlock = dockerRunCommandBetween(
+      dockerfile,
+      "# Flatten stale published base images",
+      "# Stale-base fallback for the gateway-in-sandbox-group setup",
+    );
+    const permissionBlock = dockerRunCommandBetween(
+      dockerfile,
+      "# Keep the image readable to the root entrypoint",
+      "# System-wide proxy hooks",
+    );
+    const fastPath = permissionBlock.match(/\belse\s+([\s\S]*)\s+fi$/)?.[1] ?? "";
+
+    expect(cleanupBlock).toContain("legacy_layout=0");
+    expect(cleanupBlock).toContain("legacy_layout=1");
+    expect(cleanupBlock).toMatch(
+      /if \[ "\$legacy_layout" = "1" \]; then[\s\S]*find "\$config_dir" -type l -print[\s\S]*: > "\$legacy_marker"/,
+    );
+    expect(cleanupBlock).toContain('install -d -o sandbox -g sandbox -m 2770 "$dir"');
+    expect(cleanupBlock).toContain("chmod 660 \"$file\"");
+
+    expect(permissionBlock).toContain("if [ -e /tmp/nemoclaw-legacy-openclaw-layout ]; then");
+    expect(permissionBlock).toContain("chown -R sandbox:sandbox /sandbox/.openclaw");
+    expect(permissionBlock).toContain("chmod -R g+rwX,o-rwx /sandbox/.openclaw");
+    expect(permissionBlock).toContain("find /sandbox/.openclaw -type d -exec chmod g+s {} +");
+
+    expect(fastPath).toContain("/sandbox/.openclaw/openclaw.json");
+    expect(fastPath).toContain("/sandbox/.openclaw/plugin-runtime-deps");
+    expect(fastPath).not.toContain("chown -R");
+    expect(fastPath).not.toContain("chmod -R");
+    expect(fastPath).not.toContain("find /sandbox/.openclaw");
+  });
+
   it("provisions unified mutable .openclaw layout and trusted rc shims", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-layout-"));

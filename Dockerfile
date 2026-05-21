@@ -511,12 +511,16 @@ USER root
 RUN set -eu; \
     config_dir=/sandbox/.openclaw; \
     data_dir=/sandbox/.openclaw-data; \
+    legacy_layout=0; \
+    legacy_marker=/tmp/nemoclaw-legacy-openclaw-layout; \
+    rm -f "$legacy_marker"; \
     mkdir -p "$config_dir"; \
     if [ -L "$data_dir" ]; then \
         echo "ERROR: refusing legacy layout cleanup because $data_dir is a symlink" >&2; \
         exit 1; \
     fi; \
     if [ -d "$data_dir" ]; then \
+        legacy_layout=1; \
         for entry in "$data_dir"/*; do \
             [ -e "$entry" ] || [ -L "$entry" ] || continue; \
             if [ -L "$entry" ]; then \
@@ -572,7 +576,32 @@ RUN set -eu; \
         done; \
         rm -rf "$data_dir"; \
     fi; \
-    mkdir -p "$config_dir/agents/main/agent" \
+    if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
+        echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
+        exit 1; \
+    fi; \
+    if [ "$legacy_layout" = "1" ]; then \
+        data_real="$(readlink -f "$data_dir" 2>/dev/null || printf '%s' "$data_dir")"; \
+        find "$config_dir" -type l -print | while IFS= read -r link; do \
+            raw_target="$(readlink "$link" 2>/dev/null || true)"; \
+            resolved_target="$(readlink -f "$link" 2>/dev/null || true)"; \
+            case "$raw_target" in \
+                "$data_real"/* | "$data_dir"/*) \
+                    echo "ERROR: legacy symlink remains after cleanup: $link -> $raw_target" >&2; \
+                    exit 1; \
+                    ;; \
+            esac; \
+            case "$resolved_target" in \
+                "$data_real"/* | "$data_dir"/*) \
+                    echo "ERROR: legacy symlink remains after cleanup: $link -> $resolved_target" >&2; \
+                    exit 1; \
+                    ;; \
+            esac; \
+        done; \
+        : > "$legacy_marker"; \
+    fi; \
+    for dir in \
+        "$config_dir/agents/main/agent" \
         "$config_dir/extensions" \
         "$config_dir/workspace" \
         "$config_dir/skills" \
@@ -589,28 +618,13 @@ RUN set -eu; \
         "$config_dir/telegram" \
         "$config_dir/wechat" \
         "$config_dir/media" \
-        "$config_dir/plugin-runtime-deps"; \
-    touch "$config_dir/update-check.json" "$config_dir/exec-approvals.json"; \
-    if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
-        echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
-        exit 1; \
-    fi; \
-    data_real="$(readlink -f "$data_dir" 2>/dev/null || printf '%s' "$data_dir")"; \
-    find "$config_dir" -type l -print | while IFS= read -r link; do \
-        raw_target="$(readlink "$link" 2>/dev/null || true)"; \
-        resolved_target="$(readlink -f "$link" 2>/dev/null || true)"; \
-        case "$raw_target" in \
-            "$data_real"/* | "$data_dir"/*) \
-                echo "ERROR: legacy symlink remains after cleanup: $link -> $raw_target" >&2; \
-                exit 1; \
-                ;; \
-        esac; \
-        case "$resolved_target" in \
-            "$data_real"/* | "$data_dir"/*) \
-                echo "ERROR: legacy symlink remains after cleanup: $link -> $resolved_target" >&2; \
-                exit 1; \
-                ;; \
-        esac; \
+        "$config_dir/plugin-runtime-deps"; do \
+        install -d -o sandbox -g sandbox -m 2770 "$dir"; \
+    done; \
+    for file in "$config_dir/update-check.json" "$config_dir/exec-approvals.json"; do \
+        touch "$file"; \
+        chown sandbox:sandbox "$file"; \
+        chmod 660 "$file"; \
     done; \
     rm -rf /root/.npm /sandbox/.npm
 
@@ -625,22 +639,24 @@ RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
         fi; \
     fi
 
-# Keep the image readable to the root entrypoint after capabilities are
-# dropped. OpenShell starts the runtime as the sandbox user; the entrypoint
-# and onboard flow normalize the mutable-default group-writable permissions.
-# Shields-up applies 444 root:root + chattr +i on top.
-#
-# `chmod g+w` + setgid (chmod g+s on dirs) on the mutable config tree means
-# both `sandbox` and `gateway` (now a member of the sandbox group) can write
-# to OpenClaw config/state in default mode. New files created in setgid
-# directories inherit group=sandbox regardless of which UID created them,
-# so OpenClaw's mutateConfigFile path (control-UI toggles) writes succeed
-# without needing an EACCES-swallow patch (#2681 supersedes #2693).
-RUN chown -R sandbox:sandbox /sandbox/.openclaw \
-    && chmod -R g+rwX,o-rwx /sandbox/.openclaw \
-    && find /sandbox/.openclaw -type d -exec chmod g+s {} + \
-    && chmod 2770 /sandbox/.openclaw \
-    && chmod 660 /sandbox/.openclaw/openclaw.json
+# Keep the image readable to the root entrypoint after capabilities are dropped.
+# Current base images already have a unified .openclaw tree. Avoid walking
+# plugin-runtime-deps on every build; only fall back to the broad repair when
+# the stale .openclaw-data migration path actually ran.
+RUN set -eu; \
+    if [ -e /tmp/nemoclaw-legacy-openclaw-layout ]; then \
+        chown -R sandbox:sandbox /sandbox/.openclaw; \
+        chmod -R g+rwX,o-rwx /sandbox/.openclaw; \
+        find /sandbox/.openclaw -type d -exec chmod g+s {} +; \
+        rm -f /tmp/nemoclaw-legacy-openclaw-layout; \
+    else \
+        chown sandbox:sandbox \
+            /sandbox/.openclaw \
+            /sandbox/.openclaw/openclaw.json \
+            /sandbox/.openclaw/plugin-runtime-deps; \
+        chmod 2770 /sandbox/.openclaw /sandbox/.openclaw/plugin-runtime-deps; \
+        chmod 660 /sandbox/.openclaw/openclaw.json; \
+    fi
 
 # System-wide proxy hooks for shells where ~/.bashrc / ~/.profile aren't
 # sourced (e.g. `bash -ic` / `bash -lc` invoked under a different user or
