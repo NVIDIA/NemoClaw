@@ -117,13 +117,26 @@ const MESSAGING_PRESET_LABELS: Record<string, string> = {
 function getMessagingPresetWarning(presetName: string): string | null {
   const label = MESSAGING_PRESET_LABELS[presetName];
   if (!label) return null;
-  return [
+  const lines = [
     `Note: the '${presetName}' preset only opens network egress to the ${label} API.`,
     `To actually enable ${label} messaging, re-run 'nemoclaw onboard' and select ${label}`,
     "in the messaging channels step. Channel setup, pairing, and runtime",
     "configuration are wired up at onboard time and are not added by applying",
     "this preset alone.",
-  ].join("\n  ");
+  ];
+
+  if (presetName === "discord") {
+    lines.push(
+      "For Discord preset validation, do not use curl as the success signal:",
+      "curl is not in the preset binary allowlist, so curl probes can fail even",
+      "when the policy is working. Use Node HTTPS against",
+      "https://discord.com/api/v10/gateway or validate the configured",
+      'messaging bridge/gateway path. DNS-only checks such as dns.resolve("gateway.discord.gg")',
+      "can also be inconclusive behind a proxy.",
+    );
+  }
+
+  return lines.join("\n  ");
 }
 
 function setupPolicyPresetSupported(

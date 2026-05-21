@@ -69,6 +69,7 @@ registry.listSandboxes = () => ({ sandboxes: [{ name: "test-sandbox" }] });
 policies.listPresets = () => [
   { name: "npm", description: "npm and Yarn registry access" },
   { name: "pypi", description: "Python Package Index (PyPI) access" },
+  { name: "discord", description: "Discord API, gateway, and CDN access" },
 ];
 policies.getAppliedPresets = () => [];
 policies.applyPreset = (sandboxName, presetName) => {
@@ -434,6 +435,16 @@ describe("policies", () => {
       expect(policies.getMessagingPresetWarning("discord")).toContain("Discord");
       expect(policies.getMessagingPresetWarning("slack")).toContain("Slack");
       expect(policies.getMessagingPresetWarning("wechat")).toContain("WeChat");
+    });
+
+    it("adds Discord validation guidance for Node probes instead of curl or DNS-only checks", () => {
+      const warning = policies.getMessagingPresetWarning("discord");
+
+      expect(warning).toContain("curl");
+      expect(warning).toContain("preset binary allowlist");
+      expect(warning).toContain("Node HTTPS");
+      expect(warning).toContain("https://discord.com/api/v10/gateway");
+      expect(warning).toContain('dns.resolve("gateway.discord.gg")');
     });
 
     it("returns null for non-messaging presets", () => {
@@ -1240,6 +1251,63 @@ exit 1
       }
     });
 
+    it("baseline filesystem_policy.read_write grants the Homebrew prefix (#3913)", () => {
+      // Companion to the Dockerfile.base step that bakes Homebrew core
+      // into the sandbox image. Without /home/linuxbrew in read_write,
+      // `brew install <formula>` cannot extract bottles or manage the
+      // Cellar/opt symlinks at runtime, and the brew preset's binary
+      // whitelist becomes dead code.
+      const parsed = YAML.parse(
+        fs.readFileSync(
+          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox.yaml"),
+          "utf-8",
+        ),
+      );
+      expect(parsed.filesystem_policy.read_write).toContain("/home/linuxbrew");
+    });
+
+    it("OpenClaw permissive policies preserve baseline read_write paths (#3916)", () => {
+      const baseline = YAML.parse(
+        fs.readFileSync(
+          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox.yaml"),
+          "utf-8",
+        ),
+      ) as { filesystem_policy?: { read_write?: string[] } };
+      const baselineReadWrite = baseline.filesystem_policy?.read_write ?? [];
+      const permissivePolicyPaths = [
+        "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+        "agents/openclaw/policy-permissive.yaml",
+      ];
+
+      for (const relativePath of permissivePolicyPaths) {
+        const parsed = YAML.parse(
+          fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf-8"),
+        ) as { filesystem_policy?: { read_write?: string[] } };
+        expect(parsed.filesystem_policy?.read_write, relativePath).toEqual(
+          expect.arrayContaining(baselineReadWrite),
+        );
+      }
+    });
+
+    it("brew preset whitelists the PATH shim and Homebrew-managed entrypoints (#3913)", () => {
+      const content = requirePresetContent(policies.loadPreset("brew"));
+      const parsed = YAML.parse(content);
+      const brewPolicy = parsed.network_policies?.brew as
+        | { binaries?: Array<{ path?: string }> }
+        | undefined;
+      const binaries = (brewPolicy?.binaries ?? []).map((binary) => binary.path).sort();
+      expect(binaries).toEqual(
+        [
+          "/home/linuxbrew/.linuxbrew/Homebrew/bin/*",
+          "/home/linuxbrew/.linuxbrew/bin/*",
+          "/home/linuxbrew/.linuxbrew/bin/brew",
+          "/usr/bin/curl",
+          "/usr/bin/git",
+          "/usr/local/bin/brew",
+        ].sort(),
+      );
+    });
+
     it("telegram REST preset relies on automatic TLS handling", () => {
       const content = requirePresetContent(policies.loadPreset("telegram"));
       expect(content).toBeTruthy();
@@ -1599,6 +1667,40 @@ selectForRemoval(items, options)
         /Note: the 'wechat' preset only opens network egress to the WeChat API\./,
       );
       expect(result.stdout).toMatch(/re-run 'nemoclaw onboard' and select WeChat/);
+    });
+
+    it("prints Discord validation guidance from the interactive preset flow", () => {
+      const result = runPolicyAdd("y", [], {}, "discord");
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /curl is not in the preset binary allowlist, so curl probes can fail/,
+      );
+      expect(result.stdout).toContain("https://discord.com/api/v10/gateway");
+      expect(result.stdout).toMatch(/dns\.resolve\("gateway\.discord\.gg"\)/);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls).toContainEqual({
+        type: "apply",
+        sandboxName: "test-sandbox",
+        presetName: "discord",
+      });
+    });
+
+    it("prints Discord validation guidance when the preset name is provided", () => {
+      const result = runPolicyAdd("n", ["discord", "--yes"]);
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(
+        /curl is not in the preset binary allowlist, so curl probes can fail/,
+      );
+      expect(result.stdout).toMatch(/Node HTTPS/);
+      const calls = JSON.parse(result.stdout.split("__CALLS__")[1].trim()) as PolicyCall[];
+      expect(calls.some((call: PolicyCall) => call.type === "prompt")).toBeFalsy();
+      expect(calls).toContainEqual({
+        type: "apply",
+        sandboxName: "test-sandbox",
+        presetName: "discord",
+      });
     });
 
     it("does not warn about messaging when a non-messaging preset is selected", () => {

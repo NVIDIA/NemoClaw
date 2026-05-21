@@ -18,15 +18,19 @@
  * buildVllmMenuEntries always emits the install-vllm entry when the user
  * explicitly opts in via NEMOCLAW_PROVIDER=install-vllm, even when the profile
  * is null, so the dispatcher can emit the precise "No vLLM install profile
- * available for this host." message. It also logs a note when running-vLLM
- * takes precedence over the env-var opt-in.
+ * available for this host." message. It also lets the caller surface managed
+ * vLLM by default for known DGX platforms while generic Linux stays gated, and
+ * logs a note when running-vLLM takes precedence over the env-var opt-in.
  */
 
 import { VLLM_PORT } from "../core/ports";
+import type { NvidiaPlatform } from "../inference/nim";
 
 interface VllmProfileShape {
   name: string;
 }
+
+const MANAGED_VLLM_DEFAULT_PLATFORMS = new Set<NvidiaPlatform>(["spark", "station"]);
 
 export interface VllmMenuEntry {
   key: "vllm" | "install-vllm";
@@ -37,6 +41,7 @@ export interface BuildVllmMenuOptions {
   vllmRunning: boolean;
   vllmProfile: VllmProfileShape | null | undefined;
   experimental: boolean;
+  platform?: NvidiaPlatform;
   hasVllmImage: boolean;
   /** Defaults to process.env so tests can inject a clean environment. */
   env?: NodeJS.ProcessEnv;
@@ -49,7 +54,8 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
   // env-var opt-in surface the menu entry too — the non-interactive provider
   // hint is null outside non-interactive mode.
   const env = opts.env ?? process.env;
-  const userChoseManagedVllm = (env.NEMOCLAW_PROVIDER || "").trim().toLowerCase() === "install-vllm";
+  const userChoseManagedVllm =
+    (env.NEMOCLAW_PROVIDER || "").trim().toLowerCase() === "install-vllm";
   if (opts.vllmRunning) {
     if (userChoseManagedVllm) {
       log(
@@ -63,7 +69,12 @@ export function buildVllmMenuEntries(opts: BuildVllmMenuOptions): VllmMenuEntry[
       },
     ];
   }
-  if (userChoseManagedVllm || (opts.vllmProfile && opts.experimental)) {
+  if (
+    userChoseManagedVllm ||
+    (opts.vllmProfile &&
+      (opts.experimental ||
+        (opts.platform && MANAGED_VLLM_DEFAULT_PLATFORMS.has(opts.platform))))
+  ) {
     const verb = opts.hasVllmImage ? "Start" : "Install";
     const profileLabel = opts.vllmProfile?.name ?? "no profile detected";
     return [{ key: "install-vllm", label: `${verb} vLLM (${profileLabel})` }];

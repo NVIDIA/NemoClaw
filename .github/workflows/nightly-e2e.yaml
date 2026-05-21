@@ -30,6 +30,12 @@
 #                            agent state, and the same agent type running.
 #   hermes-e2e               Hermes Agent E2E — install → onboard --agent hermes → health
 #                            probe → live inference. Validates the multi-agent architecture.
+#   openclaw-onboard-security-posture-e2e
+#                            Full OpenClaw onboard on a non-root host user
+#                            with trusted rc-file and runtime guard assertions.
+#   hermes-onboard-security-posture-e2e
+#                            Full Hermes onboard on a non-root host user
+#                            with trusted rc-file and runtime guard assertions.
 #   hermes-inference-switch-e2e
 #                            Switches a running Hermes sandbox with `nemohermes inference set`
 #                            and verifies route, config.yaml, hashes, and live requests.
@@ -79,6 +85,8 @@ on:
           token-rotation-e2e, sandbox-survival-e2e,
           openshell-gateway-upgrade-e2e,
           issue-2478-crash-loop-recovery-e2e, hermes-e2e,
+          openclaw-onboard-security-posture-e2e,
+          hermes-onboard-security-posture-e2e,
           hermes-inference-switch-e2e, hermes-discord-e2e,
           hermes-slack-e2e, sandbox-operations-e2e, inference-routing-e2e,
           openclaw-inference-switch-e2e,
@@ -92,7 +100,7 @@ on:
           credential-sanitization-e2e, telegram-injection-e2e,
           overlayfs-autofix-e2e, device-auth-health-e2e,
           launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
-          channels-stop-start-e2e, brave-search-e2e
+          channels-add-remove-e2e, channels-stop-start-e2e, brave-search-e2e
         required: false
         type: string
         default: ""
@@ -417,6 +425,50 @@ jobs:
         with:
           name: install-log-messaging-compatible-endpoint
           path: /tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log
+          if-no-files-found: ignore
+
+  # ── Channels add/remove lifecycle E2E (#3462 Test 2) ────────────────
+  # Regression coverage for #3437 (channels add must auto-apply the matching
+  # network policy preset so the bridge boots with egress to its upstream API)
+  # and #3671 (channels remove must detach providers, un-apply the preset,
+  # and survive a follow-up rebuild without being silently re-added from
+  # shell env). Telegram-only — the other paste-token channels walk the same
+  # KNOWN_CHANNELS + preset lookup code path.
+  channels-add-remove-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',channels-add-remove-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run channels add/remove lifecycle E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-channels-add-remove"
+          GITHUB_TOKEN: ${{ github.token }}
+          TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-add-remove-e2e"
+        run: bash test/e2e/test-channels-add-remove.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: install-log-channels-add-remove
+          path: |
+            /tmp/nemoclaw-e2e-install.log
+            /tmp/nc-add.log
+            /tmp/nc-remove.log
+            /tmp/nc-rebuild-add.log
+            /tmp/nc-rebuild-remove.log
           if-no-files-found: ignore
 
   # ── Channels stop/start/remove lifecycle E2E (#3462, #3671) ─────────
@@ -778,6 +830,86 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: hermes-e2e-install-log
+          path: /tmp/nemoclaw-e2e-hermes-install.log
+          if-no-files-found: ignore
+
+  # ── OpenClaw onboard security posture E2E ───────────────────────
+  # Full OpenClaw install/onboard/inference path, then asserts the Linux
+  # Docker-driver security posture that #3891 needed: non-root host user,
+  # static root-owned rc shims, and dynamic configure guards only in
+  # /tmp/nemoclaw-proxy-env.sh.
+  openclaw-onboard-security-posture-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openclaw-onboard-security-posture-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
+
+      - name: Run OpenClaw onboard security posture E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-security-posture"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_E2E_SECURITY_POSTURE: "1"
+          NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-full-e2e.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: openclaw-onboard-security-posture-install-log
+          path: /tmp/nemoclaw-e2e-install.log
+          if-no-files-found: ignore
+
+  # ── Hermes onboard security posture E2E ─────────────────────────
+  # Full Hermes install/onboard/health/inference path with the same posture
+  # assertions as OpenClaw. This specifically catches the #3891 class where
+  # startup rewrites /sandbox rc files under a non-root-host OpenShell posture.
+  hermes-onboard-security-posture-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',hermes-onboard-security-posture-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+          persist-credentials: false
+
+      - name: Run Hermes onboard security posture E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-hermes-security-posture"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_AGENT: "hermes"
+          NEMOCLAW_E2E_SECURITY_POSTURE: "1"
+          NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-hermes-e2e.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: hermes-onboard-security-posture-install-log
           path: /tmp/nemoclaw-e2e-hermes-install.log
           if-no-files-found: ignore
 
@@ -1792,15 +1924,7 @@ jobs:
           export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
           [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
           [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
-          npm ci --ignore-scripts
-          log_file="/tmp/nemoclaw-e2e-onboard-negative-paths.log"
-          : >"${log_file}"
-          for scenario in \
-            ubuntu-repo-cloud-openclaw-custom-policies \
-            ubuntu-invalid-nvidia-key-negative \
-            ubuntu-gateway-port-conflict-negative; do
-            bash test/e2e/runtime/run-scenario.sh "$scenario" 2>&1 | tee -a "${log_file}"
-          done
+          bash test/e2e/test-onboard-negative-paths.sh
       - name: Upload test log on failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -2196,6 +2320,7 @@ jobs:
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
         messaging-compatible-endpoint-e2e,
+        channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
@@ -2204,6 +2329,8 @@ jobs:
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
         hermes-e2e,
+        openclaw-onboard-security-posture-e2e,
+        hermes-onboard-security-posture-e2e,
         hermes-inference-switch-e2e,
         hermes-discord-e2e,
         hermes-slack-e2e,
@@ -2292,6 +2419,7 @@ jobs:
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
         messaging-compatible-endpoint-e2e,
+        channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
@@ -2300,6 +2428,8 @@ jobs:
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
         hermes-e2e,
+        openclaw-onboard-security-posture-e2e,
+        hermes-onboard-security-posture-e2e,
         hermes-inference-switch-e2e,
         hermes-discord-e2e,
         hermes-slack-e2e,
@@ -2445,6 +2575,7 @@ jobs:
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
         messaging-compatible-endpoint-e2e,
+        channels-add-remove-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
@@ -2453,6 +2584,8 @@ jobs:
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
         hermes-e2e,
+        openclaw-onboard-security-posture-e2e,
+        hermes-onboard-security-posture-e2e,
         hermes-inference-switch-e2e,
         hermes-discord-e2e,
         hermes-slack-e2e,
@@ -2550,20 +2683,27 @@ jobs:
                 const since48h = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString();
                 const since24h = new Date(now.getTime() - 24 * 60 * 60 * 1000).toISOString();
 
-                const { data } = await github.rest.actions.listWorkflowRuns({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  workflow_id: WORKFLOW_FILE,
-                  created: `>=${since48h}`,
-                  per_page: 50,
-                });
+                const priorRuns = [];
+                for (let page = 1; page <= 10 && priorRuns.length === 0; page++) {
+                  const { data } = await github.rest.actions.listWorkflowRuns({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    workflow_id: WORKFLOW_FILE,
+                    created: `>=${since48h}`,
+                    per_page: 100,
+                    page,
+                  });
 
-                // Find completed scheduled runs from 24–48h ago
-                const priorRuns = data.workflow_runs.filter(r =>
-                  r.status === 'completed' &&
-                  r.event === 'schedule' &&
-                  new Date(r.created_at) < new Date(since24h)
-                );
+                  priorRuns.push(
+                    ...data.workflow_runs.filter(r =>
+                      r.status === 'completed' &&
+                      r.event === 'schedule' &&
+                      new Date(r.created_at) < new Date(since24h)
+                    )
+                  );
+
+                  if (data.workflow_runs.length < 100) break;
+                }
 
                 if (priorRuns.length > 0) {
                   // Check the most recent prior run

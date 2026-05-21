@@ -68,7 +68,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         jq=1.7.1-6+deb13u2 \
         vim-tiny=2:9.1.1230-2 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s /usr/bin/python3 /usr/local/bin/python
 
 # gosu for privilege separation (gateway vs sandbox user).
 # Install from GitHub release with checksum verification instead of
@@ -209,3 +210,49 @@ RUN openclaw plugins install '@tencent-weixin/openclaw-weixin@2.4.2' --pin \
 # hadolint ignore=DL3002
 USER root
 WORKDIR /
+
+# Baseline health check. The base image runs no service, so this only
+# verifies the Node.js runtime is functional. Child images that expose
+# a service (e.g. the production Dockerfile's gateway) MUST override
+# this with a service-specific probe; otherwise an unresponsive service
+# will still report healthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+    CMD node -e "process.exit(0)"
+
+# Bake Homebrew core (Linuxbrew) into the sandbox base image (#3913).
+#
+# Without this, applying the `brew` policy preset and trying to install
+# Homebrew at runtime fails: /home/linuxbrew is not in the sandbox
+# filesystem write paths, AND the install script's first step is `sudo`
+# to create + chown /home/linuxbrew/.linuxbrew, which the unprivileged
+# sandbox user cannot grant. The preset's binary whitelist for
+# /home/linuxbrew/.linuxbrew/bin/* is then dead code.
+#
+# Image-build runs as root, so we create the prefix, chown it to the
+# sandbox user, clone Homebrew core under it as the sandbox user, and
+# symlink the brew entry point into the Homebrew prefix and /usr/local/bin.
+# /usr/local/bin is already on the locked sandbox PATH, so users can run
+# `brew` without adding the sandbox-writable Homebrew prefix to privileged
+# startup PATH.
+#
+# Companion change: /home/linuxbrew is added to filesystem_policy.read_write
+# in nemoclaw-blueprint/policies/openclaw-sandbox.yaml so brew can write
+# formulae under the prefix at runtime.
+#
+# Cost: ~80 to 150 MB (Homebrew core only; formulae download on demand).
+#
+# HOMEBREW_VERSION pins the exact upstream Homebrew tag we ship, so the
+# base image layer is reproducible across rebuilds. Bump on demand; the
+# base-image workflow re-runs on push to main. Latest stable tags are
+# at https://github.com/Homebrew/brew/releases.
+ARG HOMEBREW_VERSION=5.1.12
+RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
+    && chown -R sandbox:sandbox /home/linuxbrew \
+    && gosu sandbox git clone --depth=1 --branch="${HOMEBREW_VERSION}" \
+        https://github.com/Homebrew/brew.git \
+        /home/linuxbrew/.linuxbrew/Homebrew \
+    && ln -s /home/linuxbrew/.linuxbrew/Homebrew/bin/brew \
+        /home/linuxbrew/.linuxbrew/bin/brew \
+    && ln -s /home/linuxbrew/.linuxbrew/Homebrew/bin/brew \
+        /usr/local/bin/brew \
+    && gosu sandbox brew --version

@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { getChangedFiles, getCommits, getDiff, getDiffStat, getHeadSha, gitOutput } from "../advisors/git.mts";
 import { githubGraphql, githubRest, githubRestPaginated } from "../advisors/github.mts";
@@ -16,6 +16,13 @@ const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
 const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
 const ADVISOR_CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
+const SECURITY_REVIEW_SKILL_PATH = ".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md";
+const TRUSTED_SECURITY_REVIEW_SKILL_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "..",
+  SECURITY_REVIEW_SKILL_PATH,
+);
 const SECURITY_CATEGORIES = [
   "Secrets and Credentials",
   "Input Validation and Data Sanitization",
@@ -148,14 +155,34 @@ type DeterministicReviewContext = {
   gateStatus: ReviewAdvisorResult["gateStatus"];
   workflowSignals: string[];
   monolithDeltas: MonolithDelta[];
+  driftEvidence: DriftEvidence[];
   github: GitHubReviewContext | null;
 };
+
+type MonolithSeverity = "none" | "warning" | "blocker";
 
 type MonolithDelta = {
   file: string;
   baseLines: number;
   headLines: number;
   delta: number;
+  severity: MonolithSeverity;
+  rationale: string;
+};
+
+type DriftEvidence = {
+  file: string;
+  recentHistory: string[];
+  renameHints: string[];
+};
+
+type OpenPrOverlap = {
+  number: number;
+  title: string;
+  labels: string[];
+  linkedIssues: number[];
+  sameFiles: string[];
+  duplicateLinkedIssues: number[];
 };
 
 type GitHubReviewContext = {
@@ -167,6 +194,7 @@ type GitHubReviewContext = {
   issueComments?: unknown[];
   reviewComments?: unknown[];
   linkedIssues?: LinkedIssue[];
+  openPrOverlaps?: OpenPrOverlap[];
   e2eAdvisorComments?: string[];
 };
 
@@ -206,8 +234,9 @@ async function main(): Promise<void> {
   const diff = getDiff(baseRef, headRef, 160000);
   const deterministic = await collectDeterministicContext({ baseRef, headRef, changedFiles, diff });
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
-  const systemPrompt = buildSystemPrompt(schema);
-  const prompt = buildPrompt({ metadata, diff });
+  const securityReviewSkill = readTrustedSecurityReviewSkill();
+  const systemPrompt = buildSystemPrompt(schema, securityReviewSkill);
+  const prompt = buildPrompt({ metadata, diff, securityReviewSkill });
   fs.writeFileSync(artifacts.prompt, prompt);
 
   const writeFailure = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, true);
@@ -301,6 +330,7 @@ async function collectDeterministicContext(options: {
     gateStatus,
     workflowSignals: detectWorkflowSignals(options.changedFiles, options.diff),
     monolithDeltas: computeMonolithDeltas(options.baseRef, options.changedFiles),
+    driftEvidence: collectDriftEvidence(options.baseRef, options.changedFiles),
     github,
   };
 }
@@ -385,21 +415,57 @@ function detectWorkflowSignals(changedFiles: string[], diff: string): string[] {
   return signals;
 }
 
-function computeMonolithDeltas(baseRef: string, changedFiles: string[]): MonolithDelta[] {
+export function computeMonolithDeltas(baseRef: string, changedFiles: string[]): MonolithDelta[] {
   return changedFiles
     .filter((file) => /^(src|nemoclaw\/src)\/.*\.ts$/.test(file))
     .map((file) => {
       const headText = fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "";
       const baseText = gitOutput([["show", `${baseRef}:${file}`]], 2 * 1024 * 1024) || "";
-      return {
-        file,
-        baseLines: countLines(baseText),
-        headLines: countLines(headText),
-        delta: countLines(headText) - countLines(baseText),
-      };
+      const baseLines = countLines(baseText);
+      const headLines = countLines(headText);
+      return classifyMonolithDelta({ file, baseLines, headLines, delta: headLines - baseLines });
     })
-    .filter((delta) => delta.headLines >= 400 || delta.baseLines >= 400 || delta.delta >= 20)
-    .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+    .filter((delta) => delta.headLines >= 400 || delta.baseLines >= 400 || delta.delta > 0)
+    .sort((a, b) => severityRank(b.severity) - severityRank(a.severity) || Math.abs(b.delta) - Math.abs(a.delta));
+}
+
+export function classifyMonolithDelta(delta: Omit<MonolithDelta, "severity" | "rationale">): MonolithDelta {
+  const isCurrentMonolith = delta.headLines >= 400 || delta.baseLines >= 400;
+  const severity: MonolithSeverity = !isCurrentMonolith || delta.delta <= 0
+    ? "none"
+    : delta.delta >= 20
+      ? "blocker"
+      : "warning";
+  const rationale = !isCurrentMonolith
+    ? "Changed TypeScript file is not a current large-file hotspot."
+    : delta.delta <= 0
+      ? "Current monolith is net-negative or net-zero."
+      : delta.delta >= 20
+        ? "Current monolith grew by 20 or more lines; extract or offset the growth before merge."
+        : "Current monolith grew by 1-19 lines; review whether extraction is feasible.";
+  return { ...delta, severity, rationale };
+}
+
+function severityRank(severity: MonolithSeverity): number {
+  return severity === "blocker" ? 2 : severity === "warning" ? 1 : 0;
+}
+
+function collectDriftEvidence(baseRef: string, changedFiles: string[]): DriftEvidence[] {
+  return changedFiles.slice(0, 50).map((file) => {
+    const recentHistory = (gitOutput([["log", "--oneline", "--follow", "-20", baseRef, "--", file]], 20000) || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter(Boolean);
+    const normalizedFile = file.replace(/^\.\//, "").replace(/\\/g, "/");
+    const escapedFile = normalizedFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const filePathPattern = new RegExp(`(^|/)${escapedFile}(\\s|$)`);
+    const renameHints = (gitOutput([["log", "--oneline", "--name-status", "--find-renames", "-40", baseRef, "--"]], 120000) || "")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => /^(R\d+|A|D|M)\s/.test(line) && filePathPattern.test(line.replace(/\\/g, "/")))
+      .slice(0, 20);
+    return { file, recentHistory, renameHints };
+  });
 }
 
 function countLines(text: string): number {
@@ -461,11 +527,12 @@ async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
   const context: GitHubReviewContext = { repo, prNumber };
   try {
     const [owner, name] = repo.split("/");
-    const [pullRequest, issueComments, reviewComments, graphQl] = await Promise.all([
+    const [pullRequest, issueComments, reviewComments, graphQl, openPulls] = await Promise.all([
       githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token),
       githubRestPaginated<unknown>(`repos/${repo}/issues/${prNumber}/comments`, token, 100),
       githubRestPaginated<unknown>(`repos/${repo}/pulls/${prNumber}/comments`, token, 100),
       githubGraphql(token, buildPrGraphqlQuery(), { owner, name, number: prNumber }).catch((error: unknown) => ({ error: String(error) })),
+      githubRestPaginated<unknown>(`repos/${repo}/pulls?state=open&sort=updated&direction=desc`, token, 100),
     ]);
     context.pullRequest = pullRequest;
     context.issueComments = issueComments;
@@ -478,6 +545,7 @@ async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
     ].filter(Boolean).join("\n");
     const issueNumbers = extractIssueRefs(prText, prNumber).slice(0, 5);
     context.linkedIssues = await Promise.all(issueNumbers.map((issue) => collectLinkedIssue(repo, issue, token)));
+    context.openPrOverlaps = await collectOpenPrOverlaps(repo, prNumber, token, openPulls, issueNumbers);
     context.e2eAdvisorComments = issueComments
       .map((comment) => stringOrUndefined(getPath<unknown>(comment, ["body"])))
       .filter((body): body is string => typeof body === "string" && body.includes("<!-- nemoclaw-e2e-advisor -->"));
@@ -497,6 +565,45 @@ async function collectLinkedIssue(repo: string, number: number, token: string): 
   } catch (error: unknown) {
     return { number, fetchError: error instanceof Error ? error.message : String(error) };
   }
+}
+
+async function collectOpenPrOverlaps(
+  repo: string,
+  currentPrNumber: number,
+  token: string,
+  openPulls: unknown[],
+  currentLinkedIssues: number[],
+): Promise<OpenPrOverlap[]> {
+  const currentFiles = new Set<string>((await githubRestPaginated<{ filename?: string }>(`repos/${repo}/pulls/${currentPrNumber}/files`, token, 300))
+    .map((file) => file.filename)
+    .filter((file): file is string => typeof file === "string"));
+  const overlaps = await Promise.all(openPulls
+    .filter((pull) => getPath<number>(pull, ["number"]) !== currentPrNumber)
+    .slice(0, 80)
+    .map(async (pull): Promise<OpenPrOverlap | null> => {
+      const number = getPath<number>(pull, ["number"]);
+      if (!number) return null;
+      const title = stringOrDefault(getPath<unknown>(pull, ["title"]), `PR #${number}`);
+      const body = stringOrDefault(getPath<unknown>(pull, ["body"]), "");
+      const labels = recordItems(getPath<unknown>(pull, ["labels"])).map((label) => stringOrUndefined(label.name)).filter((label): label is string => Boolean(label));
+      const linkedIssues = extractIssueRefs(`${title}\n${body}`, number);
+      const duplicateLinkedIssues = linkedIssues.filter((issue) => currentLinkedIssues.includes(issue));
+      let sameFiles: string[] = [];
+      if (currentFiles.size > 0) {
+        try {
+          sameFiles = (await githubRestPaginated<{ filename?: string }>(`repos/${repo}/pulls/${number}/files`, token, 300))
+            .map((file) => file.filename)
+            .filter((file): file is string => typeof file === "string" && currentFiles.has(file));
+        } catch {
+          sameFiles = [];
+        }
+      }
+      if (sameFiles.length === 0 && duplicateLinkedIssues.length === 0) return null;
+      return { number, title, labels, linkedIssues, sameFiles, duplicateLinkedIssues };
+    }));
+  return overlaps.filter((overlap): overlap is OpenPrOverlap => overlap !== null)
+    .sort((a, b) => b.sameFiles.length - a.sameFiles.length || b.duplicateLinkedIssues.length - a.duplicateLinkedIssues.length || a.number - b.number)
+    .slice(0, 25);
 }
 
 function extractIssueRefs(text: string, prNumber: number): number[] {
@@ -550,7 +657,17 @@ query($owner: String!, $name: String!, $number: Int!) {
 }`;
 }
 
-function buildSystemPrompt(schema: Record<string, unknown>): string {
+export function readTrustedSecurityReviewSkill(): string {
+  try {
+    return fs.readFileSync(TRUSTED_SECURITY_REVIEW_SKILL_PATH, "utf8");
+  } catch (error: unknown) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.error(`Security review skill unavailable at ${TRUSTED_SECURITY_REVIEW_SKILL_PATH}: ${reason}`);
+    return "";
+  }
+}
+
+export function buildSystemPrompt(schema: Record<string, unknown>, securityReviewSkill = ""): string {
   return [
     "You are the NemoClaw PR Review Advisor for GitHub Actions.",
     "NemoClaw runs OpenClaw assistants inside OpenShell sandboxes. Security boundaries, workflows, credentials, network policy, SSRF validation, Dockerfiles, installers, and sandbox lifecycle code are high risk.",
@@ -560,7 +677,11 @@ function buildSystemPrompt(schema: Record<string, unknown>): string {
     "Review rubric:",
     "1. Start with codebase drift: is the PR patching code that still exists, and does it overlap or contradict active work?",
     "2. Hard gates: CI latest SHA, mergeability, unresolved review/CodeRabbit threads, risky code tests.",
-    "3. Security: secrets, input validation, authz, deps, logging, crypto, config, security tests, holistic posture. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
+    "3. Security: use the trusted security code review skill embedded below as the authoritative security rubric. Apply every category with PASS/WARNING/FAIL evidence. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
+    "Trusted security review skill from main checkout:",
+    "```markdown",
+    securityReviewSkill || "Security review skill was unavailable; fall back to the built-in 9-category security review.",
+    "```",
     "4. Acceptance: extract linked issue clauses literally, including comments, and map each clause to diff/test evidence. Named list items are separate clauses.",
     "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
@@ -573,7 +694,7 @@ function buildSystemPrompt(schema: Record<string, unknown>): string {
   ].join("\n");
 }
 
-function buildPrompt({ metadata, diff }: { metadata: ReviewMetadata; diff: string }): string {
+function buildPrompt({ metadata, diff, securityReviewSkill }: { metadata: ReviewMetadata; diff: string; securityReviewSkill: string }): string {
   return `Return a NemoClaw PR review advisor result for this PR.
 
 Set these fields exactly:
@@ -587,6 +708,9 @@ Deterministic context gathered by trusted code:
 \`\`\`json
 ${JSON.stringify(metadata.deterministic, null, 2)}
 \`\`\`
+
+Trusted security review skill path: ${SECURITY_REVIEW_SKILL_PATH}
+Trusted security review skill loaded: ${securityReviewSkill ? "yes" : "no"}
 
 Git diff, truncated if large:
 \`\`\`diff

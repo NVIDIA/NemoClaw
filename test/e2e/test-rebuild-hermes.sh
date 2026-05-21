@@ -142,6 +142,11 @@ pass "NemoClaw installed"
 # Delete the sandbox that install.sh created — we'll make our own old one.
 # Use openshell directly to preserve the 'nemoclaw' gateway for the rebuild.
 openshell sandbox delete "${SANDBOX_NAME}" 2>/dev/null || true
+# Raw OpenShell deletion can leave the prior Hermes API/dashboard forward
+# bound for a short window. The rebuild create path intentionally rolls back if
+# the baked dashboard port is host-bound after image build, so make this phase
+# cleanup synchronous before creating the old fixture sandbox.
+openshell forward stop 8642 >/dev/null 2>&1 || true
 diag "Deleted Phase 1 sandbox, gateway preserved: $(docker ps --filter name=openshell --format '{{.Names}} {{.Status}}' 2>/dev/null)"
 
 # ── Phase 2: Build old Hermes base image ───────────────────────────

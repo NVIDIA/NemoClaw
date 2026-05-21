@@ -38,6 +38,7 @@
  *   BREV_GPU_NAME          — GPU name filter when BREV_GPU_TYPE is unset (default: any GPU)
  *   BREV_GPU_MIN_VRAM      — Minimum total VRAM GB when BREV_GPU_TYPE is unset (default: 20)
  *   BREV_CREATE_TIMEOUT_SECONDS — Brev create timeout, seconds (default: 1200 for GPU)
+ *   BREV_SSH_READY_TIMEOUT_SECONDS — SSH readiness timeout, seconds (default: 900 CPU, 1800 GPU)
  *   TELEGRAM_BOT_TOKEN       — Telegram bot token for messaging-providers test (fake OK)
  *   DISCORD_BOT_TOKEN        — Discord bot token for messaging-providers test (fake OK)
  *   SLACK_BOT_TOKEN          — Slack bot token for messaging-providers test (fake OK)
@@ -76,6 +77,16 @@ const BREV_CREATE_TIMEOUT_MS =
     : GPU_TEST_SUITE
       ? 1200
       : 180) * 1000;
+const BREV_SSH_READY_TIMEOUT_SECONDS = parseInt(
+  process.env.BREV_SSH_READY_TIMEOUT_SECONDS || (GPU_TEST_SUITE ? "1800" : "900"),
+  10,
+);
+const BREV_SSH_READY_TIMEOUT_MS =
+  (Number.isFinite(BREV_SSH_READY_TIMEOUT_SECONDS) && BREV_SSH_READY_TIMEOUT_SECONDS > 0
+    ? BREV_SSH_READY_TIMEOUT_SECONDS
+    : GPU_TEST_SUITE
+      ? 1800
+      : 900) * 1000;
 
 function requireInstanceName(): string {
   if (!INSTANCE_NAME) {
@@ -101,6 +112,7 @@ let instanceCreated = false;
 
 const STREAM_STDIO: StdioOptions = ["inherit", "inherit", "inherit"];
 const CAPTURE_STDIO: StdioOptions = ["pipe", "pipe", "pipe"];
+const CAPTURE_OUTPUT_STDIO: StdioOptions = ["ignore", "pipe", "inherit"];
 const PIPE_INPUT_STDIO: StdioOptions = ["pipe", "inherit", "inherit"];
 
 // --- low-level helpers ------------------------------------------------------
@@ -113,14 +125,58 @@ function brev(...args: string[]): string {
   }).trim();
 }
 
-function listBrevInstances(): Array<{ name: string; status?: string }> {
+type BrevInstance = { name: string; status?: string };
+
+function normalizeBrevInstance(raw: unknown): BrevInstance | null {
+  if (!raw || typeof raw !== "object") return null;
+  const record = raw as Record<string, unknown>;
+  const name = record.name ?? record.workspaceName ?? record.instanceName ?? record.Name;
+  if (typeof name !== "string" || !name.trim()) return null;
+  const status = record.status ?? record.state ?? record.lifecycleStatus ?? record.Status;
+  return {
+    name: name.trim(),
+    status: typeof status === "string" ? status.trim().toUpperCase() : undefined,
+  };
+}
+
+function parseBrevListOutput(output: string): BrevInstance[] {
+  const instances: BrevInstance[] = [];
+  for (const line of output.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const fields = trimmed.split(/\s+/);
+    const [name] = fields;
+    if (!name || /^(NAME|TYPE|Usage:|Error:|no)$/i.test(name)) continue;
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(name)) continue;
+    const status = fields.find((field) =>
+      /^(CREATING|DELETING|FAILED|OFF|ON|READY|RUNNING|STARTING|STOPPED|STOPPING)$/i.test(field),
+    );
+    instances.push({
+      name,
+      status: status?.toUpperCase(),
+    });
+  }
+  return instances;
+}
+
+function listBrevInstances(): BrevInstance[] {
   try {
     const parsed = JSON.parse(brev("ls", "--json"));
-    if (Array.isArray(parsed)) return parsed;
-    if (Array.isArray(parsed?.workspaces)) return parsed.workspaces;
-    return [];
+    const rawInstances = Array.isArray(parsed)
+      ? parsed
+      : Array.isArray(parsed?.workspaces)
+        ? parsed.workspaces
+        : [];
+    return rawInstances.flatMap((instance: unknown) => {
+      const normalized = normalizeBrevInstance(instance);
+      return normalized ? [normalized] : [];
+    });
   } catch {
-    return [];
+    try {
+      return parseBrevListOutput(brev("ls"));
+    } catch {
+      return [];
+    }
   }
 }
 
@@ -141,8 +197,10 @@ function deleteBrevInstance(instanceName: string): boolean {
     return true;
   }
 
+  let deleteRequested = false;
   try {
     brev("delete", instanceName);
+    deleteRequested = true;
   } catch {
     // Best-effort delete
   }
@@ -153,7 +211,7 @@ function deleteBrevInstance(instanceName: string): boolean {
     return true;
   }
 
-  return false;
+  return deleteRequested;
 }
 
 function waitForBrevInstanceRemoved(
@@ -236,11 +294,13 @@ function sshEnv(
   return ssh(`${envPrefix} && ${cmd}`, { timeout, stream });
 }
 
-function waitForSsh(maxAttempts = GPU_TEST_SUITE ? 180 : 40, intervalMs = 5_000): void {
+function waitForSsh(maxWaitMs = BREV_SSH_READY_TIMEOUT_MS, intervalMs = 5_000): void {
+  const deadline = Date.now() + maxWaitMs;
+  let attempts = 0;
   let dnsFailures = 0;
   let lastError = "";
-  const maxDnsFailures = GPU_TEST_SUITE ? 60 : 15;
-  for (let i = 1; i <= maxAttempts; i++) {
+  while (Date.now() < deadline) {
+    attempts += 1;
     try {
       ssh("echo ok", { timeout: 10_000 });
       return;
@@ -251,18 +311,10 @@ function waitForSsh(maxAttempts = GPU_TEST_SUITE ? 180 : 40, intervalMs = 5_000)
       } else {
         dnsFailures = 0;
       }
-      if (dnsFailures >= maxDnsFailures) {
-        throw new Error(
-          `SSH alias did not resolve after ${dnsFailures} consecutive attempts. Last SSH error: ${lastError}`,
-        );
-      }
-      if (i === maxAttempts) {
-        throw new Error(
-          `SSH not ready after ${maxAttempts} attempts (~${Math.round((maxAttempts * (intervalMs + 10_000)) / 60_000)} min). Last SSH error: ${lastError}`,
-        );
-      }
-      console.log(`  SSH attempt ${i}/${maxAttempts} failed, retrying in ${intervalMs / 1000}s...`);
-      if (i % 5 === 0) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      console.log(`  SSH attempt ${attempts} failed, retrying in ${intervalMs / 1000}s...`);
+      if (attempts % 5 === 0) {
         console.log(`  Refreshing brev SSH config...`);
         try {
           brev("refresh");
@@ -270,9 +322,14 @@ function waitForSsh(maxAttempts = GPU_TEST_SUITE ? 180 : 40, intervalMs = 5_000)
           /* ignore */
         }
       }
-      execSync(`sleep ${intervalMs / 1000}`);
+      execSync(`sleep ${Math.max(1, Math.ceil(Math.min(intervalMs, remainingMs) / 1000))}`);
     }
   }
+  throw new Error(
+    `SSH not ready after ${Math.round(maxWaitMs / 60_000)} min ` +
+      `(${attempts} attempts, ${dnsFailures} hostname-resolution failures). ` +
+      `Last SSH error: ${lastError}`,
+  );
 }
 
 /**
@@ -580,7 +637,7 @@ function createBrevInstance(elapsed: () => string): void {
           gpuCandidates = execFileSync("brev", gpuSearchArgs, {
             encoding: "utf-8",
             timeout: 120_000,
-            stdio: ["ignore", "pipe", "inherit"],
+            stdio: CAPTURE_OUTPUT_STDIO,
           });
         } catch (searchErr) {
           throw new Error(
@@ -618,7 +675,7 @@ function createBrevInstance(elapsed: () => string): void {
           "--sort",
           "price",
         ],
-        { encoding: "utf-8", timeout: 120_000, stdio: PIPE_INPUT_STDIO },
+        { encoding: "utf-8", timeout: 120_000, stdio: CAPTURE_OUTPUT_STDIO },
       );
       execFileSync(
         "brev",

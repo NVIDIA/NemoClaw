@@ -196,6 +196,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "flags": "[--probe-only]"
     }
   ],
+  "sandbox:dashboard-url": [
+    {
+      "group": "Sandbox Management",
+      "order": 3.2,
+      "flags": "[--quiet|-q]"
+    }
+  ],
   "sandbox:destroy": [
     {
       "group": "Sandbox Management",

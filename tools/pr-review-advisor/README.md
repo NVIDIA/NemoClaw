@@ -41,10 +41,11 @@ It complements CodeRabbit and the E2E Advisor by encoding NemoClaw maintainer re
 
 Configure this repository secret for review analysis:
 
-- `PI_PR_REVIEW_ADVISOR_API_KEY`
+- `PR_REVIEW_ADVISOR_API_KEY`
 
-The analyzer uses the fixed `openai/openai/gpt-5.5` advisor model and also accepts
-`OPENAI_API_KEY` for local runs.
+The workflow also accepts the legacy `PI_PR_REVIEW_ADVISOR_API_KEY` secret as a
+fallback. The analyzer uses the fixed `openai/openai/gpt-5.5` advisor model and
+also accepts `OPENAI_API_KEY` for local runs.
 
 If advisor credentials are unavailable, the advisor writes a low-confidence unavailable result
 instead of failing closed without artifacts.
@@ -76,7 +77,7 @@ node --experimental-strip-types tools/pr-review-advisor/analyze.mts \
 ```
 
 Set `PR_REVIEW_ADVISOR_API_KEY` or `OPENAI_API_KEY` locally, or configure the repository
-`PI_PR_REVIEW_ADVISOR_API_KEY` secret. Run `npm install` first so the Pi SDK dependency is
+`PR_REVIEW_ADVISOR_API_KEY` secret. Run `npm install` first so the Pi SDK dependency is
 available.
 
 ## Output contract
