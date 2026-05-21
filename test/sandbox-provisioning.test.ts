@@ -235,7 +235,7 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
 });
 
 describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
-  it("keeps broad .openclaw permission repair on the legacy migration path only", () => {
+  it("uses targeted permission repair unless legacy migration ran", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const cleanupBlock = dockerRunCommandBetween(
       dockerfile,
@@ -247,26 +247,128 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
       "# Keep the image readable to the root entrypoint",
       "# System-wide proxy hooks",
     );
-    const fastPath = permissionBlock.match(/\belse\s+([\s\S]*)\s+fi$/)?.[1] ?? "";
 
-    expect(cleanupBlock).toContain("legacy_layout=0");
-    expect(cleanupBlock).toContain("legacy_layout=1");
-    expect(cleanupBlock).toMatch(
-      /if \[ "\$legacy_layout" = "1" \]; then[\s\S]*find "\$config_dir" -type l -print[\s\S]*: > "\$legacy_marker"/,
+    const runLayoutCase = (legacy: boolean) => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-repair-"));
+      const sandboxRoot = path.join(tmp, "sandbox");
+      const openclawDir = path.join(sandboxRoot, ".openclaw");
+      const dataDir = path.join(sandboxRoot, ".openclaw-data");
+      const marker = path.join(tmp, "legacy-marker");
+      const rootNpm = path.join(tmp, "root-npm");
+      const relativePath = (entry: string) => path.relative(openclawDir, entry) || ".";
+      const listRelativeEntries = (dir: string, kind: "directory" | "file"): string[] => {
+        const entries: string[] = [];
+        for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+          const entryPath = path.join(dir, entry.name);
+          if (entry.isDirectory()) {
+            if (kind === "directory") {
+              entries.push(relativePath(entryPath));
+            }
+            entries.push(...listRelativeEntries(entryPath, kind));
+          } else if (kind === "file" && entry.isFile()) {
+            entries.push(relativePath(entryPath));
+          }
+        }
+        return entries.sort();
+      };
+      const rewrite = (command: string) =>
+        command
+          .replaceAll("/sandbox", sandboxRoot)
+          .replaceAll("/tmp/nemoclaw-legacy-openclaw-layout", marker)
+          .replaceAll("/root/.npm", rootNpm);
+      const functionDefs = [
+        'install() { printf "install %s\\n" "$*" >> "$call_log"; local target="${*: -1}"; mkdir -p "$target"; }',
+        'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
+        'chmod() { printf "chmod %s\\n" "$*" >> "$call_log"; command chmod "$@"; }',
+        'find() { printf "find %s\\n" "$*" >> "$call_log"; command find "$@"; }',
+      ];
+
+      fs.mkdirSync(openclawDir, { recursive: true });
+      if (legacy) {
+        fs.mkdirSync(path.join(dataDir, "extensions"), { recursive: true });
+        fs.writeFileSync(path.join(dataDir, "extensions", "legacy-plugin.json"), "{}\n");
+      }
+
+      const cleanup = runLoggedDockerShell(rewrite(cleanupBlock), tmp, functionDefs);
+      const markerExistsAfterCleanup = fs.existsSync(marker);
+      const dirsAfterCleanup = [".", ...listRelativeEntries(openclawDir, "directory")];
+      const filesAfterCleanup = listRelativeEntries(openclawDir, "file");
+      fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n");
+      const permission = runLoggedDockerShell(rewrite(permissionBlock), tmp, functionDefs);
+      const markerExistsAfterPermission = fs.existsSync(marker);
+
+      try {
+        return {
+          cleanup,
+          dirsAfterCleanup,
+          filesAfterCleanup,
+          markerExistsAfterCleanup,
+          markerExistsAfterPermission,
+          openclawDir,
+          permission,
+          pluginRuntimeDeps: path.join(openclawDir, "plugin-runtime-deps"),
+        };
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    };
+
+    const modern = runLayoutCase(false);
+    expect(modern.cleanup.result.status).toBe(0);
+    expect(modern.permission.result.status).toBe(0);
+    expect(modern.markerExistsAfterCleanup).toBe(false);
+    expect(modern.markerExistsAfterPermission).toBe(false);
+    expect(modern.dirsAfterCleanup).toEqual([
+      ".",
+      "agents",
+      "agents/main",
+      "agents/main/agent",
+      "canvas",
+      "credentials",
+      "cron",
+      "devices",
+      "extensions",
+      "flows",
+      "hooks",
+      "identity",
+      "logs",
+      "media",
+      "memory",
+      "plugin-runtime-deps",
+      "sandbox",
+      "skills",
+      "telegram",
+      "wechat",
+      "workspace",
+    ]);
+    expect(modern.filesAfterCleanup).toEqual(["exec-approvals.json", "update-check.json"]);
+    expect(modern.cleanup.calls.split("\n").filter(Boolean)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^find /)]),
     );
-    expect(cleanupBlock).toContain('install -d -o sandbox -g sandbox -m 2770 "$dir"');
-    expect(cleanupBlock).toContain("chmod 660 \"$file\"");
+    expect(modern.permission.calls.split("\n").filter(Boolean)).toEqual([
+      `chown sandbox:sandbox ${modern.openclawDir} ${path.join(
+        modern.openclawDir,
+        "openclaw.json",
+      )} ${modern.pluginRuntimeDeps}`,
+      `chmod 2770 ${modern.openclawDir} ${modern.pluginRuntimeDeps}`,
+      `chmod 660 ${path.join(modern.openclawDir, "openclaw.json")}`,
+    ]);
 
-    expect(permissionBlock).toContain("if [ -e /tmp/nemoclaw-legacy-openclaw-layout ]; then");
-    expect(permissionBlock).toContain("chown -R sandbox:sandbox /sandbox/.openclaw");
-    expect(permissionBlock).toContain("chmod -R g+rwX,o-rwx /sandbox/.openclaw");
-    expect(permissionBlock).toContain("find /sandbox/.openclaw -type d -exec chmod g+s {} +");
-
-    expect(fastPath).toContain("/sandbox/.openclaw/openclaw.json");
-    expect(fastPath).toContain("/sandbox/.openclaw/plugin-runtime-deps");
-    expect(fastPath).not.toContain("chown -R");
-    expect(fastPath).not.toContain("chmod -R");
-    expect(fastPath).not.toContain("find /sandbox/.openclaw");
+    const legacy = runLayoutCase(true);
+    expect(legacy.cleanup.result.status).toBe(0);
+    expect(legacy.permission.result.status).toBe(0);
+    expect(legacy.markerExistsAfterCleanup).toBe(true);
+    expect(legacy.markerExistsAfterPermission).toBe(false);
+    expect(legacy.cleanup.calls.split("\n").filter(Boolean)).toEqual(
+      expect.arrayContaining([`find ${legacy.openclawDir} -type l -print`]),
+    );
+    expect(legacy.permission.calls.split("\n").filter(Boolean)).toEqual(
+      expect.arrayContaining([
+        `chown -R sandbox:sandbox ${legacy.openclawDir}`,
+        `chmod -R g+rwX,o-rwx ${legacy.openclawDir}`,
+        `find ${legacy.openclawDir} -type d -exec chmod g+s {} +`,
+      ]),
+    );
   });
 
   it("provisions unified mutable .openclaw layout and trusted rc shims", () => {
