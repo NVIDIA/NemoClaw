@@ -1125,21 +1125,21 @@ Use the hosted `curl … | bash` form only when the CLI is broken or already par
 
 ## Internal Commands
 
-NemoClaw registers a small family of `nemoclaw internal <topic> <action>` commands that the installer, uninstaller, and a few wrapper scripts (`uninstall.sh`, `scripts/npm-link-or-shim.sh`, `scripts/fix-coredns.sh`, `scripts/setup-dns-proxy.sh`) invoke under the hood.
+NemoClaw registers a small family of `nemoclaw internal <topic> <action>` commands that wrapper scripts (`uninstall.sh`, `scripts/npm-link-or-shim.sh`, `scripts/fix-coredns.sh`, `scripts/setup-dns-proxy.sh`) invoke under the hood, plus a few internal planning and inspection helpers that mirror logic used elsewhere in the CLI.
 They are intentionally omitted from `nemoclaw --help` via `static hidden = true` and are not part of the supported public CLI surface.
 Their flags, output, and exit codes may change without notice between releases.
-Operators should not invoke them directly; use the user-facing commands or wrapper scripts above instead.
+You should not invoke these directly; use the user-facing commands or wrapper scripts above instead.
 
 | Command | Caller | Purpose |
 |---|---|---|
 | `nemoclaw internal dev npm-link-or-shim` | `scripts/npm-link-or-shim.sh` | Run `npm link`, falling back to a user-local NemoClaw development shim. |
 | `nemoclaw internal dns fix-coredns` | `scripts/fix-coredns.sh` | Patch CoreDNS to use a non-loopback upstream resolver. |
 | `nemoclaw internal dns setup-proxy` | `scripts/setup-dns-proxy.sh` | Configure the DNS forwarder bridge inside a sandbox pod. |
-| `nemoclaw internal installer plan` | `install.sh` planning step | Build a deterministic installer plan from environment and probe inputs without applying it. |
-| `nemoclaw internal installer resolve-release-tag` | `install.sh` planning step | Resolve the installer ref using the same precedence as `install.sh`. |
-| `nemoclaw internal installer normalize-env` | `install.sh` planning step | Normalize installer ref and provider environment values without applying any installation changes. |
-| `nemoclaw internal uninstall plan` | `uninstall.sh` planning step | Build a deterministic uninstall plan without applying it. |
-| `nemoclaw internal uninstall classify-shim` | `uninstall.sh` planning step | Classify whether a NemoClaw shim path is safe to remove. |
+| `nemoclaw internal installer plan` | Internal planning helper | Build a deterministic installer plan from environment and probe inputs without applying it. Not currently invoked by `install.sh` (which has its own Bash equivalents); exposed for external tooling and inspection. |
+| `nemoclaw internal installer resolve-release-tag` | Internal planning helper | Resolve the installer ref using the same precedence as `install.sh`. Not currently invoked by `install.sh`; exposed for external tooling and inspection. |
+| `nemoclaw internal installer normalize-env` | Internal planning helper | Normalize installer ref and provider environment values without applying any installation changes. Not currently invoked by `install.sh`; exposed for external tooling and inspection. |
+| `nemoclaw internal uninstall plan` | Internal inspection helper | Build a deterministic uninstall plan without applying it. The runtime path (`uninstall.sh` → `internal uninstall run-plan`) calls the underlying plan logic directly, not via this command. |
+| `nemoclaw internal uninstall classify-shim` | Internal inspection helper | Classify whether a NemoClaw shim path is safe to remove. Called as a library function by `internal uninstall run-plan`, not via this command. |
 | `nemoclaw internal uninstall run-plan` | `uninstall.sh` | Execute the host-side uninstall plan. |
 
 ## Environment Variables
