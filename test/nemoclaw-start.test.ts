@@ -2213,12 +2213,34 @@ describe("Telegram diagnostics (#2766)", () => {
     let gatewayLogIsSymlink = false;
     let autoPairLogIsSymlink = false;
     if (opts.symlinkLogs && result.status === 0) {
+      const gatewayLogExistsBeforeWrite = fs.existsSync(gatewayLog);
+      const autoPairLogExistsBeforeWrite = fs.existsSync(autoPairLog);
+      expect(gatewayLogExistsBeforeWrite).toBe(true);
+      expect(autoPairLogExistsBeforeWrite).toBe(true);
+
+      const gatewayLogBeforeWrite = fs.lstatSync(gatewayLog);
+      const autoPairLogBeforeWrite = fs.lstatSync(autoPairLog);
+      const gatewayLogWasSymlink = gatewayLogBeforeWrite.isSymbolicLink();
+      const autoPairLogWasSymlink = autoPairLogBeforeWrite.isSymbolicLink();
+      if (gatewayLogWasSymlink) {
+        expect(fs.readlinkSync(gatewayLog)).toBe(gatewayTarget);
+      }
+      if (autoPairLogWasSymlink) {
+        expect(fs.readlinkSync(autoPairLog)).toBe(autoPairTarget);
+      }
+      expect(gatewayLogWasSymlink).toBe(false);
+      expect(autoPairLogWasSymlink).toBe(false);
+      expect((gatewayLogBeforeWrite.mode & 0o777).toString(8)).toBe("644");
+      expect((autoPairLogBeforeWrite.mode & 0o777).toString(8)).toBe("600");
+
       fs.writeFileSync(gatewayLog, "gateway output\n");
       fs.writeFileSync(autoPairLog, "auto-pair output\n");
       gatewayTargetContent = fs.readFileSync(gatewayTarget, "utf-8");
       autoPairTargetContent = fs.readFileSync(autoPairTarget, "utf-8");
       gatewayLogIsSymlink = fs.lstatSync(gatewayLog).isSymbolicLink();
       autoPairLogIsSymlink = fs.lstatSync(autoPairLog).isSymbolicLink();
+      expect(gatewayLogIsSymlink).toBe(gatewayLogWasSymlink);
+      expect(autoPairLogIsSymlink).toBe(autoPairLogWasSymlink);
     }
     fs.rmSync(tmpDir, { recursive: true, force: true });
     return {
