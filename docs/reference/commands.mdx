@@ -227,7 +227,8 @@ If a `--resume` is attempted with a different `--from` path than the original se
 #### `--name <sandbox>`
 
 Set the sandbox name without going through the interactive prompt.
-The same name format and reserved-name rules that the wizard enforces apply here too. Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
+The same name format and reserved-name rules that the wizard enforces apply here too.
+Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
 Names that match a NemoClaw CLI command (`status`, `list`, `debug`, etc.) are rejected up front.
 
 ```console
@@ -415,8 +416,8 @@ $ nemoclaw my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] 
 
 | Flag | Description |
 |------|-------------|
-| `--workdir <dir>` | Set the working directory inside the sandbox |
-| `--tty`, `--no-tty` | Allocate or disable a pseudo-terminal; defaults to auto-detection |
+| `--workdir <dir>` | Set the working directory inside the sandbox. |
+| `--tty`, `--no-tty` | Allocate or disable a pseudo-terminal; defaults to auto-detection. |
 | `--timeout <s>` | Timeout in seconds. Use `0` for no timeout |
 
 ### `nemoclaw <name> logs`
