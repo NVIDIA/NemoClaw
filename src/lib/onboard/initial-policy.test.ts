@@ -190,6 +190,23 @@ network_policies:
     expect(fs.existsSync(prepared.policyPath)).toBe(false);
   });
 
+  it("filters inactive Hermes messaging policies from the relative Hermes policy path", () => {
+    const hermesPolicyPath = path.relative(
+      process.cwd(),
+      path.join(import.meta.dirname, "..", "..", "..", "agents", "hermes", "policy-additions.yaml"),
+    );
+
+    const prepared = prepareInitialSandboxCreatePolicy(hermesPolicyPath, ["discord"]);
+    const policyNames = getNetworkPolicyNames(fs.readFileSync(prepared.policyPath, "utf-8"));
+
+    expect(policyNames?.has("discord")).toBe(true);
+    expect(policyNames?.has("telegram")).toBe(false);
+    expect(policyNames?.has("slack")).toBe(false);
+    expect(policyNames?.has("wechat_bridge")).toBe(false);
+    expect(prepared.cleanup?.()).toBe(true);
+    expect(fs.existsSync(prepared.policyPath)).toBe(false);
+  });
+
   it("merges missing create-time presets into a temporary policy", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
 

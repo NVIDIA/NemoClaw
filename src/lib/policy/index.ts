@@ -105,6 +105,10 @@ function parsePresetPolicyKeys(presetContent: string | null | undefined): string
   return Object.keys(parseNetworkPolicies(`network_policies:\n${presetEntries}`) || {});
 }
 
+const AGENT_PRESET_KEY_ALIASES: Record<string, string[]> = {
+  wechat: ["wechat_bridge"],
+};
+
 function selectAgentPolicyKeys(
   agentPolicies: PolicyObject,
   presetName: string,
@@ -121,6 +125,12 @@ function selectAgentPolicyKeys(
   if (Object.prototype.hasOwnProperty.call(agentPolicies, presetName)) {
     return [presetName];
   }
+
+  const aliases = AGENT_PRESET_KEY_ALIASES[presetName] || [];
+  const aliasMatches = aliases.filter((key) =>
+    Object.prototype.hasOwnProperty.call(agentPolicies, key),
+  );
+  if (aliasMatches.length > 0) return aliasMatches;
 
   return Object.entries(agentPolicies)
     .filter(([, value]) => isPolicyObject(value) && value.name === presetName)

@@ -202,7 +202,7 @@ function filterHermesInactiveMessagingPolicies(
 
 function isHermesPolicyPath(policyPath: string): boolean {
   const normalized = policyPath.split(path.sep).join("/");
-  return normalized.endsWith("/agents/hermes/policy-additions.yaml");
+  return /(^|\/)agents\/hermes\/policy-additions\.yaml$/.test(normalized);
 }
 
 export function prepareInitialSandboxCreatePolicy(
