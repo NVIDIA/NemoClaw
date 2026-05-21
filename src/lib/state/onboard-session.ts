@@ -18,6 +18,10 @@ import {
   sanitizeMessagingChannelConfig,
   type MessagingChannelConfig,
 } from "../messaging-channel-config";
+import {
+  createOnboardMachineEvent,
+  emitOnboardMachineEvent,
+} from "../onboard/machine/events";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 
 export const SESSION_VERSION = 1;
@@ -883,7 +887,8 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
 }
 
 export function markStepStarted(stepName: string): Session {
-  return updateSession((session) => {
+  let shouldEmit = false;
+  const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
     step.status = "in_progress";
@@ -893,12 +898,21 @@ export function markStepStarted(stepName: string): Session {
     session.lastStepStarted = stepName;
     session.failure = null;
     session.status = "in_progress";
+    shouldEmit = true;
     return session;
   });
+  if (shouldEmit) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({ type: "state.entered", session: updatedSession, step: stepName }),
+    );
+  }
+  return updatedSession;
 }
 
 export function markStepComplete(stepName: string, updates: SessionUpdates = {}): Session {
-  return updateSession((session) => {
+  const safeUpdates = filterSafeUpdates(updates);
+  let shouldEmit = false;
+  const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
     step.status = "complete";
@@ -906,26 +920,52 @@ export function markStepComplete(stepName: string, updates: SessionUpdates = {})
     step.error = null;
     session.lastCompletedStep = stepName;
     session.failure = null;
-    Object.assign(session, filterSafeUpdates(updates));
+    Object.assign(session, safeUpdates);
+    shouldEmit = true;
     return session;
   });
+  if (shouldEmit) {
+    if (Object.keys(safeUpdates).length > 0) {
+      emitOnboardMachineEvent(
+        createOnboardMachineEvent({
+          type: "context.updated",
+          session: updatedSession,
+          step: stepName,
+          metadata: { fields: Object.keys(safeUpdates) },
+        }),
+      );
+    }
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({ type: "state.completed", session: updatedSession, step: stepName }),
+    );
+  }
+  return updatedSession;
 }
 
 export function markStepSkipped(stepName: string): Session {
-  return updateSession((session) => {
+  let shouldEmit = false;
+  const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
-    if (step.status === "complete" || step.status === "failed") return session;
+    if (step.status === "complete" || step.status === "failed" || step.status === "skipped") return session;
     step.status = "skipped";
     step.startedAt = null;
     step.completedAt = null;
     step.error = null;
+    shouldEmit = true;
     return session;
   });
+  if (shouldEmit) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({ type: "state.skipped", session: updatedSession, step: stepName }),
+    );
+  }
+  return updatedSession;
 }
 
 export function markStepFailed(stepName: string, message: string | null = null): Session {
-  return updateSession((session) => {
+  let shouldEmit = false;
+  const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
     step.status = "failed";
@@ -937,18 +977,62 @@ export function markStepFailed(stepName: string, message: string | null = null):
       recordedAt: new Date().toISOString(),
     });
     session.status = "failed";
+    shouldEmit = true;
     return session;
   });
+  if (shouldEmit) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "state.failed",
+        session: updatedSession,
+        step: stepName,
+        error: message,
+      }),
+    );
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "onboard.failed",
+        session: updatedSession,
+        state: "failed",
+        step: stepName,
+        error: message,
+      }),
+    );
+  }
+  return updatedSession;
 }
 
 export function completeSession(updates: SessionUpdates = {}): Session {
-  return updateSession((session) => {
-    Object.assign(session, filterSafeUpdates(updates));
+  const safeUpdates = filterSafeUpdates(updates);
+  let wasComplete = false;
+  const updatedSession = updateSession((session) => {
+    wasComplete = session.status === "complete";
+    Object.assign(session, safeUpdates);
     session.status = "complete";
     session.resumable = false;
     session.failure = null;
     return session;
   });
+  if (Object.keys(safeUpdates).length > 0) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "context.updated",
+        session: updatedSession,
+        state: "complete",
+        metadata: { fields: Object.keys(safeUpdates) },
+      }),
+    );
+  }
+  if (!wasComplete) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "onboard.completed",
+        session: updatedSession,
+        state: "complete",
+      }),
+    );
+  }
+  return updatedSession;
 }
 
 export function summarizeForDebug(

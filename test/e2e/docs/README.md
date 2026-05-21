@@ -118,6 +118,6 @@ describe the required shape; `run-scenario.sh <id> --plan-only`
 validates your change without running anything destructive.
 
 When adding a suite assertion, emit or preserve a stable `PASS: <id>` /
-`FAIL: <id>` log line, add the legacy assertion mapping if one exists, and use the dedicated parity workflow to regenerate inventory/report artifacts. Platform-specific scenarios such as GPU, macOS, WSL, Brev, or DGX Spark must also list `runner_requirements` in `scenarios.yaml`.
+`FAIL: <id>` log line, add the legacy assertion mapping if one exists, and use the dedicated parity workflow to regenerate inventory/report artifacts. Sandbox lifecycle assertions should use `validation_suites/lib/sandbox_lifecycle.sh`, consume `$E2E_CONTEXT_DIR/context.env`, and keep destructive snapshot restore checks isolated in the opt-in `snapshot-lifecycle` suite. Platform-specific scenarios such as GPU, macOS, WSL, Brev, or DGX Spark must also list `runner_requirements` in `scenarios.yaml`.
 
 Prefer new scenario-matrix coverage over new legacy-style `test-*.sh` scripts. Normal PR lint no longer blocks feature work on global parity-map bookkeeping; use the parity workflow when intentionally advancing migration coverage.

@@ -514,7 +514,7 @@ def build_config(env: dict | None = None) -> dict:
         }
         if ch == "slack":
             account["appToken"] = _placeholder(ch, "SLACK_APP_TOKEN")
-        if ch == "telegram":
+        if ch in {"discord", "telegram"}:
             account["proxy"] = proxy_url
         if ch == "telegram":
             account["groupPolicy"] = "open"
