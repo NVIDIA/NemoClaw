@@ -390,9 +390,9 @@ import { getSuggestedPolicyPresets } from "./onboard/policy-presets";
 import {
   computeSetupPresetSuggestions as computeSetupPresetSuggestionsImpl,
   isStaleBuiltinBravePolicyPreset,
-  setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
   type SetupPolicySelectionOptions,
   type SetupPresetSuggestionOptions,
+  setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
 } from "./onboard/policy-selection";
 import {
   getResumeSandboxGpuOverrides,
@@ -400,6 +400,11 @@ import {
   type SandboxGpuConfig,
   type SandboxGpuFlag,
 } from "./onboard/sandbox-gpu-mode";
+import {
+  exitOnSandboxGpuConfigErrors,
+  sandboxGpuRemediationLines,
+  validateSandboxGpuPreflight,
+} from "./onboard/sandbox-gpu-preflight";
 import type { SelectionDrift } from "./onboard/selection-drift";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
 import type {
@@ -1196,35 +1201,6 @@ function resolveSandboxGpuFlagFromOptions(
   if (requestedGpuPassthrough) return "enable";
   if (optedOutGpuPassthrough) return "disable";
   return null;
-}
-
-function sandboxGpuRemediationLines(): string[] {
-  return [
-    "Install/configure NVIDIA Container Toolkit CDI, then restart Docker:",
-    "  sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml",
-    "  sudo systemctl restart docker",
-    "Or force CPU sandbox behavior with NEMOCLAW_SANDBOX_GPU=0.",
-  ];
-}
-
-function validateSandboxGpuPreflight(config: SandboxGpuConfig): void {
-  if (config.errors.length > 0) {
-    console.error("");
-    for (const error of config.errors) console.error(`  ✗ ${error}`);
-    process.exit(1);
-  }
-  if (!config.sandboxGpuEnabled) return;
-  if (process.platform !== "linux") return;
-
-  const cdiSpecDirs = getDockerCdiSpecDirs();
-  const cdiSpecFiles = findReadableNvidiaCdiSpecFiles(cdiSpecDirs);
-  if (cdiSpecFiles.length === 0) {
-    console.error("");
-    console.error("  ✗ Docker CDI GPU support was not detected.");
-    for (const line of sandboxGpuRemediationLines()) console.error(`    ${line}`);
-    process.exit(1);
-  }
-  console.log(`  ✓ Docker CDI GPU support detected (${cdiSpecFiles.join(", ")})`);
 }
 
 // ── Base image resolution ───────────────────────────────────────
@@ -3304,8 +3280,16 @@ async function preflight(
   }
   console.log("  ✓ Docker is running");
   require("./onboard/http-proxy-preflight").warnIfHostProxyMissesLoopback();
+  const gpu = nim.detectGpu();
+  const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
+    flag: resolveSandboxGpuFlagFromOptions(preflightOpts),
+    device: preflightOpts.sandboxGpuDevice ?? null,
+  });
+  exitOnSandboxGpuConfigErrors(sandboxGpuConfig);
   const optedOutGpuPassthrough =
-    preflightOpts.optedOutGpuPassthrough === true || preflightOpts.noGpu === true;
+    preflightOpts.optedOutGpuPassthrough === true ||
+    preflightOpts.noGpu === true ||
+    !sandboxGpuConfig.sandboxGpuEnabled;
   assertCdiNvidiaGpuSpecPresent(host, optedOutGpuPassthrough);
 
   // DNS resolution from inside containers (#2101). A corp firewall that
@@ -3764,7 +3748,6 @@ async function preflight(
   dockerDriverGatewayEnv.warnIfGatewayWildcardBindAddress();
 
   // GPU
-  const gpu = nim.detectGpu();
   if (gpu && gpu.type === "nvidia") {
     const lines = nim.formatNvidiaGpuPreflightLines(gpu);
     console.log(`  ✓ ${lines[0]}`);
@@ -3783,10 +3766,6 @@ async function preflight(
     console.log("  ⓘ Local NIM unavailable — no GPU detected");
   }
 
-  const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
-    flag: resolveSandboxGpuFlagFromOptions(preflightOpts),
-    device: preflightOpts.sandboxGpuDevice ?? null,
-  });
   validateSandboxGpuPreflight(sandboxGpuConfig);
   if (sandboxGpuConfig.sandboxGpuEnabled) {
     console.log(
@@ -9364,6 +9343,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     if (resumePreflight) {
       skippedStepMessage("preflight", "cached");
       gpu = nim.detectGpu();
+      const resumeSandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
+        flag: effectiveSandboxGpuFlag,
+        device: effectiveSandboxGpuDevice,
+      });
+      exitOnSandboxGpuConfigErrors(resumeSandboxGpuConfig);
       // Re-check the CDI spec gap on resume (#3152). The cached preflight
       // result does not capture host CDI state, and the original onboard
       // attempt that wrote the cache likely aborted at gateway-start with
@@ -9373,14 +9357,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       // does not need to re-pass `--no-gpu` to keep that intent (the same
       // resolution is replayed a few lines below for `gpuPassthrough`).
       const resumeOptedOutGpuPassthrough =
-        opts.noGpu === true || (opts.gpu !== true && session?.gpuPassthrough === false);
+        opts.noGpu === true ||
+        (opts.gpu !== true && session?.gpuPassthrough === false) ||
+        !resumeSandboxGpuConfig.sandboxGpuEnabled;
       assertCdiNvidiaGpuSpecPresent(assessHost(), resumeOptedOutGpuPassthrough);
-      validateSandboxGpuPreflight(
-        resolveSandboxGpuConfig(gpu, {
-          flag: effectiveSandboxGpuFlag,
-          device: effectiveSandboxGpuDevice,
-        }),
-      );
+      validateSandboxGpuPreflight(resumeSandboxGpuConfig);
     } else {
       startRecordedStep("preflight");
       gpu = await preflight({ ...opts, optedOutGpuPassthrough: opts.noGpu === true });
@@ -9504,6 +9485,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       gpuPassthrough,
       gatewayName: GATEWAY_NAME,
       currentSandboxName: recordedSandboxName || requestedSandboxName,
+      hostGpuPlatform: gpu?.platform ?? null,
       recreateSandbox: isRecreateSandbox(),
       confirmedDockerDriverGateway:
         isLinuxDockerDriverGatewayEnabled() &&

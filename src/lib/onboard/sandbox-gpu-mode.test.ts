@@ -4,7 +4,12 @@
 import { describe, expect, it } from "vitest";
 
 import type { GpuDetection } from "../inference/nim";
-import { getResumeSandboxGpuOverrides, resolveSandboxGpuConfig } from "./sandbox-gpu-mode";
+import {
+  getResumeSandboxGpuOverrides,
+  JETSON_SANDBOX_GPU_UNSUPPORTED_MESSAGE,
+  JETSON_SANDBOX_GPU_WORKAROUND_MESSAGE,
+  resolveSandboxGpuConfig,
+} from "./sandbox-gpu-mode";
 
 function gpu(overrides: Partial<GpuDetection> = {}): GpuDetection {
   return {
@@ -81,9 +86,12 @@ describe("sandbox GPU mode helpers", () => {
     expect(explicitFlagEnable.errors).toEqual([]);
   });
 
-  it("defaults to CPU sandbox on Jetson when NEMOCLAW_SANDBOX_GPU is unset", () => {
+  it("defaults to CPU sandbox on Jetson unless GPU passthrough is forced", () => {
     const jetson = gpu({ platform: "jetson" });
     expect(resolveSandboxGpuConfig(jetson, { env: {} }).sandboxGpuEnabled).toBe(false);
+    expect(resolveSandboxGpuConfig(jetson, { env: { NEMOCLAW_SANDBOX_GPU: "auto" } }).mode).toBe(
+      "0",
+    );
     const jetsonDeviceOnly = resolveSandboxGpuConfig(jetson, {
       env: { NEMOCLAW_SANDBOX_GPU_DEVICE: "nvidia.com/gpu=0" },
     });
@@ -93,9 +101,20 @@ describe("sandbox GPU mode helpers", () => {
     const jetsonExplicitEnable = resolveSandboxGpuConfig(jetson, {
       env: { NEMOCLAW_SANDBOX_GPU: "1", NEMOCLAW_SANDBOX_GPU_DEVICE: "nvidia.com/gpu=0" },
     });
-    expect(jetsonExplicitEnable.sandboxGpuEnabled).toBe(true);
-    expect(jetsonExplicitEnable.sandboxGpuDevice).toBe("nvidia.com/gpu=0");
-    expect(resolveSandboxGpuConfig(jetson, { flag: "enable", env: {} }).mode).toBe("1");
+    expect(jetsonExplicitEnable.errors.join("\n")).toContain(
+      JETSON_SANDBOX_GPU_UNSUPPORTED_MESSAGE,
+    );
+    expect(jetsonExplicitEnable.errors.join("\n")).toContain(
+      JETSON_SANDBOX_GPU_WORKAROUND_MESSAGE,
+    );
+    const jetsonFlagEnable = resolveSandboxGpuConfig(jetson, { flag: "enable", env: {} });
+    expect(jetsonFlagEnable.mode).toBe("1");
+    expect(jetsonFlagEnable.errors.join("\n")).toContain(
+      JETSON_SANDBOX_GPU_UNSUPPORTED_MESSAGE,
+    );
+    expect(jetsonFlagEnable.errors.join("\n")).toContain(
+      JETSON_SANDBOX_GPU_WORKAROUND_MESSAGE,
+    );
   });
 
   it("resumes sandbox GPU auto mode without turning CPU fallback into explicit opt-out", () => {
