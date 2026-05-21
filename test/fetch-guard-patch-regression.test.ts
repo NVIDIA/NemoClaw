@@ -8,6 +8,30 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const DOCKERFILE = path.join(import.meta.dirname, "..", "Dockerfile");
+const DOCKERFILE_BASE = path.join(import.meta.dirname, "..", "Dockerfile.base");
+const BLUEPRINT = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "blueprint.yaml");
+const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = ["2026.4.24", "2026.5.18"] as const;
+const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.5.18";
+
+function readRequiredMatch(file: string, pattern: RegExp, description: string): string {
+  const match = fs.readFileSync(file, "utf-8").match(pattern);
+  if (!match?.[1]) {
+    throw new Error(`Expected ${description} in ${path.basename(file)}`);
+  }
+  return match[1];
+}
+
+function readBlueprintMinOpenClawVersion(): string {
+  return readRequiredMatch(BLUEPRINT, /min_openclaw_version:\s*"([^"]+)"/, "OpenClaw minimum");
+}
+
+function readDockerfileBaseOpenClawVersion(): string {
+  return readRequiredMatch(
+    DOCKERFILE_BASE,
+    /^ARG OPENCLAW_VERSION=([^\s]+)/m,
+    "OpenClaw base image version",
+  );
+}
 
 function dockerRunCommandBetween(startMarker: string, endMarker: string): string {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
@@ -147,6 +171,21 @@ describe("fetch-guard patch regression guard", () => {
     expect(current.calls).not.toContain("openclaw@2026.4.2");
   });
 
+  it("requires classifier review when the pinned OpenClaw build version changes", () => {
+    const reviewMessage =
+      "Update fetch-guard classifier expectations before changing the OpenClaw build version.";
+
+    const blueprintMinVersion = readBlueprintMinOpenClawVersion();
+    const baseImageVersion = readDockerfileBaseOpenClawVersion();
+
+    expect(baseImageVersion, "Dockerfile.base and blueprint must pin the same OpenClaw version.").toBe(
+      blueprintMinVersion,
+    );
+    expect([...REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS], reviewMessage).toContain(
+      blueprintMinVersion,
+    );
+  });
+
   it("rewrites strict media fetch exports and makes proxy validation sandbox-aware", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-"));
     const dist = path.join(tmp, "dist");
@@ -167,8 +206,14 @@ describe("fetch-guard patch regression guard", () => {
     );
 
     try {
-      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.4.24");
+      const patch = runFetchGuardPatchBlock(
+        dist,
+        tmp,
+        CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION,
+      );
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+      expect(patch.stdout).toContain("Patch 1 applied");
+      expect(patch.stdout).toContain("Patch 2 applied");
       const verify = spawnSync(
         process.execPath,
         [
@@ -183,6 +228,109 @@ if (globalThis.proxyChecks.length !== 0) throw new Error('sandbox proxy validati
       );
       expect(verify.status).toBe(0);
       expect(verify.stderr).toBe("");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps the Dockerfile OpenClaw source-shape patches aligned with current dist", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-patches-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(
+      path.join(dist, "fetch-guard-test.js"),
+      [
+        "const withStrictGuardedFetchMode = Symbol('strict');",
+        "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
+        "async function assertExplicitProxyAllowed(proxyUrl) { throw new Error(proxyUrl); }",
+        "export { withStrictGuardedFetchMode as a, withTrustedEnvProxyGuardedFetchMode as b };",
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(dist, "install-safe-path-test.js"),
+      "const baseLstat = await fs.lstat(baseDir);\n",
+    );
+    fs.writeFileSync(
+      path.join(dist, "install-package-dir-test.js"),
+      [
+        "async function assertInstallBaseStable(params) {",
+        "  const baseLstat = await fs.lstat(params.installBaseDir);",
+        "  if (baseLstat.isSymbolicLink()) throw new Error('symlink');",
+        "}",
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(dist, "client-test.js"),
+      "const DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 15e3;\n",
+    );
+    fs.writeFileSync(
+      path.join(dist, "server.impl-test.js"),
+      "const DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 15e3;\n",
+    );
+
+    const command = dockerRunCommandBetween(
+      "# Patch OpenClaw media fetch for proxy-only sandbox",
+      "# Patch OpenClaw's pinned",
+    ).replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist);
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    const sedWrapper = path.join(fakeBin, "sed");
+    fs.writeFileSync(
+      sedWrapper,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "extended=0",
+        'if [ "${1:-}" = "-i" ]; then',
+        '  if [ "${2:-}" = "-E" ]; then',
+        "    extended=1",
+        "    expr=$3",
+        "    shift 3",
+        "  else",
+        "    expr=$2",
+        "    shift 2",
+        "  fi",
+        '  for file in "$@"; do',
+        "    tmp=$(mktemp)",
+        '    if [ "$extended" = "1" ]; then',
+        '      /usr/bin/sed -E "$expr" "$file" > "$tmp"',
+        "    else",
+        '      /usr/bin/sed "$expr" "$file" > "$tmp"',
+        "    fi",
+        '    mv "$tmp" "$file"',
+        "  done",
+        "  exit 0",
+        "fi",
+        'exec /usr/bin/sed "$@"',
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const scriptPath = path.join(tmp, "patch-all.sh");
+    fs.writeFileSync(scriptPath, ["#!/usr/bin/env bash", command].join("\n"), { mode: 0o700 });
+
+    try {
+      const patch = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH || ""}` },
+        timeout: 5000,
+      });
+      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+      const patched = fs
+        .readdirSync(dist)
+        .map((file) => fs.readFileSync(path.join(dist, file), "utf-8"));
+      expect(patched.join("\n")).not.toContain("DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 15e3");
+      expect(patched.join("\n")).not.toContain("DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4");
+      expect(patched.join("\n").match(/DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4/g)).toHaveLength(
+        2,
+      );
+      expect(fs.readFileSync(path.join(dist, "install-safe-path-test.js"), "utf-8")).toContain(
+        "const baseLstat = await fs.stat(baseDir)",
+      );
+      expect(fs.readFileSync(path.join(dist, "install-package-dir-test.js"), "utf-8")).toContain(
+        "const baseLstat = await fs.stat(params.installBaseDir)",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
