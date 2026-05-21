@@ -38,7 +38,7 @@ describe("ChannelManifestRegistry", () => {
     registry.register(TELEGRAM_MANIFEST);
 
     expect(registry.get("telegram")).toBe(TELEGRAM_MANIFEST);
-    expect(registry.get(" TELEGRAM ")).toBe(TELEGRAM_MANIFEST);
+    expect(registry.get("TELEGRAM")).toBeUndefined();
     expect(registry.list()).toEqual([TELEGRAM_MANIFEST]);
   });
 

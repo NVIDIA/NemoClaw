@@ -18,17 +18,16 @@ export class ChannelManifestRegistry {
   }
 
   register(manifest: ChannelManifest): this {
-    const id = normalizeChannelId(manifest.id);
-    if (this.manifests.has(id)) {
-      throw new Error(`Duplicate channel manifest id '${id}'`);
+    if (this.manifests.has(manifest.id)) {
+      throw new Error(`Duplicate channel manifest id '${manifest.id}'`);
     }
 
-    this.manifests.set(id, manifest);
+    this.manifests.set(manifest.id, manifest);
     return this;
   }
 
   get(channelId: MessagingChannelId): ChannelManifest | undefined {
-    return this.manifests.get(normalizeChannelId(channelId));
+    return this.manifests.get(channelId);
   }
 
   list(): ChannelManifest[] {
@@ -38,7 +37,7 @@ export class ChannelManifestRegistry {
   listAvailable(ctx: ChannelManifestAvailabilityContext = {}): ChannelManifest[] {
     const supportedChannelIds =
       ctx.supportedChannelIds && ctx.supportedChannelIds.length > 0
-        ? new Set(ctx.supportedChannelIds.map(normalizeChannelId))
+        ? new Set(ctx.supportedChannelIds)
         : null;
 
     return this.list().filter((manifest) => {
@@ -57,8 +56,4 @@ export function createChannelManifestRegistry(
   manifests: readonly ChannelManifest[] = [],
 ): ChannelManifestRegistry {
   return new ChannelManifestRegistry(manifests);
-}
-
-function normalizeChannelId(channelId: MessagingChannelId): MessagingChannelId {
-  return channelId.trim().toLowerCase();
 }
