@@ -118,9 +118,7 @@ describe("onboard machine hooks", () => {
         .split("\n")
         .map((line) => JSON.parse(line));
       expect(lines.map((event) => event.type)).toEqual(["state.entered", "state.completed"]);
-      expect(lines[0].context.endpointUrl).toBe(
-        "https://example.com/v1?token=%3CREDACTED%3E&keep=yes",
-      );
+      expect(lines[0].context.endpointOrigin).toBe("https://example.com");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
