@@ -212,11 +212,12 @@ function resolveOpenClawRoot() {
     }
   } catch {}
   try {
-    const discovered = execFileSync(
-      "find",
-      ["/usr/local", "/tmp/npm-global", "/sandbox", "-path", "*/dist/extensions/slack/test-api.js", "-print", "-quit"],
-      { encoding: "utf8" },
-    ).trim();
+    const searchRoots = ["/usr/local", "/tmp/npm-global", "/sandbox"].filter((root) => fs.existsSync(root));
+    const discovered = searchRoots.length
+      ? execFileSync("find", [...searchRoots, "-path", "*/dist/extensions/slack/test-api.js", "-print", "-quit"], {
+          encoding: "utf8",
+        }).trim()
+      : "";
     if (discovered) addCandidate(path.resolve(discovered, "../../../.."));
   } catch {}
   addCandidate("/usr/local/lib/node_modules/openclaw");
