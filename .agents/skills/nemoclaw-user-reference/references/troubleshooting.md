@@ -20,6 +20,8 @@ Run `source ~/.bashrc` (or `source ~/.zshrc` for zsh), or open a new terminal wi
 When installing from a source checkout with `npm install`, NemoClaw first tries `npm link`.
 If the global npm prefix is not writable, it writes a managed shim to `~/.local/bin/nemoclaw` instead.
 Add `~/.local/bin` to your `PATH` if the command is still not found.
+Source-checkout installs also bootstrap OpenShell when it is missing before running preflight.
+If a source install still reports that `openshell` is not available, re-run the installer from the repository root and check that `~/.local/bin` is on your `PATH`.
 
 ### Installer fails on unsupported platform
 
@@ -67,6 +69,13 @@ On macOS with Docker Desktop, open the Docker Desktop application and wait for i
 On Linux, if the Docker daemon is running but you see "permission denied" errors, your user may not be in the `docker` group.
 The installer can add your user to the group, but Linux does not activate that membership in the current shell automatically.
 Add your user and activate the group in the current shell:
+
+**Docker group access:**
+
+NemoClaw needs Docker access.
+On personal Linux development machines, adding your user to the `docker` group is the standard way to run Docker without sudo.
+Members of the `docker` group can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path.
+For background, review Docker's [daemon attack surface guidance](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
 
 ```console
 $ sudo usermod -aG docker $USER
@@ -328,6 +337,21 @@ $ sudo ufw allow from "$SUBNET" to any port 8080 proto tcp
 $ nemoclaw onboard
 ```
 
+### `connect` exits because the gateway is down
+
+`nemoclaw <name> connect` checks the OpenShell gateway before it tries dashboard forwarding, SSH, or inference repair.
+If the gateway is not reachable, the command exits early and prints recovery guidance.
+
+Start the gateway or resume onboarding, then retry:
+
+```console
+$ openshell gateway start --name nemoclaw
+$ nemoclaw onboard --resume
+$ nemoclaw <name> connect
+```
+
+Run `nemoclaw status` for a broader gateway health report.
+
 ### Invalid sandbox name
 
 Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
@@ -346,6 +370,15 @@ On DGX machines, sandbox creation can fail if the gateway's DNS has not finished
 
 Run `nemoclaw onboard` to retry.
 The wizard cleans up stale port forwards and waits for gateway readiness automatically.
+
+### GPU setup fails with a placeholder GPU name
+
+On Windows or WSL hosts, some systems report a placeholder display adapter name even when no NVIDIA GPU firmware is present.
+NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
+If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
+
+Jetson hosts can still run NemoClaw, but sandbox GPU passthrough is not supported there.
+If onboarding reports that sandbox GPU passthrough is unavailable on Jetson, rerun onboarding without `--sandbox-gpu`.
 
 ### Colima socket not detected (macOS)
 
