@@ -553,6 +553,15 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
+# Optional Phase 7b: Security posture regression checks
+# ══════════════════════════════════════════════════════════════════
+if [ "${NEMOCLAW_E2E_SECURITY_POSTURE:-}" = "1" ]; then
+  # shellcheck source=test/e2e/lib/security-posture-assertions.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/lib/security-posture-assertions.sh"
+  security_posture_assertions_run "$SANDBOX_NAME" "hermes"
+fi
+
+# ══════════════════════════════════════════════════════════════════
 # Phase 8: Cleanup
 # ══════════════════════════════════════════════════════════════════
 section "Phase 8: Cleanup"

@@ -118,9 +118,7 @@ describe("onboard machine hooks", () => {
         .split("\n")
         .map((line) => JSON.parse(line));
       expect(lines.map((event) => event.type)).toEqual(["state.entered", "state.completed"]);
-      expect(lines[0].context.endpointUrl).toBe(
-        "https://example.com/v1?token=%3CREDACTED%3E&keep=yes",
-      );
+      expect(lines[0].context.endpointOrigin).toBe("https://example.com");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -146,5 +144,34 @@ describe("onboard machine hooks", () => {
     await Promise.resolve();
 
     expect(observed).toEqual(["state.entered"]);
+  });
+
+  it("can observe hook lifecycle events without recursive lifecycle redispatch", async () => {
+    const observed: string[] = [];
+    const emittedLifecycle: string[] = [];
+    const unregister = registerOnboardHooks(
+      [
+        {
+          name: "lifecycle-observer",
+          onEvent(event) {
+            observed.push(event.type);
+          },
+        },
+      ],
+      {
+        includeHookEvents: true,
+        emitEvent(event) {
+          emittedLifecycle.push(event.type);
+          emitOnboardMachineEvent(event);
+        },
+      },
+    );
+
+    emitOnboardMachineEvent({ ...sampleEvent(), type: "hook.failed" });
+    await Promise.resolve();
+    unregister();
+
+    expect(observed).toEqual(["hook.failed"]);
+    expect(emittedLifecycle).toEqual([]);
   });
 });

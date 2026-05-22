@@ -107,7 +107,11 @@ function baseOptions(
     },
     selectedMessagingChannels: [],
     env: {},
-    constants: { hermesProviderName: "hermes-provider" },
+    constants: {
+      hermesProviderName: "hermes-provider",
+      hermesApiKeyAuthMethod: "api_key",
+      hermesApiKeyCredentialEnv: "NOUS_API_KEY",
+    },
     deps,
   };
 }
@@ -143,6 +147,22 @@ describe("handleProviderInferenceState", () => {
       provider: "nvidia-prod",
       preferredInferenceApi: "openai-responses",
     });
+  });
+
+  it("clears non-NVIDIA provider credentials when inference setup fails", async () => {
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      provider: "compatible-endpoint",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    }));
+    const setupInference = vi.fn(async () => {
+      throw new Error("probe failed");
+    });
+    const { deps, calls } = createDeps({ setupNim, setupInference });
+
+    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("probe failed");
+
+    expect(calls.deleteEnv).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
   });
 
   it("skips provider selection and inference setup when resume state is already ready", async () => {

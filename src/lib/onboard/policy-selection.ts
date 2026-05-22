@@ -71,6 +71,20 @@ export type SetupPolicySelectionDeps = {
   env?: NodeJS.ProcessEnv;
 };
 
+export function isStaleBuiltinBravePolicyPreset(
+  name: string,
+  options: {
+    webSearchConfig?: WebSearchConfig | null;
+    customPresetNames?: ReadonlySet<string> | null;
+  } = {},
+): boolean {
+  return (
+    name === "brave" &&
+    !options.webSearchConfig &&
+    !options.customPresetNames?.has(name)
+  );
+}
+
 export function computeSetupPresetSuggestions(
   deps: {
     policies: PoliciesApi;
@@ -86,6 +100,7 @@ export function computeSetupPresetSuggestions(
   const suggestions = deps.tiers
     .resolveTierPresets(tierName)
     .map((preset) => preset.name)
+    .filter((name) => !isStaleBuiltinBravePolicyPreset(name, { webSearchConfig }))
     .filter((name) => deps.policies.setupPolicyPresetSupported(name, supportOptions))
     .filter((name) => !known || known.has(name));
   const add = (name: string) => {
@@ -140,6 +155,8 @@ export async function setupPoliciesWithSelection(
     supportOptions,
     customPresetNames,
   );
+  const isStaleBuiltinBrave = (name: string) =>
+    isStaleBuiltinBravePolicyPreset(name, { webSearchConfig, customPresetNames });
   const filterSupportedPresetNames = (presetNames: string[]) =>
     presetNames.filter(
       (name) =>
@@ -233,6 +250,7 @@ export async function setupPoliciesWithSelection(
       const preserved: string[] = [];
       for (const name of applied) {
         if (chosenSet.has(name)) continue;
+        if (isStaleBuiltinBrave(name)) continue;
         chosen.push(name);
         chosenSet.add(name);
         preserved.push(name);
@@ -254,7 +272,7 @@ export async function setupPoliciesWithSelection(
 
   const knownNames = new Set(allPresets.map((preset) => preset.name));
   const extraSelected = [
-    ...applied.filter((name) => knownNames.has(name)),
+    ...applied.filter((name) => knownNames.has(name) && !isStaleBuiltinBrave(name)),
     ...suggestions.filter((name) => knownNames.has(name) && !applied.includes(name)),
   ];
   const resolvedPresets = await deps.selectTierPresetsAndAccess(tierName, allPresets, extraSelected);

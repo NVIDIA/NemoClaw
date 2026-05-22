@@ -54,6 +54,7 @@ describe("agent definitions", () => {
       "wechat",
       "whatsapp",
     ]);
+    expect(openclaw.inferenceProviderOptions).toEqual([]);
     expect(openclaw.legacyPaths?.startScript).toContain("scripts/nemoclaw-start.sh");
   });
 
@@ -93,6 +94,12 @@ describe("agent definitions", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("session references unknown agent 'missing-agent'"),
     );
+  });
+
+  it("treats an explicit agent flag as overriding NEMOCLAW_AGENT", () => {
+    process.env.NEMOCLAW_AGENT = "hermes";
+
+    expect(resolveAgentName({ agentFlag: "openclaw" })).toBe("openclaw");
   });
 
   it("rejects non-object manifest payloads", () => {

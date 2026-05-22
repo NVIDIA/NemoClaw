@@ -32,6 +32,7 @@ import {
   printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
 } from "./gateway-state";
+import { classifyGatewayFailure, getLayerHeader } from "./gateway-failure-classifier";
 import {
   isSandboxGatewayRunningForStatus,
   probeSandboxInferenceGatewayHealth,
@@ -102,6 +103,11 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
   } catch {
     /* non-fatal — status should still show sandbox diagnostics */
   }
+}
+
+async function printGatewayFailureLayerHeader(sandboxName: string): Promise<void> {
+  const failure = await classifyGatewayFailure(sandboxName);
+  console.log(`  ${getLayerHeader(failure.layer)}`);
 }
 
 // eslint-disable-next-line complexity
@@ -219,8 +225,13 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       /* non-fatal */
     }
 
-    if (shields.isShieldsDown(sandboxName, true)) {
-      console.log("    Permissions: shields down (check `shields status` for details)");
+    const shieldsPosture = shields.getShieldsPosture(sandboxName, true);
+    if (shieldsPosture.mode !== "locked") {
+      const detail =
+        shieldsPosture.mode === "mutable_default"
+          ? shieldsPosture.detail
+          : `${shieldsPosture.detail} (check \`shields status\` for details)`;
+      console.log(`    Permissions: ${detail}`);
     }
 
     // Agent version check
@@ -282,6 +293,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       if (guard.state === "connected_other") {
         printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.log);
       } else {
+        await printGatewayFailureLayerHeader(sandboxName);
         printGatewayLifecycleHint(guard.status || "", sandboxName, console.log);
       }
     } else {
@@ -315,6 +327,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     process.exit(1);
   } else if (lookup.state === "gateway_unreachable_after_restart") {
     console.log("");
+    await printGatewayFailureLayerHeader(sandboxName);
     console.log(
       `  Sandbox '${sandboxName}' may still exist, but the selected ${CLI_DISPLAY_NAME} gateway is still refusing connections after restart.`,
     );
@@ -330,6 +343,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     process.exit(1);
   } else if (lookup.state === "gateway_missing_after_restart") {
     console.log("");
+    await printGatewayFailureLayerHeader(sandboxName);
     console.log(
       `  Sandbox '${sandboxName}' may still exist locally, but the ${CLI_DISPLAY_NAME} gateway is no longer configured after restart/rebuild.`,
     );
@@ -349,6 +363,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     if (lookup.output) {
       console.log(lookup.output);
     }
+    await printGatewayFailureLayerHeader(sandboxName);
     printGatewayLifecycleHint(lookup.output, sandboxName, console.log);
     process.exit(1);
   }

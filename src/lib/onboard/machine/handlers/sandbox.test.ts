@@ -92,6 +92,7 @@ function baseOptions(
   return {
     resume: false,
     fresh: false,
+    resumeAgentChanged: false,
     session,
     sandboxName: null,
     model: "model",

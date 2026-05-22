@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { WebSearchConfig } from "../../../inference/web-search";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 
 export type ProviderInferenceRetry = { retry: "selection" } | { ok: true; retry?: undefined };
@@ -22,6 +23,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
   gpu: Gpu;
   sandboxName: string | null;
   agent: Agent;
+  forceProviderSelection?: boolean;
   initial: {
     model: string | null;
     provider: string | null;
@@ -31,12 +33,14 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
     hermesToolGateways: string[];
     preferredInferenceApi: string | null;
     nimContainer: string | null;
-    webSearchConfig: any;
+    webSearchConfig: WebSearchConfig | null;
   };
   selectedMessagingChannels: string[];
   env: NodeJS.ProcessEnv;
   constants: {
     hermesProviderName: string;
+    hermesApiKeyAuthMethod: string;
+    hermesApiKeyCredentialEnv: string;
   };
   deps: {
     normalizeHermesAuthMethod(value: string | null | undefined): string | null;
@@ -74,7 +78,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       model: string;
       credentialEnv: string | null;
       hermesAuthMethod: string | null;
-      webSearchConfig: any;
+      webSearchConfig: WebSearchConfig | null;
       hermesToolGateways: string[];
       enabledChannels: string[] | null;
       sandboxName: string;
@@ -99,7 +103,7 @@ export interface ProviderInferenceStateResult {
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   nimContainer: string | null;
-  webSearchConfig: any;
+  webSearchConfig: WebSearchConfig | null;
   session: Session | null;
 }
 
@@ -110,12 +114,20 @@ function requireSelection(provider: string | null, model: string | null): { prov
   return { provider, model };
 }
 
+function clearStagedCredentialEnv(
+  deps: Pick<ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"], "deleteEnv">,
+  credentialEnv: string | null,
+): void {
+  if (credentialEnv) deps.deleteEnv(credentialEnv);
+}
+
 export async function handleProviderInferenceState<Gpu, Agent, Host>({
   resume,
   session,
   gpu,
   sandboxName,
   agent,
+  forceProviderSelection: initialForceProviderSelection = false,
   initial,
   selectedMessagingChannels,
   env,
@@ -128,12 +140,14 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let credentialEnv = initial.credentialEnv;
   let hermesAuthMethod =
     deps.normalizeHermesAuthMethod(initial.hermesAuthMethod) ||
-    (provider === constants.hermesProviderName ? deps.normalizeHermesAuthMethod(initial.hermesAuthMethod) : null);
+    (provider === constants.hermesProviderName && credentialEnv === constants.hermesApiKeyCredentialEnv
+      ? constants.hermesApiKeyAuthMethod
+      : null);
   let hermesToolGateways = initial.hermesToolGateways;
   let preferredInferenceApi = initial.preferredInferenceApi;
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
-  let forceProviderSelection = false;
+  let forceProviderSelection = initialForceProviderSelection;
 
   while (true) {
     const resumeProviderSelection =
@@ -186,15 +200,20 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       if (provider === constants.hermesProviderName) {
         if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
         await deps.startRecordedStep("inference", { provider, model });
-        const inferenceResult = await deps.setupInference(
-          sandboxName,
-          model,
-          provider,
-          endpointUrl,
-          credentialEnv,
-          hermesAuthMethod,
-          hermesToolGateways,
-        );
+        let inferenceResult: ProviderInferenceRetry;
+        try {
+          inferenceResult = await deps.setupInference(
+            sandboxName,
+            model,
+            provider,
+            endpointUrl,
+            credentialEnv,
+            hermesAuthMethod,
+            hermesToolGateways,
+          );
+        } finally {
+          clearStagedCredentialEnv(deps, credentialEnv);
+        }
         if (inferenceResult?.retry === "selection") {
           forceProviderSelection = true;
           continue;
@@ -251,16 +270,20 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     }
 
     await deps.startRecordedStep("inference", { provider, model });
-    const inferenceResult = await deps.setupInference(
-      sandboxName,
-      model,
-      provider,
-      endpointUrl,
-      credentialEnv,
-      hermesAuthMethod,
-      hermesToolGateways,
-    );
-    deps.deleteEnv("NVIDIA_API_KEY");
+    let inferenceResult: ProviderInferenceRetry;
+    try {
+      inferenceResult = await deps.setupInference(
+        sandboxName,
+        model,
+        provider,
+        endpointUrl,
+        credentialEnv,
+        hermesAuthMethod,
+        hermesToolGateways,
+      );
+    } finally {
+      clearStagedCredentialEnv(deps, credentialEnv);
+    }
     if (inferenceResult?.retry === "selection") {
       forceProviderSelection = true;
       continue;

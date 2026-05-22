@@ -195,17 +195,17 @@ console.log = () => {};
       `expected chosen to preserve local-inference, got ${JSON.stringify(payload.chosen)}`,
     );
 
-    // Nothing should be removed — every applied preset is either a tier
-    // default or a user-added extra that the additive policy preserves.
+    // User-added extras stay additive, but built-in Brave is no longer
+    // preserved after Brave search was declined.
     assert.deepEqual(
       payload.removedCalls,
-      [],
-      `expected no removals, got ${JSON.stringify(payload.removedCalls)}`,
+      ["brave"],
+      `expected only stale built-in Brave to be removed, got ${JSON.stringify(payload.removedCalls)}`,
     );
 
-    // Final state should still contain every previously-applied preset.
+    // Final state should still contain every non-Brave previously-applied preset.
     const finalSorted = payload.finalApplied.slice().sort();
-    assert.deepEqual(finalSorted, ["brave", "brew", "huggingface", "local-inference", "npm", "pypi"]);
+    assert.deepEqual(finalSorted, ["brew", "huggingface", "local-inference", "npm", "pypi"]);
   });
 
   // Custom presets loaded via `policy-add --from-file` / `--from-dir` are
@@ -241,8 +241,8 @@ console.log = () => {};
     );
     assert.deepEqual(
       payload.removedCalls,
-      [],
-      `expected no removals, got ${JSON.stringify(payload.removedCalls)}`,
+      ["brave"],
+      `expected only stale built-in Brave to be removed, got ${JSON.stringify(payload.removedCalls)}`,
     );
   });
 
