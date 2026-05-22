@@ -107,9 +107,14 @@ export interface ProviderInferenceStateResult {
   session: Session | null;
 }
 
-function requireSelection(provider: string | null, model: string | null): { provider: string; model: string } {
+function requireSelection(
+  provider: string | null,
+  model: string | null,
+  deps: Pick<ProviderInferenceStateOptions<unknown, unknown, unknown>["deps"], "error" | "exitProcess">,
+): { provider: string; model: string } {
   if (typeof provider !== "string" || typeof model !== "string") {
-    throw new Error("Inference selection did not yield a provider/model.");
+    deps.error("  Inference selection did not yield a provider/model.");
+    deps.exitProcess(1);
   }
   return { provider, model };
 }
@@ -186,7 +191,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       );
     }
 
-    const selected = requireSelection(provider, model);
+    const selected = requireSelection(provider, model, deps);
     provider = selected.provider;
     model = selected.model;
     env.NEMOCLAW_OPENSHELL_BIN = deps.getOpenshellBinary();

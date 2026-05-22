@@ -165,6 +165,17 @@ describe("handleProviderInferenceState", () => {
     expect(calls.deleteEnv).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
   });
 
+  it("exits through the injected CLI boundary when provider selection is incomplete", async () => {
+    const setupNim = vi.fn(async () => ({ ...baseSelection, model: null }));
+    const { deps, calls } = createDeps({ setupNim });
+
+    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("exit 1");
+
+    expect(calls.error).toHaveBeenCalledWith("  Inference selection did not yield a provider/model.");
+    expect(calls.exit).toHaveBeenCalledWith(1);
+    expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
   it("skips provider selection and inference setup when resume state is already ready", async () => {
     const session = createSession({
       provider: "ollama-local",
