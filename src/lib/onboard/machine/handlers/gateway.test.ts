@@ -14,7 +14,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
   const calls = {
     refresh: vi.fn(async (state: GatewayReuseState) => state),
     lifecycle: vi.fn(() => false),
-    verifyContainer: vi.fn(() => "running"),
+    verifyContainer: vi.fn((_gatewayName: string): GatewayContainerState => "running"),
     waitHttp: vi.fn(async () => true),
     stopDashboardForward: vi.fn(),
     destroy: vi.fn(() => true),
@@ -136,7 +136,7 @@ describe("handleGatewayState", () => {
   it("refuses to destroy an unknown container state when HTTP is also unavailable", async () => {
     const { deps, calls } = createDeps({
       gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
-      verifyGatewayContainerRunning: vi.fn(() => "unknown"),
+      verifyGatewayContainerRunning: vi.fn((_gatewayName: string): GatewayContainerState => "unknown"),
       waitForGatewayHttpReady: vi.fn(async () => false),
     });
 
