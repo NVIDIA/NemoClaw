@@ -98,15 +98,20 @@ apply_fake_discord_gateway_policy() {
 run_fake_discord_gateway_node_client() {
   local port="$1"
   local identify_token="$2"
+  local proxy_url="${3:-}"
   local host="${FAKE_DISCORD_GATEWAY_HOST:-host.openshell.internal}"
-  sandbox_exec_stdin "FAKE_DISCORD_GATEWAY_CLIENT_HOST='$host' FAKE_DISCORD_GATEWAY_CLIENT_PORT='$port' FAKE_DISCORD_GATEWAY_IDENTIFY_TOKEN='$identify_token' node - 2>&1" <<'NODE'
+  local proxy_env=""
+  if [ -n "$proxy_url" ]; then
+    printf -v proxy_env ' FAKE_DISCORD_GATEWAY_PROXY_URL=%q' "$proxy_url"
+  fi
+  sandbox_exec_stdin "FAKE_DISCORD_GATEWAY_CLIENT_HOST='$host' FAKE_DISCORD_GATEWAY_CLIENT_PORT='$port' FAKE_DISCORD_GATEWAY_IDENTIFY_TOKEN='$identify_token'$proxy_env node - 2>&1" <<'NODE'
 const crypto = require("crypto");
 const net = require("net");
 
 const host = process.env.FAKE_DISCORD_GATEWAY_CLIENT_HOST || "host.openshell.internal";
 const port = Number(process.env.FAKE_DISCORD_GATEWAY_CLIENT_PORT);
 const identifyToken = process.env.FAKE_DISCORD_GATEWAY_IDENTIFY_TOKEN;
-const proxyUrl = process.env.HTTP_PROXY || process.env.http_proxy || "";
+const proxyUrl = process.env.FAKE_DISCORD_GATEWAY_PROXY_URL || process.env.HTTP_PROXY || process.env.http_proxy || "";
 const results = [];
 
 function proxyTarget() {

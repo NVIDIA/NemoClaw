@@ -19,6 +19,7 @@ import { envInt } from "./env";
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
+const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
 
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_PATCH_WAIT_SECS = 180;
@@ -103,6 +104,7 @@ export type DockerGpuCloneRunOptions = {
   networkMode?: string | null;
   openshellEndpoint?: string | null;
   sandboxFallbackDns?: string | null;
+  openshellSandboxCommand?: readonly string[] | null;
 };
 
 export type DockerGpuPatchDiagnostics = {
@@ -244,6 +246,11 @@ function envValue(env: string[] | null | undefined, key: string): string | null 
 function replaceEnvValue(entry: string, key: string, value: string | null | undefined): string {
   if (!value || envKey(entry) !== key) return entry;
   return `${key}=${value}`;
+}
+
+function openshellSandboxCommandEnvValue(command: readonly string[] | null | undefined): string | null {
+  const parts = (command || []).map((part) => String(part)).filter((part) => part.length > 0);
+  return parts.length > 0 ? parts.join(" ") : null;
 }
 
 function dockerGpuHostEndpointFromOpenShellEndpoint(endpoint: string): string | null {
@@ -443,8 +450,21 @@ export function buildDockerGpuCloneRunArgs(
   if (config.Tty) args.push("--tty");
   if (config.OpenStdin) args.push("--interactive");
 
+  const openshellSandboxCommandEnv = openshellSandboxCommandEnvValue(
+    options.openshellSandboxCommand,
+  );
+  let sawOpenShellSandboxCommandEnv = false;
   for (const env of stringArray(config.Env).filter((entry) => !GPU_ENV_KEYS.has(envKey(entry)))) {
+    const key = envKey(env);
+    if (key === OPENSHELL_SANDBOX_COMMAND_ENV && openshellSandboxCommandEnv) {
+      sawOpenShellSandboxCommandEnv = true;
+      args.push("--env", `${OPENSHELL_SANDBOX_COMMAND_ENV}=${openshellSandboxCommandEnv}`);
+      continue;
+    }
     args.push("--env", replaceEnvValue(env, "OPENSHELL_ENDPOINT", options.openshellEndpoint));
+  }
+  if (openshellSandboxCommandEnv && !sawOpenShellSandboxCommandEnv) {
+    args.push("--env", `${OPENSHELL_SANDBOX_COMMAND_ENV}=${openshellSandboxCommandEnv}`);
   }
 
   const labels = config.Labels || {};
@@ -527,7 +547,10 @@ export function buildDockerGpuCloneRunArgs(
 
   const entrypoint = stringArray(config.Entrypoint);
   if (entrypoint.length > 0) args.push("--entrypoint", entrypoint[0]);
-  const commandArgs = [...entrypoint.slice(1), ...stringArray(config.Cmd)];
+  const commandArgs =
+    options.openshellSandboxCommand && options.openshellSandboxCommand.length > 0
+      ? [...options.openshellSandboxCommand]
+      : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
   args.push(image, ...commandArgs);
   return args;
 }
@@ -760,6 +783,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     gpuDevice?: string | null;
     timeoutSecs?: number;
     waitForSupervisor?: boolean;
+    openshellSandboxCommand?: readonly string[] | null;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {
@@ -811,6 +835,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     }
 
     const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
+    cloneOptions.openshellSandboxCommand = options.openshellSandboxCommand ?? null;
     const sandboxFallbackDns = d.detectSandboxFallbackDns();
     if (sandboxFallbackDns) cloneOptions.sandboxFallbackDns = sandboxFallbackDns;
     const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode, cloneOptions);

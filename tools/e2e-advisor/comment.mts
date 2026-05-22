@@ -1,16 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-
-type ParsedArgs = {
-  repo?: string;
-  pr?: string;
-  summary?: string;
-  result?: string;
-  dispatch?: string;
-};
+import { upsertStickyComment } from "../advisors/github.mts";
+import { parseArgs, readIfExists, readJsonIfExists } from "../advisors/io.mts";
 
 type TestRecommendation = {
   id?: string;
@@ -31,16 +23,6 @@ type DispatchResult = {
   targetRef?: string;
   runUrl?: string;
   reason?: string;
-};
-
-type GitHubComment = {
-  id: number;
-  body?: string;
-};
-
-type GitHubRequestOptions = {
-  method?: string;
-  body?: unknown;
 };
 
 const args = parseArgs(process.argv.slice(2));
@@ -73,57 +55,7 @@ const result = readJsonIfExists<AdvisorResult>(resultPath);
 const dispatch = readJsonIfExists<DispatchResult>(dispatchPath);
 const body = buildComment({ summary, result, dispatch, runUrl, marker });
 
-try {
-  const existing = await findExistingComment(repo, pr, token, marker);
-  if (existing) {
-    await github(`repos/${repo}/issues/comments/${existing.id}`, token, {
-      method: "PATCH",
-      body: { body },
-    });
-    console.log(`Updated E2E advisor comment on ${repo}#${pr}`);
-  } else {
-    await github(`repos/${repo}/issues/${pr}/comments`, token, {
-      method: "POST",
-      body: { body },
-    });
-    console.log(`Created E2E advisor comment on ${repo}#${pr}`);
-  }
-} catch (error: unknown) {
-  if (isPermissionError(error)) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.log(`Skipping E2E advisor comment due to permission error: ${message}`);
-  } else {
-    throw error;
-  }
-}
-
-function parseArgs(argv: string[]): ParsedArgs {
-  const parsed: Record<string, string | undefined> = {};
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg.startsWith("--")) {
-      const key = arg.slice(2).replace(/-([a-z])/g, (_, char: string) => char.toUpperCase());
-      const next = argv[i + 1];
-      if (!next || next.startsWith("--")) {
-        parsed[key] = undefined;
-        continue;
-      }
-      parsed[key] = next;
-      i += 1;
-    }
-  }
-  return parsed;
-}
-
-function readIfExists(filePath: string): string | undefined {
-  const resolved = path.resolve(process.cwd(), filePath);
-  return fs.existsSync(resolved) ? fs.readFileSync(resolved, "utf8") : undefined;
-}
-
-function readJsonIfExists<T>(filePath: string): T | undefined {
-  const text = readIfExists(filePath);
-  return text ? JSON.parse(text) as T : undefined;
-}
+await upsertStickyComment({ repo, pr, token, marker, body, label: "E2E advisor", userAgent: "nemoclaw-e2e-advisor" });
 
 function buildComment({
   summary,
@@ -184,39 +116,4 @@ function renderAutoDispatch(dispatch: DispatchResult | undefined): string {
     return `\n\n**Auto-dispatch:** failed — ${dispatch.reason || "unknown error"}`;
   }
   return "";
-}
-
-async function findExistingComment(repo: string, pr: string, token: string, marker: string): Promise<GitHubComment | undefined> {
-  for (let page = 1; ; page += 1) {
-    const comments = await github<GitHubComment[]>(
-      `repos/${repo}/issues/${pr}/comments?per_page=100&page=${page}`,
-      token,
-    );
-    const match = comments.find((comment) => typeof comment.body === "string" && comment.body.includes(marker));
-    if (match) return match;
-    if (comments.length < 100) return undefined;
-  }
-}
-
-function isPermissionError(error: unknown): boolean {
-  return error instanceof Error && /\b403\b|Resource not accessible by integration|permission/i.test(error.message);
-}
-
-async function github<T>(pathname: string, token: string, options: GitHubRequestOptions = {}): Promise<T> {
-  const response = await fetch(`https://api.github.com/${pathname}`, {
-    method: options.method || "GET",
-    headers: {
-      "Accept": "application/vnd.github+json",
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "nemoclaw-e2e-advisor",
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined,
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(`GitHub API ${options.method || "GET"} ${pathname} failed: ${response.status} ${text}`);
-  }
-  return (text ? JSON.parse(text) : undefined) as T;
 }

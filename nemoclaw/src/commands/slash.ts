@@ -12,7 +12,12 @@
  *   /nemoclaw          - show help
  */
 
-import type { PluginCommandContext, PluginCommandResult, OpenClawPluginApi } from "../index.js";
+import {
+  getPluginConfig,
+  type OpenClawPluginApi,
+  type PluginCommandContext,
+  type PluginCommandResult,
+} from "../index.js";
 import { loadState } from "../blueprint/state.js";
 import {
   describeOnboardEndpoint,
@@ -24,13 +29,13 @@ import { slashConfigShow } from "./config-show.js";
 
 export function handleSlashCommand(
   ctx: PluginCommandContext,
-  _api: OpenClawPluginApi,
+  api: OpenClawPluginApi,
 ): PluginCommandResult {
   const subcommand = ctx.args?.trim().split(/\s+/)[0] ?? "";
 
   switch (subcommand) {
     case "status":
-      return slashStatus();
+      return slashStatus(api);
     case "eject":
       return slashEject();
     case "onboard":
@@ -69,25 +74,27 @@ function slashHelp(): PluginCommandResult {
   };
 }
 
-function slashStatus(): PluginCommandResult {
-  const state = loadState();
+function slashStatus(api: OpenClawPluginApi): PluginCommandResult {
+  const onboardConfig = loadOnboardConfig();
+  const { sandboxName } = getPluginConfig(api);
 
-  if (!state.lastAction) {
+  if (!onboardConfig) {
     return {
-      text: "**NemoClaw**: No operations performed yet. Run `nemoclaw onboard` to get started.",
+      text: "**NemoClaw**: No onboard configuration found. Run `nemoclaw onboard` to get started.",
     };
   }
 
   const lines = [
     "**NemoClaw Status**",
     "",
-    `Last action: ${state.lastAction}`,
-    `Blueprint: ${state.blueprintVersion ?? "unknown"}`,
-    `Run ID: ${state.lastRunId ?? "none"}`,
-    `Sandbox: ${state.sandboxName ?? "none"}`,
-    `Updated: ${state.updatedAt}`,
+    `Sandbox: ${sandboxName}`,
+    `Endpoint: ${describeOnboardEndpoint(onboardConfig)}`,
+    `Provider: ${describeOnboardProvider(onboardConfig)}`,
+    `Model: ${onboardConfig.model}`,
+    `Onboarded: ${onboardConfig.onboardedAt}`,
   ];
 
+  const state = loadState();
   if (state.migrationSnapshot) {
     lines.push("", `Rollback snapshot: ${state.migrationSnapshot}`);
   }

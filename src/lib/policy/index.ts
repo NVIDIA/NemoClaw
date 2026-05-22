@@ -84,6 +84,102 @@ function loadPreset(name: string): string | null {
   return fs.readFileSync(file, "utf-8");
 }
 
+function isPolicyObject(value: PolicyValue): value is PolicyObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseNetworkPolicies(content: string | null | undefined): PolicyObject | null {
+  if (!content) return null;
+  try {
+    const parsed = YAML.parse(content);
+    const networkPolicies = isPolicyDocument(parsed) ? parsed.network_policies : null;
+    return isPolicyObject(networkPolicies) ? networkPolicies : null;
+  } catch {
+    return null;
+  }
+}
+
+function parsePresetPolicyKeys(presetContent: string | null | undefined): string[] {
+  const presetEntries = extractPresetEntries(presetContent);
+  if (!presetEntries) return [];
+  return Object.keys(parseNetworkPolicies(`network_policies:\n${presetEntries}`) || {});
+}
+
+const AGENT_PRESET_KEY_ALIASES: Record<string, string[]> = {
+  wechat: ["wechat_bridge"],
+};
+
+function selectAgentPolicyKeys(
+  agentPolicies: PolicyObject,
+  presetName: string,
+  builtinPresetContent: string,
+): string[] {
+  const builtinKeys = parsePresetPolicyKeys(builtinPresetContent);
+  if (
+    builtinKeys.length > 0 &&
+    builtinKeys.every((key) => Object.prototype.hasOwnProperty.call(agentPolicies, key))
+  ) {
+    return builtinKeys;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(agentPolicies, presetName)) {
+    return [presetName];
+  }
+
+  const aliases = AGENT_PRESET_KEY_ALIASES[presetName] || [];
+  const aliasMatches = aliases.filter((key) =>
+    Object.prototype.hasOwnProperty.call(agentPolicies, key),
+  );
+  if (aliasMatches.length > 0) return aliasMatches;
+
+  return Object.entries(agentPolicies)
+    .filter(([, value]) => isPolicyObject(value) && value.name === presetName)
+    .map(([key]) => key);
+}
+
+function loadAgentPresetContent(
+  sandboxName: string,
+  presetName: string,
+  builtinPresetContent: string,
+): string | null {
+  try {
+    const sandbox = registry.getSandbox(sandboxName);
+    if (!sandbox?.agent) return null;
+
+    const agent = loadAgent(sandbox.agent);
+    if (!agent?.policyAdditionsPath || !fs.existsSync(agent.policyAdditionsPath)) return null;
+
+    const agentPolicies = parseNetworkPolicies(
+      fs.readFileSync(agent.policyAdditionsPath, "utf-8"),
+    );
+    if (!agentPolicies) return null;
+
+    const keys = selectAgentPolicyKeys(agentPolicies, presetName, builtinPresetContent);
+    if (keys.length === 0) return null;
+
+    const selectedPolicies: PolicyObject = {};
+    for (const key of keys) selectedPolicies[key] = agentPolicies[key];
+
+    return YAML.stringify({
+      preset: {
+        name: presetName,
+        description: `${agent.displayName} ${presetName} policy`,
+      },
+      network_policies: selectedPolicies,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function loadPresetForSandbox(sandboxName: string, presetName: string): string | null {
+  const builtinPresetContent = loadPreset(presetName);
+  if (!builtinPresetContent) return null;
+  return (
+    loadAgentPresetContent(sandboxName, presetName, builtinPresetContent) || builtinPresetContent
+  );
+}
+
 /**
  * Extract the bare hostnames declared in a preset YAML (anything matched by
  * `host: <value>`), with surrounding quotes stripped. Used to show the
@@ -91,7 +187,7 @@ function loadPreset(name: string): string | null {
  */
 function getPresetEndpoints(content: string): string[] {
   const hosts: string[] = [];
-  const regex = /host:\s*([^\s,}]+)/g;
+  const regex = /^[ \t]*(?:-[ \t]*)?host:[ \t]*([^#\s,}]+)/gm;
   let match;
   while ((match = regex.exec(content)) !== null) {
     hosts.push(match[1].replace(/^["']|["']$/g, ""));
@@ -117,13 +213,26 @@ const MESSAGING_PRESET_LABELS: Record<string, string> = {
 function getMessagingPresetWarning(presetName: string): string | null {
   const label = MESSAGING_PRESET_LABELS[presetName];
   if (!label) return null;
-  return [
+  const lines = [
     `Note: the '${presetName}' preset only opens network egress to the ${label} API.`,
     `To actually enable ${label} messaging, re-run 'nemoclaw onboard' and select ${label}`,
     "in the messaging channels step. Channel setup, pairing, and runtime",
     "configuration are wired up at onboard time and are not added by applying",
     "this preset alone.",
-  ].join("\n  ");
+  ];
+
+  if (presetName === "discord") {
+    lines.push(
+      "For Discord preset validation, do not use curl as the success signal:",
+      "curl is not in the preset binary allowlist, so curl probes can fail even",
+      "when the policy is working. Use Node HTTPS against",
+      "https://discord.com/api/v10/gateway or validate the configured",
+      'messaging bridge/gateway path. DNS-only checks such as dns.resolve("gateway.discord.gg")',
+      "can also be inconclusive behind a proxy.",
+    );
+  }
+
+  return lines.join("\n  ");
 }
 
 function setupPolicyPresetSupported(
@@ -427,7 +536,7 @@ function removePreset(sandboxName: string, presetName: string): boolean {
   // Resolve preset content: built-in first, then custom presets persisted
   // in the registry. `isCustom` controls which registry bucket to prune on
   // success.
-  let presetContent: string | null = loadPreset(presetName);
+  let presetContent: string | null = loadPresetForSandbox(sandboxName, presetName);
   let isCustom = false;
   if (!presetContent) {
     const custom = registry
@@ -666,7 +775,7 @@ function applyPreset(
   presetName: string,
   options: Record<string, unknown> = {},
 ): boolean {
-  const presetContent = loadPreset(presetName);
+  const presetContent = loadPresetForSandbox(sandboxName, presetName);
   if (!presetContent) {
     console.error(`  Cannot load preset: ${presetName}`);
     return false;
@@ -703,7 +812,7 @@ function applyPresets(sandboxName: string, presetNames: string[]): boolean {
   const endpointLogs: string[][] = [];
 
   for (const presetName of uniquePresetNames) {
-    const presetContent = loadPreset(presetName);
+    const presetContent = loadPresetForSandbox(sandboxName, presetName);
     if (!presetContent) {
       console.error(`  Cannot load preset: ${presetName}`);
       return false;
@@ -893,9 +1002,38 @@ function listCustomPresets(sandboxName: string): PresetInfo[] {
 }
 
 /**
+ * True when every `network_policies` key declared in `content` is present in
+ * `gatewayPolicyNames`. Works for both built-in preset YAML and the custom
+ * preset YAML stored under a sandbox's registry entry — keeping a single
+ * matching rule means `policy-list` and `status` stay consistent for either
+ * preset source. (#3590)
+ */
+function presetMatchesGateway(
+  content: string | null,
+  gatewayPolicyNames: ReadonlySet<string>,
+): boolean {
+  const entries = extractPresetEntries(content);
+  if (!entries) return false;
+
+  let presetPolicies;
+  try {
+    const presetParsed = YAML.parse("network_policies:\n" + entries);
+    presetPolicies = presetParsed?.network_policies;
+  } catch {
+    return false;
+  }
+
+  if (!presetPolicies || typeof presetPolicies !== "object") return false;
+
+  const presetKeys = Object.keys(presetPolicies);
+  return presetKeys.length > 0 && presetKeys.every((k) => gatewayPolicyNames.has(k));
+}
+
+/**
  * Query the gateway for the currently loaded policy and determine which
  * presets are actually enforced by matching network_policies entries
- * against known preset definitions.
+ * against known preset definitions. Considers both built-in presets and
+ * sandbox-scoped custom presets recorded in the registry. (#3590)
  *
  * Returns an array of preset names whose network_policies keys are all
  * found in the gateway's loaded policy, or `null` when the gateway
@@ -931,30 +1069,17 @@ function getGatewayPresets(sandboxName: string): string[] | null {
   }
 
   const gatewayPolicyNames = new Set(Object.keys(gatewayPolicies));
-  const matched = [];
+  const matched: string[] = [];
 
   for (const preset of listPresets()) {
-    const content = loadPreset(preset.name);
-    if (!content) continue;
-    const entries = extractPresetEntries(content);
-    if (!entries) continue;
-
-    let presetPolicies;
-    try {
-      const wrapped = "network_policies:\n" + entries;
-      const presetParsed = YAML.parse(wrapped);
-      presetPolicies = presetParsed?.network_policies;
-    } catch {
-      continue;
-    }
-
-    if (!presetPolicies || typeof presetPolicies !== "object") continue;
-
-    // A preset is considered "active on gateway" if ALL of its
-    // network_policies keys exist in the gateway's loaded policy.
-    const presetKeys = Object.keys(presetPolicies);
-    if (presetKeys.length > 0 && presetKeys.every((k) => gatewayPolicyNames.has(k))) {
+    if (presetMatchesGateway(loadPresetForSandbox(sandboxName, preset.name), gatewayPolicyNames)) {
       matched.push(preset.name);
+    }
+  }
+
+  for (const entry of registry.getCustomPolicies(sandboxName)) {
+    if (presetMatchesGateway(entry.content, gatewayPolicyNames)) {
+      matched.push(entry.name);
     }
   }
 

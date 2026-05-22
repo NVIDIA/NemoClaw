@@ -25,6 +25,7 @@ type DockerGpuSandboxCreatePatchOptions = {
   enabled: boolean;
   sandboxName: string;
   gpuDevice?: string | null;
+  openshellSandboxCommand?: readonly string[] | null;
   timeoutSecs: number;
   deps: DockerGpuSandboxCreateDeps;
 };
@@ -58,6 +59,7 @@ export function createDockerGpuSandboxCreatePatch(
   const applyOptions = {
     sandboxName: options.sandboxName,
     gpuDevice: options.gpuDevice,
+    openshellSandboxCommand: options.openshellSandboxCommand ?? null,
     timeoutSecs: options.timeoutSecs,
   };
 

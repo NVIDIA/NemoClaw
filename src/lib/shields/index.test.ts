@@ -327,6 +327,58 @@ describe("shields — unit logic", () => {
       expect(deriveShieldsMode({ shieldsDown: false }, true)).toBe("locked");
       expect(deriveShieldsMode({}, true)).toBe("mutable_default");
     });
+
+    it("getShieldsPosture exposes canonical status wording for callers", async () => {
+      const distModulePath = path.join(
+        process.cwd(),
+        "dist",
+        "lib",
+        "shields",
+        "index.js",
+      );
+      const { getShieldsPosture } = await import(distModulePath);
+      const stateDir = path.join(tmpDir, ".nemoclaw", "state");
+      fs.mkdirSync(stateDir, { recursive: true });
+
+      expect(getShieldsPosture("openclaw", false)).toEqual(
+        expect.objectContaining({
+          mode: "mutable_default",
+          detail: "not configured (default mutable state)",
+          statusText: "NOT CONFIGURED (default mutable state)",
+        }),
+      );
+
+      fs.writeFileSync(
+        path.join(stateDir, "shields-openclaw.json"),
+        JSON.stringify({ shieldsDown: false, updatedAt: "2026-05-20T00:00:00Z" }),
+        { mode: 0o600 },
+      );
+      expect(getShieldsPosture("openclaw", false)).toEqual(
+        expect.objectContaining({
+          mode: "locked",
+          detail: "up (lockdown active)",
+          statusText: "UP (lockdown active)",
+        }),
+      );
+
+      fs.writeFileSync(
+        path.join(stateDir, "shields-openclaw.json"),
+        JSON.stringify({
+          shieldsDown: true,
+          shieldsDownAt: "2026-05-20T00:00:00Z",
+          shieldsDownTimeout: 300,
+          updatedAt: "2026-05-20T00:00:00Z",
+        }),
+        { mode: 0o600 },
+      );
+      expect(getShieldsPosture("openclaw", false)).toEqual(
+        expect.objectContaining({
+          mode: "temporarily_unlocked",
+          detail: "down (temporarily unlocked)",
+          statusText: "DOWN (temporarily unlocked)",
+        }),
+      );
+    });
   });
 
   describe("NC-3112: status self-heals stale expired auto-restore markers", () => {

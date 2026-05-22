@@ -807,6 +807,33 @@ export async function rebuildSandbox(
         `  ${D}Post-upgrade structure check skipped (doctor returned ${doctorResult?.status ?? "null"})${R}`,
       );
     }
+
+    // doctor --fix may rewrite openclaw.json after the image build seeded the
+    // WeChat account/channel block. Re-run the image-bundled seed helper when
+    // present so channels.openclaw-weixin remains paired with the preserved
+    // openclaw-weixin extension after rebuild restore.
+    log("Reapplying WeChat account seed after post-upgrade structure repair");
+    const seedWechatCommand = [
+      "if [ -f /usr/local/lib/nemoclaw/seed-wechat-accounts.py ]; then",
+      "python3 /usr/local/lib/nemoclaw/seed-wechat-accounts.py;",
+      "else",
+      "echo '[nemoclaw] seed-wechat-accounts.py not present; skipping';",
+      "fi",
+    ].join(" ");
+    const seedWechatResult = executeSandboxCommand(sandboxName, seedWechatCommand);
+    log(
+      `seed-wechat-accounts.py: exit=${seedWechatResult?.status}, stdout=${(seedWechatResult?.stdout || "").substring(0, 200)}`,
+    );
+    if (seedWechatResult && seedWechatResult.status === 0) {
+      const seedWechatStdout = seedWechatResult.stdout ?? "";
+      if (!seedWechatStdout.includes("not present; skipping")) {
+        console.log(`  ${G}\u2713${R} WeChat account seed reapplied`);
+      }
+    } else {
+      console.log(
+        `  ${D}WeChat account seed skipped (seed helper returned ${seedWechatResult?.status ?? "null"})${R}`,
+      );
+    }
   }
   // Hermes: no explicit post-restore step needed. Hermes's SessionDB._init_schema()
   // auto-migrates state.db (SQLite) on first connection via sequential ALTER TABLE
