@@ -115,6 +115,22 @@ describe("handleGatewayState", () => {
     expect(calls.startGateway).not.toHaveBeenCalled();
   });
 
+  it("reuses a lifecycle gateway when container, HTTP, and image checks are healthy", async () => {
+    const { deps, calls } = createDeps({
+      gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
+    });
+
+    await handleGatewayState(baseOptions(deps, "healthy"));
+
+    expect(calls.verifyContainer).toHaveBeenCalledWith("nemoclaw");
+    expect(calls.waitHttp).toHaveBeenCalledOnce();
+    expect(calls.imageDrift).toHaveBeenCalledOnce();
+    expect(calls.stopDashboardForward).not.toHaveBeenCalled();
+    expect(calls.destroyForReuse).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.complete).toHaveBeenCalledWith("gateway");
+  });
+
   it("cleans stale lifecycle metadata when the gateway container is missing", async () => {
     const { deps, calls } = createDeps({
       gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
