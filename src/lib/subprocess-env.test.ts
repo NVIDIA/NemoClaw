@@ -34,6 +34,27 @@ describe("withLocalNoProxy", () => {
     expect(env.no_proxy).toBe(LOCAL_NO_PROXY);
   });
 
+  it("adds local host-bound names when lowercase https_proxy is set", () => {
+    const env: Record<string, string> = { https_proxy: "http://proxy:8888" };
+    withLocalNoProxy(env);
+    expect(env.NO_PROXY).toBe(LOCAL_NO_PROXY);
+    expect(env.no_proxy).toBe(LOCAL_NO_PROXY);
+  });
+
+  it("strips empty segments from a NO_PROXY with doubled or trailing commas", () => {
+    const env: Record<string, string> = {
+      HTTP_PROXY: "http://proxy:8888",
+      NO_PROXY: "corp.internal,,other.com,",
+      no_proxy: "corp.internal,,other.com,",
+    };
+    withLocalNoProxy(env);
+    expect(env.NO_PROXY).not.toContain(",,");
+    expect(env.NO_PROXY).not.toMatch(/^,|,$/);
+    expect(env.NO_PROXY).toContain("corp.internal");
+    expect(env.NO_PROXY).toContain("other.com");
+    expect(env.NO_PROXY).toContain("localhost");
+  });
+
   it("appends only the missing local entries when NO_PROXY already has localhost", () => {
     const env: Record<string, string> = {
       HTTP_PROXY: "http://proxy:8888",
