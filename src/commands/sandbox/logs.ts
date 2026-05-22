@@ -2,35 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Args, Flags } from "@oclif/core";
+import { showSandboxLogs } from "../../lib/actions/sandbox/logs";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 import { logsSinceDurationFlag } from "../../lib/cli/duration-flags";
-import type { SandboxLogsOptions } from "../../lib/domain/sandbox/log-options";
 import { DEFAULT_SANDBOX_LOG_LINES } from "../../lib/domain/sandbox/log-options";
-type SandboxLogsRuntimeBridge = {
-  sandboxLogs: (sandboxName: string, options: SandboxLogsOptions) => void;
-};
 
 const DEFAULT_SANDBOX_LOG_LINE_COUNT = Number(DEFAULT_SANDBOX_LOG_LINES);
-
-let runtimeBridgeFactory = (): SandboxLogsRuntimeBridge => ({
-  sandboxLogs: (sandboxName, options) => {
-    const { showSandboxLogs } = require("../../lib/actions/sandbox/logs") as {
-      showSandboxLogs: (sandboxName: string, options: SandboxLogsOptions) => void;
-    };
-    showSandboxLogs(sandboxName, options);
-  },
-});
-
-export function setSandboxLogsRuntimeBridgeFactoryForTest(
-  factory: () => SandboxLogsRuntimeBridge,
-): void {
-  runtimeBridgeFactory = factory;
-}
-
-function getRuntimeBridge() {
-  return runtimeBridgeFactory();
-}
 
 export default class SandboxLogsCommand extends NemoClawCommand {
   static id = "sandbox:logs";
@@ -66,7 +44,7 @@ export default class SandboxLogsCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SandboxLogsCommand);
-    getRuntimeBridge().sandboxLogs(args.sandboxName, {
+    showSandboxLogs(args.sandboxName, {
       follow: flags.follow === true,
       lines: String(flags.tail),
       since: flags.since ?? null,

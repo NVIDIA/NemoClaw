@@ -15,6 +15,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import yaml from "js-yaml";
 import { loadMetadataFromDir } from "../runtime/resolver/load.ts";
 import { resolveScenario } from "../runtime/resolver/plan.ts";
 
@@ -41,6 +42,20 @@ function planOnly(scenarioId: string): { stdout: string; stderr: string; status:
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 }
+
+describe("Issue 3812: inference/provider suite families", () => {
+  it("test_should_route_inference_suite_families_to_domain_specific_steps", () => {
+    const suites = yaml.load(fs.readFileSync(path.join(E2E_DIR, "validation_suites/suites.yaml"), "utf8")) as {
+      suites: Record<string, { steps?: { script?: string }[] }>;
+    };
+    for (const family of ["inference-routing", "inference-switch", "kimi-compatibility", "ollama-auth-proxy", "model-router"]) {
+      const scripts = suites.suites[family]?.steps?.map((step) => step.script ?? "") ?? [];
+      expect(scripts.length, family).toBeGreaterThan(0);
+      expect(scripts.every((script) => script.startsWith("inference/")), family).toBe(true);
+      expect(scripts.some((script) => !script.startsWith("inference/cloud/")), family).toBe(true);
+    }
+  });
+});
 
 describe("Phase 9: additional scenario families - metadata", () => {
   it("resolver should resolve all new scenarios", () => {
@@ -143,8 +158,20 @@ describe("Phase 9: negative preflight", () => {
     const p = plan as {
       dimensions: { runtime: { profile: { container_daemon?: string } } };
       expected_state: { id: string };
+      expected_failure?: {
+        phase?: string;
+        error_class?: string;
+        message_pattern?: string;
+        forbidden_side_effects?: string[];
+      };
     };
     expect(p.dimensions.runtime.profile.container_daemon).toBe("missing");
     expect(p.expected_state.id).toBe("preflight-failure-no-sandbox");
+    expect(p.expected_failure?.phase).toBe("preflight");
+    expect(p.expected_failure?.error_class).toBe("docker-missing");
+    expect(p.expected_failure?.message_pattern).toBeTypeOf("string");
+    expect(p.expected_failure?.forbidden_side_effects).toEqual(
+      expect.arrayContaining(["sandbox-created", "gateway-started", "credentials-written"]),
+    );
   });
 });

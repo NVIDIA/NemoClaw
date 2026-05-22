@@ -219,8 +219,13 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       /* non-fatal */
     }
 
-    if (shields.isShieldsDown(sandboxName, true)) {
-      console.log("    Permissions: shields down (check `shields status` for details)");
+    const shieldsPosture = shields.getShieldsPosture(sandboxName, true);
+    if (shieldsPosture.mode !== "locked") {
+      const detail =
+        shieldsPosture.mode === "mutable_default"
+          ? shieldsPosture.detail
+          : `${shieldsPosture.detail} (check \`shields status\` for details)`;
+      console.log(`    Permissions: ${detail}`);
     }
 
     // Agent version check

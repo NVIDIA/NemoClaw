@@ -9,7 +9,7 @@
 //
 // Credentials are stripped from backups using shared credential-filter.ts.
 
-import { spawnSync } from "child_process";
+import { createHash } from "node:crypto";
 import {
   chmodSync,
   existsSync,
@@ -21,17 +21,17 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "child_process";
 
-import * as registry from "./registry.js";
-import { loadAgent } from "../agent/defs.js";
-import type { AgentStateFile } from "../agent/defs.js";
-import { resolveOpenshell } from "../adapters/openshell/resolve.js";
 import { captureOpenshellCommand } from "../adapters/openshell/client.js";
-import { sanitizeConfigFile, isSensitiveFile } from "../security/credential-filter.js";
+import { resolveOpenshell } from "../adapters/openshell/resolve.js";
+import type { AgentStateFile } from "../agent/defs.js";
+import { loadAgent } from "../agent/defs.js";
 import { shellQuote } from "../runner.js";
+import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
+import * as registry from "./registry.js";
 
 const HOME_DIR = path.resolve(process.env.HOME || os.homedir());
 const REBUILD_BACKUPS_DIR = path.join(HOME_DIR, ".nemoclaw", "rebuild-backups");
@@ -318,8 +318,7 @@ function auditExtractedSymlinks(dirPath: string, allowedRoots: string[]): string
           // path with a tampered target falls through to the normal
           // containment check.
           const relFromDir = path.relative(dirPath, fullPath).split(path.sep).join("/");
-          const expectedTarget = AUDIT_SYMLINK_WHITELIST.get(relFromDir);
-          if (expectedTarget !== undefined && expectedTarget === linkTarget) {
+          if (isAllowedStateSymlink(relFromDir, linkTarget)) {
             continue;
           }
 
@@ -565,17 +564,12 @@ function sanitizeBackupDirectory(dirPath: string): void {
 
 const _verbose = () => process.env.NEMOCLAW_REBUILD_VERBOSE === "1";
 
-// Symlinks baked into the base image at build time (Dockerfile.base) by
-// `openclaw plugins install`. npm creates these as part of its standard
-// install layout — peer-dependency links and .bin shortcuts — and the
-// pre-backup audit would otherwise treat them as agent-planted exfil
-// attempts. Source paths are relative to the agent state-dir root (e.g.
-// for OpenClaw, /sandbox/.openclaw); targets are matched exactly against
-// the value of `readlink(source)`. Source-only matching is unsafe: a
-// compromised agent could repoint one of these to /etc/passwd and the
-// audit would still let it through. Keep in lockstep with
-// WECHAT_PLUGIN_VERSION in Dockerfile.base — bump together if the plugin
-// install layout changes.
+// Exact symlinks baked into the base image at build time (Dockerfile.base) by
+// `openclaw plugins install`. Source paths are relative to the agent state-dir
+// root (e.g. for OpenClaw, /sandbox/.openclaw); targets are matched exactly
+// against the value of `readlink(source)`. Source-only matching is unsafe: a
+// compromised agent could repoint one of these to /etc/passwd and the audit
+// would still let it through.
 const AUDIT_SYMLINK_WHITELIST: ReadonlyMap<string, string> = new Map([
   [
     "extensions/openclaw-weixin/node_modules/.bin/qrcode-terminal",
@@ -586,6 +580,33 @@ const AUDIT_SYMLINK_WHITELIST: ReadonlyMap<string, string> = new Map([
     "/usr/local/lib/node_modules/openclaw",
   ],
 ]);
+
+const EXTENSION_NPM_BIN_RE = /^extensions\/[^/]+\/node_modules\/\.bin\/[^/]+$/;
+
+function isAllowedExtensionNpmBinSymlink(relPath: string, linkTarget: string): boolean {
+  const normalizedRelPath = relPath.split(path.sep).join("/");
+  if (!EXTENSION_NPM_BIN_RE.test(normalizedRelPath)) return false;
+  if (linkTarget.length === 0 || path.posix.isAbsolute(linkTarget)) return false;
+
+  const binDir = path.posix.dirname(normalizedRelPath);
+  const nodeModulesDir = path.posix.dirname(binDir);
+  const resolvedTarget = path.posix.normalize(path.posix.join(binDir, linkTarget));
+  const targetWithinNodeModules = path.posix.relative(nodeModulesDir, resolvedTarget);
+
+  return (
+    targetWithinNodeModules.length > 0 &&
+    !targetWithinNodeModules.startsWith("../") &&
+    !path.posix.isAbsolute(targetWithinNodeModules) &&
+    !targetWithinNodeModules.startsWith(".bin/")
+  );
+}
+
+function isAllowedStateSymlink(relPath: string, linkTarget: string): boolean {
+  const exactTarget = AUDIT_SYMLINK_WHITELIST.get(relPath.split(path.sep).join("/"));
+  if (exactTarget !== undefined) return exactTarget === linkTarget;
+  return isAllowedExtensionNpmBinSymlink(relPath, linkTarget);
+}
+
 function _log(msg: string): void {
   if (_verbose()) console.error(`  [sandbox-state ${new Date().toISOString()}] ${msg}`);
 }
@@ -1059,9 +1080,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
             const relPath = absPath.startsWith(dirPrefix)
               ? absPath.slice(dirPrefix.length)
               : absPath;
-            const expectedTarget =
-              type === "l" ? AUDIT_SYMLINK_WHITELIST.get(relPath) : undefined;
-            if (expectedTarget !== undefined && expectedTarget === linkTarget) {
+            if (type === "l" && isAllowedStateSymlink(relPath, linkTarget)) {
               whitelisted.push(entry);
             } else {
               violations.push(entry);

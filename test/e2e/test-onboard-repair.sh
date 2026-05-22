@@ -162,22 +162,19 @@ pass "Exported NVIDIA_API_KEY for the repair run (host writes nothing to disk; O
 # Phase 2: Create interrupted resumable state
 # ══════════════════════════════════════════════════════════════════
 section "Phase 2: Create interrupted state"
-info "Running onboard with POLICY_MODE=custom but no POLICY_PRESETS to force a policy-step failure..."
+info "Running onboard with E2E failure injection at the policy step..."
 
-# Use NEMOCLAW_POLICY_MODE=custom without NEMOCLAW_POLICY_PRESETS — this is a
-# real validation path that exits 1 at the policy step after the sandbox is
-# already created, leaving resumable session state.
-#
-# Note: the previous approach (NEMOCLAW_POLICY_MODE=invalid) stopped working
-# after PR #2434 changed invalid modes from process.exit(1) to a graceful
-# fallback with console.warn(). See #2573 for details.
+# Force a deterministic interruption after the sandbox and OpenClaw setup
+# complete, but before policy setup completes. This keeps repair coverage
+# independent of product validation behavior such as policy-mode parsing.
 FIRST_LOG="$(mktemp)"
 NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_RECREATE_SANDBOX=1 \
-  NEMOCLAW_POLICY_MODE=custom \
-  NEMOCLAW_POLICY_PRESETS="" \
+  NEMOCLAW_POLICY_MODE=suggested \
+  NEMOCLAW_E2E_FAILURE_INJECTION=1 \
+  NEMOCLAW_E2E_FORCE_FAIL_AT_STEP=policies \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$FIRST_LOG" 2>&1
 first_exit=$?
 first_output="$(cat "$FIRST_LOG")"
@@ -197,7 +194,7 @@ else
   fail "Onboard session file missing after interrupted run"
 fi
 
-if echo "$first_output" | grep -q "NEMOCLAW_POLICY_PRESETS is required when NEMOCLAW_POLICY_MODE=custom"; then
+if echo "$first_output" | grep -q "\[e2e\] Forced onboarding failure at step 'policies'."; then
   pass "First run failed at policy setup as intended"
 else
   fail "First run did not fail at the expected policy step"
@@ -288,8 +285,9 @@ NEMOCLAW_NON_INTERACTIVE=1 \
   NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
   NEMOCLAW_SANDBOX_NAME="$SANDBOX_NAME" \
   NEMOCLAW_RECREATE_SANDBOX=1 \
-  NEMOCLAW_POLICY_MODE=custom \
-  NEMOCLAW_POLICY_PRESETS="" \
+  NEMOCLAW_POLICY_MODE=suggested \
+  NEMOCLAW_E2E_FAILURE_INJECTION=1 \
+  NEMOCLAW_E2E_FORCE_FAIL_AT_STEP=policies \
   node "$REPO/bin/nemoclaw.js" onboard --non-interactive >"$REINJECT_LOG" 2>&1 || true
 rm -f "$REINJECT_LOG"
 pass "Re-created interrupted session for conflict tests"

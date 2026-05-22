@@ -69,6 +69,44 @@ except Exception as e:
 "
 }
 
+parse_openclaw_agent_text() {
+  python3 -c '
+import json
+import sys
+
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+
+parts = []
+
+def collect(value):
+    if isinstance(value, str):
+        if value.strip():
+            parts.append(value)
+        return
+    if isinstance(value, list):
+        for item in value:
+            collect(item)
+        return
+    if not isinstance(value, dict):
+        return
+
+    for key in ("text", "content", "reasoning_content", "message"):
+        found = value.get(key)
+        if isinstance(found, str) and found.strip():
+            parts.append(found)
+
+    for key in ("payloads", "payload", "messages", "choices", "result", "response", "data", "output"):
+        if key in value:
+            collect(value[key])
+
+collect(doc.get("result", doc))
+print("\n".join(parts))
+'
+}
+
 # Determine repo root
 if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
   REPO="/workspace"
@@ -394,24 +432,12 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
 fi
 rm -f "$ssh_config"
 
-agent_reply=$(echo "$agent_response" | python3 -c "
-import json, sys
-try:
-    doc = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-result = doc.get('result') or {}
-parts = []
-for p in result.get('payloads') or []:
-    if isinstance(p, dict) and isinstance(p.get('text'), str):
-        parts.append(p['text'])
-print('\n'.join(parts))
-" 2>/dev/null) || true
+agent_reply=$(printf '%s' "$agent_response" | parse_openclaw_agent_text 2>/dev/null) || true
 
 if grep -qE "(^|[^0-9])42([^0-9]|$)" <<<"$agent_reply"; then
   pass "[LIVE] openclaw agent: model answered 6×7=42 through openclaw → inference.local"
 else
-  fail "[LIVE] openclaw agent: expected '42' in agent reply, got: ${agent_reply:0:200}"
+  fail "[LIVE] openclaw agent: expected '42' in parsed agent reply, got: ${agent_reply:0:200}; raw JSON: ${agent_response:0:500}"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -432,6 +458,15 @@ if [ -n "$logs_output" ]; then
   pass "nemoclaw logs: produced output ($(echo "$logs_output" | wc -l | tr -d ' ') lines)"
 else
   fail "nemoclaw logs: no output"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Optional Phase 5b: Security posture regression checks
+# ══════════════════════════════════════════════════════════════════
+if [ "${NEMOCLAW_E2E_SECURITY_POSTURE:-}" = "1" ]; then
+  # shellcheck source=test/e2e/lib/security-posture-assertions.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/lib/security-posture-assertions.sh"
+  security_posture_assertions_run "$SANDBOX_NAME" "openclaw"
 fi
 
 # ══════════════════════════════════════════════════════════════════

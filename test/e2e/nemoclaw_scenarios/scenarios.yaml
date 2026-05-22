@@ -1,3 +1,6 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
 platforms:
   ubuntu-local:
     os: ubuntu
@@ -57,6 +60,27 @@ onboarding:
     agent: openclaw
     provider: nvidia
     inference_route: inference-local
+  cloud-openclaw-custom-policies:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    model: nvidia/nemotron-3-super-120b-a12b
+    policy_presets:
+    - npm
+    - pypi
+  cloud-openclaw-invalid-nvidia-key:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    invalid_api_key: not-a-nvidia-key
+  cloud-openclaw-gateway-port-conflict:
+    path: cloud
+    agent: openclaw
+    provider: nvidia
+    inference_route: inference-local
+    gateway_port: 18080
   cloud-hermes: &id002
     path: cloud
     agent: hermes
@@ -85,6 +109,7 @@ setup_scenarios:
     - smoke
     - inference
     - credentials
+    - baseline-onboarding
   ubuntu-repo-cloud-hermes:
     alias_for_plan: ubuntu-repo-docker__cloud-nvidia-hermes
     dimensions:
@@ -97,6 +122,7 @@ setup_scenarios:
     - smoke
     - inference
     - hermes-specific
+    - baseline-onboarding
   gpu-repo-local-ollama-openclaw:
     alias_for_plan: gpu-repo-docker-cdi__local-ollama-openclaw
     dimensions:
@@ -156,6 +182,7 @@ setup_scenarios:
     suites:
     - smoke
     - inference
+    - baseline-onboarding
     runner_requirements:
     - ubuntu-latest
     - brev-api-token
@@ -172,6 +199,35 @@ setup_scenarios:
       runtime: docker-missing
       onboarding: cloud-openclaw
     expected_state: preflight-failure-no-sandbox
+    suites: []
+  ubuntu-repo-cloud-openclaw-custom-policies:
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw-custom-policies
+    expected_state: cloud-openclaw-custom-policies-ready
+    suites:
+    - smoke
+    - inference
+    - credentials
+    - onboarding-state
+    - baseline-onboarding
+  ubuntu-invalid-nvidia-key-negative:
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw-invalid-nvidia-key
+    expected_state: onboarding-failure-invalid-nvidia-key
+    suites: []
+  ubuntu-gateway-port-conflict-negative:
+    dimensions:
+      platform: ubuntu-local
+      install: repo-current
+      runtime: docker-running
+      onboarding: cloud-openclaw-gateway-port-conflict
+    expected_state: onboarding-failure-gateway-port-conflict
     suites: []
 base_scenarios:
   ubuntu-repo-docker:
@@ -405,6 +461,7 @@ test_plans:
     - preflight-passed
     suites:
     - smoke
+    - messaging-telegram
   ubuntu-repo-docker__cloud-nvidia-openclaw-discord:
     base: ubuntu-repo-docker
     onboarding: cloud-nvidia-openclaw-discord
@@ -414,6 +471,7 @@ test_plans:
     - preflight-passed
     suites:
     - smoke
+    - messaging-discord
   ubuntu-repo-docker__cloud-nvidia-openclaw-slack:
     base: ubuntu-repo-docker
     onboarding: cloud-nvidia-openclaw-slack
@@ -423,6 +481,7 @@ test_plans:
     - preflight-passed
     suites:
     - smoke
+    - messaging-slack
   ubuntu-repo-docker__cloud-nvidia-hermes-discord:
     base: ubuntu-repo-docker
     onboarding: cloud-nvidia-hermes-discord
@@ -432,6 +491,7 @@ test_plans:
     - preflight-passed
     suites:
     - smoke
+    - messaging-discord
   ubuntu-repo-docker__cloud-nvidia-hermes-slack:
     base: ubuntu-repo-docker
     onboarding: cloud-nvidia-hermes-slack
@@ -441,6 +501,7 @@ test_plans:
     - preflight-passed
     suites:
     - smoke
+    - messaging-slack
   ubuntu-repo-docker__cloud-nvidia-openclaw-resume-after-interrupt:
     base: ubuntu-repo-docker
     onboarding: cloud-nvidia-openclaw-resume-after-interrupt
@@ -486,6 +547,7 @@ test_plans:
     - preflight-passed
     suites:
     - smoke
+    - messaging-token-rotation
 onboarding_assertions:
   base-installed:
     stage: base
