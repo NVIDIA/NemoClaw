@@ -9292,6 +9292,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     console.log("  ===================");
 
     const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
+    const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
     const preflightResult = await handlePreflightState({
       resume,
       session,
@@ -9330,7 +9331,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const gpu = preflightResult.gpu ?? null;
     if (gpuPassthrough) {
       note(
-        resumeHasResolvedGpuIntent && session?.gpuPassthrough === true
+        resumeHasResolvedGpuIntent && recordedGpuPassthroughBeforePreflight
           ? "  [resume] Continuing GPU passthrough from the saved onboarding session."
           : requestedGpuPassthrough || sandboxGpuConfig.mode === "1"
             ? "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation."
@@ -9348,13 +9349,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       } catch {
         /* lspci not available — skip hint */
       }
-    }
-    // Persist GPU intent in the session so resume can restore it.
-    if (session && session.gpuPassthrough !== gpuPassthrough) {
-      session = onboardSession.updateSession((current: Session) => {
-        current.gpuPassthrough = gpuPassthrough;
-        return current;
-      });
     }
     dockerGpuLocalInference.configureLocalInferenceForDockerGpuHostNetwork(sandboxGpuConfig, {
       dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
