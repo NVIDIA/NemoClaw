@@ -47,7 +47,14 @@ describe("agent definitions", () => {
       envFile: null,
       format: "json",
     });
-    expect(openclaw.messagingPlatforms).toEqual(["telegram", "discord", "slack", "wechat"]);
+    expect(openclaw.messagingPlatforms).toEqual([
+      "telegram",
+      "discord",
+      "slack",
+      "wechat",
+      "whatsapp",
+    ]);
+    expect(openclaw.inferenceProviderOptions).toEqual([]);
     expect(openclaw.legacyPaths?.startScript).toContain("scripts/nemoclaw-start.sh");
   });
 
@@ -65,7 +72,13 @@ describe("agent definitions", () => {
     });
     expect(hermes.inferenceProviderOptions).toEqual(["hermesProvider"]);
     expect(hermes.healthProbe.url).toBe("http://localhost:8642/health");
-    expect(hermes.messagingPlatforms).toEqual(["telegram", "discord", "slack", "wechat"]);
+    expect(hermes.messagingPlatforms).toEqual([
+      "telegram",
+      "discord",
+      "slack",
+      "wechat",
+      "whatsapp",
+    ]);
   });
 
   it("orders OpenClaw first in interactive choices", () => {
@@ -81,6 +94,12 @@ describe("agent definitions", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("session references unknown agent 'missing-agent'"),
     );
+  });
+
+  it("treats an explicit agent flag as overriding NEMOCLAW_AGENT", () => {
+    process.env.NEMOCLAW_AGENT = "hermes";
+
+    expect(resolveAgentName({ agentFlag: "openclaw" })).toBe("openclaw");
   });
 
   it("rejects non-object manifest payloads", () => {

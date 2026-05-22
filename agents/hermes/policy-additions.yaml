@@ -37,6 +37,24 @@ process:
   run_as_group: sandbox
 
 network_policies:
+  managed_inference:
+    name: managed_inference
+    endpoints:
+      - host: inference.local
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/completions" }
+          - allow: { method: POST, path: "/v1/embeddings" }
+          - allow: { method: GET, path: "/v1/models" }
+          - allow: { method: GET, path: "/v1/models/**" }
+    binaries:
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
+
   nvidia:
     name: nvidia
     endpoints:
@@ -81,7 +99,10 @@ network_policies:
       - { path: /usr/bin/git }
       - { path: /opt/hermes/.venv/bin/python }
 
-  # ── Nous Research — Hermes auth, updates, portal ──────────────
+  # ── Nous Research — public metadata and agent updates ─────────
+  # Nous Portal OAuth, managed inference, and managed tool gateway auth are
+  # host-managed by NemoClaw/OpenShell. The sandbox should not reach the Portal
+  # or Nous vendor gateway hosts directly.
   nous_research:
     name: nous_research
     endpoints:
@@ -93,62 +114,6 @@ network_policies:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
       - host: hermes-agent.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: inference-api.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: portal.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: browser-use-gateway.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: modal-gateway.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: openai-audio-gateway.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: fal-queue-gateway.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: firecrawl-gateway.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: tool-gateway.nousresearch.com
         port: 443
         protocol: rest
         enforcement: enforce
@@ -181,7 +146,11 @@ network_policies:
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
-  # ── Messaging — pre-allowed for agent notifications ───────────
+  # ── Messaging policy templates ─────────────────────────────────
+  # These entries are agent-specific channel templates. During sandbox
+  # creation, NemoClaw filters out entries for messaging channels that were not
+  # selected, so a Discord-only Hermes sandbox does not retain Telegram, Slack,
+  # or WeChat egress.
   telegram:
     name: telegram
     endpoints:

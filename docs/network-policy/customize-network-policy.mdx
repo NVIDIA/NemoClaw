@@ -1,8 +1,8 @@
 ---
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-title: "Customize the NemoClaw Sandbox Network Policy"
-sidebar-title: "Customize Network Policy"
+title: "Customize the Sandbox Network Policy"
+sidebar-title: "Customize the Network Policy"
 description: "Add, remove, or modify allowed endpoints in the sandbox policy."
 description-agent: "Adds, removes, or modifies allowed endpoints in the sandbox policy. Use when customizing network policy, changing egress rules, or configuring sandbox endpoint access."
 keywords: ["customize nemoclaw network policy", "sandbox egress policy configuration"]
@@ -41,17 +41,10 @@ Static changes modify the baseline policy file and take effect after the next sa
 
 Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpoint entries.
 
-If you only need one of the built-in presets, use `nemoclaw <name> policy-add` instead of editing YAML by hand:
+If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into this file and re-run `nemoclaw onboard`.
 
-```console
-$ nemoclaw my-assistant policy-add
-```
-
-To remove a previously applied preset, use `nemoclaw <name> policy-remove`:
-
-```console
-$ nemoclaw my-assistant policy-remove
-```
+If you only need to apply a preset to a running sandbox, use `nemoclaw <name> policy-add` under [Dynamic Changes](#dynamic-changes).
+That updates the live policy and does not edit `openclaw-sandbox.yaml`.
 
 Use a manual YAML edit when you need to allow custom hosts that are not covered by a preset, such as an internal API or a weather service.
 
@@ -190,6 +183,7 @@ Available presets:
 | `pypi` | Python Package Index |
 | `slack` | Slack API and webhooks |
 | `telegram` | Telegram Bot API |
+| `whatsapp` | WhatsApp Web messaging |
 
 To apply a preset to a running sandbox:
 

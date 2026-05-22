@@ -14,7 +14,7 @@ const {
       enabledChannels?: string[] | null;
       knownPresetNames: string[];
       provider?: string | null;
-      webSearchConfig?: { provider?: string | null } | null;
+      webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
       webSearchSupported?: boolean | null;
     },
   ) => string[];
@@ -63,6 +63,11 @@ describe("onboard policy preset suggestions", () => {
         "slack",
         "discord",
       ]);
+      expect(getSuggestedPolicyPresets({ enabledChannels: ["whatsapp"] })).toEqual([
+        "pypi",
+        "npm",
+        "whatsapp",
+      ]);
     } finally {
       if (originalTelegramBotToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
       else process.env.TELEGRAM_BOT_TOKEN = originalTelegramBotToken;
@@ -70,6 +75,18 @@ describe("onboard policy preset suggestions", () => {
       else process.env.DISCORD_BOT_TOKEN = originalDiscordBotToken;
       if (originalSlackBotToken === undefined) delete process.env.SLACK_BOT_TOKEN;
       else process.env.SLACK_BOT_TOKEN = originalSlackBotToken;
+    }
+  });
+
+  it("never auto-detects WhatsApp because the channel has no host env key", () => {
+    const originalTelegramBotToken = process.env.TELEGRAM_BOT_TOKEN;
+    delete process.env.TELEGRAM_BOT_TOKEN;
+    try {
+      expect(getSuggestedPolicyPresets()).not.toContain("whatsapp");
+      expect(getSuggestedPolicyPresets({ provider: null })).not.toContain("whatsapp");
+    } finally {
+      if (originalTelegramBotToken === undefined) delete process.env.TELEGRAM_BOT_TOKEN;
+      else process.env.TELEGRAM_BOT_TOKEN = originalTelegramBotToken;
     }
   });
 
@@ -90,6 +107,16 @@ describe("onboard policy preset suggestions", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: [],
       knownPresetNames: known,
+    });
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+  });
+
+  it("adds Brave to balanced tier defaults only when web search is configured", () => {
+    const suggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: known,
+      webSearchConfig: { fetchEnabled: true },
+      webSearchSupported: true,
     });
     expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
   });
@@ -130,7 +157,7 @@ describe("onboard policy preset suggestions", () => {
     });
     expect(suggestions).toContain("telegram");
     expect(suggestions).toContain("npm");
-    expect(suggestions).toContain("brave");
+    expect(suggestions).not.toContain("brave");
 
     const multi = computeSetupPresetSuggestions("balanced", {
       enabledChannels: ["discord", "slack"],

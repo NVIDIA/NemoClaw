@@ -17,6 +17,39 @@ Verify the following before you begin:
 - Windows 10 (build 19041 or later) or Windows 11.
 - Hardware requirements are the same as the Quickstart (use the `nemoclaw-user-get-started` skill).
 
+## Option: Use the Bootstrap Script
+
+Open Windows PowerShell on the Windows host and run the bootstrap script:
+
+```console
+$ Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/NVIDIA/NemoClaw/main/scripts/bootstrap-windows.ps1' -OutFile "$env:TEMP\bootstrap-windows.ps1"; powershell.exe -ExecutionPolicy Bypass -File "$env:TEMP\bootstrap-windows.ps1"
+```
+
+The command downloads the script to a temporary file before running it.
+`-ExecutionPolicy Bypass` applies only to that PowerShell process and avoids local policy blocking the downloaded script.
+Run it from Windows, not from inside WSL.
+The script requests Administrator privileges when needed, enables the required WSL 2 Windows features, installs or opens Ubuntu, and installs and starts Docker Desktop.
+If Ubuntu is already registered, the script confirms it uses WSL 2, converts it from WSL 1 when needed, and verifies Docker is reachable from WSL.
+If Windows requires a reboot after enabling WSL features, the script prompts for the reboot and registers a one-time continuation for the next sign-in.
+If Docker Desktop shows first-run prompts, complete them and return to the PowerShell window.
+
+For advanced options, download the script first and run `Get-Help "$env:TEMP\bootstrap-windows.ps1" -Detailed`.
+Useful parameters include `-DistroName`, `-InstallerUrl`, `-InstallerArgs`, and `-InstallDockerDesktop`.
+
+The bootstrap script does not install NemoClaw itself.
+When Windows preparation is complete, it opens Ubuntu and prints the standard installer command to run inside Ubuntu:
+
+```console
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+If the bootstrap script reports that Docker is not reachable from Ubuntu, open Docker Desktop Settings and confirm that WSL integration is enabled for Ubuntu (Settings > Resources > WSL integration), then rerun the script.
+
+If the bootstrap script reports that `winget.exe` is not available (common on Windows Server or stripped Windows installs), install **App Installer** from the Microsoft Store (which provides `winget`), or download and install Docker Desktop manually from [docker.com](https://www.docker.com/products/docker-desktop/).
+Rerun the bootstrap script after Docker Desktop is installed; the script skips the install step once it detects Docker Desktop is present.
+
+The manual steps below describe the same Windows preparation pieces and are useful when you need to verify or repair WSL, Ubuntu, or Docker Desktop by hand.
+
 ## Enable WSL 2
 
 Open an elevated PowerShell (Run as Administrator):
@@ -88,6 +121,7 @@ You can also start it yourself beforehand with `ollama serve`.
 
 You can also use Ollama for Windows.
 During onboarding, NemoClaw can use an already-running Windows-host daemon, start or restart an installed daemon, or install Ollama on the Windows host.
+If the installer offers express install on WSL, accepting it selects this Windows-host Ollama path automatically.
 When Ollama runs on the Windows host, NemoClaw detects it from WSL through `host.docker.internal` and pulls missing models through the Ollama HTTP API.
 Do not run both the Windows and WSL Ollama instances on port `11434` at the same time.
 Use one instance, or move one of them to a different port before running `nemoclaw onboard`.
@@ -95,7 +129,8 @@ Use one instance, or move one of them to a different port before running `nemocl
 ## Next Step
 
 Your Windows environment is ready.
-Open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with the Quickstart (use the `nemoclaw-user-get-started` skill) to install NemoClaw and launch your first sandbox.
+If you used the bootstrap script, follow the installer command it printed inside Ubuntu.
+If you prepared Windows manually, open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with the Quickstart (use the `nemoclaw-user-get-started` skill) to install NemoClaw and launch your first sandbox.
 
 All NemoClaw commands run inside WSL, not in PowerShell.
 

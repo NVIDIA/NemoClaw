@@ -14,6 +14,7 @@ runs:
 
         image="ghcr.io/nvidia/nemoclaw/sandbox-base"
         min_glibc="2.39"
+        base_inputs=(Dockerfile.base nemoclaw-blueprint/blueprint.yaml)
 
         glibc_version() {
           docker run --rm --entrypoint /usr/bin/ldd "$1" --version 2>/dev/null \
@@ -40,11 +41,37 @@ runs:
           return 0
         }
 
+        base_inputs_changed() {
+          if ! git diff --quiet -- "${base_inputs[@]}"; then
+            return 0
+          fi
+
+          local base_ref="${GITHUB_BASE_REF:-main}"
+          git fetch --no-tags --depth=1 origin \
+            "+refs/heads/${base_ref}:refs/remotes/origin/${base_ref}" >/dev/null 2>&1 || true
+          if ! git rev-parse --verify "origin/${base_ref}^{commit}" >/dev/null 2>&1; then
+            return 1
+          fi
+
+          ! git diff --quiet "origin/${base_ref}" HEAD -- "${base_inputs[@]}"
+        }
+
+        use_local_base() {
+          local version
+          echo "::notice::Sandbox base image inputs changed in this checkout; building Dockerfile.base locally"
+          docker build -f Dockerfile.base -t nemoclaw-sandbox-base-local .
+          version="$(glibc_version nemoclaw-sandbox-base-local || true)"
+          if ! glibc_ok "$version"; then
+            echo "::error::Local sandbox base image has glibc ${version:-unknown}; need >= ${min_glibc}"
+            exit 1
+          fi
+          echo "BASE_IMAGE=nemoclaw-sandbox-base-local" >> "$GITHUB_ENV"
+        }
+
         candidates=()
         if [[ -n "${GITHUB_SHA:-}" ]]; then
           candidates+=("${image}:${GITHUB_SHA:0:8}" "${image}:${GITHUB_SHA:0:7}")
         fi
-        candidates+=("${image}:latest")
 
         for ref in "${candidates[@]}"; do
           if try_image "$ref"; then
@@ -52,11 +79,14 @@ runs:
           fi
         done
 
-        echo "::warning::No compatible GHCR sandbox base image found, building locally"
-        docker build -f Dockerfile.base -t nemoclaw-sandbox-base-local .
-        version="$(glibc_version nemoclaw-sandbox-base-local || true)"
-        if ! glibc_ok "$version"; then
-          echo "::error::Local sandbox base image has glibc ${version:-unknown}; need >= ${min_glibc}"
-          exit 1
+        if base_inputs_changed; then
+          use_local_base
+          exit 0
         fi
-        echo "BASE_IMAGE=nemoclaw-sandbox-base-local" >> "$GITHUB_ENV"
+
+        if try_image "${image}:latest"; then
+          exit 0
+        fi
+
+        echo "::warning::No compatible GHCR sandbox base image found, building locally"
+        use_local_base

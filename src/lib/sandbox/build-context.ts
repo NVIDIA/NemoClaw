@@ -138,6 +138,10 @@ function stageOptimizedSandboxBuildContext(
     path.join(rootDir, "scripts", "seed-wechat-accounts.py"),
     path.join(stagedScriptsDir, "seed-wechat-accounts.py"),
   );
+  fs.copyFileSync(
+    path.join(rootDir, "scripts", "patch-openclaw-tool-catalog.js"),
+    path.join(stagedScriptsDir, "patch-openclaw-tool-catalog.js"),
+  );
 
   return { buildCtx, stagedDockerfile };
 }

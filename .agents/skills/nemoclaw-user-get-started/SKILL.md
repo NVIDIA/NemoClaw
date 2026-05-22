@@ -14,7 +14,7 @@ Follow these steps to get started with NemoClaw and your first sandboxed OpenCla
 
 Make sure you have completed reviewing the Prerequisites (use the `nemoclaw-user-get-started` skill) before following this guide.
 
-## Step 1: Install NemoClaw and Onboard OpenClaw Agent
+## Install NemoClaw and Onboard OpenClaw Agent
 
 Download and run the installer script.
 The script installs Node.js if it is not already present, then runs the guided onboard wizard to create a sandbox, configure inference, and apply security policies.
@@ -48,8 +48,10 @@ $ newgrp docker
 $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-On DGX Spark and DGX Station, an interactive installer can offer express install after you accept the third-party software notice.
-Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, applies the suggested security policy, and selects the managed local inference path for that platform.
+On DGX Spark, DGX Station, and Windows WSL, an interactive installer offers express install after you accept the third-party software notice.
+Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
+Unless `NEMOCLAW_POLICY_TIER` is set, it applies sandbox policy in `suggested` mode with the `balanced` tier by default, using the base sandbox policy plus supported package, model, web-search, and local-inference presets.
+On WSL, express install selects the Windows-host Ollama setup path.
 Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer when you want to choose a provider yourself.
 
 The installer auto-launches `nemoclaw onboard` when it can locate the freshly-installed binary.
@@ -218,12 +220,11 @@ $ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-inte
 The router listens on the host at port `4000`.
 The sandbox still calls `https://inference.local/v1`, so do not point in-sandbox tools at the host router port directly.
 
-**Experimental: Local NIM and Local vLLM:**
+**Local NIM and Local vLLM:**
 
-These options appear when `NEMOCLAW_EXPERIMENTAL=1` is set and the prerequisites are met.
-
-- **Local NVIDIA NIM** requires a NIM-capable GPU. NemoClaw pulls and manages a NIM container.
-- **Local vLLM** uses a vLLM server already running on `localhost:8000`, or installs and starts a managed vLLM container on supported DGX Spark, DGX Station, and Linux NVIDIA GPU hosts. NemoClaw auto-detects the loaded model.
+- **Local NVIDIA NIM** appears when `NEMOCLAW_EXPERIMENTAL=1` is set and the host has a NIM-capable GPU. NemoClaw pulls and manages a NIM container.
+- **Local vLLM (already running)** appears whenever NemoClaw detects a vLLM server on `localhost:8000`. No flag is required for the menu entry. NemoClaw auto-detects the loaded model.
+- **Local vLLM (managed install/start)** appears by default on DGX Spark and DGX Station. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. NemoClaw pulls and starts a vLLM container on supported hosts.
 
 For setup, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
 
@@ -258,7 +259,7 @@ After you confirm the summary, NemoClaw registers the selected provider with the
 The wizard then asks whether to enable Brave Web Search.
 If you enable it, enter a Brave Search API key when prompted.
 
-The wizard also offers messaging channels such as Telegram, Discord, and Slack.
+The wizard also offers messaging channels such as Telegram, Discord, Slack, and WhatsApp.
 Press a channel number to toggle it, then press Enter to continue.
 If you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
 For example, Slack bot tokens must start with `xoxb-`.
@@ -280,24 +281,38 @@ The example below shows the result if you picked an OpenAI-compatible endpoint d
 
 ```text
 ──────────────────────────────────────────────────
-Sandbox      my-gpt-claw (Landlock + seccomp + netns)
-Model        openai/openai/gpt-5.5 (Other OpenAI-compatible endpoint)
-──────────────────────────────────────────────────
-Run:         nemoclaw my-gpt-claw connect
-Status:      nemoclaw my-gpt-claw status
-Logs:        nemoclaw my-gpt-claw logs --follow
-──────────────────────────────────────────────────
+NemoClaw is ready
 
-To change settings later:
-  Model:       nemoclaw inference get
-               nemoclaw inference set --model <model> --provider <provider> --sandbox my-gpt-claw
+Sandbox:  my-gpt-claw
+Model:    openai/openai/gpt-5.5 (Other OpenAI-compatible endpoint)
+
+Start chatting
+
+  Browser:
+    http://127.0.0.1:18789/
+
+  Terminal:
+    nemoclaw my-gpt-claw connect
+    then run: openclaw tui
+
+Authenticated dashboard URL, if needed:
+  nemoclaw my-gpt-claw dashboard-url --quiet
+
+Manage later
+
+  Status:      nemoclaw my-gpt-claw status
+  Logs:        nemoclaw my-gpt-claw logs --follow
+  Model:       nemoclaw inference set --model <model> --provider <provider> --sandbox my-gpt-claw
+  Policies:    nemoclaw my-gpt-claw policy-add
+  Credentials: nemoclaw credentials reset <KEY> && nemoclaw onboard
+──────────────────────────────────────────────────
 
 [INFO]  === Installation complete ===
 ```
 
 If you picked a different option, the `Model` line shows that provider's model and label instead. For example, you might see `gpt-5.4 (OpenAI)`, `claude-sonnet-4-6 (Anthropic)`, `gemini-2.5-flash (Google Gemini)`, `llama3.1:8b (Local Ollama)`, `nvidia-routed (Model Router)`, or `<your-model> (Other OpenAI-compatible endpoint)`.
 
-## Step 2: Run Your First Agent Prompt
+## Run Your First Agent Prompt
 
 You can chat with the agent from the terminal or the browser.
 
@@ -307,21 +322,16 @@ The onboard wizard starts a background port forward to the sandbox dashboard, th
 The default host port is `18789`.
 If that port is already taken, NemoClaw uses the next free dashboard port, such as `18790`, and prints that port in the final URL.
 If the chosen port becomes occupied after the sandbox build starts, onboarding rolls back the newly-created sandbox and asks you to retry instead of printing an unreachable dashboard URL.
-The gateway token is redacted from displayed output; retrieve it explicitly when the browser asks for authentication.
+The install transcript does not print the gateway token.
+If the browser requires authentication, use the `dashboard-url --quiet` command to print a complete URL explicitly.
 
 ```text
-──────────────────────────────────────────────────
-OpenClaw UI (auth token redacted from displayed URLs)
-Port 18790 must be forwarded before opening these URLs.
-Dashboard: http://127.0.0.1:18790/
-Token:       nemoclaw my-gpt-claw gateway-token --quiet
-             append  #token=<token> locally if the browser asks for auth.
-──────────────────────────────────────────────────
+nemoclaw my-gpt-claw dashboard-url --quiet
 ```
 
 Open the dashboard URL in your browser.
-If the browser asks for authentication, run the printed `gateway-token --quiet` command and append `#token=<token>` locally.
-Treat the token like a password.
+If the browser asks for authentication, run `nemoclaw my-gpt-claw dashboard-url --quiet` and open the returned URL.
+Treat the authenticated URL like a password.
 
 ### Chat with the Agent from the Terminal
 
@@ -329,12 +339,8 @@ Connect to the sandbox and use the OpenClaw CLI.
 
 ```bash
 nemoclaw my-assistant connect
-```
-
-In the sandbox shell, send a single message and print the response.
-
-```bash
-openclaw agent --agent main --local -m "hello" --session-id test
+# inside the sandbox:
+openclaw tui
 ```
 
 ## References

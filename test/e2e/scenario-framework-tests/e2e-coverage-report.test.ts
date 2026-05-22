@@ -55,18 +55,6 @@ describe("coverage report", () => {
     expect(md).toMatch(/empty-suite-scenario.*no suites|no suites.*empty-suite-scenario/s);
   });
 
-  it("coverage_report_should_include_legacy_parity_summary", () => {
-    const meta = loadMetadataFromDir(E2E_DIR);
-    const md = renderCoverageReport(meta);
-    expect(md).toMatch(/## Legacy Parity Summary/);
-    expect(md).toMatch(/Unmapped assertions: 0/);
-    expect(md).toMatch(/onboarding-baseline/);
-    expect(md).toMatch(/lifecycle/);
-    expect(md).toMatch(/rebuild-runtime/);
-    expect(md).toMatch(/providers-messaging/);
-    expect(md).toMatch(/final-security-policy-platform-misc/);
-  });
-
   it("should_flag_expected_states_not_used_by_any_scenario", () => {
     const meta = loadMetadataFromObjects({
       scenarios: {

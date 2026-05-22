@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# NemoClaw Architecture: Plugin, Blueprint, and Sandbox Structure
+# Architecture Details
 
 NemoClaw combines a host CLI, a TypeScript plugin that runs with OpenClaw inside the sandbox, and a versioned YAML blueprint that defines the sandbox image, policies, and inference profiles applied through OpenShell.
 
@@ -218,6 +218,8 @@ container image. Inside the sandbox:
 - Network egress is restricted by the baseline policy in `openclaw-sandbox.yaml`.
 - Filesystem access is confined to `/sandbox` and `/tmp` for read-write access, with system paths read-only.
 - The NemoClaw plugin injects sandbox and policy context into agent turns so the agent can report policy blocks accurately.
+- The image exposes a Docker health check that probes the in-sandbox gateway, so container runtimes can report whether the agent service is responding.
+- The image includes common runtime compatibility helpers such as Homebrew and a `python` to `python3` symlink for tools that still invoke `python`.
 
 ## Inference Routing
 

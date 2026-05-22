@@ -8,7 +8,7 @@
 <!-- start-badges -->
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE)
 [![Security Policy](https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red)](https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md)
-[![Project Status](https://img.shields.io/badge/status-alpha-orange)](https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.md)
+[![Project Status](https://img.shields.io/badge/status-alpha-orange)](https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.mdx)
 [![Discord](https://img.shields.io/badge/Discord-Join-7289da)](https://discord.gg/XFpfPv9Uvx)
 <!-- end-badges -->
 
@@ -240,6 +240,23 @@ Refer to the following pages on the official documentation website for more info
 | [Sandbox Hardening](https://docs.nvidia.com/nemoclaw/latest/deployment/sandbox-hardening.html) | Container security measures, capability drops, process limits. |
 | [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) | Full NemoClaw CLI command reference. |
 | [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html) | Common issues and resolution steps. |
+
+### Build Docs Locally
+
+The public documentation site is built with Fern.
+The repo pins the Fern CLI version in `fern/fern.config.json`.
+Use the npm scripts so every docs command uses that pinned version.
+
+```bash
+npm run docs
+npm run docs:live
+```
+
+To publish a branch-based Fern preview whenever docs files change, run:
+
+```bash
+npm run docs:preview:watch
+```
 
 ## Project Structure
 

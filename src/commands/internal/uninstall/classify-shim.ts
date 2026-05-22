@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Args, Flags } from "@oclif/core";
+import { Args } from "@oclif/core";
+import { jsonFlag } from "../../../lib/cli/common-flags";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import { classifyShimPath } from "../../../lib/actions/uninstall/plan";
@@ -17,7 +18,7 @@ export default class InternalUninstallClassifyShimCommand extends NemoClawComman
     path: Args.string({ description: "Shim path to classify", required: true }),
   };
   static flags = {
-    json: Flags.boolean({ description: "Print classification as JSON" }),
+    json: jsonFlag("Print classification as JSON"),
   };
 
   public async run(): Promise<void> {

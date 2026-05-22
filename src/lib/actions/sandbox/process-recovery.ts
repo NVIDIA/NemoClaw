@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import * as agentRuntime from "../../agent/runtime";
 import { DASHBOARD_PORT } from "../../core/ports";
 import { ROOT, shellQuote } from "../../runner";
 import {
@@ -21,17 +22,17 @@ import { parseForwardList } from "../../state/sandbox-session";
 import { G, R } from "../../cli/terminal-style";
 import { sleepSeconds } from "../../core/wait";
 
-const agentRuntime = require("../../../../bin/lib/agent-runtime");
-
 export type SandboxCommandResult = {
   status: number;
   stdout: string;
   stderr: string;
 };
 
+type SandboxPortAgent = { forwardPort?: unknown } | null;
+
 type SandboxPortDeps = {
   getSandbox?: typeof registry.getSandbox;
-  getSessionAgent?: typeof agentRuntime.getSessionAgent;
+  getSessionAgent?: (sandboxName?: string) => SandboxPortAgent;
 };
 
 export type SandboxForwardListEntry = {
@@ -337,7 +338,7 @@ function ensureSandboxPortForward(sandboxName: string): boolean {
   if (forwardHealth === "occupied") return false;
 
   const port = String(resolveSandboxDashboardPort(sandboxName));
-  runOpenshell(["forward", "stop", port], { ignoreError: true });
+  runOpenshell(["forward", "stop", port], { ignoreError: true, stdio: "ignore" });
   const startResult = runOpenshell(["forward", "start", "--background", port, sandboxName], {
     ignoreError: true,
   });

@@ -484,6 +484,7 @@ exit 98
     expect(output).toMatch(/aliases: cloud -> build, nim -> nim-local/);
     expect(output).toMatch(/NEMOCLAW_POLICY_MODE/);
     expect(output).toMatch(/NEMOCLAW_NON_INTERACTIVE_SUDO_MODE=prompt/);
+    expect(output).toMatch(/NEMOCLAW_NO_EXPRESS=1/);
     expect(output).toMatch(/NEMOCLAW_SANDBOX_NAME/);
     expect(output).toMatch(/nvidia\.com\/nemoclaw\.sh/);
   });
@@ -1179,6 +1180,13 @@ exit 99
     });
 
     expect(result.status, output).toBe(0);
+    expect(output).toMatch(
+      /NVIDIA GPU passthrough uses CDI specs so Docker\/OpenShell can request nvidia\.com\/gpu devices/,
+    );
+    expect(output).toMatch(/Docker is configured for CDI, but the nvidia\.com\/gpu spec is missing/);
+    expect(output).toMatch(
+      /You may be asked for your password to authorize these host-level admin changes/,
+    );
     expect(output).toMatch(/Trying NVIDIA CDI refresh service \(auto-generates GPU CDI specs\)/);
     expect(output).toMatch(/Enabled NVIDIA CDI refresh service/);
     expect(output).not.toMatch(/falling back to direct generation/);
@@ -1203,6 +1211,8 @@ exit 1
 
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Generating missing NVIDIA CDI device spec/);
+    expect(output).toMatch(/NemoClaw will first enable NVIDIA's CDI refresh service/);
+    expect(output).toMatch(/NemoClaw does not store your password/);
     expect(output).toMatch(/Generated NVIDIA CDI device spec/);
     expect(output).toMatch(/Trying NVIDIA CDI refresh service \(auto-generates GPU CDI specs\)/);
     expect(output).toMatch(/falling back to direct generation/);
@@ -1753,8 +1763,9 @@ exit 0
     expect(result.status).toBe(0);
     expect(output).not.toMatch(/current shell cannot resolve 'nemoclaw'/);
     expect(output).not.toMatch(/this shell needs PATH refresh/);
-    expect(output).toMatch(/\$ source /);
-    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).not.toMatch(/\$ source /);
+    expect(output).not.toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).toContain("Use the Start chatting section above");
   });
 
   it("makes current-shell PATH refresh obvious when the installer added the bin dir", () => {
@@ -1845,7 +1856,7 @@ fi`,
     expect(output).not.toContain(
       "Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.",
     );
-    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).not.toMatch(/\$ nemoclaw my-assistant connect/);
   });
 });
 
@@ -2853,6 +2864,11 @@ printf 'Linux\\n'
         "-c",
         `
 source "$INSTALLER_UNDER_TEST" >/dev/null
+# These tests validate the Linux Docker bootstrap branches. On a real WSL
+# runner the installer intentionally skips that bootstrap, so force the helper
+# under test to behave as a non-WSL Linux host while keeping uname/id/docker
+# stubbed through PATH.
+is_wsl_host() { return 1; }
 info() { printf 'INFO: %s\\n' "$*" >&2; }
 warn() { printf 'WARN: %s\\n' "$*" >&2; }
 error() { printf 'ERROR: %s\\n' "$*" >&2; exit 1; }
@@ -3081,7 +3097,11 @@ exit 0`,
 });
 
 describe("installer express install prompt (sourced)", () => {
-  function runExpressPromptWithTty(answer: string, stdinMode: "pipe" | "tty") {
+  function runExpressPromptWithTty(
+    answer: string,
+    stdinMode: "pipe" | "tty",
+    platform = "DGX Spark",
+  ) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-prompt-"));
     const python =
       spawnSync("bash", ["--noprofile", "--norc", "-c", "command -v python3"], { encoding: "utf-8" }).stdout.trim() ||
@@ -3097,9 +3117,10 @@ import time
 installer = sys.argv[1]
 answer = sys.argv[2].encode()
 stdin_mode = sys.argv[3]
+platform = sys.argv[4]
 script = r'''
 source "$INSTALLER_UNDER_TEST" >/dev/null
-detect_express_platform() { printf "DGX Spark"; }
+detect_express_platform() { printf "$EXPRESS_PLATFORM"; }
 NON_INTERACTIVE=""
 NEMOCLAW_PROVIDER=""
 NEMOCLAW_NO_EXPRESS=""
@@ -3110,6 +3131,7 @@ printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YE
 '''
 env = dict(os.environ)
 env["INSTALLER_UNDER_TEST"] = installer
+env["EXPRESS_PLATFORM"] = platform
 pid, fd = pty.fork()
 if pid == 0:
     if stdin_mode == "pipe":
@@ -3159,16 +3181,20 @@ except OSError:
 sys.stdout.buffer.write(output)
 sys.exit(exit_code)
 `;
-    return spawnSync(python, ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode], {
-      cwd: tmp,
-      encoding: "utf-8",
-      timeout: 15_000,
-      killSignal: "SIGKILL",
-      env: {
-        HOME: tmp,
-        PATH: TEST_SYSTEM_PATH,
+    return spawnSync(
+      python,
+      ["-c", ptyRunner, INSTALLER_PAYLOAD, answer, stdinMode, platform],
+      {
+        cwd: tmp,
+        encoding: "utf-8",
+        timeout: 15_000,
+        killSignal: "SIGKILL",
+        env: {
+          HOME: tmp,
+          PATH: TEST_SYSTEM_PATH,
+        },
       },
-    });
+    );
   }
 
   it("offers express install when curl-piped stdin still has a controlling TTY", () => {
@@ -3176,10 +3202,56 @@ sys.exit(exit_code)
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Spark/);
+    expect(output).toMatch(
+      /Express install will configure managed local Ollama with model qwen3\.6:35b/,
+    );
+    expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for DGX Spark/);
     expect(output).toMatch(
       /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-ollama MODEL=qwen3\.6:35b POLICY=suggested YES=1/,
+    );
+  });
+
+  it("detects Windows WSL as an express install platform", () => {
+    const result = spawnSync(
+      "bash",
+      [
+        "-c",
+        `
+source "$INSTALLER_UNDER_TEST" >/dev/null
+detect_express_platform
+`,
+      ],
+      {
+        cwd: path.join(import.meta.dirname, ".."),
+        encoding: "utf-8",
+        env: {
+          HOME: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-express-wsl-detect-")),
+          PATH: TEST_SYSTEM_PATH,
+          INSTALLER_UNDER_TEST: INSTALLER_PAYLOAD,
+          WSL_DISTRO_NAME: "Ubuntu",
+        },
+      },
+    );
+
+    expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+    expect(result.stdout).toBe("Windows WSL");
+  });
+
+  it("maps Windows WSL express install to Windows-host Ollama", () => {
+    const result = runExpressPromptWithTty("\n", "pipe", "Windows WSL");
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Detected Windows WSL/);
+    expect(output).toMatch(
+      /Express install will configure Windows-host Ollama through host\.docker\.internal/,
+    );
+    expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
+    expect(output).toMatch(/Run express install/);
+    expect(output).toMatch(/Using express install for Windows WSL/);
+    expect(output).toMatch(
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-windows-ollama MODEL= POLICY=suggested YES=1/,
     );
   });
 

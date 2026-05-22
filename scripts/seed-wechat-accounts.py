@@ -13,17 +13,16 @@
 # Files written (matching auth/accounts.ts in @tencent-weixin/openclaw-weixin@2.4.2):
 #   <stateDir>/openclaw-weixin/accounts.json                  — JSON array of accountIds
 #   <stateDir>/openclaw-weixin/accounts/<accountId>.json      — { token, savedAt, baseUrl, userId }
-#   <stateDir>/openclaw.json (channels.openclaw-weixin)       — registered channel + accounts.<id>.enabled
+#   <stateDir>/openclaw.json (plugins.load.paths + channels.openclaw-weixin)
+#                                                              — registered plugin/channel + accounts.<id>.enabled
 #
 # The third file is the one OpenClaw consults at startup to know the channel
 # is registered. Without channels.openclaw-weixin.accounts.<id>.enabled=true
 # in openclaw.json, the plugin's auth/accounts.ts considers the account
 # disabled and the bridge won't start, even if the per-account state files
-# above exist. We mutate openclaw.json HERE (post-install) rather than in
-# generate-openclaw-config.py because writing channels.openclaw-weixin
-# upfront races with `openclaw plugins install`, which fails with "unknown
-# channel id: openclaw-weixin" if the channel block exists before the plugin
-# has registered it.
+# above exist. The patch also restores the openclaw-weixin plugin registry and
+# load path because later OpenClaw config rewrites can drop them while leaving
+# the pre-installed extension files in place.
 #
 # State dir resolution mirrors the upstream's resolveStateDir():
 #   $OPENCLAW_STATE_DIR || $CLAWDBOT_STATE_DIR || ~/.openclaw
@@ -56,6 +55,8 @@ import pathlib
 import sys
 
 
+WECHAT_PLUGIN_ID = "openclaw-weixin"
+WECHAT_PLUGIN_SPEC = "@tencent-weixin/openclaw-weixin@2.4.2"
 WECHAT_TOKEN_PLACEHOLDER = "openshell:resolve:env:WECHAT_BOT_TOKEN"
 
 
@@ -82,6 +83,14 @@ def _state_dir() -> pathlib.Path:
         or os.path.join(os.path.expanduser("~"), ".openclaw")
     )
     return pathlib.Path(raw.strip()).resolve()
+
+
+def _wechat_plugin_install_path(install_record: object | None = None) -> str:
+    if isinstance(install_record, dict):
+        install_path = install_record.get("installPath")
+        if isinstance(install_path, str) and install_path.strip():
+            return install_path.strip()
+    return str(_state_dir() / "extensions" / WECHAT_PLUGIN_ID)
 
 
 def _decode_config() -> dict:
@@ -143,6 +152,53 @@ def _patch_openclaw_config(account_id: str) -> None:
             file=sys.stderr,
         )
         return
+
+    plugins = cfg.setdefault("plugins", {})
+    if not isinstance(plugins, dict):
+        plugins = {}
+        cfg["plugins"] = plugins
+    installs = plugins.setdefault("installs", {})
+    if not isinstance(installs, dict):
+        installs = {}
+        plugins["installs"] = installs
+    wechat_install = installs.get(WECHAT_PLUGIN_ID)
+    if not isinstance(wechat_install, dict):
+        wechat_install = {}
+    wechat_install_path = _wechat_plugin_install_path(wechat_install)
+    if wechat_install.get("source") != "npm":
+        wechat_install["source"] = "npm"
+    if not isinstance(wechat_install.get("spec"), str) or not wechat_install["spec"].strip():
+        wechat_install["spec"] = WECHAT_PLUGIN_SPEC
+    if (
+        not isinstance(wechat_install.get("installPath"), str)
+        or not wechat_install["installPath"].strip()
+    ):
+        wechat_install["installPath"] = wechat_install_path
+    installs[WECHAT_PLUGIN_ID] = wechat_install
+
+    load = plugins.setdefault("load", {})
+    if not isinstance(load, dict):
+        load = {}
+        plugins["load"] = load
+    load_paths = load.get("paths")
+    normalized_paths = (
+        [item.strip() for item in load_paths if isinstance(item, str) and item.strip()]
+        if isinstance(load_paths, list)
+        else []
+    )
+    if wechat_install_path not in normalized_paths:
+        normalized_paths.append(wechat_install_path)
+    load["paths"] = normalized_paths
+
+    entries = plugins.setdefault("entries", {})
+    if not isinstance(entries, dict):
+        entries = {}
+        plugins["entries"] = entries
+    wechat_entry = entries.setdefault(WECHAT_PLUGIN_ID, {})
+    if not isinstance(wechat_entry, dict):
+        wechat_entry = {}
+        entries[WECHAT_PLUGIN_ID] = wechat_entry
+    wechat_entry["enabled"] = True
 
     channels = cfg.setdefault("channels", {})
     weixin = channels.setdefault("openclaw-weixin", {})

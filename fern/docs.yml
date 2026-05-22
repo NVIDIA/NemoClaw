@@ -6,8 +6,11 @@
 instances:
   - url: nvidia-nemoclaw.docs.buildwithfern.com/nemoclaw
     custom-domain: docs.nvidia.com/nemoclaw
+    multi-source: true
 
 title: NVIDIA NemoClaw
+
+global-theme: nvidia
 
 announcement:
   message: "🔔 NVIDIA NemoClaw is <strong>alpha software</strong>. APIs and behavior may change without notice. Do not use in production."
@@ -33,9 +36,6 @@ theme:
   footer-nav: minimal
 
 logo:
-  dark: ./assets/NVIDIA_dark.svg
-  light: ./assets/NVIDIA_light.svg
-  height: 20
   href: /nemoclaw/latest
   right-text: NemoClaw
 
@@ -53,7 +53,9 @@ navbar-links:
     value: https://github.com/NVIDIA/NemoClaw
 
 experimental:
-  basepath-aware: true
+  mdx-components:
+    - ../docs/_components
+    - ./components
 
 versions:
   - display-name: Latest

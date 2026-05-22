@@ -248,7 +248,7 @@ fi
 exit 0`,
       );
       writeExecutable(
-        path.join(fakeBin, "shasum"),
+        path.join(fakeBin, "sha256sum"),
         `#!/usr/bin/env bash
 cat >/dev/null
 echo "checksum OK"
@@ -352,7 +352,7 @@ fi
 exit 0`,
       );
       writeExecutable(
-        path.join(fakeBin, "shasum"),
+        path.join(fakeBin, "sha256sum"),
         `#!/usr/bin/env bash
 cat >/dev/null
 echo "checksum OK"

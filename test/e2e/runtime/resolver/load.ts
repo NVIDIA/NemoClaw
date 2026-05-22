@@ -13,10 +13,18 @@ import fs from "node:fs";
 import path from "node:path";
 import yaml from "js-yaml";
 
+import {
+  EXPECTED_FAILURE_ERROR_CLASSES,
+  EXPECTED_FAILURE_PHASES,
+  EXPECTED_FAILURE_SIDE_EFFECTS,
+} from "./schema.ts";
 import type {
   ScenariosFile,
   ExpectedStatesFile,
   SuitesFile,
+  ExpectedFailurePhase,
+  ExpectedFailureErrorClass,
+  ExpectedFailureSideEffect,
 } from "./schema.ts";
 
 export interface ResolverInput {
@@ -51,6 +59,102 @@ function requireSections(
   }
 }
 
+/**
+ * Compile a YAML-authored `message_pattern` into a JS `RegExp`. RE2-style
+ * inline flag prefixes (e.g. `(?i)`, `(?ims)`) are stripped and converted
+ * to the corresponding `RegExp` flags so authors can write the same shape
+ * the issue body shows without worrying about the underlying engine.
+ *
+ * Exported so the matcher uses identical compilation rules; throws on any
+ * unsupported flag character or on an invalid pattern.
+ */
+export function compileMessagePattern(pattern: string): RegExp {
+  let body = pattern;
+  let flags = "";
+  const inlineFlagMatch = /^\(\?([a-zA-Z]+)\)/.exec(pattern);
+  if (inlineFlagMatch) {
+    const allowed = new Set(["i", "m", "s"]);
+    for (const ch of inlineFlagMatch[1]) {
+      if (!allowed.has(ch)) {
+        throw new Error(`unsupported inline regex flag '(?${inlineFlagMatch[1]})'; allowed: i, m, s`);
+      }
+      if (!flags.includes(ch)) flags += ch;
+    }
+    body = pattern.slice(inlineFlagMatch[0].length);
+  }
+  return new RegExp(body, flags);
+}
+
+/**
+ * Validate an `expected_failure` block. `partial` controls whether every
+ * required field must be present (state-level blocks: yes; scenario-level
+ * override: no, since absent fields fall back to the state).
+ */
+function validateExpectedFailureBlock(
+  block: unknown,
+  origin: string,
+  opts: { partial: boolean },
+): void {
+  if (!block || typeof block !== "object" || Array.isArray(block)) {
+    throw new Error(`${origin}.expected_failure must be a mapping`);
+  }
+  const b = block as Record<string, unknown>;
+  if (b.phase !== undefined) {
+    if (typeof b.phase !== "string" || !EXPECTED_FAILURE_PHASES.includes(b.phase as ExpectedFailurePhase)) {
+      throw new Error(
+        `${origin}.expected_failure.phase must be one of: ${EXPECTED_FAILURE_PHASES.join(", ")}`,
+      );
+    }
+  } else if (!opts.partial) {
+    throw new Error(`${origin}.expected_failure.phase is required`);
+  }
+  if (b.error_class !== undefined) {
+    if (
+      typeof b.error_class !== "string" ||
+      !EXPECTED_FAILURE_ERROR_CLASSES.includes(b.error_class as ExpectedFailureErrorClass)
+    ) {
+      throw new Error(
+        `${origin}.expected_failure.error_class must be one of: ${EXPECTED_FAILURE_ERROR_CLASSES.join(", ")}`,
+      );
+    }
+  } else if (!opts.partial) {
+    throw new Error(`${origin}.expected_failure.error_class is required`);
+  }
+  if (b.message_pattern !== undefined && typeof b.message_pattern !== "string") {
+    throw new Error(`${origin}.expected_failure.message_pattern must be a string`);
+  }
+  if (typeof b.message_pattern === "string") {
+    try {
+      compileMessagePattern(b.message_pattern);
+    } catch (err) {
+      throw new Error(
+        `${origin}.expected_failure.message_pattern is not a valid regex: ${(err as Error).message}`,
+      );
+    }
+  }
+  if (b.forbidden_side_effects !== undefined) {
+    if (!Array.isArray(b.forbidden_side_effects)) {
+      throw new Error(`${origin}.expected_failure.forbidden_side_effects must be a list`);
+    }
+    for (const effect of b.forbidden_side_effects) {
+      if (
+        typeof effect !== "string" ||
+        !EXPECTED_FAILURE_SIDE_EFFECTS.includes(effect as ExpectedFailureSideEffect)
+      ) {
+        throw new Error(
+          `${origin}.expected_failure.forbidden_side_effects entry '${String(effect)}' must be one of: ${EXPECTED_FAILURE_SIDE_EFFECTS.join(", ")}`,
+        );
+      }
+    }
+  }
+  const known = new Set(["phase", "error_class", "message_pattern", "forbidden_side_effects"]);
+  for (const k of Object.keys(b)) {
+    if (!known.has(k)) {
+      throw new Error(`${origin}.expected_failure has unknown key '${k}'`);
+    }
+  }
+}
+
 function validateScenarios(doc: Record<string, unknown>, file: string): ScenariosFile {
   requireSections(doc, file, [
     "platforms",
@@ -70,6 +174,9 @@ function validateScenarios(doc: Record<string, unknown>, file: string): Scenario
         `scenario ${id} uses array-form 'expected_states'; use singular 'expected_state'`,
       );
     }
+    if (typeof e.alias_for_plan === "string") {
+      continue;
+    }
     if (typeof e.expected_state !== "string") {
       throw new Error(`scenario ${id} must declare a string 'expected_state'`);
     }
@@ -82,6 +189,25 @@ function validateScenarios(doc: Record<string, unknown>, file: string): Scenario
         e.runner_requirements.some((requirement) => typeof requirement !== "string")
       ) {
         throw new Error(`scenario ${id}.runner_requirements must be a list of strings`);
+      }
+    }
+    if ("expected_failure" in e) {
+      validateExpectedFailureBlock(e.expected_failure, `scenario ${id}`, { partial: true });
+    }
+    if ("skipped_capabilities" in e) {
+      if (
+        !Array.isArray(e.skipped_capabilities) ||
+        e.skipped_capabilities.some((skip) => {
+          if (!skip || typeof skip !== "object" || Array.isArray(skip)) return true;
+          const s = skip as Record<string, unknown>;
+          return (
+            typeof s.id !== "string" ||
+            typeof s.reason !== "string" ||
+            ("suites" in s && (!Array.isArray(s.suites) || s.suites.some((suite) => typeof suite !== "string")))
+          );
+        })
+      ) {
+        throw new Error(`scenario ${id}.skipped_capabilities must list {id, reason, suites?}`);
       }
     }
     const dims = e.dimensions as Record<string, unknown> | undefined;
@@ -118,6 +244,20 @@ function validateExpectedStates(
   file: string,
 ): ExpectedStatesFile {
   requireSections(doc, file, ["expected_states"]);
+  const rawStates = doc.expected_states;
+  if (!rawStates || typeof rawStates !== "object" || Array.isArray(rawStates)) {
+    throw new Error(`metadata file ${file} section 'expected_states' must be a mapping`);
+  }
+  const states = rawStates as Record<string, unknown>;
+  for (const [id, entry] of Object.entries(states)) {
+    if (!entry || typeof entry !== "object") {
+      throw new Error(`expected_state ${id} must be a mapping`);
+    }
+    const e = entry as Record<string, unknown>;
+    if ("expected_failure" in e) {
+      validateExpectedFailureBlock(e.expected_failure, `expected_state ${id}`, { partial: false });
+    }
+  }
   return doc as unknown as ExpectedStatesFile;
 }
 

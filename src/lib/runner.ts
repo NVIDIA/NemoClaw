@@ -140,6 +140,8 @@ function runArrayCmd(
 
   const stdio = stdioCfg ?? defaultStdio;
 
+  // run() always uses argv arrays and rejects `shell: true` above.
+  // codeql[js/indirect-command-line-injection]
   const result = spawnSync(exe, args, {
     ...spawnOpts,
     stdio,
@@ -229,6 +231,8 @@ function runCapture(cmd: readonly string[], opts: CaptureOptions = {}): string {
   }
 
   try {
+    // runCapture() always uses argv arrays and rejects `shell: true` above.
+    // codeql[js/indirect-command-line-injection]
     const result = spawnSync(exe, args, {
       ...spawnOpts,
       cwd: ROOT,
@@ -284,7 +288,11 @@ function runCaptureEx(cmd: readonly string[], opts: Omit<CaptureOptions, "ignore
     const result = spawnSync(exe, args, {
       ...spawnOpts,
       cwd: ROOT,
-      env: { ...process.env, ...extraEnv },
+      // #2616: route via buildRunnerEnv so subprocess env is sanitized and
+      // NO_PROXY=localhost,127.0.0.1 is injected when HTTP_PROXY is set.
+      // Otherwise curl probes against localhost (Ollama validation, etc.)
+      // tunnel through the user's host proxy and fail with HTTP 500.
+      env: buildRunnerEnv(extraEnv),
       stdio: ["pipe", "pipe", "pipe"],
       encoding: "utf-8",
     });

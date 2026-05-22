@@ -68,7 +68,7 @@ flowchart TB
 | Layer | What it protects | Enforcement point | Changeable at runtime |
 | --- | --- | --- | --- |
 | Network | Unauthorized outbound connections and data exfiltration. | OpenShell gateway | Yes. Use `openshell policy set` or operator approval. |
-| Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Config lockdown posture: yes, with host-side shields commands. |
+| Filesystem | System binary tampering, credential theft, config manipulation. | Landlock LSM + container mounts | Landlock layout: no. Requires sandbox re-creation. Use host-side NemoClaw commands for durable config changes. |
 | Process | Privilege escalation, fork bombs, syscall abuse. | Container runtime (Docker/K8s `securityContext`) | No. Requires sandbox re-creation. |
 | Inference | Credential exposure, unauthorized model access, cost overruns. | OpenShell gateway | Yes. Use `nemoclaw inference set`. |
 
@@ -142,7 +142,7 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 | Preset | What it enables | Key risk |
 |---|---|---|
 | `brave` | Brave Search API. | Agent can issue search queries. |
-| `brew` | Homebrew (Linuxbrew) package manager. | Allows installing arbitrary Homebrew packages, which may contain malicious code. |
+| `brew` | Homebrew (Linuxbrew) package manager. The sandbox base image includes the `brew` binary; this preset opens network egress to GitHub and the Homebrew formulae index so `brew install` can fetch bottles. | Allows installing arbitrary Homebrew packages, which may contain malicious code. |
 | `discord` | Discord REST API, WebSocket gateway, CDN. | CDN endpoint (`cdn.discordapp.com`) allows GET to any path. WebSocket uses `access: full` (no inspection). |
 | `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `git`. |
 | `huggingface` | Hugging Face Hub (download-only) and inference router. | Allows downloading arbitrary models and datasets. POST is restricted to the inference router only. |
@@ -438,13 +438,13 @@ Different inference providers have different trust and cost profiles.
 
 ### Experimental Providers
 
-The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM and local vLLM.
+The `NEMOCLAW_EXPERIMENTAL=1` environment variable gates local NVIDIA NIM and generic Linux managed vLLM install/start. DGX Spark and DGX Station managed vLLM entries are offered by default, and an already-running vLLM server on `localhost:8000` is offered in the menu without a flag, because selecting either is an explicit user action.
 
 | Aspect | Detail |
 |---|---|
-| Default | Disabled. The onboarding wizard does not show these providers. |
-| What you can change | Set `NEMOCLAW_EXPERIMENTAL=1` before running `nemoclaw onboard`. |
-| Risk if relaxed | NemoClaw has not fully validated these providers. NIM requires a NIM-capable GPU. vLLM must already be running on `localhost:8000`. Misconfiguration can cause failed inference or unexpected behavior. |
+| Default | Local NVIDIA NIM and generic Linux managed vLLM install/start are hidden. DGX Spark and DGX Station managed vLLM entries, plus already-running vLLM on `localhost:8000`, are offered when detected. |
+| What you can change | Set `NEMOCLAW_EXPERIMENTAL=1` before running `nemoclaw onboard` to surface Local NIM and generic Linux managed vLLM. To request only the managed vLLM path non-interactively, set `NEMOCLAW_PROVIDER=install-vllm`. |
+| Risk if selected | NemoClaw has not fully validated these providers. NIM requires a NIM-capable GPU. The managed vLLM path pulls a container image and starts it on a supported NVIDIA GPU host. Misconfiguration can cause failed inference or unexpected behavior. |
 | Recommendation | Use experimental providers only for evaluation. Do not rely on them for always-on assistants. |
 
 ## Posture Profiles

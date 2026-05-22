@@ -124,97 +124,6 @@ HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
 
 # verify_config_integrity is provided by sandbox-init.sh (parameterized).
 
-rewrite_rc_marker_block() {
-  local rc_file="$1"
-  local marker_begin="$2"
-  local marker_end="$3"
-  local snippet="${4:-}"
-  local dir base tmp
-
-  [ -e "$rc_file" ] || return 0
-  if [ -L "$rc_file" ] || [ ! -f "$rc_file" ]; then
-    echo "[SECURITY] refusing unsafe rc file: $rc_file" >&2
-    return 1
-  fi
-
-  dir="$(dirname "$rc_file")"
-  base="$(basename "$rc_file")"
-  tmp="$(mktemp "${dir}/.${base}.tmp.XXXXXX")" || return 1
-
-  awk -v b="$marker_begin" -v e="$marker_end" \
-    '$0==b{s=1;next} $0==e{s=0;next} !s' "$rc_file" >"$tmp" 2>/dev/null || {
-    rm -f "$tmp"
-    return 1
-  }
-
-  if [ -n "$snippet" ]; then
-    printf '%s\n' "$snippet" >>"$tmp" || {
-      rm -f "$tmp"
-      return 1
-    }
-  fi
-
-  if [ "$(id -u)" -eq 0 ] && ! chown root:root "$tmp"; then
-    rm -f "$tmp"
-    return 1
-  fi
-  chmod 644 "$tmp" 2>/dev/null || true
-
-  if [ -L "$rc_file" ]; then
-    echo "[SECURITY] refusing symlinked rc file during replace: $rc_file" >&2
-    rm -f "$tmp"
-    return 1
-  fi
-  mv -f "$tmp" "$rc_file" 2>/dev/null || {
-    rm -f "$tmp"
-    return 1
-  }
-}
-
-rewrite_rc_marker_block_or_fail_in_root() {
-  local rc_file="$1"
-  if rewrite_rc_marker_block "$@"; then
-    return 0
-  fi
-  if [ "$(id -u)" -eq 0 ]; then
-    return 1
-  fi
-  echo "[setup] could not update rc file ${rc_file}; continuing in non-root mode" >&2
-  return 0
-}
-
-install_configure_guard() {
-  local marker_begin="# nemoclaw-configure-guard begin"
-  local marker_end="# nemoclaw-configure-guard end"
-  local snippet
-  read -r -d '' snippet <<'GUARD' || true
-# nemoclaw-configure-guard begin
-hermes() {
-  case "$1" in
-    setup|doctor)
-      echo "Error: 'hermes $1' cannot modify config inside the sandbox." >&2
-      echo "NemoClaw manages sandbox config from the host for integrity checks." >&2
-      echo "" >&2
-      echo "To change your configuration, exit the sandbox and run:" >&2
-      echo "  nemoclaw onboard --resume" >&2
-      return 1
-      ;;
-  esac
-  command hermes "$@"
-}
-# nemoclaw-configure-guard end
-GUARD
-
-  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
-    [ -f "$rc_file" ] || continue
-    rewrite_rc_marker_block_or_fail_in_root "$rc_file" "$marker_begin" "$marker_end" "$snippet"
-  done
-  # SECURITY FIX: Lock .bashrc/.profile after all mutations are complete.
-  # This was missing in Hermes (unlike OpenClaw which had it via #2125),
-  # leaving rc files writable by the sandbox user. Ref: #2277
-  lock_rc_files "$_SANDBOX_HOME"
-}
-
 # configure_messaging_channels is provided by sandbox-init.sh (shared).
 
 print_dashboard_urls() {
@@ -228,6 +137,101 @@ print_dashboard_urls() {
 start_gateway_log_stream() {
   { tail -n +1 -F /tmp/gateway.log 2>/dev/null | sed -u 's/^/[gateway-log:] /' >&2; } &
   GATEWAY_LOG_TAIL_PID=$!
+}
+
+retry_tirith_marker_if_needed() {
+  local marker="${HERMES_DIR}/.tirith-install-failed"
+  local reason
+
+  [ -e "$marker" ] || return 0
+  if [ -L "$marker" ] || [ ! -f "$marker" ]; then
+    echo "[tirith-bootstrap] WARNING: unsafe Tirith install marker at ${marker}; not reading it" >&2
+    return 0
+  fi
+
+  reason="$(head -n 1 "$marker" 2>/dev/null | tr -d '\r\n' || true)"
+  if [ "$reason" != "download_failed" ]; then
+    echo "[tirith-bootstrap] WARNING: Tirith install marker reason '${reason:-unknown}' is not retryable; Hermes gateway startup will continue" >&2
+    return 0
+  fi
+
+  echo "[tirith-bootstrap] download_failed marker present; letting Hermes runtime fallback retry Tirith" >&2
+  if ! rm -f "$marker" 2>/dev/null; then
+    echo "[tirith-bootstrap] WARNING: could not remove retryable Tirith marker; Hermes gateway startup will continue" >&2
+  fi
+}
+
+cmdline_is_hermes_gateway() {
+  local cmdline=" $1 "
+
+  case "$cmdline" in
+    *"/hermes gateway run "* | *" hermes gateway run "*) return 0 ;;
+  esac
+  return 1
+}
+
+has_live_hermes_gateway() {
+  local proc_root="${NEMOCLAW_PROC_ROOT:-/proc}"
+  local cmdline_file cmdline
+
+  for cmdline_file in "${proc_root}"/[0-9]*/cmdline; do
+    [ -r "$cmdline_file" ] || continue
+    cmdline="$(tr '\0' ' ' <"$cmdline_file" 2>/dev/null || true)"
+    if cmdline_is_hermes_gateway "$cmdline"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+cleanup_orphan_socat_forwarders() {
+  local proc_root="${NEMOCLAW_PROC_ROOT:-/proc}"
+  local cmdline_file pid cmdline
+
+  for cmdline_file in "${proc_root}"/[0-9]*/cmdline; do
+    [ -r "$cmdline_file" ] || continue
+    pid="$(basename "$(dirname "$cmdline_file")")"
+    cmdline="$(tr '\0' ' ' <"$cmdline_file" 2>/dev/null || true)"
+    case "$cmdline" in
+      *socat*"TCP-LISTEN:${PUBLIC_PORT}"*"TCP:127.0.0.1:${INTERNAL_PORT}"*)
+        echo "[gateway] Removing orphaned socat forwarder for ${PUBLIC_PORT}->${INTERNAL_PORT} (pid ${pid})" >&2
+        kill "$pid" 2>/dev/null || true
+        ;;
+    esac
+  done
+}
+
+remove_stale_gateway_file() {
+  local path="$1"
+  local label="$2"
+
+  if [ -L "$path" ]; then
+    echo "[gateway] Removing unsafe stale Hermes ${label} symlink: ${path}" >&2
+    rm -f "$path" 2>/dev/null || echo "[gateway] WARNING: could not remove stale ${label}: ${path}" >&2
+    return
+  fi
+  if [ -f "$path" ]; then
+    echo "[gateway] Removing stale Hermes ${label}: ${path}" >&2
+    rm -f "$path" 2>/dev/null || echo "[gateway] WARNING: could not remove stale ${label}: ${path}" >&2
+  fi
+}
+
+cleanup_stale_hermes_gateway_runtime() {
+  local runtime_dir="${HERMES_DIR}/runtime"
+
+  if has_live_hermes_gateway; then
+    echo "[gateway] Existing Hermes gateway process detected; preserving runtime lock state" >&2
+    return 0
+  fi
+
+  # Hermes can leave gateway.lock behind after Docker GPU recreation kills the
+  # old process namespace. Clear it only after confirming no gateway is alive.
+  remove_stale_gateway_file "${runtime_dir}/gateway.pid" "PID file"
+  if [ ! -L "${HERMES_DIR}/gateway.pid" ]; then
+    remove_stale_gateway_file "${HERMES_DIR}/gateway.pid" "legacy PID file"
+  fi
+  remove_stale_gateway_file "${runtime_dir}/gateway.lock" "lock file"
+  cleanup_orphan_socat_forwarders
 }
 
 # ── socat forwarder ──────────────────────────────────────────────
@@ -286,8 +290,8 @@ if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
   export GIT_SSL_CAINFO="${GIT_SSL_CAINFO:-$SSL_CERT_FILE}"
 fi
 
-# Resolve sandbox home dir early — used by proxy-env writing and
-# install_configure_guard before the non-root/root branch below.
+# Resolve sandbox home dir early — used by proxy-env writing before the
+# non-root/root branch below.
 if [ "$(id -u)" -eq 0 ]; then
   _SANDBOX_HOME=$(getent passwd sandbox 2>/dev/null | cut -d: -f6)
   _SANDBOX_HOME="${_SANDBOX_HOME:-/sandbox}"
@@ -296,13 +300,14 @@ else
 fi
 
 # SECURITY FIX: Write proxy config to a standalone file via
-# emit_sandbox_sourced_file() (root:root 444) instead of appending
-# inline to .bashrc/.profile. The old approach left .bashrc writable
-# by the sandbox user — same vulnerability class as #2181.
+# emit_sandbox_sourced_file() (444, root-owned when running as root) instead of
+# appending inline to .bashrc/.profile. The old approach rewrote files under
+# /sandbox during startup, which fails in non-root entrypoint postures.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/2277
 _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
-{
-  cat <<PROXYEOF
+write_runtime_shell_env() {
+  {
+    cat <<PROXYEOF
 # Proxy configuration (overrides narrow OpenShell defaults on connect)
 export HTTP_PROXY="$_PROXY_URL"
 export HTTPS_PROXY="$_PROXY_URL"
@@ -312,13 +317,37 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_DIR}"
 PROXYEOF
-  for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO; do
-    _ca_env_value="${!_ca_env_name:-}"
-    if [ -n "$_ca_env_value" ]; then
-      printf 'export %s=%q\n' "$_ca_env_name" "$_ca_env_value"
-    fi
-  done
-} | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
+    for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO; do
+      _ca_env_value="${!_ca_env_name:-}"
+      if [ -n "$_ca_env_value" ]; then
+        printf 'export %s=%q\n' "$_ca_env_name" "$_ca_env_value"
+      fi
+    done
+    cat <<'GUARDENVEOF'
+# nemoclaw-configure-guard begin
+hermes() {
+  case "$1" in
+    setup|doctor)
+      echo "Error: 'hermes $1' cannot modify config inside the sandbox." >&2
+      echo "NemoClaw manages sandbox config from the host for integrity checks." >&2
+      echo "" >&2
+      echo "To change your configuration, exit the sandbox and run:" >&2
+      echo "  nemoclaw onboard --resume" >&2
+      return 1
+      ;;
+  esac
+  command hermes "$@"
+}
+# nemoclaw-configure-guard end
+GUARDENVEOF
+  } | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
+}
+
+write_runtime_shell_env
+# SECURITY FIX: Lock .bashrc/.profile after all static shims are in place.
+# Hermes connect sessions source the dynamic guard from /tmp/nemoclaw-proxy-env.sh
+# so startup never needs to rewrite files directly under /sandbox after caps drop.
+lock_rc_files "$_SANDBOX_HOME"
 
 # ── Legacy layout migration ──────────────────────────────────────
 path_has_immutable_bit() {
@@ -595,12 +624,15 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
   fi
   refresh_hermes_provider_placeholders
-  install_configure_guard
   configure_messaging_channels
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
     exec "${NEMOCLAW_CMD[@]}"
   fi
+
+  retry_tirith_marker_if_needed
+
+  cleanup_stale_hermes_gateway_runtime
 
   prepare_restricted_log /tmp/gateway.log "" 600
 
@@ -633,14 +665,18 @@ fi
 
 # ── Root path (full privilege separation via setpriv) ──────────
 
+export HERMES_HOME="${HERMES_DIR}"
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
 refresh_hermes_provider_placeholders
-install_configure_guard
 configure_messaging_channels
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
   exec "${STEP_DOWN_PREFIX_SANDBOX[@]}" "${NEMOCLAW_CMD[@]}"
 fi
+
+retry_tirith_marker_if_needed
+
+cleanup_stale_hermes_gateway_runtime
 
 # SECURITY: Protect gateway log from sandbox user tampering
 prepare_restricted_log /tmp/gateway.log gateway:gateway 600

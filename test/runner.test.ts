@@ -229,6 +229,56 @@ describe("runner env merging", () => {
     );
     expect(firstCall[2]?.env?.PATH).toBe("/usr/local/bin:/usr/bin");
   });
+
+  it("#2616: runCaptureEx injects NO_PROXY=localhost,127.0.0.1 when http_proxy is set", () => {
+    // Regression for the macOS Privoxy scenario: validateOllamaModel calls
+    // runCaptureEx with a curl probe against http://localhost:11434. Before
+    // the fix, runCaptureEx merged raw process.env (including the user's
+    // http_proxy) and never injected NO_PROXY, so the spawned curl tunneled
+    // its localhost probe through Privoxy and returned HTTP 500.
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalHttpProxy = process.env.http_proxy;
+    const originalNoProxy = process.env.NO_PROXY;
+    const originalNoProxyLower = process.env.no_proxy;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runCaptureEx } = require(runnerPath);
+      process.env.http_proxy = "http://127.0.0.1:8118";
+      delete process.env.NO_PROXY;
+      delete process.env.no_proxy;
+      runCaptureEx([
+        "curl",
+        "-sS",
+        "--max-time",
+        "3",
+        "http://localhost:11434/api/ps",
+      ]);
+    } finally {
+      if (originalHttpProxy === undefined) delete process.env.http_proxy;
+      else process.env.http_proxy = originalHttpProxy;
+      if (originalNoProxy === undefined) delete process.env.NO_PROXY;
+      else process.env.NO_PROXY = originalNoProxy;
+      if (originalNoProxyLower === undefined) delete process.env.no_proxy;
+      else process.env.no_proxy = originalNoProxyLower;
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(calls).toHaveLength(1);
+    const firstCall = requireCall(calls, 0);
+    const env = firstCall[2]?.env ?? {};
+    expect(env.http_proxy).toBe("http://127.0.0.1:8118");
+    // Both casings get the loopback hosts so curl, Node, Python all respect
+    // the bypass regardless of which one they read.
+    expect(env.NO_PROXY).toContain("localhost");
+    expect(env.NO_PROXY).toContain("127.0.0.1");
+    expect(env.no_proxy).toContain("localhost");
+    expect(env.no_proxy).toContain("127.0.0.1");
+  });
 });
 
 describe("shellQuote", () => {
@@ -690,8 +740,8 @@ describe("regression guards", () => {
           return 0
         }
         export -f curl
-        shasum() { cat >/dev/null; echo "checksum OK"; return 0; }
-        export -f shasum
+        sha256sum() { cat >/dev/null; echo "checksum OK"; return 0; }
+        export -f sha256sum
         strings() { echo "request-body-credential-rewrite websocket-credential-rewrite"; }
         export -f strings
         tar() { return 0; }; export -f tar
@@ -715,7 +765,7 @@ describe("regression guards", () => {
     it("install-openshell.sh gh-present-but-fails path falls back to curl", () => {
       const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
-      const checksumLog = path.join(tmpBin, "shasum.log");
+      const checksumLog = path.join(tmpBin, "sha256sum.log");
       const ghStub = path.join(tmpBin, "gh");
       fs.writeFileSync(ghStub, "#!/bin/sh\nexit 4\n");
       fs.chmodSync(ghStub, 0o755);
@@ -727,8 +777,8 @@ describe("regression guards", () => {
         export PATH="${tmpBin}:/usr/bin:/bin"
         curl() { echo "CURL_FALLBACK $*"; return 0; }
         export -f curl
-        shasum() { echo "SHASUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
-        export -f shasum
+        sha256sum() { echo "SHA256SUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
+        export -f sha256sum
         strings() { echo "request-body-credential-rewrite websocket-credential-rewrite"; }
         export -f strings
         tar() { return 0; }; export -f tar
@@ -743,7 +793,7 @@ describe("regression guards", () => {
         const out = (result.stdout || "") + (result.stderr || "");
         expect(out).toContain("falling back to curl");
         expect(out).toContain("CURL_FALLBACK");
-        expect(fs.readFileSync(checksumLog, "utf-8")).toContain("SHASUM -a 256 -c -");
+        expect(fs.readFileSync(checksumLog, "utf-8")).toContain("SHA256SUM -c -");
       } finally {
         fs.rmSync(tmpBin, { recursive: true, force: true });
       }
@@ -818,6 +868,20 @@ describe("regression guards", () => {
       expect(src).toContain('brev("ls")');
       expect(src).not.toContain("BREV_API_TOKEN");
       expect(src).not.toContain('brev("login", "--token"');
+    });
+
+    it("brev e2e suite captures CPU candidates before piping them into create", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
+        "utf-8",
+      );
+      expect(src).toContain(
+        'const CAPTURE_OUTPUT_STDIO: StdioOptions = ["ignore", "pipe", "inherit"]',
+      );
+      expect(src).toMatch(
+        /const cpuCandidates = execFileSync\([\s\S]*"search",[\s\S]*"cpu",[\s\S]*stdio: CAPTURE_OUTPUT_STDIO/,
+      );
+      expect(src).toMatch(/input: cpuCandidates,[\s\S]*stdio: PIPE_INPUT_STDIO/);
     });
 
     it("brev e2e suite no longer contains the old brev-setup compatibility path", () => {

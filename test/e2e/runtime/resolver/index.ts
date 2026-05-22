@@ -6,9 +6,15 @@
  *
  * Usage:
  *   tsx test/e2e/runtime/resolver/index.ts plan <scenario-id> [--context-dir <path>]
+ *   tsx test/e2e/runtime/resolver/index.ts validate-state <scenario-id> [--probes-from-state]
+ *   tsx test/e2e/runtime/resolver/index.ts match-failure <scenario-id> \
+ *        --log <path> --observed-phase <phase> \
+ *        [--observed-error-class <class>] [--observed-side-effects <csv>]
  *
- * Writes `plan.json` under the context dir (default `.e2e/`) and prints a
- * human-readable plan to stdout. Exits non-zero on any resolution error.
+ * Writes `plan.json`, `expected-state-report.json`, or `expected-vs-actual.json`
+ * under the context dir (default `.e2e/`). Exit codes:
+ *   0 success, 2 usage error, 1 resolution error,
+ *   3 expected-state mismatch, 4 expected-failure mismatch.
  */
 
 import fs from "node:fs";
@@ -24,6 +30,19 @@ import {
   type ProbeValue,
 } from "./validator.ts";
 import { renderCoverageReport } from "./coverage.ts";
+import {
+  matchExpectedFailure,
+  formatExpectedFailureReport,
+  type ObservedFailure,
+} from "./expected-failure.ts";
+import {
+  EXPECTED_FAILURE_PHASES,
+  EXPECTED_FAILURE_ERROR_CLASSES,
+  EXPECTED_FAILURE_SIDE_EFFECTS,
+  type ExpectedFailurePhase,
+  type ExpectedFailureErrorClass,
+  type ExpectedFailureSideEffect,
+} from "./schema.ts";
 
 function parseArgs(argv: string[]): {
   command: string;
@@ -31,12 +50,20 @@ function parseArgs(argv: string[]): {
   contextDir: string;
   metadataDir: string;
   probesFromState: boolean;
+  logPath?: string;
+  observedPhase?: string;
+  observedErrorClass?: string;
+  observedSideEffects?: string;
 } {
   const args = argv.slice(2);
   const command = args.shift() ?? "";
   let scenarioId: string | undefined;
   let contextDir = process.env.E2E_CONTEXT_DIR ?? ".e2e";
   let probesFromState = false;
+  let logPath: string | undefined;
+  let observedPhase: string | undefined;
+  let observedErrorClass: string | undefined;
+  let observedSideEffects: string | undefined;
   const scriptDir = path.dirname(fileURLToPath(import.meta.url));
   // resolver/ lives under test/e2e/runtime/, so the E2E metadata root
   // (which loadMetadataFromDir resolves further into nemoclaw_scenarios/
@@ -59,6 +86,22 @@ function parseArgs(argv: string[]): {
       // item #9); the resolver will fail closed when required probe keys
       // are missing without this flag.
       probesFromState = true;
+    } else if (a === "--log") {
+      const v = args.shift();
+      if (!v) throw new Error("--log requires a value");
+      logPath = v;
+    } else if (a === "--observed-phase") {
+      const v = args.shift();
+      if (!v) throw new Error("--observed-phase requires a value");
+      observedPhase = v;
+    } else if (a === "--observed-error-class") {
+      const v = args.shift();
+      if (!v) throw new Error("--observed-error-class requires a value");
+      observedErrorClass = v;
+    } else if (a === "--observed-side-effects") {
+      const v = args.shift();
+      if (v === undefined) throw new Error("--observed-side-effects requires a value");
+      observedSideEffects = v;
     } else if (a && !a.startsWith("--") && !scenarioId) {
       scenarioId = a;
     } else if (a === "--help" || a === "-h") {
@@ -67,7 +110,17 @@ function parseArgs(argv: string[]): {
       throw new Error(`unexpected argument: ${a}`);
     }
   }
-  return { command, scenarioId, contextDir, metadataDir, probesFromState };
+  return {
+    command,
+    scenarioId,
+    contextDir,
+    metadataDir,
+    probesFromState,
+    logPath,
+    observedPhase,
+    observedErrorClass,
+    observedSideEffects,
+  };
 }
 
 function main(): number {
@@ -125,8 +178,83 @@ function main(): number {
       process.stdout.write(`expected-state-report: ${reportPath}\n`);
       return report.ok ? 0 : 3;
     }
+    if (command === "match-failure") {
+      if (!plan.expected_failure) {
+        process.stderr.write(
+          `resolver: scenario '${scenarioId}' has no expected_failure block; nothing to match\n`,
+        );
+        return 2;
+      }
+      if (!parsed.observedPhase) {
+        process.stderr.write("resolver: match-failure requires --observed-phase\n");
+        return 2;
+      }
+      if (!EXPECTED_FAILURE_PHASES.includes(parsed.observedPhase as ExpectedFailurePhase)) {
+        process.stderr.write(
+          `resolver: --observed-phase must be one of: ${EXPECTED_FAILURE_PHASES.join(", ")}\n`,
+        );
+        return 2;
+      }
+      let observedErrorClass: ExpectedFailureErrorClass | undefined;
+      if (parsed.observedErrorClass !== undefined && parsed.observedErrorClass !== "") {
+        if (
+          !EXPECTED_FAILURE_ERROR_CLASSES.includes(
+            parsed.observedErrorClass as ExpectedFailureErrorClass,
+          )
+        ) {
+          process.stderr.write(
+            `resolver: --observed-error-class must be one of: ${EXPECTED_FAILURE_ERROR_CLASSES.join(", ")}\n`,
+          );
+          return 2;
+        }
+        observedErrorClass = parsed.observedErrorClass as ExpectedFailureErrorClass;
+      }
+      const observedSideEffects: ExpectedFailureSideEffect[] = (parsed.observedSideEffects ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .map((s) => {
+          if (!EXPECTED_FAILURE_SIDE_EFFECTS.includes(s as ExpectedFailureSideEffect)) {
+            throw new Error(
+              `--observed-side-effects entry '${s}' must be one of: ${EXPECTED_FAILURE_SIDE_EFFECTS.join(", ")}`,
+            );
+          }
+          return s as ExpectedFailureSideEffect;
+        });
+      if (!parsed.logPath) {
+        process.stderr.write("resolver: match-failure requires --log\n");
+        return 2;
+      }
+      const log = fs.readFileSync(parsed.logPath, "utf8");
+      const observed: ObservedFailure = {
+        phase: parsed.observedPhase as ExpectedFailurePhase,
+        error_class: observedErrorClass,
+        log,
+        observed_side_effects: observedSideEffects,
+      };
+      const report = matchExpectedFailure(plan.expected_failure, observed);
+      // Exclude the (potentially large) log from the JSON artifact so
+      // expected-vs-actual.json stays human-readable; the log is already
+      // captured separately under the context dir.
+      const artifact = {
+        ok: report.ok,
+        expected: report.expected,
+        observed: {
+          phase: report.observed.phase,
+          error_class: report.observed.error_class,
+          observed_side_effects: report.observed.observed_side_effects,
+        },
+        checks: report.checks,
+      };
+      fs.mkdirSync(contextDir, { recursive: true });
+      const reportPath = path.join(contextDir, "expected-vs-actual.json");
+      fs.writeFileSync(reportPath, `${JSON.stringify(artifact, null, 2)}\n`);
+      process.stdout.write(`${formatExpectedFailureReport(report)}\n`);
+      process.stdout.write(`expected-vs-actual: ${reportPath}\n`);
+      return report.ok ? 0 : 4;
+    }
     process.stderr.write(
-      `resolver: unknown command '${command}' (expected: plan|validate-state <scenario-id>)\n`,
+      `resolver: unknown command '${command}' (expected: plan|validate-state|match-failure <scenario-id>)\n`,
     );
     return 2;
   } catch (err) {

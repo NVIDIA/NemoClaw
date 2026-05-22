@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# NemoClaw Network Policies: Baseline Rules and Operator Approval
+# Network Policies
 
 NemoClaw runs with a deny-by-default network policy.
 The sandbox can only reach endpoints that are explicitly allowed.
@@ -44,7 +44,7 @@ GitHub access (`github.com`, `api.github.com`) is not included in the baseline p
 Apply the `github` preset during onboarding if your agent needs GitHub access.
 See Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill).
 
-Messaging endpoints for Telegram, Discord, and Slack are not included in the baseline policy.
+The baseline policy does not include messaging endpoints for Telegram, Discord, Slack, and WhatsApp.
 Enable the channel during onboarding or apply the matching messaging preset so the sandbox can reach that platform.
 
 <a id="policy-tiers"></a>
@@ -57,8 +57,8 @@ The baseline policy is always applied regardless of the selected tier.
 | Tier | Presets included | Description |
 |------|------------------|-------------|
 | Restricted | None | Base sandbox only. No third-party network access beyond inference and core agent tooling. |
-| Balanced (default) | npm, pypi, huggingface, brew, brave when supported | Full dev tooling and web search for agents that support web search. No messaging platform access. |
-| Open | npm, pypi, huggingface, brew, brave when supported, slack, discord, telegram, jira, outlook | Broad access across third-party services including messaging and productivity. |
+| Balanced (default) | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported` | Full dev tooling and web search for agents that support web search. No messaging platform access. |
+| Open | `npm`, `pypi`, `huggingface`, `brew`, `brave when supported`, `slack`, `discord`, `telegram`, `whatsapp`, `jira`, `outlook` | Broad access across third-party services including messaging and productivity. |
 
 After selecting a tier, a combined preset and access-mode screen lets you include or exclude individual presets and toggle each between read (GET only) and read-write (GET + POST/PUT/PATCH) access.
 Tier-default presets are pre-selected; additional presets can be added from the full list.

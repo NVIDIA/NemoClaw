@@ -53,7 +53,9 @@ else
   : >"$_START_LOG"
   chmod 600 "$_START_LOG" 2>/dev/null || true
 fi
-exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
+exec 3>&1
+exec 4>&2
+exec > >(tee -a "$_START_LOG" >&3) 2> >(tee -a "$_START_LOG" >&4)
 
 # ── Source shared sandbox initialisation library ─────────────────
 # Single source of truth for security-sensitive primitives shared with
@@ -189,6 +191,18 @@ print(port)
 PYPORT
 }
 
+emit_startup_error() {
+  local message="$1"
+  if [ -n "${_START_LOG:-}" ]; then
+    printf '%s\n' "$message" >>"$_START_LOG" 2>/dev/null || true
+  fi
+  if { true >&4; } 2>/dev/null; then
+    printf '%s\n' "$message" >&4
+  else
+    printf '%s\n' "$message" >&2
+  fi
+}
+
 # Validate NEMOCLAW_DASHBOARD_PORT if set (same behavior as ports.js: fail fast).
 _DASHBOARD_PORT_RAW="${NEMOCLAW_DASHBOARD_PORT:-}"
 if [ -z "$_DASHBOARD_PORT_RAW" ]; then
@@ -199,14 +213,17 @@ if [ -z "$_DASHBOARD_PORT_RAW" ]; then
   fi
 else
   _DASHBOARD_PORT="$(printf '%s' "$_DASHBOARD_PORT_RAW" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  _DASHBOARD_PORT_VALID=1
   case "$_DASHBOARD_PORT" in
     *[!0-9]* | '')
-      echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
-      exit 1
+      _DASHBOARD_PORT_VALID=0
       ;;
   esac
-  if ! [ "$_DASHBOARD_PORT" -ge 1024 ] || ! [ "$_DASHBOARD_PORT" -le 65535 ]; then
-    echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
+  if [ "$_DASHBOARD_PORT_VALID" -eq 1 ] && { [ "$_DASHBOARD_PORT" -lt 1024 ] || [ "$_DASHBOARD_PORT" -gt 65535 ]; }; then
+    _DASHBOARD_PORT_VALID=0
+  fi
+  if [ "$_DASHBOARD_PORT_VALID" -ne 1 ]; then
+    emit_startup_error "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535"
     exit 1
   fi
 fi
@@ -225,6 +242,18 @@ export OPENCLAW_GATEWAY_PORT="$_DASHBOARD_PORT"
 export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:${_DASHBOARD_PORT}"
 OPENCLAW="$(command -v openclaw)" # Resolve once, use absolute path everywhere
 _SANDBOX_HOME="/sandbox"          # Home dir for the sandbox user (useradd -d /sandbox in Dockerfile.base)
+_OPENCLAW_STATE_DIR="${_SANDBOX_HOME}/.openclaw"
+_OPENCLAW_CREDENTIALS_DIR="${_OPENCLAW_STATE_DIR}/credentials"
+
+# OpenClaw 2026.4.x stores channel pairing requests under
+# resolveOAuthDir(resolveStateDir(...))/<channel>-pairing.json. The gateway
+# runs as the gateway user while connect-shell commands run as sandbox, so
+# relying on HOME/os.homedir() can split pending requests across users. Force
+# every OpenClaw process in the sandbox to the persistent shared state root.
+export OPENCLAW_HOME="${_SANDBOX_HOME}"
+export OPENCLAW_STATE_DIR="${_OPENCLAW_STATE_DIR}"
+export OPENCLAW_CONFIG_PATH="${_OPENCLAW_STATE_DIR}/openclaw.json"
+export OPENCLAW_OAUTH_DIR="${_OPENCLAW_CREDENTIALS_DIR}"
 
 # ── Config integrity check (delegates to shared library) ────────
 # verify_config_integrity_if_locked is provided by sandbox-init.sh. OpenClaw
@@ -1420,6 +1449,65 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 
+DISCORD_LOOPBACK_PROXY_PORT="${NEMOCLAW_DISCORD_PROXY_PORT:-3128}"
+case "$DISCORD_LOOPBACK_PROXY_PORT" in
+  *[!0-9]* | '')
+    echo "[channels] Invalid NEMOCLAW_DISCORD_PROXY_PORT='${NEMOCLAW_DISCORD_PROXY_PORT:-}' - using 3128" >&2
+    DISCORD_LOOPBACK_PROXY_PORT=3128
+    ;;
+esac
+if [ "$DISCORD_LOOPBACK_PROXY_PORT" -lt 1 ] || [ "$DISCORD_LOOPBACK_PROXY_PORT" -gt 65535 ]; then
+  echo "[channels] Invalid NEMOCLAW_DISCORD_PROXY_PORT='${DISCORD_LOOPBACK_PROXY_PORT}' - using 3128" >&2
+  DISCORD_LOOPBACK_PROXY_PORT=3128
+fi
+
+_DISCORD_LOOPBACK_PROXY_SCRIPT="/tmp/nemoclaw-discord-loopback-proxy.js"
+_DISCORD_LOOPBACK_PROXY_SOURCE="/usr/local/lib/nemoclaw/preloads/discord-loopback-proxy.js"
+
+start_discord_loopback_proxy() {
+  [ -n "${DISCORD_BOT_TOKEN:-}" ] || return 0
+  command -v node >/dev/null 2>&1 || {
+    echo "[channels] Discord loopback proxy skipped: node is not available" >&2
+    return 0
+  }
+  if [ ! -f "$_DISCORD_LOOPBACK_PROXY_SOURCE" ]; then
+    echo "[channels] Discord loopback proxy skipped: helper is not installed" >&2
+    return 0
+  fi
+
+  local log="/tmp/nemoclaw-discord-loopback-proxy.log"
+  local port="$DISCORD_LOOPBACK_PROXY_PORT"
+
+  if node -e '
+const net = require("net");
+const port = Number(process.argv[1]);
+const socket = net.createConnection({ host: "127.0.0.1", port, timeout: 500 });
+socket.on("connect", () => process.exit(0));
+socket.on("error", () => process.exit(1));
+socket.on("timeout", () => process.exit(1));
+' "$port" >/dev/null 2>&1; then
+    echo "[channels] Discord loopback proxy already listening on 127.0.0.1:${port}" >&2
+    return 0
+  fi
+
+  emit_sandbox_sourced_file "$_DISCORD_LOOPBACK_PROXY_SCRIPT" <"$_DISCORD_LOOPBACK_PROXY_SOURCE"
+  : >"$log"
+  chmod 600 "$log" 2>/dev/null || true
+
+  if [ "$(id -u)" -eq 0 ]; then
+    chown root:root "$log" 2>/dev/null || true
+    nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+      -u http_proxy -u https_proxy -u all_proxy NODE_USE_ENV_PROXY=0 \
+      node "$_DISCORD_LOOPBACK_PROXY_SCRIPT" "$port" "$PROXY_HOST" "$PROXY_PORT" >>"$log" 2>&1 &
+  else
+    nohup env -u HTTP_PROXY -u HTTPS_PROXY -u ALL_PROXY \
+      -u http_proxy -u https_proxy -u all_proxy NODE_USE_ENV_PROXY=0 \
+      node "$_DISCORD_LOOPBACK_PROXY_SCRIPT" "$port" "$PROXY_HOST" "$PROXY_PORT" >>"$log" 2>&1 &
+  fi
+  DISCORD_LOOPBACK_PROXY_PID=$!
+  echo "[channels] Discord loopback proxy launched (pid ${DISCORD_LOOPBACK_PROXY_PID}, 127.0.0.1:${port} -> ${PROXY_HOST}:${PROXY_PORT})" >&2
+}
+
 # Git TLS CA bundle fix (NemoClaw#2270).
 # OpenShell's L7 proxy does MITM TLS termination and re-signs with its own CA.
 # OpenShell injects SSL_CERT_FILE and CURL_CA_BUNDLE pointing at the CA bundle,
@@ -1580,6 +1668,13 @@ export http_proxy="$_PROXY_URL"
 export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 PROXYEOF
+    local _openclaw_env_name _openclaw_env_value _escaped_openclaw_env_value
+    for _openclaw_env_name in OPENCLAW_HOME OPENCLAW_STATE_DIR OPENCLAW_CONFIG_PATH OPENCLAW_OAUTH_DIR; do
+      _openclaw_env_value="${!_openclaw_env_name:-}"
+      [ -n "$_openclaw_env_value" ] || continue
+      _escaped_openclaw_env_value="$(printf '%s' "$_openclaw_env_value" | sed "s/'/'\\\\''/g")"
+      printf "export %s='%s'\n" "$_openclaw_env_name" "$_escaped_openclaw_env_value"
+    done
     if [ -n "${OPENCLAW_GATEWAY_PORT:-}" ]; then
       _escaped_gateway_port="$(printf '%s' "$OPENCLAW_GATEWAY_PORT" | sed "s/'/'\\\\''/g")"
       printf "export OPENCLAW_GATEWAY_PORT='%s'\n" "$_escaped_gateway_port"
@@ -1621,17 +1716,73 @@ openclaw() {
       esac
       ;;
     channels)
+      # `status` is read-only diagnostics. `login` is only allowed for
+      # WhatsApp, whose QR pairing intentionally happens inside the sandbox.
+      # Other persistent mutations (including host-QR channel login) stay
+      # blocked — they must go through the host CLI so registry/provider state
+      # and rebuild reasons are captured.
       case "$2" in
-        list | "" | -h | --help) ;;
+        list | status | "" | -h | --help) ;;
+        login)
+          _login_channel=""
+          _login_help=0
+          _prev_arg_was_channel_flag=0
+          _seen_login_subcommand=0
+          for _arg in "$@"; do
+            if [ "$_seen_login_subcommand" = "0" ]; then
+              [ "$_arg" = "login" ] && _seen_login_subcommand=1
+              continue
+            fi
+            if [ "$_prev_arg_was_channel_flag" = "1" ]; then
+              _login_channel="$_arg"
+              _prev_arg_was_channel_flag=0
+              continue
+            fi
+            case "$_arg" in
+              --channel)
+                _prev_arg_was_channel_flag=1
+                ;;
+              --channel=*)
+                _login_channel="${_arg#--channel=}"
+                ;;
+              -h | --help)
+                _login_help=1
+                ;;
+              --*)
+                ;;
+              *)
+                [ -z "$_login_channel" ] && _login_channel="$_arg"
+                ;;
+            esac
+          done
+          if [ "$_login_help" != "1" ] && [ "$_login_channel" != "whatsapp" ]; then
+            echo "Error: 'openclaw channels login' is only supported inside the sandbox for WhatsApp." >&2
+            echo "Changes inside the sandbox do not persist across rebuilds." >&2
+            echo "" >&2
+            echo "To add or remove messaging channels, exit the sandbox and run:" >&2
+            echo "  nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>" >&2
+            echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>" >&2
+            echo "" >&2
+            echo "WhatsApp pairs entirely inside the sandbox; complete pairing via:" >&2
+            echo "  openclaw channels login --channel whatsapp" >&2
+            echo "WeChat captures its token via a host-side QR during the host-side" >&2
+            echo "'channels add wechat' flow — no in-sandbox login step." >&2
+            return 1
+          fi
+          ;;
         *)
           echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
           echo "Changes inside the sandbox do not persist across rebuilds." >&2
           echo "" >&2
           echo "To add or remove messaging channels, exit the sandbox and run:" >&2
-          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack>" >&2
-          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack>" >&2
+          echo "  nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>" >&2
+          echo "  nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>" >&2
           echo "" >&2
           echo "These stage the change and rebuild the sandbox to apply it." >&2
+          echo "WhatsApp pairs entirely inside the sandbox; complete pairing via:" >&2
+          echo "  openclaw channels login --channel whatsapp" >&2
+          echo "WeChat captures its token via a host-side QR during the host-side" >&2
+          echo "'channels add wechat' flow — no in-sandbox login step." >&2
           return 1
           ;;
       esac
@@ -2027,13 +2178,41 @@ NODE
     return 0
   fi
   if [ -z "$templates_dir" ]; then
-    local npm_root
-    npm_root="$(npm root -g 2>/dev/null)" || return 0
-    [ -n "$npm_root" ] || return 0
-    templates_dir="${npm_root}/openclaw/dist/docs/reference/templates"
+    local npm_root openclaw_bin openclaw_real openclaw_pkg candidate searched_template_dirs=""
+    local openclaw_pkg_roots=()
+    npm_root="$(npm root -g 2>/dev/null || true)"
+    if [ -n "$npm_root" ]; then
+      openclaw_pkg_roots+=("${npm_root}/openclaw")
+    fi
+    openclaw_pkg_roots+=("/usr/local/lib/node_modules/openclaw")
+    if openclaw_bin="$(command -v openclaw 2>/dev/null)"; then
+      openclaw_real="$(readlink -f "$openclaw_bin" 2>/dev/null || printf '%s\n' "$openclaw_bin")"
+      openclaw_pkg="$(cd "$(dirname "$openclaw_real")/.." 2>/dev/null && pwd -P || true)"
+      if [ -n "$openclaw_pkg" ]; then
+        openclaw_pkg_roots+=("$openclaw_pkg")
+      fi
+    fi
+
+    templates_dir=""
+    for openclaw_pkg in "${openclaw_pkg_roots[@]}"; do
+      for candidate in \
+        "${openclaw_pkg}/docs/reference/templates" \
+        "${openclaw_pkg}/dist/docs/reference/templates"; do
+        searched_template_dirs="${searched_template_dirs}${searched_template_dirs:+, }${candidate}"
+        if [ -d "$candidate" ]; then
+          templates_dir="$candidate"
+          break
+        fi
+      done
+      [ -n "$templates_dir" ] && break
+    done
   fi
-  if [ ! -d "$templates_dir" ]; then
-    echo "[setup] openclaw templates dir not found at ${templates_dir}; skipping workspace seed" >&2
+  if [ -z "$templates_dir" ] || [ ! -d "$templates_dir" ]; then
+    if [ -n "${searched_template_dirs:-}" ]; then
+      echo "[setup] openclaw workspace templates dir not found; tried: ${searched_template_dirs}; skipping default workspace seed" >&2
+    else
+      echo "[setup] openclaw workspace templates dir not found: ${templates_dir}; skipping default workspace seed" >&2
+    fi
     return 0
   fi
   local file src dst tmp seeded=0
@@ -2056,6 +2235,10 @@ NODE
   if [ "$seeded" -gt 0 ]; then
     echo "[setup] seeded ${seeded} default workspace template(s) into ${workspace_dir}" >&2
   fi
+}
+
+seed_default_workspace_templates_as_sandbox() {
+  "${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "$(declare -f seed_default_workspace_templates); seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json"
 }
 
 # ── Main ─────────────────────────────────────────────────────────
@@ -2110,6 +2293,7 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
 
   configure_messaging_channels
+  start_discord_loopback_proxy
   install_telegram_diagnostics
   install_slack_channel_guard
   verify_no_slack_secrets_on_disk
@@ -2154,7 +2338,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_DISCORD_LOOPBACK_PROXY_SCRIPT"
 
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
@@ -2171,6 +2355,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # registration and the final append is a small race window (same as before
   # the shared-library refactor). Acceptable for entrypoint-level cleanup.
   SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
+  [ -n "${DISCORD_LOOPBACK_PROXY_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DISCORD_LOOPBACK_PROXY_PID")
   [ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
   [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
   [ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")
@@ -2248,6 +2433,7 @@ lock_rc_files "$_SANDBOX_HOME"
 # Must run AFTER integrity check (to detect build-time tampering) and
 # BEFORE chattr +i (which locks the config permanently).
 configure_messaging_channels
+start_discord_loopback_proxy
 install_telegram_diagnostics
 install_slack_channel_guard
 verify_no_slack_secrets_on_disk
@@ -2358,13 +2544,13 @@ provision_agent_workspaces
 # Run as the sandbox user so the seeded files inherit sandbox:sandbox
 # ownership (the function's own cp calls would otherwise produce
 # root-owned files in this branch). See function comment for context.
-gosu sandbox bash -c "$(declare -f seed_default_workspace_templates); seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json"
+seed_default_workspace_templates_as_sandbox
 
 # Defence-in-depth: verify /tmp file permissions before launching services.
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT"
+validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_DISCORD_LOOPBACK_PROXY_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs
@@ -2397,6 +2583,7 @@ start_auto_pair
 # registration and the final append is a small race window (same as before
 # the shared-library refactor). Acceptable for entrypoint-level cleanup.
 SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
+[ -n "${DISCORD_LOOPBACK_PROXY_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DISCORD_LOOPBACK_PROXY_PID")
 [ -n "${AUTO_PAIR_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$AUTO_PAIR_PID")
 [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
 [ -n "${GATEWAY_LOG_PERSIST_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_PERSIST_PID")

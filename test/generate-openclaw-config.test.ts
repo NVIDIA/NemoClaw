@@ -61,6 +61,10 @@ function runConfigScript(envOverrides: Record<string, string> = {}): any {
   return JSON.parse(fs.readFileSync(configPath, "utf-8"));
 }
 
+function wechatExtensionPath(stateDir = path.join(tmpDir, ".openclaw")) {
+  return path.join(fs.realpathSync(stateDir), "extensions", "openclaw-weixin");
+}
+
 function writeRegistryManifest(
   blueprintDir: string,
   relativeManifestPath: string,
@@ -195,6 +199,28 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.channels.telegram).toBeDefined();
   });
 
+  it("emits a tokenless WhatsApp config block for QR-paired channels", () => {
+    const channels = Buffer.from(JSON.stringify(["whatsapp"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.whatsapp).toBeDefined();
+    const account = config.channels.whatsapp.accounts.default;
+    expect(account.enabled).toBe(true);
+    expect(account.healthMonitor).toEqual({ enabled: false });
+    expect(account.token).toBeUndefined();
+    expect(account.botToken).toBeUndefined();
+    expect(account.appToken).toBeUndefined();
+  });
+
+  it("keeps WhatsApp config alongside token-based channels in the same run", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram", "whatsapp"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.telegram.accounts.default.botToken).toBe(
+      "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
+    );
+    expect(config.channels.whatsapp.accounts.default.enabled).toBe(true);
+    expect(config.channels.whatsapp.accounts.default.botToken).toBeUndefined();
+  });
+
   it("emits groups with requireMention when TELEGRAM_REQUIRE_MENTION is true (#3022)", () => {
     const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
     const telegramConfig = Buffer.from(JSON.stringify({ requireMention: true })).toString("base64");
@@ -226,13 +252,7 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.channels.telegram.groups).toBeUndefined();
   });
 
-  it("does not write channels.openclaw-weixin from generate-openclaw-config (Dockerfile seed runs separately)", () => {
-    // Commit a21e123 reverted the chained seed: generate-openclaw-config.py
-    // intentionally leaves channels.openclaw-weixin unset, even when a
-    // wechatConfig is provided. The Dockerfile invokes
-    // seed-wechat-accounts.py separately, AFTER `openclaw plugins install`
-    // registers the openclaw-weixin channel id. Writing the channel block
-    // here would trigger "unknown channel id: openclaw-weixin" on install.
+  it("does not seed channels.openclaw-weixin before the base plugin install registry exists", () => {
     const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
     const wechatConfig = Buffer.from(
       JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
@@ -245,6 +265,52 @@ describe("generate-openclaw-config.py: config generation", () => {
     // The "wechat" alias is the NemoClaw channel name, not an OpenClaw
     // channel id — must never appear under channels.
     expect(config.channels?.wechat).toBeUndefined();
+  });
+
+  it("seeds channels.openclaw-weixin when the base plugin install registry exists", () => {
+    const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
+    const installEntry = {
+      source: "npm",
+      spec: "@tencent-weixin/openclaw-weixin@2.4.2",
+    };
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ plugins: { installs: { "openclaw-weixin": installEntry } } }),
+    );
+
+    const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
+    const wechatConfig = Buffer.from(
+      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
+    ).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
+    });
+
+    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
+      ...installEntry,
+      installPath: wechatExtensionPath(),
+    });
+    expect(config.plugins?.load?.paths).toEqual([wechatExtensionPath()]);
+    expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
+      enabled: true,
+    });
+    expect(config.channels?.wechat).toBeUndefined();
+
+    const accountFile = path.join(
+      tmpDir,
+      ".openclaw",
+      "openclaw-weixin",
+      "accounts",
+      "primary.json",
+    );
+    const account = JSON.parse(fs.readFileSync(accountFile, "utf-8"));
+    expect(account).toMatchObject({
+      token: "openshell:resolve:env:WECHAT_BOT_TOKEN",
+      baseUrl: "https://example",
+      userId: "u1",
+    });
   });
 
   it("omits channels.openclaw-weixin when no accountId was captured", () => {
@@ -264,7 +330,25 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
   });
 
-  it("emits canonical openshell:resolve:env: placeholders for non-Slack channels", () => {
+  it("preserves base-image plugin install registry entries", () => {
+    const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
+    fs.mkdirSync(path.dirname(configPath), { recursive: true });
+    const installEntry = {
+      source: "npm",
+      spec: "@tencent-weixin/openclaw-weixin@2.4.2",
+    };
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ plugins: { installs: { "openclaw-weixin": installEntry } } }),
+    );
+
+    const config = runConfigScript({});
+
+    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual(installEntry);
+    expect(config.plugins?.entries?.["openclaw-weixin"]?.enabled).toBe(true);
+  });
+
+  it("emits canonical placeholders and proxy routing for non-Slack channels", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     expect(config.channels.telegram.accounts.default.botToken).toBe(
@@ -274,7 +358,36 @@ describe("generate-openclaw-config.py: config generation", () => {
       "openshell:resolve:env:DISCORD_BOT_TOKEN",
     );
     expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
-    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://127.0.0.1:3128");
+  });
+
+  it("#3894: routes Discord gateway traffic through the sandbox loopback proxy", () => {
+    const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_PROXY_HOST: "10.201.0.9",
+      NEMOCLAW_PROXY_PORT: "43128",
+      NEMOCLAW_DISCORD_PROXY_PORT: "43129",
+    });
+
+    expect(config.channels.discord.accounts.default).toMatchObject({
+      token: "openshell:resolve:env:DISCORD_BOT_TOKEN",
+      enabled: true,
+      proxy: "http://127.0.0.1:43129",
+    });
+  });
+
+  it("keeps Telegram on the OpenShell proxy when Discord uses loopback", () => {
+    const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_PROXY_HOST: "10.201.0.9",
+      NEMOCLAW_PROXY_PORT: "43128",
+      NEMOCLAW_DISCORD_PROXY_PORT: "43129",
+    });
+
+    expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.201.0.9:43128");
+    expect(config.channels.discord.accounts.default.proxy).toBe("http://127.0.0.1:43129");
   });
 
   it("emits Bolt-shape placeholders for Slack so the SDK's prefix regex passes", () => {

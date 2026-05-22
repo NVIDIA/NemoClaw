@@ -78,6 +78,23 @@ interface DnsValidatedUrl {
   pinnedUrl: string;
 }
 
+export class SandboxConfigError extends Error {
+  readonly lines: readonly string[];
+  readonly exitCode: number;
+
+  constructor(lines: string | readonly string[], exitCode = 1) {
+    const normalized = Array.isArray(lines) ? lines : [lines];
+    super(normalized.join("\n"));
+    this.name = "SandboxConfigError";
+    this.lines = normalized;
+    this.exitCode = exitCode;
+  }
+}
+
+function configFail(lines: string | readonly string[], exitCode = 1): never {
+  throw new SandboxConfigError(lines, exitCode);
+}
+
 class ConfigUrlValidationError extends Error {
   constructor(
     readonly urlValue: string,
@@ -423,17 +440,17 @@ function readSandboxConfig(sandboxName: string, target: AgentConfigTarget): Conf
   }
 
   if (!raw || !raw.trim()) {
-    console.error(`  Cannot read ${target.agentName} config (${target.configPath}).`);
-    console.error("  Is the sandbox running?");
-    process.exit(1);
+    configFail([
+      `  Cannot read ${target.agentName} config (${target.configPath}).`,
+      "  Is the sandbox running?",
+    ]);
   }
 
   try {
     return parseConfig(raw, target.format);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    console.error(`  Failed to parse ${target.agentName} config: ${message}`);
-    process.exit(1);
+    configFail(`  Failed to parse ${target.agentName} config: ${message}`);
   }
 }
 
@@ -740,8 +757,7 @@ function configGet(sandboxName: string, opts: ConfigGetOpts = {}): void {
   if (opts.key) {
     const value = extractDotpath(config, opts.key);
     if (value === undefined) {
-      console.error(`  Key "${opts.key}" not found in ${target.agentName} config.`);
-      process.exit(1);
+      configFail(`  Key "${opts.key}" not found in ${target.agentName} config.`);
     }
     config = value;
   }
@@ -771,21 +787,22 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   validateName(sandboxName, "sandbox name");
 
   if (!opts.key) {
-    console.error("  --key is required.");
-    console.error("  Usage: nemoclaw <name> config set --key <dotpath> --value <value>");
-    process.exit(1);
+    configFail([
+      "  --key is required.",
+      "  Usage: nemoclaw <name> config set --key <dotpath> --value <value>",
+    ]);
   }
 
   if (opts.value === undefined || opts.value === null) {
-    console.error("  --value is required.");
-    console.error("  Usage: nemoclaw <name> config set --key <dotpath> --value <value>");
-    process.exit(1);
+    configFail([
+      "  --value is required.",
+      "  Usage: nemoclaw <name> config set --key <dotpath> --value <value>",
+    ]);
   }
 
   const dotpathCheck = validateConfigDotpath(opts.key);
   if (!dotpathCheck.ok) {
-    console.error(`  Invalid config key '${opts.key}': ${dotpathCheck.reason}.`);
-    process.exit(1);
+    configFail(`  Invalid config key '${opts.key}': ${dotpathCheck.reason}.`);
   }
 
   const target = resolveAgentConfig(sandboxName);
@@ -799,9 +816,10 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
   // Check that we're not modifying the gateway section (contains auth tokens)
   if (opts.key.startsWith("gateway.") || opts.key === "gateway") {
-    console.error("  Cannot modify the gateway section directly.");
-    console.error("  Use `nemoclaw config rotate-token` for credential changes.");
-    process.exit(1);
+    configFail([
+      "  Cannot modify the gateway section directly.",
+      "  Use `nemoclaw <name> config rotate-token` for credential changes.",
+    ]);
   }
 
   // Show what will change
@@ -817,10 +835,9 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
   // array on its way to the leaf.
   const refusal = findClobberingAncestor(config, opts.key);
   if (refusal) {
-    console.error(
+    configFail(
       `  Cannot set '${opts.key}' in ${target.agentName} config: '${refusal.segment}' ${refusal.reason}.`,
     );
-    process.exit(1);
   }
 
   // First-time writes go through a confirmation gate so users get a
@@ -835,19 +852,15 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
       nonInteractiveEnv: process.env.NEMOCLAW_NON_INTERACTIVE,
     });
     if (gate.mode === "refuse") {
-      console.error(
+      configFail([
         `  Key '${opts.key}' does not currently exist in the ${target.agentName} config.`,
-      );
-      console.error(
         "  Re-run interactively, pass --config-accept-new-path, or set NEMOCLAW_CONFIG_ACCEPT_NEW_PATH=1.",
-      );
-      process.exit(1);
+      ]);
     }
     if (gate.mode === "prompt") {
       const confirmed = await confirmYesNo("  Write this new key? [y/N] ");
       if (!confirmed) {
-        console.error("  Aborted.");
-        process.exit(1);
+        configFail("  Aborted.");
       }
     }
   }
@@ -863,8 +876,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
     const suffix = err instanceof ConfigUrlValidationError
       ? ` for ${redactUrlForLogs(err.urlValue)}`
       : "";
-    console.error(`  URL validation failed${suffix}: ${message}`);
-    process.exit(1);
+    configFail(`  URL validation failed${suffix}: ${message}`);
   }
 
   // Apply change
@@ -925,17 +937,15 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
   const session = loadSession();
 
   if (!session || !session.credentialEnv) {
-    console.error(`  Cannot determine credential for sandbox '${sandboxName}'.`);
-    console.error("  No onboard session found with a credentialEnv.");
-    console.error("  Re-run: nemoclaw onboard --recreate-sandbox");
-    process.exit(1);
+    configFail([
+      `  Cannot determine credential for sandbox '${sandboxName}'.`,
+      "  No onboard session found with a credentialEnv.",
+      "  Re-run: nemoclaw onboard --recreate-sandbox",
+    ]);
   }
 
   if (session.sandboxName && session.sandboxName !== sandboxName) {
-    console.error(
-      `  Onboard session is for sandbox '${session.sandboxName}', not '${sandboxName}'.`,
-    );
-    process.exit(1);
+    configFail(`  Onboard session is for sandbox '${session.sandboxName}', not '${sandboxName}'.`);
   }
 
   const target = resolveAgentConfig(sandboxName);
@@ -952,8 +962,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
   if (opts.fromEnv) {
     newToken = process.env[opts.fromEnv] || null;
     if (!newToken) {
-      console.error(`  Environment variable "${opts.fromEnv}" is not set or empty.`);
-      process.exit(1);
+      configFail(`  Environment variable "${opts.fromEnv}" is not set or empty.`);
     }
   } else if (opts.fromStdin) {
     newToken = await readStdin();
@@ -963,16 +972,14 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
   }
 
   if (!newToken || !newToken.trim()) {
-    console.error("  Token cannot be empty.");
-    process.exit(1);
+    configFail("  Token cannot be empty.");
   }
 
   newToken = newToken.trim();
 
   // 3. Validate — no whitespace in token
   if (/\s/.test(newToken)) {
-    console.error("  Token contains whitespace. This is likely a paste error.");
-    process.exit(1);
+    configFail("  Token contains whitespace. This is likely a paste error.");
   }
 
   // 4. Stage the new value in the current process so the openshell update
@@ -1018,8 +1025,7 @@ async function configRotateToken(sandboxName: string, opts: RotateTokenOpts = {}
     );
 
     if (createResult.status !== 0) {
-      console.error("  Failed to update provider. You may need to re-onboard.");
-      process.exit(1);
+      configFail("  Failed to update provider. You may need to re-onboard.");
     }
   }
 
