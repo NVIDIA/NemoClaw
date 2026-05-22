@@ -92,6 +92,7 @@ function baseOptions(
   return {
     resume: false,
     fresh: false,
+    resumeAgentChanged: false,
     session,
     sandboxName: null,
     model: "model",
@@ -186,10 +187,34 @@ describe("handleSandboxState", () => {
     expect(calls.createSandbox).toHaveBeenCalled();
   });
 
+  it("recreates when a saved web search sandbox is no longer supported", async () => {
+    const session = createSession({ sandboxName: "saved", webSearchConfig: { fetchEnabled: true } });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      agentSupportsWebSearch: () => false,
+      getSandboxReuseState: () => "ready",
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => mutator(session) ?? session),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true },
+    });
+
+    expect(calls.note).toHaveBeenCalledWith(
+      "  Web search is not yet supported by this sandbox image. Clearing stale config.",
+    );
+    expect(calls.note).toHaveBeenCalledWith("  [resume] Web Search configuration changed; recreating sandbox.");
+    expect(calls.removeSandbox).toHaveBeenCalledWith("saved");
+    expect(calls.createSandbox).toHaveBeenCalled();
+  });
+
   it("uses recorded messaging channels on non-interactive resume", async () => {
     const { deps, calls } = createDeps({ getRecordedMessagingChannelsForResume: vi.fn(() => ["discord"]) });
 
-    const result = await handleSandboxState(baseOptions(deps));
+    const result = await handleSandboxState({ ...baseOptions(deps), resume: true });
 
     expect(calls.setupMessaging).not.toHaveBeenCalled();
     expect(calls.note).toHaveBeenCalledWith("  [non-interactive] Reusing messaging channel configuration: discord");

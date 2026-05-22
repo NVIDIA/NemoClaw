@@ -24,6 +24,30 @@ import { VLLM_PORT } from "../core/ports";
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
 
+// On Windows-on-ARM (Snapdragon X) WSL2 hosts, a d3d12/WDDM shim publishes a
+// `nvidia-smi.exe` that returns a placeholder name (e.g. "JMJWOA-Generic-GPU")
+// even though the system has no NVIDIA hardware. Real DGX Spark legitimately
+// reports the same string (see #3510), distinguished by the firmware platform.
+// Accept a name as NVIDIA when it either advertises the vendor explicitly or
+// matches a known NVIDIA product family; otherwise the caller must cross-check
+// against `detectNvidiaPlatform()` before trusting the nvidia-smi output.
+const NVIDIA_GPU_NAME_PATTERN =
+  /\bNVIDIA\b|\b(GeForce|Tesla|Quadro|RTX|GTX|TITAN|H100|H200|A100|A40|A10|L40|L4|GB1\d|GB200|GB300|Grace[\s_-]+Hopper)\b/i;
+
+// Names that have been observed both on legitimate NVIDIA unified-memory
+// hardware (DGX Spark — #3510) and on Windows-on-ARM WSL2 d3d12 shims with no
+// NVIDIA silicon. Even with an `NVIDIA ` vendor prefix the name alone is not
+// sufficient — the caller must cross-check `detectNvidiaPlatform()`.
+const NVIDIA_GPU_NAME_DENYLIST_PATTERN = /\bJMJWOA-Generic-GPU\b/i;
+
+function isPlausibleNvidiaGpuName(name: string): boolean {
+  return (
+    !!name &&
+    !NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(name) &&
+    NVIDIA_GPU_NAME_PATTERN.test(name)
+  );
+}
+
 export interface NimModel {
   name: string;
   image: string;
@@ -277,23 +301,36 @@ export function detectGpu(): GpuDetection | null {
         parsed.push({ name, memoryMB });
       }
       if (parsed.length > 0) {
-        const totalMemoryMB = parsed.reduce(
+        const platform = detectNvidiaPlatform();
+        // Reject WDDM/d3d12 placeholder names on hosts where firmware does not
+        // confirm an NVIDIA platform. Otherwise a Snapdragon X WSL2 nvidia-smi
+        // shim returning "JMJWOA-Generic-GPU" would be reported as a real
+        // NVIDIA GPU. Real DGX Spark uses the same placeholder but has
+        // firmware platform "spark", which keeps the #3510 path working.
+        const firmwareConfirmsNvidia =
+          platform === "spark" || platform === "station" || platform === "jetson";
+        const trusted = firmwareConfirmsNvidia
+          ? parsed
+          : parsed.filter((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
+        if (trusted.length === 0) {
+          return null;
+        }
+        const totalMemoryMB = trusted.reduce(
           (sum: number, p: ParsedGpu) => sum + p.memoryMB,
           0,
         );
-        const firstName = parsed[0].name;
+        const firstName = trusted[0].name;
         // Only surface a single name when every GPU reports the same model;
         // a mixed-GPU host would otherwise be misreported as `Nx <firstName>`.
         const allSameName =
-          !!firstName && parsed.every((p: ParsedGpu) => p.name === firstName);
-        const platform = detectNvidiaPlatform();
+          !!firstName && trusted.every((p: ParsedGpu) => p.name === firstName);
         return {
           type: "nvidia",
           ...(allSameName ? { name: firstName } : {}),
-          gpus: parsed.map((p) => ({ name: p.name, memoryMB: p.memoryMB })),
-          count: parsed.length,
+          gpus: trusted.map((p) => ({ name: p.name, memoryMB: p.memoryMB })),
+          count: trusted.length,
           totalMemoryMB,
-          perGpuMB: parsed[0].memoryMB,
+          perGpuMB: trusted[0].memoryMB,
           nimCapable: canRunNimWithMemory(totalMemoryMB),
           platform,
           spark: platform === "spark",

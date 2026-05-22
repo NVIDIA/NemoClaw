@@ -32,6 +32,7 @@ export interface AgentSetupStateOptions<Agent> {
       updates: { sandboxName: string; provider: string; model: string },
     ): Promise<void>;
     setupOpenclaw(sandboxName: string, model: string, provider: string): Promise<void>;
+    syncNemoClawConfigInSandbox(sandboxName: string, provider: string, model: string): void;
     recordStepComplete(stepName: string, updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
   };
@@ -70,6 +71,7 @@ export async function handleAgentSetupState<Agent>({
   const resumeOpenclaw = resume && sandboxName && deps.isOpenclawReady(sandboxName);
   if (resumeOpenclaw) {
     deps.skippedStepMessage("openclaw", sandboxName);
+    deps.syncNemoClawConfigInSandbox(sandboxName, provider, model);
     session = await deps.recordStepComplete(
       "openclaw",
       deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),

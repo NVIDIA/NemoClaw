@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { NvidiaPlatform } from "../../../inference/nim";
+import type { GatewayContainerState } from "../../gateway-container-running";
 import type { Session } from "../../../state/onboard-session";
 import type { GatewayReuseState } from "../../../state/gateway";
-
-export type GatewayContainerState = "missing" | "unknown" | string;
 
 export interface GatewayStateOptions<Gpu> {
   resume: boolean;
@@ -13,7 +13,6 @@ export interface GatewayStateOptions<Gpu> {
   gpu: Gpu;
   gpuPassthrough: boolean;
   gatewayName: string;
-  dashboardPort: number;
   recordedSandboxName: string | null;
   requestedSandboxName: string | null;
   recreateSandbox: boolean;
@@ -23,8 +22,11 @@ export interface GatewayStateOptions<Gpu> {
     verifyGatewayContainerRunning(gatewayName: string): GatewayContainerState;
     waitForGatewayHttpReady(): Promise<boolean>;
     getGatewayLocalEndpoint(): string;
-    runOpenshell(args: string[], opts?: { ignoreError?: boolean }): unknown;
-    destroyGateway(): boolean;
+    stopDashboardForward(): void;
+    destroyGateway(
+      clearRegistry?: () => void,
+      isDockerDriverGatewayEnabledForDestroy?: () => boolean,
+    ): boolean;
     destroyGatewayForReuse(
       destroyGateway: () => boolean,
       successMessage: string,
@@ -37,6 +39,7 @@ export interface GatewayStateOptions<Gpu> {
       gpuPassthrough: boolean;
       gatewayName: string;
       currentSandboxName: string | null;
+      hostGpuPlatform: NvidiaPlatform | null;
       recreateSandbox: boolean;
       confirmedDockerDriverGateway: boolean;
       stopDashboardForwards: () => void;
@@ -71,7 +74,6 @@ export async function handleGatewayState<Gpu>({
   gpu,
   gpuPassthrough,
   gatewayName,
-  dashboardPort,
   recordedSandboxName,
   requestedSandboxName,
   recreateSandbox,
@@ -84,7 +86,7 @@ export async function handleGatewayState<Gpu>({
     const containerState = deps.verifyGatewayContainerRunning(gatewayName);
     if (containerState === "missing") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
-      deps.runOpenshell(["forward", "stop", String(dashboardPort)], { ignoreError: true });
+      deps.stopDashboardForward();
       gatewayReuseState = deps.destroyGatewayForReuse(
         deps.destroyGateway,
         "  ✓ Stale gateway metadata cleaned up",
@@ -108,7 +110,7 @@ export async function handleGatewayState<Gpu>({
       console.log(
         `  Gateway container is running but ${deps.getGatewayLocalEndpoint()}/ is not responding. Recreating...`,
       );
-      deps.runOpenshell(["forward", "stop", String(dashboardPort)], { ignoreError: true });
+      deps.stopDashboardForward();
       gatewayReuseState = deps.destroyGatewayForReuse(
         deps.destroyGateway,
         "  ✓ Stale gateway cleaned up",
@@ -135,6 +137,7 @@ export async function handleGatewayState<Gpu>({
     gpuPassthrough,
     gatewayName,
     currentSandboxName: recordedSandboxName || requestedSandboxName,
+    hostGpuPlatform: (gpu as { platform?: NvidiaPlatform } | null)?.platform ?? null,
     recreateSandbox,
     confirmedDockerDriverGateway:
       deps.isLinuxDockerDriverGatewayEnabled() && gatewayReuseState === "healthy" && !supportsLifecycleCommands,

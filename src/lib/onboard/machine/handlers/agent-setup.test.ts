@@ -18,6 +18,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
     skippedMessage: vi.fn(),
     startStep: vi.fn(async () => undefined),
     setupOpenclaw: vi.fn(async () => undefined),
+    syncConfig: vi.fn(),
     complete: vi.fn(async () => createSession()),
   };
   return {
@@ -31,6 +32,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       skippedStepMessage: calls.skippedMessage,
       startRecordedStep: calls.startStep,
       setupOpenclaw: calls.setupOpenclaw,
+      syncNemoClawConfigInSandbox: calls.syncConfig,
       recordStepComplete: calls.complete,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       ...overrides,
@@ -85,6 +87,7 @@ describe("handleAgentSetupState", () => {
     expect(calls.skippedMessage).toHaveBeenCalledWith("openclaw", "my-assistant");
     expect(calls.startStep).not.toHaveBeenCalled();
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
+    expect(calls.syncConfig).toHaveBeenCalledWith("my-assistant", "provider", "model");
     expect(calls.complete).toHaveBeenCalledWith(
       "openclaw",
       expect.objectContaining({ sandboxName: "my-assistant", provider: "provider", model: "model" }),

@@ -48,16 +48,35 @@ function runScript(scriptBody: string, extraEnv: Record<string, string> = {}): S
 function buildPreamble({
   presetNamesAvailable = ["telegram", "slack", "discord", "npm", "github"],
   applyPresetResult = true,
+  appliedPresets = [] as string[],
   sandboxAgent = "openclaw",
+  sessionSandboxName = "test-sb",
+  sessionPolicyPresets = ["npm", "pypi", "huggingface", "brew"] as string[] | null,
+  sessionLoadThrows = false,
+  sessionUpdateThrows = false,
+  sessionMissing = false,
 }: {
   presetNamesAvailable?: string[];
   applyPresetResult?: boolean;
+  appliedPresets?: string[];
   sandboxAgent?: string;
+  sessionSandboxName?: string | null;
+  sessionPolicyPresets?: string[] | null;
+  sessionLoadThrows?: boolean;
+  sessionUpdateThrows?: boolean;
+  sessionMissing?: boolean;
 } = {}): string {
   const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
   return String.raw`
 const resolver = require(${j("adapters/openshell/resolve.js")});
 resolver.resolveOpenshell = () => "/fake/openshell";
+
+const openshellRuntime = require(${j("adapters/openshell/runtime.js")});
+openshellRuntime.runOpenshell = () => ({ status: 0, stdout: "", stderr: "" });
+
+const processRecovery = require(${j("actions/sandbox/process-recovery.js")});
+processRecovery.executeSandboxExecCommand = () => ({ status: 0, stdout: "NEMOCLAW_CHANNEL_CLEAR_OK", stderr: "" });
+processRecovery.executeSandboxCommand = () => null;
 
 const runner = require(${j("runner.js")});
 runner.run = () => ({ status: 0, stdout: "", stderr: "" });
@@ -95,6 +114,7 @@ registry.updateSandbox = (name, updates) => {
 
 const policies = require(${j("policy/index.js")});
 const appliedCalls = [];
+const removedCalls = [];
 const callOrder = [];
 policies.listPresets = () => ${JSON.stringify(presetNamesAvailable.map((name) => ({ name })))};
 policies.applyPreset = (sandboxName, presetName) => {
@@ -102,7 +122,48 @@ policies.applyPreset = (sandboxName, presetName) => {
   callOrder.push("applyPreset:" + presetName);
   return ${JSON.stringify(applyPresetResult)};
 };
-policies.getAppliedPresets = () => [];
+policies.removePreset = (sandboxName, presetName) => {
+  removedCalls.push({ sandboxName, presetName });
+  callOrder.push("removePreset:" + presetName);
+  return true;
+};
+policies.getAppliedPresets = () => ${JSON.stringify(appliedPresets)};
+
+// Stub onboardSession so the new policyPresets-sync helper has something
+// to read/write. The test asserts on sessionUpdates to verify the
+// helper kept session.policyPresets aligned with the registry.
+const onboardSession = require(${j("state/onboard-session.js")});
+const sessionUpdates = [];
+const sessionLoadConfig = ${JSON.stringify({
+      sessionSandboxName,
+      sessionPolicyPresets,
+      sessionLoadThrows,
+      sessionMissing,
+    })};
+const sessionUpdateThrows = ${JSON.stringify(sessionUpdateThrows)};
+let sessionState = sessionLoadConfig.sessionMissing
+  ? null
+  : {
+      sandboxName: sessionLoadConfig.sessionSandboxName,
+      policyPresets: Array.isArray(sessionLoadConfig.sessionPolicyPresets)
+        ? [...sessionLoadConfig.sessionPolicyPresets]
+        : sessionLoadConfig.sessionPolicyPresets,
+    };
+onboardSession.loadSession = () => {
+  if (sessionLoadConfig.sessionLoadThrows) throw new Error("simulated load failure");
+  return sessionState;
+};
+onboardSession.updateSession = (mutator) => {
+  if (sessionUpdateThrows) throw new Error("simulated save failure");
+  // Mirror the real updateSession contract: load → mutate → save.
+  if (!sessionState) sessionState = { sandboxName: null, policyPresets: null };
+  const next = mutator(sessionState) || sessionState;
+  sessionState = next;
+  sessionUpdates.push({
+    policyPresets: Array.isArray(next.policyPresets) ? [...next.policyPresets] : next.policyPresets,
+  });
+  return next;
+};
 
 // Tag the rebuild-prompt branch via stdout so we can compare ordering.
 // In NEMOCLAW_NON_INTERACTIVE mode, promptAndRebuild logs "Change queued."
@@ -116,7 +177,7 @@ console.log = (...args) => {
 
 const channelModule = require(${j("actions/sandbox/policy-channel.js")});
 
-module.exports = { channelModule, appliedCalls, callOrder, providerCalls, registryUpdates };
+module.exports = { channelModule, appliedCalls, removedCalls, callOrder, providerCalls, registryUpdates, sessionUpdates, getSessionState: () => sessionState };
 `;
 }
 
@@ -314,5 +375,300 @@ const ctx = module.exports;
       payload.callOrder.includes("promptAndRebuild"),
       `expected promptAndRebuild to still run; got order: ${JSON.stringify(payload.callOrder)}`,
     );
+  });
+});
+
+// Regression: `channels add` was updating the registry but NOT
+// session.policyPresets. A later `rebuild` re-entered onboard in resume
+// mode, read the stale session, and the policy-selection step narrowed
+// the channel's preset back away. The new sandbox booted with the
+// channel auto-launched but no matching network policy active, so the
+// bridge's Slack/Telegram/Discord WebClient hit 403s and stayed wedged
+// even after Step 5.5 of rebuild reapplied the preset from the backup
+// manifest.
+//
+// These tests pin down the invariant: after a successful preset apply
+// via channels-add, session.policyPresets must contain the channel
+// name; after a successful preset remove via channels-remove, it must
+// not. Edge cases (no session, foreign sandbox, save failure) must not
+// abort the operation.
+describe("channels add/remove keeps session.policyPresets in sync with registry", () => {
+  it("appends the channel preset to session.policyPresets after a successful add", () => {
+    const script = `${buildPreamble({
+      sessionSandboxName: "test-sb",
+      sessionPolicyPresets: ["npm", "pypi", "huggingface", "brew"],
+    })}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "slack" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      sessionUpdates: ctx.sessionUpdates,
+      finalSession: ctx.getSessionState(),
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    // Exactly one update — the helper short-circuits when the desired
+    // membership already holds, so duplicate writes would be a bug.
+    assert.equal(
+      payload.sessionUpdates.length,
+      1,
+      `expected exactly one session update; got ${JSON.stringify(payload.sessionUpdates)}`,
+    );
+    assert.deepEqual(payload.sessionUpdates[0].policyPresets, [
+      "npm",
+      "pypi",
+      "huggingface",
+      "brew",
+      "slack",
+    ]);
+    assert.deepEqual(payload.finalSession.policyPresets, [
+      "npm",
+      "pypi",
+      "huggingface",
+      "brew",
+      "slack",
+    ]);
+  });
+
+  it("does not touch the session when it tracks a different sandbox", () => {
+    const script = `${buildPreamble({
+      sessionSandboxName: "other-sb",
+      sessionPolicyPresets: ["npm", "github"],
+    })}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "slack" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      sessionUpdates: ctx.sessionUpdates,
+      finalSession: ctx.getSessionState(),
+      appliedCalls: ctx.appliedCalls,
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    // applyPreset still runs against the registry — the preset is the
+    // channel's egress contract and lives in registry, not session.
+    assert.deepEqual(payload.appliedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
+    // But the foreign session's policyPresets must be left untouched —
+    // otherwise we corrupt the other sandbox's resume state.
+    assert.deepEqual(
+      payload.sessionUpdates,
+      [],
+      `session belonging to a different sandbox must not be mutated; got ${JSON.stringify(payload.sessionUpdates)}`,
+    );
+    assert.deepEqual(payload.finalSession.policyPresets, ["npm", "github"]);
+  });
+
+  it("succeeds even when no onboard session file exists", () => {
+    const script = `${buildPreamble({ sessionMissing: true })}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "slack" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      sessionUpdates: ctx.sessionUpdates,
+      appliedCalls: ctx.appliedCalls,
+      callOrder: ctx.callOrder,
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    // Registry mutation still happens; only the session-sync side-effect
+    // is skipped (there is no intent record to keep aligned).
+    assert.deepEqual(payload.appliedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
+    assert.deepEqual(payload.sessionUpdates, []);
+    assert.ok(payload.callOrder.includes("promptAndRebuild"));
+  });
+
+  it("does not abort channels-add when session save fails", () => {
+    const script = `${buildPreamble({
+      sessionSandboxName: "test-sb",
+      sessionPolicyPresets: ["npm", "pypi", "huggingface", "brew"],
+      sessionUpdateThrows: true,
+    })}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "slack" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      appliedCalls: ctx.appliedCalls,
+      callOrder: ctx.callOrder,
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    // Even though session.updateSession threw, the channel add flow
+    // still completed: preset applied to registry, rebuild prompted.
+    // Session-sync is best-effort.
+    assert.deepEqual(payload.appliedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
+    assert.ok(payload.callOrder.includes("promptAndRebuild"));
+  });
+
+  it("removes the channel preset from session.policyPresets after a successful remove", () => {
+    const script = `${buildPreamble({
+      appliedPresets: ["slack"],
+      sessionSandboxName: "test-sb",
+      sessionPolicyPresets: ["npm", "slack", "github"],
+    })}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "slack" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      removedCalls: ctx.removedCalls,
+      sessionUpdates: ctx.sessionUpdates,
+      finalSession: ctx.getSessionState(),
+      callOrder: ctx.callOrder,
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.removedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
+    assert.equal(
+      payload.sessionUpdates.length,
+      1,
+      `expected exactly one session update; got ${JSON.stringify(payload.sessionUpdates)}`,
+    );
+    assert.deepEqual(payload.sessionUpdates[0].policyPresets, ["npm", "github"]);
+    assert.deepEqual(payload.finalSession.policyPresets, ["npm", "github"]);
+    assert.ok(payload.callOrder.includes("promptAndRebuild"));
+  });
+
+  it("does not touch a foreign session during channels-remove", () => {
+    const script = `${buildPreamble({
+      appliedPresets: ["slack"],
+      sessionSandboxName: "other-sb",
+      sessionPolicyPresets: ["slack", "npm"],
+    })}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "slack" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      removedCalls: ctx.removedCalls,
+      sessionUpdates: ctx.sessionUpdates,
+      finalSession: ctx.getSessionState(),
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.removedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
+    assert.deepEqual(
+      payload.sessionUpdates,
+      [],
+      `session belonging to a different sandbox must not be mutated; got ${JSON.stringify(payload.sessionUpdates)}`,
+    );
+    assert.deepEqual(payload.finalSession.policyPresets, ["slack", "npm"]);
+  });
+
+  it("succeeds during channels-remove when no onboard session file exists", () => {
+    const script = `${buildPreamble({
+      appliedPresets: ["slack"],
+      sessionMissing: true,
+    })}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "slack" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      removedCalls: ctx.removedCalls,
+      sessionUpdates: ctx.sessionUpdates,
+      callOrder: ctx.callOrder,
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.removedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
+    assert.deepEqual(payload.sessionUpdates, []);
+    assert.ok(payload.callOrder.includes("promptAndRebuild"));
+  });
+
+  it("does not abort channels-remove when session save fails", () => {
+    const script = `${buildPreamble({
+      appliedPresets: ["slack"],
+      sessionSandboxName: "test-sb",
+      sessionPolicyPresets: ["npm", "slack"],
+      sessionUpdateThrows: true,
+    })}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.removeSandboxChannel("test-sb", { channel: "slack" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      removedCalls: ctx.removedCalls,
+      callOrder: ctx.callOrder,
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.removedCalls, [{ sandboxName: "test-sb", presetName: "slack" }]);
+    assert.ok(payload.callOrder.includes("promptAndRebuild"));
   });
 });

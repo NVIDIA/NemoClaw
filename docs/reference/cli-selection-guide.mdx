@@ -98,7 +98,8 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
   ```console
   $ openshell sandbox list
   $ openshell sandbox get <sandbox-name>
-  $ openshell logs <sandbox-name> --tail
+  $ openshell logs <sandbox-name> -n 20
+  $ openshell doctor check
   ```
 
 - Run one-off commands or move files without starting a NemoClaw chat session:
@@ -151,7 +152,8 @@ $ openshell sandbox exec -n my-assistant -- cat /tmp/gateway.log
 Use `nemoclaw <name> status` and `nemoclaw <name> logs` first.
 They combine NemoClaw registry data, OpenShell state, OpenClaw process health, inference health, policy details, and messaging-channel warnings.
 
-Use `openshell sandbox list`, `openshell sandbox get`, or `openshell logs` when debugging lower-level OpenShell behavior.
+Use `openshell sandbox list`, `openshell sandbox get`, `openshell logs <name> -n 20`, or `openshell doctor check` when debugging lower-level OpenShell behavior.
+When using `openshell logs` directly, `-n <lines>` controls the line count; use `--tail` only when you want live OpenShell log streaming.
 
 ### Approve Blocked Network Requests
 

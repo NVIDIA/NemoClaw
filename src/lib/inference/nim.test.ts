@@ -318,6 +318,94 @@ describe("nim", () => {
       }
     });
 
+    // Regression #3988: WSL2 d3d12 shims (e.g. Snapdragon X "nvidia-smi.exe")
+    // return a generic name like "JMJWOA-Generic-GPU" for non-NVIDIA hardware.
+    // The primary path used to accept any name from nvidia-smi, which made the
+    // preflight report "NVIDIA GPU detected" on hosts with no NVIDIA hardware.
+    it("rejects WDDM placeholder names on hosts without NVIDIA firmware (#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "JMJWOA-Generic-GPU, 65471\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        // Snapdragon X WSL2 has no DMI / devicetree NVIDIA platform marker, so
+        // the firmware classification falls through to "linux" and the
+        // placeholder name is not vouched for.
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu()).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Even when the WDDM shim returns the placeholder with an `NVIDIA ` prefix
+    // (e.g. "NVIDIA JMJWOA-Generic-GPU"), `\bNVIDIA\b` alone is not enough to
+    // vouch for the device on generic Linux firmware — the placeholder family
+    // must keep requiring a firmware platform vouch. Regression guard for the
+    // CodeRabbit review comment on #4062.
+    it("rejects vendor-prefixed WDDM placeholders on generic firmware (#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA JMJWOA-Generic-GPU, 65471\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu()).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Real DGX Spark legitimately reports "NVIDIA JMJWOA-Generic-GPU" via the
+    // primary nvidia-smi path on some firmware revisions (#3510). The Spark
+    // firmware platform tag must continue to vouch for the device even when
+    // the name itself does not match a known NVIDIA family.
+    it("accepts placeholder names when firmware confirms NVIDIA platform (#3510)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "JMJWOA-Generic-GPU, 131072\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("NVIDIA DGX Spark", () => {
+          expect(nimModule.detectGpu()).toMatchObject({
+            type: "nvidia",
+            name: "JMJWOA-Generic-GPU",
+            count: 1,
+            totalMemoryMB: 131072,
+            platform: "spark",
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
     it("detects GB10 unified-memory GPUs as Spark-capable NVIDIA devices", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");

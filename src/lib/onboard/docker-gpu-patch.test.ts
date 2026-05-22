@@ -34,6 +34,7 @@ function inspectFixture(): DockerContainerInspect {
         "A=1",
         "OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/",
         "OPENSHELL_TEST=1",
+        "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
         "NVIDIA_VISIBLE_DEVICES=void",
       ],
       Labels: {
@@ -141,6 +142,51 @@ describe("docker-gpu-patch", () => {
       ]),
     );
     expect(args).not.toEqual(expect.arrayContaining(["--env", "NVIDIA_VISIBLE_DEVICES=void"]));
+  });
+
+  it("replaces OpenShell's idle sandbox command when recreating a managed container", () => {
+    const sandboxCommand = [
+      "env",
+      "CHAT_UI_URL=http://127.0.0.1:8642",
+      "NEMOCLAW_DASHBOARD_PORT=8642",
+      "nemoclaw-start",
+    ];
+
+    const args = buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("gpus"), {
+      openshellSandboxCommand: sandboxCommand,
+    });
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--env",
+        "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:8642 NEMOCLAW_DASHBOARD_PORT=8642 nemoclaw-start",
+      ]),
+    );
+    expect(args).not.toEqual(
+      expect.arrayContaining(["--env", "OPENSHELL_SANDBOX_COMMAND=sleep infinity"]),
+    );
+    expect(args.slice(args.indexOf("openshell/sandbox:abc"))).toEqual([
+      "openshell/sandbox:abc",
+      ...sandboxCommand,
+    ]);
+  });
+
+  it("adds OpenShell's sandbox command env when the inspected container lacks one", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.Env = inspect.Config!.Env!.filter(
+      (entry) => !entry.startsWith("OPENSHELL_SANDBOX_COMMAND="),
+    );
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"), {
+      openshellSandboxCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
+    });
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--env",
+        "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:8642 nemoclaw-start",
+      ]),
+    );
   });
 
   it("adds SYS_PTRACE to the GPU clone when the baseline container lacks it", () => {
@@ -427,14 +473,20 @@ describe("docker-gpu-patch", () => {
       if (args[0] === "info") return "";
       return "";
     });
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "phase: Provisioning" }));
 
     const result = recreateOpenShellDockerSandboxWithGpu(
-      { sandboxName: "alpha", timeoutSecs: 1, waitForSupervisor: false },
+      {
+        sandboxName: "alpha",
+        timeoutSecs: 1,
+        waitForSupervisor: false,
+        openshellSandboxCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
+      },
       {
         dockerCapture,
         dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
-        dockerRunDetached: vi.fn(() => ({ status: 0, stdout: "new-container-id\n" })),
+        dockerRunDetached,
         dockerRename: vi.fn(() => ({ status: 0 })),
         dockerStop: vi.fn(() => ({ status: 0 })),
         dockerRm: vi.fn(() => ({ status: 0 })),
@@ -446,6 +498,17 @@ describe("docker-gpu-patch", () => {
 
     expect(result.newContainerId).toBe("new-container-id");
     expect(runOpenshell).not.toHaveBeenCalled();
+    expect(dockerRunDetached).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "--env",
+        "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:8642 nemoclaw-start",
+        "openshell/sandbox:abc",
+        "env",
+        "CHAT_UI_URL=http://127.0.0.1:8642",
+        "nemoclaw-start",
+      ]),
+      expect.objectContaining({ ignoreError: true }),
+    );
   });
 });
 

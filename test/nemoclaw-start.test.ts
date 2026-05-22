@@ -1693,6 +1693,311 @@ describe("NC-2227-01: legacy migration behavior", () => {
   }, 15_000);
 });
 
+describe("seed_default_workspace_templates (#3240)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  function runSeed(
+    workspaceDir: string,
+    templatesDir: string,
+    scriptPath: string,
+    options: { skipBootstrap?: boolean; env?: Record<string, string> } = {},
+  ) {
+    const configPath = path.join(path.dirname(scriptPath), "openclaw.json");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ agents: { defaults: { skipBootstrap: options.skipBootstrap ?? true } } }),
+    );
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        extractShellFunctionFromSource(src, "seed_default_workspace_templates"),
+        `seed_default_workspace_templates ${JSON.stringify(workspaceDir)} ${JSON.stringify(templatesDir)} ${JSON.stringify(configPath)}`,
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      env: { ...process.env, ...(options.env ?? {}) },
+      timeout: 5000,
+    });
+  }
+
+  function writeTemplates(templatesDir: string) {
+    fs.mkdirSync(templatesDir, { recursive: true });
+    for (const name of [
+      "AGENTS.md",
+      "SOUL.md",
+      "IDENTITY.md",
+      "USER.md",
+      "TOOLS.md",
+      "HEARTBEAT.md",
+      "BOOTSTRAP.md",
+    ]) {
+      fs.writeFileSync(
+        path.join(templatesDir, name),
+        `---\nsummary: "${name} template"\n---\n# ${name} template content\n`,
+      );
+    }
+  }
+
+  it("seeds the documented workspace templates and skips BOOTSTRAP.md", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    writeTemplates(templatesDir);
+    try {
+      const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"));
+      expect(result.status).toBe(0);
+      for (const name of [
+        "AGENTS.md",
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "TOOLS.md",
+        "HEARTBEAT.md",
+      ]) {
+        expect(fs.existsSync(path.join(workspaceDir, name))).toBe(true);
+      }
+      expect(fs.existsSync(path.join(workspaceDir, "BOOTSTRAP.md"))).toBe(false);
+      expect(fs.readFileSync(path.join(workspaceDir, "SOUL.md"), "utf-8")).toBe(
+        "# SOUL.md template content\n",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves supported OpenClaw package template layouts", () => {
+    for (const relativeTemplatesDir of [
+      path.join("docs", "reference", "templates"),
+      path.join("dist", "docs", "reference", "templates"),
+    ]) {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-package-"));
+      const workspaceDir = path.join(tmpDir, "workspace");
+      const fakeBin = path.join(tmpDir, "bin");
+      const npmRoot = path.join(tmpDir, "npm-root");
+      const templatesDir = path.join(npmRoot, "openclaw", relativeTemplatesDir);
+      fs.mkdirSync(workspaceDir, { recursive: true });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      writeTemplates(templatesDir);
+      fs.writeFileSync(
+        path.join(fakeBin, "npm"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "${1:-}" = "root" ] && [ "${2:-}" = "-g" ]; then',
+          `  printf '%s\\n' ${JSON.stringify(npmRoot)}`,
+          "  exit 0",
+          "fi",
+          'printf "unexpected npm args: %s\\n" "$*" >&2',
+          "exit 2",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      try {
+        const result = runSeed(workspaceDir, "", path.join(tmpDir, "seed.sh"), {
+          env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
+        });
+        expect(result.status).toBe(0);
+        expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
+        expect(result.stderr).toContain("seeded 6 default workspace template");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("resolves the OpenClaw package root from the openclaw binary", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-openclaw-bin-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const openclawPkg = path.join(tmpDir, "openclaw-package");
+    const binDir = path.join(openclawPkg, "bin");
+    const npmRoot = path.join(tmpDir, "empty-npm-root");
+    const templatesDir = path.join(openclawPkg, "docs", "reference", "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(npmRoot, { recursive: true });
+    writeTemplates(templatesDir);
+    fs.writeFileSync(path.join(binDir, "openclaw"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o700,
+    });
+    fs.writeFileSync(
+      path.join(binDir, "npm"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "${1:-}" = "root" ] && [ "${2:-}" = "-g" ]; then',
+        `  printf '%s\n' ${JSON.stringify(npmRoot)}`,
+        "  exit 0",
+        "fi",
+        "exit 2",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = runSeed(workspaceDir, "", path.join(tmpDir, "seed.sh"), {
+        env: { PATH: `${binDir}:${process.env.PATH || ""}` },
+      });
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
+      expect(result.stderr).toContain("seeded 6 default workspace template");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not synthesize templates when OpenClaw templates are missing", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-missing-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const fakeBin = path.join(tmpDir, "bin");
+    const npmRoot = path.join(tmpDir, "empty-npm-root");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.mkdirSync(npmRoot, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openclaw"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o700,
+    });
+    fs.writeFileSync(
+      path.join(fakeBin, "npm"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "${1:-}" = "root" ] && [ "${2:-}" = "-g" ]; then',
+        `  printf '%s\n' ${JSON.stringify(npmRoot)}`,
+        "  exit 0",
+        "fi",
+        "exit 2",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = runSeed(workspaceDir, "", path.join(tmpDir, "seed.sh"), {
+        env: { PATH: `${fakeBin}:${path.dirname(process.execPath)}:${process.env.PATH || ""}` },
+      });
+      expect(result.status).toBe(0);
+      for (const name of [
+        "AGENTS.md",
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "TOOLS.md",
+        "HEARTBEAT.md",
+      ]) {
+        expect(fs.existsSync(path.join(workspaceDir, name))).toBe(false);
+      }
+      expect(result.stderr).toContain("openclaw workspace templates dir not found");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not seed unless OpenClaw bootstrap is explicitly skipped", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-bootstrap-on-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(templatesDir, { recursive: true });
+    fs.writeFileSync(path.join(templatesDir, "SOUL.md"), "soul template");
+    try {
+      const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"), {
+        skipBootstrap: false,
+      });
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not clobber an already-populated workspace", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-existing-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(templatesDir, { recursive: true });
+    fs.writeFileSync(path.join(workspaceDir, "USER.md"), "user content");
+    fs.writeFileSync(path.join(templatesDir, "USER.md"), "template content");
+    fs.writeFileSync(path.join(templatesDir, "SOUL.md"), "soul template");
+    try {
+      const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"));
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(path.join(workspaceDir, "USER.md"), "utf-8")).toBe("user content");
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to seed a symlinked workspace dir", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-symlink-"));
+    const realDir = path.join(tmpDir, "real");
+    const linkDir = path.join(tmpDir, "link");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(realDir);
+    fs.mkdirSync(templatesDir);
+    fs.symlinkSync(realDir, linkDir);
+    fs.writeFileSync(path.join(templatesDir, "SOUL.md"), "soul template");
+    try {
+      const result = runSeed(linkDir, templatesDir, path.join(tmpDir, "seed.sh"));
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("refusing to seed symlinked workspace dir");
+      expect(fs.existsSync(path.join(realDir, "SOUL.md"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("seeds through the shared sandbox step-down prefix", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-step-down-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    const stepDownLog = path.join(tmpDir, "step-down.log");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    writeTemplates(templatesDir);
+    fs.mkdirSync(path.join(tmpDir, "openclaw", "docs", "reference"), { recursive: true });
+    fs.cpSync(templatesDir, path.join(tmpDir, "openclaw", "docs", "reference", "templates"), {
+      recursive: true,
+    });
+    const configPath = path.join(tmpDir, "openclaw.json");
+    fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { skipBootstrap: true } } }));
+    const scriptPath = path.join(tmpDir, "seed-as-sandbox.sh");
+    const seedAsSandbox = extractShellFunctionFromSource(
+      src,
+      "seed_default_workspace_templates_as_sandbox",
+    )
+      .replaceAll("/sandbox/.openclaw/workspace", workspaceDir)
+      .replaceAll("/sandbox/.openclaw/openclaw.json", configPath);
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `STEP_DOWN_LOG=${JSON.stringify(stepDownLog)}`,
+        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$0" >"$STEP_DOWN_LOG"; exec "$@"' sandbox-step-down)`,
+        `seed_default_workspace_templates() { printf 'seeded\\n' > ${JSON.stringify(path.join(workspaceDir, "SOUL.md"))}; }`,
+        seedAsSandbox,
+        "seed_default_workspace_templates_as_sandbox",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: { ...process.env, STEP_DOWN_LOG: stepDownLog },
+        timeout: 5000,
+      });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(fs.readFileSync(stepDownLog, "utf-8").trim()).toBe("sandbox-step-down");
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Slack secrets-on-disk tripwire (#2085)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -1818,6 +2123,7 @@ describe("Telegram diagnostics (#2766)", () => {
         'install_slack_channel_guard() { :; }',
         'verify_no_slack_secrets_on_disk() { :; }',
         'seed_default_workspace_templates() { :; }',
+        'seed_default_workspace_templates_as_sandbox() { seed_default_workspace_templates; }',
         'write_auth_profile() { :; }',
         'harden_auth_profiles() { :; }',
         'chown() { :; }',
