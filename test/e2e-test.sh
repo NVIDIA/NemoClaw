@@ -255,7 +255,7 @@ if node --input-type=module -e "
 
   // Verify restoration
   const restored = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  const version = (restored.wizard || {}).lastRunVersion;
+  const version = (restored.meta || {}).lastTouchedVersion;
   if (version !== '2026.3.11') throw new Error('Restored config wrong: ' + JSON.stringify(restored));
   if ('corrupted' in restored) throw new Error('Config still corrupted after rollback');
   console.log('Restored config: ' + JSON.stringify(restored));
