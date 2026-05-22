@@ -107,7 +107,11 @@ function baseOptions(
     },
     selectedMessagingChannels: [],
     env: {},
-    constants: { hermesProviderName: "hermes-provider" },
+    constants: {
+      hermesProviderName: "hermes-provider",
+      hermesApiKeyAuthMethod: "api_key",
+      hermesApiKeyCredentialEnv: "NOUS_API_KEY",
+    },
     deps,
   };
 }
