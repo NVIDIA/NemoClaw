@@ -32,6 +32,8 @@ Run `source ~/.bashrc` (or `source ~/.zshrc` for zsh), or open a new terminal wi
 When installing from a source checkout with `npm install`, NemoClaw first tries `npm link`.
 If the global npm prefix is not writable, it writes a managed shim to `~/.local/bin/nemoclaw` instead.
 Add `~/.local/bin` to your `PATH` if the command is still not found.
+Source-checkout installs also bootstrap OpenShell when it is missing before running preflight.
+If a source install still reports that `openshell` is not available, re-run the installer from the repository root and check that `~/.local/bin` is on your `PATH`.
 
 ### Installer fails on unsupported platform
 
@@ -347,6 +349,21 @@ $ sudo ufw allow from "$SUBNET" to any port 8080 proto tcp
 $ nemoclaw onboard
 ```
 
+### `connect` exits because the gateway is down
+
+`nemoclaw <name> connect` checks the OpenShell gateway before it tries dashboard forwarding, SSH, or inference repair.
+If the gateway is not reachable, the command exits early and prints recovery guidance.
+
+Start the gateway or resume onboarding, then retry:
+
+```console
+$ openshell gateway start --name nemoclaw
+$ nemoclaw onboard --resume
+$ nemoclaw <name> connect
+```
+
+Run `nemoclaw status` for a broader gateway health report.
+
 ### Invalid sandbox name
 
 Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
@@ -365,6 +382,15 @@ On DGX machines, sandbox creation can fail if the gateway's DNS has not finished
 
 Run `nemoclaw onboard` to retry.
 The wizard cleans up stale port forwards and waits for gateway readiness automatically.
+
+### GPU setup fails with a placeholder GPU name
+
+On Windows or WSL hosts, some systems report a placeholder display adapter name even when no NVIDIA GPU firmware is present.
+NVIDIA NIM and GPU-backed sandbox setup require a real NVIDIA GPU.
+If NemoClaw rejects the detected GPU name during preflight, select a CPU or remote inference provider, or move the setup to a host with a supported NVIDIA GPU and current drivers.
+
+Jetson hosts can still run NemoClaw, but sandbox GPU passthrough is not supported there.
+If onboarding reports that sandbox GPU passthrough is unavailable on Jetson, rerun onboarding without `--sandbox-gpu`.
 
 ### Colima socket not detected (macOS)
 

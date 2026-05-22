@@ -43,12 +43,43 @@ class UnexpectedArgsError extends Error {
 }
 
 describe("runOclifArgv", () => {
+  let originalArgv: string[];
+
+  beforeEach(() => {
+    executeMock.mockReset();
+    loadMock.mockReset();
+    runCommandMock.mockReset();
+    loadMock.mockResolvedValue(makeConfig());
+    originalArgv = process.argv;
+    process.argv = ["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"];
+  });
+
+  afterEach(() => {
+    process.argv = originalArgv;
+  });
+
   it("executes native oclif argv with branded package metadata", async () => {
     const config = makeConfig();
     loadMock.mockResolvedValue(config);
-    executeMock.mockResolvedValue(undefined);
+    executeMock.mockImplementation(async () => {
+      expect(process.argv).toEqual([
+        "/usr/bin/node",
+        "/repo/bin/nemoclaw.js",
+        "sandbox",
+        "channels",
+        "start",
+        "--help",
+      ]);
+    });
 
     await runOclifArgv(["sandbox", "channels", "start", "--help"], { rootDir: "/repo" });
+
+    expect(process.argv).toEqual([
+      "/usr/bin/node",
+      "/repo/bin/nemoclaw.js",
+      "alpha",
+      "status",
+    ]);
 
     expect(loadMock).toHaveBeenCalledWith("/repo");
     expect(executeMock).toHaveBeenCalledWith({
@@ -61,6 +92,32 @@ describe("runOclifArgv", () => {
     expect(config.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.options.pjson.oclif.bin).toBe("nemoclaw");
     expect(config.plugins.get("root")?.pjson.oclif.bin).toBe("nemoclaw");
+  });
+
+  it("restores process argv when native oclif execution throws", async () => {
+    const error = new Error("Missing 1 required arg: channel");
+    executeMock.mockImplementation(async () => {
+      expect(process.argv).toEqual([
+        "/usr/bin/node",
+        "/repo/bin/nemoclaw.js",
+        "sandbox",
+        "channels",
+        "add",
+        "alpha",
+      ]);
+      throw error;
+    });
+
+    await expect(
+      runOclifArgv(["sandbox", "channels", "add", "alpha"], { rootDir: "/repo" }),
+    ).rejects.toBe(error);
+
+    expect(process.argv).toEqual([
+      "/usr/bin/node",
+      "/repo/bin/nemoclaw.js",
+      "alpha",
+      "status",
+    ]);
   });
 });
 

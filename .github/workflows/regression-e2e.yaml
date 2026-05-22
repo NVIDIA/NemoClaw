@@ -175,8 +175,8 @@ jobs:
 
 
   # ── OpenShell version-pin E2E ──────────────────────────────
-  # Coverage guard for #3474. If a host has sticky OpenShell 0.0.40 on PATH
-  # but this NemoClaw release supports only <=0.0.39, install-openshell.sh
+  # Coverage guard for #3474. If a host has sticky OpenShell 0.0.45 on PATH
+  # but this NemoClaw release supports only <=0.0.44, install-openshell.sh
   # must replace it with the pinned compatible release instead of hard-failing.
   openshell-version-pin-e2e:
     needs: select_regression_jobs

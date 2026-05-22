@@ -74,6 +74,7 @@ policies.listPresets = () => [
 policies.getAppliedPresets = () => [];
 policies.applyPreset = (sandboxName, presetName) => {
   calls.push({ type: "apply", sandboxName, presetName });
+  return true;
 };
 process.argv = ["node", "nemoclaw.js", "test-sandbox", "policy-add", ...${JSON.stringify(extraArgs)}];
 Promise.resolve(require(${CLI_PATH}).mainPromise).finally(() => {
@@ -405,6 +406,7 @@ describe("policies", () => {
       const hosts = policies.getPresetEndpoints(content);
       expect(hosts).toContain("ilinkai.weixin.qq.com");
       expect(hosts).toContain("ilinkai.wechat.com");
+      expect(hosts.every((host: string) => !host.includes("`"))).toBe(true);
     });
 
     it("every preset has at least one endpoint", () => {
@@ -419,6 +421,16 @@ describe("policies", () => {
       const yaml = "host: \"example.com\"\n  host: 'other.com'";
       const hosts = policies.getPresetEndpoints(yaml);
       expect(hosts).toEqual(["example.com", "other.com"]);
+    });
+
+    it("ignores commented host examples and inline comments", () => {
+      const yaml = [
+        "# matches `host:` as text",
+        "  # host: commented.example.com",
+        "  - host: real.example.com # host: ignored.example.com",
+      ].join("\n");
+      const hosts = policies.getPresetEndpoints(yaml);
+      expect(hosts).toEqual(["real.example.com"]);
     });
   });
 

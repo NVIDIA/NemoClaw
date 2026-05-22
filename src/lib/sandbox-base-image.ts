@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 
-import { ROOT, redact } from "./runner";
 import {
   dockerBuild,
   dockerCapture,
@@ -12,6 +12,7 @@ import {
   dockerImageInspectFormat,
   dockerPull,
 } from "./adapters/docker";
+import { ROOT, redact } from "./runner";
 
 export const OPENCLAW_SANDBOX_BASE_IMAGE = "ghcr.io/nvidia/nemoclaw/sandbox-base";
 export const SANDBOX_BASE_TAG = "latest";
@@ -32,7 +33,7 @@ type ResolveBaseImageOptions = {
 export type SandboxBaseImageResolution = {
   ref: string;
   digest: string | null;
-  source: "override" | "source-sha" | "latest" | "local";
+  source: "override" | "version-tag" | "source-sha" | "latest" | "local";
   glibcVersion: string | null;
 };
 
@@ -115,6 +116,50 @@ export function getSourceShortShaTags(rootDir = ROOT, env: NodeJS.ProcessEnv = p
   if (git.status === 0) push(git.stdout);
 
   return Array.from(new Set(values));
+}
+
+function normalizeVersionTag(value: string | null | undefined): string | null {
+  const raw = String(value || "").trim();
+  if (!raw || raw === "latest") return null;
+  const withoutPrefix = raw.replace(/^refs\/tags\//, "").replace(/^release\//, "");
+  const version = withoutPrefix.startsWith("v") ? withoutPrefix.slice(1) : withoutPrefix;
+  if (!/^[0-9]+(?:\.[0-9]+){1,3}(?:[-.][0-9A-Za-z][0-9A-Za-z.-]*)?$/.test(version)) {
+    return null;
+  }
+  return `v${version}`;
+}
+
+function gitExactVersionTag(rootDir: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  const git = spawnSync("git", ["-C", rootDir, "describe", "--tags", "--exact-match", "--match", "v*"], {
+    encoding: "utf-8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 5_000,
+    env,
+  });
+  return git.status === 0 ? normalizeVersionTag(git.stdout) : null;
+}
+
+function versionFileTag(rootDir: string): string | null {
+  try {
+    return normalizeVersionTag(fs.readFileSync(path.join(rootDir, ".version"), "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+export function getVersionedBaseImageTags(
+  rootDir = ROOT,
+  env: NodeJS.ProcessEnv = process.env,
+): string[] {
+  const values = [
+    env.NEMOCLAW_SANDBOX_BASE_VERSION_TAG,
+    env.NEMOCLAW_INSTALL_REF,
+    env.NEMOCLAW_INSTALL_TAG,
+    env.GITHUB_REF_TYPE === "tag" ? env.GITHUB_REF_NAME : null,
+    gitExactVersionTag(rootDir, env),
+    versionFileTag(rootDir),
+  ];
+  return Array.from(new Set(values.map((value) => normalizeVersionTag(value)).filter(Boolean))) as string[];
 }
 
 function gitStatus(rootDir: string, args: string[], env: NodeJS.ProcessEnv = process.env): number | null {
@@ -348,6 +393,12 @@ export function resolveSandboxBaseImage(
     if (resolved) return resolved;
     if (!options.requireOpenshellSandboxAbi) return null;
   } else {
+    for (const tag of getVersionedBaseImageTags(options.rootDir || ROOT, env)) {
+      const imageRef = `${options.imageName}:${tag}`;
+      const resolved = resolvePulledCandidate(options.imageName, imageRef, "version-tag", options);
+      if (resolved) return resolved;
+    }
+
     for (const tag of getSourceShortShaTags(options.rootDir || ROOT, env)) {
       const imageRef = `${options.imageName}:${tag}`;
       const resolved = resolvePulledCandidate(options.imageName, imageRef, "source-sha", options);

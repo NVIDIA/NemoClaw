@@ -2049,18 +2049,36 @@ describe("CLI dispatch", () => {
     expect(snapshots.out).toContain("No snapshots found for 'alpha'.");
   });
 
-  it("policy and channel mutations reject missing parser-owned values before dispatch", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-mutation-missing-values-"));
-    writeSandboxRegistry(home);
+  it(
+    "policy and channel mutations reject missing parser-owned values before dispatch",
+    testTimeoutOptions(30_000),
+    () => {
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-cli-mutation-missing-values-"),
+      );
+      writeSandboxRegistry(home);
 
-    const missingPolicyFile = runWithEnv("alpha policy-add --from-file 2>&1", { HOME: home });
-    expect(missingPolicyFile.code).not.toBe(0);
-    expect(missingPolicyFile.out).toContain("--from-file");
+      const missingPolicyFile = runWithEnv("alpha policy-add --from-file 2>&1", {
+        HOME: home,
+      });
+      expect(missingPolicyFile.code).not.toBe(0);
+      expect(missingPolicyFile.out).toContain("--from-file");
 
-    const missingChannel = runWithEnv("alpha channels add 2>&1", { HOME: home });
-    expect(missingChannel.code).not.toBe(0);
-    expect(missingChannel.out).toContain("channel");
-  });
+      for (const action of ["add", "remove", "start", "stop"]) {
+        const missingChannel = runWithEnv(`alpha channels ${action} 2>&1`, { HOME: home });
+        expect(missingChannel.code).toBe(PARSER_EXIT_CODE);
+        expect(missingChannel.out).toContain("Missing 1 required arg:");
+        expect(missingChannel.out).toContain("channel  Messaging channel");
+        expect(missingChannel.out).toContain("USAGE");
+        expect(missingChannel.out).toContain(
+          `$ nemoclaw sandbox channels ${action} <name> <channel> [--dry-run]`,
+        );
+        expect(missingChannel.out).not.toContain("RequiredArgsError");
+        expect(missingChannel.out).not.toContain("at validateArgs");
+        expect(missingChannel.out).not.toContain(`Command alpha:channels:${action} not found`);
+      }
+    },
+  );
 
   it("diagnostic commands reject invalid parser-owned flags before dispatch", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-diagnostics-invalid-flags-"));

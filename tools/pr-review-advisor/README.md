@@ -5,15 +5,17 @@
 
 The PR Review Advisor is an SDK-powered, NemoClaw-specific pull request reviewer. It runs as a
 trusted GitHub Actions job, inspects PRs as read-only data, and posts a sticky advisory comment with
-blockers, warnings, suggestions, acceptance coverage, security notes, and test-depth guidance.
+blockers, warnings, suggestions, acceptance coverage, security notes, and code-review follow-up guidance.
 
-It complements CodeRabbit and the E2E Advisor by encoding NemoClaw maintainer review policy:
+It complements the existing PR surfaces by keeping a NemoClaw maintainer code-review lens focused on the patch itself:
 
 - sandbox and workflow security review;
 - acceptance-clause coverage against linked issues;
-- E2E Advisor recommendation verification;
+- previous PR Review Advisor follow-up for code findings;
 - codebase drift, monolith growth, and architecture guardrails;
 - correctness and test-quality checks that CI cannot prove.
+
+It intentionally does not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
 
 ## Workflow
 

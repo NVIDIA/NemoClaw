@@ -16,9 +16,6 @@ const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
 const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
 const ADVISOR_CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
-const DEFAULT_WAIT_POLL_MS = 30000;
-const DEFAULT_REQUIRED_CHECK_WAIT_MS = 15 * 60 * 1000;
-const ADVISOR_CHECK_CONTEXT_PATTERNS = [/^PR review advisor(?:\b|$)/i, /^PR Review \/ Advisor$/i];
 const SECURITY_REVIEW_SKILL_PATH = ".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md";
 const TRUSTED_SECURITY_REVIEW_SKILL_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -45,8 +42,6 @@ const FINDING_CATEGORIES = [
   "workflow",
   "docs",
   "scope",
-  "ci",
-  "e2e",
   "acceptance",
 ] as const;
 const SUMMARY_RECOMMENDATIONS = [
@@ -57,19 +52,15 @@ const SUMMARY_RECOMMENDATIONS = [
   "superseded",
   "info_only",
 ] as const;
-const GATE_STATUSES = ["pass", "fail", "warning", "pending", "unknown"] as const;
 const CONFIDENCES = ["low", "medium", "high"] as const;
-const TEST_DEPTH_VERDICTS = ["unit_sufficient", "mocks_recommended", "e2e_required", "unknown"] as const;
-const E2E_STATUS_VERDICTS = ["ok", "missing", "ambiguous", "not_found"] as const;
+const TEST_DEPTH_VERDICTS = ["unit_sufficient", "mocks_recommended", "runtime_validation_recommended", "unknown"] as const;
 const ACCEPTANCE_STATUSES = ["met", "partial", "missing", "unknown"] as const;
 const SECURITY_VERDICTS = ["pass", "warning", "fail"] as const;
 
 type Confidence = (typeof CONFIDENCES)[number];
 type SummaryRecommendation = (typeof SUMMARY_RECOMMENDATIONS)[number];
-type GateStatusName = (typeof GATE_STATUSES)[number];
 type FindingCategory = (typeof FINDING_CATEGORIES)[number];
 type TestDepthVerdict = (typeof TEST_DEPTH_VERDICTS)[number];
-type E2eStatusVerdict = (typeof E2E_STATUS_VERDICTS)[number];
 type AcceptanceStatus = (typeof ACCEPTANCE_STATUSES)[number];
 type SecurityVerdict = (typeof SECURITY_VERDICTS)[number];
 
@@ -81,11 +72,6 @@ type ReviewMetadata = {
   headSha: string;
   changedFiles: string[];
   deterministic: DeterministicReviewContext;
-};
-
-type GateStatus = {
-  status: GateStatusName;
-  evidence: string;
 };
 
 type Finding = {
@@ -121,12 +107,12 @@ type ReviewAdvisorResult = {
     recommendation: SummaryRecommendation;
     confidence: Confidence;
     oneLine: string;
-  };
-  gateStatus: {
-    ci: GateStatus;
-    mergeability: GateStatus;
-    reviewThreads: GateStatus;
-    riskyCodeTested: GateStatus;
+    topItem?: string;
+    sinceLastReview?: {
+      resolved: number;
+      stillApplies: number;
+      newItems: number;
+    };
   };
   findings: Finding[];
   acceptanceCoverage: AcceptanceCoverage[];
@@ -135,13 +121,6 @@ type ReviewAdvisorResult = {
     verdict: TestDepthVerdict;
     rationale: string;
     suggestedTests: string[];
-  };
-  e2eAdvisorStatus: {
-    found: boolean;
-    requiredJobs: string[];
-    passedForHeadSha: string[];
-    missingForHeadSha: string[];
-    verdict: E2eStatusVerdict;
   };
   positives: string[];
   reviewCompleteness: {
@@ -155,12 +134,10 @@ type DeterministicReviewContext = {
   commits: string[];
   riskyAreas: string[];
   testDepth: ReviewAdvisorResult["testDepth"];
-  gateStatus: ReviewAdvisorResult["gateStatus"];
-  requiredStatusCheckContexts: string[];
-  additionalWaitContexts: string[];
   workflowSignals: string[];
   monolithDeltas: MonolithDelta[];
   driftEvidence: DriftEvidence[];
+  previousAdvisorReview: PreviousAdvisorReview | null;
   github: GitHubReviewContext | null;
 };
 
@@ -196,11 +173,14 @@ type GitHubReviewContext = {
   fetchError?: string;
   pullRequest?: unknown;
   graphQl?: unknown;
-  issueComments?: unknown[];
-  reviewComments?: unknown[];
   linkedIssues?: LinkedIssue[];
   openPrOverlaps?: OpenPrOverlap[];
-  e2eAdvisorComments?: string[];
+  previousAdvisorReview?: PreviousAdvisorReview | null;
+};
+
+type PreviousAdvisorReview = {
+  headSha?: string;
+  body: string;
 };
 
 type LinkedIssue = {
@@ -208,21 +188,6 @@ type LinkedIssue = {
   issue?: unknown;
   comments?: unknown[];
   fetchError?: string;
-};
-
-type CheckStatusSummary = {
-  name: string;
-  status: string | undefined;
-  conclusion: string | null;
-  state: string | undefined;
-  terminal: boolean;
-};
-
-type RequiredCheckWaitState = {
-  requiredContexts: string[];
-  pendingContexts: string[];
-  statuses: CheckStatusSummary[];
-  headRefOid?: string;
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -251,7 +216,6 @@ async function main(): Promise<void> {
   const schema = readJson<Record<string, unknown>>(schemaPath);
   const changedFiles = getChangedFiles(baseRef, headRef);
   const headSha = getHeadSha(headRef);
-  await waitForRequiredChecksBeforeAnalysis(headSha, baseRef);
   const diff = getDiff(baseRef, headRef, 160000);
   const deterministic = await collectDeterministicContext({ baseRef, headRef, changedFiles, diff });
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
@@ -304,6 +268,7 @@ async function main(): Promise<void> {
   writeJson(artifacts.finalResult, result);
   const summary = renderSummary(result);
   fs.writeFileSync(artifacts.summary, summary);
+  fs.writeFileSync(path.join(outDir, "pr-review-advisor-detailed-review.md"), renderDetailedReview(result));
   console.log(summary);
 }
 
@@ -333,239 +298,6 @@ function logProgress(message: string): void {
   console.log(`[pr-review-advisor] ${new Date().toISOString()} ${message}`);
 }
 
-async function waitForRequiredChecksBeforeAnalysis(headSha: string, baseRef: string): Promise<void> {
-  if (process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS === "0" || process.env.PR_REVIEW_ADVISOR_WAIT_FOR_REQUIRED_CHECKS === "0") return;
-  const repo = process.env.GITHUB_REPOSITORY;
-  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
-  const prNumber = currentPrNumber();
-  if (!repo || !token || !prNumber) {
-    logProgress("Required-check wait skipped: GitHub repository, token, or PR number is unavailable.");
-    return;
-  }
-
-  const requiredContexts = uniqueStrings([
-    ...(await discoverRequiredStatusCheckContexts(baseRef)),
-    ...parseContextList(process.env.PR_REVIEW_ADVISOR_WAIT_ADDITIONAL_CONTEXTS),
-  ]).filter((context) => !isAdvisorCheckContext(context));
-
-  if (requiredContexts.length === 0) {
-    logProgress("Required-check wait skipped: no required or additional check contexts were discovered.");
-    return;
-  }
-
-  const timeoutMs = parsePositiveInt(process.env.PR_REVIEW_ADVISOR_WAIT_TIMEOUT_MS, DEFAULT_REQUIRED_CHECK_WAIT_MS);
-  const pollMs = parsePositiveInt(process.env.PR_REVIEW_ADVISOR_WAIT_POLL_MS, DEFAULT_WAIT_POLL_MS);
-  const deadline = Date.now() + timeoutMs;
-  logProgress(
-    `Waiting up to ${Math.round(timeoutMs / 1000)}s for required check contexts before model analysis: ${requiredContexts.join(", ")}`,
-  );
-
-  let lastState: RequiredCheckWaitState | undefined;
-  while (true) {
-    try {
-      lastState = await fetchRequiredCheckWaitState({ repo, token, prNumber, requiredContexts });
-      assertPrHeadStillCurrent(lastState.headRefOid, headSha);
-      if (lastState.pendingContexts.length === 0) {
-        logProgress("Required-check wait complete.");
-        return;
-      }
-      logProgress(`Required-check wait pending: ${lastState.pendingContexts.join(", ")}.`);
-    } catch (error: unknown) {
-      if (isStaleAdvisorRunError(error)) throw error;
-      logProgress(`Required-check wait poll failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
-
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) {
-      const pending = lastState?.pendingContexts.length ? lastState.pendingContexts.join(", ") : "unknown";
-      logProgress(`Required-check wait timed out; continuing with advisor analysis. Pending contexts: ${pending}.`);
-      return;
-    }
-    await sleep(Math.min(pollMs, remainingMs));
-  }
-}
-
-export function assertPrHeadStillCurrent(latestHeadSha: string | undefined, workflowHeadSha: string): void {
-  if (!latestHeadSha || latestHeadSha === workflowHeadSha) return;
-  throw new StaleAdvisorRunError(
-    `PR head advanced from ${workflowHeadSha.slice(0, 12)} to ${latestHeadSha.slice(0, 12)}; rerun advisor on the latest commit.`,
-  );
-}
-
-class StaleAdvisorRunError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "StaleAdvisorRunError";
-  }
-}
-
-function isStaleAdvisorRunError(error: unknown): boolean {
-  return error instanceof StaleAdvisorRunError;
-}
-
-function currentPrNumber(): number | undefined {
-  const value = process.env.PR_NUMBER || process.env.GITHUB_REF_NAME?.match(/^(\d+)\//)?.[1] || "";
-  const parsed = Number.parseInt(value, 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
-}
-
-function parseContextList(value: string | undefined): string[] {
-  return uniqueStrings((value || "").split(/[\n,]/).map((item) => item.trim()).filter(Boolean));
-}
-
-function uniqueStrings(values: string[]): string[] {
-  return [...new Set(values)];
-}
-
-function isAdvisorCheckContext(context: string): boolean {
-  return ADVISOR_CHECK_CONTEXT_PATTERNS.some((pattern) => pattern.test(context));
-}
-
-export async function discoverRequiredStatusCheckContexts(baseRef?: string): Promise<string[]> {
-  const repo = process.env.GITHUB_REPOSITORY;
-  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
-  const fallbackContexts = parseContextList(process.env.PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS);
-  if (!repo || !token) return fallbackContexts;
-
-  const baseBranch = normalizeBaseBranch(
-    process.env.PR_REVIEW_ADVISOR_REQUIRED_CHECK_BASE || baseRef || process.env.GITHUB_BASE_REF || "main",
-  );
-  try {
-    const rulesetContexts = await fetchRequiredStatusChecks(repo, token, baseBranch);
-    return rulesetContexts.length > 0 ? rulesetContexts : fallbackContexts;
-  } catch (error: unknown) {
-    logProgress(`Could not discover required checks from repository rulesets: ${error instanceof Error ? error.message : String(error)}`);
-    return fallbackContexts;
-  }
-}
-
-async function fetchRequiredStatusChecks(repo: string, token: string, baseBranch: string): Promise<string[]> {
-  const summaries = await githubRest<unknown[]>(`repos/${repo}/rulesets?includes_parents=true`, token);
-  const detailPromises = summaries
-    .filter((ruleset) => stringOrUndefined(getPath<unknown>(ruleset, ["target"])) === "branch")
-    .filter((ruleset) => stringOrUndefined(getPath<unknown>(ruleset, ["enforcement"])) === "active")
-    .map(async (ruleset) => {
-      const idValue = getPath<unknown>(ruleset, ["id"]);
-      const id = typeof idValue === "number" ? String(idValue) : stringOrUndefined(idValue);
-      return id ? await githubRest<unknown>(`repos/${repo}/rulesets/${id}`, token) : ruleset;
-    });
-  const details = await Promise.all(detailPromises);
-  return extractRequiredStatusChecksFromRulesets(details, baseBranch);
-}
-
-export function extractRequiredStatusChecksFromRulesets(rulesets: unknown[], baseBranch: string): string[] {
-  const contexts: string[] = [];
-  for (const ruleset of rulesets) {
-    if (!rulesetAppliesToBranch(ruleset, baseBranch)) continue;
-    const rules = getPath<unknown[]>(ruleset, ["rules"]) || [];
-    for (const rule of rules) {
-      if (stringOrUndefined(getPath<unknown>(rule, ["type"])) !== "required_status_checks") continue;
-      const requiredChecks = getPath<unknown[]>(rule, ["parameters", "required_status_checks"]) || [];
-      for (const check of requiredChecks) {
-        const context = stringOrUndefined(getPath<unknown>(check, ["context"]));
-        if (context) contexts.push(context);
-      }
-    }
-  }
-  return uniqueStrings(contexts);
-}
-
-function rulesetAppliesToBranch(ruleset: unknown, baseBranch: string): boolean {
-  if (stringOrUndefined(getPath<unknown>(ruleset, ["target"])) !== "branch") return false;
-  if (stringOrUndefined(getPath<unknown>(ruleset, ["enforcement"])) !== "active") return false;
-  const ref = `refs/heads/${baseBranch}`;
-  const include = stringArray(getPath<unknown>(ruleset, ["conditions", "ref_name", "include"]));
-  const exclude = stringArray(getPath<unknown>(ruleset, ["conditions", "ref_name", "exclude"]));
-  if (exclude.some((pattern) => refPatternMatches(pattern, ref, baseBranch))) return false;
-  return include.length === 0 || include.some((pattern) => refPatternMatches(pattern, ref, baseBranch));
-}
-
-export function normalizeBaseBranch(ref: string): string {
-  return ref
-    .replace(/^refs\/heads\//, "")
-    .replace(/^refs\/remotes\/[^/]+\//, "")
-    .replace(/^(?:origin|target)\//, "");
-}
-
-function refPatternMatches(pattern: string, ref: string, baseBranch: string): boolean {
-  if (pattern === ref || pattern === baseBranch) return true;
-  if (pattern === "~DEFAULT_BRANCH" && baseBranch === "main") return true;
-  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
-  return new RegExp(`^${escaped}$`).test(ref);
-}
-
-async function fetchRequiredCheckWaitState(options: {
-  repo: string;
-  token: string;
-  prNumber: number;
-  requiredContexts: string[];
-}): Promise<RequiredCheckWaitState> {
-  const [owner, name] = options.repo.split("/");
-  const graphQl = await githubGraphql(options.token, buildRequiredCheckWaitQuery(), {
-    owner,
-    name,
-    number: options.prNumber,
-  });
-  const pr = getPath<Record<string, unknown>>(graphQl, ["data", "repository", "pullRequest"]);
-  const statuses = extractStatusCheckSummaries(getPath<unknown[]>(pr, ["statusCheckRollup", "contexts", "nodes"]) || []);
-  return {
-    requiredContexts: options.requiredContexts,
-    pendingContexts: pendingRequiredContexts(options.requiredContexts, statuses),
-    statuses,
-    headRefOid: stringOrUndefined(getPath<unknown>(pr, ["headRefOid"])),
-  };
-}
-
-export function extractStatusCheckSummaries(nodes: unknown[]): CheckStatusSummary[] {
-  return nodes
-    .map((node) => {
-      const name = stringOrUndefined(getPath<unknown>(node, ["name"])) || stringOrUndefined(getPath<unknown>(node, ["context"]));
-      if (!name) return undefined;
-      const status = stringOrUndefined(getPath<unknown>(node, ["status"]));
-      const conclusion = stringOrUndefined(getPath<unknown>(node, ["conclusion"])) || null;
-      const state = stringOrUndefined(getPath<unknown>(node, ["state"]));
-      return { name, status, conclusion, state, terminal: isTerminalStatus({ status, conclusion, state }) };
-    })
-    .filter((summary): summary is CheckStatusSummary => Boolean(summary));
-}
-
-export function pendingRequiredContexts(requiredContexts: string[], statuses: CheckStatusSummary[]): string[] {
-  return requiredContexts.filter((context) => {
-    const matches = statuses.filter((status) => status.name === context);
-    return matches.length === 0 || matches.some((status) => !status.terminal);
-  });
-}
-
-function isTerminalStatus(status: { status?: string; conclusion?: string | null; state?: string }): boolean {
-  if (status.state) return /SUCCESS|FAILURE|ERROR/i.test(status.state);
-  if (status.status) return /COMPLETED/i.test(status.status);
-  return Boolean(status.conclusion);
-}
-
-function buildRequiredCheckWaitQuery(): string {
-  return `
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      headRefOid
-      statusCheckRollup {
-        contexts(first: 100) {
-          nodes {
-            __typename
-            ... on CheckRun { name status conclusion }
-            ... on StatusContext { context state }
-          }
-        }
-      }
-    }
-  }
-}`;
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 async function collectDeterministicContext(options: {
   baseRef: string;
   headRef: string;
@@ -575,17 +307,12 @@ async function collectDeterministicContext(options: {
   const github = await collectGitHubContext();
   const riskyAreas = detectRiskyAreas(options.changedFiles);
   const testDepth = classifyTestDepth(options.changedFiles, options.diff);
-  const requiredStatusCheckContexts = await discoverRequiredStatusCheckContexts(options.baseRef);
-  const additionalWaitContexts = parseContextList(process.env.PR_REVIEW_ADVISOR_WAIT_ADDITIONAL_CONTEXTS);
-  const gateStatus = deriveGateStatus(github, options.changedFiles, riskyAreas, requiredStatusCheckContexts);
   return {
     diffStat: getDiffStat(options.baseRef, options.headRef),
     commits: getCommits(options.baseRef, options.headRef),
     riskyAreas,
     testDepth,
-    gateStatus,
-    requiredStatusCheckContexts,
-    additionalWaitContexts,
+    previousAdvisorReview: github?.previousAdvisorReview || null,
     workflowSignals: detectWorkflowSignals(options.changedFiles, options.diff),
     monolithDeltas: computeMonolithDeltas(options.baseRef, options.changedFiles),
     driftEvidence: collectDriftEvidence(options.baseRef, options.changedFiles),
@@ -632,9 +359,9 @@ export function classifyTestDepth(changedFiles: string[], diff = ""): ReviewAdvi
   );
   if (e2eSignals.length > 0) {
     return {
-      verdict: "e2e_required",
-      rationale: `Runtime/sandbox/infrastructure paths need real execution coverage: ${e2eSignals.slice(0, 8).join(", ")}.`,
-      suggestedTests: ["Confirm E2E Advisor required jobs passed for the current PR head SHA."],
+      verdict: "runtime_validation_recommended",
+      rationale: `Runtime/sandbox/infrastructure paths need behavioral runtime validation: ${e2eSignals.slice(0, 8).join(", ")}.`,
+      suggestedTests: ["Add or identify targeted runtime/integration validation for the changed behavior; do not report external E2E job pass/fail here."],
     };
   }
   const mockSignals = sourceFiles.filter((file) =>
@@ -715,12 +442,14 @@ function collectDriftEvidence(baseRef: string, changedFiles: string[]): DriftEvi
       .map((line) => line.trim())
       .filter(Boolean);
     const normalizedFile = file.replace(/^\.\//, "").replace(/\\/g, "/");
-    const escapedFile = normalizedFile.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const filePathPattern = new RegExp(`(^|/)${escapedFile}(\\s|$)`);
     const renameHints = (gitOutput([["log", "--oneline", "--name-status", "--find-renames", "-40", baseRef, "--"]], 120000) || "")
       .split("\n")
       .map((line) => line.trim())
-      .filter((line) => /^(R\d+|A|D|M)\s/.test(line) && filePathPattern.test(line.replace(/\\/g, "/")))
+      .filter((line) => {
+        const [status, ...paths] = line.replace(/\\/g, "/").split("\t");
+        if (!/^(R\d+|A|D|M)$/.test(status || "")) return false;
+        return paths.some((changedPath) => changedPath.replace(/^\.\//, "") === normalizedFile);
+      })
       .slice(0, 20);
     return { file, recentHistory, renameHints };
   });
@@ -729,94 +458,6 @@ function collectDriftEvidence(baseRef: string, changedFiles: string[]): DriftEvi
 function countLines(text: string): number {
   if (!text) return 0;
   return text.endsWith("\n") ? text.split("\n").length - 1 : text.split("\n").length;
-}
-
-function deriveCiGateStatus(statuses: CheckStatusSummary[], requiredContexts: string[]): GateStatus {
-  if (statuses.length === 0) {
-    return requiredContexts.length > 0
-      ? {
-        status: "pending",
-        evidence: `Required status context(s) pending or missing: ${requiredContexts.join(", ")}. Non-required contexts still pending: 0; failed: 0.`,
-      }
-      : { status: "unknown", evidence: "No statusCheckRollup data was available." };
-  }
-
-  if (requiredContexts.length > 0) {
-    const failedRequired = failedRequiredContexts(requiredContexts, statuses);
-    const pendingRequired = pendingRequiredContexts(requiredContexts, statuses);
-    const nonRequiredPending = statuses.filter(
-      (status) => !requiredContexts.includes(status.name) && !status.terminal,
-    ).length;
-    const nonRequiredFailed = statuses.filter(
-      (status) => !requiredContexts.includes(status.name) && isFailedStatus(status),
-    ).length;
-    const suffix = ` Non-required contexts still pending: ${nonRequiredPending}; failed: ${nonRequiredFailed}.`;
-    if (failedRequired.length > 0) {
-      return { status: "fail", evidence: `Required status context(s) failed: ${failedRequired.join(", ")}.${suffix}` };
-    }
-    if (pendingRequired.length > 0) {
-      return { status: "pending", evidence: `Required status context(s) pending or missing: ${pendingRequired.join(", ")}.${suffix}` };
-    }
-    return { status: "pass", evidence: `${requiredContexts.length} required status context(s) completed with no failures.${suffix}` };
-  }
-
-  const failed = statuses.filter(isFailedStatus);
-  const pending = statuses.filter((status) => !status.terminal);
-  return failed.length > 0
-    ? { status: "fail", evidence: `${failed.length} status context(s) appear failed.` }
-    : pending.length > 0
-      ? { status: "pending", evidence: `${pending.length} status context(s) appear pending.` }
-      : { status: "pass", evidence: `${statuses.length} status context(s) were present with no failures detected.` };
-}
-
-function failedRequiredContexts(requiredContexts: string[], statuses: CheckStatusSummary[]): string[] {
-  return requiredContexts.filter((context) => statuses.some((status) => status.name === context && isFailedStatus(status)));
-}
-
-function isFailedStatus(status: CheckStatusSummary): boolean {
-  return /FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|STALE/i.test(
-    [status.state, status.conclusion].filter(Boolean).join(" "),
-  );
-}
-
-export function deriveGateStatus(
-  github: GitHubReviewContext | null,
-  changedFiles: string[],
-  riskyAreas: string[],
-  requiredStatusCheckContexts: string[] = [],
-): ReviewAdvisorResult["gateStatus"] {
-  const graphQlPr = getPath<Record<string, unknown>>(github?.graphQl, ["data", "repository", "pullRequest"]);
-  const checkNodes = getPath<unknown[]>(graphQlPr, ["statusCheckRollup", "contexts", "nodes"]) || [];
-  const checkSummaries = extractStatusCheckSummaries(checkNodes).filter((status) => !isAdvisorCheckContext(status.name));
-  const requiredContexts = uniqueStrings(requiredStatusCheckContexts).filter((context) => !isAdvisorCheckContext(context));
-  const ci = deriveCiGateStatus(checkSummaries, requiredContexts);
-
-  const mergeState = stringOrUndefined(getPath<unknown>(graphQlPr, ["mergeStateStatus"])) ||
-    stringOrUndefined(getPath<unknown>(github?.pullRequest, ["mergeable_state"]));
-  const mergeability: GateStatus = !mergeState
-    ? { status: "unknown", evidence: "Merge state was unavailable." }
-    : /CLEAN|MERGEABLE/i.test(mergeState)
-      ? { status: "pass", evidence: `mergeStateStatus=${mergeState}` }
-      : /DIRTY|CONFLICT|BLOCKED|behind/i.test(mergeState)
-        ? { status: "fail", evidence: `mergeStateStatus=${mergeState}` }
-        : { status: "warning", evidence: `mergeStateStatus=${mergeState}` };
-
-  const threads = getPath<unknown[]>(graphQlPr, ["reviewThreads", "nodes"]) || [];
-  const unresolved = threads.filter((thread) => getPath<boolean>(thread, ["isResolved"]) === false);
-  const reviewThreads: GateStatus = threads.length === 0
-    ? { status: "unknown", evidence: "No review thread state was available." }
-    : unresolved.length === 0
-      ? { status: "pass", evidence: `${threads.length} review thread(s), all resolved.` }
-      : { status: "fail", evidence: `${unresolved.length} unresolved review thread(s).` };
-
-  const hasTestChange = changedFiles.some(isTestFile);
-  const riskyCodeTested: GateStatus = riskyAreas.length === 0
-    ? { status: "pass", evidence: "No risky code areas detected by path heuristics." }
-    : hasTestChange
-      ? { status: "warning", evidence: `Risky areas detected (${riskyAreas.join(", ")}); test files changed, but coverage still needs semantic review.` }
-      : { status: "fail", evidence: `Risky areas detected (${riskyAreas.join(", ")}) with no test file changes.` };
-
-  return { ci, mergeability, reviewThreads, riskyCodeTested };
 }
 
 async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
@@ -828,17 +469,15 @@ async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
   const context: GitHubReviewContext = { repo, prNumber };
   try {
     const [owner, name] = repo.split("/");
-    const [pullRequest, issueComments, reviewComments, graphQl, openPulls] = await Promise.all([
+    const [pullRequest, issueComments, graphQl, openPulls] = await Promise.all([
       githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token),
       githubRestPaginated<unknown>(`repos/${repo}/issues/${prNumber}/comments`, token, 100),
-      githubRestPaginated<unknown>(`repos/${repo}/pulls/${prNumber}/comments`, token, 100),
       githubGraphql(token, buildPrGraphqlQuery(), { owner, name, number: prNumber }).catch((error: unknown) => ({ error: String(error) })),
       githubRestPaginated<unknown>(`repos/${repo}/pulls?state=open&sort=updated&direction=desc`, token, 100),
     ]);
     context.pullRequest = pullRequest;
-    context.issueComments = issueComments;
-    context.reviewComments = reviewComments;
     context.graphQl = graphQl;
+    context.previousAdvisorReview = extractPreviousAdvisorReview(issueComments);
     const prText = [
       stringOrUndefined(getPath<unknown>(pullRequest, ["title"])),
       stringOrUndefined(getPath<unknown>(pullRequest, ["body"])),
@@ -847,9 +486,6 @@ async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
     const issueNumbers = extractIssueRefs(prText, prNumber).slice(0, 5);
     context.linkedIssues = await Promise.all(issueNumbers.map((issue) => collectLinkedIssue(repo, issue, token)));
     context.openPrOverlaps = await collectOpenPrOverlaps(repo, prNumber, token, openPulls, issueNumbers);
-    context.e2eAdvisorComments = issueComments
-      .map((comment) => stringOrUndefined(getPath<unknown>(comment, ["body"])))
-      .filter((body): body is string => typeof body === "string" && body.includes("<!-- nemoclaw-e2e-advisor -->"));
   } catch (error: unknown) {
     context.fetchError = error instanceof Error ? error.message : String(error);
   }
@@ -923,6 +559,16 @@ function extractIssueRefs(text: string, prNumber: number): number[] {
   return [...numbers].sort((a, b) => a - b);
 }
 
+function extractPreviousAdvisorReview(issueComments: unknown[]): PreviousAdvisorReview | null {
+  const bodies = issueComments
+    .map((comment) => stringOrUndefined(getPath<unknown>(comment, ["body"])))
+    .filter((body): body is string => Boolean(body && body.includes("<!-- nemoclaw-pr-review-advisor -->")));
+  const body = bodies.at(-1);
+  if (!body) return null;
+  const headSha = body.match(/(?:\*\*Analyzed HEAD:\*\*|Analyzed SHA:)\s*`?([^`\n\s]+)`?/)?.[1];
+  return { headSha, body: body.slice(0, 12000) };
+}
+
 function buildPrGraphqlQuery(): string {
   return `
 query($owner: String!, $name: String!, $number: Int!) {
@@ -932,27 +578,7 @@ query($owner: String!, $name: String!, $number: Int!) {
       title
       isDraft
       authorAssociation
-      reviewDecision
-      mergeStateStatus
       headRefOid
-      statusCheckRollup {
-        contexts(first: 50) {
-          nodes {
-            __typename
-            ... on CheckRun { name status conclusion detailsUrl }
-            ... on StatusContext { context state targetUrl }
-          }
-        }
-      }
-      reviewThreads(first: 100) {
-        nodes {
-          id
-          isResolved
-          comments(first: 10) {
-            nodes { author { login } body path line createdAt }
-          }
-        }
-      }
     }
   }
 }`;
@@ -977,7 +603,7 @@ export function buildSystemPrompt(schema: Record<string, unknown>, securityRevie
     "Use the repository files with read-only tools when needed. Do not ask to execute PR scripts/tests or package-manager commands.",
     "Review rubric:",
     "1. Start with codebase drift: is the PR patching code that still exists, and does it overlap or contradict active work?",
-    "2. Hard gates: CI latest SHA, mergeability, unresolved review/CodeRabbit threads, risky code tests.",
+    "2. Keep the review focused on the code changes in this PR. Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status; those are handled by other PR surfaces.",
     "3. Security: use the trusted security code review skill embedded below as the authoritative security rubric. Apply every category with PASS/WARNING/FAIL evidence. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
     "Trusted security review skill from main checkout:",
     "```markdown",
@@ -986,8 +612,10 @@ export function buildSystemPrompt(schema: Record<string, unknown>, securityRevie
     "4. Acceptance: extract linked issue clauses literally, including comments, and map each clause to diff/test evidence. Named list items are separate clauses.",
     "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
-    "7. E2E: verify E2E Advisor recommendations and whether required jobs passed for this head SHA. Runtime/security/network/credential/rebuild/snapshot/messaging/GPU/install changes need E2E if unit tests cannot prove behavior.",
-    "Finding severity: blockers prevent merge; warnings should be fixed or consciously accepted; suggestions are nice-to-have.",
+    "7. If a previous PR Review Advisor comment exists, compare it with the current diff and explicitly decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
+    "Acceptance and security should inform findings, not become standalone comment sections: any unmet acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet acceptance or security fail and severity=warning for security warnings.",
+    "Set summary.topItem to the most important actionable finding title or short description for first-review comments. Keep it concise and code-focused.",
+    "Finding severity mapping: blocker renders as 'Needs attention'; warning renders as 'Worth checking'; suggestion renders as 'Nice ideas'.",
     "Return JSON only matching this schema:",
     "```json",
     JSON.stringify(schema),
@@ -1030,12 +658,10 @@ export function normalizeReviewResult(result: unknown, metadata: ReviewMetadata)
     headSha: metadata.headSha,
     changedFiles: metadata.changedFiles,
     summary: sanitizeSummary(object.summary),
-    gateStatus: sanitizeGateStatus(object.gateStatus, metadata.deterministic.gateStatus),
     findings: sanitizeFindings(object.findings),
     acceptanceCoverage: sanitizeAcceptanceCoverage(object.acceptanceCoverage),
     securityCategories: sanitizeSecurityCategories(object.securityCategories),
     testDepth: sanitizeTestDepth(object.testDepth, metadata.deterministic.testDepth),
-    e2eAdvisorStatus: sanitizeE2eAdvisorStatus(object.e2eAdvisorStatus),
     positives: stringArray(object.positives).slice(0, 12),
     reviewCompleteness: sanitizeReviewCompleteness(object.reviewCompleteness),
   };
@@ -1047,25 +673,22 @@ function sanitizeSummary(value: unknown): ReviewAdvisorResult["summary"] {
     recommendation: enumValue(object.recommendation, SUMMARY_RECOMMENDATIONS, "info_only"),
     confidence: enumValue(object.confidence, CONFIDENCES, "medium"),
     oneLine: stringOrDefault(object.oneLine, "PR review advisor completed with limited summary."),
+    topItem: typeof object.topItem === "string" && object.topItem.trim() ? object.topItem.trim() : undefined,
+    sinceLastReview: sanitizeSinceLastReview(object.sinceLastReview),
   };
 }
 
-function sanitizeGateStatus(value: unknown, fallback: ReviewAdvisorResult["gateStatus"]): ReviewAdvisorResult["gateStatus"] {
-  const object = isRecord(value) ? value : {};
+function sanitizeSinceLastReview(value: unknown): ReviewAdvisorResult["summary"]["sinceLastReview"] {
+  if (!isRecord(value)) return undefined;
   return {
-    ci: sanitizeGate(object.ci, fallback.ci),
-    mergeability: sanitizeGate(object.mergeability, fallback.mergeability),
-    reviewThreads: sanitizeGate(object.reviewThreads, fallback.reviewThreads),
-    riskyCodeTested: sanitizeGate(object.riskyCodeTested, fallback.riskyCodeTested),
+    resolved: nonNegativeInteger(value.resolved),
+    stillApplies: nonNegativeInteger(value.stillApplies),
+    newItems: nonNegativeInteger(value.newItems),
   };
 }
 
-function sanitizeGate(value: unknown, fallback: GateStatus): GateStatus {
-  const object = isRecord(value) ? value : {};
-  return {
-    status: enumValue(object.status, GATE_STATUSES, fallback.status),
-    evidence: stringOrDefault(object.evidence, fallback.evidence),
-  };
+function nonNegativeInteger(value: unknown): number {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0;
 }
 
 function sanitizeFindings(value: unknown): Finding[] {
@@ -1112,17 +735,6 @@ function sanitizeTestDepth(value: unknown, fallback: ReviewAdvisorResult["testDe
   };
 }
 
-function sanitizeE2eAdvisorStatus(value: unknown): ReviewAdvisorResult["e2eAdvisorStatus"] {
-  const object = isRecord(value) ? value : {};
-  return {
-    found: typeof object.found === "boolean" ? object.found : false,
-    requiredJobs: stringArray(object.requiredJobs),
-    passedForHeadSha: stringArray(object.passedForHeadSha),
-    missingForHeadSha: stringArray(object.missingForHeadSha),
-    verdict: enumValue(object.verdict, E2E_STATUS_VERDICTS, "not_found"),
-  };
-}
-
 function sanitizeReviewCompleteness(value: unknown): ReviewAdvisorResult["reviewCompleteness"] {
   const object = isRecord(value) ? value : {};
   const limitations = stringArray(object.limitations);
@@ -1139,57 +751,38 @@ export function renderSummary(result: ReviewAdvisorResult): string {
   const lines: string[] = [];
   lines.push("# PR Review Advisor");
   lines.push("");
-  lines.push(`Base: \`${result.baseRef}\`  `);
-  lines.push(`Head: \`${result.headRef}\`  `);
-  lines.push(`Analyzed SHA: \`${result.headSha}\`  `);
-  lines.push(`Recommendation: **${formatRecommendation(result.summary.recommendation)}**  `);
-  lines.push(`Confidence: **${result.summary.confidence}**`);
-  lines.push("");
   lines.push(result.summary.oneLine);
   lines.push("");
-  lines.push("## Gate status");
-  lines.push(`- CI: **${result.gateStatus.ci.status}** — ${result.gateStatus.ci.evidence}`);
-  lines.push(`- Mergeability: **${result.gateStatus.mergeability.status}** — ${result.gateStatus.mergeability.evidence}`);
-  lines.push(`- Review threads: **${result.gateStatus.reviewThreads.status}** — ${result.gateStatus.reviewThreads.evidence}`);
-  lines.push(`- Risky code tested: **${result.gateStatus.riskyCodeTested.status}** — ${result.gateStatus.riskyCodeTested.evidence}`);
-  lines.push("");
-  appendFindings(lines, "🔴 Blockers", blockers);
-  appendFindings(lines, "🟡 Warnings", warnings);
-  appendFindings(lines, "🔵 Suggestions", suggestions);
-  lines.push("## Acceptance coverage");
-  if (result.acceptanceCoverage.length === 0) {
-    lines.push("- _No linked acceptance clauses were analyzed._");
-  } else {
-    for (const clause of result.acceptanceCoverage.slice(0, 20)) {
-      lines.push(`- **${clause.status}** — ${clause.clause}: ${clause.evidence}`);
-    }
-  }
-  lines.push("");
-  lines.push("## Security review");
-  for (const category of result.securityCategories.slice(0, 9)) {
-    lines.push(`- **${category.verdict}** — ${category.category}: ${category.justification}`);
-  }
-  lines.push("");
-  lines.push("## Test / E2E status");
-  lines.push(`- Test depth: **${result.testDepth.verdict}** — ${result.testDepth.rationale}`);
-  lines.push(`- E2E Advisor: **${result.e2eAdvisorStatus.verdict}**${result.e2eAdvisorStatus.found ? "" : " (not found)"}`);
-  if (result.e2eAdvisorStatus.requiredJobs.length > 0) {
-    lines.push(`- Required E2E jobs: ${result.e2eAdvisorStatus.requiredJobs.map((job) => `\`${job}\``).join(", ")}`);
-  }
-  if (result.e2eAdvisorStatus.missingForHeadSha.length > 0) {
-    lines.push(`- Missing for analyzed SHA: ${result.e2eAdvisorStatus.missingForHeadSha.map((job) => `\`${job}\``).join(", ")}`);
-  }
-  lines.push("");
-  lines.push("## ✅ What looks good");
+  appendFindings(lines, "Needs attention", blockers);
+  appendFindings(lines, "Worth checking", warnings);
+  appendFindings(lines, "Nice ideas", suggestions);
+  lines.push("## What looks good");
   if (result.positives.length === 0) {
     lines.push("- _No positives were identified by the advisor._");
   } else {
     for (const positive of result.positives.slice(0, 10)) lines.push(`- ${positive}`);
   }
   lines.push("");
-  lines.push("## Review completeness");
-  for (const limitation of result.reviewCompleteness.limitations) lines.push(`- ${limitation}`);
-  lines.push(`- Human maintainer review required: **${result.reviewCompleteness.requiresHumanReview ? "yes" : "yes (advisor output is never authoritative)"}**`);
+
+  return `${lines.join("\n")}\n`;
+}
+
+export function renderDetailedReview(result: ReviewAdvisorResult): string {
+  const lines = renderSummary(result).trimEnd().split("\n");
+  lines.push("");
+  lines.push("## Acceptance coverage");
+  if (result.acceptanceCoverage.length === 0) {
+    lines.push("- _No linked acceptance clauses were analyzed._");
+  } else {
+    for (const clause of result.acceptanceCoverage.slice(0, 100)) {
+      lines.push(`- **${clause.status}** — ${clause.clause}: ${clause.evidence}`);
+    }
+  }
+  lines.push("");
+  lines.push("## Security review");
+  for (const category of result.securityCategories.slice(0, 20)) {
+    lines.push(`- **${category.verdict}** — ${category.category}: ${category.justification}`);
+  }
   lines.push("");
   return `${lines.join("\n")}\n`;
 }
@@ -1225,11 +818,10 @@ function unavailableResult(metadata: ReviewMetadata, reason: string, failed: boo
       confidence: "low",
       oneLine: failed ? `PR review advisor failed: ${reason}` : `PR review advisor skipped: ${reason}`,
     },
-    gateStatus: metadata.deterministic.gateStatus,
     findings: failed
       ? [{
           severity: "warning",
-          category: "ci",
+          category: "correctness",
           file: null,
           line: null,
           title: "PR review advisor unavailable",
@@ -1245,7 +837,6 @@ function unavailableResult(metadata: ReviewMetadata, reason: string, failed: boo
       justification: "Advisor unavailable; human review required.",
     })),
     testDepth: metadata.deterministic.testDepth,
-    e2eAdvisorStatus: { found: false, requiredJobs: [], passedForHeadSha: [], missingForHeadSha: [], verdict: "not_found" },
     positives: [],
     reviewCompleteness: {
       limitations: [failed ? `Advisor execution failed: ${reason}` : `Advisor execution skipped: ${reason}`],

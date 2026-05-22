@@ -131,8 +131,9 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       "group": "Messaging Channels",
       "order": 21,
+      "usage": "nemoclaw <name> channels add <channel>",
       "description": "Save credentials and rebuild",
-      "flags": "<channel> [--dry-run]"
+      "flags": "[--dry-run]"
     }
   ],
   "sandbox:channels:list": [
@@ -145,24 +146,27 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       "group": "Messaging Channels",
       "order": 22,
+      "usage": "nemoclaw <name> channels remove <channel>",
       "description": "Remove a configured messaging channel",
-      "flags": "<channel> [--dry-run]"
+      "flags": "[--dry-run]"
     }
   ],
   "sandbox:channels:start": [
     {
       "group": "Messaging Channels",
       "order": 24,
+      "usage": "nemoclaw <name> channels start <channel>",
       "description": "Re-enable a previously stopped channel",
-      "flags": "<channel> [--dry-run]"
+      "flags": "[--dry-run]"
     }
   ],
   "sandbox:channels:stop": [
     {
       "group": "Messaging Channels",
       "order": 23,
+      "usage": "nemoclaw <name> channels stop <channel>",
       "description": "Disable channel (keeps credentials)",
-      "flags": "<channel> [--dry-run]"
+      "flags": "[--dry-run]"
     }
   ],
   "sandbox:config:get": [
@@ -365,7 +369,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       "group": "Sandbox Management",
       "order": 9,
-      "flags": "[selector] [--to <dst>]"
+      "flags": "[selector] [--to <dst>] [--force] [--yes|-y]"
     }
   ],
   "sandbox:status": [

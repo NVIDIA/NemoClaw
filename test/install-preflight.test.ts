@@ -334,6 +334,7 @@ exit 98
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -425,6 +426,7 @@ exit 98
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
       },
     });
@@ -636,6 +638,7 @@ fi`,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
         NPM_LOG_PATH: npmLog,
         PYTHON_LOG_PATH: pythonLog,
@@ -655,6 +658,174 @@ fi`,
     const gitCalls = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf-8") : "";
     expect(gitCalls).not.toMatch(/submodule/);
   });
+
+  it(
+    "source-checkout: installs OpenShell when missing from PATH (#3989)",
+    { timeout: 20000 },
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-source-osh-"));
+      const fakeBin = path.join(tmp, "bin");
+      const prefix = path.join(tmp, "prefix");
+      const npmLog = path.join(tmp, "npm.log");
+      const openshellLog = path.join(tmp, "install-openshell.log");
+      fs.mkdirSync(fakeBin);
+      fs.mkdirSync(path.join(tmp, ".git"));
+      fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+
+      writeNodeStub(fakeBin);
+      writeNpmStub(
+        fakeBin,
+        `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+if [ "$1" = "onboard" ]; then exit 0; fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+      );
+
+      fs.writeFileSync(
+        path.join(tmp, "package.json"),
+        JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+      );
+      fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmp, "nemoclaw", "package.json"),
+        JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+      );
+
+      fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
+      writeExecutable(
+        path.join(tmp, "scripts", "install-openshell.sh"),
+        `#!/usr/bin/env bash
+printf 'install-openshell.sh invoked\\n' >> "$INSTALL_OPENSHELL_LOG"
+exit 0
+`,
+      );
+      fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.json"), "{}\n");
+
+      const result = spawnSync("bash", [INSTALLER], {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_REPO_ROOT: tmp,
+          NPM_PREFIX: prefix,
+          NPM_LOG_PATH: npmLog,
+          INSTALL_OPENSHELL_LOG: openshellLog,
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(openshellLog)).toBe(true);
+      expect(fs.readFileSync(openshellLog, "utf-8")).toMatch(/install-openshell\.sh invoked/);
+    },
+  );
+
+  it(
+    "source-checkout: skips OpenShell install when openshell is already on PATH (#3989)",
+    { timeout: 20000 },
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-source-osh-skip-"));
+      const fakeBin = path.join(tmp, "bin");
+      const prefix = path.join(tmp, "prefix");
+      const npmLog = path.join(tmp, "npm.log");
+      const openshellLog = path.join(tmp, "install-openshell.log");
+      fs.mkdirSync(fakeBin);
+      fs.mkdirSync(path.join(tmp, ".git"));
+      fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+
+      writeNodeStub(fakeBin);
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "openshell 0.0.39"; exit 0; fi
+exit 0
+`,
+      );
+      writeNpmStub(
+        fakeBin,
+        `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+if [ "$1" = "onboard" ]; then exit 0; fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+      );
+
+      fs.writeFileSync(
+        path.join(tmp, "package.json"),
+        JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+      );
+      fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmp, "nemoclaw", "package.json"),
+        JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+      );
+
+      fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
+      writeExecutable(
+        path.join(tmp, "scripts", "install-openshell.sh"),
+        `#!/usr/bin/env bash
+printf 'install-openshell.sh invoked\\n' >> "$INSTALL_OPENSHELL_LOG"
+exit 0
+`,
+      );
+      fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.json"), "{}\n");
+
+      const result = spawnSync("bash", [INSTALLER], {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_REPO_ROOT: tmp,
+          NPM_PREFIX: prefix,
+          NPM_LOG_PATH: npmLog,
+          INSTALL_OPENSHELL_LOG: openshellLog,
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(openshellLog)).toBe(false);
+    },
+  );
 
   it("auto-resumes an interrupted onboarding session during install", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-resume-"));
@@ -1995,6 +2166,7 @@ exit 0`,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -2071,6 +2243,7 @@ fi`,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -3664,6 +3837,7 @@ exit 0`,
         env: {
           HOME: tmp,
           PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
           ...env,
         },
       },

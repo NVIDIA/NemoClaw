@@ -260,17 +260,21 @@ RUN set -eu; \
     if ! grep -q 'const baseLstat = await fs\.stat(baseDir)' "$isp_file"; then echo "ERROR: Patch 3a (install-safe-path) did not find patched baseLstat stat call" >&2; exit 1; fi; \
     ipd_file="$(grep -RIlE --include='*.js' 'assertInstallBaseStable' "$OC_DIST/install-package-dir-"*.js || true)"; \
     test -n "$ipd_file" || { echo "ERROR: install-package-dir assertInstallBaseStable not found" >&2; exit 1; }; \
-    sed -i 's/const baseLstat = await fs\.lstat(params\.installBaseDir)/const baseLstat = await fs.stat(params.installBaseDir)/' "$ipd_file"; \
-    sed -i 's/baseLstat\.isSymbolicLink()/false \/* nemoclaw: symlink check disabled, realpath guards containment *\//' "$ipd_file"; \
-    if grep -q 'fs\.lstat(params\.installBaseDir)' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left lstat in assertInstallBaseStable" >&2; exit 1; fi; \
-    if ! grep -q 'const baseLstat = await fs\.stat(params\.installBaseDir)' "$ipd_file" && ! grep -q 'await fs\.stat(params\.installBaseDir)).isDirectory()' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) did not find patched/safe installBaseDir stat call" >&2; exit 1; fi; \
-    if grep -q 'baseLstat\.isSymbolicLink()' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left baseLstat symlink check" >&2; exit 1; fi; \
+	    if grep -q 'const baseLstat = await fs\.lstat(params\.installBaseDir)' "$ipd_file"; then \
+	        sed -i 's/const baseLstat = await fs\.lstat(params\.installBaseDir)/const baseLstat = await fs.stat(params.installBaseDir)/' "$ipd_file"; \
+	        sed -i 's/baseLstat\.isSymbolicLink()/false \/* nemoclaw: symlink check disabled, realpath guards containment *\//' "$ipd_file"; \
+	        if grep -q 'fs\.lstat(params\.installBaseDir)' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left lstat in assertInstallBaseStable" >&2; exit 1; fi; \
+	        if ! grep -q 'const baseLstat = await fs\.stat(params\.installBaseDir)' "$ipd_file" && ! grep -q 'await fs\.stat(params\.installBaseDir)).isDirectory()' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) did not find patched/safe installBaseDir stat call" >&2; exit 1; fi; \
+	        if grep -q 'baseLstat\.isSymbolicLink()' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left baseLstat symlink check" >&2; exit 1; fi; \
+	    else \
+	        grep -q 'await fs\.realpath(params\.installBaseDir) !== params\.expectedRealPath' "$ipd_file" || { echo "ERROR: install-package-dir lacks expected realpath stability guard" >&2; exit 1; }; \
+	    fi; \
     # --- Patch 5: bump default WS handshake timeout 10s -> 60s (#2484) --- \
     # OpenClaw's WS connect handshake has a hard-coded 10s timeout on both \
     # client and server. Server-side connect-handler processing can exceed \
-    # 10s under load (multiple concurrent connects on slow CI infra), \
+    # that limit under load (multiple concurrent connects on slow CI infra), \
     # causing `openclaw agent --json` to fail with "gateway timeout after \
-    # 10000ms" and TC-SBX-02 to hit its 90s SSH timeout. \
+    # <timeout>ms" and TC-SBX-02 to hit its 90s SSH timeout. \
     # \
     # Both env vars (OPENCLAW_HANDSHAKE_TIMEOUT_MS, \
     # OPENCLAW_CONNECT_CHALLENGE_TIMEOUT_MS) are clamped at the same \
@@ -286,7 +290,7 @@ RUN set -eu; \
     if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)' "$OC_DIST"; then echo "ERROR: Patch 5 left a short handshake-timeout constant" >&2; exit 1; fi; \
     if ! grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4' "$OC_DIST"; then echo "ERROR: Patch 5 did not find patched 6e4 constant" >&2; exit 1; fi
 
-# Patch OpenClaw's pinned 2026.4.24 compiled selection runtime to expose a
+# Patch OpenClaw's pinned 2026.5.18 compiled selection runtime to expose a
 # compact searchable tool catalog to the model while preserving the full
 # effective tool set behind tool_call. NEMOCLAW_TOOL_CATALOG=0 disables this
 # wrapper if an emergency rollback is needed. The script fails closed if the
@@ -420,6 +424,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
     NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
     NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
+    NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED=1 \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
@@ -511,12 +516,16 @@ USER root
 RUN set -eu; \
     config_dir=/sandbox/.openclaw; \
     data_dir=/sandbox/.openclaw-data; \
+    legacy_layout=0; \
+    legacy_marker=/tmp/nemoclaw-legacy-openclaw-layout; \
+    rm -f "$legacy_marker"; \
     mkdir -p "$config_dir"; \
     if [ -L "$data_dir" ]; then \
         echo "ERROR: refusing legacy layout cleanup because $data_dir is a symlink" >&2; \
         exit 1; \
     fi; \
     if [ -d "$data_dir" ]; then \
+        legacy_layout=1; \
         for entry in "$data_dir"/*; do \
             [ -e "$entry" ] || [ -L "$entry" ] || continue; \
             if [ -L "$entry" ]; then \
@@ -572,7 +581,32 @@ RUN set -eu; \
         done; \
         rm -rf "$data_dir"; \
     fi; \
-    mkdir -p "$config_dir/agents/main/agent" \
+    if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
+        echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
+        exit 1; \
+    fi; \
+    if [ "$legacy_layout" = "1" ]; then \
+        data_real="$(readlink -f "$data_dir" 2>/dev/null || printf '%s' "$data_dir")"; \
+        find "$config_dir" -type l -print | while IFS= read -r link; do \
+            raw_target="$(readlink "$link" 2>/dev/null || true)"; \
+            resolved_target="$(readlink -f "$link" 2>/dev/null || true)"; \
+            case "$raw_target" in \
+                "$data_real"/* | "$data_dir"/*) \
+                    echo "ERROR: legacy symlink remains after cleanup: $link -> $raw_target" >&2; \
+                    exit 1; \
+                    ;; \
+            esac; \
+            case "$resolved_target" in \
+                "$data_real"/* | "$data_dir"/*) \
+                    echo "ERROR: legacy symlink remains after cleanup: $link -> $resolved_target" >&2; \
+                    exit 1; \
+                    ;; \
+            esac; \
+        done; \
+        : > "$legacy_marker"; \
+    fi; \
+    for dir in \
+        "$config_dir/agents/main/agent" \
         "$config_dir/extensions" \
         "$config_dir/workspace" \
         "$config_dir/skills" \
@@ -589,28 +623,13 @@ RUN set -eu; \
         "$config_dir/telegram" \
         "$config_dir/wechat" \
         "$config_dir/media" \
-        "$config_dir/plugin-runtime-deps"; \
-    touch "$config_dir/update-check.json" "$config_dir/exec-approvals.json"; \
-    if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
-        echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
-        exit 1; \
-    fi; \
-    data_real="$(readlink -f "$data_dir" 2>/dev/null || printf '%s' "$data_dir")"; \
-    find "$config_dir" -type l -print | while IFS= read -r link; do \
-        raw_target="$(readlink "$link" 2>/dev/null || true)"; \
-        resolved_target="$(readlink -f "$link" 2>/dev/null || true)"; \
-        case "$raw_target" in \
-            "$data_real"/* | "$data_dir"/*) \
-                echo "ERROR: legacy symlink remains after cleanup: $link -> $raw_target" >&2; \
-                exit 1; \
-                ;; \
-        esac; \
-        case "$resolved_target" in \
-            "$data_real"/* | "$data_dir"/*) \
-                echo "ERROR: legacy symlink remains after cleanup: $link -> $resolved_target" >&2; \
-                exit 1; \
-                ;; \
-        esac; \
+        "$config_dir/plugin-runtime-deps"; do \
+        install -d -o sandbox -g sandbox -m 2770 "$dir"; \
+    done; \
+    for file in "$config_dir/update-check.json" "$config_dir/exec-approvals.json"; do \
+        touch "$file"; \
+        chown sandbox:sandbox "$file"; \
+        chmod 660 "$file"; \
     done; \
     rm -rf /root/.npm /sandbox/.npm
 
@@ -625,22 +644,24 @@ RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
         fi; \
     fi
 
-# Keep the image readable to the root entrypoint after capabilities are
-# dropped. OpenShell starts the runtime as the sandbox user; the entrypoint
-# and onboard flow normalize the mutable-default group-writable permissions.
-# Shields-up applies 444 root:root + chattr +i on top.
-#
-# `chmod g+w` + setgid (chmod g+s on dirs) on the mutable config tree means
-# both `sandbox` and `gateway` (now a member of the sandbox group) can write
-# to OpenClaw config/state in default mode. New files created in setgid
-# directories inherit group=sandbox regardless of which UID created them,
-# so OpenClaw's mutateConfigFile path (control-UI toggles) writes succeed
-# without needing an EACCES-swallow patch (#2681 supersedes #2693).
-RUN chown -R sandbox:sandbox /sandbox/.openclaw \
-    && chmod -R g+rwX,o-rwx /sandbox/.openclaw \
-    && find /sandbox/.openclaw -type d -exec chmod g+s {} + \
-    && chmod 2770 /sandbox/.openclaw \
-    && chmod 660 /sandbox/.openclaw/openclaw.json
+# Keep the image readable to the root entrypoint after capabilities are dropped.
+# Current base images already have a unified .openclaw tree. Avoid walking
+# plugin-runtime-deps on every build; only fall back to the broad repair when
+# the stale .openclaw-data migration path actually ran.
+RUN set -eu; \
+    if [ -e /tmp/nemoclaw-legacy-openclaw-layout ]; then \
+        chown -R sandbox:sandbox /sandbox/.openclaw; \
+        chmod -R g+rwX,o-rwx /sandbox/.openclaw; \
+        find /sandbox/.openclaw -type d -exec chmod g+s {} +; \
+        rm -f /tmp/nemoclaw-legacy-openclaw-layout; \
+    else \
+        chown sandbox:sandbox \
+            /sandbox/.openclaw \
+            /sandbox/.openclaw/openclaw.json \
+            /sandbox/.openclaw/plugin-runtime-deps; \
+        chmod 2770 /sandbox/.openclaw /sandbox/.openclaw/plugin-runtime-deps; \
+        chmod 660 /sandbox/.openclaw/openclaw.json; \
+    fi
 
 # System-wide proxy hooks for shells where ~/.bashrc / ~/.profile aren't
 # sourced (e.g. `bash -ic` / `bash -lc` invoked under a different user or

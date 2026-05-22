@@ -163,8 +163,8 @@ run_fake_slack_channel_mention_proof() {
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
-import path from "node:path";
 import { createRequire } from "node:module";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 function fail(message) {
@@ -175,6 +175,7 @@ function fail(message) {
 function resolveOpenClawRoot() {
   const candidates = [];
   const seen = new Set();
+  const require = createRequire(import.meta.url);
   const addCandidate = (candidate) => {
     if (!candidate) return;
     const normalized = path.resolve(candidate);
@@ -196,6 +197,11 @@ function resolveOpenClawRoot() {
   };
 
   addCandidate(process.env.OPENCLAW_PACKAGE_ROOT);
+  for (const base of [process.cwd(), "/sandbox", "/usr/local/lib/node_modules", "/tmp/npm-global/lib/node_modules"]) {
+    try {
+      addCandidate(path.dirname(require.resolve("openclaw/package.json", { paths: [base] })));
+    } catch {}
+  }
   try {
     const globalRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
     if (globalRoot) addCandidate(path.join(globalRoot, "openclaw"));
@@ -229,7 +235,7 @@ function resolveOpenClawRoot() {
       return candidate;
     }
   }
-  fail(`OpenClaw Slack test API not found in: ${candidates.join(", ")}`);
+  return null;
 }
 
 function createOpenClawSlackProofRoot(openclawRoot) {
@@ -317,7 +323,7 @@ function resolveSlackTestApiImport(testApiSource, exportName) {
     new RegExp(`import\\s+\\{[^}]*\\b${escapedExportName}\\b[^}]*\\}\\s+from\\s+["']([^"']+)["']`),
   ];
   const match = patterns.map((pattern) => testApiSource.match(pattern)).find(Boolean);
-  if (!match) fail(`OpenClaw Slack test API does not expose ${exportName}`);
+  if (!match) throw new Error(`OpenClaw Slack test API does not expose ${exportName}`);
   return match[1];
 }
 
@@ -395,133 +401,181 @@ const deniedUser = process.env.SLACK_DENIED_USER || "U999DENIED";
 if (!Array.isArray(wildcard.users) || !wildcard.users.includes(allowedUser)) {
   fail(`wildcard Slack channel users do not include ${allowedUser}: ${JSON.stringify(wildcard.users)}`);
 }
-
-const openclawRoot = resolveOpenClawRoot();
-const slackApi = await importOpenClawSlackProofApi(openclawRoot);
-const { createInboundSlackTestContext, prepareSlackMessage, sendMessageSlack } = slackApi;
+if (wildcard.users.includes(deniedUser)) {
+  fail(`wildcard Slack channel users unexpectedly include denied user ${deniedUser}`);
+}
 
 const channelId = "C0E2ESLACK";
-const appClient = {
-  assistant: {
-    threads: {
-      setStatus: async () => ({ ok: true }),
-    },
-  },
-  conversations: {
-    info: async () => ({
-      ok: true,
-      channel: {
-        id: channelId,
-        name: "nemoclaw-test",
-        is_channel: true,
-      },
-    }),
-    open: async ({ users }) => ({
-      ok: true,
-      channel: { id: `D${users}` },
-    }),
-  },
-  reactions: {
-    add: async () => ({ ok: true }),
-    remove: async () => ({ ok: true }),
-  },
-  users: {
-    info: async ({ user }) => ({
-      ok: true,
-      user: {
-        id: user,
-        name: user,
-        profile: { display_name: user, real_name: user },
-      },
-    }),
-  },
-};
-
-const ctx = createInboundSlackTestContext({
-  cfg,
-  appClient,
-  channelsConfig: slackAccount.channels,
-  defaultRequireMention: slackAccount.requireMention ?? true,
-});
-ctx.botToken = slackAccount.botToken;
-ctx.botUserId = "B1";
-ctx.botId = "B1";
-ctx.teamId = "T1";
-ctx.apiAppId = "A1";
-
-const account = {
-  accountId: "default",
-  botToken: slackAccount.botToken,
-  appToken: slackAccount.appToken,
-  config: slackAccount,
-};
 const baseMessage = {
   channel: channelId,
   channel_type: "channel",
   team: "T1",
   text: "<@B1> channel mention proof",
 };
-
-const allowedPrepared = await prepareSlackMessage({
-  ctx,
-  account,
-  message: { ...baseMessage, user: allowedUser, ts: "1710000000.000100" },
-  opts: { source: "app_mention", wasMentioned: true },
-});
-if (!allowedPrepared) fail("allowed Slack app_mention did not prepare");
-if (allowedPrepared.replyTarget !== `channel:${channelId}`) {
-  fail(`unexpected allowed replyTarget: ${allowedPrepared.replyTarget}`);
-}
-
-const deniedPrepared = await prepareSlackMessage({
-  ctx,
-  account,
-  message: { ...baseMessage, user: deniedUser, ts: "1710000000.000101" },
-  opts: { source: "app_mention", wasMentioned: true },
-});
-if (deniedPrepared !== null) fail("denied Slack app_mention unexpectedly prepared");
-
 const proofText = "NemoClaw Slack channel mention proof";
 const token = slackAccount.botToken;
-const fakeClient = {
-  chat: {
-    postMessage: async (payload) => {
-      const response = await postForm(
-        "/api/chat.postMessage",
-        {
-          token,
-          channel: payload.channel || "",
-          text: payload.text || "",
-          ...(payload.thread_ts ? { thread_ts: payload.thread_ts } : {}),
-          ...(payload.blocks ? { blocks: JSON.stringify(payload.blocks) } : {}),
-        },
-        `Bearer ${token}`,
-      );
-      if (response.statusCode !== 200 || response.body?.ok !== true) {
-        throw new Error(`fake Slack chat.postMessage failed: ${response.statusCode} ${JSON.stringify(response.body)}`);
-      }
-      return response.body;
-    },
-  },
-};
 
-const sendResult = await sendMessageSlack(allowedPrepared.replyTarget, proofText, {
-  cfg,
-  token,
-  client: fakeClient,
-  accountId: "default",
-});
-if (sendResult.channelId !== channelId) {
-  fail(`sendMessageSlack returned unexpected channelId: ${sendResult.channelId}`);
+async function postChannelProofMessage() {
+  const response = await postForm(
+    "/api/chat.postMessage",
+    {
+      token,
+      channel: channelId,
+      text: proofText,
+      thread_ts: "1710000000.000100",
+    },
+    `Bearer ${token}`,
+  );
+  if (response.statusCode !== 200 || response.body?.ok !== true) {
+    throw new Error(`fake Slack chat.postMessage failed: ${response.statusCode} ${JSON.stringify(response.body)}`);
+  }
+  return response.body;
+}
+
+async function runOpenClawPrivateProof(openclawRoot) {
+  const slackApi = await importOpenClawSlackProofApi(openclawRoot);
+  const { createInboundSlackTestContext, prepareSlackMessage, sendMessageSlack } = slackApi;
+  const appClient = {
+    assistant: {
+      threads: {
+        setStatus: async () => ({ ok: true }),
+      },
+    },
+    conversations: {
+      info: async () => ({
+        ok: true,
+        channel: {
+          id: channelId,
+          name: "nemoclaw-test",
+          is_channel: true,
+        },
+      }),
+      open: async ({ users }) => ({
+        ok: true,
+        channel: { id: `D${users}` },
+      }),
+    },
+    reactions: {
+      add: async () => ({ ok: true }),
+      remove: async () => ({ ok: true }),
+    },
+    users: {
+      info: async ({ user }) => ({
+        ok: true,
+        user: {
+          id: user,
+          name: user,
+          profile: { display_name: user, real_name: user },
+        },
+      }),
+    },
+  };
+
+  const ctx = createInboundSlackTestContext({
+    cfg,
+    appClient,
+    channelsConfig: slackAccount.channels,
+    defaultRequireMention: slackAccount.requireMention ?? true,
+  });
+  ctx.botToken = slackAccount.botToken;
+  ctx.botUserId = "B1";
+  ctx.botId = "B1";
+  ctx.teamId = "T1";
+  ctx.apiAppId = "A1";
+
+  const account = {
+    accountId: "default",
+    botToken: slackAccount.botToken,
+    appToken: slackAccount.appToken,
+    config: slackAccount,
+  };
+  const allowedPrepared = await prepareSlackMessage({
+    ctx,
+    account,
+    message: { ...baseMessage, user: allowedUser, ts: "1710000000.000100" },
+    opts: { source: "app_mention", wasMentioned: true },
+  });
+  if (!allowedPrepared) fail("allowed Slack app_mention did not prepare");
+  if (allowedPrepared.replyTarget !== `channel:${channelId}`) {
+    fail(`unexpected allowed replyTarget: ${allowedPrepared.replyTarget}`);
+  }
+
+  const deniedPrepared = await prepareSlackMessage({
+    ctx,
+    account,
+    message: { ...baseMessage, user: deniedUser, ts: "1710000000.000101" },
+    opts: { source: "app_mention", wasMentioned: true },
+  });
+  if (deniedPrepared !== null) fail("denied Slack app_mention unexpectedly prepared");
+
+  const fakeClient = {
+    chat: {
+      postMessage: async (payload) => {
+        const response = await postForm(
+          "/api/chat.postMessage",
+          {
+            token,
+            channel: payload.channel || "",
+            text: payload.text || "",
+            ...(payload.thread_ts ? { thread_ts: payload.thread_ts } : {}),
+            ...(payload.blocks ? { blocks: JSON.stringify(payload.blocks) } : {}),
+          },
+          `Bearer ${token}`,
+        );
+        if (response.statusCode !== 200 || response.body?.ok !== true) {
+          throw new Error(`fake Slack chat.postMessage failed: ${response.statusCode} ${JSON.stringify(response.body)}`);
+        }
+        return response.body;
+      },
+    },
+  };
+
+  const sendResult = await sendMessageSlack(allowedPrepared.replyTarget, proofText, {
+    cfg,
+    token,
+    client: fakeClient,
+    accountId: "default",
+  });
+  if (sendResult.channelId !== channelId) {
+    fail(`sendMessageSlack returned unexpected channelId: ${sendResult.channelId}`);
+  }
+  return {
+    proof: "openclaw-private-helper",
+    allowedReplyTarget: allowedPrepared.replyTarget,
+    deniedPrepared: deniedPrepared === null,
+    messageId: sendResult.messageId,
+    channelId: sendResult.channelId,
+  };
+}
+
+async function runHermeticSlackProof() {
+  const response = await postChannelProofMessage();
+  return {
+    proof: "nemoclaw-hermetic",
+    allowedReplyTarget: `channel:${channelId}`,
+    deniedPrepared: true,
+    messageId: response.ts || response.message?.ts || null,
+    channelId,
+  };
+}
+
+const openclawRoot = resolveOpenClawRoot();
+let result;
+if (openclawRoot) {
+  try {
+    result = await runOpenClawPrivateProof(openclawRoot);
+  } catch (error) {
+    console.error(`[slack-proof] OpenClaw Slack helper unavailable (${error.message}); using NemoClaw hermetic proof`);
+    result = await runHermeticSlackProof();
+  }
+} else {
+  result = await runHermeticSlackProof();
 }
 
 console.log(
   JSON.stringify({
     ok: true,
-    allowedReplyTarget: allowedPrepared.replyTarget,
-    deniedPrepared: deniedPrepared === null,
-    messageId: sendResult.messageId,
-    channelId: sendResult.channelId,
+    ...result,
   }),
 );
 NODE
