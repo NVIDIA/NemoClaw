@@ -14,6 +14,7 @@ import { getAgentBranding } from "../cli/branding";
 import { getProviderSelectionConfig } from "../inference/config";
 import type { JsonObject as LooseObject } from "../core/json-types";
 import * as onboardSession from "../state/onboard-session";
+import { runSandboxConfigSync } from "../onboard/config-sync";
 import { ROOT, redact, run, shellQuote } from "../runner";
 import {
   buildLocalBaseTag,
@@ -28,9 +29,6 @@ export interface OnboardContext {
   runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string | null;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   openshellBinary: string;
-  buildSandboxConfigSyncScript: (config: LooseObject) => string;
-  writeSandboxConfigSyncFile: (script: string) => string;
-  cleanupTempDir: (file: string, prefix: string) => void;
   startRecordedStep: (stepName: string, updates: LooseObject) => void;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
 }
@@ -402,12 +400,24 @@ export async function handleAgentSetup(
     step,
     runCaptureOpenshell,
     openshellBinary: openshellBin,
-    buildSandboxConfigSyncScript,
-    writeSandboxConfigSyncFile,
-    cleanupTempDir,
     startRecordedStep,
     skippedStepMessage,
   } = ctx;
+
+  const syncNemoClawConfig = (): void => {
+    runSandboxConfigSync(sandboxName, {
+      getSelectionConfig: () => {
+        const cfg = getProviderSelectionConfig(provider, model);
+        return cfg ? { ...cfg, agent: agent.name } : null;
+      },
+      runConnectScript: (name, scriptContent) => {
+        run([openshellBin, "sandbox", "connect", name], {
+          stdio: ["pipe", "ignore", "inherit"],
+          input: scriptContent,
+        });
+      },
+    });
+  };
 
   if (resume && sandboxName) {
     const probe = agent.healthProbe;
@@ -418,6 +428,11 @@ export async function handleAgentSetup(
       );
       if (isHealthProbeOk(result)) {
         skippedStepMessage("agent_setup", sandboxName);
+        // Re-sync `~/.nemoclaw/config.json` even on the resume skip path —
+        // a rebuild destroys/recreates the container and the file reverts
+        // to the Dockerfile's zero-byte placeholder. Mirrors the OpenClaw
+        // path in src/lib/onboard.ts. Fixes #3999 for non-OpenClaw agents.
+        syncNemoClawConfig();
         onboardSession.markStepComplete("agent_setup", { sandboxName, provider, model });
         return;
       }
@@ -436,25 +451,7 @@ export async function handleAgentSetup(
     );
   }
 
-  const selectionConfig = getProviderSelectionConfig(provider, model);
-  if (selectionConfig) {
-    const sandboxConfig = {
-      ...selectionConfig,
-      agent: agent.name,
-      onboardedAt: new Date().toISOString(),
-    };
-    const script = buildSandboxConfigSyncScript(sandboxConfig);
-    const scriptFile = writeSandboxConfigSyncFile(script);
-    try {
-      const scriptContent = fs.readFileSync(scriptFile, "utf-8");
-      run([openshellBin, "sandbox", "connect", sandboxName], {
-        stdio: ["pipe", "ignore", "inherit"],
-        input: scriptContent,
-      });
-    } finally {
-      cleanupTempDir(scriptFile, "nemoclaw-sync");
-    }
-  }
+  syncNemoClawConfig();
 
   const probe = agent.healthProbe;
   if (probe?.url) {

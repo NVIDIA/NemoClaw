@@ -800,6 +800,54 @@ In that case:
 - inspect gateway logs and blocked requests with `openshell term`
 - treat the failure as a native Discord gateway problem, not as a bridge startup problem
 
+### Discord preset validation behind a proxy
+
+The built-in Discord policy preset intentionally allows the Node binaries used by the messaging runtime and does not allow `curl`.
+As a result, `curl -s https://discord.com` failing, hanging, or printing no output is not proof that the Discord preset is broken.
+
+Behind the OpenShell proxy, direct DNS-only checks can also be the wrong signal.
+For example, `dns.resolve("gateway.discord.gg")` can fail even when HTTPS requests routed through the proxy are healthy.
+
+Use Node HTTPS as the manual REST probe:
+
+```console
+$ node - <<'NODE'
+const https = require("node:https");
+
+https
+  .get("https://discord.com/api/v10/gateway", (res) => {
+    console.log(`${res.statusCode} ${res.statusMessage || ""}`.trim());
+    res.resume();
+  })
+  .on("error", (err) => {
+    console.error(err.message);
+    process.exitCode = 1;
+  });
+NODE
+```
+
+To check Discord CDN egress, use the same Node HTTPS path:
+
+```console
+$ node - <<'NODE'
+const https = require("node:https");
+
+https
+  .get("https://cdn.discordapp.com/", (res) => {
+    console.log(`${res.statusCode} ${res.statusMessage || ""}`.trim());
+    res.resume();
+  })
+  .on("error", (err) => {
+    console.error(err.message);
+    process.exitCode = 1;
+  });
+NODE
+```
+
+Any HTTP status from these probes means the Node process reached the endpoint; the exact status can vary by unauthenticated path.
+If the Node REST probe works but the Discord channel is still unhealthy, investigate the native gateway path instead of widening the preset.
+Check the gateway logs and blocked-request output with `openshell term`, and look for `gateway.discord.gg` connection or WebSocket upgrade failures.
+
 ### Messaging bridge appears running but no messages arrive
 
 Bot tokens for Telegram (`getUpdates`), Discord (gateway), and Slack (Socket Mode) only allow one active consumer per token. If two NemoClaw sandboxes are configured with the same bot token, each one kicks the other off its polling connection and neither delivers messages. `nemoclaw status` still reports the bridge as running because the gateway process itself is alive.
@@ -1130,6 +1178,20 @@ $ wsl --shutdown
 $ wsl -d Ubuntu
 $ docker info
 ```
+
+### Windows-host Ollama is installed but not shown during onboarding
+
+When NemoClaw runs inside WSL, it checks both the Windows-host Ollama HTTP endpoint and the Windows `ollama.exe` process.
+If Ollama is installed but the daemon is not reachable through `host.docker.internal:11434`, the wizard should still offer a start or restart action.
+
+If the Windows-host option does not appear, confirm that PowerShell interop is enabled in WSL and that Windows can locate Ollama:
+
+```console
+$ powershell.exe -NoProfile -Command "Get-Process ollama -ErrorAction SilentlyContinue"
+```
+
+If the process is missing, start Ollama from Windows and rerun onboarding.
+If the process exists but the endpoint is unreachable, use the restart action when the wizard offers it, or restart Ollama from Windows with `OLLAMA_HOST=0.0.0.0:11434`.
 
 ### Ollama inference fails or hangs in WSL
 

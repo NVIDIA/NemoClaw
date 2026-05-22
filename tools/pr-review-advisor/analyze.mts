@@ -16,6 +16,9 @@ const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
 const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
 const ADVISOR_CREDENTIAL_ENV = ["PR", "REVIEW", "ADVISOR", "API", "KEY"].join("_");
+const DEFAULT_WAIT_POLL_MS = 30000;
+const DEFAULT_REQUIRED_CHECK_WAIT_MS = 15 * 60 * 1000;
+const ADVISOR_CHECK_CONTEXT_PATTERNS = [/^PR review advisor(?:\b|$)/i, /^PR Review \/ Advisor$/i];
 const SECURITY_REVIEW_SKILL_PATH = ".agents/skills/nemoclaw-maintainer-security-code-review/SKILL.md";
 const TRUSTED_SECURITY_REVIEW_SKILL_PATH = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -153,6 +156,8 @@ type DeterministicReviewContext = {
   riskyAreas: string[];
   testDepth: ReviewAdvisorResult["testDepth"];
   gateStatus: ReviewAdvisorResult["gateStatus"];
+  requiredStatusCheckContexts: string[];
+  additionalWaitContexts: string[];
   workflowSignals: string[];
   monolithDeltas: MonolithDelta[];
   driftEvidence: DriftEvidence[];
@@ -205,6 +210,21 @@ type LinkedIssue = {
   fetchError?: string;
 };
 
+type CheckStatusSummary = {
+  name: string;
+  status: string | undefined;
+  conclusion: string | null;
+  state: string | undefined;
+  terminal: boolean;
+};
+
+type RequiredCheckWaitState = {
+  requiredContexts: string[];
+  pendingContexts: string[];
+  statuses: CheckStatusSummary[];
+  headRefOid?: string;
+};
+
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main().catch((error: unknown) => {
     console.error(error instanceof Error ? error.message : String(error));
@@ -231,6 +251,7 @@ async function main(): Promise<void> {
   const schema = readJson<Record<string, unknown>>(schemaPath);
   const changedFiles = getChangedFiles(baseRef, headRef);
   const headSha = getHeadSha(headRef);
+  await waitForRequiredChecksBeforeAnalysis(headSha, baseRef);
   const diff = getDiff(baseRef, headRef, 160000);
   const deterministic = await collectDeterministicContext({ baseRef, headRef, changedFiles, diff });
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
@@ -312,6 +333,239 @@ function logProgress(message: string): void {
   console.log(`[pr-review-advisor] ${new Date().toISOString()} ${message}`);
 }
 
+async function waitForRequiredChecksBeforeAnalysis(headSha: string, baseRef: string): Promise<void> {
+  if (process.env.PR_REVIEW_ADVISOR_RUN_ANALYSIS === "0" || process.env.PR_REVIEW_ADVISOR_WAIT_FOR_REQUIRED_CHECKS === "0") return;
+  const repo = process.env.GITHUB_REPOSITORY;
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  const prNumber = currentPrNumber();
+  if (!repo || !token || !prNumber) {
+    logProgress("Required-check wait skipped: GitHub repository, token, or PR number is unavailable.");
+    return;
+  }
+
+  const requiredContexts = uniqueStrings([
+    ...(await discoverRequiredStatusCheckContexts(baseRef)),
+    ...parseContextList(process.env.PR_REVIEW_ADVISOR_WAIT_ADDITIONAL_CONTEXTS),
+  ]).filter((context) => !isAdvisorCheckContext(context));
+
+  if (requiredContexts.length === 0) {
+    logProgress("Required-check wait skipped: no required or additional check contexts were discovered.");
+    return;
+  }
+
+  const timeoutMs = parsePositiveInt(process.env.PR_REVIEW_ADVISOR_WAIT_TIMEOUT_MS, DEFAULT_REQUIRED_CHECK_WAIT_MS);
+  const pollMs = parsePositiveInt(process.env.PR_REVIEW_ADVISOR_WAIT_POLL_MS, DEFAULT_WAIT_POLL_MS);
+  const deadline = Date.now() + timeoutMs;
+  logProgress(
+    `Waiting up to ${Math.round(timeoutMs / 1000)}s for required check contexts before model analysis: ${requiredContexts.join(", ")}`,
+  );
+
+  let lastState: RequiredCheckWaitState | undefined;
+  while (true) {
+    try {
+      lastState = await fetchRequiredCheckWaitState({ repo, token, prNumber, requiredContexts });
+      assertPrHeadStillCurrent(lastState.headRefOid, headSha);
+      if (lastState.pendingContexts.length === 0) {
+        logProgress("Required-check wait complete.");
+        return;
+      }
+      logProgress(`Required-check wait pending: ${lastState.pendingContexts.join(", ")}.`);
+    } catch (error: unknown) {
+      if (isStaleAdvisorRunError(error)) throw error;
+      logProgress(`Required-check wait poll failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) {
+      const pending = lastState?.pendingContexts.length ? lastState.pendingContexts.join(", ") : "unknown";
+      logProgress(`Required-check wait timed out; continuing with advisor analysis. Pending contexts: ${pending}.`);
+      return;
+    }
+    await sleep(Math.min(pollMs, remainingMs));
+  }
+}
+
+export function assertPrHeadStillCurrent(latestHeadSha: string | undefined, workflowHeadSha: string): void {
+  if (!latestHeadSha || latestHeadSha === workflowHeadSha) return;
+  throw new StaleAdvisorRunError(
+    `PR head advanced from ${workflowHeadSha.slice(0, 12)} to ${latestHeadSha.slice(0, 12)}; rerun advisor on the latest commit.`,
+  );
+}
+
+class StaleAdvisorRunError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StaleAdvisorRunError";
+  }
+}
+
+function isStaleAdvisorRunError(error: unknown): boolean {
+  return error instanceof StaleAdvisorRunError;
+}
+
+function currentPrNumber(): number | undefined {
+  const value = process.env.PR_NUMBER || process.env.GITHUB_REF_NAME?.match(/^(\d+)\//)?.[1] || "";
+  const parsed = Number.parseInt(value, 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
+function parseContextList(value: string | undefined): string[] {
+  return uniqueStrings((value || "").split(/[\n,]/).map((item) => item.trim()).filter(Boolean));
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return [...new Set(values)];
+}
+
+function isAdvisorCheckContext(context: string): boolean {
+  return ADVISOR_CHECK_CONTEXT_PATTERNS.some((pattern) => pattern.test(context));
+}
+
+export async function discoverRequiredStatusCheckContexts(baseRef?: string): Promise<string[]> {
+  const repo = process.env.GITHUB_REPOSITORY;
+  const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+  const fallbackContexts = parseContextList(process.env.PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS);
+  if (!repo || !token) return fallbackContexts;
+
+  const baseBranch = normalizeBaseBranch(
+    process.env.PR_REVIEW_ADVISOR_REQUIRED_CHECK_BASE || baseRef || process.env.GITHUB_BASE_REF || "main",
+  );
+  try {
+    const rulesetContexts = await fetchRequiredStatusChecks(repo, token, baseBranch);
+    return rulesetContexts.length > 0 ? rulesetContexts : fallbackContexts;
+  } catch (error: unknown) {
+    logProgress(`Could not discover required checks from repository rulesets: ${error instanceof Error ? error.message : String(error)}`);
+    return fallbackContexts;
+  }
+}
+
+async function fetchRequiredStatusChecks(repo: string, token: string, baseBranch: string): Promise<string[]> {
+  const summaries = await githubRest<unknown[]>(`repos/${repo}/rulesets?includes_parents=true`, token);
+  const detailPromises = summaries
+    .filter((ruleset) => stringOrUndefined(getPath<unknown>(ruleset, ["target"])) === "branch")
+    .filter((ruleset) => stringOrUndefined(getPath<unknown>(ruleset, ["enforcement"])) === "active")
+    .map(async (ruleset) => {
+      const idValue = getPath<unknown>(ruleset, ["id"]);
+      const id = typeof idValue === "number" ? String(idValue) : stringOrUndefined(idValue);
+      return id ? await githubRest<unknown>(`repos/${repo}/rulesets/${id}`, token) : ruleset;
+    });
+  const details = await Promise.all(detailPromises);
+  return extractRequiredStatusChecksFromRulesets(details, baseBranch);
+}
+
+export function extractRequiredStatusChecksFromRulesets(rulesets: unknown[], baseBranch: string): string[] {
+  const contexts: string[] = [];
+  for (const ruleset of rulesets) {
+    if (!rulesetAppliesToBranch(ruleset, baseBranch)) continue;
+    const rules = getPath<unknown[]>(ruleset, ["rules"]) || [];
+    for (const rule of rules) {
+      if (stringOrUndefined(getPath<unknown>(rule, ["type"])) !== "required_status_checks") continue;
+      const requiredChecks = getPath<unknown[]>(rule, ["parameters", "required_status_checks"]) || [];
+      for (const check of requiredChecks) {
+        const context = stringOrUndefined(getPath<unknown>(check, ["context"]));
+        if (context) contexts.push(context);
+      }
+    }
+  }
+  return uniqueStrings(contexts);
+}
+
+function rulesetAppliesToBranch(ruleset: unknown, baseBranch: string): boolean {
+  if (stringOrUndefined(getPath<unknown>(ruleset, ["target"])) !== "branch") return false;
+  if (stringOrUndefined(getPath<unknown>(ruleset, ["enforcement"])) !== "active") return false;
+  const ref = `refs/heads/${baseBranch}`;
+  const include = stringArray(getPath<unknown>(ruleset, ["conditions", "ref_name", "include"]));
+  const exclude = stringArray(getPath<unknown>(ruleset, ["conditions", "ref_name", "exclude"]));
+  if (exclude.some((pattern) => refPatternMatches(pattern, ref, baseBranch))) return false;
+  return include.length === 0 || include.some((pattern) => refPatternMatches(pattern, ref, baseBranch));
+}
+
+export function normalizeBaseBranch(ref: string): string {
+  return ref
+    .replace(/^refs\/heads\//, "")
+    .replace(/^refs\/remotes\/[^/]+\//, "")
+    .replace(/^(?:origin|target)\//, "");
+}
+
+function refPatternMatches(pattern: string, ref: string, baseBranch: string): boolean {
+  if (pattern === ref || pattern === baseBranch) return true;
+  if (pattern === "~DEFAULT_BRANCH" && baseBranch === "main") return true;
+  const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
+  return new RegExp(`^${escaped}$`).test(ref);
+}
+
+async function fetchRequiredCheckWaitState(options: {
+  repo: string;
+  token: string;
+  prNumber: number;
+  requiredContexts: string[];
+}): Promise<RequiredCheckWaitState> {
+  const [owner, name] = options.repo.split("/");
+  const graphQl = await githubGraphql(options.token, buildRequiredCheckWaitQuery(), {
+    owner,
+    name,
+    number: options.prNumber,
+  });
+  const pr = getPath<Record<string, unknown>>(graphQl, ["data", "repository", "pullRequest"]);
+  const statuses = extractStatusCheckSummaries(getPath<unknown[]>(pr, ["statusCheckRollup", "contexts", "nodes"]) || []);
+  return {
+    requiredContexts: options.requiredContexts,
+    pendingContexts: pendingRequiredContexts(options.requiredContexts, statuses),
+    statuses,
+    headRefOid: stringOrUndefined(getPath<unknown>(pr, ["headRefOid"])),
+  };
+}
+
+export function extractStatusCheckSummaries(nodes: unknown[]): CheckStatusSummary[] {
+  return nodes
+    .map((node) => {
+      const name = stringOrUndefined(getPath<unknown>(node, ["name"])) || stringOrUndefined(getPath<unknown>(node, ["context"]));
+      if (!name) return undefined;
+      const status = stringOrUndefined(getPath<unknown>(node, ["status"]));
+      const conclusion = stringOrUndefined(getPath<unknown>(node, ["conclusion"])) || null;
+      const state = stringOrUndefined(getPath<unknown>(node, ["state"]));
+      return { name, status, conclusion, state, terminal: isTerminalStatus({ status, conclusion, state }) };
+    })
+    .filter((summary): summary is CheckStatusSummary => Boolean(summary));
+}
+
+export function pendingRequiredContexts(requiredContexts: string[], statuses: CheckStatusSummary[]): string[] {
+  return requiredContexts.filter((context) => {
+    const matches = statuses.filter((status) => status.name === context);
+    return matches.length === 0 || matches.some((status) => !status.terminal);
+  });
+}
+
+function isTerminalStatus(status: { status?: string; conclusion?: string | null; state?: string }): boolean {
+  if (status.state) return /SUCCESS|FAILURE|ERROR/i.test(status.state);
+  if (status.status) return /COMPLETED/i.test(status.status);
+  return Boolean(status.conclusion);
+}
+
+function buildRequiredCheckWaitQuery(): string {
+  return `
+query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      headRefOid
+      statusCheckRollup {
+        contexts(first: 100) {
+          nodes {
+            __typename
+            ... on CheckRun { name status conclusion }
+            ... on StatusContext { context state }
+          }
+        }
+      }
+    }
+  }
+}`;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 async function collectDeterministicContext(options: {
   baseRef: string;
   headRef: string;
@@ -321,13 +575,17 @@ async function collectDeterministicContext(options: {
   const github = await collectGitHubContext();
   const riskyAreas = detectRiskyAreas(options.changedFiles);
   const testDepth = classifyTestDepth(options.changedFiles, options.diff);
-  const gateStatus = deriveGateStatus(github, options.changedFiles, riskyAreas);
+  const requiredStatusCheckContexts = await discoverRequiredStatusCheckContexts(options.baseRef);
+  const additionalWaitContexts = parseContextList(process.env.PR_REVIEW_ADVISOR_WAIT_ADDITIONAL_CONTEXTS);
+  const gateStatus = deriveGateStatus(github, options.changedFiles, riskyAreas, requiredStatusCheckContexts);
   return {
     diffStat: getDiffStat(options.baseRef, options.headRef),
     commits: getCommits(options.baseRef, options.headRef),
     riskyAreas,
     testDepth,
     gateStatus,
+    requiredStatusCheckContexts,
+    additionalWaitContexts,
     workflowSignals: detectWorkflowSignals(options.changedFiles, options.diff),
     monolithDeltas: computeMonolithDeltas(options.baseRef, options.changedFiles),
     driftEvidence: collectDriftEvidence(options.baseRef, options.changedFiles),
@@ -473,22 +731,65 @@ function countLines(text: string): number {
   return text.endsWith("\n") ? text.split("\n").length - 1 : text.split("\n").length;
 }
 
+function deriveCiGateStatus(statuses: CheckStatusSummary[], requiredContexts: string[]): GateStatus {
+  if (statuses.length === 0) {
+    return requiredContexts.length > 0
+      ? {
+        status: "pending",
+        evidence: `Required status context(s) pending or missing: ${requiredContexts.join(", ")}. Non-required contexts still pending: 0; failed: 0.`,
+      }
+      : { status: "unknown", evidence: "No statusCheckRollup data was available." };
+  }
+
+  if (requiredContexts.length > 0) {
+    const failedRequired = failedRequiredContexts(requiredContexts, statuses);
+    const pendingRequired = pendingRequiredContexts(requiredContexts, statuses);
+    const nonRequiredPending = statuses.filter(
+      (status) => !requiredContexts.includes(status.name) && !status.terminal,
+    ).length;
+    const nonRequiredFailed = statuses.filter(
+      (status) => !requiredContexts.includes(status.name) && isFailedStatus(status),
+    ).length;
+    const suffix = ` Non-required contexts still pending: ${nonRequiredPending}; failed: ${nonRequiredFailed}.`;
+    if (failedRequired.length > 0) {
+      return { status: "fail", evidence: `Required status context(s) failed: ${failedRequired.join(", ")}.${suffix}` };
+    }
+    if (pendingRequired.length > 0) {
+      return { status: "pending", evidence: `Required status context(s) pending or missing: ${pendingRequired.join(", ")}.${suffix}` };
+    }
+    return { status: "pass", evidence: `${requiredContexts.length} required status context(s) completed with no failures.${suffix}` };
+  }
+
+  const failed = statuses.filter(isFailedStatus);
+  const pending = statuses.filter((status) => !status.terminal);
+  return failed.length > 0
+    ? { status: "fail", evidence: `${failed.length} status context(s) appear failed.` }
+    : pending.length > 0
+      ? { status: "pending", evidence: `${pending.length} status context(s) appear pending.` }
+      : { status: "pass", evidence: `${statuses.length} status context(s) were present with no failures detected.` };
+}
+
+function failedRequiredContexts(requiredContexts: string[], statuses: CheckStatusSummary[]): string[] {
+  return requiredContexts.filter((context) => statuses.some((status) => status.name === context && isFailedStatus(status)));
+}
+
+function isFailedStatus(status: CheckStatusSummary): boolean {
+  return /FAILURE|ERROR|CANCELLED|TIMED_OUT|ACTION_REQUIRED|STARTUP_FAILURE|STALE/i.test(
+    [status.state, status.conclusion].filter(Boolean).join(" "),
+  );
+}
+
 export function deriveGateStatus(
   github: GitHubReviewContext | null,
   changedFiles: string[],
   riskyAreas: string[],
+  requiredStatusCheckContexts: string[] = [],
 ): ReviewAdvisorResult["gateStatus"] {
   const graphQlPr = getPath<Record<string, unknown>>(github?.graphQl, ["data", "repository", "pullRequest"]);
   const checkNodes = getPath<unknown[]>(graphQlPr, ["statusCheckRollup", "contexts", "nodes"]) || [];
-  const failed = checkNodes.filter((node) => /FAILURE|ERROR|CANCELLED|TIMED_OUT/i.test(JSON.stringify(node)));
-  const pending = checkNodes.filter((node) => /PENDING|IN_PROGRESS|QUEUED|EXPECTED/i.test(JSON.stringify(node)));
-  const ci: GateStatus = checkNodes.length === 0
-    ? { status: "unknown", evidence: "No statusCheckRollup data was available." }
-    : failed.length > 0
-      ? { status: "fail", evidence: `${failed.length} status context(s) appear failed.` }
-      : pending.length > 0
-        ? { status: "pending", evidence: `${pending.length} status context(s) appear pending.` }
-        : { status: "pass", evidence: `${checkNodes.length} status context(s) were present with no failures detected.` };
+  const checkSummaries = extractStatusCheckSummaries(checkNodes).filter((status) => !isAdvisorCheckContext(status.name));
+  const requiredContexts = uniqueStrings(requiredStatusCheckContexts).filter((context) => !isAdvisorCheckContext(context));
+  const ci = deriveCiGateStatus(checkSummaries, requiredContexts);
 
   const mergeState = stringOrUndefined(getPath<unknown>(graphQlPr, ["mergeStateStatus"])) ||
     stringOrUndefined(getPath<unknown>(github?.pullRequest, ["mergeable_state"]));

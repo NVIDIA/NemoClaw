@@ -376,7 +376,7 @@ Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a new
 ```console
 $ nemoclaw my-assistant status
 ...
-    Agent:    OpenClaw v2026.4.24
+    Agent:    OpenClaw v2026.5.18
 ...
 ```
 
@@ -425,10 +425,33 @@ If one log source is unavailable, NemoClaw prints a warning and keeps reading th
 $ nemoclaw my-assistant logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]
 ```
 
+### `nemoclaw <name> dashboard-url`
+
+Print the authenticated OpenClaw dashboard URL for a running sandbox.
+Use this when you are on a remote machine, using an SSH or reverse tunnel, or need a complete URL for a browser session.
+
+```console
+$ nemoclaw my-assistant dashboard-url
+$ nemoclaw my-assistant dashboard-url --quiet
+```
+
+The default output includes a label and a warning.
+Pass `--quiet` or `-q` to print only the URL to stdout so scripts can capture it:
+
+```console
+$ URL=$(nemoclaw my-assistant dashboard-url --quiet)
+```
+
+**Warning:**
+
+Treat the authenticated dashboard URL like a password.
+Do not log it, share it, or commit it to version control.
+
 ### `nemoclaw <name> gateway-token`
 
 Print the OpenClaw gateway auth token for a running sandbox to stdout.
-The token is required by `openclaw tui` and the OpenClaw dashboard URL, but onboarding only prints it once.
+The token is required by `openclaw tui` and the OpenClaw dashboard URL.
+Use `dashboard-url` for browser access; use `gateway-token` only when automation needs the raw token.
 Pipe it into automation or capture it into an environment variable:
 
 ```console
@@ -844,7 +867,7 @@ Prerequisites:
 
 - `sshfs` must be installed on the host (`sudo apt-get install sshfs` on Linux, `brew install macfuse && brew install sshfs` on macOS).
 - The sandbox must be running.
-- The remote sandbox path must exist. NemoClaw verifies it before invoking `sshfs` and prints a `connect`, then `ls <path>` check when the probe fails.
+- The remote sandbox path must exist. NemoClaw verifies it against the target sandbox before invoking `sshfs` and prints a `connect`, then `ls <path>` check when the probe fails.
 - Sandboxes created before the `openssh-sftp-server` base image update must be rebuilt with `nemoclaw <name> rebuild`.
 - The local mount path must be on a writable filesystem; FUSE creates the mount on the host side.
   If the default `~/.nemoclaw/mounts/<name>` lives on a read-only filesystem, pass an explicit writable path as the second positional argument.

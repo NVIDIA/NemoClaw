@@ -870,6 +870,20 @@ describe("regression guards", () => {
       expect(src).not.toContain('brev("login", "--token"');
     });
 
+    it("brev e2e suite captures CPU candidates before piping them into create", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
+        "utf-8",
+      );
+      expect(src).toContain(
+        'const CAPTURE_OUTPUT_STDIO: StdioOptions = ["ignore", "pipe", "inherit"]',
+      );
+      expect(src).toMatch(
+        /const cpuCandidates = execFileSync\([\s\S]*"search",[\s\S]*"cpu",[\s\S]*stdio: CAPTURE_OUTPUT_STDIO/,
+      );
+      expect(src).toMatch(/input: cpuCandidates,[\s\S]*stdio: PIPE_INPUT_STDIO/);
+    });
+
     it("brev e2e suite no longer contains the old brev-setup compatibility path", () => {
       const src = fs.readFileSync(
         path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),

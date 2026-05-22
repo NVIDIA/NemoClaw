@@ -611,15 +611,25 @@ export async function runSandboxDoctor(
       });
     }
 
-    const shieldsDown = shields.isShieldsDown(sandboxName, true);
+    const shieldsPosture = shields.getShieldsPosture(sandboxName, true);
+    const shieldsStatus: DoctorStatus =
+      shieldsPosture.mode === "locked"
+        ? "ok"
+        : shieldsPosture.mode === "temporarily_unlocked" || shieldsPosture.mode === "error"
+          ? "warn"
+          : "info";
+    const shieldsHint =
+      shieldsPosture.mode === "mutable_default"
+        ? `run \`${CLI_NAME} ${sandboxName} shields up\` to opt into lockdown`
+        : shieldsPosture.mode === "locked"
+          ? undefined
+          : `run \`${CLI_NAME} ${sandboxName} shields status\` for details`;
     checks.push({
       group: "Sandbox",
       label: "Shields",
-      status: shieldsDown ? "warn" : "ok",
-      detail: shieldsDown ? "down" : "up",
-      hint: shieldsDown
-        ? `run \`${CLI_NAME} ${sandboxName} shields status\` for details`
-        : undefined,
+      status: shieldsStatus,
+      detail: shieldsPosture.detail,
+      hint: shieldsHint,
     });
     checks.push(messagingDoctorCheck(sandboxName, sb));
   }

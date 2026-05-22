@@ -4,6 +4,34 @@
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
+## v0.0.48
+
+NemoClaw v0.0.48 improves onboarding, sandbox builds, local inference, messaging, and day-two sandbox operations:
+
+- Windows WSL onboarding detects Windows-host Ollama through both the HTTP endpoint and a Windows process probe, so the installer can offer start or restart actions even when the daemon is installed but not yet reachable from WSL.
+- Onboarding no longer prints a noisy `No active forward found` warning when it performs best-effort dashboard forward cleanup before rebuilding or recovering a sandbox.
+- `nemoclaw <name> share mount` verifies the requested remote path against the target sandbox name, so probes for non-default sandboxes no longer accidentally inspect the default sandbox.
+- The OpenClaw plugin tolerates an empty or malformed onboard `config.json` by falling back to default onboard status instead of failing during startup.
+- Hermes messaging policies are scoped to Hermes-supported channel behavior, keeping unsupported OpenClaw-specific messaging access out of Hermes sandboxes.
+- Onboard session snapshots persist machine-readable state for resume flows, which makes provider and policy decisions more durable across retries.
+- DGX Spark GPU sandbox recreation restores the startup path for Hermes by patching Docker GPU state and preserving the marker files the Hermes entrypoint needs.
+- Discord messaging routes REST and gateway traffic through the sandbox proxy path, including a loopback proxy for gateway traffic, so Discord channels work through the same policy-controlled egress model as other sandbox traffic.
+- Sandbox base images now include Homebrew and a `python` to `python3` compatibility symlink, reducing first-run setup for package and script workflows inside the sandbox.
+- The NemoClaw sandbox image includes a Docker health check so container runtimes can report whether the in-sandbox gateway is responding.
+- Sandbox startup resolves workspace template files from the installed package when source-relative files are not available, which helps package installs seed a fresh workspace consistently.
+- Installer checksum verification prefers `sha256sum` and falls back when needed, improving compatibility on Linux hosts where `shasum` is not installed.
+- VM-driver snapshot health checks now use gateway metadata instead of stale local assumptions, so snapshot operations fail less often after gateway state changes.
+
+## v0.0.47
+
+NemoClaw v0.0.47 focused on release hardening and validation coverage:
+
+- The scenario E2E framework gained baseline onboarding coverage for CLI setup, OpenShell gateway creation, sandbox state, inference routing, and smoke tests.
+- Messaging provider scenarios now validate provider attachment, placeholder configuration, secret-leak prevention, bridge reachability, Discord gateway routing, Slack provider state, Telegram injection safety, and token-rotation isolation.
+- CLI command registration was refactored so public display defaults stay consistent across sandbox channel, host, log, policy, skill, and snapshot commands.
+- PR review advisor automation was added for maintainers, with deterministic GitHub context gathering and structured review comments.
+- The release refreshed v0.0.46 documentation, generated user skills, navigation, and version metadata.
+
 ## v0.0.46
 
 NemoClaw v0.0.46 improves Windows setup, messaging channels, Hermes sandboxes, inference routing, and command compatibility:
@@ -83,7 +111,7 @@ NemoClaw v0.0.40 improves onboarding reliability, local inference setup, and san
 - The Docker-driver gateway startup check waits for the gateway port to accept TCP connections before it reports the gateway as healthy, and startup failures now include child process exit details.
 - Local Ollama setup requires the authenticated reverse proxy token on every native Ollama API route, including `GET /api/tags`.
 - The Linux Ollama install path preflights `zstd` before running the official installer and explains why each sudo-backed setup step needs elevated privileges.
-- The onboarding provider menu offers an already-running local vLLM server directly when `localhost:8000` responds, while managed vLLM install and start options remain behind the experimental opt-in.
+- The onboarding provider menu offers an already-running local vLLM server directly when `localhost:8000` responds. Managed vLLM install and start options now appear by default on DGX Spark and DGX Station, while generic Linux NVIDIA GPU hosts remain behind the experimental opt-in.
 - Policy tier defaults are filtered by active agent support, so presets such as Brave Search are not reapplied to agents that do not support that integration.
 - `nemoclaw <name> connect` checks dashboard forward reachability with a TCP probe before it reports a forward as stale.
 - Sandbox startup captures a known-good OpenClaw config baseline and restores it on restart if `/sandbox/.openclaw/openclaw.json` becomes empty.

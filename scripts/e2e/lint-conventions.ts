@@ -22,10 +22,6 @@
  *     `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` and
  *     walk up.
  *
- * Normal PR lint intentionally excludes legacy parity bookkeeping. Generate and
- * validate legacy assertion parity from `.github/workflows/e2e-parity-compare.yaml`
- * when producing a parity report.
- *
  * Invocation:
  *   tsx scripts/e2e/lint-conventions.ts [--root <repo-root>]
  * Exits 0 on success, 1 on violations, 2 on misuse.
@@ -34,7 +30,6 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import yaml from "js-yaml";
 
 interface Rule {
   id: string;
@@ -181,44 +176,9 @@ function lintSuiteSteps(root: string): LintFinding[] {
   return findings;
 }
 
-function lintRetiredLegacyWrappers(root: string): LintFinding[] {
-  const findings: LintFinding[] = [];
-  const mapFile = path.join(root, "test/e2e/docs/parity-map.yaml");
-  if (!fs.existsSync(mapFile)) return findings;
-  const loaded = (yaml.load(fs.readFileSync(mapFile, "utf8")) ?? {}) as {
-    scripts?: Record<string, { status?: unknown }>;
-  };
-  for (const [script, entry] of Object.entries(loaded.scripts ?? {})) {
-    if (entry.status !== "retired") continue;
-    const file = path.join(root, "test/e2e", script);
-    if (!fs.existsSync(file) || !script.endsWith(".sh")) continue;
-    const body = fs.readFileSync(file, "utf8");
-    if (!/test\/e2e\/runtime\/run-scenario\.sh|runtime\/run-scenario\.sh/.test(body)) {
-      findings.push({
-        file: `test/e2e/${script}`,
-        rule: "retired-wrapper-delegates-to-scenario-runner",
-        message: "retired legacy wrapper must delegate to test/e2e/runtime/run-scenario.sh",
-      });
-    }
-    if (
-      /^\s*(pass|fail)\s*\(\)|^\s*section\s*\(\)|nemoclaw\s+onboard|bash\s+.*install\.sh/m.test(
-        body,
-      )
-    ) {
-      findings.push({
-        file: `test/e2e/${script}`,
-        rule: "retired-wrapper-no-monolithic-logic",
-        message:
-          "retired legacy wrapper must not reintroduce pass/fail helpers, install, or onboard logic",
-      });
-    }
-  }
-  return findings;
-}
-
 function main(): number {
   const { root } = parseArgs(process.argv);
-  const findings = [...lintSuiteSteps(root), ...lintRetiredLegacyWrappers(root)];
+  const findings = lintSuiteSteps(root);
   if (findings.length === 0) {
     return 0;
   }

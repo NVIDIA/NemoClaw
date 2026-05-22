@@ -12,6 +12,7 @@ const RUNTIME_LIB = path.join(REPO_ROOT, "test/e2e/runtime/lib");
 const VALIDATION_SUITES = path.join(REPO_ROOT, "test/e2e/validation_suites");
 const VALIDATION_LIB = path.join(VALIDATION_SUITES, "lib");
 const ASSERT = path.join(VALIDATION_SUITES, "assert");
+const REBUILD_UPGRADE_LIB = path.join(VALIDATION_SUITES, "lib/rebuild_upgrade.sh");
 const FIXTURES = path.join(REPO_ROOT, "test/e2e/nemoclaw_scenarios/fixtures");
 const INSTALL_DIR = path.join(REPO_ROOT, "test/e2e/nemoclaw_scenarios/install");
 const RUN_SCENARIO = path.join(REPO_ROOT, "test/e2e/runtime/run-scenario.sh");
@@ -31,6 +32,381 @@ function runBash(script: string, env: Record<string, string> = {}): SpawnSyncRet
 // ──────────────────────────────────────────────────────────────────────────
 
 describe("E2E shell helpers", () => {
+  it("test_should_source_inference_routing_helpers_under_strict_shell_mode", () => {
+    const r = runBash(`
+      set -euo pipefail
+      . "${VALIDATION_SUITES}/lib/inference_routing.sh"
+      declare -F e2e_inference_routing_assert_chat_completion
+    `);
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  it("test_should_fail_clearly_when_required_context_is_missing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inf-missing-"));
+    try {
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${RUNTIME_LIB}/context.sh"
+        . "${VALIDATION_SUITES}/lib/inference_routing.sh"
+        e2e_context_init
+        e2e_inference_routing_assert_chat_completion "post-onboard.inference-routing.inference-local-chat-completion"
+      `,
+        { E2E_CONTEXT_DIR: tmp },
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/E2E_SANDBOX_NAME|E2E_CONTEXT_DIR|context/i);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("test_should_emit_plan_only_checks_without_live_infrastructure", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inf-plan-"));
+    try {
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${RUNTIME_LIB}/context.sh"
+        . "${VALIDATION_SUITES}/lib/inference_routing.sh"
+        e2e_context_init
+        e2e_context_set E2E_SANDBOX_NAME sandbox-1
+        e2e_inference_routing_assert_chat_completion "post-onboard.inference-routing.inference-local-chat-completion"
+      `,
+        { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("post-onboard.inference-routing.inference-local-chat-completion");
+      expect(r.stdout).toMatch(/dry-run|plan/i);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("test_should_not_print_secret_values_in_helper_output", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-inf-secret-"));
+    try {
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${RUNTIME_LIB}/context.sh"
+        . "${VALIDATION_SUITES}/lib/inference_routing.sh"
+        e2e_context_init
+        e2e_context_set E2E_SANDBOX_NAME sandbox-1
+        e2e_context_set E2E_PROVIDER_API_KEY super-secret-test-token
+        e2e_inference_routing_assert_auth_proxy "post-onboard.ollama-auth-proxy.authenticated-request-accepted" "valid"
+      `,
+        { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout + r.stderr).not.toContain("super-secret-test-token");
+      expect(r.stdout + r.stderr).toMatch(/REDACTED|dry-run|plan/i);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("security_policy_credentials_helper_should_load_with_context_library", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-context-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n");
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/security_policy_credentials.sh"
+        spc_require_context E2E_SCENARIO E2E_PROVIDER
+        echo "provider=$(spc_context_get E2E_PROVIDER)"
+        `,
+        { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("provider=nvidia");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("security_policy_credentials_helper_should_fail_when_required_context_missing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-context-missing-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\n");
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/security_policy_credentials.sh"
+        spc_require_context E2E_PROVIDER
+        `,
+        { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" },
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain("E2E_PROVIDER");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("security_policy_credentials_helper_should_not_log_secret_values", () => {
+    const r = runBash(`
+      set -euo pipefail
+      . "${VALIDATION_SUITES}/lib/security_policy_credentials.sh"
+      spc_log_provider_metadata "nvidia" "primary"
+      printf 'token=nvapi-secret-value-1234567890 sk-abcdefghijklmnop\n' | spc_redact_secret_text
+    `);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("provider=nvidia name=primary");
+    expect(r.stdout).not.toMatch(/nvapi-secret-value|sk-abcdefghijklmnop/);
+    expect(r.stdout).toMatch(/\[REDACTED\]/);
+  });
+
+  it("security_policy_credentials_helper_should_reject_empty_gateway_credentials", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-credentials-empty-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+if [ "$1 $2" = "credentials list" ]; then
+  echo "  No provider credentials registered."
+  exit 0
+fi
+exit 2
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n");
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/security_policy_credentials.sh"
+        spc_assert_credentials_expected
+        `,
+        { E2E_CONTEXT_DIR: tmp, PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/no gateway credentials/i);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("security_policy_credentials_helper_should_reject_raw_credential_leaks", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-credentials-leak-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+if [ "$1 $2" = "credentials list" ]; then
+  echo "  Providers registered with the OpenShell gateway:"
+  echo "    nvidia token=nvapi-secret-value-1234567890"
+  exit 0
+fi
+exit 2
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n");
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/security_policy_credentials.sh"
+        spc_assert_credentials_expected
+        `,
+        { E2E_CONTEXT_DIR: tmp, PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/secret-looking raw output/i);
+      expect(r.stdout).not.toContain("nvapi-secret-value");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("security_policy_credentials_helper_should_reject_raw_credential_leaks_from_failed_list", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-credentials-failed-leak-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+if [ "$1 $2" = "credentials list" ]; then
+  echo "gateway error token=nvapi-secret-value-1234567890" >&2
+  exit 1
+fi
+exit 2
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_CREDENTIALS_EXPECTED=present\n");
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/security_policy_credentials.sh"
+        spc_assert_credentials_expected
+        `,
+        { E2E_CONTEXT_DIR: tmp, PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/secret-looking raw output/i);
+      expect(r.stderr).not.toMatch(/credentials list failed/);
+      expect(r.stdout).not.toContain("nvapi-secret-value");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("security_policy_credentials_helper_should_verify_policy_and_shields_state", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-policy-shields-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+if [ "$1 $2" = "sb policy-list" ]; then
+  echo "  Policy presets for sandbox 'sb':"
+  echo "    ● telegram — Telegram bridge egress"
+  echo "    ○ slack — Slack bridge egress"
+  exit 0
+fi
+if [ "$1 $2 $3" = "sb shields status" ]; then
+  echo "  Shields: UP (lockdown active)"
+  exit 0
+fi
+exit 2
+`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+if [ "$1 $2 $3" = "sandbox exec --name" ]; then
+  echo "440 root:root"
+  exit 0
+fi
+exit 2
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_SANDBOX_NAME=sb\nE2E_AGENT=openclaw\nE2E_SHIELDS_EXPECTED_STATE=up\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/security_policy_credentials.sh"
+        spc_assert_policy_preset_present telegram
+        spc_assert_shields_config_consistent
+        `,
+        { E2E_CONTEXT_DIR: tmp, PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("telegram");
+      expect(r.stdout).toContain("shields config state is consistent: up");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("security_policy_credentials_helper_should_fail_on_missing_policy_preset", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-policy-missing-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "nemoclaw"),
+      `#!/usr/bin/env bash
+echo "    slack — Slack bridge egress"
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\nE2E_PROVIDER=nvidia\nE2E_SANDBOX_NAME=sb\n");
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/security_policy_credentials.sh"
+        spc_assert_policy_preset_present telegram
+        `,
+        { E2E_CONTEXT_DIR: tmp, PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/expected policy preset 'telegram'/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("security_policy_credentials_helper_should_verify_openshell_rewrite_markers", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-openshell-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+# request-body-credential-rewrite websocket-credential-rewrite
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.39"
+  exit 0
+fi
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\n");
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/security_policy_credentials.sh"
+        spc_assert_openshell_credential_rewrite_supported
+        `,
+        { E2E_CONTEXT_DIR: tmp, PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("OpenShell 0.0.39 credential rewrite capability markers present");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("security_policy_credentials_helper_should_reject_below_minimum_openshell_version", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "spc-openshell-old-"));
+    const fakeBin = path.join(tmp, "bin");
+    fs.mkdirSync(fakeBin);
+    fs.writeFileSync(
+      path.join(fakeBin, "openshell"),
+      `#!/usr/bin/env bash
+# request-body-credential-rewrite websocket-credential-rewrite
+if [ "$1" = "--version" ]; then
+  echo "openshell 0.0.38"
+  exit 0
+fi
+exit 0
+`,
+      { mode: 0o755 },
+    );
+    try {
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\n");
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/security_policy_credentials.sh"
+        spc_assert_openshell_credential_rewrite_supported
+        `,
+        { E2E_CONTEXT_DIR: tmp, PATH: `${fakeBin}:${process.env.PATH ?? ""}` },
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toContain("below credential rewrite minimum");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("env_helper_should_set_standard_noninteractive_env", () => {
     const r = runBash(`
       set -euo pipefail
@@ -135,6 +511,96 @@ describe("E2E shell helpers", () => {
 // ─────────────────────────────────────────────────────────────────────────────
 // Phase 1.A — Logging helpers (lib/logging.sh)
 // ─────────────────────────────────────────────────────────────────────────────
+
+describe("rebuild/upgrade validation helpers", () => {
+  it("rebuild_upgrade_library_should_source_without_side_effects", () => {
+    const r = runBash(`
+      set -euo pipefail
+      . "${REBUILD_UPGRADE_LIB}"
+      declare -F rebuild_upgrade_require_context >/dev/null
+    `);
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout + r.stderr).not.toMatch(/install|onboard|rebuild/i);
+  });
+
+  it("rebuild_upgrade_context_should_fail_with_missing_key_name", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ru-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=test\n");
+      const r = runBash(
+        `
+        . "${REBUILD_UPGRADE_LIB}"
+        rebuild_upgrade_require_context
+      `,
+        { E2E_CONTEXT_DIR: tmp },
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/E2E_AGENT|E2E_SANDBOX_NAME|E2E_GATEWAY_URL/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rebuild_upgrade_context_should_pass_when_required_keys_present", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ru-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=test\nE2E_AGENT=openclaw\nE2E_SANDBOX_NAME=sb\nE2E_GATEWAY_URL=http://127.0.0.1\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${REBUILD_UPGRADE_LIB}"
+        rebuild_upgrade_require_context
+      `,
+        { E2E_CONTEXT_DIR: tmp },
+      );
+      expect(r.status, r.stderr).toBe(0);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rebuild_upgrade_checks_should_allow_command_fakes", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-ru-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        "E2E_SCENARIO=test\nE2E_AGENT=openclaw\nE2E_SANDBOX_NAME=sb\nE2E_GATEWAY_URL=http://127.0.0.1\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        fake_sandbox() {
+          case "$*" in
+            *cat*) printf 'marker' ;;
+            *version*) printf 'OpenClaw 2.0.0' ;;
+            *models*) printf '{"data":[]}' ;;
+            *) true ;;
+          esac
+        }
+        . "${REBUILD_UPGRADE_LIB}"
+        rebuild_upgrade_assert_marker_preserved
+        rebuild_upgrade_assert_agent_version_upgraded
+        rebuild_upgrade_assert_inference_works
+      `,
+        {
+          E2E_CONTEXT_DIR: tmp,
+          REBUILD_UPGRADE_SANDBOX_CMD: "fake_sandbox",
+          E2E_REBUILD_MARKER_EXPECTED: "marker",
+          E2E_OLD_AGENT_VERSION: "1.0.0",
+        },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout).toContain("suite.rebuild.workspace_state_preserved");
+      expect(r.stdout).toContain("suite.rebuild.agent_version_upgraded");
+      expect(r.stdout).toContain("suite.rebuild.inference_still_works");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("Phase 1.A logging helpers", () => {
   it("logging_should_emit_stable_pass_marker_when_e2e_pass_called", () => {
@@ -525,6 +991,20 @@ describe("Phase 1.E install dispatcher splits", () => {
     expect(r.stdout + r.stderr).not.toMatch(/install-curl|install-ollama|install-launchable/);
   });
 
+  it("repo_current_install_should_use_full_cli_build_script", () => {
+    const script = fs.readFileSync(path.join(INSTALL_DIR, "repo-current.sh"), "utf8");
+    expect(script).toContain("npm run build:cli");
+    expect(script).not.toContain("./node_modules/.bin/tsc -p tsconfig.src.json");
+    expect(script).not.toContain("./node_modules/.bin/tsc -p nemoclaw-blueprint/tsconfig.json");
+  });
+
+  it("repo_current_install_should_verify_generated_oclif_metadata", () => {
+    const script = fs.readFileSync(path.join(INSTALL_DIR, "repo-current.sh"), "utf8");
+    const buildScript = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")).scripts?.["build:cli"] ?? "";
+    expect(buildScript).toContain("generate-oclif-metadata-manifest.js");
+    expect(script).toContain("dist/lib/cli/oclif-command-metadata.generated.json");
+  });
+
   it("install_should_dispatch_to_install_curl_helper_for_public_installer_profile", () => {
     const r = dispatchDryRun("public-installer");
     expect(r.status, r.stderr).toBe(0);
@@ -562,7 +1042,14 @@ describe("baseline onboarding validation helper", () => {
       const ctx = path.join(tmp, "ctx");
       fs.mkdirSync(bin); fs.mkdirSync(ctx);
       fs.writeFileSync(path.join(ctx, "context.env"), "E2E_SANDBOX_NAME=sb1\nE2E_PROVIDER=nvidia\nE2E_INFERENCE_ROUTE=inference-local\n");
-      fs.writeFileSync(path.join(bin, "nemoclaw"), "#!/usr/bin/env bash\n[[ $1 == --help ]] && echo help && exit 0\n", { mode: 0o755 });
+      fs.writeFileSync(path.join(bin, "nemoclaw"), `#!/usr/bin/env bash
+case "$*" in
+  --help) echo help;;
+  "sb1 status") echo 'status running gateway healthy sandbox running';;
+  "sb1 logs") echo baseline-log;;
+  *) echo "unexpected nemoclaw args: $*" >&2; exit 64;;
+esac
+`, { mode: 0o755 });
       fs.writeFileSync(path.join(bin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
       const r = runBash(`
         set -euo pipefail
@@ -571,11 +1058,15 @@ describe("baseline onboarding validation helper", () => {
         baseline_assert_nemoclaw_on_path
         baseline_assert_openshell_on_path
         baseline_assert_nemoclaw_help_exits_zero
+        baseline_assert_sandbox_status_exits_zero
+        baseline_assert_logs_produce_output
       `, { E2E_CONTEXT_DIR: ctx, PATH: `${bin}:${process.env.PATH}` });
       expect(r.status, r.stderr).toBe(0);
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.nemoclaw_on_path");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.openshell_on_path");
       expect(r.stdout).toContain("PASS: validation.baseline_onboarding.nemoclaw_help_exits_zero");
+      expect(r.stdout).toContain("PASS: validation.baseline_onboarding.sandbox_status");
+      expect(r.stdout).toContain("PASS: validation.baseline_onboarding.logs_available");
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
 });
@@ -614,7 +1105,12 @@ describe("sandbox lifecycle validation helper", () => {
     try {
       const bin = path.join(tmp, "bin"); fs.mkdirSync(bin);
       fs.writeFileSync(path.join(bin, "nemoclaw"), `#!/usr/bin/env bash
-case "$1" in list) echo sb1;; status) echo 'status running gateway healthy sandbox running';; logs) echo logline;; esac
+case "$*" in
+  list) echo sb1;;
+  "sb1 status") echo 'status running gateway healthy sandbox running';;
+  "sb1 logs") echo logline;;
+  *) echo "unexpected nemoclaw args: $*" >&2; exit 64;;
+esac
 `, { mode: 0o755 });
       fs.writeFileSync(path.join(bin, "openshell"), `#!/usr/bin/env bash
 echo lifecycle-ok

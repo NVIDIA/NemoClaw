@@ -35,16 +35,16 @@ info "Detected $OS_LABEL ($ARCH_LABEL)"
 
 # Minimum version required for native messaging credential rewrite:
 # WebSocket text frames plus provider-shaped aliases and REST request bodies.
-MIN_VERSION="0.0.39"
+MIN_VERSION="0.0.44"
 # Maximum version validated for this NemoClaw release. Newer OpenShell builds
 # may change sandbox semantics; upgrade NemoClaw before upgrading past this.
-MAX_VERSION="0.0.39"
+MAX_VERSION="0.0.44"
 # Pin fresh installs to this version. The TS installer normally overrides this
 # via NEMOCLAW_OPENSHELL_PIN_VERSION after resolving the highest published
 # OpenShell release that satisfies the blueprint's max_openshell_version
 # (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
-DEV_MIN_VERSION="0.0.39"
+DEV_MIN_VERSION="0.0.44"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in

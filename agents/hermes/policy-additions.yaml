@@ -146,7 +146,11 @@ network_policies:
       - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
-  # ── Messaging — pre-allowed for agent notifications ───────────
+  # ── Messaging policy templates ─────────────────────────────────
+  # These entries are agent-specific channel templates. During sandbox
+  # creation, NemoClaw filters out entries for messaging channels that were not
+  # selected, so a Discord-only Hermes sandbox does not retain Telegram, Slack,
+  # or WeChat egress.
   telegram:
     name: telegram
     endpoints:
