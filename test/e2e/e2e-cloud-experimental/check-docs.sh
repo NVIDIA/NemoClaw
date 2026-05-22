@@ -173,17 +173,32 @@ JSON
   # shellcheck disable=SC2016
   # log text: backticks are documentation markers, not command substitution
   log '[cli] phase 2/2: extract ### `nemoclaw …` headings from commands reference'
-  # Allow optional MyST suffix on the same line, e.g. ### `nemoclaw onboard` {#anchor}
-  # Strip argument placeholders (<arg>, [optional]) to match canonical usage signatures.
+  # Allow optional MyST suffix on the same line, e.g. ### `nemoclaw onboard` {#anchor}.
+  # Preserve placeholders that are part of the canonical help signature, but
+  # keep accepting docs-only suffixes such as `snapshot restore [selector]`.
   grep -E '^### `nemoclaw ' "$COMMANDS_MD" | LC_ALL=C perl -CS -ne '
+    BEGIN {
+      my $help_path = shift @ARGV;
+      open my $help_fh, "<", $help_path or die "open help list: $!";
+      while (my $line = <$help_fh>) {
+        chomp $line;
+        $help{$line} = 1;
+      }
+      close $help_fh;
+    }
     if (/^### `([^`]+)`\s*(?:\{[^}]+\})?\s*$/) {
       my $c = $1;
-      while ($c =~ s/\s*\[[^\]]*\]\s*$//) {}
-      while ($c =~ s/\s+<[^>]+>\s*$//) {}
       $c =~ s/\s+$//;
+      while (!$help{$c}) {
+        my $changed = 0;
+        $changed ||= ($c =~ s/\s*\[[^\]]*\]\s*$//);
+        $changed ||= ($c =~ s/\s+<[^>]+>\s*$//);
+        $c =~ s/\s+$//;
+        last unless $changed;
+      }
       print "$c\n";
     }
-  ' | LC_ALL=C sort -u >"$_tmp/doc.txt"
+  ' "$_tmp/help.txt" | LC_ALL=C sort -u >"$_tmp/doc.txt"
 
   local _n_doc
   _n_doc="$(wc -l <"$_tmp/doc.txt" | tr -d " ")"
@@ -239,6 +254,11 @@ JSON
         bt = index(line, "`")
         if (bt > 0) {
           cand = substr(line, 1, bt - 1)
+          sub(/[[:space:]]+$/, "", cand)
+          if (cand == target) {
+            in_sec = 1
+            next
+          }
           while (sub(/[[:space:]]*\[[^]]*\][[:space:]]*$/, "", cand)) {}
           while (sub(/[[:space:]]+<[^>]+>[[:space:]]*$/, "", cand)) {}
           sub(/[[:space:]]+$/, "", cand)

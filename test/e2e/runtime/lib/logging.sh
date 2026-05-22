@@ -6,8 +6,8 @@
 #
 # Collapses the ad-hoc `section` / `info` / `pass` / `fail` functions that
 # the 40 legacy `test/e2e/test-*.sh` scripts each re-declare with subtle
-# drift. Emits stable markers that `scripts/e2e/compare-parity.sh` parses
-# when diffing legacy vs. migrated runs.
+# drift. Emits stable markers that humans can grep and migration reviews can
+# reference.
 #
 # Contract:
 #   PASS: <message>           — asserting success
@@ -52,7 +52,7 @@ e2e_info() {
 }
 
 # e2e_pass <message>
-# Assertion-success marker; consumed by parity-map.yaml + compare-parity.sh.
+# Assertion-success marker for human-readable logs and migration review.
 e2e_pass() {
   printf 'PASS: %s\n' "${*:-}"
 }

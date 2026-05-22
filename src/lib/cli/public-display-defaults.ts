@@ -127,6 +127,48 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "hidden": true
     }
   ],
+  "sandbox:channels:add": [
+    {
+      "group": "Messaging Channels",
+      "order": 21,
+      "usage": "nemoclaw <name> channels add <channel>",
+      "description": "Save credentials and rebuild",
+      "flags": "[--dry-run]"
+    }
+  ],
+  "sandbox:channels:list": [
+    {
+      "group": "Messaging Channels",
+      "order": 20
+    }
+  ],
+  "sandbox:channels:remove": [
+    {
+      "group": "Messaging Channels",
+      "order": 22,
+      "usage": "nemoclaw <name> channels remove <channel>",
+      "description": "Remove a configured messaging channel",
+      "flags": "[--dry-run]"
+    }
+  ],
+  "sandbox:channels:start": [
+    {
+      "group": "Messaging Channels",
+      "order": 24,
+      "usage": "nemoclaw <name> channels start <channel>",
+      "description": "Re-enable a previously stopped channel",
+      "flags": "[--dry-run]"
+    }
+  ],
+  "sandbox:channels:stop": [
+    {
+      "group": "Messaging Channels",
+      "order": 23,
+      "usage": "nemoclaw <name> channels stop <channel>",
+      "description": "Disable channel (keeps credentials)",
+      "flags": "[--dry-run]"
+    }
+  ],
   "sandbox:config:get": [
     {
       "group": "Sandbox Management",
@@ -156,6 +198,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "group": "Sandbox Management",
       "order": 3,
       "flags": "[--probe-only]"
+    }
+  ],
+  "sandbox:dashboard-url": [
+    {
+      "group": "Sandbox Management",
+      "order": 3.2,
+      "flags": "[--quiet|-q]"
     }
   ],
   "sandbox:destroy": [
@@ -215,6 +264,28 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "flags": "[--follow] [--tail <lines>|-n <lines>] [--since <duration>]"
     }
   ],
+  "sandbox:policy:add": [
+    {
+      "group": "Policy Presets",
+      "order": 17,
+      "flags": "(--yes, -y, --dry-run, --from-file <path>, --from-dir <path>)"
+    }
+  ],
+  "sandbox:policy:list": [
+    {
+      "group": "Policy Presets",
+      "order": 19,
+      "description": "List presets (● = applied)"
+    }
+  ],
+  "sandbox:policy:remove": [
+    {
+      "group": "Policy Presets",
+      "order": 18,
+      "description": "Remove an applied policy preset (built-in or custom)",
+      "flags": "(--yes, -y, --dry-run)"
+    }
+  ],
   "sandbox:rebuild": [
     {
       "group": "Sandbox Management",
@@ -272,6 +343,33 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "group": "Sandbox Management",
       "order": 26,
       "hidden": true
+    }
+  ],
+  "sandbox:skill:install": [
+    {
+      "group": "Skills",
+      "order": 16,
+      "flags": "<path>"
+    }
+  ],
+  "sandbox:snapshot:create": [
+    {
+      "group": "Sandbox Management",
+      "order": 7,
+      "flags": "[--name <name>]"
+    }
+  ],
+  "sandbox:snapshot:list": [
+    {
+      "group": "Sandbox Management",
+      "order": 8
+    }
+  ],
+  "sandbox:snapshot:restore": [
+    {
+      "group": "Sandbox Management",
+      "order": 9,
+      "flags": "[selector] [--to <dst>] [--force] [--yes|-y]"
     }
   ],
   "sandbox:status": [
