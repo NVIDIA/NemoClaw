@@ -427,6 +427,7 @@ Use `--tail <lines>` or `-n <lines>` to limit the number of returned lines.
 Use `--since <duration>` to show recent logs only, such as `5m`, `1h`, or `30s`.
 The command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear alongside the gateway log stream.
 If one log source is unavailable, NemoClaw prints a warning and keeps reading the remaining source.
+NemoClaw's `--tail <lines>` flag is a line-count flag; the lower-level `openshell logs --tail` flag means follow live output, so use `openshell logs <sandbox> -n <lines>` when running OpenShell directly for a fixed line count.
 
 ```console
 $ nemoclaw my-assistant logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]

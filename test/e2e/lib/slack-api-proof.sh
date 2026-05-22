@@ -164,6 +164,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 function fail(message) {
@@ -173,14 +174,58 @@ function fail(message) {
 
 function resolveOpenClawRoot() {
   const candidates = [];
-  if (process.env.OPENCLAW_PACKAGE_ROOT) candidates.push(process.env.OPENCLAW_PACKAGE_ROOT);
+  const seen = new Set();
+  const addCandidate = (candidate) => {
+    if (!candidate) return;
+    const normalized = path.resolve(candidate);
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      candidates.push(normalized);
+    }
+  };
+  const addPathWalk = (start) => {
+    if (!start) return;
+    let current = path.resolve(start);
+    for (let depth = 0; depth < 8; depth += 1) {
+      addCandidate(current);
+      if (path.basename(current) === "openclaw") addCandidate(current);
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  };
+
+  addCandidate(process.env.OPENCLAW_PACKAGE_ROOT);
   try {
     const globalRoot = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
-    if (globalRoot) candidates.push(path.join(globalRoot, "openclaw"));
+    if (globalRoot) addCandidate(path.join(globalRoot, "openclaw"));
   } catch {}
-  candidates.push("/usr/local/lib/node_modules/openclaw");
+  try {
+    const require = createRequire(import.meta.url);
+    addCandidate(path.dirname(require.resolve("openclaw/package.json")));
+  } catch {}
+  try {
+    const openclawBin = execFileSync("sh", ["-lc", "command -v openclaw || true"], { encoding: "utf8" }).trim();
+    if (openclawBin) {
+      const realBin = execFileSync("readlink", ["-f", openclawBin], { encoding: "utf8" }).trim();
+      addPathWalk(path.dirname(realBin));
+    }
+  } catch {}
+  try {
+    const searchRoots = ["/usr/local", "/tmp/npm-global", "/sandbox"].filter((root) => fs.existsSync(root));
+    const discovered = searchRoots.length
+      ? execFileSync("find", [...searchRoots, "-path", "*/dist/extensions/slack/test-api.js", "-print", "-quit"], {
+          encoding: "utf8",
+        }).trim()
+      : "";
+    if (discovered) addCandidate(path.resolve(discovered, "../../../.."));
+  } catch {}
+  addCandidate("/usr/local/lib/node_modules/openclaw");
+  addCandidate("/tmp/npm-global/lib/node_modules/openclaw");
+
   for (const candidate of candidates) {
-    if (candidate && fs.existsSync(path.join(candidate, "dist/extensions/slack/test-api.js"))) {
+    if (fs.existsSync(path.join(candidate, "dist/extensions/slack/test-api.js"))) {
+      console.error(`OpenClaw Slack test API root: ${candidate}`);
       return candidate;
     }
   }

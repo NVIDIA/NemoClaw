@@ -20,6 +20,8 @@ CURRENT_INSTALL_LOG="/tmp/nemoclaw-e2e-openshell-gateway-current-install.log"
 START_LOG="/tmp/nemoclaw-e2e-openshell-gateway-start.log"
 GATEWAY_LOG="/tmp/nemoclaw-e2e-openshell-gateway-process.log"
 MOCK_LOG="/tmp/nemoclaw-e2e-openshell-gateway-compatible-mock.log"
+OLD_DOCKER_WRAPPER_DIR=""
+OLD_DOCKER_WRAPPER_LOG="/tmp/nemoclaw-e2e-openshell-gateway-old-docker.log"
 exec > >(tee "$LOG_FILE") 2>&1
 
 RED='\033[0;31m'
@@ -52,6 +54,8 @@ STATE_DIR="${NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR:-$HOME/.local/state/nemoclaw/o
 PID_FILE="${STATE_DIR}/openshell-gateway.pid"
 OLD_NEMOCLAW_REF="${NEMOCLAW_OLD_NEMOCLAW_REF:-v0.0.36}"
 OLD_OPENSHELL_VERSION="${NEMOCLAW_OLD_OPENSHELL_VERSION:-0.0.36}"
+OLD_SANDBOX_BASE_IMAGE_REF="${NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:-ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:104151ffadc2ff0b6c815e3c95c2783ced61aee0d0f83fc327cc02be9b7e14e6}"
+OLD_OPENCLAW_VERSION="${NEMOCLAW_OLD_OPENCLAW_VERSION:-2026.4.24}"
 CURRENT_OPENSHELL_VERSION="${NEMOCLAW_CURRENT_OPENSHELL_VERSION:-0.0.39}"
 SURVIVOR_SANDBOX="${NEMOCLAW_GATEWAY_UPGRADE_SURVIVOR_NAME:-e2e-gateway-upgrade-survivor}"
 SURVIVOR_MARKER="gateway-upgrade-survivor-$(date +%s)"
@@ -111,6 +115,72 @@ cleanup_pid() {
   fi
 }
 
+create_old_docker_wrapper() {
+  OLD_DOCKER_WRAPPER_DIR="$(mktemp -d)"
+  rm -f "$OLD_DOCKER_WRAPPER_LOG"
+  cat >"${OLD_DOCKER_WRAPPER_DIR}/docker" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+real_docker="${NEMOCLAW_REAL_DOCKER:-/usr/bin/docker}"
+base_ref="${NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF:?}"
+old_openclaw="${NEMOCLAW_OLD_OPENCLAW_VERSION:?}"
+log_file="${NEMOCLAW_OLD_DOCKER_WRAPPER_LOG:-/tmp/nemoclaw-e2e-openshell-gateway-old-docker.log}"
+if [ "${1:-}" != "build" ]; then
+  exec "$real_docker" "$@"
+fi
+
+args=()
+rewrote_openclaw=0
+rewrote_base=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --build-arg)
+      if [ "$#" -ge 2 ] && [ "${2#OPENCLAW_VERSION=}" != "$2" ]; then
+        args+=("--build-arg" "OPENCLAW_VERSION=${old_openclaw}")
+        rewrote_openclaw=1
+        printf 'rewrite build-arg %s -> OPENCLAW_VERSION=%s\n' "$2" "$old_openclaw" >>"$log_file"
+        shift 2
+        continue
+      fi
+      if [ "$#" -ge 2 ] && [ "$2" = "BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest" ]; then
+        args+=("--build-arg" "BASE_IMAGE=${base_ref}")
+        rewrote_base=1
+        printf 'rewrite build-arg %s -> BASE_IMAGE=%s\n' "$2" "$base_ref" >>"$log_file"
+        shift 2
+        continue
+      fi
+      ;;
+    --build-arg=OPENCLAW_VERSION=*)
+      args+=("--build-arg=OPENCLAW_VERSION=${old_openclaw}")
+      rewrote_openclaw=1
+      printf 'rewrite build-arg %s -> OPENCLAW_VERSION=%s\n' "$1" "$old_openclaw" >>"$log_file"
+      shift
+      continue
+      ;;
+    --build-arg=BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest)
+      args+=("--build-arg=BASE_IMAGE=${base_ref}")
+      rewrote_base=1
+      printf 'rewrite build-arg %s -> BASE_IMAGE=%s\n' "$1" "$base_ref" >>"$log_file"
+      shift
+      continue
+      ;;
+  esac
+  args+=("$1")
+  shift
+done
+if [ "$rewrote_openclaw" = "0" ]; then
+  args+=("--build-arg" "OPENCLAW_VERSION=${old_openclaw}")
+  printf 'add build-arg OPENCLAW_VERSION=%s\n' "$old_openclaw" >>"$log_file"
+fi
+if [ "$rewrote_base" = "0" ]; then
+  args+=("--build-arg" "BASE_IMAGE=${base_ref}")
+  printf 'add build-arg BASE_IMAGE=%s\n' "$base_ref" >>"$log_file"
+fi
+exec "$real_docker" "${args[@]}"
+EOF
+  chmod 755 "${OLD_DOCKER_WRAPPER_DIR}/docker"
+}
+
 cleanup() {
   set +e
   cleanup_pid "$FAKE_MOCK_PID"
@@ -119,6 +189,9 @@ cleanup() {
     openshell gateway remove nemoclaw >/dev/null 2>&1 || true
   fi
   rm -f "$PID_FILE"
+  if [ -n "$OLD_DOCKER_WRAPPER_DIR" ]; then
+    rm -rf "$OLD_DOCKER_WRAPPER_DIR"
+  fi
 }
 trap cleanup EXIT
 
@@ -418,7 +491,19 @@ run_installer_payload() {
   local label="$1" ref="$2" installer="$3" log_file="$4"
   info "Running ${label} NemoClaw installer from ${ref}"
   rm -f "$log_file"
+  local docker_path_env=()
+  if [ -n "$OLD_DOCKER_WRAPPER_DIR" ] && [[ "$label" == old\ * ]]; then
+    docker_path_env=(
+      PATH="${OLD_DOCKER_WRAPPER_DIR}:$PATH"
+      NEMOCLAW_REAL_DOCKER="$(command -v docker)"
+      NEMOCLAW_OLD_SANDBOX_BASE_IMAGE_REF="$OLD_SANDBOX_BASE_IMAGE_REF"
+      NEMOCLAW_OLD_OPENCLAW_VERSION="$OLD_OPENCLAW_VERSION"
+      NEMOCLAW_OLD_DOCKER_WRAPPER_LOG="$OLD_DOCKER_WRAPPER_LOG"
+    )
+  fi
+
   env \
+    "${docker_path_env[@]}" \
     COMPATIBLE_API_KEY=dummy \
     NEMOCLAW_NON_INTERACTIVE=1 \
     NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
@@ -452,8 +537,14 @@ download_old_curl_installer() {
 install_old_nemoclaw_and_claw() {
   local installer
   installer="$(mktemp)"
+  create_old_docker_wrapper
+  info "Pinning old ${OLD_NEMOCLAW_REF} OpenClaw base build to ${OLD_OPENCLAW_VERSION}"
   download_old_curl_installer "$installer"
   run_installer_payload "old ${OLD_NEMOCLAW_REF}" "$OLD_NEMOCLAW_REF" "$installer" "$OLD_INSTALL_LOG"
+  if [ -f "$OLD_DOCKER_WRAPPER_LOG" ]; then
+    diag "old installer docker wrapper activity:"
+    cat "$OLD_DOCKER_WRAPPER_LOG" || true
+  fi
   rm -f "$installer"
 
   if ! openshell --version 2>&1 | grep -q "$OLD_OPENSHELL_VERSION"; then
