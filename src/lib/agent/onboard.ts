@@ -13,7 +13,6 @@ import { dockerBuild, dockerImageInspect } from "../adapters/docker";
 import { getAgentBranding } from "../cli/branding";
 import { getProviderSelectionConfig } from "../inference/config";
 import type { JsonObject as LooseObject } from "../core/json-types";
-import * as onboardSession from "../state/onboard-session";
 import { runSandboxConfigSync } from "../onboard/config-sync";
 import { ROOT, redact, run, shellQuote } from "../runner";
 import {
@@ -29,7 +28,9 @@ export interface OnboardContext {
   runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string | null;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   openshellBinary: string;
-  startRecordedStep: (stepName: string, updates: LooseObject) => void;
+  startRecordedStep: (stepName: string, updates: LooseObject) => Promise<void>;
+  recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
+  recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
   skippedStepMessage: (stepName: string, sandboxName: string) => void;
 }
 
@@ -348,13 +349,14 @@ export function collectHermesStartupDiagnostics(
 /**
  * Record and print an agent setup failure before exiting the onboarding flow.
  */
-function failAgentSetup(
+async function failAgentSetup(
   sandboxName: string,
   agent: AgentDefinition,
   message: string,
+  recordStepFailed: OnboardContext["recordStepFailed"],
   details: string[] = [],
-): never {
-  onboardSession.markStepFailed(
+): Promise<never> {
+  await recordStepFailed(
     "agent_setup",
     details.length > 0 ? `${message}\n${details.join("\n")}` : message,
   );
@@ -401,6 +403,8 @@ export async function handleAgentSetup(
     runCaptureOpenshell,
     openshellBinary: openshellBin,
     startRecordedStep,
+    recordStepComplete,
+    recordStepFailed,
     skippedStepMessage,
   } = ctx;
 
@@ -433,21 +437,22 @@ export async function handleAgentSetup(
         // to the Dockerfile's zero-byte placeholder. Mirrors the OpenClaw
         // path in src/lib/onboard.ts. Fixes #3999 for non-OpenClaw agents.
         syncNemoClawConfig();
-        onboardSession.markStepComplete("agent_setup", { sandboxName, provider, model });
+        await recordStepComplete("agent_setup", { sandboxName, provider, model });
         return;
       }
     }
   }
 
-  startRecordedStep("agent_setup", { sandboxName, provider, model });
+  await startRecordedStep("agent_setup", { sandboxName, provider, model });
   step(7, 8, `Setting up ${agent.displayName} inside sandbox`);
 
   const binaryAvailability = verifyAgentBinaryAvailable(sandboxName, agent, runCaptureOpenshell);
   if (!binaryAvailability.available) {
-    failAgentSetup(
+    await failAgentSetup(
       sandboxName,
       agent,
       describeAgentBinaryFailure(sandboxName, agent, binaryAvailability),
+      recordStepFailed,
     );
   }
 
@@ -478,10 +483,11 @@ export async function handleAgentSetup(
         agent.name === "hermes"
           ? collectHermesStartupDiagnostics(sandboxName, runCaptureOpenshell)
           : [];
-      failAgentSetup(
+      await failAgentSetup(
         sandboxName,
         agent,
         `${agent.displayName} gateway did not respond within ${timeoutSecs}s`,
+        recordStepFailed,
         diagnostics,
       );
     }
@@ -489,7 +495,7 @@ export async function handleAgentSetup(
     console.log(`  \u2713 ${agent.displayName} configured inside sandbox`);
   }
 
-  onboardSession.markStepComplete("agent_setup", { sandboxName, provider, model });
+  await recordStepComplete("agent_setup", { sandboxName, provider, model });
 }
 
 /**
