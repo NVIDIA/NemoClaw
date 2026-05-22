@@ -15,8 +15,14 @@ type ReviewAdvisorResult = {
     recommendation?: string;
     confidence?: string;
     oneLine?: string;
+    topItem?: string;
+    sinceLastReview?: {
+      resolved?: number;
+      stillApplies?: number;
+      newItems?: number;
+    };
   };
-  findings?: Array<{ severity?: string }>;
+  findings?: Array<{ severity?: string; title?: string }>;
   reviewCompleteness?: {
     limitations?: string[];
   };
@@ -58,7 +64,7 @@ async function main(): Promise<void> {
 }
 
 export function buildComment({
-  summary,
+  summary: _summary,
   result,
   runUrl,
   marker,
@@ -71,28 +77,37 @@ export function buildComment({
   const blockerCount = result?.findings?.filter((finding) => finding.severity === "blocker").length ?? 0;
   const warningCount = result?.findings?.filter((finding) => finding.severity === "warning").length ?? 0;
   const suggestionCount = result?.findings?.filter((finding) => finding.severity === "suggestion").length ?? 0;
-  const recommendation = result?.summary?.recommendation ? result.summary.recommendation.replaceAll("_", " ") : "unknown";
-  const confidence = result?.summary?.confidence || "unknown";
-  const sha = result?.headSha ? `\n**Analyzed HEAD:** \`${result.headSha}\`` : "";
-  const run = runUrl ? `\n\n[Workflow run](${runUrl})` : "";
-  const limitations = result?.reviewCompleteness?.limitations?.length
-    ? `\n\n**Limitations:** ${result.reviewCompleteness.limitations.join("; ")}`
+  const secondary = buildSecondarySummary(result);
+  const details = runUrl
+    ? `\n[Workflow run details](${runUrl})`
     : "";
-
   return `${marker || MARKER}
 ## PR Review Advisor
 
-**Recommendation:** ${recommendation}
-**Confidence:** ${confidence}${sha}
-**Findings:** ${blockerCount} blocker(s), ${warningCount} warning(s), ${suggestionCount} suggestion(s)
+**Findings:** ${blockerCount} needs attention, ${warningCount} worth checking, ${suggestionCount} nice ideas
+${secondary}${details}
 
-This is an automated advisory review. A human maintainer must make the final merge decision.${limitations}${run}
+This is an automated advisory review. A human maintainer must make the final merge decision.
 
-<details>
-<summary>Full advisor summary</summary>
-
-${summary.trim()}
-
-</details>
 `;
+}
+
+function buildSecondarySummary(result?: ReviewAdvisorResult): string {
+  const sinceLastReview = result?.summary?.sinceLastReview;
+  if (sinceLastReview) {
+    return `**Since last review:** ${countLabel(sinceLastReview.resolved, "prior item")} resolved, ${countLabel(sinceLastReview.stillApplies, "still applies", "still apply")}, ${countLabel(sinceLastReview.newItems, "new item")} found\n`;
+  }
+  const topItem = result?.summary?.topItem || topFindingTitle(result);
+  return topItem ? `**Top item:** ${topItem}\n` : "";
+}
+
+function topFindingTitle(result?: ReviewAdvisorResult): string | undefined {
+  return result?.findings?.find((finding) => finding.severity === "blocker")?.title ||
+    result?.findings?.find((finding) => finding.severity === "warning")?.title ||
+    result?.findings?.find((finding) => finding.severity === "suggestion")?.title;
+}
+
+function countLabel(count: unknown, singular: string, plural = `${singular}s`): string {
+  const numeric = typeof count === "number" && Number.isFinite(count) ? count : 0;
+  return `${numeric} ${numeric === 1 ? singular : plural}`;
 }
