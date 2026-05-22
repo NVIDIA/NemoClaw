@@ -888,7 +888,7 @@ async function configSet(sandboxName: string, opts: ConfigSetOpts = {}): Promise
 
   // Audit log
   appendAuditEntry({
-    action: "shields_down",
+    action: "config_set",
     sandbox: sandboxName,
     timestamp: new Date().toISOString(),
     reason: `config set ${target.agentName}:${opts.key}`,
