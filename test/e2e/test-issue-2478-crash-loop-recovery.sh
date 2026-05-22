@@ -110,7 +110,8 @@ sandbox_exec() {
 # oldest live `openclaw` process when gateway.log proves it reached ready.
 gateway_pid() {
   local script
-  script=$(cat <<'SH'
+  script=$(
+    cat <<'SH'
 set -eu
 pid="$(ps -eo pid=,comm=,args= 2>/dev/null | awk '
   $2 == "openclaw-gateway" || $0 ~ /openclaw[[:space:]]+gateway([[:space:]]|$)/ || $0 ~ /openclaw-gateway/ { print $1 }
