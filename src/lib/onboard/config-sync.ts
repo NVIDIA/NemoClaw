@@ -37,10 +37,12 @@ export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionC
   // chance to perform its own startup initialization.
   return `
 set -euo pipefail
-mkdir -p ~/.nemoclaw
+mkdir -p -m 700 ~/.nemoclaw
+chmod 700 ~/.nemoclaw
 cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
 ${JSON.stringify(selectionConfig, null, 2)}
 EOF_NEMOCLAW_CFG
+chmod 600 ~/.nemoclaw/config.json
 config_dir=/sandbox/.openclaw
 if [ -d "$config_dir" ]; then
   config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"

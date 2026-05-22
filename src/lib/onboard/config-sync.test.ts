@@ -22,7 +22,10 @@ describe("sandbox config sync helpers", () => {
       providerLabel: "Other OpenAI-compatible endpoint",
     });
 
+    expect(script).toMatch(/mkdir -p -m 700 ~\/\.nemoclaw/);
+    expect(script).toMatch(/chmod 700 ~\/\.nemoclaw/);
     expect(script).toMatch(/cat > ~\/\.nemoclaw\/config\.json/);
+    expect(script).toMatch(/chmod 600 ~\/\.nemoclaw\/config\.json/);
     expect(script).toContain('"model": "nemotron-3-nano:30b"');
     expect(script).toContain('"credentialEnv": "OPENAI_API_KEY"');
     expect(script).not.toMatch(/cat > ~\/\.openclaw\/openclaw\.json/);
