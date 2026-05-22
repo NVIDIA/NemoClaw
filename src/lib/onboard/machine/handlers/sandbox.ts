@@ -124,7 +124,8 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
 >): Promise<SandboxStateResult<WebSearchConfig>> {
   const webSearchSupportProbePath = fromDockerfile ? deps.resolvePath(fromDockerfile) : null;
   const webSearchSupported = deps.agentSupportsWebSearch(agent, webSearchSupportProbePath, rootDir);
-  if (webSearchConfig && !webSearchSupported) {
+  const webSearchSupportDropped = Boolean(webSearchConfig) && !webSearchSupported;
+  if (webSearchSupportDropped) {
     deps.note(
       `  Web search is not yet supported by ${(agent as { displayName?: string } | null)?.displayName ?? "this sandbox image"}. Clearing stale config.`,
     );
@@ -148,9 +149,12 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
   }
 
   const sandboxReuseState = deps.getSandboxReuseState(sandboxName);
-  const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
+  const webSearchConfigChanged = webSearchSupportDropped || Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
   const currentTelegramRequireMention = deps.computeTelegramRequireMention();
   const recordedTelegramRequireMention = session?.telegramConfig?.requireMention ?? null;
+  // Telegram mention-mode is baked into openclaw.json at sandbox build time.
+  // Compare effective modes because null and false both produce groupPolicy: open
+  // during config generation. This preserves the original #1737/#2417 drift rule.
   const telegramConfigChanged = !sameEffectiveTelegramRequireMention(
     currentTelegramRequireMention,
     recordedTelegramRequireMention,
