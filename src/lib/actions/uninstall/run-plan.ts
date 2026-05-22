@@ -167,7 +167,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
     runDocker: deps.runDocker ?? defaultRunDocker,
-    warn: deps.error ?? ((message) => console.warn(message)),
+    warn: deps.warn ?? ((message) => console.warn(message)),
   };
 }
 
