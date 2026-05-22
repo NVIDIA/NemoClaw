@@ -151,12 +151,7 @@ function buildSplitToolCallId(originalId, index, command) {
   return `${baseId}_split_${index + 1}_${command}`;
 }
 
-function getSafeCombinedExecToolCall(message) {
-  if (!message || typeof message !== "object") return null;
-  const content = message.content;
-  if (!Array.isArray(content) || content.length !== 1) return null;
-
-  const toolCall = content[0];
+function getSafeExecToolCallCommand(toolCall) {
   if (!toolCall || typeof toolCall !== "object" || Array.isArray(toolCall)) return null;
   if (toolCall.type !== "toolCall" || toolCall.name !== "exec") return null;
 
@@ -167,10 +162,58 @@ function getSafeCombinedExecToolCall(message) {
     return null;
   }
 
-  const commands = splitSafeExecCommand(args.command);
+  return args.command;
+}
+
+function getSafeCombinedExecToolCall(message) {
+  if (!message || typeof message !== "object") return null;
+  const content = message.content;
+  if (!Array.isArray(content) || content.length !== 1) return null;
+
+  const toolCall = content[0];
+  const command = getSafeExecToolCallCommand(toolCall);
+  if (command === null) return null;
+
+  const commands = splitSafeExecCommand(command);
   if (!commands) return null;
 
   return { commands, toolCall };
+}
+
+function getCanonicalSafeExecToolCallSequence(message) {
+  if (!message || typeof message !== "object") return null;
+  const content = message.content;
+  if (!Array.isArray(content) || content.length < 2) return null;
+
+  let combinedToolCall = null;
+  const expanded = [];
+  for (const toolCall of content) {
+    const command = getSafeExecToolCallCommand(toolCall);
+    if (command === null) return null;
+
+    const split = splitSafeExecCommand(command);
+    if (split) {
+      combinedToolCall = combinedToolCall || toolCall;
+      expanded.push(...split);
+    } else if (SAFE_SPLIT_EXEC_COMMANDS.has(command.trim())) {
+      expanded.push(command.trim());
+    } else {
+      return null;
+    }
+  }
+
+  if (!combinedToolCall) return null;
+  const seen = Array.from(new Set(expanded));
+  const commands = ["hostname", "date", "uptime"];
+  if (seen.length !== commands.length || commands.some((command, index) => seen[index] !== command)) {
+    return null;
+  }
+
+  return { commands, toolCall: combinedToolCall };
+}
+
+function getSafeExecRewrite(message) {
+  return getSafeCombinedExecToolCall(message) || getCanonicalSafeExecToolCallSequence(message);
 }
 
 function applySafeExecSplitToMessage(message, split) {
@@ -188,7 +231,7 @@ function applySafeExecSplitToMessage(message, split) {
 }
 
 function rewriteSafeCombinedExecToolCallInMessage(message) {
-  return applySafeExecSplitToMessage(message, getSafeCombinedExecToolCall(message));
+  return applySafeExecSplitToMessage(message, getSafeExecRewrite(message));
 }
 
 function getSafeCombinedExecToolCallFromEventDelta(event) {
@@ -216,8 +259,8 @@ function getSafeCombinedExecToolCallFromEventDelta(event) {
 function rewriteSafeCombinedExecToolCallInEvent(event) {
   if (!event || typeof event !== "object") return false;
   const split =
-    getSafeCombinedExecToolCall(event.partial) ||
-    getSafeCombinedExecToolCall(event.message) ||
+    getSafeExecRewrite(event.partial) ||
+    getSafeExecRewrite(event.message) ||
     getSafeCombinedExecToolCallFromEventDelta(event);
   if (!split) return false;
 

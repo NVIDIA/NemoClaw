@@ -2132,7 +2132,10 @@ ensure_docker() {
   # need to run usermod.
   if ! id -nG "$current_user" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
     info "Your user '$current_user' is not in the docker group."
-    info "The next step uses sudo to add you to the group so docker works without sudo. You may be prompted for your password."
+    info "NemoClaw needs Docker access. On personal Linux development machines, adding your user to the docker group is the standard way to run Docker without sudo."
+    info "Docker group members can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path."
+    info "Background: https://docs.docker.com/engine/security/#docker-daemon-attack-surface"
+    info "You may be prompted for your password."
     sudo usermod -aG docker "$current_user"
     needs_group_refresh=1
   fi

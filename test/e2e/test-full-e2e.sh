@@ -69,6 +69,9 @@ except Exception as e:
 "
 }
 
+# shellcheck source=test/e2e/lib/openclaw-json.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/openclaw-json.sh"
+
 # Determine repo root
 if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
   REPO="/workspace"
@@ -371,8 +374,8 @@ fi
 #     routeLogsToStderr() (openclaw/src/commands/agent-via-gateway.ts:57),
 #     so stdout is a clean JSON envelope; prompt-echo on stderr cannot
 #     pollute the assertion.
-#   * Asserts on the model's reply text inside `result.payloads[].text`,
-#     not on the merged stdout/stderr.
+#   * Asserts on parsed model reply text from the JSON envelope, not on
+#     the merged stdout/stderr or a single brittle envelope shape.
 #   * The expected token (the integer 42) is not a literal substring of the
 #     prompt, so an error path that quoted the prompt back cannot satisfy
 #     the grep.

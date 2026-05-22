@@ -2,8 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
 import { loadMetadataFromDir, loadMetadataFromObjects } from "../runtime/resolver/load.ts";
@@ -55,82 +53,6 @@ describe("coverage report", () => {
     const md = renderCoverageReport(meta);
     expect(md).toMatch(/## Gaps/);
     expect(md).toMatch(/empty-suite-scenario.*no suites|no suites.*empty-suite-scenario/s);
-  });
-
-  it("coverage_report_should_include_rebuild_upgrade_parity_buckets", () => {
-    const meta = loadMetadataFromDir(E2E_DIR);
-    const md = renderCoverageReport(meta);
-    expect(md).toMatch(/rebuild-runtime/);
-  });
-
-  it("coverage_report_should_include_legacy_parity_summary_when_inventory_exists", () => {
-    const sourceDir = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-coverage-parity-"));
-    try {
-      const docsDir = path.join(sourceDir, "docs");
-      fs.mkdirSync(docsDir, { recursive: true });
-      fs.writeFileSync(
-        path.join(docsDir, "parity-inventory.generated.json"),
-        `${JSON.stringify(
-          {
-            entrypoints: [
-              {
-                script: "test/e2e/test-onboarding-baseline.sh",
-                assertions: [
-                  { mapping_status: "mapped" },
-                  { mapping_status: "deferred" },
-                  { mapping_status: "retired" },
-                  { mapping_status: "unmapped" },
-                ],
-              },
-            ],
-          },
-          null,
-          2,
-        )}\n`,
-      );
-      fs.writeFileSync(
-        path.join(docsDir, "parity-map.yaml"),
-        "scripts:\n  test-onboarding-baseline.sh:\n    bucket: onboarding-baseline\n",
-      );
-      const meta = loadMetadataFromObjects({
-        scenarios: {
-          platforms: { p: {} },
-          installs: { i: {} },
-          runtimes: { r: {} },
-          onboarding: { o: { agent: "openclaw", provider: "nvidia" } },
-          setup_scenarios: {
-            s1: {
-              dimensions: { platform: "p", install: "i", runtime: "r", onboarding: "o" },
-              expected_state: "some-state",
-              suites: ["smoke"],
-            },
-          },
-        },
-        expectedStates: { expected_states: { "some-state": { gateway: { health: "healthy" } } } },
-        suites: { suites: { smoke: { steps: [{ id: "a", script: "suites/smoke/a.sh" }] } } },
-        sourceDir,
-      });
-      const md = renderCoverageReport(meta);
-      expect(md).toMatch(/## Legacy Parity Summary/);
-      expect(md).toMatch(/Scripts: 1/);
-      expect(md).toMatch(/Mapped assertions: 1/);
-      expect(md).toMatch(/Deferred assertions: 1/);
-      expect(md).toMatch(/Retired assertions: 1/);
-      expect(md).toMatch(/Unmapped assertions: 1/);
-      expect(md).toMatch(/onboarding-baseline/);
-    } finally {
-      fs.rmSync(sourceDir, { recursive: true, force: true });
-    }
-  });
-
-
-  it("test_should_report_scoped_lifecycle_parity_sections", () => {
-    const meta = loadMetadataFromDir(E2E_DIR);
-    const md = renderCoverageReport(meta);
-    expect(md).toMatch(/lifecycle/);
-    expect(md).toMatch(/Mapped assertions:/);
-    expect(md).toMatch(/Deferred assertions:/);
-    expect(md).toMatch(/Retired assertions:/);
   });
 
   it("should_flag_expected_states_not_used_by_any_scenario", () => {

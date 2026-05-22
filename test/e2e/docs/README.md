@@ -59,7 +59,7 @@ setup state.
 
 ```text
 test/e2e/
-  docs/                              # README.md, MIGRATION.md, parity-map.yaml
+  docs/                              # README.md, MIGRATION.md
   nemoclaw_scenarios/                # declarative scenario inputs + setup machinery
     scenarios.yaml / expected-states.yaml
     install/       # install dispatcher + one file per install profile
@@ -77,34 +77,9 @@ test/e2e/
     lib/           # shared shell helpers: context, env, cleanup, logging, artifacts, sandbox-teardown
 ```
 
-The CI entry points are `.github/workflows/e2e-scenarios.yaml`
-(manual dispatch) and `.github/workflows/e2e-parity-compare.yaml`
-(runs new vs. legacy and reports divergence). Existing workflows
-(`nightly-e2e.yaml`, `macos-e2e.yaml`, `wsl-e2e.yaml`, etc.) are
-unchanged during the migration.
+The CI entry point is `.github/workflows/e2e-scenarios.yaml` (manual dispatch). Existing legacy workflows (`nightly-e2e.yaml`, `macos-e2e.yaml`, `wsl-e2e.yaml`, etc.) remain in place during the migration.
 
-## Legacy assertion inventory
-
-The legacy assertion inventory is generated when `.github/workflows/e2e-parity-compare.yaml` produces a parity report. The workflow uploads `parity-inventory.generated.json` as an artifact under `.e2e/parity/`; normal feature PRs do not commit this generated inventory.
-
-Generate a local inventory when debugging migration coverage:
-
-```bash
-npx tsx scripts/e2e/extract-legacy-assertions.ts --output /tmp/parity-inventory.generated.json
-```
-
-`test/e2e/docs/parity-map.yaml` is the assertion-level migration map.
-Every inventory assertion must be classified as `mapped`, `deferred`, or
-`retired`; strict validation requires zero `unmapped` assertions:
-
-```bash
-npx tsx scripts/e2e/check-parity-map.ts --strict
-```
-
-Mapped assertions point at stable scenario-side assertion IDs emitted by
-suites (for example `smoke.cli.available`). Deferred assertions must name
-an owner plus a runner or secret requirement, and retired assertions must
-record reviewer/date evidence.
+Migration coverage is tracked through the layered scenario definitions, suite inventory, and the domain migration issues linked from issue #3588. Do not add a workflow-level parity report or assertion-ledger gate; use focused code review and the scenario coverage report to decide what to migrate next.
 
 ## How to add a scenario, state, or suite
 
@@ -118,6 +93,6 @@ describe the required shape; `run-scenario.sh <id> --plan-only`
 validates your change without running anything destructive.
 
 When adding a suite assertion, emit or preserve a stable `PASS: <id>` /
-`FAIL: <id>` log line, add the legacy assertion mapping if one exists, and use the dedicated parity workflow to regenerate inventory/report artifacts. Sandbox lifecycle assertions should use `validation_suites/lib/sandbox_lifecycle.sh`, consume `$E2E_CONTEXT_DIR/context.env`, and keep destructive snapshot restore checks isolated in the opt-in `snapshot-lifecycle` suite. Platform-specific scenarios such as GPU, macOS, WSL, Brev, or DGX Spark must also list `runner_requirements` in `scenarios.yaml`.
+`FAIL: <id>` log line, and update migration coverage through the scenario coverage report and the domain issues under `#3588`. Sandbox lifecycle assertions should use `validation_suites/lib/sandbox_lifecycle.sh`, consume `$E2E_CONTEXT_DIR/context.env`, and keep destructive snapshot restore checks isolated in the opt-in `snapshot-lifecycle` suite. Platform-specific scenarios such as GPU, macOS, WSL, Brev, or DGX Spark must also list `runner_requirements` in `scenarios.yaml`.
 
-Prefer new scenario-matrix coverage over new legacy-style `test-*.sh` scripts. Normal PR lint no longer blocks feature work on global parity-map bookkeeping; use the parity workflow when intentionally advancing migration coverage.
+Prefer new scenario-matrix coverage over new legacy-style `test-*.sh` scripts.

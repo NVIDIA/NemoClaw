@@ -80,6 +80,13 @@ On Linux, if the Docker daemon is running but you see "permission denied" errors
 The installer can add your user to the group, but Linux does not activate that membership in the current shell automatically.
 Add your user and activate the group in the current shell:
 
+<Warning title="Docker group access">
+NemoClaw needs Docker access.
+On personal Linux development machines, adding your user to the `docker` group is the standard way to run Docker without sudo.
+Members of the `docker` group can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path.
+For background, review Docker's [daemon attack surface guidance](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
+</Warning>
+
 ```console
 $ sudo usermod -aG docker $USER
 $ newgrp docker

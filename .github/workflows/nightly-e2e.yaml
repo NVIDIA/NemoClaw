@@ -163,7 +163,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -202,7 +202,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-cloud-onboard
           path: /tmp/nemoclaw-e2e-cloud-onboard-install.log
@@ -236,7 +236,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-cloud-inference
           path: /tmp/nemoclaw-e2e-cloud-inference-install.log
@@ -270,7 +270,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-skill-agent
           path: /tmp/nemoclaw-e2e-skill-agent-install.log
@@ -346,7 +346,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-messaging-providers
           path: |
@@ -385,7 +385,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-openclaw-slack-pairing
           path: /tmp/nemoclaw-e2e-openclaw-slack-pairing-install.log
@@ -421,7 +421,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-messaging-compatible-endpoint
           path: /tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log
@@ -460,7 +460,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-channels-add-remove
           path: |
@@ -516,7 +516,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-channels-stop-start
           path: |
@@ -562,7 +562,7 @@ jobs:
 
       - name: Upload onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-brave-search
           # The script scrubs $BRAVE_API_KEY from this log in place
@@ -598,7 +598,7 @@ jobs:
 
       - name: Upload onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-kimi-inference-compat
           path: /tmp/nemoclaw-e2e-kimi-inference-compat-onboard.log
@@ -606,7 +606,7 @@ jobs:
 
       - name: Upload build/setup log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-log-kimi-inference-compat
           path: /tmp/nemoclaw-e2e-kimi-inference-compat-build.log
@@ -614,7 +614,7 @@ jobs:
 
       - name: Upload agent log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: agent-log-kimi-inference-compat
           path: /tmp/nemoclaw-e2e-kimi-inference-compat-agent.log
@@ -654,7 +654,7 @@ jobs:
 
       - name: Upload onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: onboard-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
           path: /tmp/nemoclaw-e2e-bedrock-runtime-${{ matrix.agent }}-onboard.log
@@ -662,7 +662,7 @@ jobs:
 
       - name: Upload build/setup log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
           path: /tmp/nemoclaw-e2e-bedrock-runtime-${{ matrix.agent }}-build.log
@@ -670,7 +670,7 @@ jobs:
 
       - name: Upload fake Bedrock Runtime log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mock-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
           path: /tmp/nemoclaw-e2e-bedrock-runtime-${{ matrix.agent }}-mock.log
@@ -678,7 +678,7 @@ jobs:
 
       - name: Upload Bedrock Runtime adapter log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: adapter-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
           path: ~/.nemoclaw/bedrock-runtime-adapter.log
@@ -723,7 +723,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-token-rotation
           path: /tmp/nemoclaw-e2e-install.log
@@ -755,7 +755,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sandbox-survival-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -790,7 +790,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: issue-2478-crash-loop-recovery-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -827,7 +827,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermes-e2e-install-log
           path: /tmp/nemoclaw-e2e-hermes-install.log
@@ -867,7 +867,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openclaw-onboard-security-posture-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -907,7 +907,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermes-onboard-security-posture-install-log
           path: /tmp/nemoclaw-e2e-hermes-install.log
@@ -944,7 +944,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermes-inference-switch-install-log
           path: /tmp/nemoclaw-e2e-hermes-inference-switch-install.log
@@ -986,7 +986,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermes-discord-e2e-install-log
           path: /tmp/nemoclaw-e2e-hermes-discord-install.log
@@ -1026,7 +1026,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermes-slack-e2e-install-log
           path: /tmp/nemoclaw-e2e-hermes-slack-install.log
@@ -1266,7 +1266,7 @@ jobs:
 
       - name: Upload sandbox gateway logs on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sandbox-operations-docker-logs
           path: docker-logs/
@@ -1274,7 +1274,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sandbox-operations-test-log
           path: test-sandbox-operations-*.log
@@ -1308,7 +1308,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: inference-routing-test-log
           path: test-inference-routing-*.log
@@ -1344,7 +1344,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openclaw-inference-switch-install-log
           path: /tmp/nemoclaw-e2e-openclaw-inference-switch-install.log
@@ -1378,7 +1378,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: network-policy-test-log
           path: test-network-policy-*.log
@@ -1409,7 +1409,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: state-backup-restore-test-log
           path: test-state-backup-restore-*.log
@@ -1440,7 +1440,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: tunnel-lifecycle-test-log
           path: test-tunnel-lifecycle-*.log
@@ -1474,7 +1474,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: diagnostics-test-log
           path: test-diagnostics-*.log
@@ -1512,7 +1512,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-credential-migration
           path: /tmp/nemoclaw-e2e-install.log
@@ -1546,7 +1546,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: snapshot-commands-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -1580,7 +1580,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: shields-config-install-log
           path: /tmp/nemoclaw-e2e-shields-install.log
@@ -1614,7 +1614,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rebuild-openclaw-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -1649,7 +1649,7 @@ jobs:
 
       - name: Upload install logs on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: upgrade-stale-sandbox-logs
           path: |
@@ -1689,7 +1689,7 @@ jobs:
 
       - name: Upload gateway upgrade logs on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openshell-gateway-upgrade-logs
           path: |
@@ -1730,7 +1730,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rebuild-hermes-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -1766,7 +1766,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rebuild-hermes-stale-base-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -1806,7 +1806,7 @@ jobs:
           bash test/e2e/test-double-onboard.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: double-onboard-test-log
           path: test-double-onboard-*.log
@@ -1846,7 +1846,7 @@ jobs:
           bash test/e2e/test-onboard-repair.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: onboard-repair-test-log
           path: test-onboard-repair-*.log
@@ -1886,7 +1886,7 @@ jobs:
           bash test/e2e/test-onboard-resume.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: onboard-resume-test-log
           path: test-onboard-resume-*.log
@@ -1927,7 +1927,7 @@ jobs:
           bash test/e2e/test-onboard-negative-paths.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: onboard-negative-paths-test-log
           path: /tmp/nemoclaw-e2e-onboard-negative-paths.log
@@ -1967,7 +1967,7 @@ jobs:
           bash test/e2e/test-runtime-overrides.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: runtime-overrides-test-log
           path: test-runtime-overrides-*.log
@@ -2010,7 +2010,7 @@ jobs:
           bash test/e2e/test-credential-sanitization.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: credential-sanitization-test-log
           path: test-credential-sanitization-*.log
@@ -2053,7 +2053,7 @@ jobs:
           bash test/e2e/test-telegram-injection.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: telegram-injection-test-log
           path: test-telegram-injection-*.log
@@ -2089,7 +2089,7 @@ jobs:
 
       - name: Upload onboard logs on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: overlayfs-autofix-logs
           path: |
@@ -2130,7 +2130,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: device-auth-health-install-log
           path: /tmp/nemoclaw-e2e-health-install.log
@@ -2169,7 +2169,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: launchable-smoke-install-log
           path: /tmp/nemoclaw-launchable-install.log
@@ -2177,7 +2177,7 @@ jobs:
 
       - name: Upload onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: launchable-smoke-onboard-log
           path: /tmp/nemoclaw-launchable-onboard.log
@@ -2185,7 +2185,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: launchable-smoke-test-log
           path: /tmp/nemoclaw-launchable-test.log
@@ -2231,7 +2231,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gpu-e2e-install-log
           path: /tmp/nemoclaw-gpu-e2e-install.log
@@ -2239,7 +2239,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gpu-e2e-test-log
           path: /tmp/nemoclaw-gpu-e2e-test.log
@@ -2286,7 +2286,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gpu-double-onboard-install-log
           path: /tmp/nemoclaw-gpu-double-onboard-install.log
@@ -2294,7 +2294,7 @@ jobs:
 
       - name: Upload re-onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gpu-double-onboard-reonboard-log
           path: /tmp/nemoclaw-gpu-double-onboard-reonboard.log
@@ -2302,7 +2302,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gpu-double-onboard-test-log
           path: /tmp/nemoclaw-gpu-double-onboard-test.log

@@ -33,8 +33,9 @@ import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
+import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { runSetupDnsProxy } from "../dns";
-import { ensureLiveSandboxOrExit } from "./gateway-state";
+import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
 import {
   applyOpenShellVmDnsMonkeypatch,
@@ -50,6 +51,11 @@ export type SandboxConnectOptions = {
 type SpawnLikeResult = {
   status: number | null;
   signal?: NodeJS.Signals | null;
+};
+
+type SandboxListProbe = {
+  status: number | null;
+  output: string;
 };
 
 type SandboxInferenceRouteProbe = {
@@ -164,6 +170,51 @@ function sleepSync(ms: number): void {
     stdio: "ignore",
     timeout: ms + 1_000,
   });
+}
+
+const GATEWAY_UNAVAILABLE_RE =
+  /No gateway configured|No active gateway|Connection refused|client error \(Connect\)|tcp connect error|Status:\s*Disconnected/i;
+
+function isBlockingGatewayLifecycle(
+  lifecycle: ReturnType<typeof getNamedGatewayLifecycleState>,
+): boolean {
+  if (lifecycle.state === "named_unreachable" || lifecycle.state === "named_unhealthy") {
+    return true;
+  }
+  return lifecycle.state === "missing_named" && GATEWAY_UNAVAILABLE_RE.test(lifecycle.status || "");
+}
+
+function failConnectReadinessGatewayUnavailable(
+  sandboxName: string,
+  detailOutput = "",
+): never {
+  console.error("");
+  console.error(
+    `  OpenShell gateway is not running or unreachable; cannot verify sandbox '${sandboxName}' readiness.`,
+  );
+  if (detailOutput.trim()) {
+    console.error(detailOutput.trimEnd());
+    printGatewayLifecycleHint(detailOutput, sandboxName, console.error);
+  }
+  console.error("  Recovery:");
+  console.error("    1. Run: openshell gateway start --name nemoclaw");
+  console.error(`    2. If the gateway cannot be restarted, run: ${CLI_NAME} onboard`);
+  console.error(`    3. Retry: ${CLI_NAME} ${sandboxName} connect`);
+  process.exit(1);
+}
+
+function outputShowsGatewayUnavailable(output = ""): boolean {
+  return GATEWAY_UNAVAILABLE_RE.test(output);
+}
+
+function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
+  const lifecycle = getNamedGatewayLifecycleState();
+  if (isBlockingGatewayLifecycle(lifecycle)) {
+    failConnectReadinessGatewayUnavailable(
+      sandboxName,
+      lifecycle.status || lifecycle.gatewayInfo || "",
+    );
+  }
 }
 
 function probeSandboxInferenceRoute(
@@ -646,15 +697,27 @@ export async function connectSandbox(
   const deadline = startedAt + timeout * 1000;
   const elapsedSec = () => Math.floor((Date.now() - startedAt) / 1000);
   const remainingMs = () => Math.max(1, deadline - Date.now());
-  const runSandboxList = () =>
-    captureOpenshell(["sandbox", "list"], {
+  const runSandboxList = (): SandboxListProbe => {
+    const result = captureOpenshell(["sandbox", "list"], {
       ignoreError: true,
       timeout: remainingMs(),
-    }).output;
+    });
+    return { status: result.status, output: result.output };
+  };
 
-  const list = runSandboxList();
+  const listProbe = runSandboxList();
+  const listCommandFailed = listProbe.status !== 0;
+  if (listCommandFailed) {
+    if (outputShowsGatewayUnavailable(listProbe.output)) {
+      failConnectReadinessGatewayUnavailable(sandboxName, listProbe.output);
+    }
+  }
+  const list = listProbe.output;
   if (!isSandboxReady(list, sandboxName)) {
     const status = parseSandboxStatus(list, sandboxName);
+    if (!listCommandFailed && status && /^unknown$/i.test(status)) {
+      failIfGatewayBlocksConnectReadiness(sandboxName);
+    }
     const TERMINAL = new Set([
       "Failed",
       "Error",
@@ -678,13 +741,24 @@ export async function connectSandbox(
       const sleepFor = Math.min(interval, remainingMs() / 1000);
       if (sleepFor <= 0) break;
       spawnSync("sleep", [String(sleepFor)]);
-      const poll = runSandboxList();
+      const pollProbe = runSandboxList();
+      const pollCommandFailed = pollProbe.status !== 0;
+      if (pollCommandFailed) {
+        if (outputShowsGatewayUnavailable(pollProbe.output)) {
+          failConnectReadinessGatewayUnavailable(sandboxName, pollProbe.output);
+        }
+      }
+      const poll = pollProbe.output;
       const elapsed = elapsedSec();
       if (isSandboxReady(poll, sandboxName)) {
         ready = true;
         break;
       }
-      const cur = parseSandboxStatus(poll, sandboxName) || "unknown";
+      const parsedCur = parseSandboxStatus(poll, sandboxName);
+      const cur = parsedCur || "unknown";
+      if (!pollCommandFailed && parsedCur && /^unknown$/i.test(parsedCur)) {
+        failIfGatewayBlocksConnectReadiness(sandboxName);
+      }
       if (cur !== "unknown") everSeen = true;
       if (TERMINAL.has(cur)) {
         console.error("");

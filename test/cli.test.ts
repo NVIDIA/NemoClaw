@@ -282,6 +282,7 @@ function createCloudflaredServiceDir(prefix: string): { sandboxName: string; ser
 function createDebugCommandTestEnv(prefix: string): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
+  const sandboxName = `${prefix}${process.pid.toString(36)}-${Date.now().toString(36)}`;
   fs.mkdirSync(localBin, { recursive: true });
   fs.writeFileSync(
     path.join(localBin, "openshell"),
@@ -299,8 +300,15 @@ function createDebugCommandTestEnv(prefix: string): Record<string, string> {
   fs.writeFileSync(path.join(localBin, "docker"), ["#!/bin/sh", "exit 0"].join("\n"), {
     mode: 0o755,
   });
+  fs.writeFileSync(
+    path.join(localBin, "dmesg"),
+    ["#!/bin/sh", "echo 'nemoclaw test kernel message'", "exit 0"].join("\n"),
+    { mode: 0o755 },
+  );
   return {
     HOME: home,
+    NEMOCLAW_HOME: path.join(home, ".nemoclaw"),
+    NEMOCLAW_SANDBOX: sandboxName,
     PATH: `${localBin}:${process.env.PATH || ""}`,
   };
 }
@@ -1402,6 +1410,33 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Done")).toBeTruthy();
   });
 
+  it(
+    "debug --quick explains restricted dmesg instead of printing raw stderr",
+    testTimeoutOptions(30_000),
+    () => {
+      const env = createDebugCommandTestEnv("nemoclaw-cli-debug-dmesg-");
+      const localBin = env.PATH?.split(path.delimiter)[0];
+      if (!localBin) throw new Error("Expected debug test PATH to include a fake bin dir");
+      fs.writeFileSync(
+        path.join(localBin, "dmesg"),
+        [
+          "#!/bin/sh",
+          "echo 'dmesg: read kernel buffer failed: Operation not permitted' >&2",
+          "exit 1",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("debug --quick", env, 30000);
+
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("Kernel Messages");
+      expect(r.out).toContain("kernel messages skipped");
+      expect(r.out).toContain("dmesg access is restricted");
+      expect(r.out).not.toContain("dmesg: read kernel buffer failed: Operation not permitted");
+    },
+  );
+
   it("debug exits 1 on unknown option", () => {
     const r = run("debug --quik");
     expect(r.code).not.toBe(0);
@@ -1502,6 +1537,35 @@ describe("CLI dispatch", () => {
       }),
     );
   });
+
+  it(
+    "doctor reports fresh shields state as not configured instead of down",
+    testTimeoutOptions(30_000),
+    () => {
+      const setup = createDoctorTestSetup("nemoclaw-cli-doctor-shields-default-", [
+        'case "$*" in',
+        '  "status") printf "Server Status\\n\\n  Gateway: nemoclaw\\n  Status: Connected\\n"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+        '  "inference get") printf "Provider: nvidia-prod\\nModel: test-model\\n"; exit 0 ;;',
+        "esac",
+      ]);
+
+      const r = setup.runDoctor("alpha doctor --json");
+
+      const report = JSON.parse(r.out) as {
+        checks: Array<{ label: string; status: string; detail: string; hint?: string }>;
+      };
+      const shields = report.checks.find((check) => check.label === "Shields");
+      expect(shields).toEqual(
+        expect.objectContaining({
+          status: "info",
+          detail: "not configured (default mutable state)",
+        }),
+      );
+      expect(shields?.detail).not.toBe("down");
+    },
+  );
 
   it("doctor does not query sandbox state from a different active gateway", () => {
     const setup = createDoctorTestSetup("nemoclaw-cli-doctor-wrong-gateway-", [
@@ -2122,6 +2186,17 @@ describe("CLI dispatch", () => {
       "sandbox exec -n alpha -- tail -n 25 /tmp/gateway.log",
       "logs alpha -n 25 --source all",
     ]);
+  });
+
+  it("passes --follow --tail line count to both streaming log sources", () => {
+    const setup = createLogsTestSetup("nemoclaw-cli-logs-follow-tail-");
+    const r = setup.runLogs("alpha logs --follow --tail 50");
+
+    const calls = setup.readCalls();
+    expect(r.code).toBe(0);
+    expect(calls).toContain("settings set alpha --key ocsf_json_enabled --value true");
+    expect(calls).toContain("sandbox exec -n alpha -- tail -n 50 -f /tmp/gateway.log");
+    expect(calls).toContain("logs alpha -n 50 --source all --tail");
   });
 
   it("passes --since to OpenShell logs without an unfiltered gateway tail", () => {
@@ -3760,6 +3835,95 @@ describe("CLI dispatch", () => {
     expect(calls).toContain("sandbox connect alpha");
   });
 
+  it(
+    "fails fast with gateway recovery guidance when connect readiness sees a disconnected gateway",
+    () => {
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-cli-connect-gateway-down-"),
+      );
+      const localBin = path.join(home, "bin");
+      const registryDir = path.join(home, ".nemoclaw");
+      const markerFile = path.join(home, "openshell-calls");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(registryDir, { recursive: true });
+      fs.writeFileSync(
+        path.join(registryDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            alpha: {
+              name: "alpha",
+              model: "test-model",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+            },
+          },
+          defaultSandbox: "alpha",
+        }),
+        { mode: 0o600 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          `marker_file=${JSON.stringify(markerFile)}`,
+          'printf \'%s\\n\' "$*" >> "$marker_file"',
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  echo 'Sandbox:'",
+          "  echo",
+          "  echo '  Id: abc'",
+          "  echo '  Name: alpha'",
+          "  echo '  Namespace: openshell'",
+          "  echo '  Phase: Pending'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          "  echo 'alpha   unknown   103s ago'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "status" ]; then',
+          "  echo 'Server Status'",
+          "  echo",
+          "  echo '  Gateway: nemoclaw'",
+          "  echo '  Status: Disconnected'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+          "  echo 'Gateway Info'",
+          "  echo",
+          "  echo '  Gateway: nemoclaw'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "connect" ] && [ "$3" = "alpha" ]; then',
+          "  echo 'should-not-connect' >> \"$marker_file\"",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv(
+        "alpha connect",
+        {
+          HOME: home,
+          NEMOCLAW_CONNECT_TIMEOUT: "1",
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        execTimeout(10_000),
+      );
+
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("OpenShell gateway is not running or unreachable");
+      expect(r.out).toContain("nemoclaw onboard");
+      expect(r.out).not.toContain("Timed out after 1s");
+      const calls = fs.readFileSync(markerFile, "utf8").trim().split("\n").filter(Boolean);
+      expect(calls).toContain("status");
+      expect(calls).not.toContain("should-not-connect");
+    },
+    testTimeout(15_000),
+  );
+
   it("prints recovery guidance when readiness polling hits a terminal sandbox state", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-failed-"));
     const localBin = path.join(home, "bin");
@@ -4746,6 +4910,53 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Start Ollama and retry");
     expect(r.out).toContain("http://127.0.0.1:11434/api/tags");
   });
+
+  it(
+    "status reports fresh shields state as not configured instead of down",
+    testTimeoutOptions(30_000),
+    () => {
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-cli-status-shields-default-"),
+      );
+      const localBin = path.join(home, "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      writeSandboxRegistry(home);
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  echo 'Error: sandbox not found' >&2",
+          "  exit 1",
+          "fi",
+          'if [ "$1" = "status" ]; then',
+          "  echo 'Server Status'",
+          "  echo",
+          "  echo '  Gateway: nemoclaw'",
+          "  echo '  Status: Connected'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ] && [ "$3" = "-g" ] && [ "$4" = "nemoclaw" ]; then',
+          "  echo 'Gateway Info'",
+          "  echo",
+          "  echo '  Gateway: nemoclaw'",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("alpha status 2>&1", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(r.code).toBe(1);
+      expect(r.out).toContain("Permissions: not configured (default mutable state)");
+      expect(r.out).not.toContain("Permissions: shields down");
+    },
+  );
 
   it("prints healthy inference only after the sandbox and gateway are verified", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-healthy-"));

@@ -59,13 +59,26 @@ spc_assert_credentials_expected() {
     echo "[dry-run] would list gateway credentials without raw values"
     return 0
   fi
-  local listed
-  if ! listed="$(nemoclaw credentials list 2>&1 | spc_redact_secret_text)"; then
-    printf '%s\n' "${listed}"
+  local raw_file listed_raw listed list_rc
+  raw_file="$(mktemp "${TMPDIR:-/tmp}/nemoclaw-credentials-list.XXXXXX")"
+  chmod 600 "${raw_file}"
+  if nemoclaw credentials list >"${raw_file}" 2>&1; then
+    list_rc=0
+  else
+    list_rc=$?
+  fi
+  listed_raw="$(cat "${raw_file}")"
+  listed="$(printf '%s\n' "${listed_raw}" | spc_redact_secret_text)"
+  rm -f "${raw_file}"
+  printf '%s\n' "${listed}"
+  if [[ "${listed_raw}" != "${listed}" ]]; then
+    echo "credentials list emitted secret-looking raw output before redaction" >&2
+    return 1
+  fi
+  if ((list_rc != 0)); then
     echo "nemoclaw credentials list failed while credentials.expected=present" >&2
     return 1
   fi
-  printf '%s\n' "${listed}"
   if printf '%s\n' "${listed}" | grep -qi "No provider credentials registered"; then
     echo "no gateway credentials were listed while credentials.expected=present" >&2
     return 1
@@ -110,6 +123,23 @@ spc_assert_policy_preset_present() {
   fi
 }
 
+spc_semver_ge() {
+  local have="$1" want="$2" h_major h_minor h_patch w_major w_minor w_patch
+  IFS=. read -r h_major h_minor h_patch <<<"${have}"
+  IFS=. read -r w_major w_minor w_patch <<<"${want}"
+  h_major=$((10#${h_major:-0}))
+  h_minor=$((10#${h_minor:-0}))
+  h_patch=$((10#${h_patch:-0}))
+  w_major=$((10#${w_major:-0}))
+  w_minor=$((10#${w_minor:-0}))
+  w_patch=$((10#${w_patch:-0}))
+  ((h_major > w_major)) && return 0
+  ((h_major < w_major)) && return 1
+  ((h_minor > w_minor)) && return 0
+  ((h_minor < w_minor)) && return 1
+  ((h_patch >= w_patch))
+}
+
 spc_assert_openshell_credential_rewrite_supported() {
   spc_assertion_id "post-onboard.gateway.openshell-version-supports-credential-rewrite"
   spc_require_context E2E_SCENARIO
@@ -117,10 +147,21 @@ spc_assert_openshell_credential_rewrite_supported() {
     echo "[dry-run] would verify OpenShell gateway capability metadata"
     return 0
   fi
-  local openshell_bin binary_strings feature
+  local openshell_bin version_output version minimum_version binary_strings feature
+  minimum_version="0.0.39"
   openshell_bin="$(command -v openshell 2>/dev/null || true)"
   if [[ -z "${openshell_bin}" ]]; then
     echo "openshell binary was not found on PATH" >&2
+    return 1
+  fi
+  version_output="$(${openshell_bin} --version 2>&1 || true)"
+  version="$(printf '%s\n' "${version_output}" | grep -oE '[0-9]+(\.[0-9]+){1,2}' | head -n1 || true)"
+  if [[ -z "${version}" ]]; then
+    echo "could not determine OpenShell version from: ${version_output}" >&2
+    return 1
+  fi
+  if ! spc_semver_ge "${version}" "${minimum_version}"; then
+    echo "OpenShell ${version} is below credential rewrite minimum ${minimum_version}" >&2
     return 1
   fi
   if ! command -v strings >/dev/null 2>&1; then
@@ -134,7 +175,7 @@ spc_assert_openshell_credential_rewrite_supported() {
       return 1
     fi
   done
-  echo "OpenShell credential rewrite capability markers present"
+  echo "OpenShell ${version} credential rewrite capability markers present"
 }
 
 spc_agent_config_path() {
