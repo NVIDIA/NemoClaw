@@ -14,6 +14,11 @@ export type SandboxGpuConfig = {
   errors: string[];
 };
 
+export const JETSON_SANDBOX_GPU_UNSUPPORTED_MESSAGE =
+  "Jetson/Tegra sandbox GPU passthrough is not supported by NemoClaw/OpenShell.";
+export const JETSON_SANDBOX_GPU_WORKAROUND_MESSAGE =
+  "Destroying/recreating the sandbox or gateway will not enable it; re-run with --no-gpu or NEMOCLAW_SANDBOX_GPU=0.";
+
 export type ResumeSandboxGpuOverrides = {
   flag: SandboxGpuFlag;
   device: string | null;
@@ -40,8 +45,11 @@ export function resolveSandboxGpuMode(args: {
   flag?: SandboxGpuFlag;
 }): SandboxGpuMode {
   let mode: SandboxGpuMode = args.envMode ?? "auto";
-  // GPU sandbox passthrough does not currently work on Jetson; disable by default
-  if (args.gpu?.platform === "jetson" && args.envMode === null) mode = "0";
+  // GPU sandbox passthrough is not supported on Jetson/Tegra; keep auto/default
+  // behavior on the CPU sandbox path unless the user explicitly forces GPU.
+  if (args.gpu?.platform === "jetson" && (args.envMode === null || args.envMode === "auto")) {
+    mode = "0";
+  }
   if (args.flag === "enable") mode = "1";
   if (args.flag === "disable") mode = "0";
   return mode;
@@ -77,6 +85,10 @@ export function resolveSandboxGpuConfig(
   const hostGpuDetected = isNvidiaGpuDetected(gpu);
   if (mode === "1" && !hostGpuDetected) {
     errors.push("Sandbox GPU was requested, but no NVIDIA GPU was detected on the host.");
+  }
+  if (mode === "1" && gpu?.platform === "jetson") {
+    errors.push(JETSON_SANDBOX_GPU_UNSUPPORTED_MESSAGE);
+    errors.push(JETSON_SANDBOX_GPU_WORKAROUND_MESSAGE);
   }
 
   return {

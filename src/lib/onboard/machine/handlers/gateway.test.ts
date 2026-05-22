@@ -15,7 +15,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
     lifecycle: vi.fn(() => false),
     verifyContainer: vi.fn(() => "running"),
     waitHttp: vi.fn(async () => true),
-    runOpenshell: vi.fn(),
+    stopDashboardForward: vi.fn(),
     destroy: vi.fn(() => true),
     destroyForReuse: vi.fn(() => "missing" as GatewayReuseState),
     imageDrift: vi.fn(() => null),
@@ -41,7 +41,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
       verifyGatewayContainerRunning: calls.verifyContainer,
       waitForGatewayHttpReady: calls.waitHttp,
       getGatewayLocalEndpoint: () => "http://127.0.0.1:31818",
-      runOpenshell: calls.runOpenshell,
+      stopDashboardForward: calls.stopDashboardForward,
       destroyGateway: calls.destroy,
       destroyGatewayForReuse: calls.destroyForReuse,
       getGatewayClusterImageDrift: calls.imageDrift,
@@ -73,7 +73,6 @@ function baseOptions(
     gpu: { type: "nvidia" },
     gpuPassthrough: true,
     gatewayName: "nemoclaw",
-    dashboardPort: 18789,
     recordedSandboxName: null,
     requestedSandboxName: "my-assistant",
     recreateSandbox: false,
@@ -124,9 +123,7 @@ describe("handleGatewayState", () => {
 
     await handleGatewayState(baseOptions(deps, "healthy"));
 
-    expect(calls.runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789"], {
-      ignoreError: true,
-    });
+    expect(calls.stopDashboardForward).toHaveBeenCalledOnce();
     expect(deps.destroyGatewayForReuse).toHaveBeenCalledWith(
       deps.destroyGateway,
       "  ✓ Stale gateway metadata cleaned up",
@@ -157,9 +154,7 @@ describe("handleGatewayState", () => {
 
     await handleGatewayState(baseOptions(deps, "healthy"));
 
-    expect(calls.runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789"], {
-      ignoreError: true,
-    });
+    expect(calls.stopDashboardForward).toHaveBeenCalledOnce();
     expect(deps.destroyGatewayForReuse).toHaveBeenCalledWith(
       deps.destroyGateway,
       "  ✓ Stale gateway cleaned up",

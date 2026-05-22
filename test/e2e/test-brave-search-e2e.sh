@@ -33,6 +33,8 @@ export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1800
 SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=test/e2e/e2e-timeout.sh
 . "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
+# shellcheck source=test/e2e/lib/openclaw-json.sh
+. "${SCRIPT_DIR_TIMEOUT}/lib/openclaw-json.sh"
 
 PASS=0
 FAIL=0
@@ -306,19 +308,7 @@ check_real_brave_search_via_agent() {
     return
   fi
 
-  reply=$(printf '%s' "$raw" | python3 -c "
-import json, sys
-try:
-    doc = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-result = doc.get('result') or {}
-parts = []
-for p in result.get('payloads') or []:
-    if isinstance(p, dict) and isinstance(p.get('text'), str):
-        parts.append(p['text'])
-print('\n'.join(parts))
-" 2>/dev/null) || true
+  reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
 
   # NVIDIA-related phrasing (nvidia, gpu, cuda, geforce) is overwhelmingly
   # likely in any legitimate top-1 web result for the query "NVIDIA".

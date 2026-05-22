@@ -7,13 +7,15 @@ vi.mock("../adapters/docker", () => ({
   dockerInspect: vi.fn(),
 }));
 
+import * as docker from "../adapters/docker";
+import type { GatewayReuseState } from "../state/gateway";
 import {
   canRestartCpuOnlyGatewayForGpuIntent,
   decideGatewayGpuReuseForGpuIntent,
   inspectLegacyGatewayGpuPassthroughResult,
+  reconcileGatewayGpuReuseForGpuIntent,
   shouldInspectLegacyGatewayGpuPassthrough,
 } from "./gateway-gpu-passthrough";
-import type { GatewayReuseState } from "../state/gateway";
 
 describe("gateway GPU passthrough inspection", () => {
   const healthy: GatewayReuseState = "healthy";
@@ -137,5 +139,45 @@ describe("gateway GPU passthrough inspection", () => {
     );
     expect(canRestartCpuOnlyGatewayForGpuIntent(["alpha"], "beta", true)).toBe(false);
     expect(canRestartCpuOnlyGatewayForGpuIntent(["alpha", "beta"], "alpha", true)).toBe(false);
+  });
+
+  it("aborts unsupported Jetson GPU passthrough before gateway inspection or cleanup", () => {
+    vi.mocked(docker.dockerInspect).mockClear();
+    const stopDashboardForwards = vi.fn();
+    const retireLegacyGatewayForDockerDriverUpgrade = vi.fn();
+    const destroyGatewayRuntimeForGpuReuse = vi.fn();
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
+      throw new Error(`exit:${code}`);
+    }) as never);
+
+    try {
+      expect(() =>
+        reconcileGatewayGpuReuseForGpuIntent({
+          gatewayReuseState: healthy,
+          gpuPassthrough: true,
+          gatewayName: "nemoclaw",
+          currentSandboxName: "jetson-box",
+          hostGpuPlatform: "jetson",
+          recreateSandbox: true,
+          confirmedDockerDriverGateway: false,
+          stopDashboardForwards,
+          retireLegacyGatewayForDockerDriverUpgrade,
+          destroyGatewayRuntimeForGpuReuse,
+        }),
+      ).toThrow("exit:1");
+
+      const message = errorSpy.mock.calls.map((call) => call[0]).join("\n");
+      expect(message).toContain("Jetson/Tegra sandbox GPU passthrough is not supported");
+      expect(message).toContain("--no-gpu");
+      expect(message).not.toContain("destroy --yes");
+      expect(docker.dockerInspect).not.toHaveBeenCalled();
+      expect(stopDashboardForwards).not.toHaveBeenCalled();
+      expect(retireLegacyGatewayForDockerDriverUpgrade).not.toHaveBeenCalled();
+      expect(destroyGatewayRuntimeForGpuReuse).not.toHaveBeenCalled();
+    } finally {
+      errorSpy.mockRestore();
+      exitSpy.mockRestore();
+    }
   });
 });

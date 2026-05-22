@@ -75,6 +75,18 @@ describe("gpuPassthroughRecoveryLines", () => {
     // No double-spaced "nemoclaw  destroy" rendering.
     expect(joined).not.toMatch(/nemoclaw\s{2,}destroy/);
   });
+
+  it("does not suggest destroy/recreate as sufficient for unsupported Jetson passthrough", () => {
+    const lines = gpuPassthroughRecoveryLines(["jetson-box"], {
+      unsupportedPlatform: "jetson",
+    });
+    const joined = lines.join("\n");
+    expect(joined).toContain("Jetson/Tegra sandbox GPU passthrough is not supported");
+    expect(joined).toContain("--no-gpu");
+    expect(joined).toContain("NEMOCLAW_SANDBOX_GPU=0");
+    expect(joined).not.toContain("destroy --yes");
+    expect(joined).not.toContain("nemoclaw onboard --gpu");
+  });
 });
 
 describe("reportGpuPassthroughRecovery", () => {
@@ -93,5 +105,19 @@ describe("reportGpuPassthroughRecovery", () => {
     const joined = emit.mock.calls.map((c) => c[0]).join("\n");
     expect(joined).toContain("nemoclaw alpha destroy --yes");
     expect(joined).toContain("nemoclaw beta destroy --yes --cleanup-gateway");
+  });
+
+  it("does not load registered names for unsupported Jetson passthrough", () => {
+    const emit = vi.fn();
+    const loadNames = vi.fn(() => ["jetson-box"]);
+    reportGpuPassthroughRecovery(emit, loadNames, {
+      unsupportedPlatform: "jetson",
+    });
+    const joined = emit.mock.calls.map((c) => c[0]).join("\n");
+
+    expect(loadNames).not.toHaveBeenCalled();
+    expect(joined).toContain("Jetson/Tegra sandbox GPU passthrough is not supported");
+    expect(joined).toContain("nemoclaw onboard --no-gpu");
+    expect(joined).not.toContain("jetson-box");
   });
 });

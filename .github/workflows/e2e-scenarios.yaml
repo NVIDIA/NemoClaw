@@ -10,6 +10,20 @@
 name: E2E / Scenario Runner
 
 on:
+  workflow_call:
+    inputs:
+      scenario:
+        description: "Scenario id (e.g. ubuntu-repo-cloud-openclaw)"
+        required: true
+        type: string
+      suite_filter:
+        description: "Comma-separated suite ids to run (optional; defaults to the scenario's full suite list)"
+        required: false
+        default: ""
+        type: string
+    secrets:
+      NVIDIA_API_KEY:
+        required: false
   workflow_dispatch:
     inputs:
       scenario:
@@ -26,7 +40,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: e2e-scenarios-${{ github.event.inputs.scenario }}
+  group: e2e-scenarios-${{ inputs.scenario }}
   cancel-in-progress: false
 
 jobs:
@@ -44,7 +58,7 @@ jobs:
     steps:
       - id: pick
         env:
-          SCENARIO: ${{ github.event.inputs.scenario }}
+          SCENARIO: ${{ inputs.scenario }}
         run: |
           case "${SCENARIO}" in
             macos-*)  echo "runner=macos-26"      >> "$GITHUB_OUTPUT" ;;
@@ -66,41 +80,73 @@ jobs:
       NEMOCLAW_RECREATE_SANDBOX: "1"
     steps:
       - name: Force LF line endings for WSL checkout
-        if: startsWith(github.event.inputs.scenario, 'wsl-')
+        if: startsWith(inputs.scenario, 'wsl-')
         shell: powershell
         run: git config --global core.autocrlf false
 
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up Node
-        if: ${{ !startsWith(github.event.inputs.scenario, 'wsl-') }}
-        uses: actions/setup-node@v6
+        if: ${{ !startsWith(inputs.scenario, 'wsl-') }}
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
         with:
           node-version: 22
           cache: npm
 
       - name: Install root dependencies
-        if: ${{ !startsWith(github.event.inputs.scenario, 'wsl-') }}
+        if: ${{ !startsWith(inputs.scenario, 'wsl-') }}
         run: npm ci --ignore-scripts
 
       - name: Render coverage report
-        if: ${{ !startsWith(github.event.inputs.scenario, 'wsl-') }}
+        if: ${{ !startsWith(inputs.scenario, 'wsl-') }}
+        env:
+          SCENARIO: ${{ inputs.scenario }}
         run: |
           mkdir -p .e2e
           bash test/e2e/runtime/coverage-report.sh > .e2e/coverage.md
-          echo '## E2E scenario coverage' >> "$GITHUB_STEP_SUMMARY"
-          cat .e2e/coverage.md >> "$GITHUB_STEP_SUMMARY"
+          {
+            echo '# E2E Scenario Report'
+            echo ''
+            # Keep workflow_dispatch input in an env var so untrusted scenario text
+            # is data, not YAML-interpolated shell source.
+            printf '**Scenario:** `%s`\n' "$SCENARIO"
+            echo ''
+            cat .e2e/coverage.md
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Run scenario
-        if: ${{ !startsWith(github.event.inputs.scenario, 'wsl-') }}
+        if: ${{ !startsWith(inputs.scenario, 'wsl-') }}
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          E2E_SUITE_FILTER: ${{ github.event.inputs.suite_filter }}
+          E2E_SUITE_FILTER: ${{ inputs.suite_filter }}
+          SCENARIO: ${{ inputs.scenario }}
         run: |
-          bash test/e2e/runtime/run-scenario.sh "${{ github.event.inputs.scenario }}"
+          # Keep workflow inputs in env vars so untrusted scenario text
+          # is data, not YAML-interpolated shell source.
+          set +e
+          bash test/e2e/runtime/run-scenario.sh "$SCENARIO"
+          rc=$?
+          set -e
+          {
+            echo ''
+            echo '## Scenario execution result'
+            echo ''
+            if [ "$rc" -eq 0 ]; then
+              printf -- '- Scenario `%s` completed successfully.\n' "$SCENARIO"
+            else
+              printf -- '- Scenario `%s` failed with exit code `%s`.\n' "$SCENARIO" "$rc"
+            fi
+            if grep -R '^SKIP:' .e2e test/e2e/logs >/tmp/e2e-skips.txt 2>/dev/null; then
+              echo ''
+              echo '### Runtime skips observed'
+              echo ''
+              sed 's/^/- `/' /tmp/e2e-skips.txt | sed 's/$/`/'
+            fi
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          exit "$rc"
 
       - name: Resolve workspace paths for WSL
-        if: startsWith(github.event.inputs.scenario, 'wsl-')
+        if: startsWith(inputs.scenario, 'wsl-')
         shell: powershell
         run: |
           $winPath = "${{ github.workspace }}"
@@ -112,7 +158,7 @@ jobs:
           "WSL_WORKDIR=$wslWorkdir" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Ensure Ubuntu WSL exists
-        if: startsWith(github.event.inputs.scenario, 'wsl-')
+        if: startsWith(inputs.scenario, 'wsl-')
         shell: powershell
         run: |
           wsl --list --verbose 2>&1 | Out-Default
@@ -124,7 +170,7 @@ jobs:
           wsl --set-default $env:WSL_DISTRO
 
       - name: Install WSL dependencies
-        if: startsWith(github.event.inputs.scenario, 'wsl-')
+        if: startsWith(inputs.scenario, 'wsl-')
         shell: powershell
         run: |
           $script = @'
@@ -151,7 +197,7 @@ jobs:
           wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
 
       - name: Copy checkout into WSL ext4 workspace
-        if: startsWith(github.event.inputs.scenario, 'wsl-')
+        if: startsWith(inputs.scenario, 'wsl-')
         shell: powershell
         run: |
           $script = @"
@@ -169,7 +215,7 @@ jobs:
           wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
 
       - name: Install root dependencies in WSL
-        if: startsWith(github.event.inputs.scenario, 'wsl-')
+        if: startsWith(inputs.scenario, 'wsl-')
         shell: powershell
         run: |
           $script = @"
@@ -185,27 +231,29 @@ jobs:
           wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
 
       - name: Run scenario in WSL
-        if: startsWith(github.event.inputs.scenario, 'wsl-')
+        if: startsWith(inputs.scenario, 'wsl-')
         shell: powershell
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          E2E_SUITE_FILTER: ${{ github.event.inputs.suite_filter }}
+          E2E_SUITE_FILTER: ${{ inputs.suite_filter }}
+          SCENARIO: ${{ inputs.scenario }}
         run: |
-          $script = @"
+          $env:WSLENV = "NVIDIA_API_KEY:E2E_SUITE_FILTER:NEMOCLAW_RECREATE_SANDBOX:SCENARIO:WSL_WORKDIR"
+          $script = @'
           set -euo pipefail
-          cd '$env:WSL_WORKDIR'
-          export NVIDIA_API_KEY='$env:NVIDIA_API_KEY'
-          export E2E_SUITE_FILTER='$env:E2E_SUITE_FILTER'
-          export NEMOCLAW_RECREATE_SANDBOX='$env:NEMOCLAW_RECREATE_SANDBOX'
-          bash test/e2e/runtime/run-scenario.sh '${{ github.event.inputs.scenario }}'
-          "@
+          cd "$WSL_WORKDIR"
+          export NVIDIA_API_KEY
+          export E2E_SUITE_FILTER
+          export NEMOCLAW_RECREATE_SANDBOX
+          bash test/e2e/runtime/run-scenario.sh "$SCENARIO"
+          '@
           $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
           [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
           $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
           wsl -d $env:WSL_DISTRO -- bash -l $wslTmp
 
       - name: Copy WSL artifacts back to checkout
-        if: always() && startsWith(github.event.inputs.scenario, 'wsl-')
+        if: always() && startsWith(inputs.scenario, 'wsl-')
         shell: powershell
         run: |
           $script = @"
@@ -221,9 +269,9 @@ jobs:
 
       - name: Upload scenario artifacts
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: e2e-scenario-${{ github.event.inputs.scenario }}
+          name: e2e-scenario-${{ inputs.scenario }}
           path: |
             .e2e/
             test/e2e/logs/

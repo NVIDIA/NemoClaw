@@ -124,13 +124,13 @@ describe("verifyDeployment", () => {
     const deps = makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {
         if (script.includes("openclaw --version")) {
-          return { status: 0, stdout: "2026.4.24", stderr: "" };
+          return { status: 0, stdout: "2026.5.18", stderr: "" };
         }
         return { status: 0, stdout: "200", stderr: "" };
       },
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
-    expect(result.verification.gatewayVersion).toBe("2026.4.24");
+    expect(result.verification.gatewayVersion).toBe("2026.5.18");
   });
 
   it("reports null version when gateway is down (skips version probe)", async () => {
@@ -179,7 +179,7 @@ describe("verifyDeployment", () => {
     const deps = makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {
         if (script.includes("openclaw --version")) {
-          return { status: 0, stdout: "2026.4.24", stderr: "" };
+          return { status: 0, stdout: "2026.5.18", stderr: "" };
         }
         if (script.includes("inference.local")) {
           return { status: 0, stdout: "200", stderr: "" };
@@ -240,14 +240,14 @@ describe("formatVerificationDiagnostics", () => {
     const result = await verifyDeployment("my-sandbox", chain, makeDeps({
       executeSandboxCommand: (_name: string, script: string) => {
         if (script.includes("openclaw --version")) {
-          return { status: 0, stdout: "2026.4.24", stderr: "" };
+          return { status: 0, stdout: "2026.5.18", stderr: "" };
         }
         return { status: 0, stdout: "200", stderr: "" };
       },
     }), NO_RETRY);
     const lines = formatVerificationDiagnostics(result);
     expect(lines.some((l) => l.includes("verified"))).toBe(true);
-    expect(lines.some((l) => l.includes("2026.4.24"))).toBe(true);
+    expect(lines.some((l) => l.includes("2026.5.18"))).toBe(true);
   });
 
   it("prints failure diagnostics with hints when unhealthy", async () => {

@@ -107,14 +107,14 @@ export async function handlePreflightState<
   if (resumePreflight) {
     deps.skippedStepMessage("preflight", "cached");
     gpu = deps.detectGpu();
-    const resumeOptedOutGpuPassthrough = noGpu || (!gpuRequested && session?.gpuPassthrough === false);
+    const resumeSandboxGpuConfig = deps.resolveSandboxGpuConfig(gpu, {
+      flag: effectiveSandboxGpuFlag,
+      device: effectiveSandboxGpuDevice,
+    });
+    deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);
+    const resumeOptedOutGpuPassthrough =
+      noGpu || (!gpuRequested && session?.gpuPassthrough === false) || !resumeSandboxGpuConfig.sandboxGpuEnabled;
     deps.assertCdiNvidiaGpuSpecPresent(deps.assessHost(), resumeOptedOutGpuPassthrough);
-    deps.validateSandboxGpuPreflight(
-      deps.resolveSandboxGpuConfig(gpu, {
-        flag: effectiveSandboxGpuFlag,
-        device: effectiveSandboxGpuDevice,
-      }),
-    );
   } else {
     await deps.startRecordedStep("preflight");
     gpu = await deps.runPreflight({ optedOutGpuPassthrough: noGpu });
