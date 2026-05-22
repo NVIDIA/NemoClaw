@@ -52,6 +52,10 @@ export class OnboardRuntimeBoundary {
     return this.getRuntime().markStepSkipped(stepName);
   }
 
+  async recordStepFailed(stepName: string, message: string | null): Promise<Session> {
+    return this.getRuntime().markStepFailed(stepName, message);
+  }
+
   async recordSessionComplete(updates: SessionUpdates = {}): Promise<Session> {
     return this.getRuntime().completeSession(updates);
   }

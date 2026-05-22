@@ -8923,6 +8923,7 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
 const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
 const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
 const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardRuntimeBoundary);
+const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
 const recordSessionComplete = onboardRuntimeBoundary.recordSessionComplete.bind(onboardRuntimeBoundary);
 
 const ONBOARD_STEP_INDEX: Record<string, { number: number; title: string }> = {
@@ -9904,6 +9905,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         openshellShellCommand,
         openshellBinary: getOpenshellBinary(),
         startRecordedStep,
+        recordStepComplete,
+        recordStepFailed,
         skippedStepMessage,
       });
       ensureAgentDashboardForward(sandboxName, agent);
