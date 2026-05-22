@@ -154,6 +154,59 @@ network_policies:
     });
   });
 
+  it("records active channel policies already provided by an agent base policy", () => {
+    const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  discord: {}\n");
+
+    expect(prepareInitialSandboxCreatePolicy(basePolicyPath, ["discord"])).toEqual({
+      policyPath: basePolicyPath,
+      appliedPresets: ["discord"],
+    });
+  });
+
+  it("filters inactive Hermes messaging policies from the create-time policy", () => {
+    const basePolicyPath = tmpPolicy(
+      [
+        "version: 1",
+        "network_policies:",
+        "  pypi: {}",
+        "  telegram: {}",
+        "  discord: {}",
+        "  slack: {}",
+        "  wechat_bridge: {}",
+        "",
+      ].join("\n"),
+    );
+
+    const prepared = prepareInitialSandboxCreatePolicy(basePolicyPath, ["discord"], {
+      agentName: "hermes",
+    });
+
+    expect(prepared.policyPath).not.toBe(basePolicyPath);
+    expect(prepared.appliedPresets).toEqual(["discord"]);
+    expect(getNetworkPolicyNames(fs.readFileSync(prepared.policyPath, "utf-8"))).toEqual(
+      new Set(["pypi", "discord"]),
+    );
+    expect(prepared.cleanup?.()).toBe(true);
+    expect(fs.existsSync(prepared.policyPath)).toBe(false);
+  });
+
+  it("filters inactive Hermes messaging policies from the relative Hermes policy path", () => {
+    const hermesPolicyPath = path.relative(
+      process.cwd(),
+      path.join(import.meta.dirname, "..", "..", "..", "agents", "hermes", "policy-additions.yaml"),
+    );
+
+    const prepared = prepareInitialSandboxCreatePolicy(hermesPolicyPath, ["discord"]);
+    const policyNames = getNetworkPolicyNames(fs.readFileSync(prepared.policyPath, "utf-8"));
+
+    expect(policyNames?.has("discord")).toBe(true);
+    expect(policyNames?.has("telegram")).toBe(false);
+    expect(policyNames?.has("slack")).toBe(false);
+    expect(policyNames?.has("wechat_bridge")).toBe(false);
+    expect(prepared.cleanup?.()).toBe(true);
+    expect(fs.existsSync(prepared.policyPath)).toBe(false);
+  });
+
   it("merges missing create-time presets into a temporary policy", () => {
     const basePolicyPath = tmpPolicy("version: 1\nnetwork_policies:\n  base: {}\n");
 

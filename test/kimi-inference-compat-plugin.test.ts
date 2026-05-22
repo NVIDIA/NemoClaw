@@ -172,6 +172,56 @@ describe("nemoclaw Kimi inference compat plugin", () => {
     ]);
   });
 
+  it("canonicalizes mixed streamed split calls plus the original combined call", () => {
+    const message = {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        {
+          type: "toolCall",
+          id: "call_kimi_exec_split_1_hostname",
+          name: "exec",
+          arguments: { command: "hostname" },
+        },
+        {
+          type: "toolCall",
+          id: "call_kimi_exec_split_2_date",
+          name: "exec",
+          arguments: { command: "date" },
+        },
+        {
+          type: "toolCall",
+          id: "call_kimi_exec",
+          name: "exec",
+          arguments: { command: "hostname; date; uptime" },
+        },
+      ],
+    };
+
+    expect(plugin.__testing.rewriteSafeCombinedExecToolCallInMessage(message)).toBe(true);
+
+    expect(message.content).toEqual([
+      {
+        type: "toolCall",
+        id: "call_kimi_exec_split_1_hostname",
+        name: "exec",
+        arguments: { command: "hostname" },
+      },
+      {
+        type: "toolCall",
+        id: "call_kimi_exec_split_2_date",
+        name: "exec",
+        arguments: { command: "date" },
+      },
+      {
+        type: "toolCall",
+        id: "call_kimi_exec_split_3_uptime",
+        name: "exec",
+        arguments: { command: "uptime" },
+      },
+    ]);
+  });
+
   it.each([
     "hostname && date && uptime",
     "hostname; date; uptime > /tmp/out",

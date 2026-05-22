@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 
 import { describe, it } from "vitest";
 
-import { buildVllmMenuEntries } from "../../../dist/lib/onboard/vllm-menu";
+import { buildVllmMenuEntries } from "./vllm-menu";
 
 describe("buildVllmMenuEntries", () => {
   it("returns no entries when nothing is running, no profile, and no opt-in", () => {
@@ -47,6 +47,49 @@ describe("buildVllmMenuEntries", () => {
     assert.equal(entries.length, 1);
     assert.equal(entries[0].key, "install-vllm");
     assert.equal(entries[0].label, "Install vLLM (Linux NVIDIA)");
+  });
+
+  it("returns the install entry by default for DGX Spark", () => {
+    const entries = buildVllmMenuEntries({
+      vllmRunning: false,
+      vllmProfile: { name: "DGX Spark" },
+      experimental: false,
+      platform: "spark",
+      hasVllmImage: false,
+      env: {},
+      log: () => {},
+    });
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].key, "install-vllm");
+    assert.equal(entries[0].label, "Install vLLM (DGX Spark)");
+  });
+
+  it("returns the start entry by default for DGX Station when the image is already cached", () => {
+    const entries = buildVllmMenuEntries({
+      vllmRunning: false,
+      vllmProfile: { name: "DGX Station" },
+      experimental: false,
+      platform: "station",
+      hasVllmImage: true,
+      env: {},
+      log: () => {},
+    });
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0].key, "install-vllm");
+    assert.equal(entries[0].label, "Start vLLM (DGX Station)");
+  });
+
+  it("keeps generic Linux managed vLLM behind EXPERIMENTAL", () => {
+    const entries = buildVllmMenuEntries({
+      vllmRunning: false,
+      vllmProfile: { name: "Linux NVIDIA" },
+      experimental: false,
+      platform: "linux",
+      hasVllmImage: false,
+      env: {},
+      log: () => {},
+    });
+    assert.deepEqual(entries, []);
   });
 
   it("uses Start verb when the image is already cached", () => {

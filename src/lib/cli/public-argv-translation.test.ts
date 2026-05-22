@@ -132,6 +132,11 @@ describe("translatePublicSandboxArgv", () => {
       "sandbox:doctor",
       ["alpha", "--json"],
     );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "dashboard-url", ["--quiet"]),
+      "sandbox:dashboard-url",
+      ["alpha", "--quiet"],
+    );
   });
 
   it("translates legacy hyphenated actions to native oclif argv", () => {

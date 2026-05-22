@@ -16,7 +16,7 @@ vi.mock("@oclif/core", () => ({
   execute: executeMock,
 }));
 
-import { runOclifArgv, runCompatibilityOclifCommandById } from "./oclif-runner";
+import { runOclifArgv, runOclifCommandById } from "./oclif-runner";
 
 function makeConfig() {
   const rootPlugin = {
@@ -121,7 +121,7 @@ describe("runOclifArgv", () => {
   });
 });
 
-describe("runCompatibilityOclifCommandById", () => {
+describe("runOclifCommandById", () => {
   beforeEach(() => {
     executeMock.mockReset();
     runCommandMock.mockReset();
@@ -140,7 +140,7 @@ describe("runCompatibilityOclifCommandById", () => {
     loadMock.mockResolvedValue(config);
     runCommandMock.mockResolvedValue(undefined);
 
-    await runCompatibilityOclifCommandById("list", ["--json"], { rootDir: "/repo" });
+    await runOclifCommandById("list", ["--json"], { rootDir: "/repo" });
 
     expect(loadMock).toHaveBeenCalledWith("/repo");
     expect(runCommandMock).toHaveBeenCalledWith("list", ["--json"]);
@@ -159,7 +159,7 @@ describe("runCompatibilityOclifCommandById", () => {
     });
 
     await expect(
-      runCompatibilityOclifCommandById("list", ["--bogus"], { rootDir: "/repo", error: errorLine, exit }),
+      runOclifCommandById("list", ["--bogus"], { rootDir: "/repo", error: errorLine, exit }),
     ).rejects.toThrow("exit:2");
 
     expect(errorLine).toHaveBeenCalledWith("  Nonexistent flag: --bogus\nSee more help");
@@ -174,7 +174,7 @@ describe("runCompatibilityOclifCommandById", () => {
     });
 
     await expect(
-      runCompatibilityOclifCommandById("status", ["extra"], { rootDir: "/repo", error: errorLine, exit }),
+      runOclifCommandById("status", ["extra"], { rootDir: "/repo", error: errorLine, exit }),
     ).rejects.toThrow("exit:2");
 
     expect(errorLine).toHaveBeenCalledWith("  Unexpected argument: extra");
@@ -191,7 +191,7 @@ describe("runCompatibilityOclifCommandById", () => {
     runCommandMock.mockRejectedValue(new ExitError("EEXIT: 0"));
     const errorLine = vi.fn();
 
-    await runCompatibilityOclifCommandById("list", ["--help"], { rootDir: "/repo", error: errorLine });
+    await runOclifCommandById("list", ["--help"], { rootDir: "/repo", error: errorLine });
 
     expect(process.exitCode).toBe(0);
     expect(errorLine).not.toHaveBeenCalled();
@@ -208,7 +208,7 @@ describe("runCompatibilityOclifCommandById", () => {
     runCommandMock.mockRejectedValue(new WeirdError("Could not verify sandbox 'my-assist' against the live OpenShell gateway"));
     const errorLine = vi.fn();
 
-    await runCompatibilityOclifCommandById("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
+    await runOclifCommandById("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
 
     expect(process.exitCode).toBe(0);
     expect(errorLine).toHaveBeenCalledWith(
@@ -226,7 +226,7 @@ describe("runCompatibilityOclifCommandById", () => {
     runCommandMock.mockRejectedValue(new BlankError(""));
     const errorLine = vi.fn();
 
-    await runCompatibilityOclifCommandById("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
+    await runOclifCommandById("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
 
     expect(process.exitCode).toBe(0);
     expect(errorLine).toHaveBeenCalledOnce();
@@ -238,7 +238,7 @@ describe("runCompatibilityOclifCommandById", () => {
     const error = new Error("boom");
     runCommandMock.mockRejectedValue(error);
 
-    await expect(runCompatibilityOclifCommandById("list", [], { rootDir: "/repo" })).rejects.toBe(error);
+    await expect(runOclifCommandById("list", [], { rootDir: "/repo" })).rejects.toBe(error);
   });
 
   it("exits cleanly without rethrowing when oclif Command.exit(code) bubbles up", async () => {
@@ -255,7 +255,7 @@ describe("runCompatibilityOclifCommandById", () => {
     });
 
     await expect(
-      runCompatibilityOclifCommandById("sandbox:gateway:token", ["hermes"], {
+      runOclifCommandById("sandbox:gateway:token", ["hermes"], {
         rootDir: "/repo",
         error: errorLine,
         exit,
@@ -278,7 +278,7 @@ describe("runCompatibilityOclifCommandById", () => {
     });
 
     await expect(
-      runCompatibilityOclifCommandById("skill:install", [], { rootDir: "/repo", error: errorLine, exit }),
+      runOclifCommandById("skill:install", [], { rootDir: "/repo", error: errorLine, exit }),
     ).rejects.toThrow("exit:2");
 
     expect(errorLine).toHaveBeenCalledWith("  Missing 1 required arg: path");

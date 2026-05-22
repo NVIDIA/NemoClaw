@@ -125,8 +125,9 @@ RUN mkdir -p /sandbox/.hermes/memories \
 
 # Pre-create shell init files for the sandbox user.
 # The Hermes entrypoint writes proxy vars and
-# HERMES_HOME to /tmp/nemoclaw-proxy-env.sh (root-owned, mode 444); these rc
-# files source it on every interactive `openshell sandbox connect` session.
+# HERMES_HOME to /tmp/nemoclaw-proxy-env.sh (mode 444, root-owned when the
+# entrypoint runs as root); these rc files source it on every interactive
+# `openshell sandbox connect` session.
 # Ref: #2376.
 # hadolint ignore=SC2016,SC2028
 RUN printf '%s\n' \

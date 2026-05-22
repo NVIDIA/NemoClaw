@@ -135,14 +135,15 @@ Legend: ⬜ not started · 🟨 in progress · ✅ migrated · 🔵 parity verif
 - ⬜ `test-skill-agent-e2e.sh` (244) → `onboarding/skill-agent/`
 - ⬜ `test-docs-validation.sh` (161) → `lifecycle/docs-validation/`
 
-## Parallel verification
+## Migration tracking
 
-Before merge, `.github/workflows/e2e-parity-compare.yaml` (Wave 0.F.1)
-will run each migrated scenario next to its legacy counterpart and diff
-PASS/FAIL per assertion via `test/e2e/docs/parity-map.yaml` +
-`scripts/e2e/compare-parity.sh`.
+The old workflow-level parity report has been removed. Migration is tracked by
+coverage domain under issue #3588 and its child issues. For each domain, add the
+missing primitive layer first, then migrate assertions into scenario plans and
+post-onboard suites with stable assertion IDs.
 
-Merge gate: **zero divergence**. Documented flaky assertions are
-compared as "both-pass-or-both-fail" rather than strict equality.
+Use the scenario coverage report plus code review to answer:
 
-Internal plan document (not committed): `specs/2026-05-08_e2e-setup-scenario-matrix/migration-plan.md`.
+- which legacy/nightly behaviors are now represented in scenarios,
+- which behaviors remain outstanding for the domain issue, and
+- which legacy behaviors should be retired rather than ported.
