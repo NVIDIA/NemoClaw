@@ -31,6 +31,7 @@ export interface NimModel {
 }
 
 export type NvidiaPlatform = "spark" | "station" | "jetson" | "linux";
+export type JetsonClass = "xavier" | "orin" | "orin-32" | "orin-64" | "thor" | "thor-128";
 
 export interface NimGpu {
   name: string;
@@ -57,6 +58,8 @@ export interface GpuDetection {
   nimCapable: boolean;
   unifiedMemory?: boolean;
   spark?: boolean;
+  jetson?: boolean;
+  jetsonClass?: JetsonClass;
   platform?: NvidiaPlatform;
 }
 
@@ -123,19 +126,22 @@ export function formatNvidiaGpuPreflightLines(gpu: GpuDetection): string[] {
 // and Station, observed empirically), fall back to devicetree on systems
 // without DMI tables. Returns "" if neither is readable.
 function readPlatformModel(): string {
-  try {
-    const dmi = fs.readFileSync("/sys/class/dmi/id/product_name", "utf-8").trim();
-    if (dmi) return dmi;
-  } catch {
-    /* no dmi */
-  }
-  try {
-    return fs
-      .readFileSync("/sys/firmware/devicetree/base/model", "utf-8")
-      .replace(/\0/g, "")
-      .trim();
-  } catch {
-    /* not arm devicetree */
+  for (const candidate of [
+    "/sys/class/dmi/id/product_name",
+    "/sys/firmware/devicetree/base/model",
+    "/proc/device-tree/model",
+    "/etc/nv_tegra_release",
+  ]) {
+    try {
+      const value = fs
+        .readFileSync(candidate, "utf-8")
+        .replace(/\0/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
+      if (value) return value;
+    } catch {
+      /* try next platform probe */
+    }
   }
   return "";
 }
@@ -173,18 +179,43 @@ function hasTegraDeviceNodeSignal(): boolean {
   ].some(hostPathExists);
 }
 
-function detectTegraHostGpu(): { name: string; platform: NvidiaPlatform } | null {
-  const model = readPlatformModel();
-  const modelLooksTegra = /Jetson|Tegra|Thor|Orin|Xavier/i.test(model);
-  if (!modelLooksTegra && !hasTegraDeviceNodeSignal()) return null;
-
-  let name = model.replace(/^NVIDIA\s+/i, "").trim();
+function normalizeTegraDisplayName(model: string): string {
+  const cleaned = model.replace(/\0/g, " ").replace(/\s+/g, " ").trim();
+  const tegraMatch =
+    cleaned.match(/(?:NVIDIA\s+)?Jetson[^,\n]*/i) ??
+    cleaned.match(/(?:NVIDIA\s+)?(?:Thor|Orin|Xavier)[^,\n]*/i);
+  let name = (tegraMatch?.[0] ?? cleaned).replace(/^NVIDIA\s+/i, "").trim();
   if (!name) name = "Jetson/Tegra";
   if (!/^NVIDIA\b/i.test(name)) name = `NVIDIA ${name}`;
   if (!/Jetson|Tegra|Thor|Orin|Xavier/i.test(name)) {
     name = "NVIDIA Jetson/Tegra GPU";
   }
-  return { name, platform: "jetson" };
+  return name;
+}
+
+function classifyJetsonDevice(name: string | undefined, totalMemoryMB: number): JetsonClass | undefined {
+  if (!name) return undefined;
+
+  if (/thor/i.test(name)) {
+    return totalMemoryMB >= 120 * 1024 ? "thor-128" : "thor";
+  }
+
+  if (/orin/i.test(name)) {
+    if (totalMemoryMB >= 60 * 1024) return "orin-64";
+    if (totalMemoryMB >= 28 * 1024) return "orin-32";
+    return "orin";
+  }
+
+  if (/xavier/i.test(name)) return "xavier";
+  return undefined;
+}
+
+function detectTegraHostGpu(): { name: string; platform: NvidiaPlatform } | null {
+  const model = readPlatformModel();
+  const modelLooksTegra = /Jetson|Tegra|Thor|Orin|Xavier/i.test(model);
+  if (!modelLooksTegra && !hasTegraDeviceNodeSignal()) return null;
+
+  return { name: normalizeTegraDisplayName(model), platform: "jetson" };
 }
 
 export function detectNvidiaPlatform(): NvidiaPlatform {
@@ -287,6 +318,8 @@ export function detectGpu(): GpuDetection | null {
         const allSameName =
           !!firstName && parsed.every((p: ParsedGpu) => p.name === firstName);
         const platform = detectNvidiaPlatform();
+        const jetsonClass = classifyJetsonDevice(firstName, totalMemoryMB);
+        const isJetson = platform === "jetson" || !!jetsonClass;
         return {
           type: "nvidia",
           ...(allSameName ? { name: firstName } : {}),
@@ -295,8 +328,10 @@ export function detectGpu(): GpuDetection | null {
           totalMemoryMB,
           perGpuMB: parsed[0].memoryMB,
           nimCapable: canRunNimWithMemory(totalMemoryMB),
-          platform,
+          platform: isJetson ? "jetson" : platform,
           spark: platform === "spark",
+          jetson: isJetson,
+          ...(jetsonClass ? { jetsonClass } : {}),
         };
       }
     }
@@ -340,14 +375,19 @@ export function detectGpu(): GpuDetection | null {
       // Cross-check the firmware model against the GPU name. Spark must have
       // a GB10; falling through to firmware lets us classify Station too.
       const hasGb10 = unifiedGpuNames.some((name: string) => /GB10/i.test(name));
+      const hasTegraName = unifiedGpuNames.some((name: string) =>
+        /Jetson|Tegra|Thor|Orin|Xavier/i.test(name),
+      );
       const platform: NvidiaPlatform =
         firmwarePlatform === "spark" || hasGb10
           ? "spark"
           : firmwarePlatform === "station"
             ? "station"
-            : firmwarePlatform === "jetson"
+            : firmwarePlatform === "jetson" || hasTegraName
               ? "jetson"
-            : "linux";
+              : "linux";
+      const jetsonClass = classifyJetsonDevice(firstUnifiedName, totalMemoryMB);
+      const isJetson = platform === "jetson";
       // Memory.total is not available on unified-memory devices, so we split
       // the host RAM evenly across the named GPUs for the per-GPU breakdown.
       // Approximation, but the only number nvidia-smi gives us in this path.
@@ -361,6 +401,8 @@ export function detectGpu(): GpuDetection | null {
         nimCapable: canRunNimWithMemory(totalMemoryMB),
         unifiedMemory: true,
         spark: platform === "spark",
+        jetson: isJetson,
+        ...(jetsonClass ? { jetsonClass } : {}),
         platform,
       };
     }
@@ -373,6 +415,7 @@ export function detectGpu(): GpuDetection | null {
   const tegraGpu = detectTegraHostGpu();
   if (tegraGpu) {
     const totalMemoryMB = readHostMemoryMB();
+    const jetsonClass = classifyJetsonDevice(tegraGpu.name, totalMemoryMB);
     return {
       type: "nvidia",
       name: tegraGpu.name,
@@ -383,6 +426,8 @@ export function detectGpu(): GpuDetection | null {
       nimCapable: canRunNimWithMemory(totalMemoryMB),
       unifiedMemory: true,
       spark: false,
+      jetson: true,
+      ...(jetsonClass ? { jetsonClass } : {}),
       platform: tegraGpu.platform,
     };
   }

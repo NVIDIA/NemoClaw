@@ -439,6 +439,71 @@ describe("nim", () => {
             nimCapable: true,
             unifiedMemory: true,
             spark: false,
+            jetson: true,
+            jetsonClass: "orin-32",
+            platform: "jetson",
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("detects Orin 64GB unified-memory GPUs distinctly", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd.some((a: string) => a.includes("memory.total"))) return "";
+        if (cmd.some((a: string) => a.includes("query-gpu=name"))) return "NVIDIA Jetson AGX Orin";
+        if (cmd[0] === "free" && cmd[1] === "-m") return "              total        used        free      shared  buff/cache   available\nMem:          65536        5120       50000         512       10304      60364\nSwap:             0           0           0";
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withGenericLinuxFirmware(() => {
+          expect(nimModule.detectGpu()).toMatchObject({
+            type: "nvidia",
+            name: "NVIDIA Jetson AGX Orin",
+            count: 1,
+            totalMemoryMB: 65536,
+            perGpuMB: 65536,
+            nimCapable: true,
+            unifiedMemory: true,
+            spark: false,
+            jetson: true,
+            jetsonClass: "orin-64",
+            platform: "jetson",
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    it("detects Thor 128GB unified-memory GPUs distinctly", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd.some((a: string) => a.includes("memory.total"))) return "";
+        if (cmd.some((a: string) => a.includes("query-gpu=name"))) return "NVIDIA Thor";
+        if (cmd[0] === "free" && cmd[1] === "-m") return "              total        used        free      shared  buff/cache   available\nMem:         131072        5120      100000         512       25952     125000\nSwap:             0           0           0";
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withGenericLinuxFirmware(() => {
+          expect(nimModule.detectGpu()).toMatchObject({
+            type: "nvidia",
+            name: "NVIDIA Thor",
+            count: 1,
+            totalMemoryMB: 131072,
+            perGpuMB: 131072,
+            nimCapable: true,
+            unifiedMemory: true,
+            spark: false,
+            jetson: true,
+            jetsonClass: "thor-128",
+            platform: "jetson",
           });
         });
       } finally {
@@ -478,12 +543,87 @@ describe("nim", () => {
           nimCapable: true,
           unifiedMemory: true,
           spark: false,
+          jetson: true,
+          jetsonClass: "orin-64",
           platform: "jetson",
           gpus: [{ name: "NVIDIA Jetson AGX Orin", memoryMB: 65536 }],
         });
       } finally {
         fs.readFileSync = origReadFileSync;
         fs.existsSync = origExistsSync;
+        restore();
+      }
+    });
+
+    it("detects Thor from /proc/device-tree/model when nvidia-smi is absent", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "nvidia-smi") return "";
+        if (cmd[0] === "free" && cmd[1] === "-m") {
+          return "              total        used        free\nMem:         131072        4096      120000\nSwap:             0           0           0";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const origReadFileSync = fs.readFileSync;
+      fs.readFileSync = (p: string, ...args: unknown[]) => {
+        if (p === "/sys/class/dmi/id/product_name") throw new Error("ENOENT");
+        if (p === "/sys/firmware/devicetree/base/model") throw new Error("ENOENT");
+        if (p === "/proc/device-tree/model") return "NVIDIA Thor Developer Kit\0";
+        return origReadFileSync(p, ...args);
+      };
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA Thor Developer Kit",
+          totalMemoryMB: 131072,
+          unifiedMemory: true,
+          spark: false,
+          jetson: true,
+          jetsonClass: "thor-128",
+          platform: "jetson",
+        });
+      } finally {
+        fs.readFileSync = origReadFileSync;
+        restore();
+      }
+    });
+
+    it("detects Orin from /etc/nv_tegra_release when other firmware probes are empty", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "nvidia-smi") return "";
+        if (cmd[0] === "free" && cmd[1] === "-m") {
+          return "              total        used        free\nMem:          65536        4096       50000\nSwap:             0           0           0";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const origReadFileSync = fs.readFileSync;
+      fs.readFileSync = (p: string, ...args: unknown[]) => {
+        if (p === "/sys/class/dmi/id/product_name") throw new Error("ENOENT");
+        if (p === "/sys/firmware/devicetree/base/model") return "";
+        if (p === "/proc/device-tree/model") return "";
+        if (p === "/etc/nv_tegra_release") {
+          return "# R36 (release), REVISION: 4.0, BOARD: t186ref, EABI: aarch64, DATE: ... Jetson AGX Orin";
+        }
+        return origReadFileSync(p, ...args);
+      };
+
+      try {
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA Jetson AGX Orin",
+          totalMemoryMB: 65536,
+          unifiedMemory: true,
+          spark: false,
+          jetson: true,
+          jetsonClass: "orin-64",
+          platform: "jetson",
+        });
+      } finally {
+        fs.readFileSync = origReadFileSync;
         restore();
       }
     });
@@ -538,6 +678,9 @@ describe("nim", () => {
             nimCapable: false,
             unifiedMemory: true,
             spark: false,
+            jetson: true,
+            jetsonClass: "xavier",
+            platform: "jetson",
           });
         });
       } finally {
