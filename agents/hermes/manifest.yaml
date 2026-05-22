@@ -16,7 +16,7 @@ homepage: "https://github.com/NousResearch/hermes-agent"
 install_method: curl  # curl install.sh | bash
 binary_path: /usr/local/bin/hermes
 version_command: "hermes --version"
-expected_version: "2026.4.23"
+expected_version: "2026.5.16"
 gateway_command: "hermes gateway run"
 
 # ── Health probe ────────────────────────────────────────────────

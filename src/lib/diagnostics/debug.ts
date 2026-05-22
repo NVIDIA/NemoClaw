@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -63,6 +63,7 @@ export { redact };
 
 const isMacOS = platform() === "darwin";
 const TIMEOUT_MS = 30_000;
+const DMESG_RESTRICT_PATH = "/proc/sys/kernel/dmesg_restrict";
 
 function commandExists(cmd: string): boolean {
   try {
@@ -118,6 +119,80 @@ function collectShell(collectDir: string, label: string, shellCmd: string): void
   const raw = (result.stdout ?? "") + "\n" + (result.stderr ?? "");
   const redacted = redact(raw);
   writeFileSync(outfile, redacted);
+  console.log(redacted.trimEnd());
+
+  if (result.status !== 0) {
+    console.log("  (command exited with non-zero status)");
+  }
+}
+
+function writeCollectedMessage(collectDir: string, label: string, message: string): void {
+  const filename = label.replace(/[ /]/g, (c) => (c === " " ? "_" : "-"));
+  const outfile = join(collectDir, `${filename}.txt`);
+  writeFileSync(outfile, message + "\n");
+  console.log(message);
+}
+
+function isRootUser(): boolean {
+  return typeof process.getuid === "function" && process.getuid() === 0;
+}
+
+function isDmesgRestrictedForCurrentUser(): boolean {
+  if (isRootUser()) return false;
+
+  try {
+    return readFileSync(DMESG_RESTRICT_PATH, "utf-8").trim() === "1";
+  } catch {
+    return false;
+  }
+}
+
+export function isDmesgPermissionDeniedOutput(output: string): boolean {
+  if (!/\b(operation not permitted|permission denied)\b/i.test(output)) {
+    return false;
+  }
+  return /\b(dmesg|kernel buffer|kernel logs?)\b/i.test(output);
+}
+
+function dmesgRestrictedMessage(reason: string): string {
+  return `  (kernel messages skipped: dmesg access is restricted for this user; ${reason})`;
+}
+
+function collectDmesg(collectDir: string): void {
+  if (!commandExists("dmesg")) {
+    writeCollectedMessage(collectDir, "dmesg", "  (dmesg not found, skipping)");
+    return;
+  }
+
+  if (isDmesgRestrictedForCurrentUser()) {
+    writeCollectedMessage(
+      collectDir,
+      "dmesg",
+      dmesgRestrictedMessage(
+        `${DMESG_RESTRICT_PATH}=1 prevents non-root users from reading kernel logs`,
+      ),
+    );
+    return;
+  }
+
+  const result = spawnSync("sh", ["-c", "dmesg | tail -100"], {
+    timeout: TIMEOUT_MS,
+    stdio: ["ignore", "pipe", "pipe"],
+    encoding: "utf-8",
+  });
+
+  const raw = (result.stdout ?? "") + "\n" + (result.stderr ?? "");
+  if (isDmesgPermissionDeniedOutput(raw)) {
+    writeCollectedMessage(
+      collectDir,
+      "dmesg",
+      dmesgRestrictedMessage("the dmesg command denied access to kernel logs"),
+    );
+    return;
+  }
+
+  const redacted = redact(raw);
+  writeFileSync(join(collectDir, "dmesg.txt"), redacted);
   console.log(redacted.trimEnd());
 
   if (result.status !== 0) {
@@ -424,7 +499,7 @@ function collectKernelMessages(collectDir: string): void {
       'log show --last 5m --predicate "eventType == logEvent" --style compact 2>/dev/null | tail -100',
     );
   } else {
-    collectShell(collectDir, "dmesg", "dmesg | tail -100");
+    collectDmesg(collectDir);
   }
 }
 

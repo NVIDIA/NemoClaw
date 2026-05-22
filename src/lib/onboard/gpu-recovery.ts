@@ -14,6 +14,14 @@
  */
 
 import * as registry from "../state/registry";
+import {
+  JETSON_SANDBOX_GPU_UNSUPPORTED_MESSAGE,
+  JETSON_SANDBOX_GPU_WORKAROUND_MESSAGE,
+} from "./sandbox-gpu-mode";
+
+export type GpuPassthroughRecoveryOptions = {
+  unsupportedPlatform?: "jetson" | null;
+};
 
 /**
  * Returns the multi-line recovery hint for the GPU-passthrough mismatch
@@ -29,7 +37,19 @@ import * as registry from "../state/registry";
  * line each; only the last carries `--cleanup-gateway` so the gateway lives
  * until every sandbox is gone.
  */
-export function gpuPassthroughRecoveryLines(names: readonly string[] | null): string[] {
+export function gpuPassthroughRecoveryLines(
+  names: readonly string[] | null,
+  options: GpuPassthroughRecoveryOptions = {},
+): string[] {
+  if (options.unsupportedPlatform === "jetson") {
+    return [
+      `  ${JETSON_SANDBOX_GPU_UNSUPPORTED_MESSAGE}`,
+      `  ${JETSON_SANDBOX_GPU_WORKAROUND_MESSAGE}`,
+      "  Use CPU sandbox mode instead:",
+      "    nemoclaw onboard --no-gpu",
+    ];
+  }
+
   const cleanNames = (names ?? []).map((n) => n.trim()).filter((n) => n.length > 0);
 
   if (cleanNames.length === 0) {
@@ -90,6 +110,8 @@ export function getRegisteredSandboxNamesForGpuRecovery(): string[] {
 export function reportGpuPassthroughRecovery(
   emit: (line: string) => void,
   loadNames: () => string[] = getRegisteredSandboxNamesForGpuRecovery,
+  options: GpuPassthroughRecoveryOptions = {},
 ): void {
-  for (const line of gpuPassthroughRecoveryLines(loadNames())) emit(line);
+  const names = options.unsupportedPlatform === "jetson" ? [] : loadNames();
+  for (const line of gpuPassthroughRecoveryLines(names, options)) emit(line);
 }

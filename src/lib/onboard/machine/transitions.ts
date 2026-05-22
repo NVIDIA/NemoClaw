@@ -8,22 +8,6 @@ import {
   ONBOARD_TERMINAL_MACHINE_STATES,
 } from "./types";
 
-export const ONBOARD_MACHINE_NEXT_STATES = {
-  init: ["preflight", "failed"],
-  preflight: ["gateway", "failed"],
-  gateway: ["provider_selection", "failed"],
-  provider_selection: ["inference", "failed"],
-  inference: ["provider_selection", "sandbox", "failed"],
-  sandbox: ["openclaw", "agent_setup", "failed"],
-  agent_setup: ["policies", "failed"],
-  openclaw: ["policies", "failed"],
-  policies: ["finalizing", "failed"],
-  finalizing: ["post_verify", "failed"],
-  post_verify: ["complete", "failed"],
-  complete: [],
-  failed: [],
-} as const satisfies Readonly<Record<OnboardMachineState, readonly OnboardMachineState[]>>;
-
 export const ONBOARD_MACHINE_DIRECT_TRANSITIONS = [
   { from: "init", to: "preflight", kind: "advance" },
   { from: "preflight", to: "gateway", kind: "advance" },
@@ -48,6 +32,18 @@ export const ONBOARD_MACHINE_TRANSITIONS = [
   ...ONBOARD_MACHINE_DIRECT_TRANSITIONS,
   ...ONBOARD_MACHINE_FAILURE_TRANSITIONS,
 ] as const satisfies readonly OnboardMachineTransition[];
+
+export const ONBOARD_MACHINE_NEXT_STATES: Readonly<
+  Record<OnboardMachineState, readonly OnboardMachineState[]>
+> = ONBOARD_MACHINE_STATES.reduce(
+  (nextStates, state) => ({
+    ...nextStates,
+    [state]: ONBOARD_MACHINE_TRANSITIONS.filter((transition) => transition.from === state).map(
+      (transition) => transition.to,
+    ),
+  }),
+  {} as Record<OnboardMachineState, readonly OnboardMachineState[]>,
+);
 
 export class InvalidOnboardMachineTransitionError extends Error {
   readonly from: OnboardMachineState;

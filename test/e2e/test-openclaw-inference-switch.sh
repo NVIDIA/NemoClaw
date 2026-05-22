@@ -270,24 +270,11 @@ check_openclaw_agent_turn() {
     -o ConnectTimeout=10 \
     -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" \
-    "openclaw agent --agent main --json --thinking off --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
-    2>/dev/null) || rc=$?
+    "openclaw agent --agent main --json --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
+    2>&1) || rc=$?
   rm -f "$ssh_config"
 
-  reply=$(printf '%s' "$raw" | python3 -c '
-import json
-import sys
-try:
-    doc = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-result = doc.get("result") or {}
-parts = []
-for payload in result.get("payloads") or []:
-    if isinstance(payload, dict) and isinstance(payload.get("text"), str):
-        parts.append(payload["text"])
-print("\n".join(parts))
-' 2>/dev/null) || true
+  reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
 
   if [ "$rc" -eq 0 ] && grep -qE '(^|[^0-9])42([^0-9]|$)' <<<"$reply"; then
     pass "OpenClaw agent answered through the switched inference route"
@@ -306,6 +293,8 @@ else
 fi
 
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=test/e2e/lib/openclaw-json.sh
+. "${E2E_DIR}/lib/openclaw-json.sh"
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-openclaw-inference-switch}"
 SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-nvidia-prod}"
 SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-z-ai/glm-5.1}"
