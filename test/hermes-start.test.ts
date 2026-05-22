@@ -40,9 +40,18 @@ function extractShellFunctionFromSource(src: string, name: string): string {
 
 function extractRuntimeShellEnvBlock(src: string): string {
   const start = src.indexOf("write_runtime_shell_env() {");
-  const end = src.indexOf("\nwrite_runtime_shell_env\n", start);
+  const end = src.indexOf("\nensure_runtime_shell_env_shim() {", start);
   if (start < 0 || end < 0) {
     throw new Error("Expected write_runtime_shell_env block in agents/hermes/start.sh");
+  }
+  return src.slice(start, end).trimEnd();
+}
+
+function extractRuntimeShellEnvShimBlock(src: string): string {
+  const start = src.indexOf("ensure_runtime_shell_env_shim() {");
+  const end = src.indexOf("\n# ── Legacy layout", start);
+  if (start < 0 || end < 0) {
+    throw new Error("Expected ensure_runtime_shell_env_shim block in agents/hermes/start.sh");
   }
   return src.slice(start, end).trimEnd();
 }
@@ -190,7 +199,7 @@ function runRuntimeShellEnvBootstrap() {
     [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
-      'emit_sandbox_sourced_file() { cat >"$1"; chmod 444 "$1"; }',
+      'emit_sandbox_sourced_file() { local tmp="${1}.tmp"; cat >"$tmp"; chmod 444 "$tmp"; mv -f "$tmp" "$1"; }',
       `_PROXY_ENV_FILE=${shellQuote(envFile)}`,
       `_PROXY_URL=${shellQuote("http://10.200.0.1:3128")}`,
       `_NO_PROXY_VAL=${shellQuote("localhost,127.0.0.1,::1,10.200.0.1")}`,
@@ -235,6 +244,53 @@ function runRuntimeShellEnvBootstrap() {
   }
 }
 
+function runRuntimeShellEnvShimBootstrap() {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-shim-"));
+  const sandboxHome = path.join(tmpDir, "sandbox");
+  const envFile = path.join(tmpDir, "nemoclaw-proxy-env.sh");
+  const bashrc = path.join(sandboxHome, ".bashrc");
+  const profile = path.join(sandboxHome, ".profile");
+  const scriptPath = path.join(tmpDir, "run.sh");
+
+  fs.mkdirSync(sandboxHome, { recursive: true });
+  fs.writeFileSync(bashrc, "export EXISTING=1\n");
+
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      'emit_sandbox_sourced_file() { local tmp="${1}.tmp"; cat >"$tmp"; chmod 444 "$tmp"; mv -f "$tmp" "$1"; }',
+      `_SANDBOX_HOME=${shellQuote(sandboxHome)}`,
+      `_PROXY_ENV_FILE=${shellQuote(envFile)}`,
+      '_RUNTIME_SHELL_ENV_SHIM="[ -f ${_PROXY_ENV_FILE} ] && . ${_PROXY_ENV_FILE}"',
+      extractRuntimeShellEnvShimBlock(src),
+      "ensure_runtime_shell_env_shim",
+      "ensure_runtime_shell_env_shim",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    const result = spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+    return {
+      result,
+      bashrcContent: fs.existsSync(bashrc) ? fs.readFileSync(bashrc, "utf-8") : "",
+      profileContent: fs.existsSync(profile) ? fs.readFileSync(profile, "utf-8") : "",
+      bashrcMode: fs.existsSync(bashrc) ? (fs.statSync(bashrc).mode & 0o777).toString(8) : "",
+      profileMode: fs.existsSync(profile) ? (fs.statSync(profile).mode & 0o777).toString(8) : "",
+      envFile,
+    };
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 describe("agents/hermes/start.sh runtime shell env", () => {
   it("puts the Hermes configure guard in the sourced proxy env file", () => {
     const run = runRuntimeShellEnvBootstrap();
@@ -254,6 +310,18 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.guardResult.stderr).toContain(
       "Error: 'hermes setup' cannot modify config inside the sandbox.",
     );
+  });
+
+  it("backfills the runtime env shim into sandbox rc files idempotently", () => {
+    const run = runRuntimeShellEnvShimBootstrap();
+    const shimLine = `[ -f ${run.envFile} ] && . ${run.envFile}`;
+
+    expect(run.result.status).toBe(0);
+    expect(run.bashrcContent).toContain("export EXISTING=1");
+    expect(run.bashrcContent.match(new RegExp(escapeRegExp(shimLine), "g"))).toHaveLength(1);
+    expect(run.profileContent.match(new RegExp(escapeRegExp(shimLine), "g"))).toHaveLength(1);
+    expect(run.bashrcMode).toBe("444");
+    expect(run.profileMode).toBe("444");
   });
 
 });

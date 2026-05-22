@@ -300,14 +300,14 @@ if [ -n "${SSL_CERT_FILE:-}" ] && [ -f "${SSL_CERT_FILE}" ]; then
   export GIT_SSL_CAINFO="${GIT_SSL_CAINFO:-$SSL_CERT_FILE}"
 fi
 
-# Resolve sandbox home dir early — used by proxy-env writing before the
-# non-root/root branch below.
-if [ "$(id -u)" -eq 0 ]; then
-  _SANDBOX_HOME=$(getent passwd sandbox 2>/dev/null | cut -d: -f6)
-  _SANDBOX_HOME="${_SANDBOX_HOME:-/sandbox}"
-else
-  _SANDBOX_HOME="${HOME:-/sandbox}"
-fi
+resolve_sandbox_home() {
+  if [ "$(id -u)" -eq 0 ]; then
+    _SANDBOX_HOME=$(getent passwd sandbox 2>/dev/null | cut -d: -f6)
+    _SANDBOX_HOME="${_SANDBOX_HOME:-/sandbox}"
+  else
+    _SANDBOX_HOME="${HOME:-/sandbox}"
+  fi
+}
 
 # SECURITY FIX: Write proxy config to a standalone file via
 # emit_sandbox_sourced_file() (444, root-owned when running as root) instead of
@@ -315,6 +315,8 @@ fi
 # /sandbox during startup, which fails in non-root entrypoint postures.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/2277
 _PROXY_ENV_FILE="/tmp/nemoclaw-proxy-env.sh"
+_RUNTIME_SHELL_ENV_SHIM="[ -f ${_PROXY_ENV_FILE} ] && . ${_PROXY_ENV_FILE}"
+
 write_runtime_shell_env() {
   {
     cat <<PROXYEOF
@@ -353,11 +355,48 @@ GUARDENVEOF
   } | emit_sandbox_sourced_file "$_PROXY_ENV_FILE"
 }
 
-write_runtime_shell_env
-# SECURITY FIX: Lock .bashrc/.profile after all static shims are in place.
-# Hermes connect sessions source the dynamic guard from /tmp/nemoclaw-proxy-env.sh
-# so startup never needs to rewrite files directly under /sandbox after caps drop.
-lock_rc_files "$_SANDBOX_HOME"
+ensure_runtime_shell_env_shim() {
+  local failed=0
+  local rc_file
+
+  for rc_file in "${_SANDBOX_HOME}/.bashrc" "${_SANDBOX_HOME}/.profile"; do
+    if [ -L "$rc_file" ]; then
+      echo "[SECURITY] refusing symlinked rc file: $rc_file" >&2
+      failed=1
+      continue
+    fi
+    if [ -e "$rc_file" ] && [ ! -f "$rc_file" ]; then
+      echo "[SECURITY] refusing non-regular rc file: $rc_file" >&2
+      failed=1
+      continue
+    fi
+    if [ -f "$rc_file" ] && grep -qxF "$_RUNTIME_SHELL_ENV_SHIM" "$rc_file" 2>/dev/null; then
+      continue
+    fi
+
+    if [ -f "$rc_file" ]; then
+      if ! {
+        cat "$rc_file"
+        printf '\n%s\n%s\n' '# Source runtime proxy + HERMES_HOME config' "$_RUNTIME_SHELL_ENV_SHIM"
+      } | emit_sandbox_sourced_file "$rc_file"; then
+        echo "[SECURITY] could not backfill runtime env shim into $rc_file" >&2
+        failed=1
+        continue
+      fi
+    elif ! printf '%s\n%s\n' '# Source runtime proxy + HERMES_HOME config' "$_RUNTIME_SHELL_ENV_SHIM" | emit_sandbox_sourced_file "$rc_file"; then
+      echo "[SECURITY] could not create $rc_file with runtime env shim" >&2
+      failed=1
+      continue
+    fi
+
+    if ! grep -qxF "$_RUNTIME_SHELL_ENV_SHIM" "$rc_file" 2>/dev/null; then
+      echo "[SECURITY] runtime env shim missing after backfill: $rc_file" >&2
+      failed=1
+    fi
+  done
+
+  return "$failed"
+}
 
 # ── Legacy layout migration ──────────────────────────────────────
 path_has_immutable_bit() {
@@ -623,6 +662,7 @@ if [ "$(id -u)" -ne 0 ]; then
   echo "[gateway] Running as non-root (uid=$(id -u)) — privilege separation disabled" >&2
   export HOME=/sandbox
   export HERMES_HOME="${HERMES_DIR}"
+  resolve_sandbox_home
 
   # macOS VM startup currently runs this entrypoint as the sandbox user and
   # remaps rootfs ownership to the host uid. In that mode the strict /etc hash
@@ -634,6 +674,9 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
   fi
   refresh_hermes_provider_placeholders
+  write_runtime_shell_env
+  ensure_runtime_shell_env_shim
+  lock_rc_files "$_SANDBOX_HOME"
   configure_messaging_channels
 
   if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
@@ -676,8 +719,12 @@ fi
 # ── Root path (full privilege separation via setpriv) ──────────
 
 export HERMES_HOME="${HERMES_DIR}"
+resolve_sandbox_home
 verify_config_integrity "${HERMES_DIR}" "${HERMES_HASH_FILE}"
 refresh_hermes_provider_placeholders
+write_runtime_shell_env
+ensure_runtime_shell_env_shim
+lock_rc_files "$_SANDBOX_HOME"
 configure_messaging_channels
 
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
