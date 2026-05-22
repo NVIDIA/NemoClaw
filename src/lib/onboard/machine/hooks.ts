@@ -79,30 +79,37 @@ export class OnboardHookDispatcher {
   }
 
   async dispatch(event: OnboardMachineEvent): Promise<void> {
+    const shouldEmitLifecycle = !isHookLifecycleEvent(event);
     for (const [index, hook] of this.hooks.entries()) {
       if (typeof hook.onEvent !== "function") continue;
-      this.emitEvent(
-        hookLifecycleEvent(event, "hook.started", hook, index, {
-          occurredAt: this.now(),
-        }),
-      );
-      try {
-        await hook.onEvent(event);
+      if (shouldEmitLifecycle) {
         this.emitEvent(
-          hookLifecycleEvent(event, "hook.completed", hook, index, {
+          hookLifecycleEvent(event, "hook.started", hook, index, {
             occurredAt: this.now(),
           }),
         );
+      }
+      try {
+        await hook.onEvent(event);
+        if (shouldEmitLifecycle) {
+          this.emitEvent(
+            hookLifecycleEvent(event, "hook.completed", hook, index, {
+              occurredAt: this.now(),
+            }),
+          );
+        }
       } catch (error) {
         const name = hookName(hook, index);
         const message = error instanceof Error ? error.message : String(error);
         this.warn(`Onboard hook '${name}' failed: ${redactSensitiveText(message) ?? "<redacted>"}`);
-        this.emitEvent(
-          hookLifecycleEvent(event, "hook.failed", hook, index, {
-            occurredAt: this.now(),
-            error: message,
-          }),
-        );
+        if (shouldEmitLifecycle) {
+          this.emitEvent(
+            hookLifecycleEvent(event, "hook.failed", hook, index, {
+              occurredAt: this.now(),
+              error: message,
+            }),
+          );
+        }
       }
     }
   }
