@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../../../state/onboard-session";
+import type { GatewayContainerState } from "../../gateway-container-running";
 import type { GatewayReuseState } from "../../../state/gateway";
 import { handleGatewayState, type GatewayStateOptions } from "./gateway";
 
@@ -117,7 +118,7 @@ describe("handleGatewayState", () => {
   it("cleans stale lifecycle metadata when the gateway container is missing", async () => {
     const { deps, calls } = createDeps({
       gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
-      verifyGatewayContainerRunning: vi.fn(() => "missing" as GatewayReuseState),
+      verifyGatewayContainerRunning: vi.fn(() => "missing" as GatewayContainerState),
       destroyGatewayForReuse: vi.fn(() => "missing" as GatewayReuseState),
     });
 

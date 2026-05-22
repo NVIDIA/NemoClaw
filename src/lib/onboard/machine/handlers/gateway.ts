@@ -2,10 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { NvidiaPlatform } from "../../../inference/nim";
+import type { GatewayContainerState } from "../../gateway-container-running";
 import type { Session } from "../../../state/onboard-session";
 import type { GatewayReuseState } from "../../../state/gateway";
-
-export type GatewayContainerState = "missing" | "unknown" | string;
 
 export interface GatewayStateOptions<Gpu> {
   resume: boolean;
@@ -24,7 +23,10 @@ export interface GatewayStateOptions<Gpu> {
     waitForGatewayHttpReady(): Promise<boolean>;
     getGatewayLocalEndpoint(): string;
     stopDashboardForward(): void;
-    destroyGateway(): boolean;
+    destroyGateway(
+      clearRegistry?: () => void,
+      isDockerDriverGatewayEnabledForDestroy?: () => boolean,
+    ): boolean;
     destroyGatewayForReuse(
       destroyGateway: () => boolean,
       successMessage: string,
