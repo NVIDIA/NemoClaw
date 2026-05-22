@@ -213,15 +213,7 @@ function listSelectionFiles(distDir) {
     .sort();
 }
 
-function hasBuiltInToolCatalog(source) {
-  return source.includes("applyToolSearchCatalog({") && source.includes("buildToolSearchRunPlan({");
-}
-
 function patchSelectionText(source, filePath) {
-  if (hasBuiltInToolCatalog(source)) {
-    return { patched: false, text: source, skippedBuiltIn: true };
-  }
-
   if (source.includes(MARKER)) {
     if (ALREADY_PATCHED_FORBIDDEN_PATTERNS.some((pattern) => source.includes(pattern))) {
       throw new Error(`${filePath}: compact catalog marker is present but original targets remain`);
@@ -272,27 +264,15 @@ function patchOpenClawToolCatalog(distDir) {
     return text.includes(ALL_CUSTOM_TOOLS_PATTERN) || text.includes(MARKER);
   });
   if (targetFiles.length !== 1) {
-    if (targetFiles.length === 0) {
-      const builtInCatalogFile = selectionFiles.find((file) => {
-        const text = fs.readFileSync(file, "utf-8");
-        return hasBuiltInToolCatalog(text);
-      });
-      if (builtInCatalogFile) {
-        return { status: "skipped-built-in", file: builtInCatalogFile, version };
-      }
-    }
     throw new Error(`Expected exactly one selection-*.js target, found ${targetFiles.length}`);
   }
 
   const target = targetFiles[0];
   const source = fs.readFileSync(target, "utf-8");
-  const { patched, text, skippedBuiltIn } = patchSelectionText(source, target);
+  const { patched, text } = patchSelectionText(source, target);
   if (patched) {
     fs.writeFileSync(target, text);
     return { status: "patched", file: target, version };
-  }
-  if (skippedBuiltIn) {
-    return { status: "skipped-built-in", file: target, version };
   }
   return { status: "already-patched", file: target, version };
 }
