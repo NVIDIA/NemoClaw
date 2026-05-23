@@ -22,7 +22,6 @@ const {
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const {
-  ensureManagedOllamaLoopbackSystemdOverride,
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
 const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
@@ -103,6 +102,9 @@ const { buildVllmMenuEntries }: typeof import("./onboard/vllm-menu") = require("
 const {
   detectWindowsHostOllama,
 }: typeof import("./onboard/windows-host-ollama") = require("./onboard/windows-host-ollama");
+const {
+  installOllamaOnLinux,
+}: typeof import("./onboard/install-ollama-linux") = require("./onboard/install-ollama-linux");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -1313,20 +1315,6 @@ function hostCommandExists(commandName: string): boolean {
   return !!runCapture(["sh", "-c", 'command -v "$1"', "--", commandName], {
     ignoreError: true,
   });
-}
-
-function ensureOllamaLinuxExtractionDependencies(): void {
-  if (hostCommandExists("zstd")) return;
-  console.log(
-    "  The Ollama Linux installer requires zstd for archive extraction. " +
-      "The next step uses sudo to install zstd; you may be prompted for your password.",
-  );
-  runShell(`if ! command -v apt-get >/dev/null 2>&1; then
-  echo "ERROR: Ollama requires zstd for extraction, and only apt-based Linux is supported here." >&2
-  echo "Install zstd manually (for example, sudo dnf install zstd or sudo pacman -S zstd), then rerun ${cliName()} onboard." >&2
-  exit 1
-fi
-sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends zstd`);
 }
 
 function captureProcessArgs(pid: number): string {
@@ -5292,38 +5280,10 @@ async function setupNim(
             continue selectionLoop;
           }
         } else {
-          ensureOllamaLinuxExtractionDependencies();
-          console.log(
-            "  The Ollama installer creates a system user, a systemd service, and writes to /usr/local. " +
-              "It uses sudo, may ask for your password, and can take a few minutes; installer output will stream below.",
-          );
-          runShell("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh", { stdio: "inherit" });
-          // Give the just-started ollama.service a moment to bind port
-          // 11434 before we probe or apply the systemd drop-in override.
-          sleepSeconds(2);
-          // Linux native + systemd: force a loopback-only OLLAMA_HOST drop-in
-          // and let systemd own the daemon (avoids racing the installer's
-          // daemon with our own `ollama serve`). This also repairs older
-          // NemoClaw-created overrides that exposed raw Ollama on all interfaces.
-          // WSL and non-systemd Linux fall back to a manual loopback launch.
-          const overrideState = ensureManagedOllamaLoopbackSystemdOverride({ isNonInteractive });
-          if (overrideState === "failed") {
-            console.error(
-              "  Ollama systemd restart did not recover after applying the loopback override.",
-            );
-            process.exit(1);
-          }
-          // Fall back to manual start only when systemd is unavailable.
-          if (overrideState === "not-applicable" && !findReachableOllamaHost()) {
-            console.log("  Starting Ollama...");
-            runShell(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
-              ignoreError: true,
-            });
-            if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
-              console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
-              if (isNonInteractive()) process.exit(1);
-              continue selectionLoop;
-            }
+          const installResult = installOllamaOnLinux({ isNonInteractive });
+          if (!installResult.ok) {
+            if (isNonInteractive()) process.exit(1);
+            continue selectionLoop;
           }
         }
         if (shouldFrontOllamaWithProxy()) {
