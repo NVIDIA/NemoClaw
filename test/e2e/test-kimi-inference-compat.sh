@@ -466,10 +466,14 @@ if "/usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat" not in pat
     errors.append("Kimi plugin load path missing")
 if not entries.get("nemoclaw-kimi-inference-compat", {}).get("enabled"):
     errors.append("Kimi plugin entry is not enabled")
+tools = cfg.get("tools", {})
+if tools.get("toolSearch") is not False:
+    errors.append("tools.toolSearch is %r" % tools.get("toolSearch"))
 print(json.dumps({
     "provider_keys": sorted(providers.keys()) if isinstance(providers, dict) else [],
     "primary": primary,
     "plugin_enabled": entries.get("nemoclaw-kimi-inference-compat", {}).get("enabled"),
+    "toolSearch": tools.get("toolSearch"),
     "errors": errors,
 }))
 sys.exit(1 if errors else 0)
@@ -496,14 +500,39 @@ check_inference_route() {
 }
 
 run_agent_prompt() {
-  local prompt remote_cmd agent_exit=0
+  local prompt remote_cmd agent_exit=0 final_text
   prompt="Use the exec tool to run hostname, date, and uptime. Run each command and then say exactly: hostname, date, and uptime completed successfully."
   remote_cmd="rm -f /sandbox/.openclaw/agents/main/sessions/${SESSION_ID}.jsonl.lock /sandbox/.openclaw/agents/main/sessions/${SESSION_ID}.trajectory.jsonl 2>/dev/null || true; nemoclaw-start openclaw agent --agent main --json --session-id $(quote_for_remote_sh "$SESSION_ID") -m $(quote_for_remote_sh "$prompt")"
   run_with_timeout 420 openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc "$remote_cmd" >"$AGENT_LOG" 2>&1 || agent_exit=$?
-  if [ "$agent_exit" -eq 0 ] && grep -q "hostname, date, and uptime completed successfully." "$AGENT_LOG"; then
+  final_text="$(
+    python3 - "$AGENT_LOG" <<'PY' 2>/dev/null || true
+import json
+import sys
+
+text = open(sys.argv[1], encoding="utf-8", errors="replace").read()
+for idx, ch in enumerate(text):
+    if ch != "{":
+        continue
+    try:
+        data = json.loads(text[idx:])
+    except Exception:
+        continue
+    payloads = data.get("payloads") or []
+    texts = [p.get("text") for p in payloads if isinstance(p, dict) and isinstance(p.get("text"), str)]
+    if texts:
+        print(texts[-1])
+        break
+    meta_text = data.get("meta", {}).get("finalAssistantVisibleText")
+    if isinstance(meta_text, str):
+        print(meta_text)
+        break
+PY
+  )"
+  if [ "$agent_exit" -eq 0 ] && [ "$final_text" = "hostname, date, and uptime completed successfully." ]; then
     pass "K4: OpenClaw agent completed after Kimi tool results"
   else
     fail "K4: OpenClaw agent did not complete successfully (exit $agent_exit)"
+    info "Parsed final assistant text: ${final_text:-<missing>}"
     info "Agent log tail:"
     tail -120 "$AGENT_LOG" 2>/dev/null || true
   fi

@@ -11,6 +11,7 @@ import os from "node:os";
 import nodePath from "node:path";
 import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
+import type { ContainerRuntime } from "../platform";
 import type { CaptureResult } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 
@@ -23,6 +24,8 @@ const { containerCanReachHostLoopback, inferContainerRuntime, isWsl } = require(
 const { dockerInfo } = require("../adapters/docker/info");
 const { detectNvidiaPlatform } = require("./nim");
 
+const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 1500;
+
 /**
  * Port containers use to reach Ollama. Returns the raw Ollama port when the
  * container can reach the host's 127.0.0.1 directly (Docker Desktop on WSL),
@@ -32,7 +35,9 @@ const { detectNvidiaPlatform } = require("./nim");
 let _ollamaContainerPort: number | null = null;
 export function getOllamaContainerPort(): number {
   if (_ollamaContainerPort !== null) return _ollamaContainerPort;
-  const runtime = inferContainerRuntime(dockerInfo({ ignoreError: true }));
+  const runtime = inferContainerRuntime(
+    dockerInfo({ ignoreError: true, timeout: DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS }),
+  ) as ContainerRuntime;
   _ollamaContainerPort = containerCanReachHostLoopback(runtime) ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
   return _ollamaContainerPort;
 }
@@ -623,6 +628,81 @@ export function parseOllamaTags(output: string | null | undefined): string[] {
   }
 }
 
+export interface OllamaRuntimeModelStatus {
+  probed: boolean;
+  loaded: boolean;
+  cpuOnly: boolean;
+  processor?: string;
+  sizeVram?: number;
+}
+
+function normalizeOllamaModelName(value: unknown): string {
+  return String(value || "").trim();
+}
+
+export function probeOllamaRuntimeModelStatus(
+  model: string,
+  runCaptureImpl?: RunCaptureFn,
+): OllamaRuntimeModelStatus {
+  const capture = runCaptureImpl ?? runCapture;
+  const host = getResolvedOllamaHost();
+  const output = capture(
+    [
+      "curl",
+      "-sf",
+      "--connect-timeout",
+      "3",
+      "--max-time",
+      "5",
+      `http://${host}:${OLLAMA_PORT}/api/ps`,
+    ],
+    { ignoreError: true },
+  );
+  if (!output) return { probed: false, loaded: false, cpuOnly: false };
+
+  try {
+    const parsed = JSON.parse(String(output || ""));
+    const models = Array.isArray(parsed?.models) ? parsed.models : [];
+    const target = normalizeOllamaModelName(model);
+    const loaded = models.find((entry: { name?: unknown; model?: unknown }) => {
+      return (
+        normalizeOllamaModelName(entry?.name) === target ||
+        normalizeOllamaModelName(entry?.model) === target
+      );
+    });
+    if (!loaded) return { probed: true, loaded: false, cpuOnly: false };
+
+    const rawSizeVram = Number((loaded as { size_vram?: unknown }).size_vram);
+    const hasSizeVram = Number.isFinite(rawSizeVram);
+    const processor = normalizeOllamaModelName((loaded as { processor?: unknown }).processor);
+    const mentionsGpu = /\bGPU\b/i.test(processor);
+    const processorCpuOnly = /\bCPU\b/i.test(processor) && !mentionsGpu;
+    const sizeVramCpuOnly = hasSizeVram && rawSizeVram === 0 && !mentionsGpu;
+
+    return {
+      probed: true,
+      loaded: true,
+      cpuOnly: processorCpuOnly || sizeVramCpuOnly,
+      ...(processor ? { processor } : {}),
+      ...(hasSizeVram ? { sizeVram: rawSizeVram } : {}),
+    };
+  } catch {
+    return { probed: true, loaded: false, cpuOnly: false };
+  }
+}
+
+function formatOllamaCpuOnlyDiagnostic(model: string, status: OllamaRuntimeModelStatus): string {
+  const observed: string[] = [];
+  if (status.processor) observed.push(`processor=${status.processor}`);
+  if (status.sizeVram !== undefined) observed.push(`size_vram=${status.sizeVram}`);
+  const observedText = observed.length > 0 ? ` (${observed.join(", ")})` : "";
+  return (
+    `Selected Ollama model '${model}' answered the local probe, but Ollama reports it is loaded on CPU only${observedText}. ` +
+    "DGX Spark should use the CUDA v13 backend; check `ollama ps`, `sudo systemctl cat ollama`, " +
+    "and `journalctl -u ollama.service --since \"10 min ago\" | grep -iE \"gpu|cuda|vram|compute|library\"`, then retry onboarding."
+  );
+}
+
 export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   const capture = runCaptureImpl ?? runCapture;
   const host = getResolvedOllamaHost();
@@ -745,13 +825,14 @@ export function validateOllamaModel(
   const capture = runCaptureImpl ?? runCapture;
   const captureEx = runCaptureExImpl ?? runCaptureEx;
   const isSpark = isSparkImpl ?? (() => detectNvidiaPlatform() === "spark");
+  const sparkHost = isSpark();
   const probeCmd = getOllamaProbeCommand(model);
   const probeResult = captureEx(probeCmd);
   let output = probeResult.stdout;
   // On DGX Spark (128 GB unified memory), loading a large model from disk can take >2 min.
   // Only retry with a 300 s timeout when the initial probe genuinely timed out — fast
   // failures (connection refused, Ollama not running) surface immediately. (#3251)
-  if (isSpark() && probeResult.timedOut) {
+  if (sparkHost && probeResult.timedOut) {
     const retryResult = captureEx(getOllamaProbeCommand(model, 300));
     output = retryResult.stdout;
   }
@@ -782,7 +863,7 @@ export function validateOllamaModel(
       const memMatch = errText.match(
         /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
       );
-      if (memMatch && isSpark()) {
+      if (memMatch && sparkHost) {
         const requiresGiB = parseFloat(memMatch[1]);
         const freeOut = capture(["free", "-m"], { ignoreError: true });
         if (freeOut) {
@@ -803,6 +884,16 @@ export function validateOllamaModel(
     }
   } catch {
     /* ignored */
+  }
+
+  if (sparkHost) {
+    const runtimeStatus = probeOllamaRuntimeModelStatus(model, capture);
+    if (runtimeStatus.cpuOnly) {
+      return {
+        ok: false,
+        message: formatOllamaCpuOnlyDiagnostic(model, runtimeStatus),
+      };
+    }
   }
 
   return { ok: true };

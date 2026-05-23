@@ -161,9 +161,14 @@ export function loadOnboardConfig(): NemoClawOnboardConfig | null {
   if (!existsSync(path)) {
     return null;
   }
-  const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
-  const parsedObject = typeof parsed === "object" && parsed !== null ? parsed : null;
-  return isOnboardConfig(parsedObject) ? parsedObject : null;
+  // Treat unreadable config as "no config" so plugin register doesn't abort.
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, "utf-8"));
+    const parsedObject = typeof parsed === "object" && parsed !== null ? parsed : null;
+    return isOnboardConfig(parsedObject) ? parsedObject : null;
+  } catch {
+    return null;
+  }
 }
 
 export function saveOnboardConfig(config: NemoClawOnboardConfig): void {

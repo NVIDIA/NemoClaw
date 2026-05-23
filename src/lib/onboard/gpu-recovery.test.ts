@@ -75,6 +75,18 @@ describe("gpuPassthroughRecoveryLines", () => {
     // No double-spaced "nemoclaw  destroy" rendering.
     expect(joined).not.toMatch(/nemoclaw\s{2,}destroy/);
   });
+
+  it("does not suggest destroy/recreate as sufficient for a missing Jetson NVIDIA runtime", () => {
+    const lines = gpuPassthroughRecoveryLines(["jetson-box"], {
+      missingRuntimePlatform: "jetson",
+    });
+    const joined = lines.join("\n");
+    expect(joined).toContain("Jetson/Tegra sandbox GPU requires Docker NVIDIA runtime support");
+    expect(joined).toContain("--no-gpu");
+    expect(joined).toContain("missing NVIDIA runtime");
+    expect(joined).not.toContain("destroy --yes");
+    expect(joined).not.toContain("nemoclaw onboard --gpu");
+  });
 });
 
 describe("reportGpuPassthroughRecovery", () => {
@@ -93,5 +105,19 @@ describe("reportGpuPassthroughRecovery", () => {
     const joined = emit.mock.calls.map((c) => c[0]).join("\n");
     expect(joined).toContain("nemoclaw alpha destroy --yes");
     expect(joined).toContain("nemoclaw beta destroy --yes --cleanup-gateway");
+  });
+
+  it("does not load registered names for missing Jetson NVIDIA runtime recovery", () => {
+    const emit = vi.fn();
+    const loadNames = vi.fn(() => ["jetson-box"]);
+    reportGpuPassthroughRecovery(emit, loadNames, {
+      missingRuntimePlatform: "jetson",
+    });
+    const joined = emit.mock.calls.map((c) => c[0]).join("\n");
+
+    expect(loadNames).not.toHaveBeenCalled();
+    expect(joined).toContain("Jetson/Tegra sandbox GPU requires Docker NVIDIA runtime support");
+    expect(joined).toContain("nemoclaw onboard --no-gpu");
+    expect(joined).not.toContain("jetson-box");
   });
 });

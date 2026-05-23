@@ -85,13 +85,22 @@ function sanitizeJsonValue(value: unknown): JsonValue {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "boolean" || value === null) return value;
   if (Array.isArray(value)) return value.map((entry) => sanitizeJsonValue(entry));
-  if (typeof value !== "object" || value === null) return String(value);
+  if (typeof value !== "object") return String(value);
 
   const result: JsonObject = {};
   for (const [key, entry] of Object.entries(value)) {
     result[key] = sanitizeJsonValue(entry);
   }
   return result;
+}
+
+function endpointOrigin(value: unknown): string | null {
+  if (typeof value !== "string" || value.trim() === "") return null;
+  try {
+    return new URL(value).origin;
+  } catch {
+    return null;
+  }
 }
 
 export function sanitizeOnboardMachineEventMetadata(
@@ -106,13 +115,12 @@ export function sanitizeOnboardMachineEventMetadata(
 }
 
 export function buildOnboardMachineContext(session: Session): OnboardMachineContext {
-  const endpointUrl = redactUrl(session.endpointUrl);
   return {
     agent: nullableString(session.agent),
     sandboxName: nullableString(session.sandboxName),
     provider: nullableString(session.provider),
     model: nullableString(session.model),
-    endpointUrl,
+    endpointOrigin: endpointOrigin(session.endpointUrl),
     credentialEnv: nullableString(session.credentialEnv),
     preferredInferenceApi: nullableString(session.preferredInferenceApi),
     hermesAuthMethod: hermesAuthMethod(session.hermesAuthMethod),
