@@ -8,6 +8,17 @@ export interface PolicyPresetEntry {
   [key: string]: unknown;
 }
 
+export interface ActiveSandboxPolicyState {
+  messagingChannels?: string[] | null;
+  disabledChannels?: string[] | null;
+}
+
+export interface PolicyResumeSelection {
+  policyPresets: string[];
+  recordedPolicyPresetsNeedReconcile: boolean;
+  disabledMessagingPolicyPresetApplied: boolean;
+}
+
 export interface PoliciesStateOptions<Agent, WebSearchConfig> {
   resume: boolean;
   sandboxName: string;
@@ -22,7 +33,13 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
   agent: Agent;
   deps: {
     loadSession(): Session | null;
-    getActiveMessagingChannels(sandboxName: string): string[] | null | undefined;
+    getActiveSandbox(sandboxName: string): ActiveSandboxPolicyState | null | undefined;
+    mergePolicyMessagingChannels(
+      selectedMessagingChannels: string[],
+      recordedMessagingChannels: string[],
+      activeMessagingChannels: string[] | null | undefined,
+      disabledChannels: string[] | null | undefined,
+    ): string[];
     verifyCompatibleEndpointSandboxSmoke(options: {
       sandboxName: string;
       provider: string;
@@ -32,23 +49,17 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       messagingChannels: string[];
       agent: Agent;
     }): void;
-    listSetupPolicyPresets(
+    preparePolicyPresetResumeSelection(
       sandboxName: string,
-      options: { webSearchSupported: boolean },
-    ): PolicyPresetEntry[];
-    getAppliedPolicyPresets(sandboxName: string): string[];
-    listCustomPolicyPresets(sandboxName: string): PolicyPresetEntry[];
-    clampSetupPolicyPresetNames(
-      names: string[],
-      selectablePresets: PolicyPresetEntry[],
-      options: { webSearchSupported: boolean },
-      customPresetNames: Set<string>,
-    ): string[];
-    mergeRequiredHermesToolGatewayPolicyPresets(
-      selectedPresets: string[],
-      hermesToolGateways: string[],
-      selectablePresetNames: string[],
-    ): string[];
+      options: {
+        recordedPolicyPresets: string[] | null;
+        disabledChannels: string[] | null | undefined;
+        enabledChannels: string[];
+        hermesToolGateways: string[];
+        webSearchConfig: WebSearchConfig | null;
+        webSearchSupported: boolean;
+      },
+    ): PolicyResumeSelection;
     arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[]): boolean;
     skippedStepMessage(stepName: string, detail?: string | null): void;
     recordStateSkipped(state: "policies", metadata?: Record<string, unknown> | null): Promise<Session>;
@@ -61,6 +72,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
       options: {
         selectedPresets: string[] | null;
         enabledChannels: string[];
+        disabledChannels?: string[] | null;
         webSearchConfig: WebSearchConfig | null;
         provider: string;
         webSearchSupported: boolean;
@@ -101,44 +113,36 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   const recordedMessagingChannels = Array.isArray(latestSession?.messagingChannels)
     ? latestSession.messagingChannels
     : [];
-  const activeMessagingChannels = deps.getActiveMessagingChannels(sandboxName);
+  const activeSandbox = deps.getActiveSandbox(sandboxName);
+  const policyMessagingChannels = deps.mergePolicyMessagingChannels(
+    selectedMessagingChannels,
+    recordedMessagingChannels,
+    activeSandbox?.messagingChannels,
+    activeSandbox?.disabledChannels,
+  );
   deps.verifyCompatibleEndpointSandboxSmoke({
     sandboxName,
     provider,
     model,
     endpointUrl,
     credentialEnv,
-    messagingChannels: Array.isArray(activeMessagingChannels) ? activeMessagingChannels : [],
+    messagingChannels: policyMessagingChannels,
     agent,
   });
 
-  const policyPresetSupportOptions = { webSearchSupported };
-  const selectablePolicyPresetsForSupport = [
-    ...deps.listSetupPolicyPresets(sandboxName, policyPresetSupportOptions),
-    ...deps.getAppliedPolicyPresets(sandboxName).map((name) => ({ name })),
-  ];
-  const customPolicyPresetNames = new Set(
-    deps.listCustomPolicyPresets(sandboxName).map((preset) => preset.name),
-  );
-  let recordedPolicyPresetsForSupport = deps.clampSetupPolicyPresetNames(
-    recordedPolicyPresets || [],
-    selectablePolicyPresetsForSupport,
-    policyPresetSupportOptions,
-    customPolicyPresetNames,
-  );
-  if (recordedPolicyPresets) {
-    recordedPolicyPresetsForSupport = deps.mergeRequiredHermesToolGatewayPolicyPresets(
-      recordedPolicyPresetsForSupport,
-      hermesToolGateways,
-      selectablePolicyPresetsForSupport.map((preset) => preset.name),
-    );
-  }
-  const recordedPolicyPresetsHaveUnsupported =
-    Array.isArray(recordedPolicyPresets) &&
-    recordedPolicyPresetsForSupport.length !== recordedPolicyPresets.length;
+  const policyResumeSelection = deps.preparePolicyPresetResumeSelection(sandboxName, {
+    recordedPolicyPresets,
+    disabledChannels: activeSandbox?.disabledChannels,
+    enabledChannels: policyMessagingChannels,
+    hermesToolGateways,
+    webSearchConfig,
+    webSearchSupported,
+  });
+  const recordedPolicyPresetsForSupport = policyResumeSelection.policyPresets;
   const resumePolicies =
     resume &&
-    !recordedPolicyPresetsHaveUnsupported &&
+    !policyResumeSelection.recordedPolicyPresetsNeedReconcile &&
+    !policyResumeSelection.disabledMessagingPolicyPresetApplied &&
     deps.arePolicyPresetsApplied(sandboxName, recordedPolicyPresetsForSupport);
 
   let appliedPolicyPresets = recordedPolicyPresetsForSupport;
@@ -169,10 +173,8 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       selectedPresets: Array.isArray(recordedPolicyPresets)
         ? recordedPolicyPresetsForSupport
         : null,
-      enabledChannels:
-        selectedMessagingChannels.length > 0
-          ? selectedMessagingChannels
-          : recordedMessagingChannels,
+      enabledChannels: policyMessagingChannels,
+      disabledChannels: activeSandbox?.disabledChannels,
       webSearchConfig,
       provider,
       webSearchSupported,

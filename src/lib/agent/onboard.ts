@@ -13,6 +13,7 @@ import { dockerBuild, dockerImageInspect } from "../adapters/docker";
 import { getAgentBranding } from "../cli/branding";
 import { getProviderSelectionConfig } from "../inference/config";
 import type { JsonObject as LooseObject } from "../core/json-types";
+import { runSandboxConfigSync } from "../onboard/config-sync";
 import { ROOT, redact, run, shellQuote } from "../runner";
 import {
   buildLocalBaseTag,
@@ -27,9 +28,6 @@ export interface OnboardContext {
   runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string | null;
   openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
   openshellBinary: string;
-  buildSandboxConfigSyncScript: (config: LooseObject) => string;
-  writeSandboxConfigSyncFile: (script: string) => string;
-  cleanupTempDir: (file: string, prefix: string) => void;
   startRecordedStep: (stepName: string, updates: LooseObject) => Promise<void>;
   recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
   recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
@@ -355,8 +353,8 @@ async function failAgentSetup(
   sandboxName: string,
   agent: AgentDefinition,
   message: string,
-  details: string[] = [],
   recordStepFailed: OnboardContext["recordStepFailed"],
+  details: string[] = [],
 ): Promise<never> {
   await recordStepFailed(
     "agent_setup",
@@ -404,14 +402,26 @@ export async function handleAgentSetup(
     step,
     runCaptureOpenshell,
     openshellBinary: openshellBin,
-    buildSandboxConfigSyncScript,
-    writeSandboxConfigSyncFile,
-    cleanupTempDir,
     startRecordedStep,
     recordStepComplete,
     recordStepFailed,
     skippedStepMessage,
   } = ctx;
+
+  const syncNemoClawConfig = (): void => {
+    runSandboxConfigSync(sandboxName, {
+      getSelectionConfig: () => {
+        const cfg = getProviderSelectionConfig(provider, model);
+        return cfg ? { ...cfg, agent: agent.name } : null;
+      },
+      runConnectScript: (name, scriptContent) => {
+        run([openshellBin, "sandbox", "connect", name], {
+          stdio: ["pipe", "ignore", "inherit"],
+          input: scriptContent,
+        });
+      },
+    });
+  };
 
   if (resume && sandboxName) {
     const probe = agent.healthProbe;
@@ -422,6 +432,11 @@ export async function handleAgentSetup(
       );
       if (isHealthProbeOk(result)) {
         skippedStepMessage("agent_setup", sandboxName);
+        // Re-sync `~/.nemoclaw/config.json` even on the resume skip path —
+        // a rebuild destroys/recreates the container and the file reverts
+        // to the Dockerfile's zero-byte placeholder. Mirrors the OpenClaw
+        // path in src/lib/onboard.ts. Fixes #3999 for non-OpenClaw agents.
+        syncNemoClawConfig();
         await recordStepComplete("agent_setup", { sandboxName, provider, model });
         return;
       }
@@ -433,34 +448,15 @@ export async function handleAgentSetup(
 
   const binaryAvailability = verifyAgentBinaryAvailable(sandboxName, agent, runCaptureOpenshell);
   if (!binaryAvailability.available) {
-    failAgentSetup(
+    await failAgentSetup(
       sandboxName,
       agent,
       describeAgentBinaryFailure(sandboxName, agent, binaryAvailability),
-      [],
       recordStepFailed,
     );
   }
 
-  const selectionConfig = getProviderSelectionConfig(provider, model);
-  if (selectionConfig) {
-    const sandboxConfig = {
-      ...selectionConfig,
-      agent: agent.name,
-      onboardedAt: new Date().toISOString(),
-    };
-    const script = buildSandboxConfigSyncScript(sandboxConfig);
-    const scriptFile = writeSandboxConfigSyncFile(script);
-    try {
-      const scriptContent = fs.readFileSync(scriptFile, "utf-8");
-      run([openshellBin, "sandbox", "connect", sandboxName], {
-        stdio: ["pipe", "ignore", "inherit"],
-        input: scriptContent,
-      });
-    } finally {
-      cleanupTempDir(scriptFile, "nemoclaw-sync");
-    }
-  }
+  syncNemoClawConfig();
 
   const probe = agent.healthProbe;
   if (probe?.url) {
@@ -487,12 +483,12 @@ export async function handleAgentSetup(
         agent.name === "hermes"
           ? collectHermesStartupDiagnostics(sandboxName, runCaptureOpenshell)
           : [];
-      failAgentSetup(
+      await failAgentSetup(
         sandboxName,
         agent,
         `${agent.displayName} gateway did not respond within ${timeoutSecs}s`,
-        diagnostics,
         recordStepFailed,
+        diagnostics,
       );
     }
   } else {

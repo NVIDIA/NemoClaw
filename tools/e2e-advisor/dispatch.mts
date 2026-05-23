@@ -5,6 +5,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import { githubApi } from "../advisors/github.mts";
+import { parseArgs, readJson, readJsonIfExists, writeJson } from "../advisors/io.mts";
+
 const DEFAULT_TARGET_WORKFLOW = "nightly-e2e.yaml";
 const DEFAULT_DISPATCH_REF = "main";
 const DEFAULT_ALLOWED_AUTHOR_ASSOCIATIONS = "OWNER,MEMBER";
@@ -67,13 +70,6 @@ type DispatchPlan = {
   authorLogin?: string;
   allowedAuthorAssociations?: string[];
   allowedByAuthorAllowlist?: boolean;
-};
-
-type ParsedArgs = {
-  result?: string;
-  workflowPath?: string;
-  workflow?: string;
-  outDir?: string;
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
@@ -155,37 +151,9 @@ async function main(): Promise<void> {
   }
 
   const summary = renderDispatchSummary(output);
-  fs.writeFileSync(outputPath, `${JSON.stringify(output, null, 2)}\n`);
+  writeJson(outputPath, output);
   fs.writeFileSync(summaryPath, summary);
   console.log(summary);
-}
-
-function parseArgs(argv: string[]): ParsedArgs {
-  const parsed: Record<string, string | undefined> = {};
-  for (let i = 0; i < argv.length; i += 1) {
-    const arg = argv[i];
-    if (arg.startsWith("--")) {
-      const key = arg.slice(2).replace(/-([a-z])/g, (_, char: string) => char.toUpperCase());
-      const next = argv[i + 1];
-      if (!next || next.startsWith("--")) {
-        parsed[key] = undefined;
-        continue;
-      }
-      parsed[key] = next;
-      i += 1;
-    }
-  }
-  return parsed;
-}
-
-function readJson<T>(filePath: string): T {
-  return JSON.parse(fs.readFileSync(path.resolve(filePath), "utf8")) as T;
-}
-
-function readJsonIfExists<T>(filePath: string | undefined): T | undefined {
-  if (!filePath) return undefined;
-  const resolved = path.resolve(filePath);
-  return fs.existsSync(resolved) ? readJson<T>(resolved) : undefined;
 }
 
 export function planAutoDispatch({
@@ -403,27 +371,19 @@ async function dispatchWorkflow({
   const safeWorkflow = validateWorkflowFile(workflow);
   const safeRef = validateGitRef(ref);
   const safeInputs = validateDispatchInputs(inputs);
-  const dispatchUrl = `https://api.github.com/repos/${safeRepo}/actions/workflows/${encodeURIComponent(safeWorkflow)}/dispatches`;
-
   // lgtm[js/file-access-to-http] The request body is constructed only after
   // same-repository/OWNER-or-MEMBER gating and strict validation of the target
   // workflow, ref, PR number, and comma-separated E2E job names.
-  const response = await fetch(dispatchUrl, {
-    method: "POST",
-    headers: {
-      "Accept": "application/vnd.github+json",
-      "Authorization": `Bearer ${token}`,
-      "Content-Type": "application/json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      "User-Agent": "nemoclaw-e2e-advisor-dispatcher",
-    },
-    body: JSON.stringify({ ref: safeRef, inputs: safeInputs }),
-  });
-
-  if (!response.ok) {
+  try {
+    await githubApi<void>(`repos/${safeRepo}/actions/workflows/${encodeURIComponent(safeWorkflow)}/dispatches`, token, {
+      method: "POST",
+      body: { ref: safeRef, inputs: safeInputs },
+      userAgent: "nemoclaw-e2e-advisor-dispatcher",
+    });
+  } catch {
     // Do not include the response body in thrown errors. GitHub API error text
     // is network-controlled and this script records failures to artifact files.
-    throw new Error(`GitHub workflow dispatch failed with HTTP ${response.status}`);
+    throw new Error("GitHub workflow dispatch failed");
   }
 }
 
@@ -459,24 +419,17 @@ async function findDispatchedWorkflowRun({
     branch: safeRef,
     per_page: "20",
   });
-  const runsUrl = `https://api.github.com/repos/${safeRepo}/actions/workflows/${encodeURIComponent(safeWorkflow)}/runs?${params}`;
+  const runsPath = `repos/${safeRepo}/actions/workflows/${encodeURIComponent(safeWorkflow)}/runs?${params}`;
 
   for (let attempt = 0; attempt < 8; attempt += 1) {
     if (attempt > 0) await delay(2000);
-    const response = await fetch(runsUrl, {
-      headers: {
-        "Accept": "application/vnd.github+json",
-        "Authorization": `Bearer ${token}`,
-        "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "nemoclaw-e2e-advisor-dispatcher",
-      },
-    });
-    if (!response.ok) {
-      console.warn(`Could not look up dispatched nightly run: GitHub API HTTP ${response.status}`);
+    let data: WorkflowRunSearchResult;
+    try {
+      data = await githubApi<WorkflowRunSearchResult>(runsPath, token, { userAgent: "nemoclaw-e2e-advisor-dispatcher" });
+    } catch (error: unknown) {
+      console.warn(`Could not look up dispatched nightly run: ${error instanceof Error ? error.message : String(error)}`);
       return undefined;
     }
-
-    const data = await response.json() as WorkflowRunSearchResult;
     const match = data.workflow_runs?.find(
       (run) => run.event === "workflow_dispatch" && run.display_title?.includes(advisorDispatchId),
     );
