@@ -139,8 +139,11 @@ export async function stopModelRouterProcess(pid: number, port: number): Promise
 export async function stopTrackedModelRouterForAgentChange(
   session: Pick<Session, "routerPid"> | null,
   port: number,
+  deps: ModelRouterProcessOwnershipDeps & {
+    stopProcess?: (pid: number, port: number) => Promise<void>;
+  } = {},
 ): Promise<void> {
   const recordedPid = session?.routerPid ?? null;
-  if (!recordedPid) return;
-  await stopModelRouterProcess(recordedPid, port);
+  if (!doesModelRouterProcessOwnPort(recordedPid, port, deps)) return;
+  await (deps.stopProcess ?? stopModelRouterProcess)(recordedPid as number, port);
 }

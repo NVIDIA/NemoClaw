@@ -7,6 +7,7 @@ import {
   doesModelRouterProcessOwnPort,
   isModelRouterCommandLineForPort,
   readModelRouterProcessCommandLine,
+  stopTrackedModelRouterForAgentChange,
 } from "../../../dist/lib/onboard/model-router-process";
 
 describe("model-router process ownership checks", () => {
@@ -32,6 +33,30 @@ describe("model-router process ownership checks", () => {
         readPsCommandLine: () => ["/tmp/router/bin/model-router", "proxy", "--port", "44123"],
       }),
     ).toEqual(["/tmp/router/bin/model-router", "proxy", "--port", "44123"]);
+  });
+
+  it("skips agent-change stop when the recorded PID is not an owned model-router", async () => {
+    let stopped = false;
+    await stopTrackedModelRouterForAgentChange({ routerPid: 1234 }, 44123, {
+      isRunning: () => true,
+      readCommandLine: () => ["/usr/bin/sleep", "999"],
+      stopProcess: async () => {
+        stopped = true;
+      },
+    });
+    expect(stopped).toBe(false);
+  });
+
+  it("stops the recorded router on agent change only after ownership is established", async () => {
+    const stopped: Array<[number, number]> = [];
+    await stopTrackedModelRouterForAgentChange({ routerPid: 1234 }, 44123, {
+      isRunning: () => true,
+      readCommandLine: () => ["/tmp/router/bin/model-router", "proxy", "--port", "44123"],
+      stopProcess: async (pid, port) => {
+        stopped.push([pid, port]);
+      },
+    });
+    expect(stopped).toEqual([[1234, 44123]]);
   });
 
   it("rejects reused PIDs that do not look like the expected model-router proxy", () => {
