@@ -10,10 +10,53 @@ runs:
     - name: Resolve Hermes sandbox base image
       shell: bash
       run: |
-        if docker pull ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest 2>/dev/null; then
-          echo "HERMES_BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest" >> "$GITHUB_ENV"
-        else
-          echo "::warning::GHCR Hermes base image not available, building locally"
-          docker build -f agents/hermes/Dockerfile.base -t nemoclaw-hermes-base-local .
-          echo "HERMES_BASE_IMAGE=nemoclaw-hermes-base-local" >> "$GITHUB_ENV"
+        set -euo pipefail
+
+        image="ghcr.io/nvidia/nemoclaw/hermes-sandbox-base"
+        min_glibc="2.39"
+
+        glibc_version() {
+          docker run --rm --entrypoint /usr/bin/ldd "$1" --version 2>/dev/null \
+            | sed -nE 's/.*GLIBC ([0-9]+\.[0-9]+).*/\1/p; s/.* ([0-9]+\.[0-9]+)$/\1/p' \
+            | head -n 1
+        }
+
+        glibc_ok() {
+          local have="$1"
+          [[ -n "$have" ]] && [[ "$(printf '%s\n%s\n' "$min_glibc" "$have" | sort -V | head -n 1)" == "$min_glibc" ]]
+        }
+
+        try_image() {
+          local ref="$1" version
+          if ! docker pull "$ref" >/dev/null 2>&1; then
+            return 1
+          fi
+          version="$(glibc_version "$ref" || true)"
+          if ! glibc_ok "$version"; then
+            echo "::warning::Hermes sandbox base image ${ref} has glibc ${version:-unknown}; need >= ${min_glibc}"
+            return 1
+          fi
+          echo "HERMES_BASE_IMAGE=${ref}" >> "$GITHUB_ENV"
+          return 0
+        }
+
+        candidates=()
+        if [[ -n "${GITHUB_SHA:-}" ]]; then
+          candidates+=("${image}:${GITHUB_SHA:0:8}" "${image}:${GITHUB_SHA:0:7}")
         fi
+        candidates+=("${image}:latest")
+
+        for ref in "${candidates[@]}"; do
+          if try_image "$ref"; then
+            exit 0
+          fi
+        done
+
+        echo "::warning::No compatible GHCR Hermes sandbox base image found, building locally"
+        docker build -f agents/hermes/Dockerfile.base -t nemoclaw-hermes-base-local .
+        version="$(glibc_version nemoclaw-hermes-base-local || true)"
+        if ! glibc_ok "$version"; then
+          echo "::error::Local Hermes sandbox base image has glibc ${version:-unknown}; need >= ${min_glibc}"
+          exit 1
+        fi
+        echo "HERMES_BASE_IMAGE=nemoclaw-hermes-base-local" >> "$GITHUB_ENV"

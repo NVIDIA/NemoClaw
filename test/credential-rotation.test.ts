@@ -35,7 +35,7 @@ function isCredentialRotationInternals(value: object | null): value is Credentia
   );
 }
 
-function isRegistryModule(value: object | null): value is typeof import("../dist/lib/registry.js") {
+function isRegistryModule(value: object | null): value is typeof import("../dist/lib/state/registry.js") {
   return isRecord(value) && typeof value.getSandbox === "function";
 }
 
@@ -48,8 +48,8 @@ function loadCredentialRotationInternals(): CredentialRotationInternals {
   return record;
 }
 
-function loadRegistryModule(): typeof import("../dist/lib/registry.js") {
-  const loaded = require("../dist/lib/registry.js");
+function loadRegistryModule(): typeof import("../dist/lib/state/registry.js") {
+  const loaded = require("../dist/lib/state/registry.js");
   const record = typeof loaded === "object" && loaded !== null ? loaded : null;
   if (!isRegistryModule(record)) {
     throw new Error("Expected registry module to expose getSandbox");
@@ -60,7 +60,7 @@ function loadRegistryModule(): typeof import("../dist/lib/registry.js") {
 describe("credential rotation detection", () => {
   let hashCredential: CredentialRotationInternals["hashCredential"];
   let detectMessagingCredentialRotation: CredentialRotationInternals["detectMessagingCredentialRotation"];
-  let registry: typeof import("../dist/lib/registry.js");
+  let registry: typeof import("../dist/lib/state/registry.js");
 
   beforeEach(() => {
     // Fresh imports to avoid cross-test contamination
@@ -182,7 +182,7 @@ describe("credential rotation detection", () => {
       vi.restoreAllMocks();
     });
 
-    it("skips providers with null tokens", () => {
+    it("treats removed tokens as changed providers", () => {
       const hash = hashCredentialOrThrow("old-token");
       vi.spyOn(registry, "getSandbox").mockReturnValue({
         name: "test-sandbox",
@@ -193,8 +193,8 @@ describe("credential rotation detection", () => {
         { name: "test-telegram-bridge", envKey: "TELEGRAM_BOT_TOKEN", token: null },
       ]);
 
-      expect(result.changed).toBe(false);
-      expect(result.changedProviders).toEqual([]);
+      expect(result.changed).toBe(true);
+      expect(result.changedProviders).toEqual(["test-telegram-bridge"]);
       vi.restoreAllMocks();
     });
 

@@ -24,10 +24,12 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | `nemoclaw/src/commands/` | TypeScript | Slash commands, migration state |
 | `nemoclaw/src/onboard/` | TypeScript | Onboarding config |
 | `nemoclaw-blueprint/` | YAML | Blueprint definition and network policies |
+| `nemoclaw-blueprint/model-specific-setup/` | JSON | Agent-scoped model/provider compatibility registry |
 | `scripts/` | Bash/JS/TS | Install helpers, setup, automation, E2E tooling |
 | `test/` | JavaScript (ESM) | Root-level integration tests (Vitest) |
-| `test/e2e/` | Bash/JS | End-to-end tests (Brev cloud instances) |
-| `docs/` | Markdown (MyST) | User-facing docs (Sphinx) |
+| `test/e2e/` | Bash/JS/TS | End-to-end tests, scenario-based runner (see `test/e2e/README.md`) |
+| `docs/` | MDX/Markdown | User-facing docs (Fern MDX plus legacy MyST source during migration) |
+| `fern/` | YAML/CSS/SVG | Fern site configuration and shared assets |
 
 ## Quick Reference
 
@@ -51,7 +53,7 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 
 - **CLI and plugin**: TypeScript (`src/`, `nemoclaw/src/`) with a small CommonJS launcher in `bin/`; ESM in `test/`
 - **Blueprint**: YAML configuration (`nemoclaw-blueprint/`)
-- **Docs**: Sphinx/MyST Markdown
+- **Docs**: Fern MDX for migrated pages; legacy MyST Markdown remains during the transition for generated skills and parity checks
 - **Tooling scripts**: Bash and Python
 
 The `bin/` directory uses CommonJS intentionally for the launcher and a few compatibility helpers so the CLI still has a stable executable entry point. The main CLI implementation lives in `src/` and compiles to `dist/`. The `nemoclaw/` plugin uses TypeScript and requires compilation.
@@ -165,6 +167,15 @@ All hooks managed by [prek](https://prek.j178.dev/) (installed via `npm install`
 
 - Add YAML to `nemoclaw-blueprint/policies/presets/`
 - Follow existing preset structure (see `slack.yaml`, `discord.yaml`)
+
+**Adding model-specific sandbox compatibility:**
+
+- Add a declarative manifest under `nemoclaw-blueprint/model-specific-setup/<agent>/`
+- Use one exact `agent` per manifest (`openclaw`, `hermes`, etc.); do not make shared multi-agent manifests
+- Put OpenClaw executable wrappers under `nemoclaw-blueprint/openclaw-plugins/`
+- Put Hermes executable wrappers under `agents/hermes/`
+- Keep `agents/hermes/generate-config.ts` as a thin build-time entrypoint; add Hermes env parsing, config construction, registry handling, and serialization under `agents/hermes/config/`
+- Do not add Hermes behavior for an OpenClaw issue without a Hermes-specific repro or acceptance test
 
 ### Gotchas
 

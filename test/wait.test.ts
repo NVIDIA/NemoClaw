@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import assert from "node:assert";
-import { describe, expect, it } from "vitest";
-import { sleepMs, sleepSeconds } from "../src/lib/wait.js";
+import { describe, it } from "vitest";
+import { sleepMs, sleepSeconds } from "../src/lib/core/wait.js";
 
 describe("wait utility", () => {
   it("sleepMs blocks for approximately the requested time", () => {

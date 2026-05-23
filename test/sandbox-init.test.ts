@@ -405,6 +405,66 @@ EOF
     });
   });
 
+  describe("init_step_down_prefixes", () => {
+    it("falls back to gosu when setpriv is unavailable", () => {
+      // Source-time init runs before our test body, so re-run it with a
+      // PATH that hides setpriv and capsh to exercise the fallback.
+      const { stdout, stderr } = runWithLib(
+        [
+          "export PATH=/nonexistent",
+          "init_step_down_prefixes 2>&1",
+          "printf '%s\\n' \"${STEP_DOWN_PREFIX_SANDBOX[@]}\"",
+          'echo "--"',
+          "printf '%s\\n' \"${STEP_DOWN_PREFIX_GATEWAY[@]}\"",
+        ].join("\n"),
+      );
+      const combined = `${stdout}\n${stderr}`;
+      expect(combined).toContain("falling back to gosu");
+      expect(stdout).toContain("gosu\nsandbox");
+      expect(stdout).toContain("gosu\ngateway");
+    });
+
+    it("uses setpriv with the issue-3280 bounding-set drop when available", () => {
+      const { stdout } = runWithLib(
+        [
+          "TMP=$(mktemp -d)",
+          'cat >"$TMP/setpriv" <<\'STUB\'',
+          "#!/bin/sh",
+          "exit 0",
+          "STUB",
+          'cat >"$TMP/capsh" <<\'STUB\'',
+          "#!/bin/sh",
+          '[ "$1" = "--has-p=cap_setpcap" ] && exit 0',
+          "exit 1",
+          "STUB",
+          'chmod +x "$TMP/setpriv" "$TMP/capsh"',
+          'export PATH="$TMP:$PATH"',
+          "init_step_down_prefixes",
+          "printf '%s\\n' \"${STEP_DOWN_PREFIX_SANDBOX[@]}\"",
+          'echo "--"',
+          "printf '%s\\n' \"${STEP_DOWN_PREFIX_GATEWAY[@]}\"",
+          'rm -rf "$TMP"',
+        ].join("\n"),
+      );
+      // setpriv prefix must include --reuid/--regid for the user and the
+      // bounding-set drop covering the five load-bearing caps from #3280.
+      expect(stdout).toContain("setpriv");
+      expect(stdout).toContain("--reuid=sandbox");
+      expect(stdout).toContain("--regid=sandbox");
+      expect(stdout).toContain("--reuid=gateway");
+      expect(stdout).toContain("--regid=gateway");
+      // setpriv expects unprefixed cap names (per `setpriv --list`),
+      // unlike capsh which uses cap_*. Keep these in sync with the
+      // STEP_DOWN_PREFIX_* arrays in sandbox-init.sh.
+      expect(stdout).toContain("--bounding-set=-setuid,-setgid,-fowner,-chown,-kill");
+      // Each prefix array must end with '--' so setpriv stops parsing
+      // its own flags before the caller's target command. printf splits
+      // array elements onto separate lines, so each prefix's last element
+      // is a line containing just '--'.
+      expect(stdout.match(/^--$/gm)?.length).toBeGreaterThanOrEqual(3);
+    });
+  });
+
   describe("validate_config_symlinks", () => {
     let workDir: string;
 
@@ -541,75 +601,6 @@ EOF
       } finally {
         rmSync(workDir, { recursive: true, force: true });
       }
-    });
-
-    it("hermes start.sh sources sandbox-init.sh", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain("source");
-      expect(src).toContain("sandbox-init.sh");
-    });
-
-    it("hermes start.sh calls lock_rc_files (vulnerability fix)", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain("lock_rc_files");
-    });
-
-    it("hermes start.sh rewrites configure guard rc blocks through the symlink-safe helper", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      const helperFn = src.match(/rewrite_rc_marker_block\(\) \{([\s\S]*?)^}/m);
-      const guardFn = src.match(/install_configure_guard\(\) \{([\s\S]*?)^# configure_messaging_channels/m);
-      expect(helperFn).toBeTruthy();
-      expect(guardFn).toBeTruthy();
-      expect(helperFn![1]).toContain('[ -L "$rc_file" ]');
-      expect(helperFn![1]).toContain('mktemp "${dir}/.${base}.tmp.XXXXXX"');
-      expect(helperFn![1]).toContain('mv -f "$tmp" "$rc_file"');
-      expect(src).toContain("rewrite_rc_marker_block_or_fail_in_root");
-      expect(guardFn![1]).toContain("rewrite_rc_marker_block_or_fail_in_root");
-      expect(guardFn![1]).not.toContain('cat "$tmp" >"$rc_file"');
-      expect(guardFn![1]).not.toContain('>>"$rc_file"');
-    });
-
-    it("hermes start.sh uses emit_sandbox_sourced_file for proxy config", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain("emit_sandbox_sourced_file");
-      // Should NOT contain the old inline _write_proxy_snippet pattern
-      expect(src).not.toContain("_write_proxy_snippet");
-      expect(src).not.toContain("_PROXY_MARKER_BEGIN");
-    });
-
-    it("hermes start.sh calls validate_tmp_permissions", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      expect(src).toContain("validate_tmp_permissions");
-    });
-
-    it("hermes start.sh checks immutable bits before legacy migration mutates files", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      const fn = src.match(/migrate_legacy_layout\(\) \{([\s\S]*?)^}/m);
-      expect(fn).toBeTruthy();
-      expect(src).toContain("path_has_immutable_bit");
-      expect(src).toContain("ensure_mutable_for_migration");
-      expect(fn![1]).toContain('[ -L "$config_dir" ]');
-      for (const target of ["$sentinel", "$config_dir", "$data_dir", "$entry", "$target"]) {
-        expect(fn![1]).toContain(`ensure_mutable_for_migration "${target}"`);
-      }
-      expect(fn![1]).toContain('elif [ -d "$target" ] && [ -d "$entry" ]; then');
-    });
-
-    it("hermes start.sh validates hidden legacy symlinks and avoids recursive chown following", () => {
-      const src = readFileSync(join(import.meta.dirname, "../agents/hermes/start.sh"), "utf-8");
-      const existsFn = src.match(/legacy_symlinks_exist\(\) \{([\s\S]*?)^}/m);
-      const assertFn = src.match(/assert_no_legacy_layout\(\) \{([\s\S]*?)^}/m);
-      const migrateFn = src.match(/migrate_legacy_layout\(\) \{([\s\S]*?)^}/m);
-      expect(existsFn).toBeTruthy();
-      expect(assertFn).toBeTruthy();
-      expect(migrateFn).toBeTruthy();
-      for (const fn of [existsFn![1], assertFn![1]]) {
-        expect(fn).toContain('"$config_dir"/.[!.]*');
-        expect(fn).toContain('"$config_dir"/..?*');
-      }
-      expect(src).toContain("chown_tree_no_symlink_follow");
-      expect(migrateFn![1]).toContain("chown_tree_no_symlink_follow sandbox:sandbox");
-      expect(migrateFn![1]).not.toContain('chown -R sandbox:sandbox "$entry"');
     });
 
   });

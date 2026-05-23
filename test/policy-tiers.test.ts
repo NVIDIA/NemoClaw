@@ -11,8 +11,8 @@
 //   - Integration with the existing policies module
 
 import { describe, expect, it } from "vitest";
-import policies from "../dist/lib/policies";
-import tiers from "../dist/lib/tiers";
+import policies from "../dist/lib/policy";
+import tiers from "../dist/lib/policy/tiers";
 
 interface TierPreset {
   name: string;
@@ -138,11 +138,13 @@ describe("tiers", () => {
       }
     });
 
-    it("does not include messaging presets (slack, discord, telegram)", () => {
+    it("does not include messaging presets (slack, discord, telegram, wechat, whatsapp)", () => {
       const names = mustGetTier("balanced").presets.map((preset: TierPreset) => preset.name);
       expect(names).not.toContain("slack");
       expect(names).not.toContain("discord");
       expect(names).not.toContain("telegram");
+      expect(names).not.toContain("wechat");
+      expect(names).not.toContain("whatsapp");
     });
   });
 
@@ -159,11 +161,13 @@ describe("tiers", () => {
       }
     });
 
-    it("includes messaging presets (slack, discord, telegram)", () => {
+    it("includes messaging presets (slack, discord, telegram, wechat, whatsapp)", () => {
       const names = mustGetTier("open").presets.map((preset: TierPreset) => preset.name);
       expect(names).toContain("slack");
       expect(names).toContain("discord");
       expect(names).toContain("telegram");
+      expect(names).toContain("wechat");
+      expect(names).toContain("whatsapp");
     });
 
     it("includes productivity presets (jira, outlook)", () => {

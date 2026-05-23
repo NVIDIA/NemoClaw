@@ -13,7 +13,7 @@ function runShell(
   script: string,
   env: Record<string, string | undefined> = {},
 ): SpawnSyncReturns<string> {
-  return spawnSync("bash", ["-lc", script], {
+  return spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
     cwd: path.join(import.meta.dirname, ".."),
     encoding: "utf-8",
     env: { ...process.env, ...env },

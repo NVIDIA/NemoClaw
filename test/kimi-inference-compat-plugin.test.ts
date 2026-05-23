@@ -54,6 +54,44 @@ function toolMessage(command: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
+function toolCommand(block: any) {
+  if (typeof block?.arguments === "string") return JSON.parse(block.arguments).command;
+  return block?.arguments?.command;
+}
+
+function failedToolContext() {
+  return {
+    messages: [
+      {
+        role: "toolResult",
+        content: [
+          {
+            type: "toolResult",
+            toolCallId: "call_kimi_exec",
+            isError: true,
+            text: "exec failed: command not found",
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function failedToolAssistantMessage() {
+  return {
+    role: "assistant",
+    stopReason: "stop",
+    reasoning: "PRIVATE reasoning after the exec tool failed",
+    reasoning_content: "PRIVATE chain-of-thought after the tool failure",
+    reasoningDetails: [{ text: "PRIVATE detailed reasoning" }],
+    thinking: "PRIVATE thinking content",
+    content: [
+      { type: "thinking", text: "PRIVATE streamed thinking block" },
+      { type: "text", text: "The exec tool failed: command not found." },
+    ],
+  };
+}
+
 describe("nemoclaw Kimi inference compat plugin", () => {
   it("splits the safe combined exec diagnostics into separate tool calls", () => {
     const message = toolMessage("hostname; date; uptime");
@@ -89,11 +127,12 @@ describe("nemoclaw Kimi inference compat plugin", () => {
 
     expect(plugin.__testing.rewriteSafeCombinedExecToolCallInMessage(message)).toBe(true);
 
-    expect(message.content.map((block: any) => block.arguments.command)).toEqual([
+    expect(message.content.map(toolCommand)).toEqual([
       "hostname",
       "date",
       "uptime",
     ]);
+    expect(message.content.every((block: any) => typeof block.arguments === "string")).toBe(true);
   });
 
   it("drops transient streaming fields from split tool calls", () => {
@@ -137,6 +176,104 @@ describe("nemoclaw Kimi inference compat plugin", () => {
       "call_kimi_exec_split_2_date",
       "call_kimi_exec_split_3_uptime",
     ]);
+  });
+
+  it("canonicalizes mixed streamed split calls plus the original combined call", () => {
+    const message = {
+      role: "assistant",
+      stopReason: "toolUse",
+      content: [
+        {
+          type: "toolCall",
+          id: "call_kimi_exec_split_1_hostname",
+          name: "exec",
+          arguments: { command: "hostname" },
+        },
+        {
+          type: "toolCall",
+          id: "call_kimi_exec_split_2_date",
+          name: "exec",
+          arguments: { command: "date" },
+        },
+        {
+          type: "toolCall",
+          id: "call_kimi_exec",
+          name: "exec",
+          arguments: { command: "hostname; date; uptime" },
+        },
+      ],
+    };
+
+    expect(plugin.__testing.rewriteSafeCombinedExecToolCallInMessage(message)).toBe(true);
+
+    expect(message.content).toEqual([
+      {
+        type: "toolCall",
+        id: "call_kimi_exec_split_1_hostname",
+        name: "exec",
+        arguments: { command: "hostname" },
+      },
+      {
+        type: "toolCall",
+        id: "call_kimi_exec_split_2_date",
+        name: "exec",
+        arguments: { command: "date" },
+      },
+      {
+        type: "toolCall",
+        id: "call_kimi_exec_split_3_uptime",
+        name: "exec",
+        arguments: { command: "uptime" },
+      },
+    ]);
+  });
+
+  it("normalizes mixed already-split and combined exec commands from OpenClaw trajectories", () => {
+    const message = {
+      ...toolMessage("ignored"),
+      content: [
+        toolMessage("hostname", { id: "call_hostname" }).content[0],
+        toolMessage("date", { id: "call_date" }).content[0],
+        toolMessage("hostname; date; uptime", { id: "call_combined" }).content[0],
+      ],
+    };
+
+    expect(plugin.__testing.rewriteSafeCombinedExecToolCallInMessage(message)).toBe(true);
+
+    expect(message.content.map(toolCommand)).toEqual([
+      "hostname",
+      "date",
+      "uptime",
+    ]);
+    expect(JSON.stringify(message)).not.toContain("hostname; date; uptime");
+  });
+
+  it("does not dedupe unrelated mixed content when splitting a safe exec command", () => {
+    const message = {
+      ...toolMessage("ignored"),
+      content: [
+        { type: "text", text: "Checking the environment." },
+        toolMessage("hostname", { id: "call_hostname" }).content[0],
+        toolMessage("hostname; date; uptime", { id: "call_combined" }).content[0],
+      ],
+    };
+
+    expect(plugin.__testing.rewriteSafeCombinedExecToolCallInMessage(message)).toBe(true);
+
+    expect(message.content.map((block: any) => block.type)).toEqual([
+      "text",
+      "toolCall",
+      "toolCall",
+      "toolCall",
+      "toolCall",
+    ]);
+    expect(message.content.filter((block: any) => block.type === "toolCall").map(toolCommand)).toEqual([
+      "hostname",
+      "hostname",
+      "date",
+      "uptime",
+    ]);
+    expect(JSON.stringify(message)).not.toContain("hostname; date; uptime");
   });
 
   it.each([
@@ -186,6 +323,84 @@ describe("nemoclaw Kimi inference compat plugin", () => {
     }
   });
 
+  it("filters Kimi reasoning fields from final assistant messages after tool failures", async () => {
+    const provider = makeProvider();
+    const wrapper = provider.wrapStreamFn(
+      managedKimiCtx(() => ({
+        async result() {
+          return failedToolAssistantMessage();
+        },
+      })),
+    );
+
+    expect(wrapper).toEqual(expect.any(Function));
+
+    const stream = wrapper({}, failedToolContext(), {});
+    const result = await stream.result();
+
+    expect(result).toEqual({
+      role: "assistant",
+      stopReason: "stop",
+      content: [{ type: "text", text: "The exec tool failed: command not found." }],
+    });
+    expect(JSON.stringify(result)).not.toContain("PRIVATE");
+  });
+
+  it("drops Kimi reasoning stream events while preserving content and tool-call deltas", async () => {
+    const provider = makeProvider();
+    const finalMessage = failedToolAssistantMessage();
+    const wrapper = provider.wrapStreamFn(
+      managedKimiCtx(() => ({
+        async result() {
+          return finalMessage;
+        },
+        async *[Symbol.asyncIterator]() {
+          yield { type: "reasoning_delta", delta: "PRIVATE stream reasoning after tool failure" };
+          yield {
+            type: "content_delta",
+            delta: "The exec tool failed: command not found.",
+            reasoning_content: "PRIVATE event reasoning",
+            partial: failedToolAssistantMessage(),
+          };
+          yield {
+            type: "toolcall_delta",
+            contentIndex: 0,
+            delta: JSON.stringify({ command: "hostname" }),
+            reasoning: "PRIVATE tool-call event reasoning",
+            partial: toolMessage("hostname"),
+          };
+          yield { type: "done", message: finalMessage };
+        },
+      })),
+    );
+
+    expect(wrapper).toEqual(expect.any(Function));
+
+    const stream = wrapper({}, failedToolContext(), {});
+    const events = [];
+    for await (const event of stream) events.push(event);
+    const result = await stream.result();
+
+    expect(events.map((event: any) => event.type)).toEqual([
+      "content_delta",
+      "toolcall_delta",
+      "done",
+    ]);
+    expect(events[0].partial.content).toEqual([
+      { type: "text", text: "The exec tool failed: command not found." },
+    ]);
+    expect(events[0].delta).toBe("The exec tool failed: command not found.");
+    expect(events[1].delta).toBe(JSON.stringify({ command: "hostname" }));
+    expect(events[1].partial.content[0].arguments.command).toBe("hostname");
+    expect(events[2].message.content).toEqual([
+      { type: "text", text: "The exec tool failed: command not found." },
+    ]);
+    expect(result.content).toEqual([
+      { type: "text", text: "The exec tool failed: command not found." },
+    ]);
+    expect(JSON.stringify({ events, result })).not.toContain("PRIVATE");
+  });
+
   it("wraps managed Kimi streams and rewrites partial and final assistant messages", async () => {
     const partial = toolMessage("ignored until delta is complete", { arguments: {} });
     const message = toolMessage("hostname; date; uptime");
@@ -214,21 +429,89 @@ describe("nemoclaw Kimi inference compat plugin", () => {
     for await (const event of stream) events.push(event);
     const result = await stream.result();
 
-    expect(events[0].partial.content.map((block: any) => block.arguments.command)).toEqual([
+    expect(events[0].partial.content.map(toolCommand)).toEqual([
       "hostname",
       "date",
       "uptime",
     ]);
     expect(JSON.parse(events[0].delta).command).toBe("hostname");
-    expect(events[1].message.content.map((block: any) => block.arguments.command)).toEqual([
+    expect(events[1].message.content.map(toolCommand)).toEqual([
       "hostname",
       "date",
       "uptime",
     ]);
-    expect(result.content.map((block: any) => block.arguments.command)).toEqual([
+    expect(result.content.map(toolCommand)).toEqual([
       "hostname",
       "date",
       "uptime",
     ]);
+  });
+
+  it("rewrites object tool-call deltas at their content index without retaining compound commands", () => {
+    const event = {
+      type: "toolcall_delta",
+      contentIndex: 2,
+      delta: { command: "hostname; date; uptime" },
+      partial: {
+        ...toolMessage("ignored"),
+        content: [
+          toolMessage("hostname", { id: "call_hostname" }).content[0],
+          toolMessage("date", { id: "call_date" }).content[0],
+          toolMessage("hostname; date; uptime", { id: "call_combined" }).content[0],
+        ],
+      },
+      toolCall: toolMessage("hostname; date; uptime", { id: "call_combined" }).content[0],
+    };
+
+    expect(plugin.__testing.rewriteSafeCombinedExecToolCallInEvent(event)).toBe(true);
+
+    expect(event.delta).toEqual({ command: "uptime" });
+    expect(event.partial.content.map(toolCommand)).toEqual([
+      "hostname",
+      "date",
+      "uptime",
+    ]);
+    expect(toolCommand(event.toolCall)).toBe("uptime");
+    expect(JSON.stringify(event)).not.toContain("hostname; date; uptime");
+  });
+
+  it("does not reapply a delta split at a stale content index after rewriting partial content", () => {
+    const event = {
+      type: "toolcall_delta",
+      contentIndex: 1,
+      delta: { command: "uptime; date" },
+      partial: {
+        ...toolMessage("ignored"),
+        content: [
+          toolMessage("hostname; date", { id: "call_first" }).content[0],
+          toolMessage("uptime; date", { id: "call_second" }).content[0],
+        ],
+      },
+      message: {
+        ...toolMessage("ignored"),
+        content: [
+          toolMessage("hostname; date", { id: "call_first" }).content[0],
+          toolMessage("uptime; date", { id: "call_second" }).content[0],
+        ],
+      },
+      toolCall: toolMessage("uptime; date", { id: "call_second" }).content[0],
+    };
+
+    expect(plugin.__testing.rewriteSafeCombinedExecToolCallInEvent(event)).toBe(true);
+
+    expect(event.partial.content.map(toolCommand)).toEqual([
+      "hostname",
+      "date",
+      "uptime",
+    ]);
+    expect(event.message.content.map(toolCommand)).toEqual([
+      "hostname",
+      "date",
+      "uptime",
+    ]);
+    expect(event.delta).toEqual({ command: "date" });
+    expect(toolCommand(event.toolCall)).toBe("date");
+    expect(JSON.stringify(event)).not.toContain("hostname; date");
+    expect(JSON.stringify(event)).not.toContain("uptime; date");
   });
 });

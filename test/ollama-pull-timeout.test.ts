@@ -8,7 +8,7 @@ import { spawnSync } from "child_process";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { getOllamaPullTimeoutMs } from "../dist/lib/onboard-ollama-proxy.js";
+import { getOllamaPullTimeoutMs } from "../dist/lib/inference/ollama/proxy.js";
 
 const ENV = "NEMOCLAW_OLLAMA_PULL_TIMEOUT";
 const DEFAULT_MS = 30 * 60 * 1000;
@@ -46,8 +46,8 @@ describe("getOllamaPullTimeoutMs", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-pull-timeout-"));
     const scriptPath = path.join(tmpDir, "http-timeout-check.js");
-    const proxyPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard-ollama-proxy.js"));
-    const localInferencePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "local-inference.js"));
+    const proxyPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"));
+    const localInferencePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
     const script = `
 const { EventEmitter } = require("events");
 const { PassThrough } = require("stream");
