@@ -151,10 +151,6 @@ function extractTryCloudflareUrl(log: string): string | null {
   return null;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null;
-}
-
 function formatNamedTunnelUrl(hostname: string): string | null {
   const normalized = hostname.trim().replace(/\.$/, "").toLowerCase();
   if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(normalized)) {
@@ -177,12 +173,15 @@ function serviceTargetsDashboard(service: string, dashboardPort: number): boolea
 }
 
 function getConfigIngressEntries(config: unknown): Array<{ hostname: string; service: string }> {
-  if (!isRecord(config) || !Array.isArray(config.ingress)) return [];
+  if (typeof config !== "object" || config === null) return [];
+
+  const ingress = (config as { ingress?: unknown }).ingress;
+  if (!Array.isArray(ingress)) return [];
 
   const entries: Array<{ hostname: string; service: string }> = [];
-  for (const entry of config.ingress) {
-    if (!isRecord(entry)) continue;
-    const { hostname, service } = entry;
+  for (const entry of ingress) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { hostname, service } = entry as { hostname?: unknown; service?: unknown };
     if (typeof hostname === "string" && typeof service === "string") {
       entries.push({ hostname, service });
     }
