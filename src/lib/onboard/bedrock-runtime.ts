@@ -10,6 +10,7 @@ import {
   isBedrockRuntimeEndpoint,
 } from "../inference/bedrock-runtime";
 import { ensureBedrockRuntimeAdapter } from "../inference/bedrock-runtime-adapter";
+import type { BackToSelection } from "../navigation";
 import { redact } from "../runner";
 import * as registry from "../state/registry";
 import { LOCAL_INFERENCE_TIMEOUT_SECS } from "./env";
@@ -61,10 +62,18 @@ export async function selectBedrockRuntimeCustomAnthropic(options: {
   label: string;
   helpUrl: string | null;
   defaultModel: string;
-  backToSelection: string;
+  backToSelection: BackToSelection;
   isNonInteractive: () => boolean;
-  promptInputModel: (label: string, defaultModel: string, validator: null) => Promise<string>;
-  replaceNamedCredential: (envName: string, label: string, helpUrl: string | null) => Promise<string>;
+  promptInputModel: (
+    label: string,
+    defaultModel: string,
+    validator: null,
+  ) => Promise<string | BackToSelection>;
+  replaceNamedCredential: (
+    envName: string,
+    label: string,
+    helpUrl: string | null,
+  ) => Promise<string | BackToSelection>;
 }): Promise<
   | { action: "not-bedrock" }
   | { action: "retry-selection" }
@@ -82,13 +91,23 @@ export async function selectBedrockRuntimeCustomAnthropic(options: {
       printMissingBedrockAuth();
       process.exit(1);
     }
-    await options.replaceNamedCredential(credentialEnv, `${options.label} API key`, options.helpUrl);
+    const credentialResult = await options.replaceNamedCredential(
+      credentialEnv,
+      `${options.label} API key`,
+      options.helpUrl,
+    );
+    if (credentialResult === options.backToSelection) {
+      return { action: "retry-selection" };
+    }
   }
 
   const model = options.isNonInteractive()
     ? options.defaultModel
     : await options.promptInputModel(options.label, options.defaultModel, null);
   if (model === options.backToSelection) {
+    return { action: "retry-selection" };
+  }
+  if (typeof model !== "string") {
     return { action: "retry-selection" };
   }
   return { action: "selected", model, preferredInferenceApi: "openai-completions" };

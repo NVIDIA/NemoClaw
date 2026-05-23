@@ -8,6 +8,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  buildDockerDriverGatewayConfigToml,
   buildDockerDriverGatewayLaunch,
   parseGlibcVersionsFromBinaryText,
   shouldUseContainerizedGateway,
@@ -110,13 +111,39 @@ describe("docker-driver-gateway-launch", () => {
           "OPENSHELL_DRIVERS",
           "--env",
           "OPENSHELL_DOCKER_SUPERVISOR_BIN",
+          "--env",
+          "OPENSHELL_GATEWAY_CONFIG",
           "ubuntu:24.04",
           "/opt/nemoclaw/openshell-gateway",
         ]),
       );
       expect(launch.env.OPENSHELL_DOCKER_SUPERVISOR_BIN).toBe(sandboxBin);
       expect(launch.env.OPENSHELL_BIND_ADDRESS).toBe("0.0.0.0");
+      const configPath = launch.env.OPENSHELL_GATEWAY_CONFIG;
+      expect(configPath).toBe(path.join(stateDir, "openshell-gateway.toml"));
+      expect(configPath).toBeDefined();
+      if (!configPath) throw new Error("expected generated gateway config path");
+      expect(fs.readFileSync(configPath, "utf-8")).toContain(`supervisor_bin = "${sandboxBin}"`);
     });
+  });
+
+  it("writes Docker driver settings in gateway TOML because OpenShell driver config is not env-backed", () => {
+    const toml = buildDockerDriverGatewayConfigToml(
+      {
+        OPENSHELL_GRPC_ENDPOINT: "http://127.0.0.1:8080",
+        OPENSHELL_DOCKER_NETWORK_NAME: "openshell-docker",
+        OPENSHELL_DOCKER_SUPERVISOR_IMAGE: "ghcr.io/nvidia/openshell/supervisor:0.0.44",
+      },
+      "/home/shadeform/.local/bin/openshell-sandbox",
+    );
+
+    expect(toml).toContain('compute_drivers = ["docker"]');
+    expect(toml).toContain('grpc_endpoint = "http://127.0.0.1:8080"');
+    expect(toml).toContain('network_name = "openshell-docker"');
+    expect(toml).toContain(
+      'supervisor_image = "ghcr.io/nvidia/openshell/supervisor:0.0.44"',
+    );
+    expect(toml).toContain('supervisor_bin = "/home/shadeform/.local/bin/openshell-sandbox"');
   });
 
   it("allows the compatibility gateway bind address to be forced back to loopback", () => {

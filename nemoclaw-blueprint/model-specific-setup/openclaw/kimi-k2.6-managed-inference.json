@@ -15,6 +15,9 @@
       "maxTokensField": "max_tokens",
       "requiresToolResultName": true
     },
+    "openclawTools": {
+      "toolSearch": false
+    },
     "openclawPlugins": [
       {
         "id": "nemoclaw-kimi-inference-compat",

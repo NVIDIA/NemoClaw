@@ -140,7 +140,7 @@ export function globalCommandTokens(): Set<string> {
 }
 
 /**
- * Leaf global command IDs that should use command-ID compatibility execution.
+ * Leaf global command IDs that should execute directly by oclif command ID.
  *
  * Derived from registered oclif metadata by excluding nested IDs and command
  * IDs that have registered child commands.

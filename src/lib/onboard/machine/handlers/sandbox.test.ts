@@ -24,6 +24,7 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
     removeSandbox: vi.fn(),
     repairSandbox: vi.fn(),
     validateBrave: vi.fn(async () => "brave-key"),
+    isBackToSelection: vi.fn(() => false),
     configureWebSearch: vi.fn(async () => null as WebSearchConfig | null),
     startStep: vi.fn(async () => undefined),
     getRecordedChannels: vi.fn(() => null),
@@ -61,6 +62,7 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
       removeSandboxFromRegistry: calls.removeSandbox,
       repairRecordedSandbox: calls.repairSandbox,
       ensureValidatedBraveSearchCredential: calls.validateBrave,
+      isBackToSelection: calls.isBackToSelection,
       configureWebSearch: calls.configureWebSearch,
       startRecordedStep: calls.startStep,
       getRecordedMessagingChannelsForResume: calls.getRecordedChannels,
@@ -92,6 +94,7 @@ function baseOptions(
   return {
     resume: false,
     fresh: false,
+    resumeAgentChanged: false,
     session,
     sandboxName: null,
     model: "model",
@@ -186,10 +189,69 @@ describe("handleSandboxState", () => {
     expect(calls.createSandbox).toHaveBeenCalled();
   });
 
+  it("recreates when a saved web search sandbox is no longer supported", async () => {
+    const session = createSession({ sandboxName: "saved", webSearchConfig: { fetchEnabled: true } });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      agentSupportsWebSearch: () => false,
+      getSandboxReuseState: () => "ready",
+      updateSession: vi.fn((mutator: (value: Session) => Session | void) => mutator(session) ?? session),
+    });
+
+    await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true },
+    });
+
+    expect(calls.note).toHaveBeenCalledWith(
+      "  Web search is not yet supported by this sandbox image. Clearing stale config.",
+    );
+    expect(calls.note).toHaveBeenCalledWith("  [resume] Web Search configuration changed; recreating sandbox.");
+    expect(calls.removeSandbox).toHaveBeenCalledWith("saved");
+    expect(calls.createSandbox).toHaveBeenCalled();
+  });
+
+  it("drops saved web search config when credential revalidation returns to provider selection", async () => {
+    const session = createSession({ sandboxName: "saved", webSearchConfig: { fetchEnabled: true } });
+    session.steps.sandbox.status = "complete";
+    const backToSelection = Object.freeze({ kind: "NEMOCLAW_BACK_TO_SELECTION" });
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "not_ready",
+      ensureValidatedBraveSearchCredential: vi.fn(async () => backToSelection),
+      isBackToSelection: vi.fn((value: unknown) => value === backToSelection),
+    });
+
+    const result = await handleSandboxState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "saved",
+      webSearchConfig: { fetchEnabled: true },
+    });
+
+    expect(calls.configureWebSearch).not.toHaveBeenCalled();
+    expect(calls.createSandbox).toHaveBeenCalledWith(
+      { type: "nvidia" },
+      "model",
+      "provider",
+      "openai-completions",
+      "saved",
+      null,
+      [],
+      null,
+      null,
+      null,
+      { sandboxGpuEnabled: false, mode: "0" },
+      [],
+    );
+    expect(result.webSearchConfig).toBeNull();
+  });
+
   it("uses recorded messaging channels on non-interactive resume", async () => {
     const { deps, calls } = createDeps({ getRecordedMessagingChannelsForResume: vi.fn(() => ["discord"]) });
 
-    const result = await handleSandboxState(baseOptions(deps));
+    const result = await handleSandboxState({ ...baseOptions(deps), resume: true });
 
     expect(calls.setupMessaging).not.toHaveBeenCalled();
     expect(calls.note).toHaveBeenCalledWith("  [non-interactive] Reusing messaging channel configuration: discord");
