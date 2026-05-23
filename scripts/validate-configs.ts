@@ -9,7 +9,7 @@
 //   npx tsx scripts/validate-configs.ts              # validate all known config files
 //   npx tsx scripts/validate-configs.ts --file <config> --schema <schema>  # validate one file
 
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv/dist/2020.js";
@@ -45,7 +45,32 @@ function discoverTargets(): ConfigTarget[] {
       schema: "schemas/openclaw-plugin.schema.json",
       files: ["nemoclaw/openclaw.plugin.json"],
     },
+    {
+      schema: "schemas/router-pool-config.schema.json",
+      files: ["nemoclaw-blueprint/router/pool-config.yaml"],
+    },
   ];
+
+  const agentsDir = join(REPO_ROOT, "agents");
+  try {
+    const agentPolicyFiles = readdirSync(agentsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .flatMap((entry) => {
+        const base = `agents/${entry.name}`;
+        return [`${base}/policy-additions.yaml`, `${base}/policy-permissive.yaml`];
+      })
+      .filter((file) => existsSync(join(REPO_ROOT, file)));
+    if (agentPolicyFiles.length > 0) {
+      const sandboxPolicyTarget = targets.find(
+        (target) => target.schema === "schemas/sandbox-policy.schema.json",
+      );
+      sandboxPolicyTarget?.files.push(...agentPolicyFiles);
+    }
+  } catch (err) {
+    const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
+    // agents directory may not exist — not an error
+  }
 
   // Discover all preset YAML files dynamically.
   const presetsDir = join(REPO_ROOT, "nemoclaw-blueprint/policies/presets");

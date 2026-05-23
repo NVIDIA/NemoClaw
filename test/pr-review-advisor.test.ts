@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 import { buildSystemPrompt, classifyMonolithDelta, classifyTestDepth, normalizeReviewResult, readTrustedSecurityReviewSkill, renderDetailedReview, renderSummary } from "../tools/pr-review-advisor/analyze.mts";
 import { githubGraphql } from "../tools/advisors/github.mts";
+import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const requireForTest = createRequire(import.meta.url);
@@ -295,6 +296,51 @@ describe("PR review advisor", () => {
 
     expect(schema["SPDX-License-Identifier"]).toBe("Apache-2.0");
     expect(validate(result)).toBe(true);
+  });
+
+  it("keeps the workflow inside the trusted-code boundary", () => {
+    expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
+  });
+
+  it("flags trusted-code boundary workflow regressions", () => {
+    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    fs.writeFileSync(
+      workflowPath,
+      `
+"on":
+  pull_request_target: {}
+permissions:
+  contents: write
+jobs:
+  review:
+    continue-on-error: true
+    steps:
+      - name: Checkout trusted advisor code (main)
+        uses: actions/checkout@v4
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: main
+          path: advisor
+          persist-credentials: true
+`,
+    );
+
+    try {
+      const errors = validatePrReviewAdvisorWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "workflow must run on pull_request, not only trusted-target events",
+          "workflow must not run untrusted PR code under pull_request_target",
+          "workflow permissions.contents must be read",
+          "review job must not be globally continue-on-error",
+        ]),
+      );
+      expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);
+      expect(errors.some((error) => error.includes("persist-credentials=false"))).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
 });

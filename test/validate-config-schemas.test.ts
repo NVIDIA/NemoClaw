@@ -9,7 +9,7 @@
  * Vitest project.
  */
 
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
@@ -182,6 +182,31 @@ describe("blueprint.schema.json", () => {
   });
 });
 
+// ── Model Router pool config ────────────────────────────────────────────────
+
+describe("router-pool-config.schema.json", () => {
+  const validate = compileSchema("schemas/router-pool-config.schema.json");
+  const data = loadYAML(repoPath("nemoclaw-blueprint/router/pool-config.yaml"));
+
+  it("pool-config.yaml passes schema validation", () => {
+    expectValid(validate, data, "pool-config.yaml");
+  });
+
+  it("rejects router pool config without routing settings", () => {
+    const bad = cloneObject(data);
+    delete bad.routing;
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects router pool config models without LiteLLM model IDs", () => {
+    const root = asRecord(data);
+    const firstModel = asRecord(Array.isArray(root.models) ? root.models[0] : undefined);
+    const { litellm_model: _litellmModel, ...modelWithoutId } = firstModel;
+    const bad = { ...root, models: [modelWithoutId] };
+    expect(validate(bad)).toBe(false);
+  });
+});
+
 // ── Base sandbox policy ──────────────────────────────────────────────────────
 
 describe("sandbox-policy.schema.json", () => {
@@ -191,6 +216,18 @@ describe("sandbox-policy.schema.json", () => {
   it("openclaw-sandbox.yaml passes schema validation", () => {
     expectValid(validate, data, "openclaw-sandbox.yaml");
   });
+
+  for (const file of [
+    "agents/openclaw/policy-permissive.yaml",
+    "agents/hermes/policy-additions.yaml",
+    "agents/hermes/policy-permissive.yaml",
+  ]) {
+    if (existsSync(repoPath(file))) {
+      it(`${file} passes schema validation`, () => {
+        expectValid(validate, loadYAML(repoPath(file)), file);
+      });
+    }
+  }
 
   it("rejects policy with missing network_policies", () => {
     const bad = cloneObject(data);
@@ -216,12 +253,26 @@ describe("sandbox-policy.schema.json", () => {
     expect(validate(bad)).toBe(false);
   });
 
+  it("rejects sandbox-policy network entries without explicit binary scoping", () => {
+    const bad = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "api.example.com", port: 443, access: "full" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
   it("accepts sandbox-policy native WebSocket text rules and credential rewrite", () => {
     const valid = {
       version: 1,
       network_policies: {
         test_service: {
           name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [
             {
               host: "gateway.example.com",
@@ -248,6 +299,7 @@ describe("sandbox-policy.schema.json", () => {
       network_policies: {
         slack: {
           name: "Slack",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [
             {
               host: "api.slack.com",
@@ -327,12 +379,26 @@ describe("policy-preset.schema.json", () => {
     expect(validate(bad)).toBe(false);
   });
 
+  it("rejects preset network entries without explicit binary scoping", () => {
+    const bad = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "api.example.com", port: 443, access: "full" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
   it("accepts preset native WebSocket text rules and credential rewrite", () => {
     const valid = {
       preset: { name: "test", description: "test" },
       network_policies: {
         test_service: {
           name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [
             {
               host: "gateway.example.com",
@@ -359,6 +425,7 @@ describe("policy-preset.schema.json", () => {
       network_policies: {
         slack: {
           name: "Slack",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [
             {
               host: "api.slack.com",

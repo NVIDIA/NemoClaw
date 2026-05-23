@@ -122,12 +122,16 @@ function looksLikeTestFixturePath(text: string): boolean {
 
 function looksLikeDeclarativeConfigPath(text: string): boolean {
   const normalized = normalizePathText(text);
+  // Declarative configs below have dedicated schema/resolver validation. Keep
+  // this scanner focused on source-code shape assertions rather than treating
+  // every schema-backed config invariant as source-text coupling.
   return (
-    /nemoclaw-blueprint\/(?:policies|router|model-specific-setup|blueprint\.yaml)/.test(
-      normalized,
-    ) ||
+    /nemoclaw-blueprint\/blueprint\.yaml/.test(normalized) ||
+    /nemoclaw-blueprint\/policies\//.test(normalized) ||
+    /nemoclaw-blueprint\/router\/pool-config\.yaml/.test(normalized) ||
+    /nemoclaw-blueprint\/model-specific-setup\//.test(normalized) ||
     /agents\/[^/]+\/policy-(?:additions|permissive)\.yaml/.test(normalized) ||
-    /test\/e2e\/(?:nemoclaw_scenarios|validation_suites|docs)\//.test(normalized)
+    /test\/e2e\/(?:nemoclaw_scenarios|validation_suites)\//.test(normalized)
   );
 }
 
@@ -406,7 +410,9 @@ function collectSourceFunctions(
 ): Map<string, SourceFunction> {
   const sourceFunctions = new Map<string, SourceFunction>();
 
-  function parameterNamesFor(node: ts.FunctionDeclaration): string[] {
+  function parameterNamesFor(node: {
+    parameters: ts.NodeArray<ts.ParameterDeclaration>;
+  }): string[] {
     return node.parameters
       .map((parameter) => (ts.isIdentifier(parameter.name) ? parameter.name.text : null))
       .filter((name): name is string => Boolean(name));
@@ -442,38 +448,52 @@ function collectSourceFunctions(
     };
   }
 
+  function registerSourceFunction(
+    name: string,
+    node: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
+  ): void {
+    const functionText = node.getText(sourceFile);
+    if (isExecutionResultDerivation(functionText)) return;
+
+    let sourceRead: SourceRead | null = null;
+    let parameterizedPathRead = false;
+    const parameterNames = parameterNamesFor(node);
+
+    function visitFunctionBody(child: ts.Node): void {
+      if (sourceRead) return;
+      if (child !== node && isNestedFunctionLike(child)) return;
+      if (ts.isCallExpression(child)) {
+        const result = sourceReadFromExpression(child, parameterNames);
+        if (result) {
+          sourceRead = result.sourceRead;
+          parameterizedPathRead = result.parameterizedPathRead;
+          return;
+        }
+      }
+      ts.forEachChild(child, visitFunctionBody);
+    }
+
+    if (node.body) visitFunctionBody(node.body);
+    if (sourceRead) {
+      sourceFunctions.set(name, {
+        name,
+        sourceRead,
+        parameterNames,
+        parameterizedPathRead,
+      });
+    }
+  }
+
   function visit(node: ts.Node): void {
     if (ts.isFunctionDeclaration(node) && node.name) {
-      const functionText = node.getText(sourceFile);
-      if (isExecutionResultDerivation(functionText)) {
-        ts.forEachChild(node, visit);
-        return;
-      }
-      let sourceRead: SourceRead | null = null;
-      let parameterizedPathRead = false;
-      const parameterNames = parameterNamesFor(node);
-      function visitFunctionBody(child: ts.Node): void {
-        if (sourceRead) return;
-        if (child !== node && isNestedFunctionLike(child)) return;
-        if (ts.isCallExpression(child)) {
-          const result = sourceReadFromExpression(child, parameterNames);
-          if (result) {
-            sourceRead = result.sourceRead;
-            parameterizedPathRead = result.parameterizedPathRead;
-            return;
-          }
-        }
-        ts.forEachChild(child, visitFunctionBody);
-      }
-      if (node.body) visitFunctionBody(node.body);
-      if (sourceRead) {
-        sourceFunctions.set(node.name.text, {
-          name: node.name.text,
-          sourceRead,
-          parameterNames,
-          parameterizedPathRead,
-        });
-      }
+      registerSourceFunction(node.name.text, node);
+    } else if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.initializer &&
+      (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer))
+    ) {
+      registerSourceFunction(node.name.text, node.initializer);
     }
     ts.forEachChild(node, visit);
   }
@@ -818,10 +838,8 @@ function fallbackLineScan(sourceFile: ts.SourceFile, root: ts.Node): Assertion[]
   return assertions;
 }
 
-function scanFile(absPath: string): SourceShapeCase[] {
-  const relPath = normalizePathText(relative(REPO_ROOT, absPath));
-  const text = readFileSync(absPath, "utf-8");
-  const sourceFile = ts.createSourceFile(absPath, text, ts.ScriptTarget.Latest, true);
+function scanSourceText(fileName: string, relPath: string, text: string): SourceShapeCase[] {
+  const sourceFile = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true);
   const allVariables = collectVariableDecls(sourceFile);
 
   const cases: SourceShapeCase[] = [];
@@ -860,6 +878,12 @@ function scanFile(absPath: string): SourceShapeCase[] {
 
   visit(sourceFile);
   return cases;
+}
+
+function scanFile(absPath: string): SourceShapeCase[] {
+  const relPath = normalizePathText(relative(REPO_ROOT, absPath));
+  const text = readFileSync(absPath, "utf-8");
+  return scanSourceText(absPath, relPath, text);
 }
 
 function scan(): Report {
@@ -941,4 +965,18 @@ function main(): void {
   }
 }
 
-main();
+export function scanTextForTest(relPath: string, text: string): SourceShapeCase[] {
+  return scanSourceText(relPath, normalizePathText(relPath), text);
+}
+
+function isDirectInvocation(): boolean {
+  const invoked = process.argv[1];
+  return Boolean(
+    invoked &&
+      (import.meta.url === `file://${invoked}` || invoked.endsWith("find-source-shape-tests.ts")),
+  );
+}
+
+if (isDirectInvocation()) {
+  main();
+}
