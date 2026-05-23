@@ -4165,7 +4165,7 @@ async function selectAndValidateOllamaModel(
     const installedModels = getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
     if (isNonInteractive()) {
-      model = requestedModel || recoveredModel || getDefaultOllamaModel(gpu);
+      model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
     } else {
       model = await promptOllamaModel(gpu);
     }

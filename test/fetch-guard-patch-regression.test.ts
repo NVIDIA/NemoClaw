@@ -272,7 +272,7 @@ if (globalThis.proxyChecks.length !== 0) throw new Error('sandbox proxy validati
 
     const command = dockerRunCommandBetween(
       "# Patch OpenClaw media fetch for proxy-only sandbox",
-      "# Patch OpenClaw's pinned",
+      "# Patch OpenClaw chat.send gateway behavior",
     ).replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist);
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);

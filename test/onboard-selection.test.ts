@@ -1281,6 +1281,16 @@ printf '%s' "$status"
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
+const child_process = require("child_process");
+
+child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "nc" && args?.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
+  return originalSpawnSync(cmd, args, opts);
+};
 
 const answers = ["7", "1"];
 const messages = [];

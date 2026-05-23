@@ -200,6 +200,62 @@ function parseDockerInfoSummary(info = ""): string | undefined {
   return parts.length > 0 ? parts.join(" · ") : undefined;
 }
 
+/**
+ * Decide whether `docker info --format '{{json .}}'` output reflects an
+ * actually responding daemon, not just the Docker CLI emitting a zero-value
+ * client-side struct.
+ *
+ * NemoClaw #2348: when the daemon is unreachable (for example after
+ * `colima stop`), Docker CLI can still exit 0 and print a JSON struct with
+ * `ServerVersion: ""` plus `ServerErrors`. A naive non-empty-output check
+ * misreads that as "daemon reachable".
+ */
+function isDockerDaemonReachable(rawOutput = ""): boolean {
+  const text = String(rawOutput).trim();
+  if (!text) return false;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    // Backward-compatible fallback for callers that still inject plain-text
+    // docker info output, but do not let plain-text daemon connection errors
+    // recreate the false positive that this check is meant to prevent.
+    const lowered = text.toLowerCase();
+    return !(
+      lowered.includes("cannot connect to the docker daemon") ||
+      lowered.includes("error during connect") ||
+      lowered.includes("is the docker daemon running")
+    );
+  }
+
+  if (!parsed || typeof parsed !== "object") return false;
+  const obj = parsed as Record<string, unknown>;
+
+  // Explicit negative signal: Docker CLI fills ServerErrors when it could
+  // not reach the daemon, even when exit code is 0 under `--format`.
+  if (Array.isArray(obj.ServerErrors) && obj.ServerErrors.length > 0) {
+    return false;
+  }
+
+  // Canonical positive signal: Docker CLI and podman's docker-compat layer
+  // both populate ServerVersion from the running daemon.
+  if (typeof obj.ServerVersion === "string" && obj.ServerVersion.trim().length > 0) {
+    return true;
+  }
+
+  // podman-docker alias path: `docker info --format '{{json .}}'` actually
+  // runs `podman info`, whose native schema has no top-level ServerVersion
+  // but nests a `version.Version` instead.
+  const version = obj.version;
+  if (version && typeof version === "object") {
+    const v = (version as Record<string, unknown>).Version;
+    if (typeof v === "string" && v.trim().length > 0) return true;
+  }
+
+  return false;
+}
+
 export function parseDockerStorageDriver(info = ""): string | undefined {
   // JSON form (`docker info --format '{{json .}}'`) is the canonical caller
   // path inside this file, but accept the plain-text `Storage Driver: <name>`
@@ -458,7 +514,7 @@ export function assessHost(opts: AssessHostOpts = {}): HostAssessment {
       ignoreError: true,
     });
   }
-  if (dockerInstalled && String(dockerInfoOutput || "").trim()) {
+  if (dockerInstalled && isDockerDaemonReachable(dockerInfoOutput)) {
     dockerReachable = true;
     dockerRunning = true;
   }
