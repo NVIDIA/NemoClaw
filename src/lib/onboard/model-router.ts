@@ -20,7 +20,6 @@ import { buildSubprocessEnv } from "../subprocess-env";
 import { hydrateCredentialEnv } from "./credential-env";
 import {
   doesModelRouterProcessOwnPort,
-  isProcessRunning,
   isRouterHealthy,
   stopModelRouterProcess,
 } from "./model-router-process";
