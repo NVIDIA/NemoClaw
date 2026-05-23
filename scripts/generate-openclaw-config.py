@@ -701,6 +701,7 @@ def build_config(env: dict | None = None) -> dict:
         },
         "models": {"mode": "merge", "providers": providers},
         "channels": {"defaults": {}, **_ch_cfg},
+        "tools": {"toolSearch": True},
         "update": {"checkOnStart": False},
         # Disable bundled plugins/channels that hit the L7 proxy at startup
         # and either crash or hang the gateway:
@@ -746,15 +747,13 @@ def build_config(env: dict | None = None) -> dict:
         }
 
     if env.get("NEMOCLAW_WEB_SEARCH_ENABLED", "") == "1":
-        config["tools"] = {
-            "web": {
-                "search": {
-                    "enabled": True,
-                    "provider": "brave",
-                    "apiKey": "openshell:resolve:env:BRAVE_API_KEY",
-                },
-                "fetch": {"enabled": True},
-            }
+        config.setdefault("tools", {})["web"] = {
+            "search": {
+                "enabled": True,
+                "provider": "brave",
+                "apiKey": "openshell:resolve:env:BRAVE_API_KEY",
+            },
+            "fetch": {"enabled": True},
         }
 
     return config

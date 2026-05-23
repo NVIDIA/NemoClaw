@@ -572,13 +572,25 @@ describe("generate-openclaw-config.py: config generation", () => {
     });
   });
 
+  it("enables native OpenClaw Tool Search by default", () => {
+    const config = runConfigScript();
+    expect(config.tools?.toolSearch).toBe(true);
+  });
+
   it("enables web search when env is '1'", () => {
     const config = runConfigScript({ NEMOCLAW_WEB_SEARCH_ENABLED: "1" });
-    expect(config.tools?.web?.search?.enabled).toBe(true);
+    expect(config.tools?.toolSearch).toBe(true);
+    expect(config.tools?.web?.search).toEqual({
+      enabled: true,
+      provider: "brave",
+      apiKey: "openshell:resolve:env:BRAVE_API_KEY",
+    });
+    expect(config.tools?.web?.fetch?.enabled).toBe(true);
   });
 
   it("omits web search when env is not set", () => {
     const config = runConfigScript();
+    expect(config.tools?.toolSearch).toBe(true);
     expect(config.tools?.web).toBeUndefined();
   });
 
