@@ -53,6 +53,7 @@ export interface PreflightStateOptions<
     ): Config;
     validateSandboxGpuPreflight(config: Config): void;
     skippedStepMessage(stepName: string, detail?: string | null): void;
+    recordStateSkipped(state: "preflight", metadata?: Record<string, unknown> | null): Promise<Session>;
     startRecordedStep(stepName: string): Promise<void>;
     recordStepComplete(stepName: string): Promise<Session>;
     updateSession(mutator: (session: Session) => Session | void): Session;
@@ -111,6 +112,7 @@ export async function handlePreflightState<
   let gpu: Gpu;
   if (resumePreflight) {
     deps.skippedStepMessage("preflight", "cached");
+    await deps.recordStateSkipped("preflight", { reason: "resume", validation: "gpu-cdi" });
     gpu = deps.detectGpu();
     const resumeSandboxGpuConfig = deps.resolveSandboxGpuConfig(gpu, {
       flag: effectiveSandboxGpuFlag,

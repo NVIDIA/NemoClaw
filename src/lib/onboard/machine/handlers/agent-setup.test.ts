@@ -20,6 +20,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
     }),
     openclawReady: vi.fn(() => false),
     skippedMessage: vi.fn(),
+    recordSkip: vi.fn(async () => createSession()),
     startStep: vi.fn(async () => undefined),
     setupOpenclaw: vi.fn(async () => undefined),
     syncConfig: vi.fn(),
@@ -38,6 +39,7 @@ function createDeps(overrides: Partial<AgentSetupStateOptions<Agent>["deps"]> = 
       recordStepSkipped: calls.skipped,
       isOpenclawReady: calls.openclawReady,
       skippedStepMessage: calls.skippedMessage,
+      recordStateSkipped: calls.recordSkip,
       startRecordedStep: calls.startStep,
       setupOpenclaw: calls.setupOpenclaw,
       syncNemoClawConfigInSandbox: calls.syncConfig,
@@ -94,6 +96,10 @@ describe("handleAgentSetupState", () => {
     const result = await handleAgentSetupState({ ...baseOptions(deps), resume: true });
 
     expect(calls.skippedMessage).toHaveBeenCalledWith("openclaw", "my-assistant");
+    expect(calls.recordSkip).toHaveBeenCalledWith("openclaw", {
+      reason: "resume",
+      sandboxName: "my-assistant",
+    });
     expect(calls.startStep).not.toHaveBeenCalled();
     expect(calls.setupOpenclaw).not.toHaveBeenCalled();
     expect(calls.syncConfig).toHaveBeenCalledWith("my-assistant", "provider", "model");

@@ -3,7 +3,7 @@
 
 import { dockerInfoFormat } from "../adapters/docker";
 import { findReadableNvidiaCdiSpecFiles, getDockerCdiSpecDirs } from "./docker-cdi";
-import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
+import type { SandboxGpuConfig, SandboxGpuFlag } from "./sandbox-gpu-mode";
 
 const SANDBOX_GPU_PREFLIGHT_TIMEOUT_MS = 30_000;
 
@@ -13,6 +13,33 @@ export type SandboxGpuPreflightDeps = {
   getDockerCdiSpecDirs?: () => string[];
   findReadableNvidiaCdiSpecFiles?: (dirs: string[]) => string[];
 };
+
+export interface SandboxGpuFlagOptions {
+  sandboxGpu?: SandboxGpuFlag;
+  gpu?: boolean;
+  noGpu?: boolean;
+}
+
+export function resolveSandboxGpuFlagFromOptions(opts: SandboxGpuFlagOptions): SandboxGpuFlag {
+  const requestedGpuPassthrough = opts.gpu === true;
+  const optedOutGpuPassthrough = opts.noGpu === true;
+  const sandboxGpuFlag = opts.sandboxGpu ?? null;
+  if (requestedGpuPassthrough && optedOutGpuPassthrough) {
+    console.error("  --gpu and --no-gpu cannot both be set.");
+    process.exit(1);
+  }
+  if (
+    (requestedGpuPassthrough && sandboxGpuFlag === "disable") ||
+    (optedOutGpuPassthrough && sandboxGpuFlag === "enable")
+  ) {
+    console.error("  --gpu/--no-gpu conflict with the sandbox GPU flags.");
+    process.exit(1);
+  }
+  if (sandboxGpuFlag) return sandboxGpuFlag;
+  if (requestedGpuPassthrough) return "enable";
+  if (optedOutGpuPassthrough) return "disable";
+  return null;
+}
 
 export function sandboxGpuRemediationLines(): string[] {
   return [
@@ -97,6 +124,50 @@ function validateJetsonSandboxGpuPreflight(deps: SandboxGpuPreflightDeps): void 
     process.exit(1);
   }
   console.log("  ✓ Docker NVIDIA runtime detected for Jetson/Tegra sandbox GPU");
+}
+
+export interface DirectSandboxGpuVerifierDeps {
+  runOpenshell(
+    args: string[],
+    opts?: Record<string, unknown>,
+  ): { status?: number | null; stdout?: unknown; stderr?: unknown };
+  buildDirectSandboxGpuProofCommands?: (sandboxName: string) => Array<{
+    args: string[];
+    label: string;
+    optional?: boolean;
+  }>;
+  compactText(value: string): string;
+  redact(value: unknown): string;
+}
+
+export function createDirectSandboxGpuVerifier(deps: DirectSandboxGpuVerifierDeps) {
+  return function verifyDirectSandboxGpu(sandboxName: string): void {
+    console.log("  Verifying direct sandbox GPU access...");
+    const buildProofCommands =
+      deps.buildDirectSandboxGpuProofCommands ??
+      require("./initial-policy").buildDirectSandboxGpuProofCommands;
+    for (const proof of buildProofCommands(sandboxName)) {
+      const result = deps.runOpenshell(proof.args, {
+        ignoreError: true,
+        suppressOutput: true,
+        timeout: 30_000,
+      });
+      if (result.status === 0) {
+        console.log(`  ✓ GPU proof passed: ${proof.label}`);
+        continue;
+      }
+      if (proof.optional === true) return;
+      const diagnostic = deps.compactText(deps.redact(`${result.stderr || ""} ${result.stdout || ""}`));
+      console.error(`  ✗ GPU proof failed: ${proof.label}`);
+      if (diagnostic) console.error(`    ${diagnostic.slice(0, 300)}`);
+      for (const line of sandboxGpuRemediationLines()) {
+        console.error(`    ${line}`);
+      }
+      const statusText = String(result.status || 1);
+      const diagnosticSuffix = diagnostic ? `: ${diagnostic.slice(0, 300)}` : "";
+      throw new Error(`GPU proof failed: ${proof.label} (status ${statusText})${diagnosticSuffix}`);
+    }
+  };
 }
 
 export function validateSandboxGpuPreflight(

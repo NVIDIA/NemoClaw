@@ -65,6 +65,14 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
     ): Promise<{ forceInferenceSetup: boolean; credentialEnv: string | null }>;
+    recordStateSkipped(
+      state: "provider_selection" | "inference",
+      metadata?: Record<string, unknown> | null,
+    ): Promise<Session>;
+    recordRepairEvent(
+      type: "state.repair.started" | "state.repair.completed" | "state.repair.failed",
+      options?: { state?: "provider_selection" | "inference"; error?: string | null; metadata?: Record<string, unknown> | null },
+    ): Promise<Session>;
     hydrateCredentialEnv(credentialEnv: string | null): void;
     repairLocalInferenceSystemdOverrideOrExit(provider: string | null, isNonInteractive: () => boolean): void;
     isNonInteractive(): boolean;
@@ -172,8 +180,35 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       forceInferenceSetup = recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       deps.skippedStepMessage("provider_selection", `${provider} / ${model}`);
+      await deps.recordStateSkipped("provider_selection", {
+        reason: "resume",
+        provider,
+        model,
+      });
       deps.hydrateCredentialEnv(credentialEnv);
-      deps.repairLocalInferenceSystemdOverrideOrExit(provider, deps.isNonInteractive);
+      if (provider === "ollama-local") {
+        const repairMetadata = { repair: "ollama-systemd-loopback" };
+        await deps.recordRepairEvent("state.repair.started", {
+          state: "provider_selection",
+          metadata: repairMetadata,
+        });
+        try {
+          deps.repairLocalInferenceSystemdOverrideOrExit(provider, deps.isNonInteractive);
+        } catch (err) {
+          await deps.recordRepairEvent("state.repair.failed", {
+            state: "provider_selection",
+            error: err instanceof Error ? err.message : String(err),
+            metadata: repairMetadata,
+          });
+          throw err;
+        }
+        await deps.recordRepairEvent("state.repair.completed", {
+          state: "provider_selection",
+          metadata: repairMetadata,
+        });
+      } else {
+        deps.repairLocalInferenceSystemdOverrideOrExit(provider, deps.isNonInteractive);
+      }
     } else {
       await deps.startRecordedStep("provider_selection");
       const selection = await deps.setupNim(gpu, sandboxName, agent);
@@ -251,6 +286,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         }
       }
       deps.skippedStepMessage("inference", `${provider} / ${model}`);
+      await deps.recordStateSkipped("inference", {
+        reason: "resume",
+        provider,
+        model,
+      });
       if (nimContainer && sandboxName) deps.registryUpdateSandbox(sandboxName, { nimContainer });
       session = await deps.recordStepComplete(
         "inference",

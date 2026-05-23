@@ -62,6 +62,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
     ): PolicyResumeSelection;
     arePolicyPresetsApplied(sandboxName: string, selectedPresets: string[]): boolean;
     skippedStepMessage(stepName: string, detail?: string | null): void;
+    recordStateSkipped(state: "policies", metadata?: Record<string, unknown> | null): Promise<Session>;
     startRecordedStep(
       stepName: string,
       updates: { sandboxName: string; provider: string; model: string; policyPresets: string[] },
@@ -148,6 +149,10 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
   let session: Session | null;
   if (resumePolicies) {
     deps.skippedStepMessage("policies", recordedPolicyPresetsForSupport.join(", "));
+    await deps.recordStateSkipped("policies", {
+      reason: "resume",
+      policyPresets: recordedPolicyPresetsForSupport,
+    });
     session = await deps.recordStepComplete(
       "policies",
       deps.toSessionUpdates({

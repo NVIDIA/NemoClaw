@@ -110,6 +110,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "hidden": true
     }
   ],
+  "resources": [
+    {
+      "group": "Resources",
+      "order": 900,
+      "description": "Show hardware inventory (CPU cores, RAM, GPU VRAM)",
+      "flags": "[--json]"
+    }
+  ],
   "root:version": [
     {
       "group": "Getting Started",

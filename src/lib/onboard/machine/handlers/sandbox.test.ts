@@ -11,8 +11,9 @@ type Agent = { displayName?: string } | null;
 type WebSearchConfig = { fetchEnabled: true };
 type MessagingChannelConfig = Record<string, string>;
 type SandboxGpuConfig = { sandboxGpuEnabled: boolean; mode: string };
+type ResourceProfile = { cpu: string; memory: string };
 
-function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig>["deps"]> = {}) {
+function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig, ResourceProfile>["deps"]> = {}) {
   let session = createSession();
   const calls = {
     note: vi.fn(),
@@ -30,12 +31,15 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
     getRecordedChannels: vi.fn(() => null),
     setupMessaging: vi.fn(async () => [] as string[]),
     promptName: vi.fn(async () => "my-assistant"),
+    selectResourceProfile: vi.fn(async () => null as ResourceProfile | null),
     stopStale: vi.fn(),
     createSandbox: vi.fn(async () => "my-assistant"),
     updateSandbox: vi.fn(),
     setDefault: vi.fn(),
     complete: vi.fn(async () => createSession()),
     skipped: vi.fn(),
+    recordSkip: vi.fn(async () => createSession()),
+    repairEvent: vi.fn(async () => createSession()),
     error: vi.fn(),
     exit: vi.fn((code: number): never => {
       throw new Error(`exit ${code}`);
@@ -70,6 +74,7 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
       setupMessagingChannels: calls.setupMessaging,
       readMessagingChannelConfigFromEnv: () => null,
       promptValidatedSandboxName: calls.promptName,
+      selectResourceProfileForSandbox: calls.selectResourceProfile,
       stopStaleDashboardListenersForSandbox: calls.stopStale,
       listRegistrySandboxes: () => ({ sandboxes: [{ name: "old" }] }),
       createSandbox: calls.createSandbox,
@@ -79,6 +84,8 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
       recordStepComplete: calls.complete,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       skippedStepMessage: calls.skipped,
+      recordStateSkipped: calls.recordSkip,
+      recordRepairEvent: calls.repairEvent,
       error: calls.error,
       exitProcess: calls.exit,
       ...overrides,
@@ -88,9 +95,9 @@ function createDeps(overrides: Partial<SandboxStateOptions<Gpu, Agent, WebSearch
 }
 
 function baseOptions(
-  deps: SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig>["deps"],
+  deps: SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig, ResourceProfile>["deps"],
   session: Session | null = createSession(),
-): SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig> {
+): SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig, ResourceProfile> {
   return {
     resume: false,
     fresh: false,
@@ -139,6 +146,7 @@ describe("handleSandboxState", () => {
       null,
       null,
       { sandboxGpuEnabled: false, mode: "0" },
+      null,
       [],
     );
     expect(calls.updateSandbox).toHaveBeenCalledWith("my-assistant", expect.objectContaining({ model: "model", provider: "provider" }));
@@ -156,6 +164,10 @@ describe("handleSandboxState", () => {
 
     expect(calls.createSandbox).not.toHaveBeenCalled();
     expect(calls.skipped).toHaveBeenCalledWith("sandbox", "saved");
+    expect(calls.recordSkip).toHaveBeenCalledWith("sandbox", {
+      reason: "resume",
+      sandboxName: "saved",
+    });
     expect(result.selectedMessagingChannels).toEqual(["slack"]);
   });
 
@@ -185,8 +197,43 @@ describe("handleSandboxState", () => {
 
     await handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" });
 
+    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.started", {
+      state: "sandbox",
+      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+    });
     expect(calls.repairSandbox).toHaveBeenCalledWith("saved");
+    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.completed", {
+      state: "sandbox",
+      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+    });
     expect(calls.createSandbox).toHaveBeenCalled();
+  });
+
+  it("records failed sandbox repair events before propagating repair errors", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "not_ready",
+      repairRecordedSandbox: vi.fn(() => {
+        throw new Error("cleanup failed");
+      }),
+    });
+
+    await expect(
+      handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" }),
+    ).rejects.toThrow("cleanup failed");
+
+    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.started", {
+      state: "sandbox",
+      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+    });
+    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.failed", {
+      state: "sandbox",
+      error: "cleanup failed",
+      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+    });
+    expect(calls.repairEvent).not.toHaveBeenCalledWith("state.repair.completed", expect.anything());
+    expect(calls.createSandbox).not.toHaveBeenCalled();
   });
 
   it("recreates when a saved web search sandbox is no longer supported", async () => {
@@ -243,6 +290,7 @@ describe("handleSandboxState", () => {
       null,
       null,
       { sandboxGpuEnabled: false, mode: "0" },
+      null,
       [],
     );
     expect(result.webSearchConfig).toBeNull();

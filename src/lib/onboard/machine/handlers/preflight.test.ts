@@ -50,6 +50,7 @@ function createDeps(overrides: Partial<PreflightStateOptions<Gpu, SandboxEntry, 
       }),
       validateSandboxGpuPreflight: vi.fn(),
       skippedStepMessage: vi.fn(),
+      recordStateSkipped: vi.fn(async () => session),
       startRecordedStep: vi.fn(async () => undefined),
       recordStepComplete: vi.fn(async () => session),
       updateSession: vi.fn((mutator: (value: Session) => Session | void) => {
@@ -125,6 +126,10 @@ describe("handlePreflightState", () => {
     });
 
     expect(harness.deps.skippedStepMessage).toHaveBeenCalledWith("preflight", "cached");
+    expect(harness.deps.recordStateSkipped).toHaveBeenCalledWith("preflight", {
+      reason: "resume",
+      validation: "gpu-cdi",
+    });
     expect(harness.deps.detectGpu).toHaveBeenCalledOnce();
     expect(harness.deps.runPreflight).not.toHaveBeenCalled();
     expect(harness.deps.startRecordedStep).not.toHaveBeenCalled();
