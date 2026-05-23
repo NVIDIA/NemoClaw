@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 #
 # Documentation checks (default: all):
-#   1) Markdown links — local paths exist; optional curl for unique http(s) URLs.
-#   2) CLI parity — `nemoclaw --help` vs ### `nemoclaw …` in docs/reference/commands.md.
+#   1) Markdown/MDX links — local paths exist; optional curl for unique http(s) URLs.
+#   2) CLI parity — `nemoclaw --help` vs ### `nemoclaw …` in docs/reference/commands.mdx.
 #
 # Usage (from repo root):
 #   test/e2e/e2e-cloud-experimental/check-docs.sh                    # both checks
@@ -12,7 +12,7 @@
 #   test/e2e/e2e-cloud-experimental/check-docs.sh --only-cli
 #   test/e2e/e2e-cloud-experimental/check-docs.sh --local-only
 #   CHECK_DOC_LINKS_REMOTE=0 test/e2e/e2e-cloud-experimental/check-docs.sh
-#   test/e2e/e2e-cloud-experimental/check-docs.sh path/to/a.md
+#   test/e2e/e2e-cloud-experimental/check-docs.sh path/to/a.md path/to/b.mdx
 #
 # Environment:
 #   CHECK_DOC_LINKS_REMOTE   If 0, skip http(s) probes for links check.
@@ -42,14 +42,14 @@ WITH_SKILLS=0
 
 usage() {
   cat <<'EOF'
-Documentation checks: Markdown links + nemoclaw --help vs commands reference
+Documentation checks: Markdown/MDX links + nemoclaw --help vs commands reference
 + install.sh --help vs canonical provider list.
 
-Usage: test/e2e/e2e-cloud-experimental/check-docs.sh [options] [extra.md ...]
+Usage: test/e2e/e2e-cloud-experimental/check-docs.sh [options] [extra.md/.mdx ...]
 
 Options:
-  --only-links     Run only the Markdown link check.
-  --only-cli       Run only the CLI help vs docs/reference/commands.md check
+  --only-links     Run only the Markdown/MDX link check.
+  --only-cli       Run only the CLI help vs docs/reference/commands.mdx check
                    (includes both command-level and flag-level parity).
   --only-install   Run only the install.sh --help vs canonical provider check.
   --local-only     Do not curl http(s) URLs (same as CHECK_DOC_LINKS_REMOTE=0).
@@ -126,11 +126,11 @@ log() {
   printf '%s\n' "check-docs: $*"
 }
 
-# --- CLI: --help vs commands.md -------------------------------------------------
+# --- CLI: --help vs commands.mdx ------------------------------------------------
 
 run_cli_check() {
   local CLI_JS="$REPO_ROOT/bin/nemoclaw.js"
-  local COMMANDS_MD="$REPO_ROOT/docs/reference/commands.md"
+  local COMMANDS_MD="$REPO_ROOT/docs/reference/commands.mdx"
 
   if [[ ! -f "$CLI_JS" ]]; then
     echo "check-docs: [cli] missing $CLI_JS" >&2
@@ -156,7 +156,7 @@ JSON
   log "[cli] comparing: $NODE bin/nemoclaw.js --dump-commands"
   # shellcheck disable=SC2016
   # log text: backticks are documentation markers, not command substitution
-  log '[cli]        vs: docs/reference/commands.md (### `nemoclaw …` headings only)'
+  log '[cli]        vs: docs/reference/commands.mdx (### `nemoclaw …` headings only)'
 
   log "[cli] phase 1/2: dump canonical command list from registry"
   if ! HOME="$_cli_home" "$NODE" "$CLI_JS" --dump-commands >"$_tmp/help.txt" 2>"$_tmp/help.err"; then
@@ -173,17 +173,32 @@ JSON
   # shellcheck disable=SC2016
   # log text: backticks are documentation markers, not command substitution
   log '[cli] phase 2/2: extract ### `nemoclaw …` headings from commands reference'
-  # Allow optional MyST suffix on the same line, e.g. ### `nemoclaw onboard` {#anchor}
-  # Strip argument placeholders (<arg>, [optional]) to match canonical usage signatures.
+  # Allow optional MyST suffix on the same line, e.g. ### `nemoclaw onboard` {#anchor}.
+  # Preserve placeholders that are part of the canonical help signature, but
+  # keep accepting docs-only suffixes such as `snapshot restore [selector]`.
   grep -E '^### `nemoclaw ' "$COMMANDS_MD" | LC_ALL=C perl -CS -ne '
+    BEGIN {
+      my $help_path = shift @ARGV;
+      open my $help_fh, "<", $help_path or die "open help list: $!";
+      while (my $line = <$help_fh>) {
+        chomp $line;
+        $help{$line} = 1;
+      }
+      close $help_fh;
+    }
     if (/^### `([^`]+)`\s*(?:\{[^}]+\})?\s*$/) {
       my $c = $1;
-      while ($c =~ s/\s*\[[^\]]*\]\s*$//) {}
-      while ($c =~ s/\s+<[^>]+>\s*$//) {}
       $c =~ s/\s+$//;
+      while (!$help{$c}) {
+        my $changed = 0;
+        $changed ||= ($c =~ s/\s*\[[^\]]*\]\s*$//);
+        $changed ||= ($c =~ s/\s+<[^>]+>\s*$//);
+        $c =~ s/\s+$//;
+        last unless $changed;
+      }
       print "$c\n";
     }
-  ' | LC_ALL=C sort -u >"$_tmp/doc.txt"
+  ' "$_tmp/help.txt" | LC_ALL=C sort -u >"$_tmp/doc.txt"
 
   local _n_doc
   _n_doc="$(wc -l <"$_tmp/doc.txt" | tr -d " ")"
@@ -192,10 +207,10 @@ JSON
   if ! cmp -s "$_tmp/help.txt" "$_tmp/doc.txt"; then
     echo "check-docs: [cli] mismatch between --help and $COMMANDS_MD" >&2
     echo "" >&2
-    echo "Only in --help (add ### to commands.md or fix help):" >&2
+    echo "Only in --help (add ### to commands.mdx or fix help):" >&2
     comm -23 "$_tmp/help.txt" "$_tmp/doc.txt" | sed 's/^/  /' >&2 || true
     echo "" >&2
-    echo "Only in commands.md (add to help() in bin/nemoclaw.js or fix heading):" >&2
+    echo "Only in commands.mdx (add to help() in bin/nemoclaw.js or fix heading):" >&2
     comm -13 "$_tmp/help.txt" "$_tmp/doc.txt" | sed 's/^/  /' >&2 || true
     rm -rf "$_tmp"
     return 1
@@ -206,7 +221,7 @@ JSON
   # ── Phase 3/3: flag-level parity (NemoClaw#3224) ──────────────────────────
   # For each command, run its `--help`, extract every long-form flag mentioned,
   # and confirm each appears within that command's own section in
-  # commands.md (between its `### \`nemoclaw <cmd>\`` heading and the next
+  # commands.mdx (between its `### \`nemoclaw <cmd>\`` heading and the next
   # ### heading). Two help formats coexist: oclif global commands use a
   # USAGE/FLAGS layout; `nemoclaw <name> ...` commands use a custom
   # Options: section. Greping the full help output handles both formats.
@@ -239,6 +254,11 @@ JSON
         bt = index(line, "`")
         if (bt > 0) {
           cand = substr(line, 1, bt - 1)
+          sub(/[[:space:]]+$/, "", cand)
+          if (cand == target) {
+            in_sec = 1
+            next
+          }
           while (sub(/[[:space:]]*\[[^]]*\][[:space:]]*$/, "", cand)) {}
           while (sub(/[[:space:]]+<[^>]+>[[:space:]]*$/, "", cand)) {}
           sub(/[[:space:]]+$/, "", cand)
@@ -308,7 +328,7 @@ JSON
     # `$_tmp/help.txt` via `done <` redirection; any inner command that
     # touches stdin (some node startup paths do) would eat subsequent
     # lines, silently truncating the iteration. Negative-tested by
-    # mutating commands.md and confirming drift is now reported.
+    # mutating commands.mdx and confirming drift is now reported.
     #
     # Capture exit code separately so a real failure (broken command path,
     # crashed loader, etc.) propagates instead of being swallowed by
@@ -351,7 +371,7 @@ JSON
 
     # Reverse direction: extract long flags mentioned in the doc section
     # and confirm each appears in the actual --help. Catches stale docs
-    # (flag removed from CLI but still listed in commands.md).
+    # (flag removed from CLI but still listed in commands.mdx).
     #
     # Scoping rule: inside fenced code blocks (where USAGE lines live like
     # `[--non-interactive]`), any `--foo` counts. Outside fences, only
@@ -575,7 +595,7 @@ collect_default_docs() {
     [[ -f "$f" ]] && printf '%s\n' "$f"
   done
   if [[ -d "$REPO_ROOT/docs" ]]; then
-    find "$REPO_ROOT/docs" -type f -name '*.md' | LC_ALL=C sort
+    find "$REPO_ROOT/docs" -type f \( -name '*.md' -o -name '*.mdx' \) | LC_ALL=C sort
   fi
   if [[ "$WITH_SKILLS" -eq 1 && -d "$REPO_ROOT/.agents/skills" ]]; then
     find "$REPO_ROOT/.agents/skills" -type f -name '*.md' | LC_ALL=C sort
@@ -658,6 +678,21 @@ check_local_ref() {
   fi
   if [[ "$stripped" == *://* ]]; then
     return 0
+  fi
+
+  if [[ "$stripped" == /* ]]; then
+    local site_path="${stripped#/}"
+    local candidate
+    for candidate in \
+      "$REPO_ROOT/docs/$site_path" \
+      "$REPO_ROOT/docs/$site_path.mdx" \
+      "$REPO_ROOT/docs/$site_path.md" \
+      "$REPO_ROOT/docs/$site_path/index.mdx" \
+      "$REPO_ROOT/docs/$site_path/index.md"; do
+      [[ -e "$candidate" ]] && return 0
+    done
+    echo "check-docs: [links] broken site route in $md_path:$line_no -> $target" >&2
+    return 1
   fi
 
   if (cd "$(dirname "$md_path")" && [[ -e "$stripped" ]]); then
@@ -752,7 +787,7 @@ run_links_check() {
   if [[ "$WITH_SKILLS" -eq 1 ]]; then
     log "[links] scope: default doc set + .agents/skills/**/*.md"
   else
-    log "[links] scope: README, CONTRIBUTING, SECURITY, spark-install, CODE_OF_CONDUCT, .github PR template, docs/**/*.md"
+    log "[links] scope: README, CONTRIBUTING, SECURITY, spark-install, CODE_OF_CONDUCT, .github PR template, docs/**/*.{md,mdx}"
   fi
   if [[ "$CHECK_DOC_LINKS_REMOTE" != 0 ]]; then
     log "[links] remote: curl unique http(s) targets (disable: CHECK_DOC_LINKS_REMOTE=0 or --local-only)"

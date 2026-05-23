@@ -7,8 +7,10 @@
 const { redact } = require("../runner");
 const {
   DEFAULT_CLOUD_MODEL,
+  DEFAULT_HERMES_PROVIDER_MODEL,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
+  getSandboxInferenceConfig,
 } = require("../inference/config");
 const { isSafeModelId } = require("../validation");
 const { compactText } = require("../core/url-utils");
@@ -19,6 +21,7 @@ const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";
+const HERMES_INFERENCE_ENDPOINT_URL = "https://inference-api.nousresearch.com/v1";
 
 const REMOTE_PROVIDER_CONFIG = {
   build: {
@@ -74,6 +77,17 @@ const REMOTE_PROVIDER_CONFIG = {
     defaultModel: "gemini-2.5-flash",
     skipVerify: true,
   },
+  hermesProvider: {
+    label: "Hermes Provider",
+    providerName: "hermes-provider",
+    providerType: "openai",
+    credentialEnv: "OPENAI_API_KEY",
+    endpointUrl: HERMES_INFERENCE_ENDPOINT_URL,
+    helpUrl: "https://portal.nousresearch.com/manage-subscription",
+    modelMode: "curated",
+    defaultModel: DEFAULT_HERMES_PROVIDER_MODEL,
+    skipVerify: true,
+  },
   custom: {
     label: "Other OpenAI-compatible endpoint",
     providerName: "compatible-endpoint",
@@ -89,14 +103,6 @@ const REMOTE_PROVIDER_CONFIG = {
 
 // Providers that run on the host and need the local-inference policy preset.
 const LOCAL_INFERENCE_PROVIDERS = ["ollama-local", "vllm-local"];
-
-type SandboxInferenceConfig = {
-  providerKey: string;
-  primaryModelRef: string;
-  inferenceBaseUrl: string;
-  inferenceApi: string;
-  inferenceCompat: Record<string, unknown> | null;
-};
 
 // Re-exported alias matching the existing onboard.ts call sites. The canonical
 // definitions live in inference-config.ts so that getProviderSelectionConfig
@@ -161,6 +167,11 @@ function getNonInteractiveProvider() {
     nim: "nim-local",
     vllm: "vllm",
     anthropiccompatible: "anthropicCompatible",
+    hermes: "hermesProvider",
+    "hermes-provider": "hermesProvider",
+    hermesprovider: "hermesProvider",
+    nous: "hermesProvider",
+    "nous-portal": "hermesProvider",
   };
   const normalized = aliases[providerKey] || providerKey;
   const validProviders = new Set([
@@ -169,6 +180,7 @@ function getNonInteractiveProvider() {
     "anthropic",
     "anthropicCompatible",
     "gemini",
+    "hermesProvider",
     "ollama",
     "custom",
     "nim-local",
@@ -182,7 +194,7 @@ function getNonInteractiveProvider() {
   if (!validProviders.has(normalized)) {
     console.error(`  Unsupported NEMOCLAW_PROVIDER: ${providerKey}`);
     console.error(
-      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama",
+      "  Valid values: build, openai, anthropic, anthropicCompatible, gemini, hermes-provider, ollama, custom, nim-local, vllm, routed, install-vllm, install-ollama, install-windows-ollama, start-windows-ollama",
     );
     process.exit(1);
   }
@@ -304,60 +316,6 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell) {
     upserted.push(name);
   }
   return upserted;
-}
-
-// ── Sandbox inference config ─────────────────────────────────────
-
-function getSandboxInferenceConfig(
-  model: string,
-  provider: string | null = null,
-  preferredInferenceApi: string | null = null,
-): SandboxInferenceConfig {
-  let providerKey;
-  let primaryModelRef;
-  let inferenceBaseUrl = "https://inference.local/v1";
-  let inferenceApi = preferredInferenceApi || "openai-completions";
-  let inferenceCompat = null;
-
-  switch (provider) {
-    case "openai-api":
-      providerKey = "openai";
-      primaryModelRef = `openai/${model}`;
-      break;
-    case "anthropic-prod":
-    case "compatible-anthropic-endpoint":
-      providerKey = "anthropic";
-      primaryModelRef = `anthropic/${model}`;
-      inferenceBaseUrl = "https://inference.local";
-      inferenceApi = "anthropic-messages";
-      break;
-    case "gemini-api":
-      providerKey = "inference";
-      primaryModelRef = `inference/${model}`;
-      inferenceCompat = {
-        supportsStore: false,
-      };
-      break;
-    case "compatible-endpoint":
-      providerKey = "inference";
-      primaryModelRef = `inference/${model}`;
-      inferenceCompat = {
-        supportsStore: false,
-      };
-      break;
-    case "nvidia-router":
-      providerKey = "inference";
-      primaryModelRef = `inference/${model}`;
-      break;
-    case "nvidia-prod":
-    case "nvidia-nim":
-    default:
-      providerKey = "inference";
-      primaryModelRef = `inference/${model}`;
-      break;
-  }
-
-  return { providerKey, primaryModelRef, inferenceBaseUrl, inferenceApi, inferenceCompat };
 }
 
 module.exports = {

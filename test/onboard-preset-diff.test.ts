@@ -20,11 +20,23 @@ function runScript(scriptBody: string): SpawnSyncReturns<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preset-diff-"));
   const scriptPath = path.join(tmpDir, "script.js");
   fs.writeFileSync(scriptPath, scriptBody);
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (
+      key.startsWith("DISCORD_") ||
+      key.startsWith("SLACK_") ||
+      key.startsWith("TELEGRAM_") ||
+      key.startsWith("WECHAT_") ||
+      key.startsWith("WHATSAPP_")
+    ) {
+      delete env[key];
+    }
+  }
   const result = spawnSync(process.execPath, [scriptPath], {
     cwd: repoRoot,
     encoding: "utf-8",
     env: {
-      ...process.env,
+      ...env,
       HOME: tmpDir,
       NEMOCLAW_NON_INTERACTIVE: "1",
     },
@@ -50,7 +62,7 @@ function buildPreamble({
   const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
   const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
   const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
-  const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));
+  const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
   const resolveOpenshellPath = JSON.stringify(
     path.join(repoRoot, "dist", "lib", "adapters", "openshell", "resolve.js"),
   );
@@ -59,13 +71,18 @@ function buildPreamble({
   return String.raw`
 // All stubs MUST be installed before requiring onboard so its module-level
 // destructuring picks up the patched functions.
+Object.defineProperty(process, "platform", { value: "darwin" });
+
 const resolver = require(${resolveOpenshellPath});
 resolver.resolveOpenshell = () => "/fake/openshell";
 
 const runner = require(${runnerPath});
 runner.run = () => {};
-// Return "Running" so waitForSandboxReady passes immediately.
-runner.runCapture = () => "Running";
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : String(command);
+  if (text.includes("sandbox list")) return "test-sb Ready";
+  return "Running";
+};
 
 const credentials = require(${credPath});
 credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + msg); };
@@ -88,6 +105,13 @@ policies.applyPreset = (_name, preset) => {
   if (!appliedState.includes(preset)) appliedState.push(preset);
   // Mirror production contract: real applyPreset returns true on success
   // and false on recoverable errors (unknown preset, malformed YAML, etc).
+  return true;
+};
+policies.applyPresets = (_name, presets) => {
+  for (const preset of presets) {
+    appliedCalls.push(preset);
+    if (!appliedState.includes(preset)) appliedState.push(preset);
+  }
   return true;
 };
 policies.removePreset = (_name, preset) => {
@@ -183,17 +207,17 @@ console.log = () => {};
       `expected chosen to preserve local-inference, got ${JSON.stringify(payload.chosen)}`,
     );
 
-    // Nothing should be removed — every applied preset is either a tier
-    // default or a user-added extra that the additive policy preserves.
+    // User-added extras stay additive, but built-in Brave is no longer
+    // preserved after Brave search was declined.
     assert.deepEqual(
       payload.removedCalls,
-      [],
-      `expected no removals, got ${JSON.stringify(payload.removedCalls)}`,
+      ["brave"],
+      `expected only stale built-in Brave to be removed, got ${JSON.stringify(payload.removedCalls)}`,
     );
 
-    // Final state should still contain every previously-applied preset.
+    // Final state should still contain every non-Brave previously-applied preset.
     const finalSorted = payload.finalApplied.slice().sort();
-    assert.deepEqual(finalSorted, ["brave", "brew", "huggingface", "local-inference", "npm", "pypi"]);
+    assert.deepEqual(finalSorted, ["brew", "huggingface", "local-inference", "npm", "pypi"]);
   });
 
   // Custom presets loaded via `policy-add --from-file` / `--from-dir` are
@@ -229,8 +253,219 @@ console.log = () => {};
     );
     assert.deepEqual(
       payload.removedCalls,
+      ["brave"],
+      `expected only stale built-in Brave to be removed, got ${JSON.stringify(payload.removedCalls)}`,
+    );
+  });
+
+  it("non-interactive suggested re-onboard removes unsupported Brave preset", () => {
+    const script =
+      buildPreamble({
+        policyMode: "suggested",
+        policyPresets: "",
+        alreadyApplied: ["npm", "pypi", "huggingface", "brew", "brave", "my-internal-api"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      provider: "openai",
+      webSearchSupported: false,
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.ok(
+      !payload.chosen.includes("brave"),
+      `expected chosen to drop brave, got ${JSON.stringify(payload.chosen)}`,
+    );
+    assert.ok(
+      payload.chosen.includes("my-internal-api"),
+      `expected chosen to preserve my-internal-api, got ${JSON.stringify(payload.chosen)}`,
+    );
+    assert.deepEqual(payload.removedCalls, ["brave"]);
+    assert.deepEqual(payload.finalApplied.slice().sort(), [
+      "brew",
+      "huggingface",
+      "my-internal-api",
+      "npm",
+      "pypi",
+    ]);
+  });
+
+  it("resume selection removes unsupported Brave preset", () => {
+    const script =
+      buildPreamble({
+        policyMode: "suggested",
+        policyPresets: "",
+        alreadyApplied: ["npm", "brave"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      selectedPresets: ["npm", "brave"],
+      webSearchSupported: false,
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.deepEqual(payload.chosen, ["npm"]);
+    assert.deepEqual(payload.removedCalls, ["brave"]);
+    assert.deepEqual(payload.finalApplied, ["npm"]);
+  });
+
+  it("resume selection preserves the Slack policy required by a recorded Slack channel", () => {
+    const script =
+      buildPreamble({
+        policyMode: "suggested",
+        policyPresets: "",
+        alreadyApplied: ["slack"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      selectedPresets: ["npm", "pypi"],
+      enabledChannels: ["slack"],
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.deepEqual(payload.chosen.slice().sort(), ["npm", "pypi", "slack"]);
+    assert.deepEqual(
+      payload.removedCalls,
       [],
-      `expected no removals, got ${JSON.stringify(payload.removedCalls)}`,
+      `Slack must remain targeted while the slack channel is enabled; got removals ${JSON.stringify(payload.removedCalls)}`,
+    );
+    assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "slack"]);
+  });
+
+  it("custom non-interactive selection preserves the Slack policy required by Slack messaging", () => {
+    const script =
+      buildPreamble({
+        policyMode: "custom",
+        policyPresets: "npm,pypi",
+        alreadyApplied: ["slack"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      enabledChannels: ["slack"],
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.deepEqual(payload.chosen.slice().sort(), ["npm", "pypi", "slack"]);
+    assert.deepEqual(
+      payload.removedCalls,
+      [],
+      `Slack must not be removed while Slack messaging is enabled; got removals ${JSON.stringify(payload.removedCalls)}`,
+    );
+    assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "slack"]);
+  });
+
+  it("custom non-interactive selection removes disabled Slack while honoring the explicit preset list", () => {
+    const script =
+      buildPreamble({
+        policyMode: "custom",
+        policyPresets: "npm",
+        alreadyApplied: ["npm", "pypi", "slack"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      disabledChannels: ["slack"],
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.deepEqual(payload.chosen, ["npm"]);
+    assert.deepEqual(payload.removedCalls.slice().sort(), ["pypi", "slack"]);
+    assert.deepEqual(payload.finalApplied, ["npm"]);
+  });
+
+  it("suggested non-interactive selection removes disabled Slack from tier defaults", () => {
+    const script =
+      buildPreamble({
+        tierEnv: "open",
+        policyMode: "suggested",
+        policyPresets: "",
+        alreadyApplied: ["slack"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      disabledChannels: ["slack"],
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.ok(
+      !payload.chosen.includes("slack"),
+      `expected chosen to drop disabled Slack, got ${JSON.stringify(payload.chosen)}`,
+    );
+    assert.deepEqual(payload.removedCalls, ["slack"]);
+    assert.ok(
+      !payload.finalApplied.includes("slack"),
+      `final applied presets should not include Slack, got ${JSON.stringify(payload.finalApplied)}`,
     );
   });
 

@@ -30,10 +30,13 @@ function extractShellFunctionFromSource(src: string, name: string): string {
 
 function normalizeMutableConfigPermsFor(configDir: string): string {
   const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
-  return extractShellFunctionFromSource(startScript, "normalize_mutable_config_perms").replace(
-    'local config_dir="/sandbox/.openclaw"',
-    `local config_dir=${JSON.stringify(configDir)}`,
-  );
+  return [
+    extractShellFunctionFromSource(startScript, "lock_openclaw_config_baseline_if_present"),
+    extractShellFunctionFromSource(startScript, "normalize_mutable_config_perms").replace(
+      'local config_dir="/sandbox/.openclaw"',
+      `local config_dir=${JSON.stringify(configDir)}`,
+    ),
+  ].join("\n");
 }
 
 function modeBits(filePath: string): number {
@@ -161,68 +164,6 @@ describe("Issue #2681 — mutable OpenClaw config permissions", () => {
     expect(commands.find((command) => command[0] === "sh" && command[1] === "-c")).toEqual(
       expect.arrayContaining(["/sandbox/.openclaw", "sandbox:sandbox", "g+rwX,o-rwx", "2770"]),
     );
-  });
-
-  it("shields-up strips setgid from the OpenClaw config root before verifying lock", () => {
-    const probe = spawnSync(
-      process.execPath,
-      [
-        "-e",
-        String.raw`
-const Module = require("node:module");
-const originalLoad = Module._load;
-const calls = [];
-Module._load = function patchedLoad(request, parent, isMain) {
-  if (request === "../adapters/docker/exec") {
-    return {
-      dockerExecFileSync(args) {
-        const separator = args.indexOf("--");
-        const command = separator >= 0 ? args.slice(separator + 1) : args;
-        calls.push(command);
-        if (command[0] === "stat" && command[1] === "-c") {
-          return command.at(-1) === "/sandbox/.openclaw"
-            ? "755 root:root\n"
-            : "444 root:root\n";
-        }
-        if (command[0] === "lsattr") {
-          return "----i----------------- " + command.at(-1) + "\n";
-        }
-        return "";
-      },
-    };
-  }
-  return originalLoad.call(this, request, parent, isMain);
-};
-const { lockAgentConfig } = require("./dist/lib/shields/index.js");
-lockAgentConfig("sandbox-pod", {
-  agentName: "openclaw",
-  configPath: "/sandbox/.openclaw/openclaw.json",
-  configDir: "/sandbox/.openclaw",
-  sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
-});
-process.stdout.write(JSON.stringify(calls));
-`,
-      ],
-      { encoding: "utf-8", timeout: 5000 },
-    );
-
-    expect(probe.status).toBe(0);
-    const commands = JSON.parse(probe.stdout) as string[][];
-    const stateDirLockIndex = commands.findIndex(
-      (command) =>
-        command[0] === "sh" &&
-        command[1] === "-c" &&
-        command.includes("/sandbox/.openclaw") &&
-        command.includes("root:root") &&
-        command.includes("go-w") &&
-        command.includes("755"),
-    );
-    const stripSetgidIndex = commands.findIndex((command) =>
-      command.join("\0") === ["chmod", "g-s", "/sandbox/.openclaw"].join("\0"),
-    );
-    expect(stateDirLockIndex).toBeGreaterThan(-1);
-    expect(stripSetgidIndex).toBeGreaterThan(stateDirLockIndex);
-    expect(commands).toContainEqual(["chmod", "755", "/sandbox/.openclaw"]);
   });
 
   it("shields-up strips setgid from the OpenClaw config root before verifying lock", () => {

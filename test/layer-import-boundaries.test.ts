@@ -42,7 +42,7 @@ describe("CLI layer import boundaries", () => {
   });
 
   it("counts only classes that extend Command as oclif command classes", () => {
-    const fixture = path.join(REPO_ROOT, "src", "lib", "commands", `__boundary-implements-${process.pid}.ts`);
+    const fixture = path.join(REPO_ROOT, "src", "commands", `__boundary-implements-${process.pid}.ts`);
     try {
       fs.writeFileSync(
         fixture,

@@ -58,11 +58,13 @@ writable `.openclaw/` tree so state survives sandbox restart, and
 `nemoclaw <name> snapshot create` discovers every `workspace-<name>/` directory
 and includes it in the snapshot bundle alongside the default `workspace/`.
 
-> **Note:** Files that operators typically want consistent across every agent workspace
-> (`AGENTS.md`, shared skills, common templates) are not synced automatically.
-> Each workspace is independent; changes in one don't propagate. Tracking
-> shared-file tooling (shared mount, `workspaces list` command) in
-> [#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
+**Note:**
+
+Files that operators typically want consistent across every agent workspace
+(`AGENTS.md`, shared skills, common templates) are not synced automatically.
+Each workspace is independent; changes in one don't propagate. Tracking
+shared-file tooling (shared mount, `workspaces list` command) in
+[#1260](https://github.com/NVIDIA/NemoClaw/issues/1260).
 
 ## Persistence Behavior
 
@@ -83,8 +85,10 @@ It does not continue with a partial backup.
 Running `nemoclaw <name> destroy` deletes the sandbox and its persistent state volume.
 Workspace files are removed from the sandbox unless you created a snapshot or backup first.
 
-> **Warning:** Back up your workspace files before running `nemoclaw <name> destroy`.
-> See Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill) for instructions.
+**Warning:**
+
+Back up your workspace files before running `nemoclaw <name> destroy`.
+See Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill) for instructions.
 
 ## Editing Workspace Files
 

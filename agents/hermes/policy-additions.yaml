@@ -18,7 +18,6 @@ filesystem_policy:
     - /usr
     - /lib
     - /opt/hermes
-    - /opt/nemoclaw-hermes-discord-preload
     - /proc
     - /dev/urandom
     - /app
@@ -38,6 +37,24 @@ process:
   run_as_group: sandbox
 
 network_policies:
+  managed_inference:
+    name: managed_inference
+    endpoints:
+      - host: inference.local
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: POST, path: "/v1/chat/completions" }
+          - allow: { method: POST, path: "/v1/completions" }
+          - allow: { method: POST, path: "/v1/embeddings" }
+          - allow: { method: GET, path: "/v1/models" }
+          - allow: { method: GET, path: "/v1/models/**" }
+    binaries:
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3.11 }
+      - { path: /opt/hermes/.venv/bin/python }
+
   nvidia:
     name: nvidia
     endpoints:
@@ -63,7 +80,7 @@ network_policies:
           - allow: { method: GET, path: "/v1/models/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
   github:
@@ -76,11 +93,16 @@ network_policies:
         port: 443
         access: full
     binaries:
-      - { path: /usr/bin/gh }
+      # `gh` was historically whitelisted here, but the Hermes sandbox base
+      # image (agents/hermes/Dockerfile.base) only apt-installs `git`, not
+      # `gh`, so the entry was a phantom — see #2179.
       - { path: /usr/bin/git }
       - { path: /opt/hermes/.venv/bin/python }
 
-  # ── Nous Research — Hermes auth, updates, portal ──────────────
+  # ── Nous Research — public metadata and agent updates ─────────
+  # Nous Portal OAuth, managed inference, and managed tool gateway auth are
+  # host-managed by NemoClaw/OpenShell. The sandbox should not reach the Portal
+  # or Nous vendor gateway hosts directly.
   nous_research:
     name: nous_research
     endpoints:
@@ -98,65 +120,9 @@ network_policies:
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
-      - host: inference-api.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: portal.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: browser-use-gateway.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: modal-gateway.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: openai-audio-gateway.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: fal-queue-gateway.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: firecrawl-gateway.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      - host: tool-gateway.nousresearch.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
   # ── PyPI — needed for pip install (skill/plugin deps) ─────────
@@ -177,10 +143,14 @@ network_policies:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/pip3 }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
-  # ── Messaging — pre-allowed for agent notifications ───────────
+  # ── Messaging policy templates ─────────────────────────────────
+  # These entries are agent-specific channel templates. During sandbox
+  # creation, NemoClaw filters out entries for messaging channels that were not
+  # selected, so a Discord-only Hermes sandbox does not retain Telegram, Slack,
+  # or WeChat egress.
   telegram:
     name: telegram
     endpoints:
@@ -194,7 +164,7 @@ network_policies:
           - allow: { method: GET, path: "/file/bot*/**" }
     binaries:
       - { path: /usr/local/bin/node }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
   discord:
@@ -222,8 +192,20 @@ network_policies:
           - allow: { method: DELETE, path: "/api/v*/webhooks/*/*/messages/*" }
       - host: gateway.discord.gg
         port: 443
-        access: full
-        tls: skip
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
+      - host: "*.discord.gg"
+        port: 443
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
       - host: cdn.discordapp.com
         port: 443
         protocol: rest
@@ -232,7 +214,7 @@ network_policies:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/node }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }
 
   slack:
@@ -242,6 +224,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -249,6 +232,7 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -256,18 +240,54 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
+        request_body_credential_rewrite: true
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
       - host: wss-primary.slack.com
         port: 443
-        tls: skip
-        access: full
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
       - host: wss-backup.slack.com
         port: 443
-        tls: skip
-        access: full
+        protocol: websocket
+        enforcement: enforce
+        websocket_credential_rewrite: true
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: WEBSOCKET_TEXT, path: "/**" }
     binaries:
       - { path: /usr/local/bin/hermes }
-      - { path: /usr/bin/python3.11 }
+      - { path: /usr/bin/python3* }
+      - { path: /opt/hermes/.venv/bin/python }
+
+  # WeChat (personal) via Tencent's iLink Bot API. The Hermes adapter uses
+  # HTTP long-polling (no WebSocket). WEIXIN_TOKEN is L7-resolved at egress
+  # from WECHAT_BOT_TOKEN (same credential slot OpenClaw's bridge uses) — see
+  # agents/hermes/config/messaging-config.ts and
+  # nemoclaw-blueprint/policies/presets/wechat.yaml for the shared host set.
+  wechat_bridge:
+    name: wechat_bridge
+    endpoints:
+      - host: ilinkai.weixin.qq.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+      - host: ilinkai.wechat.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        rules:
+          - allow: { method: GET, path: "/**" }
+          - allow: { method: POST, path: "/**" }
+    binaries:
+      - { path: /usr/local/bin/hermes }
+      - { path: /usr/bin/python3* }
       - { path: /opt/hermes/.venv/bin/python }

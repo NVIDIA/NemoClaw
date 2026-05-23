@@ -64,6 +64,7 @@ describe("final gateway startup failure cleanup", () => {
     expect(errors).toContain("  Gateway logs:");
     expect(errors).toContain("    gateway log line");
     expect(errors).toContain("  Cleanup attempted.");
+    expect(errors).toContain("    openshell gateway remove nemoclaw");
     expect(errors).toContain("    openshell gateway destroy -g nemoclaw");
     expect(errors).toContain(
       '    docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | xargs -r docker volume rm',

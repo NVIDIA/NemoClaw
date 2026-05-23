@@ -6,7 +6,7 @@ description: "Adds, removes, or modifies allowed endpoints in the sandbox policy
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Customize the NemoClaw Sandbox Network Policy
+# Customize the Sandbox Network Policy
 
 ## Gotchas
 
@@ -22,12 +22,14 @@ Add, remove, or modify the endpoints that the sandbox is allowed to reach.
 The sandbox policy is defined in a declarative YAML file in the NemoClaw repository and enforced at runtime by [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell).
 NemoClaw supports both static policy changes that persist across restarts and dynamic updates applied to a running sandbox through the OpenShell CLI.
 
-> **Note:** If the sandbox needs to reach an HTTP service running on the host, expose the service on a host IP that the OpenShell gateway can reach.
-> Apply a custom NemoClaw preset with `nemoclaw <sandbox> policy-add --from-file`.
-> Do not rely on `host.docker.internal` as a general host-service path because it bypasses the OpenShell policy path and may not be reachable in every sandbox runtime.
-> See Agent cannot reach a host-side HTTP service (use the `nemoclaw-user-reference` skill).
+**Note:**
 
-## Step 1: Static Changes
+If the sandbox needs to reach an HTTP service running on the host, expose the service on a host IP that the OpenShell gateway can reach.
+Apply a custom NemoClaw preset with `nemoclaw <sandbox> policy-add --from-file`.
+Do not rely on `host.docker.internal` as a general host-service path because it bypasses the OpenShell policy path and may not be reachable in every sandbox runtime.
+See Agent cannot reach a host-side HTTP service (use the `nemoclaw-user-reference` skill).
+
+## Static Changes
 
 Static changes modify the baseline policy file and take effect after the next sandbox creation.
 
@@ -35,17 +37,10 @@ Static changes modify the baseline policy file and take effect after the next sa
 
 Open `nemoclaw-blueprint/policies/openclaw-sandbox.yaml` and add or modify endpoint entries.
 
-If you only need one of the built-in presets, use `nemoclaw <name> policy-add` instead of editing YAML by hand:
+If you want a built-in preset to be part of the baseline policy, merge its `network_policies` entries into this file and re-run `nemoclaw onboard`.
 
-```console
-$ nemoclaw my-assistant policy-add
-```
-
-To remove a previously applied preset, use `nemoclaw <name> policy-remove`:
-
-```console
-$ nemoclaw my-assistant policy-remove
-```
+If you only need to apply a preset to a running sandbox, use `nemoclaw <name> policy-add` under [Dynamic Changes](#dynamic-changes).
+That updates the live policy and does not edit `openclaw-sandbox.yaml`.
 
 Use a manual YAML edit when you need to allow custom hosts that are not covered by a preset, such as an internal API or a weather service.
 
@@ -84,7 +79,7 @@ If you maintain a custom blueprint, you can add extra policy entries under `comp
 NemoClaw validates those entries with the same policy schema used by preset files, fetches the live policy during sandbox creation, merges the additions into `network_policies`, and applies the merged policy through OpenShell.
 The applied additions are recorded in the run metadata so you can audit which blueprint-level policy entries were active for that sandbox run.
 
-## Step 2: Dynamic Changes
+## Dynamic Changes
 
 Dynamic changes apply a policy update to a running sandbox without restarting it.
 
@@ -159,7 +154,7 @@ $ openshell term
 
 This is useful when you want to test a destination before deciding whether it belongs in a permanent preset or custom policy file.
 
-## Step 3: Policy Presets
+## Policy Presets
 
 NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
 Apply a preset as-is or use it as a starting template for a custom policy.
@@ -184,6 +179,7 @@ Available presets:
 | `pypi` | Python Package Index |
 | `slack` | Slack API and webhooks |
 | `telegram` | Telegram Bot API |
+| `whatsapp` | WhatsApp Web messaging |
 
 To apply a preset to a running sandbox:
 
@@ -191,8 +187,10 @@ To apply a preset to a running sandbox:
 $ nemoclaw <name> policy-add
 ```
 
-> **Note:** Preset selection is interactive when you omit a preset name.
-> Pass a preset name with `--yes` for scripted workflows.
+**Note:**
+
+Preset selection is interactive when you omit a preset name.
+Pass a preset name with `--yes` for scripted workflows.
 
 For example, to interactively add PyPI access to a running sandbox:
 
@@ -208,9 +206,11 @@ $ nemoclaw <name> policy-list
 
 To include a preset in the baseline, merge its entries into `openclaw-sandbox.yaml` and re-run `nemoclaw onboard`.
 
-> **Note:** The `openshell policy set --policy <file> <sandbox-name>` command operates on raw policy files and does not
-> accept the `preset:` metadata block used in preset YAML files. Use `nemoclaw <name> policy-add` for
-> presets.
+**Note:**
+
+The `openshell policy set --policy <file> <sandbox-name>` command operates on raw policy files and does not
+accept the `preset:` metadata block used in preset YAML files. Use `nemoclaw <name> policy-add` for
+presets.
 
 For scripted workflows, `policy-add` and `policy-remove` accept the preset name as a positional argument:
 
@@ -224,7 +224,7 @@ See Commands (use the `nemoclaw-user-reference` skill) for the full flag referen
 
 `nemoclaw <name> rebuild` reapplies every policy preset to the recreated sandbox, so presets survive an agent-version upgrade without manual reapplication.
 
-## Step 4: Custom Preset Files
+## Custom Preset Files
 
 Apply a user-authored preset YAML to a running sandbox without editing the baseline or dropping to `openshell policy set`.
 
@@ -271,8 +271,10 @@ Files are processed in lexicographic order.
 Processing stops at the first failure; presets already applied are not rolled back.
 Fix the failing file and re-run the command to continue.
 
-> **Warning:** Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress to arbitrary destinations.
-> Review every host in a custom preset before applying it, especially when the file originates outside your team.
+**Warning:**
+
+Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress to arbitrary destinations.
+Review every host in a custom preset before applying it, especially when the file originates outside your team.
 
 ### Remove a Custom Preset
 

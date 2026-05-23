@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { CurlProbeResult } from "../http-probe";
-import { getCurlTimingArgs, runCurlProbe } from "../http-probe";
+import type { CurlProbeResult } from "../adapters/http/probe";
+import { getCurlTimingArgs, runCurlProbe } from "../adapters/http/probe";
 import type { ModelCatalogFetchResult, ModelValidationResult } from "../onboard/types";
 
 // credentials.ts still uses CommonJS-style exports.

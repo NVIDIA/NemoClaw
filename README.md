@@ -8,7 +8,7 @@
 <!-- start-badges -->
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE)
 [![Security Policy](https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red)](https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md)
-[![Project Status](https://img.shields.io/badge/status-alpha-orange)](https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.md)
+[![Project Status](https://img.shields.io/badge/status-alpha-orange)](https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.mdx)
 [![Discord](https://img.shields.io/badge/Discord-Join-7289da)](https://discord.gg/XFpfPv9Uvx)
 <!-- end-badges -->
 
@@ -115,6 +115,10 @@ Status:      nemoclaw my-assistant status
 Logs:        nemoclaw my-assistant logs --follow
 ──────────────────────────────────────────────────
 
+To change settings later:
+  Model:       nemoclaw inference get
+               nemoclaw inference set --model <model> --provider <provider> --sandbox my-assistant
+
 [INFO]  === Installation complete ===
 ```
 
@@ -201,7 +205,7 @@ nemoclaw uninstall
 | Flag               | Effect                                              |
 |--------------------|-----------------------------------------------------|
 | `--yes`            | Skip the confirmation prompt.                       |
-| `--keep-openshell` | Leave the `openshell` binary installed.              |
+| `--keep-openshell` | Leave OpenShell binaries installed.                  |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
 
 `nemoclaw uninstall` runs the version-pinned `uninstall.sh` shipped with your installed CLI, with no network fetch at uninstall time.
@@ -225,8 +229,9 @@ Refer to the following pages on the official documentation website for more info
 | Page | Description |
 |------|-------------|
 | [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html) | What NemoClaw does and how it fits together. |
-| [How It Works](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) | Plugin, blueprint, sandbox lifecycle, and protection layers. |
-| [Architecture](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html) | Plugin structure, blueprint lifecycle, sandbox environment, and host-side state. |
+| [Architecture Overview](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) | High-level overview of Plugin, blueprint, sandbox lifecycle, and protection layers. |
+| [Ecosystem](https://docs.nvidia.com/nemoclaw/latest/about/ecosystem.html) | How OpenClaw, OpenShell, and NemoClaw form a stack and when to use NemoClaw versus OpenShell alone. |
+| [Architecture Details](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html) | Detailed description of Plugin structure, blueprint lifecycle, sandbox environment, and host-side state. |
 | [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) | Hardware, software, and supported platforms, with any platform-specific pre-setup. |
 | [Inference Options](https://docs.nvidia.com/nemoclaw/latest/inference/inference-options.html) | Supported providers, validation, and routed inference configuration. |
 | [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html) | Baseline rules, operator approval flow, and egress control. |
@@ -235,6 +240,23 @@ Refer to the following pages on the official documentation website for more info
 | [Sandbox Hardening](https://docs.nvidia.com/nemoclaw/latest/deployment/sandbox-hardening.html) | Container security measures, capability drops, process limits. |
 | [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) | Full NemoClaw CLI command reference. |
 | [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html) | Common issues and resolution steps. |
+
+### Build Docs Locally
+
+The public documentation site is built with Fern.
+The repo pins the Fern CLI version in `fern/fern.config.json`.
+Use the npm scripts so every docs command uses that pinned version.
+
+```bash
+npm run docs
+npm run docs:live
+```
+
+To publish a branch-based Fern preview whenever docs files change, run:
+
+```bash
+npm run docs:preview:watch
+```
 
 ## Project Structure
 
@@ -254,7 +276,8 @@ NemoClaw/
 │       └── llm-router/      # LLM Router v3 submodule (prefill routing engine)
 ├── scripts/          # Install helpers, setup, automation
 ├── test/             # Integration and E2E tests
-└── docs/             # User-facing docs (Sphinx/MyST)
+├── fern/             # Fern site configuration and shared assets
+└── docs/             # User-facing docs (Fern MDX plus legacy MyST source during migration)
 ```
 
 ## Community

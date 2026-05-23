@@ -289,12 +289,31 @@ export function runSetupDnsProxy(
     kctl(
       runDocker,
       cluster,
-      ["get", "endpoints", "kube-dns", "-n", "kube-system", "-o", "jsonpath={.subsets[0].addresses[0].ip}"],
+      ["get", "service", "kube-dns", "-n", "kube-system", "-o", "jsonpath={.spec.clusterIP}"],
       dockerEnv,
     ),
   ).trim();
+  if (!dnsUpstream || dnsUpstream.toLowerCase() === "none") {
+    log("WARNING: Could not discover kube-dns service IP. Falling back to CoreDNS pod IP.");
+    dnsUpstream = commandOutput(
+      kctl(
+        runDocker,
+        cluster,
+        [
+          "get",
+          "endpoints",
+          "kube-dns",
+          "-n",
+          "kube-system",
+          "-o",
+          "jsonpath={.subsets[0].addresses[0].ip}",
+        ],
+        dockerEnv,
+      ),
+    ).trim();
+  }
   if (!dnsUpstream) {
-    log("WARNING: Could not discover CoreDNS pod IP. Falling back to 8.8.8.8.");
+    log("WARNING: Could not discover CoreDNS service or pod IP. Falling back to 8.8.8.8.");
     log("WARNING: k8s-internal names (inference.local routing) will NOT work.");
     dnsUpstream = DEFAULT_DNS_UPSTREAM;
   }

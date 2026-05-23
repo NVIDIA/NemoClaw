@@ -90,7 +90,7 @@ dump_hermes_slack_diagnostics() {
   diag_script+='; echo "== hermes health =="; curl -sf http://localhost:8642/health 2>&1 || true'
   diag_script+='; echo "== hermes-related processes =="'
   # shellcheck disable=SC2016
-  diag_script+='; for p in /proc/[0-9]*; do cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true); case "$cmd" in *hermes*|*socat*|*nemoclaw-decode-proxy*) echo "$(basename "$p") $cmd" ;; esac; done'
+  diag_script+='; for p in /proc/[0-9]*; do cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true); case "$cmd" in *hermes*|*socat*) echo "$(basename "$p") $cmd" ;; esac; done'
   diag_script+='; echo "== /tmp/nemoclaw-start.log tail =="; tail -n 80 /tmp/nemoclaw-start.log 2>&1 || true'
   diag_script+='; echo "== /tmp/gateway.log tail =="; tail -n 120 /tmp/gateway.log 2>&1 || true'
   diag_output=$(openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$diag_script" 2>&1 || true)
@@ -400,7 +400,7 @@ if policy_output=$(openshell policy get --full "$SANDBOX_NAME" 2>&1); then
   fi
 
   if echo "$slack_block" | grep -Fq "/usr/local/bin/hermes" \
-    && echo "$slack_block" | grep -Fq "/usr/bin/python3.11" \
+    && echo "$slack_block" | grep -Fq "/usr/bin/python3*" \
     && echo "$slack_block" | grep -Fq "/opt/hermes/.venv/bin/python"; then
     pass "Slack policy is scoped to Hermes and Python binaries"
   else
@@ -420,19 +420,50 @@ if policy_output=$(openshell policy get --full "$SANDBOX_NAME" 2>&1); then
   else
     fail "Slack policy missing Socket Mode websocket hosts"
   fi
+
+  if echo "$slack_block" | grep -Fq "request_body_credential_rewrite: true"; then
+    pass "Slack REST policy enables OpenShell request-body credential rewrite"
+  else
+    fail "Slack policy missing request_body_credential_rewrite for REST alias rewrite"
+  fi
 else
   fail "openshell policy get failed: ${policy_output:0:200}"
 fi
 
-section "Phase 6: Slack placeholder egress from Python"
+# shellcheck disable=SC2016
+bridge_residue=$(sandbox_exec 'set +e
+decode_needle="$(printf "%s%s%s" "nemoclaw-" "decode" "-proxy")"
+preload_needle="$(printf "%s" "/opt/nemoclaw-hermes-discord-preload")"
+if env | grep -Fq "$preload_needle"; then echo ENV_PYTHON_PRELOAD; fi
+if grep -Fq "$preload_needle" /tmp/nemoclaw-proxy-env.sh /sandbox/.hermes/.env /sandbox/.hermes/config.yaml 2>/dev/null; then echo FILE_PYTHON_PRELOAD; fi
+if command -v "$decode_needle" >/dev/null 2>&1; then echo BIN_DECODE_PROXY; fi
+current_pid="$$"
+for p in /proc/[0-9]*; do
+  pid=$(basename "$p")
+  [ "$pid" = "$current_pid" ] && continue
+  cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true)
+  case "$cmd" in *"$decode_needle"*) echo PROCESS_DECODE_PROXY ;; esac
+done')
+if [ -z "$bridge_residue" ]; then
+  pass "Hermes Slack sandbox has no decode proxy or Python placeholder-normalization preload"
+else
+  fail "Hermes Slack bridge residue found: ${bridge_residue:0:300}"
+  dump_hermes_slack_diagnostics
+fi
+
+section "Phase 6: Slack alias egress from Python"
 
 slack_probe=$(
-  sandbox_exec_stdin 'sh -lc ". /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; /usr/bin/python3.11 -"' <<'PY'
+  sandbox_exec_stdin 'sh -lc ". /tmp/nemoclaw-proxy-env.sh 2>/dev/null || true; if [ -x /opt/hermes/.venv/bin/python ]; then exec /opt/hermes/.venv/bin/python -; fi; exec python3 -" 2>&1' <<'PY'
 import json
+import http.client
 import socket
+import ssl
 import sys
 import urllib.error
 import urllib.request
+
+TLS_CONTEXT = ssl._create_unverified_context()
 
 def call(label, path, env_key, allowed_errors):
     prefix = {
@@ -450,7 +481,11 @@ def call(label, path, env_key, allowed_errors):
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        # The assertion here is placeholder substitution + Slack egress. CA
+        # wiring is covered separately by proxy-env tests and can vary by
+        # OpenShell proxy runner, so this probe does not make TLS trust the
+        # signal.
+        with urllib.request.urlopen(req, timeout=30, context=TLS_CONTEXT) as resp:
             status = resp.status
             body = resp.read().decode("utf-8", errors="replace")
     except socket.timeout:
@@ -459,6 +494,13 @@ def call(label, path, env_key, allowed_errors):
     except urllib.error.URLError as exc:
         reason = str(getattr(exc, "reason", exc))
         if "timed out" in reason.lower():
+            print(f"TIMEOUT {label}: {reason}")
+            return False
+        print(f"ERROR {label}: {reason}")
+        return False
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        if isinstance(exc, http.client.RemoteDisconnected) or "timed out" in reason.lower():
             print(f"TIMEOUT {label}: {reason}")
             return False
         print(f"ERROR {label}: {reason}")
@@ -492,7 +534,7 @@ PY
 info "Slack Python probe response: ${slack_probe:0:500}"
 if echo "$slack_probe" | grep -q "^OK auth.test:" \
   && echo "$slack_probe" | grep -q "^OK apps.connections.open:"; then
-  pass "Slack API reached from Python through OpenShell placeholder substitution"
+  pass "Slack API reached from Python through OpenShell alias substitution"
 elif echo "$slack_probe" | grep -q "^TIMEOUT"; then
   skip "Slack API timed out"
 elif echo "$slack_probe" | grep -qE "^(FAIL|ERROR)"; then

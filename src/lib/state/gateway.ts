@@ -78,10 +78,15 @@ export function getReportedGatewayName(output = ""): string | null {
 }
 
 export function isGatewayConnected(statusOutput = ""): boolean {
-  return (
-    typeof statusOutput === "string" &&
-    (statusOutput.includes("Connected") || statusOutput.includes("Server Status"))
-  );
+  if (typeof statusOutput !== "string") return false;
+  const clean = stripAnsi(statusOutput);
+  if (
+    /\b(Error|transport error|client error)\b/i.test(clean) ||
+    /Connection refused|Connection reset|No active gateway/i.test(clean)
+  ) {
+    return false;
+  }
+  return clean.includes("Connected") || clean.includes("Server Status");
 }
 
 export function hasActiveGatewayInfo(activeGatewayInfoOutput = ""): boolean {
@@ -170,5 +175,8 @@ export function getSandboxStateFromOutputs(
 ): SandboxState {
   if (!sandboxName) return "missing";
   if (!getOutput) return "missing";
+  if (/\bNotFound\b|\bNot Found\b|sandbox not found/i.test(stripAnsi(getOutput))) {
+    return "missing";
+  }
   return isSandboxReady(listOutput, sandboxName) ? "ready" : "not_ready";
 }

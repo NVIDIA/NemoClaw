@@ -49,9 +49,11 @@ function createFixture(opts: {
   /** If set, the onboard-session.json provider_selection step status */
   providerSelectionStatus?: string;
   agent?: string | null;
+  hermesAuthMethod?: string | null;
   messagingChannels?: string[] | null;
   providerCredentialHashes?: Record<string, string>;
   dockerBuildExitCode?: number;
+  providerRegistered?: boolean;
 }) {
   const {
     sandboxName = "my-assistant",
@@ -60,9 +62,11 @@ function createFixture(opts: {
     savedCredential,
     providerSelectionStatus = "complete",
     agent = null,
+    hermesAuthMethod = null,
     messagingChannels = null,
     providerCredentialHashes,
     dockerBuildExitCode = 0,
+    providerRegistered = true,
   } = opts;
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2273-"));
   tmpFixtures.push(tmpDir);
@@ -110,6 +114,7 @@ function createFixture(opts: {
       model: "meta/llama-3.3-70b-instruct",
       endpointUrl: null,
       credentialEnv,
+      hermesAuthMethod,
       preferredInferenceApi: null,
       nimContainer: null,
       webSearchConfig: null,
@@ -207,6 +212,7 @@ if (a[0]==="gateway" && a[1]==="info")       { process.stdout.write("nemoclaw\\n
 if (a[0]==="gateway" && a[1]==="select")     { process.exit(0); }
 if (a[0]==="inference" && a[1]==="get")      { process.stdout.write('{"provider":"${provider}","model":"meta/llama-3.3-70b-instruct"}\\n'); process.exit(0); }
 if (a[0]==="inference" && a[1]==="set")      { process.exit(0); }
+if (a[0]==="provider" && a[1]==="get")       { process.exit(${providerRegistered ? 0 : 1}); }
 if (a[0]==="provider")                       { process.exit(0); }
 if (a[0]==="forward")                        { process.exit(0); }
 process.exit(0);
@@ -481,6 +487,71 @@ describe("Issue #2273: atomic rebuild", () => {
         expect(output).toContain("preflight failed");
         expect(output).toContain("OPENAI_API_KEY");
         expect(output).toContain("untouched");
+        expect(registryHasSandbox(f)).toBe(true);
+      },
+    );
+
+    it(
+      "uses the registered Hermes Provider in OpenShell instead of requiring OPENAI_API_KEY",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          provider: "hermes-provider",
+          credentialEnv: "OPENAI_API_KEY",
+          hermesAuthMethod: "oauth",
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
+        expect(output).not.toContain("provider credential not found");
+        expect(output).toContain("Backing up sandbox state");
+      },
+    );
+
+    it(
+      "registers an exported Hermes API key in OpenShell when the provider is missing",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          provider: "hermes-provider",
+          credentialEnv: "NOUS_API_KEY",
+          hermesAuthMethod: "api_key",
+          providerRegistered: false,
+        });
+
+        const result = runRebuild(f, { NOUS_API_KEY: "nous-key-from-env" });
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(output).not.toContain("Missing credential: NOUS_API_KEY");
+        expect(output).not.toContain("provider credential not found");
+        expect(output).toContain("Backing up sandbox state");
+      },
+    );
+
+    it(
+      "aborts Hermes OAuth rebuild before backup when the OpenShell provider is missing",
+      { timeout: 60_000 },
+      () => {
+        const f = createFixture({
+          agent: "hermes",
+          provider: "hermes-provider",
+          credentialEnv: "OPENAI_API_KEY",
+          hermesAuthMethod: "oauth",
+          providerRegistered: false,
+        });
+
+        const result = runRebuild(f);
+        const output = (result.stderr || "") + (result.stdout || "");
+
+        expect(result.status).not.toBe(0);
+        expect(output).toContain("Hermes Provider is not registered in OpenShell");
+        expect(output).toContain("credentials must be stored in OpenShell");
+        expect(output).not.toContain("Missing credential: OPENAI_API_KEY");
+        expect(output).not.toContain("Backing up sandbox state");
         expect(registryHasSandbox(f)).toBe(true);
       },
     );

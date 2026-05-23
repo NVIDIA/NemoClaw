@@ -8,12 +8,39 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+import { testTimeout } from "./helpers/timeouts";
+
 const CREDENTIAL_RETRY_PROMPT =
   "  Options: retry (re-enter key), back (change provider), exit [retry]: ";
 const CREDENTIAL_RETRY_PROMPT_RE =
   /Options: retry \(re-enter key\), back \(change provider\), exit \[retry\]: /;
 const OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE =
   '{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"type":"function","function":{"name":"emit_ok","arguments":"{\\"ok\\":true}"}}]}}]}';
+const PROVIDER_SELECTION_TEST_TIMEOUT_MS = testTimeout(60_000);
+
+function writeOllamaToolCallingCurl(fakeBin: string) {
+  fs.writeFileSync(
+    path.join(fakeBin, "curl"),
+    `#!/usr/bin/env bash
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+    { mode: 0o755 },
+  );
+}
 
 function writeOpenAiStyleAuthRetryCurl(fakeBin: string, goodToken: string, models = ["gpt-5.4"]) {
   fs.writeFileSync(
@@ -99,7 +126,241 @@ printf '%s' "$status"
   );
 }
 
-describe("onboard provider selection UX", () => {
+type CredentialBackScenario = {
+  name: string;
+  answers: string[];
+  menuSelections?: string[];
+  credentialEnv: string;
+  promptPattern: RegExp;
+  expectedOutcome?: "back" | "exit";
+  env?: Record<string, string>;
+  agent?: "hermes";
+  gpu?: Record<string, unknown> | null;
+  stubNim?: boolean;
+};
+
+function writeAlwaysOkCurl(fakeBin: string) {
+  fs.writeFileSync(
+    path.join(fakeBin, "curl"),
+    `#!/usr/bin/env bash
+body='{"id":"resp_123"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+fi
+printf '%s' "$status"
+`,
+    { mode: 0o755 },
+  );
+}
+
+function runCredentialBackScenario(scenario: CredentialBackScenario) {
+  const repoRoot = path.join(import.meta.dirname, "..");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-credential-back-"));
+  const fakeBin = path.join(tmpDir, "bin");
+  const scriptPath = path.join(
+    tmpDir,
+    `${scenario.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.js`,
+  );
+  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const credentialsPath = JSON.stringify(
+    path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+  );
+  const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+  const agentDefsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent", "defs.js"));
+  const nimPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "nim.js"));
+
+  fs.mkdirSync(fakeBin, { recursive: true });
+  writeAlwaysOkCurl(fakeBin);
+
+  const script = String.raw`
+const answers = ${JSON.stringify(scenario.answers)};
+const menuSelections = ${JSON.stringify(scenario.menuSelections || [])};
+let menuSelectionIndex = 0;
+const expectedOutcome = ${JSON.stringify(scenario.expectedOutcome || "back")};
+const scenarioEnv = ${JSON.stringify(scenario.env || {})};
+const messages = [];
+const prompts = [];
+const saved = [];
+const lines = [];
+const clearCredentialEnv = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "COMPATIBLE_API_KEY",
+  "COMPATIBLE_ANTHROPIC_API_KEY",
+  "NOUS_API_KEY",
+  "NVIDIA_API_KEY",
+  "NGC_API_KEY",
+  "NEMOCLAW_PROVIDER_KEY",
+];
+const clearOnboardControlEnv = [
+  "NEMOCLAW_NON_INTERACTIVE",
+  "NEMOCLAW_PROVIDER",
+  "NEMOCLAW_MODEL",
+  "NEMOCLAW_YES",
+  "NEMOCLAW_PREFERRED_API",
+  "NEMOCLAW_EXPERIMENTAL",
+];
+
+for (const key of [...clearCredentialEnv, ...clearOnboardControlEnv]) {
+  delete process.env[key];
+}
+Object.assign(process.env, scenarioEnv);
+
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const nim = require(${nimPath});
+
+function selectRecentMenuOption(patternText, lines) {
+  const pattern = new RegExp(patternText, "i");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const match = /^\s*(\d+)\)\s+(.+)$/.exec(lines[index]);
+    if (match && pattern.test(match[2])) return match[1];
+  }
+  throw new Error(
+    "Could not find menu option matching " +
+      pattern +
+      "\\nRecent output:\\n" +
+      lines.slice(-20).join("\\n"),
+  );
+}
+
+credentials.prompt = async (message, opts = {}) => {
+  messages.push(message);
+  prompts.push({ message, secret: opts.secret === true });
+  if (/Choose \[/.test(message) && menuSelectionIndex < menuSelections.length) {
+    return selectRecentMenuOption(menuSelections[menuSelectionIndex++], lines);
+  }
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => {
+  return { kind: "credential", value: "nvapi-good" };
+};
+const originalSaveCredential = credentials.saveCredential;
+credentials.saveCredential = (key, value) => {
+  saved.push({ key, value });
+  return originalSaveCredential(key, value);
+};
+runner.runCapture = () => "";
+
+if (${JSON.stringify(scenario.stubNim === true)}) {
+  nim.isNgcLoggedIn = () => false;
+  nim.dockerLoginNgc = () => {
+    throw new Error("NGC login should not run after back navigation");
+  };
+  nim.pullNimImage = () => "image";
+  nim.startNimContainerByName = () => "container";
+  nim.waitForNimHealth = () => true;
+}
+
+const { setupNim } = require(${onboardPath});
+const agent = ${JSON.stringify(scenario.agent || null)}
+  ? require(${agentDefsPath}).loadAgent(${JSON.stringify(scenario.agent || null)})
+  : null;
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalExit = process.exit;
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  if (expectedOutcome === "exit") {
+    process.exit = (code) => {
+      const error = new Error("process.exit:" + code);
+      error.exitCode = code;
+      throw error;
+    };
+  }
+  try {
+    const result = await setupNim(${JSON.stringify(scenario.gpu ?? null)}, null, agent);
+    originalLog(JSON.stringify({
+      outcome: "completed",
+      result,
+      messages,
+      prompts,
+      lines,
+      saved,
+      menuSelectionIndex,
+      credentialValue: process.env[${JSON.stringify(scenario.credentialEnv)}] || null,
+    }));
+  } catch (error) {
+    if (expectedOutcome !== "exit" || error.exitCode === undefined) {
+      throw error;
+    }
+    originalLog(JSON.stringify({
+      outcome: "exit",
+      exitCode: error.exitCode,
+      messages,
+      prompts,
+      lines,
+      saved,
+      menuSelectionIndex,
+      credentialValue: process.env[${JSON.stringify(scenario.credentialEnv)}] || null,
+    }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    process.exit = originalExit;
+  }
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+`;
+  fs.writeFileSync(scriptPath, script);
+
+  const result = spawnSync(process.execPath, [scriptPath], {
+    cwd: repoRoot,
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      HOME: tmpDir,
+      PATH: `${fakeBin}:${process.env.PATH || ""}`,
+    },
+    timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout.trim());
+  assert.equal(payload.menuSelectionIndex, scenario.menuSelections?.length || 0);
+  if (scenario.expectedOutcome === "exit") {
+    assert.equal(payload.outcome, "exit");
+    assert.equal(payload.exitCode, 1);
+    assert.equal(payload.credentialValue, null);
+    assert.deepEqual(payload.saved, []);
+    assert.ok(payload.lines.some((line: string) => line.includes("Exiting onboarding.")));
+    assert.ok(
+      payload.prompts.some(
+        (entry: { message: string; secret: boolean }) =>
+          scenario.promptPattern.test(entry.message) && entry.secret,
+      ),
+    );
+    return;
+  }
+  assert.equal(payload.outcome, "completed");
+  assert.equal(payload.result.provider, "nvidia-prod");
+  assert.ok(payload.lines.some((line: string) => line.includes("Returning to provider selection.")));
+  assert.ok(
+    payload.prompts.some(
+      (entry: { message: string; secret: boolean }) =>
+        scenario.promptPattern.test(entry.message) && entry.secret,
+    ),
+  );
+  assert.ok(
+    payload.saved.every((entry: { key: string; value: string }) => entry.value !== "back"),
+  );
+  assert.equal(payload.credentialValue, null);
+}
+
+describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS }, () => {
   it("prompts explicitly instead of silently auto-selecting detected Ollama", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-selection-"));
@@ -199,6 +460,317 @@ const { setupNim } = require(${onboardPath});
     assert.ok(payload.lines.some((line: string) => line.includes("Cloud models:")));
     assert.ok(
       payload.lines.some((line: string) => line.includes("Chat Completions API available")),
+    );
+    // #3951: step 3 banner must be provider-agnostic — selecting a non-NIM
+    // provider (here, NVIDIA Endpoints) must not be labeled "(NIM)".
+    assert.ok(
+      payload.lines.some((line: string) =>
+        /\[3\/8\] Configuring inference provider\b/.test(line),
+      ),
+      "expected provider-agnostic [3/8] banner",
+    );
+    assert.ok(
+      !payload.lines.some((line: string) => line.includes("Configuring inference (NIM)")),
+      'step 3 banner must not be labeled "Configuring inference (NIM)" for non-NIM providers',
+    );
+  });
+
+  it("offers detected running vLLM without requiring a rerun", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-running-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "vllm-running-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"ok"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const messages = [];
+const lines = [];
+const originalLog = console.log;
+
+function findRunningVllmChoice() {
+  const option = lines.find((line) =>
+    /^\s*\d+\) Local vLLM \[experimental\] \(localhost:8000\) — running \(suggested\)/.test(line)
+  );
+  const match = option && option.match(/^\s*(\d+)\)/);
+  if (!match) {
+    throw new Error("Could not find running vLLM option in menu:\\n" + lines.join("\\n"));
+  }
+  return match[1];
+}
+
+credentials.prompt = async (message) => {
+  messages.push(message);
+  if (/Choose \[/.test(message)) return findRunningVllmChoice();
+  return "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return JSON.stringify({ data: [{ id: "meta-llama/Llama-3.3-70B-Instruct" }] });
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim({ type: "nvidia" }, null);
+    originalLog(JSON.stringify({ result, messages, lines }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_EXPERIMENTAL: "",
+        NEMOCLAW_PROVIDER: "",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout.trim()).not.toBe("");
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "vllm-local");
+    assert.equal(payload.result.model, "meta-llama/Llama-3.3-70B-Instruct");
+    assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 1);
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Detected local inference option: vLLM"),
+      ),
+    );
+    assert.ok(
+      payload.lines.some((line: string) =>
+        /^\s*\d+\) Local vLLM \[experimental\] \(localhost:8000\) — running \(suggested\)/.test(
+          line,
+        ),
+      ),
+    );
+    assert.ok(!payload.lines.some((line: string) => line.includes("rerun the same command")));
+  });
+
+  it("does not turn non-interactive NEMOCLAW_PROVIDER=vllm into managed install-vllm", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-no-install-"));
+    const scriptPath = path.join(tmpDir, "vllm-no-install-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const vllmPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "vllm.js"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const vllm = require(${vllmPath});
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("Unexpected ensureApiKey call in non-interactive test");
+};
+vllm.installVllm = async () => {
+  console.error("INSTALL_VLLM_CALLED");
+  return { ok: false };
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim({ type: "nvidia" }, null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "vllm",
+        NEMOCLAW_EXPERIMENTAL: "",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Requested provider 'vllm' is not available/);
+    assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
+  });
+
+  it("surfaces a precise error when NEMOCLAW_PROVIDER=install-vllm but no vLLM profile is detected (#3765)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-no-profile-"));
+    const scriptPath = path.join(tmpDir, "install-vllm-no-profile-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const vllmPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "vllm.js"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const vllm = require(${vllmPath});
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("Unexpected ensureApiKey call in non-interactive test");
+};
+vllm.installVllm = async () => {
+  console.error("INSTALL_VLLM_CALLED");
+  return { ok: false };
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+// gpu=null forces detectVllmProfile to return null, the scenario the bug
+// reports: explicit env-var opt-in with no profile detected.
+(async () => {
+  await setupNim(null, null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_EXPERIMENTAL: "1",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    // The fix routes the explicit opt-in through the install-vllm dispatcher,
+    // which emits a precise message instead of the generic "Requested provider
+    // 'install-vllm' is not available in this environment." that hid the cause.
+    assert.match(result.stderr, /No vLLM install profile available for this host\./);
+    assert.doesNotMatch(result.stderr, /Requested provider 'install-vllm' is not available/);
+    assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
+  });
+
+  it("logs a note when NEMOCLAW_PROVIDER=install-vllm is overridden by a running vLLM server (#3765)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-running-"));
+    const scriptPath = path.join(tmpDir, "install-vllm-running-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("Unexpected ensureApiKey call in non-interactive test");
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  // vLLM probe succeeds → vllmRunning becomes true.
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return '{"data":[]}';
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  try {
+    await setupNim({ type: "nvidia" }, null);
+  } catch (e) {
+    // Downstream paths (model probe, gateway, etc.) are not mocked here; we
+    // only care about the menu-build log emitted before any failure.
+  }
+})();
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-vllm",
+        NEMOCLAW_EXPERIMENTAL: "1",
+      },
+    });
+
+    assert.match(
+      result.stdout,
+      /NEMOCLAW_PROVIDER=install-vllm requested, but vLLM is already running on localhost:8000 — selecting the running instance\./,
     );
   });
 
@@ -840,6 +1412,9 @@ const child_process = require("child_process");
 child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "nc" && args?.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
   if (cmd === "ps") {
     return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
   }
@@ -922,6 +1497,692 @@ const { setupNim } = require(${onboardPath});
       ),
       "managed Ollama launch must not expose raw Ollama on all interfaces",
     );
+  });
+
+  it("applies the systemd loopback override for an existing running Ollama install", { timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-systemd-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "ollama-systemd-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOllamaToolCallingCurl(fakeBin);
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+const child_process = require("child_process");
+
+child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "nc" && args && args.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
+  if (cmd === "ps") {
+    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
+  }
+  return originalSpawnSync(cmd, args, opts);
+};
+
+const runCommands = [];
+const shellCommands = [];
+
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
+  return "";
+};
+runner.run = (command) => {
+  runCommands.push(Array.isArray(command) ? command.join(" ") : command);
+  return { status: 0 };
+};
+runner.runShell = (command) => {
+  shellCommands.push(command);
+  return { status: 0 };
+};
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, lines, runCommands, shellCommands }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Configuring Ollama systemd loopback override"),
+      ),
+      "existing Ollama systemd installs should get the loopback override",
+    );
+    assert.ok(
+      payload.shellCommands.some(
+        (command: string) =>
+          command.includes("install -D -m 0644") &&
+          command.includes("/etc/systemd/system/ollama.service.d/override.conf") &&
+          command.includes("systemctl daemon-reload") &&
+          command.includes("systemctl --no-block restart ollama") &&
+          command.includes("pre_state=$(") &&
+          command.includes("current_state=$("),
+      ),
+      "should install and wait for the Ollama systemd drop-in restart",
+    );
+  });
+
+  it("preserves existing Ollama systemd override settings while repairing loopback", { timeout: 10_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-ollama-systemd-merge-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "ollama-systemd-merge-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOllamaToolCallingCurl(fakeBin);
+
+    const script = String.raw`
+const fs = require("fs");
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+const child_process = require("child_process");
+
+child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "nc" && args && args.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
+  if (cmd === "ps") {
+    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
+  }
+  return originalSpawnSync(cmd, args, opts);
+};
+
+let installedBody = "";
+const shellCommands = [];
+const shellCalls = [];
+
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
+  return "";
+};
+runner.run = () => ({ status: 0 });
+runner.runShell = (command, opts = {}) => {
+  shellCommands.push(command);
+  shellCalls.push({ command, opts });
+  if (command.includes("cat") && command.includes("ollama.service.d/override.conf")) {
+    return {
+      status: 0,
+      stdout: [
+        "[Service]",
+        "Environment=\"OLLAMA_MODELS=/srv/ollama\"",
+        "Environment=\"OLLAMA_HOST=0.0.0.0:11434\"",
+        "Environment=\"HTTPS_PROXY=http://proxy.internal:8080\"",
+        "",
+        "[Install]",
+        "WantedBy=multi-user.target",
+        "",
+      ].join("\n"),
+    };
+  }
+  const match = command.match(/(?:sudo(?: -n)? )?install -D -m 0644 '([^']+)'/);
+  if (match) installedBody = fs.readFileSync(match[1], "utf8");
+  return { status: 0 };
+};
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  console.log = () => {};
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, shellCommands, shellCalls, installedBody }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.ok(payload.installedBody.includes('Environment="OLLAMA_MODELS=/srv/ollama"'));
+    assert.ok(payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'));
+    assert.ok(payload.installedBody.includes("[Install]"));
+    assert.ok(payload.installedBody.includes("WantedBy=multi-user.target"));
+    assert.ok(
+      payload.shellCommands.some((command: string) =>
+        command.includes("sudo -n install -D -m 0644"),
+      ),
+      "non-interactive systemd drop-in install should use sudo -n",
+    );
+    const catCall = payload.shellCalls.find(
+      (call: { command: string }) =>
+        call.command.includes("cat") && call.command.includes("ollama.service.d/override.conf"),
+    );
+    assert.ok(catCall, "expected existing drop-in inspection command");
+    assert.equal(catCall.opts?.suppressOutput, true);
+    assert.ok(
+      catCall.command.includes("if [ -r"),
+      "readable drop-ins should be inspected without sudo first",
+    );
+    assert.ok(
+      catCall.command.indexOf("cat") < catCall.command.indexOf("sudo -n cat"),
+      "sudo cat should only be the unreadable-file fallback",
+    );
+
+    const repairedHost = 'Environment="OLLAMA_HOST=127.0.0.1:11434"';
+    const oldHost = 'Environment="OLLAMA_HOST=0.0.0.0:11434"';
+    assert.ok(payload.installedBody.includes(repairedHost), "loopback host should be installed");
+    assert.ok(
+      !payload.installedBody.includes(oldHost),
+      "legacy 0.0.0.0 OLLAMA_HOST line should be removed, not just shadowed (#3342)",
+    );
+    assert.ok(
+      payload.installedBody.includes('Environment="OLLAMA_MODELS=/srv/ollama"'),
+      "non-OLLAMA_HOST settings should be preserved",
+    );
+    assert.ok(
+      payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'),
+      "other Environment= settings should be preserved",
+    );
+  });
+
+  it("adds Spark CUDA v13 and enables the Ollama systemd service on managed install", { timeout: 10_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-systemd-spark-"));
+    const scriptPath = path.join(tmpDir, "ollama-systemd-spark-check.js");
+    const ollamaSystemdPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "ollama-systemd.js"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    );
+
+    const script = String.raw`
+const fs = require("fs");
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+const localInference = require(${localInferencePath});
+
+let installedBody = "";
+const shellCommands = [];
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service disabled";
+  return "";
+};
+runner.runShell = (command) => {
+  shellCommands.push(command);
+  if (command.includes("cat") && command.includes("ollama.service.d/override.conf")) {
+    return {
+      status: 0,
+      stdout: [
+        "[Service]",
+        "Environment=\"OLLAMA_HOST=0.0.0.0:11434\"",
+        "Environment=\"OLLAMA_LLM_LIBRARY=cuda\"",
+        "",
+      ].join("\\n"),
+    };
+  }
+  const match = command.match(/(?:sudo(?: -n)? )?install -D -m 0644 '([^']+)'/);
+  if (match) installedBody = fs.readFileSync(match[1], "utf8");
+  return { status: 0, stdout: "" };
+};
+platform.isWsl = () => false;
+localInference.findReachableOllamaHost = () => true;
+Object.defineProperty(process, "platform", { value: "linux" });
+
+const { ensureOllamaLoopbackSystemdOverride } = require(${ollamaSystemdPath});
+const result = ensureOllamaLoopbackSystemdOverride({
+  isNonInteractive: () => true,
+  enableService: true,
+  detectNvidiaPlatformImpl: () => "spark",
+  hasOllamaCudaV13LibraryImpl: () => true,
+});
+console.log(JSON.stringify({ result, installedBody, shellCommands }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}");
+    const installedLines = payload.installedBody.split(/\r?\n/);
+    assert.equal(payload.result, "ready");
+    assert.ok(payload.installedBody.includes('Environment="OLLAMA_HOST=127.0.0.1:11434"'));
+    assert.ok(payload.installedBody.includes('Environment="OLLAMA_LLM_LIBRARY=cuda_v13"'));
+    assert.ok(!installedLines.includes('Environment="OLLAMA_LLM_LIBRARY=cuda"'));
+    assert.ok(
+      payload.shellCommands.some((command: string) => command.includes("systemctl enable ollama")),
+      "managed Ollama installs should enable the service for reboot survival",
+    );
+  });
+
+  it("allows prompt-capable sudo in non-interactive Ollama systemd setup", { timeout: 10_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-systemd-sudo-mode-"));
+    const scriptPath = path.join(tmpDir, "ollama-systemd-sudo-mode-check.js");
+    const ollamaSystemdPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "ollama-systemd.js"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    );
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+const localInference = require(${localInferencePath});
+
+const shellCommands = [];
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  return "";
+};
+runner.runShell = (command) => {
+  shellCommands.push(command);
+  return { status: 0, stdout: "" };
+};
+platform.isWsl = () => false;
+localInference.findReachableOllamaHost = () => true;
+Object.defineProperty(process, "platform", { value: "linux" });
+
+const { ensureOllamaLoopbackSystemdOverride } = require(${ollamaSystemdPath});
+const result = ensureOllamaLoopbackSystemdOverride({ isNonInteractive: () => true });
+console.log(JSON.stringify({ result, shellCommands }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_NON_INTERACTIVE_SUDO_MODE: "prompt",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}");
+    assert.equal(payload.result, "ready");
+    assert.ok(
+      payload.shellCommands.some((command: string) => command.includes("sudo install -D -m 0644")),
+      "prompt sudo mode should use sudo without -n",
+    );
+    assert.ok(
+      !payload.shellCommands.some((command: string) =>
+        command.includes("sudo -n install -D -m 0644"),
+      ),
+      "prompt sudo mode should not use sudo -n",
+    );
+  });
+
+  it("rejects unsupported non-interactive sudo mode values", { timeout: 10_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-systemd-sudo-invalid-"));
+    const scriptPath = path.join(tmpDir, "ollama-systemd-sudo-invalid-check.js");
+    const ollamaSystemdPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "ollama-systemd.js"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  return "";
+};
+platform.isWsl = () => false;
+Object.defineProperty(process, "platform", { value: "linux" });
+
+const { ensureOllamaLoopbackSystemdOverride } = require(${ollamaSystemdPath});
+ensureOllamaLoopbackSystemdOverride({ isNonInteractive: () => true });
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_NON_INTERACTIVE_SUDO_MODE: "foo",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Unsupported NEMOCLAW_NON_INTERACTIVE_SUDO_MODE value: foo/);
+  });
+
+  it("repairs already-loopback systemd Ollama without starting a duplicate daemon", { timeout: 10_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-ollama-systemd-loopback-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "ollama-systemd-loopback-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    writeOllamaToolCallingCurl(fakeBin);
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+const child_process = require("child_process");
+
+child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "nc" && args && args.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
+  if (cmd === "ps") {
+    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
+  }
+  return originalSpawnSync(cmd, args, opts);
+};
+
+const events = [];
+const shellCommands = [];
+
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) {
+    events.push("tags");
+    return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  }
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
+  return "";
+};
+runner.run = () => ({ status: 0 });
+runner.runShell = (command) => {
+  shellCommands.push(command);
+  if (command.includes("systemctl") && command.includes("restart ollama")) events.push("restart");
+  return { status: 0 };
+};
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({ result, lines, shellCommands, events }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.ok(
+      payload.shellCommands.some((command: string) =>
+        command.includes("/etc/systemd/system/ollama.service.d/override.conf"),
+      ),
+      "already-loopback systemd Ollama still needs the persistent drop-in",
+    );
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Configuring Ollama systemd loopback override"),
+      ),
+      "already-loopback repair should emit the visible loopback-override transcript",
+    );
+    assert.ok(
+      !payload.shellCommands.some((command: string) =>
+        command.includes("OLLAMA_HOST=127.0.0.1:11434 ollama serve"),
+      ),
+      "systemd restart success should not spawn a duplicate manual daemon",
+    );
+    const restartIndex = payload.events.indexOf("restart");
+    assert.ok(restartIndex >= 0, "expected a systemd restart");
+    assert.ok(
+      payload.events.slice(restartIndex + 1).includes("tags"),
+      "should re-probe after the systemd restart instead of trusting a stale loopback cache",
+    );
+  });
+
+  it("fails closed instead of starting unmanaged Ollama when systemd restart stays unreachable", { timeout: 15_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-existing-systemd-restart-fail-"),
+    );
+    const scriptPath = path.join(tmpDir, "existing-systemd-restart-fail-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+
+let tagsProbeCount = 0;
+
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) {
+    tagsProbeCount += 1;
+    return tagsProbeCount === 1 ? JSON.stringify({ models: [{ name: "qwen3:8b" }] }) : "";
+  }
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  return "";
+};
+runner.runShell = (command) => {
+  if (command.includes("ollama serve")) console.error("manual-start");
+  return { status: 0 };
+};
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim(null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Ollama systemd restart did not recover/);
+    assert.doesNotMatch(result.stderr, /manual-start/);
+  });
+
+  it("fails closed when an existing Ollama systemd override cannot be applied", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-existing-systemd-fail-"),
+    );
+    const scriptPath = path.join(tmpDir, "existing-systemd-fail-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service enabled";
+  return "";
+};
+runner.runShell = (command) => {
+  if (command.includes("ollama serve")) console.error("manual-start");
+  if (command.includes("install -D -m 0644")) return { status: 1 };
+  return { status: 0 };
+};
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim(null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Failed to apply Ollama systemd loopback override/);
+    assert.match(result.stderr, /Refusing to continue/);
+    assert.doesNotMatch(result.stderr, /manual-start/);
   });
 
   it("returns to provider selection when Ollama manual entry chooses back", () => {
@@ -2564,6 +3825,214 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
+  it("lets users type back at a secret provider credential prompt to return to provider selection", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-credential-back-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "credential-back-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"resp_123"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const clearCredentialEnv = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "COMPATIBLE_API_KEY",
+  "COMPATIBLE_ANTHROPIC_API_KEY",
+  "NOUS_API_KEY",
+  "NVIDIA_API_KEY",
+  "NGC_API_KEY",
+  "NEMOCLAW_PROVIDER_KEY",
+];
+const clearOnboardControlEnv = [
+  "NEMOCLAW_NON_INTERACTIVE",
+  "NEMOCLAW_PROVIDER",
+  "NEMOCLAW_MODEL",
+  "NEMOCLAW_YES",
+  "NEMOCLAW_PREFERRED_API",
+  "NEMOCLAW_EXPERIMENTAL",
+];
+
+for (const key of [...clearCredentialEnv, ...clearOnboardControlEnv]) {
+  delete process.env[key];
+}
+
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["2", "back", "1", ""];
+const messages = [];
+const prompts = [];
+const saved = [];
+
+credentials.prompt = async (message, opts = {}) => {
+  messages.push(message);
+  prompts.push({ message, secret: opts.secret === true });
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => {
+  return { kind: "credential", value: "nvapi-good" };
+};
+const originalSaveCredential = credentials.saveCredential;
+credentials.saveCredential = (key, value) => {
+  saved.push({ key, value });
+  return originalSaveCredential(key, value);
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({
+      result,
+      messages,
+      prompts,
+      lines,
+      saved,
+      openaiKey: process.env.OPENAI_API_KEY || null,
+    }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+      timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "nvidia-prod");
+    assert.equal(payload.openaiKey, null);
+    assert.ok(
+      payload.saved.every((entry: { key: string; value: string }) => entry.value !== "back"),
+    );
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
+    );
+    assert.ok(
+      payload.prompts.some(
+        (entry: { message: string; secret: boolean }) =>
+          /OpenAI API key: /.test(entry.message) && entry.secret,
+      ),
+    );
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
+  });
+
+  const secretCredentialBackScenarios: CredentialBackScenario[] = [
+    {
+      name: "Anthropic",
+      answers: ["4", "back", "1", ""],
+      credentialEnv: "ANTHROPIC_API_KEY",
+      promptPattern: /Anthropic API key: /,
+    },
+    {
+      name: "Anthropic exit",
+      answers: ["4", "exit"],
+      credentialEnv: "ANTHROPIC_API_KEY",
+      promptPattern: /Anthropic API key: /,
+      expectedOutcome: "exit",
+    },
+    {
+      name: "Google Gemini",
+      answers: ["6", "back", "1", ""],
+      credentialEnv: "GEMINI_API_KEY",
+      promptPattern: /Google Gemini API key: /,
+    },
+    {
+      name: "Other OpenAI-compatible endpoint",
+      answers: ["3", "https://proxy.example.com/v1", "back", "1", ""],
+      credentialEnv: "COMPATIBLE_API_KEY",
+      promptPattern: /Other OpenAI-compatible endpoint API key: /,
+    },
+    {
+      name: "Other Anthropic-compatible endpoint",
+      answers: ["5", "https://proxy.example.com", "back", "1", ""],
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      promptPattern: /Other Anthropic-compatible endpoint API key: /,
+    },
+    {
+      name: "Model Router",
+      answers: ["back", ""],
+      menuSelections: ["Model Router", "NVIDIA Endpoints"],
+      credentialEnv: "NVIDIA_API_KEY",
+      promptPattern: /Model Router API key: /,
+    },
+    {
+      name: "Hermes Provider Nous API key",
+      answers: ["back", ""],
+      menuSelections: ["Hermes Provider", "Nous API Key", "NVIDIA Endpoints"],
+      credentialEnv: "NOUS_API_KEY",
+      promptPattern: /Nous API Key: /,
+      agent: "hermes",
+    },
+    {
+      name: "Local NIM NGC API key",
+      answers: ["", "back", ""],
+      menuSelections: ["Local NVIDIA NIM", "NVIDIA Endpoints"],
+      credentialEnv: "NGC_API_KEY",
+      promptPattern: /NGC API Key: /,
+      env: { NEMOCLAW_EXPERIMENTAL: "1" },
+      gpu: {
+        type: "nvidia",
+        name: "test-gpu",
+        count: 1,
+        totalMemoryMB: 999999,
+        perGpuMB: 999999,
+        nimCapable: true,
+      },
+      stubNim: true,
+    },
+  ];
+
+  for (const scenario of secretCredentialBackScenarios) {
+    const action = scenario.expectedOutcome === "exit" ? "exit" : "back";
+    it(`lets users type ${action} at the ${scenario.name} secret credential prompt`, () => {
+      runCredentialBackScenario(scenario);
+    });
+  }
+
   it("lets users type back after a transport validation failure to return to provider selection", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-transport-back-"));
@@ -3749,6 +5218,9 @@ child_process.spawn = (...args) => {
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
   const cmdStr = [cmd, ...(args || [])].join(" ");
+  if (cmd === "nc" && args?.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
   // ollama pull — pretend it succeeds
   if (cmd === "ollama" && args && args[0] === "pull") {
     return { status: 0, stdout: "", stderr: "", signal: null };
@@ -3765,6 +5237,7 @@ let promptCalls = 0;
 const messages = [];
 const updates = [];
 const runCommands = [];
+const events = [];
 
 credentials.prompt = async (message) => {
   promptCalls += 1;
@@ -3792,10 +5265,13 @@ runner.runCapture = (command) => {
   return "";
 };
 runner.run = (command, opts) => {
-  runCommands.push(typeof command === "string" ? command : command.join(" "));
+  const rendered = typeof command === "string" ? command : command.join(" ");
+  runCommands.push(rendered);
+  events.push({ type: "command", value: rendered });
 };
-runner.runShell = (command, opts) => {
+runner.runShell = (command, opts = {}) => {
   runCommands.push(command);
+  events.push({ type: "command", value: command, stdio: opts.stdio || null });
 };
 registry.updateSandbox = (_name, update) => updates.push(update);
 
@@ -3808,10 +5284,14 @@ const { setupNim } = require(${onboardPath});
 (async () => {
   const originalLog = console.log;
   const lines = [];
-  console.log = (...args) => lines.push(args.join(" "));
+  console.log = (...args) => {
+    const line = args.join(" ");
+    lines.push(line);
+    events.push({ type: "log", value: line });
+  };
   try {
     const result = await setupNim("install-test", null);
-    originalLog(JSON.stringify({ result, promptCalls, messages, updates, lines, runCommands }));
+    originalLog(JSON.stringify({ result, promptCalls, messages, updates, lines, runCommands, events }));
   } finally {
     console.log = originalLog;
   }
@@ -3846,6 +5326,60 @@ const { setupNim } = require(${onboardPath});
     assert.equal(payload.result.provider, "ollama-local");
 
     // Should have run the curl installer (not brew)
+    const zstdPreflightIndex = payload.runCommands.findIndex((cmd: string) =>
+      cmd.includes("apt-get install -y -qq --no-install-recommends zstd"),
+    );
+    const ollamaInstallerIndex = payload.runCommands.findIndex((cmd: string) =>
+      cmd.includes("ollama.com/install.sh"),
+    );
+    assert.ok(zstdPreflightIndex >= 0, "Should preflight zstd before the Ollama installer");
+    assert.ok(
+      ollamaInstallerIndex > zstdPreflightIndex,
+      "Should install zstd before running the Ollama installer",
+    );
+    const zstdWarningEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "log" && event.value.includes("requires zstd for archive extraction"),
+    );
+    const zstdCommandEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "command" &&
+        event.value.includes("apt-get install -y -qq --no-install-recommends zstd"),
+    );
+    const installerWarningEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "log" &&
+        event.value.includes("creates a system user, a systemd service, and writes to /usr/local"),
+    );
+    const installerCommandEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "command" && event.value.includes("ollama.com/install.sh"),
+    );
+    const installerProgressEventIndex = payload.events.findIndex(
+      (event: { type: string; value: string }) =>
+        event.type === "log" && event.value.includes("installer output will stream below"),
+    );
+    const installerCommandEvent = payload.events.find(
+      (event: { type: string; value: string }) =>
+        event.type === "command" && event.value.includes("ollama.com/install.sh"),
+    );
+    assert.ok(
+      zstdWarningEventIndex >= 0 && zstdWarningEventIndex < zstdCommandEventIndex,
+      "Should explain the zstd sudo install before running apt-get",
+    );
+    assert.ok(
+      installerWarningEventIndex >= 0 && installerWarningEventIndex < installerCommandEventIndex,
+      "Should explain the Ollama installer sudo usage before running it",
+    );
+    assert.ok(
+      installerProgressEventIndex >= 0 && installerProgressEventIndex < installerCommandEventIndex,
+      "Should warn that the Ollama installer can take a few minutes before running it",
+    );
+    assert.equal(
+      installerCommandEvent?.stdio,
+      "inherit",
+      "Should stream Ollama installer output live",
+    );
     assert.ok(
       payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
       "Should use curl installer on Linux",
@@ -3909,7 +5443,8 @@ runner.runCapture = (command) => {
 };
 runner.runShell = (command) => {
   if (command.includes("ollama.com/install.sh")) return { status: 0 };
-  if (command.includes("sudo install -D -m 0644")) return { status: 1 };
+  if (command.includes("ollama serve")) console.error("manual-start");
+  if (command.includes("install -D -m 0644")) return { status: 1 };
   return { status: 0 };
 };
 
@@ -3937,8 +5472,11 @@ const { setupNim } = require(${onboardPath});
     });
 
     assert.equal(result.status, 1);
+    assert.match(result.stdout, /Applying an Ollama systemd override/);
+    assert.match(result.stdout, /use sudo to write the drop-in, reload systemd, and restart the service/);
     assert.match(result.stderr, /Failed to apply Ollama systemd loopback override/);
     assert.match(result.stderr, /Refusing to continue/);
+    assert.doesNotMatch(result.stderr, /manual-start/);
   });
 
   it("uses install-ollama for non-interactive NEMOCLAW_PROVIDER=ollama on fresh Linux", () => {
@@ -3989,6 +5527,9 @@ child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
 const originalSpawnSync = child_process.spawnSync;
 child_process.spawnSync = (cmd, args, opts) => {
   const command = [cmd, ...(args || [])].join(" ");
+  if (cmd === "nc" && args?.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
   if (command.includes("ollama pull")) {
     return { status: 0, stdout: "", stderr: "", signal: null };
   }
@@ -4001,6 +5542,7 @@ child_process.spawnSync = (cmd, args, opts) => {
 let promptCalls = 0;
 const updates = [];
 const runCommands = [];
+const runShellCalls = [];
 
 credentials.prompt = async () => {
   promptCalls += 1;
@@ -4020,8 +5562,9 @@ runner.runCapture = (command) => {
 runner.run = (command) => {
   runCommands.push(typeof command === "string" ? command : command.join(" "));
 };
-runner.runShell = (command) => {
+runner.runShell = (command, opts = {}) => {
   runCommands.push(command);
+  runShellCalls.push({ command, stdio: opts.stdio || null });
 };
 registry.updateSandbox = (_name, update) => updates.push(update);
 
@@ -4036,7 +5579,7 @@ const { setupNim } = require(${onboardPath});
   console.log = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim("noninteractive-install-test", null);
-    originalLog(JSON.stringify({ result, promptCalls, updates, lines, runCommands }));
+    originalLog(JSON.stringify({ result, promptCalls, updates, lines, runCommands, runShellCalls }));
   } finally {
     console.log = originalLog;
   }
@@ -4066,9 +5609,31 @@ const { setupNim } = require(${onboardPath});
 
     assert.equal(payload.promptCalls, 0);
     assert.equal(payload.result.provider, "ollama-local");
+    const zstdPreflightIndex = payload.runCommands.findIndex((cmd: string) =>
+      cmd.includes("apt-get install -y -qq --no-install-recommends zstd"),
+    );
+    const ollamaInstallerIndex = payload.runCommands.findIndex((cmd: string) =>
+      cmd.includes("ollama.com/install.sh"),
+    );
+    assert.ok(
+      zstdPreflightIndex >= 0,
+      "Should preflight zstd before the non-interactive Ollama installer",
+    );
+    assert.ok(
+      ollamaInstallerIndex > zstdPreflightIndex,
+      "Should install zstd before running the non-interactive Ollama installer",
+    );
     assert.ok(
       payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
       "Should use the Ollama installer when requested non-interactively on a fresh host",
+    );
+    const ollamaInstallShellCall = payload.runShellCalls.find((call: { command: string }) =>
+      call.command.includes("ollama.com/install.sh"),
+    );
+    assert.equal(
+      ollamaInstallShellCall?.stdio,
+      "inherit",
+      "non-interactive Ollama install should stream installer output live",
     );
     assert.ok(
       payload.runCommands.some((cmd: string) =>
@@ -4080,6 +5645,747 @@ const { setupNim } = require(${onboardPath});
       !payload.runCommands.some((cmd: string) => cmd.includes("OLLAMA_HOST=0.0.0.0:11434")),
       "non-interactive install path must not expose raw Ollama on all interfaces",
     );
+  });
+
+  it("restarts Windows-host Ollama after install when installer auto-start is not reachable", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-install-restart-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "windows-ollama-install-restart-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const windowsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "windows.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const platform = require(${platformPath});
+platform.isWsl = () => true;
+
+const installedPath = "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe";
+const installCalls = [];
+const awaitCalls = [];
+const restartCalls = [];
+const updates = [];
+const runCommands = [];
+credentials.prompt = async () => "";
+credentials.ensureApiKey = async () => {};
+registry.updateSandbox = (_name, update) => updates.push(update);
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) return "";
+  if (cmd.includes("api/tags")) {
+    if (restartCalls.length > 0) {
+      return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+    }
+    return "";
+  }
+  if (cmd.includes("api/show")) return JSON.stringify({ capabilities: ["completion", "tools"] });
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  return "";
+};
+runner.run = (command) => {
+  runCommands.push(Array.isArray(command) ? command.join(" ") : String(command));
+  return { status: 0 };
+};
+runner.runShell = (command) => {
+  runCommands.push(command);
+  return { status: 0 };
+};
+
+const local = require(${localPath});
+local.resetOllamaHostCache();
+
+const windows = require(${windowsPath});
+windows.installOllamaOnWindowsHost = async () => {
+  installCalls.push(true);
+  return { ok: true, path: installedPath };
+};
+windows.awaitWindowsOllamaReady = () => {
+  awaitCalls.push(true);
+  return false;
+};
+windows.setupWindowsOllamaWith0000Binding = (opts) => {
+  restartCalls.push(opts || {});
+  local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
+  return true;
+};
+windows.switchToWindowsOllamaHost = () => {
+  local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("windows-install-restart-test", null);
+    originalLog(JSON.stringify({
+      result,
+      installCalls,
+      awaitCalls,
+      restartCalls,
+      updates,
+      lines,
+      runCommands,
+    }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-windows-ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+        NEMOCLAW_YES: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
+    assert.notEqual(result.stdout.trim(), "", result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.equal(payload.result.model, "qwen3:8b");
+    assert.equal(payload.installCalls.length, 1);
+    assert.equal(payload.awaitCalls.length, 1);
+    assert.deepEqual(payload.restartCalls, [
+      { installedPath: "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe" },
+    ]);
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Using Ollama on host.docker.internal:11434"),
+      ),
+    );
+  });
+
+  it("uses the Windows-host start path when install-windows-ollama is requested but Ollama is already installed", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-install-to-start-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "windows-ollama-install-to-start-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const windowsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "windows.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+platform.isWsl = () => true;
+
+const installedPath = "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe";
+const installCalls = [];
+const setupCalls = [];
+const runCommands = [];
+credentials.prompt = async () => "";
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) return installedPath;
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama")) return "";
+  if (cmd.includes("api/tags")) {
+    if (setupCalls.length > 0) {
+      return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+    }
+    return "";
+  }
+  if (cmd.includes("api/show")) return JSON.stringify({ capabilities: ["completion", "tools"] });
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  return "";
+};
+runner.run = (command) => {
+  runCommands.push(Array.isArray(command) ? command.join(" ") : String(command));
+  return { status: 0 };
+};
+runner.runShell = (command) => {
+  runCommands.push(command);
+  return { status: 0 };
+};
+
+const local = require(${localPath});
+local.resetOllamaHostCache();
+
+const windows = require(${windowsPath});
+windows.installOllamaOnWindowsHost = async () => {
+  installCalls.push(true);
+  return { ok: false, path: "" };
+};
+windows.setupWindowsOllamaWith0000Binding = (opts) => {
+  setupCalls.push(opts || {});
+  local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
+  return true;
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("windows-install-to-start-test", null);
+    originalLog(JSON.stringify({ result, installCalls, setupCalls, lines, runCommands }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-windows-ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+        NEMOCLAW_YES: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
+    assert.notEqual(result.stdout.trim(), "", result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.equal(payload.result.model, "qwen3:8b");
+    assert.equal(payload.installCalls.length, 0);
+    // The restart/start path now forwards the verified executable path
+    // recovered from Get-Command so windows.ts can launch the binary
+    // directly instead of relying on the calling shell's Windows PATH
+    // (#3949).
+    assert.deepEqual(payload.setupCalls, [
+      {
+        announceStop: false,
+        // The mock injects `\\\\` per separator (raw template → 4 source
+        // backslashes per separator → 2 backslashes in the subprocess
+        // JS string). The deepEqual right-hand side is a regular TS
+        // string, so 4 backslashes per separator here equals 2 in the
+        // compiled string, matching what the subprocess captured.
+        installedPath:
+          "C:\\\\Users\\\\tester\\\\AppData\\\\Local\\\\Programs\\\\Ollama\\\\ollama.exe",
+      },
+    ]);
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("Using Ollama on host.docker.internal:11434"),
+      ),
+    );
+  });
+
+  it("detects Windows-host Ollama via running process when not on the user PATH (#3949)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-process-fallback-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "windows-ollama-process-fallback-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const windowsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "windows.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+platform.isWsl = () => true;
+
+const setupCalls = [];
+const installedPath = "C:/Program Files/Ollama/ollama.exe";
+credentials.prompt = async () => "";
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  // The fix: Get-Command misses ollama.exe (service install, not on user
+  // PATH), but Get-Process recovers both the live PID and the verified
+  // executable path. Repro for #3949.
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) return "";
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama") && cmd.includes("Path"))
+    return installedPath;
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama") && cmd.includes("Id"))
+    return "7652";
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-NetTCPConnection")) return "127.0.0.1";
+  if (cmd.includes("api/tags")) {
+    if (setupCalls.length === 0) return "";
+    return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  }
+  if (cmd.includes("api/show")) return JSON.stringify({ capabilities: ["completion", "tools"] });
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  return "";
+};
+runner.run = () => ({ status: 0 });
+runner.runShell = () => ({ status: 0 });
+
+const local = require(${localPath});
+local.resetOllamaHostCache();
+
+const windows = require(${windowsPath});
+windows.installOllamaOnWindowsHost = async () => {
+  throw new Error("installOllamaOnWindowsHost called: hasWindowsOllama not detected");
+};
+windows.setupWindowsOllamaWith0000Binding = (opts) => {
+  setupCalls.push(opts || {});
+  local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
+  return true;
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("windows-process-fallback-test", null);
+    originalLog(JSON.stringify({ result, setupCalls, lines }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "start-windows-ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+        NEMOCLAW_YES: "1",
+      },
+    });
+
+    assert.equal(
+      result.status,
+      0,
+      `Process failed:\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`,
+    );
+    assert.notEqual(result.stdout.trim(), "", result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+
+    assert.equal(payload.result.provider, "ollama-local");
+    // hasWindowsOllama detected via Get-Process → winOllamaLoopbackOnly
+    // observed from 127.0.0.1 listen → restart path taken with
+    // announceStop:true and the recovered executable path threaded
+    // through so windows.ts can target the verified binary instead of
+    // the broken PATH fallback. Pre-fix behaviour was the bogus install
+    // path with no setup call at all.
+    assert.deepEqual(payload.setupCalls, [
+      {
+        announceStop: true,
+        installedPath: "C:/Program Files/Ollama/ollama.exe",
+      },
+    ]);
+  });
+
+  it("uses a known Windows install path when a running Ollama process has no readable path", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-static-path-fallback-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "windows-ollama-static-path-fallback-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const windowsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "windows.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+platform.isWsl = () => true;
+
+const setupCalls = [];
+const installedPath = "C:/Users/tester/AppData/Local/Programs/Ollama/ollama.exe";
+credentials.prompt = async () => "";
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) return "";
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama") && cmd.includes("Path"))
+    return "";
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Process ollama") && cmd.includes("Id"))
+    return "7652";
+  if (cmd.includes("powershell.exe") && cmd.includes("Test-Path -LiteralPath"))
+    return installedPath;
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-NetTCPConnection")) return "127.0.0.1";
+  if (cmd.includes("api/tags")) {
+    if (setupCalls.length === 0) return "";
+    return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  }
+  if (cmd.includes("api/show")) return JSON.stringify({ capabilities: ["completion", "tools"] });
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  return "";
+};
+runner.run = () => ({ status: 0 });
+runner.runShell = () => ({ status: 0 });
+
+const local = require(${localPath});
+local.resetOllamaHostCache();
+
+const windows = require(${windowsPath});
+windows.installOllamaOnWindowsHost = async () => {
+  throw new Error("installOllamaOnWindowsHost called: hasWindowsOllama not detected");
+};
+windows.setupWindowsOllamaWith0000Binding = (opts) => {
+  setupCalls.push(opts || {});
+  local.setResolvedOllamaHost(local.OLLAMA_HOST_DOCKER_INTERNAL);
+  return true;
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("windows-static-path-fallback-test", null);
+    originalLog(JSON.stringify({ result, setupCalls, lines }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "start-windows-ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+        NEMOCLAW_YES: "1",
+      },
+    });
+
+    assert.equal(
+      result.status,
+      0,
+      `Process failed:\nSTDOUT:\n${result.stdout}\nSTDERR:\n${result.stderr}`,
+    );
+    assert.notEqual(result.stdout.trim(), "", result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.deepEqual(payload.setupCalls, [
+      {
+        announceStop: true,
+        installedPath: "C:/Users/tester/AppData/Local/Programs/Ollama/ollama.exe",
+      },
+    ]);
+  });
+
+  it("does not satisfy start-windows-ollama with WSL-local Ollama", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-no-wsl-fallback-"),
+    );
+    const scriptPath = path.join(tmpDir, "windows-ollama-no-wsl-fallback-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const windowsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "windows.js"),
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+platform.isWsl = () => true;
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  if (cmd.includes("host.docker.internal:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("powershell.exe") && cmd.includes("Get-Command ollama.exe")) return "";
+  return "";
+};
+
+const local = require(${localPath});
+local.resetOllamaHostCache();
+
+const windows = require(${windowsPath});
+windows.setupWindowsOllamaWith0000Binding = () => {
+  console.error("WINDOWS_SETUP_CALLED");
+  return false;
+};
+windows.switchToWindowsOllamaHost = () => {
+  console.error("WINDOWS_SWITCH_CALLED");
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim("windows-no-wsl-fallback-test", null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "start-windows-ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+        NEMOCLAW_YES: "1",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Requested provider 'start-windows-ollama' is not available/);
+    assert.doesNotMatch(result.stderr, /WINDOWS_SETUP_CALLED|WINDOWS_SWITCH_CALLED/);
+  });
+
+  it("does not satisfy install-windows-ollama with non-WSL local Ollama", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-windows-ollama-no-linux-fallback-"),
+    );
+    const scriptPath = path.join(tmpDir, "windows-ollama-no-linux-fallback-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const windowsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "windows.js"),
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+platform.isWsl = () => false;
+
+credentials.prompt = async () => {
+  throw new Error("Unexpected prompt in non-interactive test");
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "/usr/bin/ollama";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "qwen3:8b" }] });
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  return "";
+};
+
+const local = require(${localPath});
+local.resetOllamaHostCache();
+
+const windows = require(${windowsPath});
+windows.installOllamaOnWindowsHost = async () => {
+  console.error("WINDOWS_INSTALL_CALLED");
+  return { ok: false, path: "" };
+};
+windows.setupWindowsOllamaWith0000Binding = () => {
+  console.error("WINDOWS_SETUP_CALLED");
+  return false;
+};
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  await setupNim("windows-no-linux-fallback-test", null);
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-windows-ollama",
+        NEMOCLAW_MODEL: "qwen3:8b",
+        NEMOCLAW_YES: "1",
+      },
+    });
+
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /Requested provider 'install-windows-ollama' is not available/);
+    assert.doesNotMatch(result.stderr, /WINDOWS_INSTALL_CALLED|WINDOWS_SETUP_CALLED/);
   });
 
   it("honours NEMOCLAW_LOCAL_INFERENCE_TIMEOUT for compatible-endpoint during inference setup (#2403)", () => {

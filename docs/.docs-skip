@@ -38,6 +38,8 @@ skip-features:
   - "test/e2e/test-shields-config.sh"    # shields/config E2E, experimental
   - "shields-status"                     # plugin shields-status command, experimental
   - "config-show"                        # plugin config-show command, experimental
+  - "wechat"                             # WeChat channel docs are not public yet
+  - "WeChat"                             # WeChat channel docs are not public yet
 
 skip-terms:
   - "permissive mode"                    # do not reference this concept in docs
@@ -46,3 +48,6 @@ skip-terms:
   - "shields status"                     # experimental shields command, not advertised
   - "config rotate-token"                # experimental config command, not advertised
   - "rotate-token"                       # experimental config command, not advertised
+  - "wechat"                             # WeChat channel docs are not public yet
+  - "WeChat"                             # WeChat channel docs are not public yet
+  - "WECHAT"                             # WeChat channel docs are not public yet
