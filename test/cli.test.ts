@@ -1498,6 +1498,35 @@ describe("CLI dispatch", () => {
     expect(fs.existsSync(output)).toBe(false);
   });
 
+  it("debug --sandbox propagates ambiguous openshell probe failures", testTimeoutOptions(30_000), () => {
+    const env = createDebugCommandTestEnv("nemoclaw-cli-debug-probe-failure-");
+    const localBin = env.PATH?.split(path.delimiter)[0];
+    if (!localBin) throw new Error("Expected debug test PATH to include a fake bin dir");
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        "  echo 'NAME'",
+        "  echo 'mybox'",
+        "  exit 0",
+        "fi",
+        "echo 'gateway unavailable' >&2",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const output = path.join(env.HOME, "probe-failure-debug.tar.gz");
+
+    const r = runWithEnv(`debug --quick --sandbox probe-target --output ${output}`, env, 30000);
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("gateway unavailable");
+    expect(r.out).not.toContain("Sandbox 'probe-target' does not exist.");
+    expect(r.out).not.toContain("Tarball written");
+    expect(fs.existsSync(output)).toBe(false);
+  });
+
   it("debug --sandbox without a name exits 1", () => {
     const r = run("debug --sandbox");
     expect(r.code).not.toBe(0);

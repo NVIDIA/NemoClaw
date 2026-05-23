@@ -205,6 +205,21 @@ function collectDmesg(collectDir: string): void {
 // Auto-detect sandbox name
 // ---------------------------------------------------------------------------
 
+function errorOutput(error: unknown): string {
+  if (typeof error !== "object" || error === null) return String(error);
+  const { message, stderr, stdout } = error as { message?: unknown; stderr?: unknown; stdout?: unknown };
+  return [message, stdout, stderr]
+    .map((value) => (Buffer.isBuffer(value) ? value.toString("utf8") : typeof value === "string" ? value : ""))
+    .join("\n");
+}
+
+function isMissingSandboxError(error: unknown): boolean {
+  return /not\s*found|notfound|does not exist/i.test(errorOutput(error));
+}
+
+/**
+ * Returns whether a sandbox exists, while propagating ambiguous openshell probe failures.
+ */
 function sandboxExists(sandboxName: string): boolean {
   try {
     const registry = listSandboxes();
@@ -221,11 +236,12 @@ function sandboxExists(sandboxName: string): boolean {
     execFileSync("openshell", ["sandbox", "get", sandboxName], {
       encoding: "utf-8",
       timeout: 10_000,
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "pipe", "pipe"],
     });
     return true;
-  } catch {
-    return false;
+  } catch (probeError) {
+    if (isMissingSandboxError(probeError)) return false;
+    throw probeError;
   }
 }
 
