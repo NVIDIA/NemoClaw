@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -30,6 +30,39 @@ export type DockerDriverGatewayRuntimeIdentity = {
   driftGatewayBin: string | null;
   identityGatewayBin: string | null;
 };
+
+export function openDockerDriverGatewayLog(
+  logPath: string,
+  options: { exitOnFailure?: boolean } = {},
+): number {
+  const appendNoFollow =
+    fs.constants.O_APPEND |
+    fs.constants.O_CREAT |
+    fs.constants.O_WRONLY |
+    fs.constants.O_NOFOLLOW;
+  try {
+    return fs.openSync(logPath, appendNoFollow, 0o600);
+  } catch (error) {
+    console.error(`  Failed to open OpenShell Docker-driver gateway log '${logPath}': ${String(error)}`);
+    if (options.exitOnFailure) process.exit(1);
+    throw error;
+  }
+}
+
+export function spawnDockerDriverGateway(
+  launch: DockerDriverGatewayLaunch,
+  logFd: number,
+): ChildProcess {
+  try {
+    return spawn(launch.command, launch.args, {
+      detached: true,
+      stdio: ["ignore", logFd, logFd],
+      env: launch.env,
+    });
+  } finally {
+    fs.closeSync(logFd);
+  }
+}
 
 type BuildGatewayLaunchOptions = {
   gatewayBin: string;

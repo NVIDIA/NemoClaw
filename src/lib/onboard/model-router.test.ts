@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import {
   doesModelRouterProcessOwnPort,
   isModelRouterCommandLineForPort,
-} from "../../../dist/lib/onboard/model-router";
+  readModelRouterProcessCommandLine,
+} from "../../../dist/lib/onboard/model-router-process";
 
 describe("model-router process ownership checks", () => {
   it("recognizes model-router proxy command lines for the expected port", () => {
@@ -22,6 +23,15 @@ describe("model-router process ownership checks", () => {
         44123,
       ),
     ).toBe(true);
+  });
+
+  it("falls back to ps-style command lines when /proc is unavailable", () => {
+    expect(
+      readModelRouterProcessCommandLine(1234, {
+        readProcCommandLine: () => null,
+        readPsCommandLine: () => ["/tmp/router/bin/model-router", "proxy", "--port", "44123"],
+      }),
+    ).toEqual(["/tmp/router/bin/model-router", "proxy", "--port", "44123"]);
   });
 
   it("rejects reused PIDs that do not look like the expected model-router proxy", () => {

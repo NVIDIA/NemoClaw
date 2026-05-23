@@ -7,6 +7,8 @@ import path from "node:path";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { ROOT, runCapture } from "../runner";
 
+export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.0.44";
+
 export function getInstalledOpenshellVersion(versionOutput: string | null = null): string | null {
   const openshellBin = resolveOpenshell();
   if (!versionOutput && !openshellBin) return null;

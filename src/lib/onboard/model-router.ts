@@ -4,7 +4,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
-import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { requireValue } from "../core/require-value";
@@ -19,11 +18,16 @@ import type { Session } from "../state/onboard-session";
 import * as onboardSession from "../state/onboard-session";
 import { buildSubprocessEnv } from "../subprocess-env";
 import { hydrateCredentialEnv } from "./credential-env";
+import {
+  doesModelRouterProcessOwnPort,
+  isProcessRunning,
+  isRouterHealthy,
+  stopModelRouterProcess,
+} from "./model-router-process";
 import { prepareModelRouterVenv } from "./model-router-python";
 
 const ROUTER_HEALTH_RETRIES = 15;
 const ROUTER_HEALTH_INTERVAL_MS = 2000;
-const ROUTER_HEALTH_TIMEOUT_MS = 3000;
 const MODEL_ROUTER_RELATIVE_DIR = path.join("nemoclaw-blueprint", "router", "llm-router");
 const MODEL_ROUTER_VENV_DIR = path.join(os.homedir(), ".nemoclaw", "model-router-venv");
 const MODEL_ROUTER_FINGERPRINT_FILE = ".nemoclaw-source-fingerprint";
@@ -82,95 +86,6 @@ export function loadBlueprintProfile(
     return { ...profile, router } as BlueprintInferenceProfile;
   } catch {
     return null;
-  }
-}
-
-async function isRouterHealthy(port: number, timeoutMs = ROUTER_HEALTH_TIMEOUT_MS): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
-    let settled = false;
-    const settle = (healthy: boolean) => {
-      if (settled) return;
-      settled = true;
-      resolve(healthy);
-    };
-    const request = http
-      .get(`http://127.0.0.1:${port}/health`, (res: http.IncomingMessage) => {
-        res.resume();
-        settle((res.statusCode || 0) >= 200 && (res.statusCode || 0) < 300);
-      })
-      .on("error", () => settle(false));
-    request.setTimeout(timeoutMs, () => {
-      request.destroy();
-      settle(false);
-    });
-  });
-}
-
-function isProcessRunning(pid: number | null | undefined): boolean {
-  if (!Number.isInteger(pid) || Number(pid) <= 0) return false;
-  try {
-    process.kill(Number(pid), 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-export function isModelRouterCommandLineForPort(args: readonly string[], port: number): boolean {
-  const commandName = path.basename(args[0] || "");
-  if (commandName !== "model-router") return false;
-  if (!args.includes("proxy")) return false;
-  return args.some((arg, index) => {
-    if (arg === "--port") return args[index + 1] === String(port);
-    return arg === `--port=${String(port)}`;
-  });
-}
-
-function readProcessCommandLine(pid: number): string[] | null {
-  try {
-    return fs
-      .readFileSync(`/proc/${pid}/cmdline`, "utf8")
-      .split("\0")
-      .filter(Boolean);
-  } catch {
-    return null;
-  }
-}
-
-export function doesModelRouterProcessOwnPort(
-  pid: number | null | undefined,
-  port: number,
-  deps: {
-    isRunning?: (pid: number | null | undefined) => boolean;
-    readCommandLine?: (pid: number) => string[] | null;
-  } = {},
-): boolean {
-  if (!Number.isInteger(pid) || Number(pid) <= 0) return false;
-  const isRunning = deps.isRunning ?? isProcessRunning;
-  if (!isRunning(pid)) return false;
-  const readCommandLine = deps.readCommandLine ?? readProcessCommandLine;
-  const args = readCommandLine(Number(pid));
-  return Array.isArray(args) && isModelRouterCommandLineForPort(args, port);
-}
-
-async function stopModelRouterProcess(pid: number, port: number): Promise<void> {
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    return;
-  }
-  for (let attempt = 0; attempt < 10; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (!isProcessRunning(pid) && !(await isRouterHealthy(port, 1000))) return;
-  }
-  try {
-    process.kill(pid, "SIGKILL");
-  } catch {
-    // already stopped
-  }
-  for (let attempt = 0; attempt < 5; attempt++) {
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    if (!isProcessRunning(pid) && !(await isRouterHealthy(port, 1000))) return;
   }
 }
 

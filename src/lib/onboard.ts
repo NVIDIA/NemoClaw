@@ -107,7 +107,7 @@ const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawn, spawnSync } = require("child_process");
+const { spawnSync } = require("child_process");
 const pRetry = require("p-retry");
 
 /** Strip ANSI escape sequences before printing process output to the terminal.
@@ -343,6 +343,7 @@ const {
   getBlueprintMinOpenshellVersion,
   getInstalledOpenshellVersion,
   isOpenshellDevVersion,
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
   shouldAllowOpenshellAboveBlueprintMax,
   shouldUseOpenshellDevChannel,
   versionGte,
@@ -532,7 +533,6 @@ const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
 const GATEWAY_NAME = "nemoclaw";
-const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.0.44";
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
@@ -2669,19 +2669,7 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
 
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
-  const appendNoFollow =
-    fs.constants.O_APPEND |
-    fs.constants.O_CREAT |
-    fs.constants.O_WRONLY |
-    fs.constants.O_NOFOLLOW;
-  let logFd: number;
-  try {
-    logFd = fs.openSync(logPath, appendNoFollow, 0o600);
-  } catch (error) {
-    console.error(`  Failed to open OpenShell Docker-driver gateway log '${logPath}': ${String(error)}`);
-    if (exitOnFailure) process.exit(1);
-    throw error;
-  }
+  const logFd = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
   console.log("  Starting OpenShell Docker-driver gateway...");
   console.log(`  Gateway log: ${logPath}`);
   const launch = gatewayLaunch ?? {
@@ -2692,11 +2680,7 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
     processGatewayBin: gatewayBin,
   };
   dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(launch);
-  const child = spawn(launch.command, launch.args, {
-    detached: true,
-    stdio: ["ignore", logFd, logFd],
-    env: launch.env,
-  });
+  const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(launch, logFd);
   const childExit = trackChildExit(child); // #3111 zombie-safe liveness
   child.unref();
   const childPid = child.pid ?? 0;
