@@ -1466,6 +1466,38 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
   });
 
+  it("debug --sandbox exits non-zero for an unknown sandbox and leaves no tarball", testTimeoutOptions(30_000), () => {
+    const env = createDebugCommandTestEnv("nemoclaw-cli-debug-unknown-sandbox-");
+    const localBin = env.PATH?.split(path.delimiter)[0];
+    if (!localBin) throw new Error("Expected debug test PATH to include a fake bin dir");
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        "  echo 'NAME'",
+        "  echo 'mybox'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "mybox" ]; then',
+        "  echo 'mybox Ready'",
+        "  exit 0",
+        "fi",
+        "echo 'sandbox not found' >&2",
+        "exit 1",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const output = path.join(env.HOME, "unknown-debug.tar.gz");
+
+    const r = runWithEnv(`debug --quick --sandbox does-not-exist --output ${output}`, env, 30000);
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Sandbox 'does-not-exist' does not exist.");
+    expect(r.out).not.toContain("Tarball written");
+    expect(fs.existsSync(output)).toBe(false);
+  });
+
   it("debug --sandbox without a name exits 1", () => {
     const r = run("debug --sandbox");
     expect(r.code).not.toBe(0);

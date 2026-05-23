@@ -205,6 +205,30 @@ function collectDmesg(collectDir: string): void {
 // Auto-detect sandbox name
 // ---------------------------------------------------------------------------
 
+function sandboxExists(sandboxName: string): boolean {
+  try {
+    const registry = listSandboxes();
+    if (registry.sandboxes.some((sandbox) => sandbox.name === sandboxName)) {
+      return true;
+    }
+  } catch {
+    /* registry unreadable — fall through to openshell probe */
+  }
+
+  if (!commandExists("openshell")) return true;
+
+  try {
+    execFileSync("openshell", ["sandbox", "get", sandboxName], {
+      encoding: "utf-8",
+      timeout: 10_000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function detectSandboxName(): string {
   // First, check the local registry for the default sandbox. This is
   // the authoritative source — it reflects the user's actual onboard
@@ -560,10 +584,17 @@ export function runDebug(opts: DebugOptions = {}): void {
   const repoDir = join(__dirname, "..", "..", "..");
 
   // Resolve sandbox name
-  let sandboxName =
+  const requestedSandboxName =
     opts.sandboxName ?? process.env.NEMOCLAW_SANDBOX ?? process.env.SANDBOX_NAME ?? "";
+  let sandboxName = requestedSandboxName;
   if (!sandboxName) {
     sandboxName = detectSandboxName();
+  }
+
+  if (requestedSandboxName && !sandboxExists(sandboxName)) {
+    error(`Sandbox '${sandboxName}' does not exist.`);
+    process.exitCode = 1;
+    return;
   }
 
   // Create temp collection directory
