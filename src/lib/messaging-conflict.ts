@@ -13,8 +13,8 @@
 // added have no record — can optionally backfill the channel field by probing
 // the live OpenShell gateway for known provider names.
 
-import type { SandboxEntry } from "./registry";
-import { getChannelDef, getChannelTokenKeys } from "./sandbox-channels";
+import type { SandboxEntry } from "./state/registry";
+import { getChannelDef, getChannelTokenKeys } from "./sandbox/channels";
 
 type ProbeResult = "present" | "absent" | "error";
 type ConflictReason = "matching-token" | "unknown-token";
@@ -52,6 +52,7 @@ const PROVIDER_SUFFIXES: Record<string, string> = {
   telegram: "-telegram-bridge",
   discord: "-discord-bridge",
   slack: "-slack-bridge",
+  wechat: "-wechat-bridge",
 };
 
 const KNOWN_CHANNELS = Object.keys(PROVIDER_SUFFIXES);
@@ -70,7 +71,13 @@ function getTokenKeys(channel: string): string[] {
 }
 
 function hasStoredChannel(entry: SandboxEntry, channel: string): boolean {
-  return Array.isArray(entry.messagingChannels) && entry.messagingChannels.includes(channel);
+  if (!Array.isArray(entry.messagingChannels) || !entry.messagingChannels.includes(channel)) {
+    return false;
+  }
+  // A `channels stop` sandbox keeps the channel in messagingChannels so a later
+  // `channels start` can recover, but its bridge is paused — the credential is
+  // not in use, so it must not block another sandbox from claiming the token.
+  return !(Array.isArray(entry.disabledChannels) && entry.disabledChannels.includes(channel));
 }
 
 function conflictReasonForRequest(
@@ -198,7 +205,11 @@ export function findAllOverlaps(registry: ConflictRegistry): Array<{
   const byChannel = new Map<string, SandboxEntry[]>();
   for (const entry of sandboxes) {
     if (!Array.isArray(entry.messagingChannels)) continue;
+    const disabled = new Set(
+      Array.isArray(entry.disabledChannels) ? entry.disabledChannels : [],
+    );
     for (const channel of entry.messagingChannels) {
+      if (disabled.has(channel)) continue;
       const list = byChannel.get(channel) || [];
       list.push(entry);
       byChannel.set(channel, list);

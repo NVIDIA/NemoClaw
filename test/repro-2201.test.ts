@@ -61,8 +61,16 @@ function createFixture({
   lastOnboarded,
   fromDockerfile = null,
 }: {
-  rebuildTarget: { name: string; agent: string | null };
-  lastOnboarded: { name: string; agent: string | null };
+  rebuildTarget: {
+    name: string;
+    agent: string | null;
+    messagingChannelConfig?: Record<string, string> | null;
+  };
+  lastOnboarded: {
+    name: string;
+    agent: string | null;
+    messagingChannelConfig?: Record<string, string> | null;
+  };
   fromDockerfile?: string | null;
 }) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-2201-"));
@@ -83,6 +91,9 @@ function createFixture({
           gpuEnabled: false,
           policies: [],
           agent: rebuildTarget.agent,
+          ...(rebuildTarget.messagingChannelConfig
+            ? { messagingChannelConfig: rebuildTarget.messagingChannelConfig }
+            : {}),
         },
         [lastOnboarded.name]: {
           name: lastOnboarded.name,
@@ -91,6 +102,9 @@ function createFixture({
           gpuEnabled: false,
           policies: [],
           agent: lastOnboarded.agent,
+          ...(lastOnboarded.messagingChannelConfig
+            ? { messagingChannelConfig: lastOnboarded.messagingChannelConfig }
+            : {}),
         },
       },
     }),
@@ -122,6 +136,7 @@ function createFixture({
       webSearchConfig: null,
       policyPresets: [],
       messagingChannels: null,
+      messagingChannelConfig: lastOnboarded.messagingChannelConfig ?? null,
       metadata: { gatewayName: "nemoclaw", fromDockerfile: fromDockerfile },
       steps: {
         preflight: { status: "complete", startedAt: null, completedAt: null, error: null },
@@ -232,7 +247,10 @@ function runRebuild(fixture: ReturnType<typeof createFixture>) {
   );
 }
 
-type SessionFixture = { agent?: string | null };
+type SessionFixture = {
+  agent?: string | null;
+  messagingChannelConfig?: Record<string, string> | null;
+};
 
 /**
  * Read the fixture's persisted onboarding session.
@@ -247,6 +265,15 @@ function readSession(fixture: ReturnType<typeof createFixture>): SessionFixture 
  */
 function readSessionAgent(fixture: ReturnType<typeof createFixture>): string | null | undefined {
   return readSession(fixture).agent;
+}
+
+/**
+ * Read only the messaging config recorded in the fixture onboarding session.
+ */
+function readSessionMessagingChannelConfig(
+  fixture: ReturnType<typeof createFixture>,
+): Record<string, string> | null | undefined {
+  return readSession(fixture).messagingChannelConfig;
 }
 
 describe("Issue #2201: rebuild syncs agent from registry, not stale session", () => {
@@ -279,6 +306,26 @@ describe("Issue #2201: rebuild syncs agent from registry, not stale session", ()
       // With fix: session.agent = "hermes" (synced from hermes registry entry)
       // Without fix: session.agent stays null (from openclaw onboard)
       expect(readSessionAgent(f)).toBe("hermes");
+    },
+  );
+
+  it(
+    "does not inherit messaging channel config from a stale session for another sandbox",
+    { timeout: 60_000 },
+    () => {
+      const f = createFixture({
+        rebuildTarget: { name: "openclaw", agent: null },
+        lastOnboarded: {
+          name: "hermes",
+          agent: "hermes",
+          messagingChannelConfig: {
+            TELEGRAM_ALLOWED_IDS: "999",
+            TELEGRAM_REQUIRE_MENTION: "1",
+          },
+        },
+      });
+      runRebuild(f);
+      expect(readSessionMessagingChannelConfig(f)).toBeNull();
     },
   );
 });

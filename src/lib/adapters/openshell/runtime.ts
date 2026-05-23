@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- exercised through CLI subprocess tests. */
 
 import type { StdioOptions } from "node:child_process";
 
@@ -9,11 +8,12 @@ import { ROOT } from "../../runner";
 import {
   captureOpenshellCommand,
   captureOpenshellCommandAsync,
+  captureSandboxSshConfigCommand,
   getInstalledOpenshellVersion,
   runOpenshellCommand,
 } from "./client";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 import { resolveOpenshell } from "./resolve";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 type CommandArgs = string[];
 
@@ -60,6 +60,17 @@ export function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
   });
 }
 
+export function captureSandboxSshConfig(sandboxName: string, opts: RunnerOptions = {}) {
+  return captureSandboxSshConfigCommand(getOpenshellBinary(), sandboxName, {
+    cwd: ROOT,
+    env: opts.env,
+    ignoreError: opts.ignoreError,
+    timeout: opts.timeout,
+    errorLine: console.error,
+    exit: (code: number) => process.exit(code),
+  });
+}
+
 export function getStatusProbeTimeoutMs(): number {
   const raw = process.env.NEMOCLAW_STATUS_PROBE_TIMEOUT_MS;
   const parsed = raw ? Number(raw) : NaN;
@@ -80,8 +91,11 @@ export function isCommandTimeout(result: { error?: Error }) {
   return (result.error as NodeJS.ErrnoException | undefined)?.code === "ETIMEDOUT";
 }
 
-export function getInstalledOpenshellVersionOrNull(): string | null {
+export function getInstalledOpenshellVersionOrNull(
+  opts: { timeout?: number } = {},
+): string | null {
   return getInstalledOpenshellVersion(getOpenshellBinary(), {
     cwd: ROOT,
+    timeout: opts.timeout,
   });
 }

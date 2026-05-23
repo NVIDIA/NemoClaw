@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: assign-linked-issue-author
+name: Automation / Assign Linked Issue Author
 
 # pull_request_target runs in the base repo context, giving the token write
 # access even for fork PRs. This workflow is safe because it only reads PR

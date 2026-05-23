@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const TSX = path.join(REPO_ROOT, "node_modules", ".bin", "tsx");
 const INVENTORY_SCRIPT = path.join(REPO_ROOT, "scripts", "list-command-helper-uses.ts");
-const DOCKER_ABSTRACTION_PREFIX = "src/lib/docker/";
+const DOCKER_ABSTRACTION_PREFIX = "src/lib/adapters/docker/";
 
 type CommandUse = {
   filePath: string;
@@ -36,7 +36,7 @@ function listCommandUses(): CommandUse[] {
 }
 
 describe("Docker command abstraction guard", () => {
-  it("keeps direct docker process launches inside src/lib/docker", () => {
+  it("keeps direct docker process launches inside src/lib/adapters/docker", () => {
     const directDockerCalls = listCommandUses().filter(
       (entry) =>
         entry.kind === "call" &&
@@ -52,7 +52,7 @@ describe("Docker command abstraction guard", () => {
         )
         .join("\n");
       throw new Error(
-        `Direct docker process launches must use the src/lib/docker abstractions.\n` +
+        `Direct docker process launches must use the src/lib/adapters/docker abstractions.\n` +
           `Do not add calls like run(["docker", ...]), runCapture(["docker", ...]), ` +
           `spawnSync("docker", ...), or execFileSync("docker", ...) outside ${DOCKER_ABSTRACTION_PREFIX}.\n` +
           `Add or reuse a helper under ${DOCKER_ABSTRACTION_PREFIX} (for example dockerRun(), dockerCapture(), dockerPull(), dockerRmi(), dockerExecFileSync(), or dockerSpawnSync()) and call that instead.\n` +

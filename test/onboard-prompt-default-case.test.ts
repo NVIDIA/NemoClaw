@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 
 const repoRoot = path.join(import.meta.dirname, "..");
 const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
-const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
 
 type RunResult = {
   result: boolean;

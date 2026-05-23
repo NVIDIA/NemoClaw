@@ -1,14 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- extracted legacy sandbox liveness paths are covered through CLI subprocess tests. */
 
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { CLI_DISPLAY_NAME, CLI_NAME } from "../../branding";
-import { parseSandboxPhase } from "../../gateway-state";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
+import { parseSandboxPhase } from "../../state/gateway";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
@@ -16,9 +15,15 @@ import {
 const { pruneKnownHostsEntries } = require("../../onboard") as {
   pruneKnownHostsEntries: (contents: string) => string;
 };
-import * as onboardSession from "../../onboard-session";
-import type { Session } from "../../onboard-session";
+import * as onboardSession from "../../state/onboard-session";
+import type { Session } from "../../state/onboard-session";
 import { stripAnsi } from "../../adapters/openshell/client";
+import {
+  detectOpenShellStateRpcPreflightIssue,
+  detectOpenShellStateRpcResultIssue,
+  formatOpenShellStateRpcIssue,
+  type OpenShellStateRpcIssue,
+} from "../../adapters/openshell/gateway-drift";
 import {
   captureOpenshell,
   captureOpenshellForStatus,
@@ -30,9 +35,9 @@ import {
   OPENSHELL_OPERATION_TIMEOUT_MS,
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
-import * as registry from "../../registry";
+import * as registry from "../../state/registry";
 
-type SandboxGatewayState = {
+export type SandboxGatewayState = {
   state: string;
   output: string;
   activeGateway?: string | null;
@@ -45,6 +50,14 @@ type SandboxGatewayStateLookup = (
   sandboxName: string,
 ) => SandboxGatewayState | Promise<SandboxGatewayState>;
 
+function formatGatewaySchemaMismatchOutput(
+  issue: OpenShellStateRpcIssue,
+  action: string,
+  command?: string,
+): string {
+  return formatOpenShellStateRpcIssue(issue, { action, command }).join("\n");
+}
+
 export function mergeLivePolicyIntoSandboxOutput(
   output: string,
   livePolicyOutput: string,
@@ -55,18 +68,26 @@ export function mergeLivePolicyIntoSandboxOutput(
   if (policyLineIdx === -1) return output;
 
   const before = rawLines.slice(0, policyLineIdx + 1).join("\n");
-  const delimIdx = livePolicyOutput.search(/^---\s*$/m);
+  const cleanLivePolicy = stripAnsi(String(livePolicyOutput));
+  const delimIdx = cleanLivePolicy.search(/^---\s*$/m);
+  const metadataPart = delimIdx !== -1 ? cleanLivePolicy.slice(0, delimIdx) : "";
   const yamlPart =
     delimIdx !== -1
-      ? livePolicyOutput.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
-      : livePolicyOutput;
+      ? cleanLivePolicy.slice(delimIdx).replace(/^---\s*[\r\n]+/, "")
+      : cleanLivePolicy;
   const trimmedYaml = yamlPart.trim();
   const looksLikeError = /^(error|failed|invalid|warning|status)\b/i.test(trimmedYaml);
   if (!trimmedYaml || looksLikeError || !/^[a-z_][a-z0-9_]*\s*:/m.test(trimmedYaml)) {
     return output;
   }
 
-  const indented = trimmedYaml
+  const activeMatch = metadataPart.match(/^Active:\s*(\d+)\s*$/m);
+  const rewrittenYaml =
+    activeMatch && /^version:\s*\d+/m.test(trimmedYaml)
+      ? trimmedYaml.replace(/^version:\s*\d+/m, `version: ${activeMatch[1]}`)
+      : trimmedYaml;
+
+  const indented = rewrittenYaml
     .split("\n")
     .map((line: string) => (line ? `  ${line}` : line))
     .join("\n");
@@ -75,10 +96,29 @@ export function mergeLivePolicyIntoSandboxOutput(
 
 /** Query sandbox presence and return its output with the live enforced policy. */
 export function getSandboxGatewayState(sandboxName: string): SandboxGatewayState {
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue();
+  if (preflightIssue) {
+    return {
+      state: "gateway_schema_mismatch",
+      output: formatGatewaySchemaMismatchOutput(
+        preflightIssue,
+        `verifying sandbox '${sandboxName}' against OpenShell`,
+      ),
+    };
+  }
   const result = captureOpenshell(["sandbox", "get", sandboxName], {
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   let output = result.output;
+  const resultIssue = detectOpenShellStateRpcResultIssue(result);
+  if (resultIssue) {
+    return {
+      state: "gateway_schema_mismatch",
+      output: formatOpenShellStateRpcIssue(resultIssue, {
+        action: `verifying sandbox '${sandboxName}' against OpenShell`,
+      }).join("\n"),
+    };
+  }
   if (result.status === 0) {
     const livePolicy = captureOpenshell(["policy", "get", "--full", sandboxName], {
       ignoreError: true,
@@ -106,10 +146,31 @@ export async function getSandboxGatewayStateForStatus(
   sandboxName: string,
 ): Promise<SandboxGatewayState> {
   const timeoutMs = getStatusProbeTimeoutMs();
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue({ timeoutMs });
+  if (preflightIssue) {
+    return {
+      state: "gateway_schema_mismatch",
+      output: formatGatewaySchemaMismatchOutput(
+        preflightIssue,
+        `checking status for sandbox '${sandboxName}'`,
+        `${CLI_NAME} ${sandboxName} status`,
+      ),
+    };
+  }
   const result = await captureOpenshellForStatus(["sandbox", "get", sandboxName], {
     timeout: timeoutMs,
   });
   let output = result.output;
+  const resultIssue = detectOpenShellStateRpcResultIssue(result, { timeoutMs });
+  if (resultIssue) {
+    return {
+      state: "gateway_schema_mismatch",
+      output: formatOpenShellStateRpcIssue(resultIssue, {
+        action: `checking status for sandbox '${sandboxName}'`,
+        command: `${CLI_NAME} ${sandboxName} status`,
+      }).join("\n"),
+    };
+  }
   if (isCommandTimeout(result)) {
     return {
       state: "status_probe_timeout",
@@ -161,6 +222,9 @@ export function reconcileMissingAgainstNamedGateway(
     const retry = getSandboxGatewayState(sandboxName);
     if (retry.state === "present") {
       return { ...retry, recoveredGateway: true, recoveryVia: "select" };
+    }
+    if (retry.state === "gateway_schema_mismatch") {
+      return retry;
     }
     if (retry.state === "missing") {
       const after = getNamedGatewayLifecycleState();
@@ -328,7 +392,7 @@ export async function ensureLiveSandboxOrExit(
   const lookup = await getReconciledSandboxGatewayState(sandboxName);
   if (lookup.state === "present") {
     const phase = parseSandboxPhase(lookup.output || "");
-    if (!allowNonReadyPhase && phase && phase !== "Ready") {
+    if (!allowNonReadyPhase && phase && phase !== "Ready" && phase !== "Running") {
       console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
       console.error(
         "  This usually happens when a process crash inside the sandbox prevented clean startup.",
@@ -340,6 +404,10 @@ export async function ensureLiveSandboxOrExit(
       process.exit(1);
     }
     return lookup;
+  }
+  if (lookup.state === "gateway_schema_mismatch") {
+    console.error(lookup.output);
+    process.exit(1);
   }
   if (lookup.state === "missing") {
     const guard = getNamedGatewayLifecycleState();

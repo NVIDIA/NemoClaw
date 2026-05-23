@@ -5,6 +5,7 @@ import { describe, it, expect } from "vitest";
 import path from "node:path";
 
 import {
+  containerCanReachHostLoopback,
   detectDockerHost,
   findColimaDockerSocket,
   getDockerSocketCandidates,
@@ -63,6 +64,7 @@ describe("platform helpers", () => {
       expect(getDockerSocketCandidates({ platform: "darwin", home })).toEqual([
         path.join(home, ".colima/default/docker.sock"),
         path.join(home, ".config/colima/default/docker.sock"),
+        path.join(home, ".colima/docker.sock"),
         path.join(home, ".local/share/containers/podman/machine/podman.sock"),
         "/var/run/docker.sock",
         path.join(home, ".docker/run/docker.sock"),
@@ -182,6 +184,31 @@ describe("platform helpers", () => {
     });
   });
 
+  describe("containerCanReachHostLoopback", () => {
+    it("only returns true under WSL + Docker Desktop (the bridged topology)", () => {
+      expect(containerCanReachHostLoopback("docker-desktop", { isWsl: true })).toBe(true);
+    });
+
+    it("returns false for WSL with native dockerd (#3695)", () => {
+      expect(containerCanReachHostLoopback("docker", { isWsl: true })).toBe(false);
+    });
+
+    it("returns false for non-WSL Docker Desktop (macOS)", () => {
+      expect(containerCanReachHostLoopback("docker-desktop", { isWsl: false })).toBe(false);
+    });
+
+    it("returns false for native Linux Docker", () => {
+      expect(containerCanReachHostLoopback("docker", { isWsl: false })).toBe(false);
+    });
+
+    it("returns false for non-Docker runtimes regardless of WSL", () => {
+      expect(containerCanReachHostLoopback("podman", { isWsl: true })).toBe(false);
+      expect(containerCanReachHostLoopback("colima", { isWsl: true })).toBe(false);
+      expect(containerCanReachHostLoopback("podman", { isWsl: false })).toBe(false);
+      expect(containerCanReachHostLoopback("unknown", { isWsl: true })).toBe(false);
+    });
+  });
+
   describe("detectDockerHost with Podman", () => {
     it("detects Podman socket on macOS when Colima is absent", () => {
       const home = "/tmp/test-home";
@@ -206,6 +233,22 @@ describe("platform helpers", () => {
         dockerHost: `unix://${colimaSocket}`,
         source: "socket",
         socketPath: colimaSocket,
+      });
+    });
+
+    it("discovers the bare ~/.colima/docker.sock layout (regression for #3503)", () => {
+      // The reporter's Colima setup puts the socket at the top-level
+      // ~/.colima/docker.sock rather than under ~/.colima/default/. Before
+      // this fix, detection returned null and the gateway fell back to
+      // /var/run/docker.sock, breaking onboard.
+      const home = "/tmp/test-home";
+      const bareColimaSocket = path.join(home, ".colima/docker.sock");
+      const existsSync = (candidate: string) => candidate === bareColimaSocket;
+
+      expect(detectDockerHost({ env: {}, platform: "darwin", home, existsSync })).toEqual({
+        dockerHost: `unix://${bareColimaSocket}`,
+        source: "socket",
+        socketPath: bareColimaSocket,
       });
     });
   });

@@ -3,7 +3,7 @@
 #
 # Hermes sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:22-slim (OpenShell needs Node), apt packages, gosu,
+# Contains: node:22-trixie-slim (OpenShell needs Node), apt packages, gosu,
 # user/group setup, .hermes directory structure, Hermes CLI, and the
 # dependencies for NemoClaw-supported Hermes integrations.
 #
@@ -14,35 +14,39 @@
 #   1. Hermes version bump      — change the HERMES_VERSION below
 #   2. New apt package needed   — add it to the apt-get install list
 #   3. gosu upgrade             — update URL, checksum, and version
-#   4. node:22-slim digest rot  — update-docker-pin.sh updates both
-#   5. New .hermes subdirectory — add mkdir below
+#   4. node:22-trixie-slim digest rot — update-docker-pin.sh updates all
+#   5. New .hermes subdirectory — add mkdir/chmod below
 # ────────────────────────────────────────────────────────────────
 
-FROM node:22-slim@sha256:4f77a690f2f8946ab16fe1e791a3ac0667ae1c3575c3e4d0d4589e9ed5bfaf3d
+FROM node:22-trixie-slim@sha256:2d9f5c76c8f4dd36e8f253bee5d828a83a6c09f36188f0b0414325232e0b175d
 
 ENV DEBIAN_FRONTEND=noninteractive
 
 # Hermes version pinned for reproducibility.
-# Calver tag v2026.4.23 = semver 0.11.0.
-ARG HERMES_VERSION=v2026.4.23
-ARG HERMES_TARBALL_SHA256=1ee1be80a2112b7edc581770cee8858e725ba110cc423979cd7102492504bc6b
+# Calver tag v2026.5.16 = Hermes Agent v0.14.0.
+ARG HERMES_VERSION=v2026.5.16
+ARG HERMES_TARBALL_SHA256=c0a554050a50ee9a62f3fa5cd288a167ba5640c42d647d100cdea084b7294143
 ARG HERMES_UV_EXTRAS="messaging web"
 ARG UV_VERSION=0.11.8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        python3=3.11.2-1+b1 \
-        python3-pip=23.0.1+dfsg-1 \
-        python3-venv=3.11.2-1+b1 \
-        curl=7.88.1-10+deb12u14 \
-        git=1:2.39.5-0+deb12u3 \
-    gnupg=2.2.40-1.1+deb12u2 \
-        ca-certificates=20230311+deb12u1 \
-        iproute2=6.1.0-3 \
-        iptables=1.8.9-2 \
-        libcap2-bin=1:2.66-4+deb12u2+b2 \
-    procps=2:4.0.2-3 \
-    openssh-sftp-server=1:9.2p1-2+deb12u9 \
-        socat=1.7.4.4-2 \
+        python3=3.13.5-1 \
+        python3-pip=25.1.1+dfsg-1 \
+        python3-venv=3.13.5-1 \
+        curl=8.14.1-2+deb13u3 \
+        git=1:2.47.3-0+deb13u1 \
+        gnupg=2.4.7-21+deb13u1 \
+        ca-certificates=20250419 \
+        iproute2=6.15.0-1 \
+        iptables=1.8.11-2 \
+        libcap2-bin=1:2.75-10+deb13u1+b1 \
+        procps=2:4.0.4-9 \
+        e2fsprogs=1.47.2-3+b11 \
+        openssh-sftp-server=1:10.0p1-7+deb13u4 \
+        socat=1.8.0.3-1 \
+        "dos2unix=7.5.2-1*" \
+        jq=1.7.1-6+deb13u2 \
+        vim-tiny=2:9.1.1230-2 \
     && rm -rf /var/lib/apt/lists/*
 
 # gosu for privilege separation (gateway vs sandbox user).
@@ -85,6 +89,9 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/profiles \
         /sandbox/.hermes/cache \
         /sandbox/.hermes/pairing \
+        /sandbox/.hermes/platforms \
+        /sandbox/.hermes/platforms/whatsapp \
+        /sandbox/.hermes/platforms/whatsapp/session \
         /sandbox/.hermes/runtime \
     && chown -R sandbox:sandbox /sandbox/.hermes \
     && chown gateway:sandbox /sandbox/.hermes/runtime \
@@ -102,7 +109,14 @@ RUN mkdir -p /sandbox/.hermes/memories \
         /sandbox/.hermes/profiles \
         /sandbox/.hermes/cache \
         /sandbox/.hermes/pairing \
+        /sandbox/.hermes/platforms \
+        /sandbox/.hermes/platforms/whatsapp \
+        /sandbox/.hermes/platforms/whatsapp/session \
         /sandbox/.hermes/runtime \
+    && chmod 2770 \
+        /sandbox/.hermes/platforms \
+        /sandbox/.hermes/platforms/whatsapp \
+        /sandbox/.hermes/platforms/whatsapp/session \
     && chmod 2770 /sandbox/.hermes/runtime \
     && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \
         rm -f "/sandbox/.hermes/${name}"; \
@@ -110,19 +124,19 @@ RUN mkdir -p /sandbox/.hermes/memories \
     done
 
 # Pre-create shell init files for the sandbox user.
-# The /sandbox home directory is Landlock read-only at runtime (#804), so these
-# files must exist at build time. The Hermes entrypoint writes proxy vars and
-# HERMES_HOME to /tmp/nemoclaw-proxy-env.sh (root-owned, mode 444); these rc
-# files source it on every interactive `openshell sandbox connect` session.
+# The Hermes entrypoint writes proxy vars and
+# HERMES_HOME to /tmp/nemoclaw-proxy-env.sh (mode 444, root-owned when the
+# entrypoint runs as root); these rc files source it on every interactive
+# `openshell sandbox connect` session.
 # Ref: #2376.
 # hadolint ignore=SC2016,SC2028
 RUN printf '%s\n' \
-        '# Source runtime proxy + HERMES_HOME config (Landlock read-only home, #804)' \
+        '# Source runtime proxy + HERMES_HOME config' \
         '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
         'export PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"' \
         > /sandbox/.bashrc \
     && printf '%s\n' \
-        '# Source runtime proxy + HERMES_HOME config (Landlock read-only home, #804)' \
+        '# Source runtime proxy + HERMES_HOME config' \
         '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
         'export PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"' \
         > /sandbox/.profile \
@@ -131,9 +145,10 @@ RUN printf '%s\n' \
 
 # Install Hermes Agent from the selected GitHub release.
 # The image prebakes only the extras mapped to NemoClaw-supported onboarding
-# integrations: messaging (Telegram, Discord, Slack) and web (API health/UI
-# runtime). New Hermes integrations should be installed by the agent workflow
-# when they are enabled rather than shipped in the base image by default.
+# integrations: messaging (Telegram, Discord, Slack, WeChat, WhatsApp) and
+# web (API health/UI runtime). New Hermes integrations should be installed
+# by the agent workflow when they are enabled rather than shipped in the
+# base image by default.
 # Root Node dependencies provide Hermes browser tooling such as agent-browser.
 RUN pip3 install --no-cache-dir --break-system-packages "uv==${UV_VERSION}"
 RUN mkdir -p /opt/hermes \

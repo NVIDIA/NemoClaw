@@ -39,16 +39,16 @@ describe("sandboxName command hardening in onboard.js", () => {
       pathToFileURL(path.join(repoRoot, "dist", "lib", "runner.js")).href,
     );
     const registryUrl = JSON.stringify(
-      pathToFileURL(path.join(repoRoot, "dist", "lib", "registry.js")).href,
+      pathToFileURL(path.join(repoRoot, "dist", "lib", "state", "registry.js")).href,
     );
     const preflightUrl = JSON.stringify(
-      pathToFileURL(path.join(repoRoot, "dist", "lib", "preflight.js")).href,
+      pathToFileURL(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js")).href,
     );
     const credentialsUrl = JSON.stringify(
-      pathToFileURL(path.join(repoRoot, "dist", "lib", "credentials.js")).href,
+      pathToFileURL(path.join(repoRoot, "dist", "lib", "credentials", "store.js")).href,
     );
     const streamUrl = JSON.stringify(
-      pathToFileURL(path.join(repoRoot, "dist", "lib", "sandbox-create-stream.js")).href,
+      pathToFileURL(path.join(repoRoot, "dist", "lib", "sandbox", "create-stream.js")).href,
     );
 
     fs.mkdirSync(fakeBin, { recursive: true });
@@ -82,8 +82,8 @@ runner.runCapture = (command) => {
   const text = asText(command);
   if (text.includes("sandbox get my-assistant")) return "";
   if (text.includes("sandbox list")) return "my-assistant Ready";
-  if (text.includes("forward list")) return "";
-  if (text.includes("sandbox exec -n my-assistant -- curl -sf")) return "ok";
+  if (text.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (text.includes("sandbox exec") && text.includes("http://localhost:") && text.includes("/health")) return "200";
   if (text === "uname -r") return "6.8.0";
   return "";
 };
@@ -104,6 +104,8 @@ try {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_NON_INTERACTIVE = "1";
   process.env.NEMOCLAW_HEALTH_POLL_COUNT = "1";
+  Object.defineProperty(process, "platform", { value: "darwin" });
+  Object.defineProperty(process, "arch", { value: "x64" });
   const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, commands }));
 } catch (error) {

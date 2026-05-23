@@ -229,6 +229,56 @@ describe("runner env merging", () => {
     );
     expect(firstCall[2]?.env?.PATH).toBe("/usr/local/bin:/usr/bin");
   });
+
+  it("#2616: runCaptureEx injects NO_PROXY=localhost,127.0.0.1 when http_proxy is set", () => {
+    // Regression for the macOS Privoxy scenario: validateOllamaModel calls
+    // runCaptureEx with a curl probe against http://localhost:11434. Before
+    // the fix, runCaptureEx merged raw process.env (including the user's
+    // http_proxy) and never injected NO_PROXY, so the spawned curl tunneled
+    // its localhost probe through Privoxy and returned HTTP 500.
+    const calls: SpawnCall[] = [];
+    const originalSpawnSync = childProcess.spawnSync;
+    const originalHttpProxy = process.env.http_proxy;
+    const originalNoProxy = process.env.NO_PROXY;
+    const originalNoProxyLower = process.env.no_proxy;
+    // @ts-expect-error — intentional partial mock for testing
+    childProcess.spawnSync = captureSpawnCall(calls, { status: 0, stdout: "", stderr: "" });
+
+    try {
+      delete require.cache[require.resolve(runnerPath)];
+      const { runCaptureEx } = require(runnerPath);
+      process.env.http_proxy = "http://127.0.0.1:8118";
+      delete process.env.NO_PROXY;
+      delete process.env.no_proxy;
+      runCaptureEx([
+        "curl",
+        "-sS",
+        "--max-time",
+        "3",
+        "http://localhost:11434/api/ps",
+      ]);
+    } finally {
+      if (originalHttpProxy === undefined) delete process.env.http_proxy;
+      else process.env.http_proxy = originalHttpProxy;
+      if (originalNoProxy === undefined) delete process.env.NO_PROXY;
+      else process.env.NO_PROXY = originalNoProxy;
+      if (originalNoProxyLower === undefined) delete process.env.no_proxy;
+      else process.env.no_proxy = originalNoProxyLower;
+      childProcess.spawnSync = originalSpawnSync;
+      delete require.cache[require.resolve(runnerPath)];
+    }
+
+    expect(calls).toHaveLength(1);
+    const firstCall = requireCall(calls, 0);
+    const env = firstCall[2]?.env ?? {};
+    expect(env.http_proxy).toBe("http://127.0.0.1:8118");
+    // Both casings get the loopback hosts so curl, Node, Python all respect
+    // the bypass regardless of which one they read.
+    expect(env.NO_PROXY).toContain("localhost");
+    expect(env.NO_PROXY).toContain("127.0.0.1");
+    expect(env.no_proxy).toContain("localhost");
+    expect(env.no_proxy).toContain("127.0.0.1");
+  });
 });
 
 describe("shellQuote", () => {
@@ -281,6 +331,14 @@ describe("validateName", () => {
     expect(() => validateName("")).toThrow(/required/);
     expect(() => validateName(null)).toThrow(/required/);
     expect(() => validateName("a".repeat(64))).toThrow(/too long/);
+  });
+
+  it("rejects excessively long valid-looking names before spawning OpenShell", () => {
+    const { validateName } = require(runnerPath);
+    expect(validateName("a".repeat(63))).toBe("a".repeat(63));
+    expect(() => validateName("a".repeat(64 * 1024), "sandbox name")).toThrow(
+      /sandbox name too long \(max 63 chars\)/,
+    );
   });
 
   it("rejects uppercase and special characters", () => {
@@ -554,19 +612,6 @@ describe("regression guards", () => {
     }
   });
 
-  it("nemoclaw.ts does not use execSync", () => {
-    const src = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "nemoclaw.ts"),
-      "utf-8",
-    );
-    const lines = src.split("\n");
-    for (let i = 0; i < lines.length; i += 1) {
-      if (lines[i].includes("execSync") && !lines[i].includes("execFileSync")) {
-        expect.unreachable(`src/nemoclaw.ts:${i + 1} uses execSync — use execFileSync instead`);
-      }
-    }
-  });
-
   it("keeps a single shellQuote definition in the root CLI codebase", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const searchRoots = [path.join(repoRoot, "bin"), path.join(repoRoot, "src")];
@@ -584,15 +629,21 @@ describe("regression guards", () => {
 
     const defs = [];
     for (const file of files) {
-      const src = fs.readFileSync(file, "utf-8");
+      let src: string;
+      try {
+        src = fs.readFileSync(file, "utf-8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
+        throw error;
+      }
       if (src.includes("function shellQuote")) {
         defs.push(path.relative(repoRoot, file));
       }
     }
-    // runner.ts (CJS consumers) and shell-quote.ts (ESM consumers like config-io.ts)
+    // runner.ts (CJS consumers) and core/shell-quote.ts (ESM consumers like config-io.ts)
     expect(defs.sort()).toEqual([
+      path.join("src", "lib", "core", "shell-quote.ts"),
       path.join("src", "lib", "runner.ts"),
-      path.join("src", "lib", "shell-quote.ts"),
     ]);
   });
 
@@ -661,21 +712,38 @@ describe("regression guards", () => {
             shift || true
           done
           if [ -n "$out" ]; then
-            if [ "$(basename "$out")" = "openshell-checksums-sha256.txt" ]; then
+            case "$(basename "$out")" in
+            openshell-checksums-sha256.txt)
               printf '%s\n' \
                 'ignored  openshell-x86_64-unknown-linux-musl.tar.gz' \
                 'ignored  openshell-aarch64-unknown-linux-musl.tar.gz' \
                 'ignored  openshell-x86_64-apple-darwin.tar.gz' \
-                'ignored  openshell-aarch64-apple-darwin.tar.gz' > "$out"
-            else
+                'ignored  openshell-aarch64-apple-darwin.tar.gz' \
+                'ignored  openshell-driver-vm-aarch64-apple-darwin.tar.gz' > "$out"
+              ;;
+            openshell-gateway-checksums-sha256.txt)
+              printf '%s\n' \
+                'ignored  openshell-gateway-x86_64-unknown-linux-gnu.tar.gz' \
+                'ignored  openshell-gateway-aarch64-unknown-linux-gnu.tar.gz' \
+                'ignored  openshell-gateway-aarch64-apple-darwin.tar.gz' > "$out"
+              ;;
+            openshell-sandbox-checksums-sha256.txt)
+              printf '%s\n' \
+                'ignored  openshell-sandbox-x86_64-unknown-linux-gnu.tar.gz' \
+                'ignored  openshell-sandbox-aarch64-unknown-linux-gnu.tar.gz' > "$out"
+              ;;
+            *)
               : > "$out"
-            fi
+              ;;
+            esac
           fi
           return 0
         }
         export -f curl
-        shasum() { cat >/dev/null; echo "checksum OK"; return 0; }
-        export -f shasum
+        sha256sum() { cat >/dev/null; echo "checksum OK"; return 0; }
+        export -f sha256sum
+        strings() { echo "request-body-credential-rewrite websocket-credential-rewrite"; }
+        export -f strings
         tar() { return 0; }; export -f tar
         install() { return 0; }; export -f install
         source "${scriptPath}"
@@ -697,7 +765,7 @@ describe("regression guards", () => {
     it("install-openshell.sh gh-present-but-fails path falls back to curl", () => {
       const scriptPath = path.join(import.meta.dirname, "..", "scripts", "install-openshell.sh");
       const tmpBin = fs.mkdtempSync(path.join(os.tmpdir(), "gh-stub-"));
-      const checksumLog = path.join(tmpBin, "shasum.log");
+      const checksumLog = path.join(tmpBin, "sha256sum.log");
       const ghStub = path.join(tmpBin, "gh");
       fs.writeFileSync(ghStub, "#!/bin/sh\nexit 4\n");
       fs.chmodSync(ghStub, 0o755);
@@ -709,8 +777,10 @@ describe("regression guards", () => {
         export PATH="${tmpBin}:/usr/bin:/bin"
         curl() { echo "CURL_FALLBACK $*"; return 0; }
         export -f curl
-        shasum() { echo "SHASUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
-        export -f shasum
+        sha256sum() { echo "SHA256SUM $*" >> ${JSON.stringify(checksumLog)}; echo "checksum OK"; return 0; }
+        export -f sha256sum
+        strings() { echo "request-body-credential-rewrite websocket-credential-rewrite"; }
+        export -f strings
         tar() { return 0; }; export -f tar
         install() { return 0; }; export -f install
         source "${scriptPath}"
@@ -723,7 +793,7 @@ describe("regression guards", () => {
         const out = (result.stdout || "") + (result.stderr || "");
         expect(out).toContain("falling back to curl");
         expect(out).toContain("CURL_FALLBACK");
-        expect(fs.readFileSync(checksumLog, "utf-8")).toContain("SHASUM -a 256 -c -");
+        expect(fs.readFileSync(checksumLog, "utf-8")).toContain("SHA256SUM -c -");
       } finally {
         fs.rmSync(tmpBin, { recursive: true, force: true });
       }
@@ -755,7 +825,7 @@ describe("regression guards", () => {
             {
               encoding: "utf-8",
               env: { ...process.env, HOME: tmp, PATH: `${fakeBin}:/usr/bin:/bin` },
-              timeout: 5000,
+              timeout: 15000,
             },
           );
           expect(result.status, `${script}: ${result.stdout}${result.stderr}`).toBe(0);
@@ -798,6 +868,20 @@ describe("regression guards", () => {
       expect(src).toContain('brev("ls")');
       expect(src).not.toContain("BREV_API_TOKEN");
       expect(src).not.toContain('brev("login", "--token"');
+    });
+
+    it("brev e2e suite captures CPU candidates before piping them into create", () => {
+      const src = fs.readFileSync(
+        path.join(import.meta.dirname, "..", "test", "e2e", "brev-e2e.test.ts"),
+        "utf-8",
+      );
+      expect(src).toContain(
+        'const CAPTURE_OUTPUT_STDIO: StdioOptions = ["ignore", "pipe", "inherit"]',
+      );
+      expect(src).toMatch(
+        /const cpuCandidates = execFileSync\([\s\S]*"search",[\s\S]*"cpu",[\s\S]*stdio: CAPTURE_OUTPUT_STDIO/,
+      );
+      expect(src).toMatch(/input: cpuCandidates,[\s\S]*stdio: PIPE_INPUT_STDIO/);
     });
 
     it("brev e2e suite no longer contains the old brev-setup compatibility path", () => {

@@ -67,16 +67,16 @@ For each relevant commit, determine which doc page(s) it affects. Use this mappi
 
 | Code area | Likely doc page(s) |
 |---|---|
-| `nemoclaw/src/commands/` (launch, connect, status, logs) | `docs/reference/commands.md` |
-| `nemoclaw/src/commands/` (new command) | May need a new page or entry in `docs/reference/commands.md` |
-| `nemoclaw/src/blueprint/` | `docs/about/architecture.md` |
-| `nemoclaw/src/cli.ts` or `nemoclaw/src/index.ts` | `docs/reference/commands.md`, `docs/get-started/quickstart.md` |
-| `nemoclaw-blueprint/orchestrator/` | `docs/about/architecture.md` |
-| `nemoclaw-blueprint/policies/` | `docs/reference/network-policies.md` |
-| `nemoclaw-blueprint/blueprint.yaml` | `docs/about/architecture.md`, `docs/reference/inference-profiles.md` |
-| `scripts/` (setup, start) | `docs/get-started/quickstart.md` |
-| `Dockerfile` | `docs/about/architecture.md` |
-| Inference-related changes | `docs/reference/inference-profiles.md` |
+| `nemoclaw/src/commands/` (launch, connect, status, logs) | `docs/reference/commands.mdx` |
+| `nemoclaw/src/commands/` (new command) | May need a new page or entry in `docs/reference/commands.mdx` |
+| `nemoclaw/src/blueprint/` | `docs/reference/architecture.mdx` |
+| `nemoclaw/src/cli.ts` or `nemoclaw/src/index.ts` | `docs/reference/commands.mdx`, `docs/get-started/quickstart.mdx` |
+| `nemoclaw-blueprint/orchestrator/` | `docs/reference/architecture.mdx` |
+| `nemoclaw-blueprint/policies/` | `docs/reference/network-policies.mdx` |
+| `nemoclaw-blueprint/blueprint.yaml` | `docs/reference/architecture.mdx`, `docs/inference/inference-options.mdx` |
+| `scripts/` (setup, start) | `docs/get-started/quickstart.mdx` |
+| `Dockerfile` | `docs/reference/architecture.mdx` |
+| Inference-related changes | `docs/inference/inference-options.mdx` |
 
 If a commit does not map to any existing page but introduces a user-visible concept, flag it as needing a new page.
 
@@ -131,7 +131,7 @@ When updating an existing page:
 When creating a new page:
 
 - Follow the frontmatter template from existing pages in `docs/`.
-- Add the page to the appropriate `toctree` in `docs/index.md`.
+- Add the page to the appropriate navigation entry in `docs/index.yml`.
 
 ## Step 6: Present the Results
 
@@ -141,8 +141,8 @@ After drafting all updates, present a summary to the user:
 ## Doc Updates from Commits
 
 ### Updated pages
-- `docs/reference/commands.md`: Added `eject` command documentation (from commit abc1234).
-- `docs/reference/network-policies.md`: Updated policy schema for new egress rule (from commit def5678).
+- `docs/reference/commands.mdx`: Added `eject` command documentation (from commit abc1234).
+- `docs/reference/network-policies.mdx`: Updated policy schema for new egress rule (from commit def5678).
 
 ### New pages needed
 - None (or list any new pages created).
@@ -162,10 +162,11 @@ Skip this step when the user only asked for ordinary doc catch-up and no release
 If the user invoked this skill for release prep, finish the release-specific doc work before verification:
 
 1. Make any requested doc version bumps in `versions1.json` and `project.json` in the `docs/` directory.
-2. Refresh the NemoClaw user skills:
+2. Determine the release label from the release version. Release labels use `vX.Y.Z` format. For example, if `docs/project.json` has `"version": "0.0.37"`, the release label is `v0.0.37`. Use the version requested by the user if one was provided; otherwise use the version in `docs/project.json` after the bump.
+3. Refresh the NemoClaw user skills:
 
    ```bash
-   python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user
+   python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
    ```
 
 ## Step 9: Build and Verify
@@ -188,10 +189,12 @@ Check for:
 Commit changes and open a pull request with a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
 
 ```markdown
-- #<doc-impacting-PR-number> -> `docs/path.md`: Description of the doc change reflecting the source code changes in the PR.
+- #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
 ```
 
-Apply the `documentation` label so reviewers can identify doc-only changes.
+Apply the `documentation` label and the corresponding release label so reviewers can identify doc-only changes for the target release.
+When creating the PR with `gh pr create`, pass both labels, for example `--label documentation --label v0.0.37`.
+If the release label does not exist, report that instead of substituting another label.
 
 ## Tips
 
@@ -201,7 +204,7 @@ Apply the `documentation` label so reviewers can identify doc-only changes.
 - PRs that are purely internal refactors with no behavior change do not need doc updates, even if they touch high-signal directories.
 - To suppress documentation for a merged feature that is not ready for public docs, add it to `docs/.docs-skip`. Remove the entry once the feature is ready to document.
 
-## Example Usage
+## Summary of Steps
 
 User says: "Catch up the docs for everything merged since v0.1.0."
 
@@ -211,13 +214,13 @@ User says: "Catch up the docs for everything merged since v0.1.0."
 4. Read the commit diffs and current doc pages.
 5. Draft doc updates reflecting the source code changes in the commits following the style guide.
 6. **Release prep only:** Apply release-prep version bumps if the user requested release prep.
-7. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user`.
+7. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
 8. Present the summary.
 9. Build with `make docs` to verify.
-10. **Release prep only:** Commit changes and open a pull request with a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
+10. **Release prep only:** Commit changes and open a pull request with the `documentation` label and the corresponding `vX.Y.Z` release label. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
 
    ```markdown
-   - #<doc-impacting-PR-number> -> `docs/path.md`: Description of the doc change reflecting the source code changes in the PR.
+   - #<doc-impacting-PR-number> -> `docs/path.mdx`: Description of the doc change reflecting the source code changes in the PR.
    ```
 
-11.Apply the `documentation` label so reviewers can identify doc-only changes.
+   If the release label does not exist, report that the PR was created without the release label or that PR creation failed because the label was missing.

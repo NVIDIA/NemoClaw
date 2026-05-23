@@ -1,78 +1,209 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/* v8 ignore start -- exercised through CLI subprocess status tests. */
 
-import { CLI_DISPLAY_NAME, CLI_NAME } from "../../branding";
-import { parseSandboxPhase } from "../../gateway-state";
+import * as agentRuntime from "../../agent/runtime";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
+import { parseSandboxPhase } from "../../state/gateway";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
-import { parseGatewayInference } from "../../inference-config";
-import { probeProviderHealth } from "../../inference-health";
-import * as nim from "../../nim";
-import * as onboardSession from "../../onboard-session";
-import type { Session } from "../../onboard-session";
+import { parseGatewayInference } from "../../inference/config";
+import {
+  probeProviderHealth,
+  type ProviderHealthProbeOptions,
+  type ProviderHealthStatus,
+} from "../../inference/health";
+import * as nim from "../../inference/nim";
+import * as onboardSession from "../../state/onboard-session";
+import type { Session } from "../../state/onboard-session";
 import {
   captureOpenshellForStatus,
   isCommandTimeout,
 } from "../../adapters/openshell/runtime";
-import * as registry from "../../registry";
+import {
+  detectOpenShellStateRpcResultIssue,
+  printOpenShellStateRpcIssue,
+} from "../../adapters/openshell/gateway-drift";
+import * as registry from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import type { SandboxGatewayState } from "./gateway-state";
 import {
   getReconciledSandboxGatewayState,
   getSandboxGatewayStateForStatus,
   printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
 } from "./gateway-state";
-import { isSandboxGatewayRunningForStatus } from "./process-recovery";
+import { classifyGatewayFailure, getLayerHeader } from "./gateway-failure-classifier";
+import {
+  isSandboxGatewayRunningForStatus,
+  probeSandboxInferenceGatewayHealth,
+} from "./process-recovery";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
-} from "../../sandbox-session-state";
-import * as sandboxVersion from "../../sandbox-version";
+} from "../../state/sandbox-session";
+import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
-import { D, G, R, RD, YW } from "../../terminal-style";
+import { D, G, R, RD, YW } from "../../cli/terminal-style";
 
-const agentRuntime = require("../../../../bin/lib/agent-runtime");
+type ProbeProviderHealth = (
+  provider: string,
+  options?: ProviderHealthProbeOptions,
+) => ProviderHealthStatus | null;
+
+export function getSandboxStatusInferenceHealth(
+  gatewayPresent: boolean,
+  currentProvider: unknown,
+  currentModel: unknown,
+  probeProviderHealthImpl: ProbeProviderHealth = probeProviderHealth,
+): ProviderHealthStatus | null {
+  if (!gatewayPresent || typeof currentProvider !== "string") return null;
+  return probeProviderHealthImpl(currentProvider, {
+    model: typeof currentModel === "string" ? currentModel : undefined,
+  });
+}
+
+/**
+ * Render one Inference status line. The main probe and each subprobe go
+ * through this helper so multi-hop providers (e.g. ollama-local backend +
+ * auth proxy) get parallel formatting and the failure of any hop is
+ * surfaced individually instead of being hidden by a healthy hop. (#3265)
+ */
+function printInferenceProbeLine(probe: ProviderHealthStatus): void {
+  const label = probe.probeLabel ? `Inference (${probe.probeLabel})` : "Inference";
+  if (!probe.probed) {
+    console.log(`    ${label}: ${D}not probed${R} (${probe.detail})`);
+    return;
+  }
+  if (probe.ok) {
+    console.log(`    ${label}: ${G}healthy${R} (${probe.endpoint})`);
+    return;
+  }
+  // `failureLabel` is set by the probe (e.g. `unauthorized` for HTTP 401 on
+  // the auth proxy in `inference/local.ts:probeOllamaAuthProxyHealth`); the
+  // `|| "unreachable"` fallback only applies when an upstream forgot to set
+  // one. Don't infer the failure mode here — preserve what the probe said. (#3265)
+  console.log(
+    `    ${label}: ${RD}${probe.failureLabel || "unreachable"}${R} (${probe.endpoint})`,
+  );
+  console.log(`      ${probe.detail}`);
+}
+
+function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): void {
+  if (
+    !sb ||
+    sb.agent !== "hermes" ||
+    !Array.isArray(sb.hermesToolGateways) ||
+    sb.hermesToolGateways.length === 0
+  ) {
+    return;
+  }
+  try {
+    const hermesToolGatewayBroker = require("../../hermes-tool-gateway-broker");
+    hermesToolGatewayBroker.ensureHermesToolGatewayBrokerForSandboxEntry(sb, { quiet: true });
+  } catch {
+    /* non-fatal — status should still show sandbox diagnostics */
+  }
+}
+
+async function printGatewayFailureLayerHeader(sandboxName: string): Promise<void> {
+  const failure = await classifyGatewayFailure(sandboxName);
+  console.log(`  ${getLayerHeader(failure.layer)}`);
+}
 
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   const sb = registry.getSandbox(sandboxName);
-  const lookup = await getReconciledSandboxGatewayState(sandboxName, {
-    getState: getSandboxGatewayStateForStatus,
-  });
-  const liveResult =
-    lookup.state === "present"
-      ? await captureOpenshellForStatus(["inference", "get"], {
-          ignoreError: true,
-        })
-      : null;
+  maybeEnsureHermesToolGatewayBroker(sb);
+  // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
+  // hanging when its container is stopped and the published port is held by a
+  // foreign listener) suppress the sandbox header. The downstream switch
+  // handles `gateway_error` by printing an actionable block + exit(1), so a
+  // synthesized fallback keeps the user-visible contract intact.
+  let lookup: SandboxGatewayState;
+  try {
+    lookup = await getReconciledSandboxGatewayState(sandboxName, {
+      getState: getSandboxGatewayStateForStatus,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    lookup = {
+      state: "gateway_error",
+      output: `  Could not probe live gateway state: ${message}`,
+    };
+  }
+  let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
+  if (lookup.state === "present") {
+    try {
+      liveResult = await captureOpenshellForStatus(["inference", "get"]);
+    } catch {
+      liveResult = null;
+    }
+  }
+  if (liveResult) {
+    const inferenceIssue = detectOpenShellStateRpcResultIssue(liveResult);
+    if (inferenceIssue) {
+      printOpenShellStateRpcIssue(inferenceIssue, {
+        action: `checking inference status for sandbox '${sandboxName}'`,
+        command: `${CLI_NAME} ${sandboxName} status`,
+      });
+      process.exit(1);
+    }
+  }
   const live =
     liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
   const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
-  const inferenceHealth =
-    lookup.state === "present" && typeof currentProvider === "string"
-      ? probeProviderHealth(currentProvider)
-      : null;
+  const inferenceHealth = getSandboxStatusInferenceHealth(
+    lookup.state === "present",
+    currentProvider,
+    currentModel,
+  );
+  // #3265 optional 3rd line: probe the full inference chain (openclaw gateway
+  // → auth proxy → backend) from inside the sandbox so a broken hop the
+  // host-side probes can't see still surfaces in `status`.
+  if (
+    inferenceHealth &&
+    lookup.state === "present" &&
+    (currentProvider === "ollama-local" || currentProvider === "vllm-local")
+  ) {
+    const gatewayChain = await probeSandboxInferenceGatewayHealth(sandboxName);
+    if (gatewayChain) {
+      const gatewaySubprobe: ProviderHealthStatus = {
+        ok: gatewayChain.ok,
+        probed: true,
+        providerLabel: "Inference gateway chain",
+        endpoint: gatewayChain.endpoint,
+        detail: gatewayChain.detail,
+        probeLabel: "gateway",
+        ...(gatewayChain.ok ? {} : { failureLabel: "unreachable" as const }),
+      };
+      inferenceHealth.subprobes = [...(inferenceHealth.subprobes ?? []), gatewaySubprobe];
+    }
+  }
   if (sb) {
     console.log("");
     console.log(`  Sandbox: ${sb.name}`);
     console.log(`    Model:    ${currentModel}`);
     console.log(`    Provider: ${currentProvider}`);
     if (inferenceHealth) {
-      if (!inferenceHealth.probed) {
-        console.log(`    Inference: ${D}not probed${R} (${inferenceHealth.detail})`);
-      } else if (inferenceHealth.ok) {
-        console.log(`    Inference: ${G}healthy${R} (${inferenceHealth.endpoint})`);
-      } else {
-        console.log(`    Inference: ${RD}unreachable${R} (${inferenceHealth.endpoint})`);
-        console.log(`      ${inferenceHealth.detail}`);
+      printInferenceProbeLine(inferenceHealth);
+      for (const sub of inferenceHealth.subprobes ?? []) {
+        printInferenceProbeLine(sub);
       }
     }
     if (lookup.state !== "present") {
       console.log("    Inference: not verified (gateway/sandbox state not verified)");
     }
-    console.log(`    GPU:      ${sb.gpuEnabled ? "yes" : "no"}`);
+    const hostGpu = sb.hostGpuDetected ? "yes" : "no";
+    const sandboxGpuEnabled = sb.sandboxGpuEnabled ?? (sb.gpuEnabled === true);
+    const sandboxGpu = sandboxGpuEnabled ? "enabled" : "disabled";
+    const sandboxGpuMode = sb.sandboxGpuMode ? ` (${sb.sandboxGpuMode})` : "";
+    const sandboxGpuDevice = sb.sandboxGpuDevice ? ` device=${sb.sandboxGpuDevice}` : "";
+    const openshellDriver = sb.openshellDriver || "unknown";
+    const openshellVersion = sb.openshellVersion || "unknown";
+    console.log(`    Host GPU: ${hostGpu}`);
+    console.log(`    Sandbox GPU: ${sandboxGpu}${sandboxGpuMode}${sandboxGpuDevice}`);
+    console.log(`    OpenShell: ${openshellVersion} (${openshellDriver})`);
     console.log(`    Policies: ${(sb.policies || []).join(", ") || "none"}`);
 
     // Active session indicator
@@ -94,8 +225,13 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       /* non-fatal */
     }
 
-    if (shields.isShieldsDown(sandboxName)) {
-      console.log("    Permissions: shields down (check `shields status` for details)");
+    const shieldsPosture = shields.getShieldsPosture(sandboxName, true);
+    if (shieldsPosture.mode !== "locked") {
+      const detail =
+        shieldsPosture.mode === "mutable_default"
+          ? shieldsPosture.detail
+          : `${shieldsPosture.detail} (check \`shields status\` for details)`;
+      console.log(`    Permissions: ${detail}`);
     }
 
     // Agent version check
@@ -144,6 +280,9 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     console.log("");
     printWrongGatewayActiveGuidance(sandboxName, activeGateway, console.log);
     process.exit(1);
+  } else if (lookup.state === "gateway_schema_mismatch") {
+    console.log(lookup.output);
+    process.exit(1);
   } else if (lookup.state === "missing") {
     // Belt-and-suspenders: only destroy registry state if the nemoclaw gateway
     // is demonstrably the healthy active gateway. Guards against regressions
@@ -154,6 +293,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       if (guard.state === "connected_other") {
         printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.log);
       } else {
+        await printGatewayFailureLayerHeader(sandboxName);
         printGatewayLifecycleHint(guard.status || "", sandboxName, console.log);
       }
     } else {
@@ -187,6 +327,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     process.exit(1);
   } else if (lookup.state === "gateway_unreachable_after_restart") {
     console.log("");
+    await printGatewayFailureLayerHeader(sandboxName);
     console.log(
       `  Sandbox '${sandboxName}' may still exist, but the selected ${CLI_DISPLAY_NAME} gateway is still refusing connections after restart.`,
     );
@@ -202,6 +343,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     process.exit(1);
   } else if (lookup.state === "gateway_missing_after_restart") {
     console.log("");
+    await printGatewayFailureLayerHeader(sandboxName);
     console.log(
       `  Sandbox '${sandboxName}' may still exist locally, but the ${CLI_DISPLAY_NAME} gateway is no longer configured after restart/rebuild.`,
     );
@@ -221,6 +363,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     if (lookup.output) {
       console.log(lookup.output);
     }
+    await printGatewayFailureLayerHeader(sandboxName);
     printGatewayLifecycleHint(lookup.output, sandboxName, console.log);
     process.exit(1);
   }

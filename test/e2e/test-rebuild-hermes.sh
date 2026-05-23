@@ -82,7 +82,7 @@ dump_hermes_sandbox_logs() {
   diag_script+='; echo "== log and state paths =="; ls -ld /tmp /sandbox/.hermes /sandbox/.hermes/logs 2>&1 || true; ls -l /tmp/nemoclaw-start.log /tmp/gateway.log 2>&1 || true'
   diag_script+='; echo "== hermes-related processes =="'
   # shellcheck disable=SC2016  # script is intentionally evaluated inside the sandbox
-  diag_script+='; for p in /proc/[0-9]*; do cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true); case "$cmd" in *hermes*|*socat*|*nemoclaw-decode-proxy*) echo "$(basename "$p") $cmd" ;; esac; done'
+  diag_script+='; for p in /proc/[0-9]*; do cmd=$(tr "\000" " " < "$p/cmdline" 2>/dev/null || true); case "$cmd" in *hermes*|*socat*) echo "$(basename "$p") $cmd" ;; esac; done'
   diag_script+='; echo "== /tmp/nemoclaw-start.log tail =="; tail -n 80 /tmp/nemoclaw-start.log 2>&1 || true'
   diag_script+='; echo "== /tmp/gateway.log tail =="; tail -n 120 /tmp/gateway.log 2>&1 || true'
 
@@ -142,6 +142,11 @@ pass "NemoClaw installed"
 # Delete the sandbox that install.sh created — we'll make our own old one.
 # Use openshell directly to preserve the 'nemoclaw' gateway for the rebuild.
 openshell sandbox delete "${SANDBOX_NAME}" 2>/dev/null || true
+# Raw OpenShell deletion can leave the prior Hermes API/dashboard forward
+# bound for a short window. The rebuild create path intentionally rolls back if
+# the baked dashboard port is host-bound after image build, so make this phase
+# cleanup synchronous before creating the old fixture sandbox.
+openshell forward stop 8642 >/dev/null 2>&1 || true
 diag "Deleted Phase 1 sandbox, gateway preserved: $(docker ps --filter name=openshell --format '{{.Names}} {{.Status}}' 2>/dev/null)"
 
 # ── Phase 2: Build old Hermes base image ───────────────────────────

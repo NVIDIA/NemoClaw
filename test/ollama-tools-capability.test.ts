@@ -7,8 +7,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const require = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "..");
-const LOCAL_INFERENCE_PATH = path.join(REPO_ROOT, "dist", "lib", "local-inference.js");
-const ONBOARD_OLLAMA_PROXY_PATH = path.join(REPO_ROOT, "dist", "lib", "onboard-ollama-proxy.js");
+const LOCAL_INFERENCE_PATH = path.join(REPO_ROOT, "dist", "lib", "inference", "local.js");
+const ONBOARD_OLLAMA_PROXY_PATH = path.join(REPO_ROOT, "dist", "lib", "inference", "ollama", "proxy.js");
 
 type CapturedCall = { argv: readonly string[]; opts?: Record<string, unknown> };
 
@@ -29,6 +29,8 @@ interface LocalInferenceModule {
   validateOllamaModel: (
     model: string,
     capture?: CaptureFn,
+    isSparkImpl?: () => boolean,
+    captureExImpl?: (cmd: string[]) => { stdout: string; exitCode: number | null; timedOut: boolean },
   ) => { ok: boolean; message?: string };
   setResolvedOllamaHost: (host: string) => void;
   resetOllamaHostCache: () => void;
@@ -176,7 +178,9 @@ describe("validateOllamaModel — tools-capable error mapping", () => {
         }),
       },
     ]);
-    const result = localInference.validateOllamaModel("phi4", capture);
+    const payload = JSON.stringify({ error: "registry.ollama.ai/library/phi4 does not support tools" });
+    const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+    const result = localInference.validateOllamaModel("phi4", capture, () => false, captureEx);
     expect(result.ok).toBe(false);
     expect(result.message).toBeTruthy();
     expect(result.message!).toContain("phi4");
@@ -235,7 +239,7 @@ function installSharedStubs(): void {
     _model: string,
   ) => SHARED.scriptedCaps;
 
-  const credentialsPath = path.join(REPO_ROOT, "dist", "lib", "credentials.js");
+  const credentialsPath = path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js");
   const credentials = require(credentialsPath) as {
     prompt: (msg: string) => Promise<string>;
   };

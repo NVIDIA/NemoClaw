@@ -1,0 +1,29 @@
+{
+  "$schema": "../schema.json",
+  "id": "kimi-k2.6-managed-inference",
+  "agent": "openclaw",
+  "description": "Preserves OpenClaw request, tool-call, and reasoning-output compatibility for moonshotai/kimi-k2.6 through NemoClaw managed inference.local chat completions.",
+  "match": {
+    "modelIds": ["moonshotai/kimi-k2.6"],
+    "providerKey": "inference",
+    "inferenceApi": "openai-completions",
+    "baseUrl": "https://inference.local/v1"
+  },
+  "effects": {
+    "openclawCompat": {
+      "requiresStringContent": true,
+      "maxTokensField": "max_tokens",
+      "requiresToolResultName": true
+    },
+    "openclawTools": {
+      "toolSearch": false
+    },
+    "openclawPlugins": [
+      {
+        "id": "nemoclaw-kimi-inference-compat",
+        "path": "openclaw-plugins/kimi-inference-compat",
+        "loadPath": "/usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat"
+      }
+    ]
+  }
+}
