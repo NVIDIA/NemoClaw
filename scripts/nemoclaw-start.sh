@@ -1541,11 +1541,11 @@ fi
 # thinking mode disabled for NemoClaw's OpenAI-compatible
 # chat-completions path.
 #
-# The preload wraps http.request() — the lowest common denominator every
-# HTTP client bottoms out at — buffers the JSON body for POST requests
-# to /v1/chat/completions, and injects model-specific kwargs for the affected
-# NVIDIA endpoint models. Backends that do not recognise the extra field
-# silently ignore it (OpenAI-compatible contract).
+# The preload wraps http.request()/https.request() plus fetch() because modern
+# OpenAI-compatible clients may use either transport. It buffers JSON bodies for
+# POST requests to /v1/chat/completions and injects model-specific kwargs for the
+# affected NVIDIA endpoint models. Backends that do not recognise the extra
+# field silently ignore it (OpenAI-compatible contract).
 #
 # Scoped strictly to known affected models: unrelated requests pass through
 # completely untouched.

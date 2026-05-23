@@ -149,4 +149,72 @@ console.log(JSON.stringify(records));
     expect(JSON.parse(records[5].writes[0]).chat_template_kwargs).toBeUndefined();
     expect(JSON.parse(records[6].writes[0]).chat_template_kwargs).toBeUndefined();
   });
+
+  it("preload also injects model-specific kwargs for fetch requests", () => {
+    const preload = extractStartScriptHeredoc(src, "NEMOTRON_FIX_EOF");
+    const harness = `
+const records = [];
+globalThis.fetch = async function (input, init) {
+  records.push({
+    input,
+    body: init && init.body,
+    headers: init && init.headers,
+    method: init && init.method,
+  });
+  return new Response('{}', { status: 200 });
+};
+${preload}
+async function main() {
+  await fetch('https://inference.local/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-length': '999' },
+    body: JSON.stringify({
+      model: 'deepseek-ai/deepseek-v4-pro',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  await fetch('https://inference.local/v1/chat/completions', {
+    method: 'POST',
+    headers: new Headers({ 'content-type': 'application/json', 'content-length': '999' }),
+    body: JSON.stringify({
+      model: 'moonshotai/kimi-k2.6',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  await fetch('https://inference.local/v1/chat/completions', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'content-length': '999' },
+    body: JSON.stringify({
+      model: 'other-model',
+      messages: [{ role: 'user', content: 'hello' }],
+    }),
+  });
+  console.log(JSON.stringify(records.map((record) => ({
+    method: record.method,
+    body: record.body,
+    contentLength:
+      record.headers instanceof Headers
+        ? record.headers.get('content-length')
+        : (record.headers && record.headers['content-length']) || null,
+  }))));
+}
+main().catch((err) => {
+  console.error(err && err.stack ? err.stack : String(err));
+  process.exit(1);
+});
+`;
+
+    const result = spawnSync(process.execPath, ["-e", harness], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status).toBe(0);
+    const records = JSON.parse(result.stdout.trim());
+    expect(JSON.parse(records[0].body).chat_template_kwargs).toEqual({ thinking: false });
+    expect(records[0].contentLength).toBeNull();
+    expect(JSON.parse(records[1].body).chat_template_kwargs).toEqual({ thinking: false });
+    expect(records[1].contentLength).toBeNull();
+    expect(JSON.parse(records[2].body).chat_template_kwargs).toBeUndefined();
+    expect(records[2].contentLength).toBe("999");
+  });
 });

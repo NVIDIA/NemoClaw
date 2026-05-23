@@ -45,6 +45,129 @@
     );
   }
 
+  function shouldPatchModel(model) {
+    return (
+      NEMOTRON_RE.test(model) ||
+      DEEPSEEK_V4_PRO_RE.test(model) ||
+      KIMI_K26_RE.test(model)
+    );
+  }
+
+  function patchBody(body) {
+    if (!body || !body.model || !shouldPatchModel(body.model)) {
+      return false;
+    }
+    if (!hasObjectChatTemplateKwargs(body)) {
+      body.chat_template_kwargs = {};
+    }
+    if (NEMOTRON_RE.test(body.model)) {
+      body.chat_template_kwargs.force_nonempty_content = true;
+    }
+    if (DEEPSEEK_V4_PRO_RE.test(body.model) || KIMI_K26_RE.test(body.model)) {
+      body.chat_template_kwargs.thinking = false;
+    }
+    return true;
+  }
+
+  function patchRawBody(raw) {
+    try {
+      var body = JSON.parse(raw.toString('utf-8'));
+      if (!patchBody(body)) {
+        return null;
+      }
+      return Buffer.from(JSON.stringify(body), 'utf-8');
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function headersWithoutContentLength(headers) {
+    if (typeof Headers !== 'undefined' && headers instanceof Headers) {
+      var copy = new Headers(headers);
+      copy.delete('content-length');
+      return copy;
+    }
+    if (Array.isArray(headers)) {
+      return headers.filter(function (entry) {
+        return !entry || String(entry[0]).toLowerCase() !== 'content-length';
+      });
+    }
+    if (headers && typeof headers === 'object') {
+      var next = {};
+      Object.keys(headers).forEach(function (key) {
+        if (key.toLowerCase() !== 'content-length') {
+          next[key] = headers[key];
+        }
+      });
+      return next;
+    }
+    return headers;
+  }
+
+  function isChatCompletionsFetch(input, init) {
+    var method = String((init && init.method) || (input && input.method) || 'GET').toUpperCase();
+    if (method !== 'POST') return false;
+    var url = '';
+    if (typeof input === 'string') {
+      url = input;
+    } else if (input && typeof input.url === 'string') {
+      url = input.url;
+    } else if (input && typeof input.href === 'string') {
+      url = input.href;
+    }
+    return COMPLETIONS_RE.test(url);
+  }
+
+  function bytesFromSimpleBody(body) {
+    if (typeof body === 'string') return Promise.resolve(Buffer.from(body, 'utf-8'));
+    if (Buffer.isBuffer(body)) return Promise.resolve(body);
+    if (body instanceof Uint8Array) return Promise.resolve(Buffer.from(body));
+    if (body instanceof ArrayBuffer) return Promise.resolve(Buffer.from(body));
+    return null;
+  }
+
+  function wrapFetch() {
+    if (typeof globalThis.fetch !== 'function' || globalThis.fetch.__nemoclawInferenceFix) {
+      return;
+    }
+
+    var origFetch = globalThis.fetch;
+    var wrappedFetch = async function (input, init) {
+      if (!isChatCompletionsFetch(input, init)) {
+        return origFetch.apply(this, arguments);
+      }
+
+      var nextInit = init ? Object.assign({}, init) : {};
+      var rawPromise = bytesFromSimpleBody(nextInit.body);
+      if (!rawPromise && typeof Request !== 'undefined' && input instanceof Request) {
+        try {
+          rawPromise = input.clone().arrayBuffer().then(function (buf) {
+            return Buffer.from(buf);
+          });
+        } catch (_e) {
+          rawPromise = null;
+        }
+      }
+
+      if (!rawPromise) {
+        return origFetch.apply(this, arguments);
+      }
+
+      var modified = patchRawBody(await rawPromise);
+      if (!modified) {
+        return origFetch.apply(this, arguments);
+      }
+
+      nextInit.body = modified.toString('utf-8');
+      nextInit.headers = headersWithoutContentLength(
+        nextInit.headers || (input && input.headers)
+      );
+      return origFetch.call(this, input, nextInit);
+    };
+    wrappedFetch.__nemoclawInferenceFix = true;
+    globalThis.fetch = wrappedFetch;
+  }
+
   function wrapModule(mod) {
     var origRequest = mod.request;
 
@@ -87,37 +210,17 @@
           : null;
 
         var raw = Buffer.concat(chunks);
-        try {
-          var body = JSON.parse(raw.toString('utf-8'));
-          if (
-            body && body.model &&
-            (NEMOTRON_RE.test(body.model) ||
-              DEEPSEEK_V4_PRO_RE.test(body.model) ||
-              KIMI_K26_RE.test(body.model))
-          ) {
-            if (!hasObjectChatTemplateKwargs(body)) {
-              body.chat_template_kwargs = {};
-            }
-            if (NEMOTRON_RE.test(body.model)) {
-              body.chat_template_kwargs.force_nonempty_content = true;
-            }
-            if (DEEPSEEK_V4_PRO_RE.test(body.model) || KIMI_K26_RE.test(body.model)) {
-              body.chat_template_kwargs.thinking = false;
-            }
-            intercepted = true;
-            var modified = Buffer.from(JSON.stringify(body), 'utf-8');
-            // Update Content-Length so the proxy/server reads the full body.
-            if (req.getHeader && req.setHeader) {
-              req.removeHeader('content-length');
-              req.setHeader('Content-Length', modified.length);
-            }
-            origWrite.call(req, modified);
-          } else {
-            // Not a Nemotron model — send original bytes unmodified.
-            origWrite.call(req, raw);
+        var modified = patchRawBody(raw);
+        if (modified) {
+          intercepted = true;
+          // Update Content-Length so the proxy/server reads the full body.
+          if (req.getHeader && req.setHeader) {
+            req.removeHeader('content-length');
+            req.setHeader('Content-Length', modified.length);
           }
-        } catch (_e) {
-          // JSON parse failed — forward original bytes.
+          origWrite.call(req, modified);
+        } else {
+          // Not an affected model or not JSON — send original bytes unmodified.
           origWrite.call(req, raw);
         }
 
@@ -130,4 +233,5 @@
 
   wrapModule(http);
   wrapModule(https);
+  wrapFetch();
 })();
