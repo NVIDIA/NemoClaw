@@ -17,11 +17,11 @@ import {
 } from "../../dist/lib/sandbox-base-image";
 
 const tmpRoots: string[] = [];
-const emptyGitConfig = path.join(
-  os.tmpdir(),
-  `nemoclaw-empty-gitconfig-${process.pid}-${Date.now()}`,
-);
-fs.writeFileSync(emptyGitConfig, "");
+const emptyGitConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-gitconfig-"));
+tmpRoots.push(emptyGitConfigDir);
+const emptyGitConfig = path.join(emptyGitConfigDir, "gitconfig");
+const emptyGitConfigFd = fs.openSync(emptyGitConfig, "wx", 0o600);
+fs.closeSync(emptyGitConfigFd);
 
 const gitEnv = {
   ...process.env,
