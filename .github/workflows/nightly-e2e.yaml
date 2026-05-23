@@ -10,6 +10,9 @@
 #   openclaw-slack-pairing-e2e
 #                            Validates hermetic Slack Socket Mode pairing request approval across
 #                            gateway and connect-shell OpenClaw state roots (#3730/#3737).
+#   openclaw-discord-pairing-e2e
+#                            Validates hermetic Discord pairing request approval across
+#                            gateway and connect-shell OpenClaw state roots (#4061).
 #   messaging-compatible-endpoint-e2e
 #                            Validates Telegram + OpenAI-compatible endpoint inference routing
 #                            through inference.local with a hermetic local mock (#2766).
@@ -79,6 +82,7 @@ on:
           Valid: cloud-e2e, cloud-onboard-e2e, cloud-inference-e2e,
           skill-agent-e2e, docs-validation-e2e, messaging-providers-e2e,
           openclaw-slack-pairing-e2e,
+          openclaw-discord-pairing-e2e,
           messaging-compatible-endpoint-e2e,
           kimi-inference-compat-e2e,
           bedrock-runtime-compatible-anthropic-e2e,
@@ -389,6 +393,42 @@ jobs:
         with:
           name: install-log-openclaw-slack-pairing
           path: /tmp/nemoclaw-e2e-openclaw-slack-pairing-install.log
+          if-no-files-found: ignore
+
+  # ── OpenClaw Discord Pairing E2E (#4061) ──────────────────────
+  # Hermetic Discord Gateway placeholder rewrite proof, then connect-shell
+  # `openclaw pairing approve discord <code>` against shared state.
+  openclaw-discord-pairing-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openclaw-discord-pairing-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run OpenClaw Discord pairing E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_POLICY_TIER: "open"
+          NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-discord-pairing"
+          GITHUB_TOKEN: ${{ github.token }}
+          DISCORD_BOT_TOKEN: "test-fake-discord-pairing-e2e"
+        run: bash test/e2e/test-openclaw-discord-pairing.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: install-log-openclaw-discord-pairing
+          path: /tmp/nemoclaw-e2e-openclaw-discord-pairing-install.log
           if-no-files-found: ignore
 
   # ── Messaging + compatible endpoint regression (#2766) ───────
@@ -2319,6 +2359,7 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
+        openclaw-discord-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-add-remove-e2e,
         channels-stop-start-e2e,
@@ -2418,6 +2459,7 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
+        openclaw-discord-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-add-remove-e2e,
         channels-stop-start-e2e,
@@ -2574,6 +2616,7 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
+        openclaw-discord-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-add-remove-e2e,
         channels-stop-start-e2e,
