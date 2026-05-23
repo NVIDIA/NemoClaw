@@ -2103,9 +2103,6 @@ function verifyWebSearchInsideSandbox(
   });
 }
 
-// getSandboxInferenceConfig — moved to onboard-providers.ts
-
-// Inference probes — moved to inference/onboard-probes.ts
 const {
   hasResponsesToolCall,
   hasChatCompletionsToolCall,
@@ -2131,6 +2128,7 @@ async function validateOpenAiLikeSelection(
     requireChatCompletionsToolCalling?: boolean;
     skipResponsesProbe?: boolean;
     probeStreaming?: boolean;
+    allowHostDockerInternal?: boolean;
   } = {},
 ): Promise<EndpointValidationResult> {
   const apiKey = credentialEnv ? getCredential(credentialEnv) : "";
@@ -6011,6 +6009,8 @@ async function selectAndValidateOllamaModel(
       {
         skipResponsesProbe: true,
         requireChatCompletionsToolCalling: true,
+        allowHostDockerInternal:
+          localInference.getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
       },
     );
     if (validation.retry === "selection") return { outcome: "back-to-selection" };
