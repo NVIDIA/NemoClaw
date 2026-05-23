@@ -4,7 +4,30 @@
 import fs from "node:fs";
 
 import type { ProviderSelectionConfig } from "../inference/config";
-import { secureTempFile } from "./temp-files";
+import { cleanupTempDir, secureTempFile } from "./temp-files";
+
+export interface RunSandboxConfigSyncDeps {
+  getSelectionConfig: () => ProviderSelectionConfig | null;
+  runConnectScript: (sandboxName: string, scriptContent: string) => void;
+}
+
+// Write `~/.nemoclaw/config.json` and normalize OpenClaw config-dir perms
+// inside the sandbox. Idempotent — safe to invoke from the rebuild resume
+// path where the Dockerfile leaves config.json as a zero-byte placeholder
+// that crashes the OpenClaw nemoclaw plugin's loadOnboardConfig. Fixes #3999.
+export function runSandboxConfigSync(sandboxName: string, deps: RunSandboxConfigSyncDeps): void {
+  const selectionConfig = deps.getSelectionConfig();
+  if (!selectionConfig) return;
+  const sandboxConfig = { ...selectionConfig, onboardedAt: new Date().toISOString() };
+  const script = buildSandboxConfigSyncScript(sandboxConfig);
+  const scriptFile = writeSandboxConfigSyncFile(script);
+  try {
+    const scriptContent = fs.readFileSync(scriptFile, "utf-8");
+    deps.runConnectScript(sandboxName, scriptContent);
+  } finally {
+    cleanupTempDir(scriptFile, "nemoclaw-sync");
+  }
+}
 
 export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionConfig): string {
   // Do not rewrite openclaw.json at runtime. Model routing is handled by the

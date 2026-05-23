@@ -14,7 +14,7 @@ const {
       enabledChannels?: string[] | null;
       knownPresetNames: string[];
       provider?: string | null;
-      webSearchConfig?: { provider?: string | null } | null;
+      webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
       webSearchSupported?: boolean | null;
     },
   ) => string[];
@@ -108,6 +108,16 @@ describe("onboard policy preset suggestions", () => {
       enabledChannels: [],
       knownPresetNames: known,
     });
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew"]);
+  });
+
+  it("adds Brave to balanced tier defaults only when web search is configured", () => {
+    const suggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: known,
+      webSearchConfig: { fetchEnabled: true },
+      webSearchSupported: true,
+    });
     expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
   });
 
@@ -147,7 +157,7 @@ describe("onboard policy preset suggestions", () => {
     });
     expect(suggestions).toContain("telegram");
     expect(suggestions).toContain("npm");
-    expect(suggestions).toContain("brave");
+    expect(suggestions).not.toContain("brave");
 
     const multi = computeSetupPresetSuggestions("balanced", {
       enabledChannels: ["discord", "slack"],

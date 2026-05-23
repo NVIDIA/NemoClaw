@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, it, expect } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 // Import from compiled dist/ for correct coverage attribution.
@@ -13,6 +15,7 @@ import {
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
   QWEN3_6_OLLAMA_MODEL,
   getOllamaContainerPort,
+  resetOllamaContainerPortCache,
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
@@ -33,6 +36,40 @@ import {
 
 describe("local inference helpers", () => {
   const originalSandboxHostUrl = process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
+  const originalPath = process.env.PATH;
+  let fakeDockerDir: string | null = null;
+
+  beforeAll(() => {
+    fakeDockerDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-docker-"));
+    const fakeDockerPath = path.join(fakeDockerDir, "docker");
+    writeFileSync(
+      fakeDockerPath,
+      [
+        "#!/bin/sh",
+        "if [ \"$1\" = \"info\" ]; then",
+        "  printf '%s\\n' 'Server: Docker Engine'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(fakeDockerPath, 0o755);
+    process.env.PATH = `${fakeDockerDir}${path.delimiter}${originalPath ?? ""}`;
+    resetOllamaContainerPortCache();
+  });
+
+  afterAll(() => {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+    if (fakeDockerDir) {
+      rmSync(fakeDockerDir, { recursive: true, force: true });
+    }
+    resetOllamaContainerPortCache();
+  });
 
   afterEach(() => {
     if (originalSandboxHostUrl === undefined) {
