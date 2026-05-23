@@ -633,7 +633,7 @@ function isProxyNonInteractive(): boolean {
   // at module-load time). isNonInteractive is exported from onboard.ts;
   // fall back to the env var if onboard hasn't fully loaded yet.
   try {
-    const onboardMod = require("./onboard");
+    const onboardMod = require("../../onboard");
     if (typeof onboardMod.isNonInteractive === "function") {
       return Boolean(onboardMod.isNonInteractive());
     }
@@ -648,7 +648,7 @@ function isProxyAutoYes(): boolean {
   // The interactive override prompt path still covers --yes-only invocations
   // because non-interactive mode is the gate that matters here.
   try {
-    const onboardMod = require("./onboard");
+    const onboardMod = require("../../onboard");
     if (typeof onboardMod.isAutoYes === "function") {
       return Boolean(onboardMod.isAutoYes());
     }
@@ -662,7 +662,7 @@ async function promptProxyYesNo(question: string, defaultIsYes: boolean): Promis
   // Prefer onboard's promptYesNoOrDefault so we get the same indicator
   // formatting and non-interactive note. Lazy-require to avoid the cycle.
   try {
-    const onboardMod = require("./onboard");
+    const onboardMod = require("../../onboard");
     if (typeof onboardMod.promptYesNoOrDefault === "function") {
       return Boolean(await onboardMod.promptYesNoOrDefault(question, null, defaultIsYes));
     }

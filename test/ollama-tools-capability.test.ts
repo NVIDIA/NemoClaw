@@ -9,6 +9,7 @@ const require = createRequire(import.meta.url);
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const LOCAL_INFERENCE_PATH = path.join(REPO_ROOT, "dist", "lib", "inference", "local.js");
 const ONBOARD_OLLAMA_PROXY_PATH = path.join(REPO_ROOT, "dist", "lib", "inference", "ollama", "proxy.js");
+const ONBOARD_PATH = path.join(REPO_ROOT, "dist", "lib", "onboard.js");
 
 type CapturedCall = { argv: readonly string[]; opts?: Record<string, unknown> };
 
@@ -41,6 +42,16 @@ interface OnboardOllamaProxyModule {
   checkOllamaModelToolSupport: (
     model: string,
   ) => Promise<{ ok: boolean; message?: string }>;
+}
+
+interface OnboardModuleExports {
+  isAutoYes?: () => boolean;
+  isNonInteractive?: () => boolean;
+  promptYesNoOrDefault?: (
+    question: string,
+    envVar: string | null,
+    defaultIsYes: boolean,
+  ) => boolean | Promise<boolean>;
 }
 
 function loadLocalInference(): LocalInferenceModule {
@@ -211,6 +222,7 @@ interface ProxyTestHarness {
   logs: string[];
   errors: string[];
   promptCalls: string[];
+  setOnboardExports: (exports: OnboardModuleExports) => void;
   setProbeResult: (caps: OllamaCapabilities) => void;
   setPromptReply: (reply: string) => void;
 }
@@ -225,9 +237,37 @@ const SHARED = {
   promptReply: "",
   promptCalls: [] as string[],
   installed: false,
+  onboardExports: {} as OnboardModuleExports,
   originalProbe: undefined as undefined | LocalInferenceModule["probeOllamaModelCapabilities"],
   originalPrompt: undefined as undefined | ((msg: string) => Promise<string>),
+  originalOnboardCacheEntry: undefined as undefined | NodeJS.Module,
 };
+
+function resetOnboardExports(): void {
+  for (const key of Object.keys(SHARED.onboardExports) as Array<keyof OnboardModuleExports>) {
+    delete SHARED.onboardExports[key];
+  }
+}
+
+function installOnboardModuleStub(): void {
+  require.cache[ONBOARD_PATH] = {
+    id: ONBOARD_PATH,
+    filename: ONBOARD_PATH,
+    loaded: true,
+    exports: SHARED.onboardExports,
+    children: [],
+    path: path.dirname(ONBOARD_PATH),
+    paths: [],
+  } as unknown as NodeJS.Module;
+}
+
+function restoreOnboardModuleStub(): void {
+  if (SHARED.originalOnboardCacheEntry) {
+    require.cache[ONBOARD_PATH] = SHARED.originalOnboardCacheEntry;
+    return;
+  }
+  delete require.cache[ONBOARD_PATH];
+}
 
 function installSharedStubs(): void {
   if (SHARED.installed) return;
@@ -248,6 +288,7 @@ function installSharedStubs(): void {
     SHARED.promptCalls.push(msg);
     return SHARED.promptReply;
   };
+  SHARED.originalOnboardCacheEntry = require.cache[ONBOARD_PATH];
 
   SHARED.installed = true;
 }
@@ -262,6 +303,8 @@ function loadProxyWithStubs(): ProxyTestHarness {
   };
   SHARED.promptReply = "";
   SHARED.promptCalls.length = 0;
+  resetOnboardExports();
+  installOnboardModuleStub();
 
   // Invalidate the cache and re-require so the proxy module's
   // destructured `probeOllamaModelCapabilities` binding picks up the
@@ -282,6 +325,8 @@ function loadProxyWithStubs(): ProxyTestHarness {
   const restore = () => {
     logSpy.mockRestore();
     errSpy.mockRestore();
+    restoreOnboardModuleStub();
+    delete require.cache[ONBOARD_OLLAMA_PROXY_PATH];
   };
   (loadProxyWithStubs as unknown as { _restore?: () => void })._restore = restore;
 
@@ -290,6 +335,9 @@ function loadProxyWithStubs(): ProxyTestHarness {
     logs,
     errors,
     promptCalls: SHARED.promptCalls,
+    setOnboardExports: (exports) => {
+      Object.assign(SHARED.onboardExports, exports);
+    },
     setProbeResult: (caps) => {
       SHARED.scriptedCaps = caps;
     },
@@ -367,6 +415,20 @@ describe("checkOllamaModelToolSupport", () => {
     expect(h.errors.some((e) => e.includes("NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0"))).toBe(true);
   });
 
+  it("uses onboard non-interactive state when the env var is unset", async () => {
+    const h = loadProxyWithStubs();
+    h.setOnboardExports({ isNonInteractive: () => true });
+    h.setProbeResult({
+      source: "api",
+      capabilities: ["completion"],
+      supportsTools: false,
+    });
+    const out = await h.proxy.checkOllamaModelToolSupport("phi4");
+    expect(out.ok).toBe(false);
+    expect(h.errors.some((e) => e.includes("NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0"))).toBe(true);
+    expect(h.promptCalls.length).toBe(0);
+  });
+
   it("non-interactive + NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 → {ok:true} after stderr warning", async () => {
     process.env.NEMOCLAW_NON_INTERACTIVE = "1";
     process.env.NEMOCLAW_OLLAMA_REQUIRE_TOOLS = "0";
@@ -398,6 +460,24 @@ describe("checkOllamaModelToolSupport", () => {
     // Note about --yes is printed.
     expect(h.logs.some((l) => l.toLowerCase().includes("--yes"))).toBe(true);
     // Prompt should NOT have been shown.
+    expect(h.promptCalls.length).toBe(0);
+  });
+
+  it("uses onboard prompt helper when available", async () => {
+    const h = loadProxyWithStubs();
+    const promptYesNoOrDefault = vi.fn(async () => true);
+    h.setOnboardExports({
+      isNonInteractive: () => false,
+      promptYesNoOrDefault,
+    });
+    h.setProbeResult({
+      source: "api",
+      capabilities: ["completion"],
+      supportsTools: false,
+    });
+    const out = await h.proxy.checkOllamaModelToolSupport("phi4");
+    expect(out).toEqual({ ok: true });
+    expect(promptYesNoOrDefault).toHaveBeenCalledWith("  Use this model anyway?", null, false);
     expect(h.promptCalls.length).toBe(0);
   });
 
