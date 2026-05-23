@@ -10,6 +10,7 @@ import { BRAVE_API_KEY_ENV } from "../inference/web-search";
 import { ROOT } from "../runner";
 import { classifyValidationFailure } from "../validation";
 import { getTransportRecoveryMessage } from "../validation-recovery";
+import { BACK_TO_SELECTION, type BackToSelection, isBackToSelection } from "./credential-navigation";
 import { exitOnboardFromPrompt, isAffirmativeAnswer } from "./prompt-helpers";
 import type { ValidationFailureLike } from "./types";
 import { agentSupportsWebSearch } from "./web-search-support";
@@ -28,8 +29,8 @@ export interface WebSearchFlowDeps {
 export interface WebSearchFlowHelpers {
   validateBraveSearchApiKey(apiKey: string): CurlProbeResult;
   promptBraveSearchRecovery(validation: ValidationFailureLike): Promise<"retry" | "skip">;
-  promptBraveSearchApiKey(): Promise<string>;
-  ensureValidatedBraveSearchCredential(nonInteractive?: boolean): Promise<string | null>;
+  promptBraveSearchApiKey(): Promise<string | BackToSelection>;
+  ensureValidatedBraveSearchCredential(nonInteractive?: boolean): Promise<string | BackToSelection | null>;
   configureWebSearch(
     existingConfig?: WebSearchConfig | null,
     agent?: AgentDefinition | null,
@@ -82,15 +83,23 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     return "retry";
   }
 
-  async function promptBraveSearchApiKey(): Promise<string> {
+  async function promptBraveSearchApiKey(): Promise<string | BackToSelection> {
     console.log("");
     console.log(`  Get your Brave Search API key from: ${BRAVE_SEARCH_HELP_URL}`);
     console.log("");
 
     while (true) {
-      const key = normalizeCredentialValue(
-        await deps.prompt("  Brave Search API key: ", { secret: true }),
-      );
+      const value = await deps.prompt("  Brave Search API key: ", { secret: true });
+      const intent = normalizeCredentialValue(value).toLowerCase();
+      if (intent === "back") return BACK_TO_SELECTION;
+      if (intent === "exit" || intent === "quit") {
+        exitOnboardFromPrompt();
+      }
+      if (intent === "?" || intent === "help") {
+        console.log("  Type back to choose again, or exit to quit.");
+        continue;
+      }
+      const key = normalizeCredentialValue(value);
       if (!key) {
         console.error("  Brave Search API key is required.");
         continue;
@@ -101,7 +110,7 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
 
   async function ensureValidatedBraveSearchCredential(
     nonInteractive = deps.isNonInteractive(),
-  ): Promise<string | null> {
+  ): Promise<string | BackToSelection | null> {
     const savedApiKey = getCredential(BRAVE_API_KEY_ENV);
     let apiKey: string | null =
       savedApiKey || normalizeCredentialValue(process.env[BRAVE_API_KEY_ENV]);
@@ -114,7 +123,11 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
             "Brave Search requires BRAVE_API_KEY or a saved Brave Search credential in non-interactive mode.",
           );
         }
-        apiKey = await promptBraveSearchApiKey();
+        const promptedApiKey = await promptBraveSearchApiKey();
+        if (isBackToSelection(promptedApiKey)) {
+          return promptedApiKey;
+        }
+        apiKey = promptedApiKey;
         usingSavedKey = false;
       }
 
@@ -191,6 +204,9 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     }
 
     const braveApiKey = await ensureValidatedBraveSearchCredential();
+    if (isBackToSelection(braveApiKey)) {
+      return configureWebSearch(existingConfig, agent, dockerfilePathOverride);
+    }
     if (!braveApiKey) {
       return null;
     }
