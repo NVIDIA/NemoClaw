@@ -52,6 +52,8 @@ type VariableDecl = {
 type SourceFunction = {
   readonly name: string;
   readonly sourceRead: SourceRead;
+  readonly parameterNames: readonly string[];
+  readonly parameterizedPathRead: boolean;
 };
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
@@ -113,8 +115,19 @@ function looksLikeTestFixturePath(text: string): boolean {
   const normalized = normalizePathText(text);
   return (
     /Dockerfile\.sandbox/.test(normalized) ||
-    /["'`]test["'`]/.test(normalized) ||
+    /(?:^|\/)fixtures?\//.test(normalized) ||
     /\.agents\/skills/.test(normalized)
+  );
+}
+
+function looksLikeDeclarativeConfigPath(text: string): boolean {
+  const normalized = normalizePathText(text);
+  return (
+    /nemoclaw-blueprint\/(?:policies|router|model-specific-setup|blueprint\.yaml)/.test(
+      normalized,
+    ) ||
+    /agents\/[^/]+\/policy-(?:additions|permissive)\.yaml/.test(normalized) ||
+    /test\/e2e\/(?:nemoclaw_scenarios|validation_suites|docs)\//.test(normalized)
   );
 }
 
@@ -123,7 +136,9 @@ function isProductionPathExpression(
   productionPathVars: ReadonlySet<string>,
 ): boolean {
   const normalized = normalizePathText(text);
-  if (looksLikeTestFixturePath(normalized)) return false;
+  if (looksLikeTestFixturePath(normalized) || looksLikeDeclarativeConfigPath(normalized)) {
+    return false;
+  }
   if ([...productionPathVars].some((name) => textContainsIdentifier(normalized, name))) return true;
 
   return hasDirectProductionPathHint(normalized);
@@ -131,6 +146,10 @@ function isProductionPathExpression(
 
 function hasDirectProductionPathHint(text: string): boolean {
   return (
+    /["'`](?:\.\.\/)?(?:\.github|agents|bin|dist|nemoclaw|nemoclaw-blueprint|scripts|src|test\/e2e)\//.test(
+      text,
+    ) ||
+    /["'`](?:package\.json|install\.sh|\.pre-commit-config\.yaml)["'`]/.test(text) ||
     /["'`]\.\.\/Dockerfile(?:\.base)?["'`]/.test(text) ||
     /["'`]\.\.\/bin\//.test(text) ||
     /["'`]\.\.\/agents\//.test(text) ||
@@ -144,6 +163,9 @@ function hasDirectProductionPathHint(text: string): boolean {
       text,
     ) ||
     /join\(\s*["'`]\.\.["'`]\s*,\s*["'`](?:\.github|agents|bin|dist|nemoclaw|nemoclaw-blueprint|scripts|src|Dockerfile(?:\.base)?|install\.sh|package\.json)["'`]\s*\)/.test(
+      text,
+    ) ||
+    /path\.join\(\s*process\.cwd\(\)\s*,\s*["'`](?:\.github|agents|bin|dist|nemoclaw|nemoclaw-blueprint|scripts|src|Dockerfile(?:\.base)?|install\.sh|package\.json)["'`]/.test(
       text,
     ) ||
     /(import\.meta\.dirname|import\.meta\.url)[\s\S]*["'`](?![\w.-]+\.test\.ts["'`])[\w.-]+\.ts["'`]/.test(
@@ -160,8 +182,12 @@ function hasDirectProductionPathHint(text: string): boolean {
 function isPathLikeVariableName(name: string): boolean {
   return (
     /^(REPO_ROOT|ROOT)$/.test(name) ||
-    /(path|file|script|source|src|dockerfile|payload|installer)/i.test(name)
+    /(root|dir|path|file|files|script|source|src|dockerfile|payload|installer)/i.test(name)
   );
+}
+
+function isReadFileExpressionText(text: string): boolean {
+  return /\b(?:readFileSync|readFile)\s*\(/.test(text);
 }
 
 function isReadFileCall(node: ts.CallExpression): boolean {
@@ -182,7 +208,13 @@ function isSourceTextLikeName(name: string): boolean {
 }
 
 function isTextDerivation(initText: string): boolean {
-  return /(\.indexOf\b|\.search\b|\.includes\b|\.match(All)?\b|\.slice\b|\.split\b|\.replace(All)?\b|\.trim(End)?\b|\.join\b|String\(|Heredoc\b|Snippet\b|Block\b|extract[A-Z])/.test(
+  return /(\.indexOf\b|\.search\b|\.includes\b|\.match(All)?\b|\.slice\b|\.split\b|\.replace(All)?\b|\.trim(End)?\b|\.join\b|String\(|(?:YAML|yaml|JSON)\.parse\b|yaml\.load\b|Heredoc\b|Snippet\b|Block\b|extract[A-Z]|load[A-Z]|parse[A-Z])/.test(
+    initText,
+  );
+}
+
+function isExecutionResultDerivation(initText: string): boolean {
+  return /\b(?:spawnSync|execFileSync|execSync|run(?:Logged|Docker|Bash|WithLib|Embedded|Patch|Hermes|Openclaw|Daemon|Fetch|Command)\w*)\b/.test(
     initText,
   );
 }
@@ -253,6 +285,7 @@ function collectProductionPathVars(
         [...pathVars].some((name) => textContainsIdentifier(initText, name));
       if (
         !looksLikeTestFixturePath(initText) &&
+        !looksLikeDeclarativeConfigPath(initText) &&
         (isRepositoryRoot || directlyNamesProductionPath || derivesNamedProductionPath)
       ) {
         pathVars.add(variable.name);
@@ -269,13 +302,48 @@ function callTargetName(expression: ts.Expression): string | null {
   return null;
 }
 
+function nestedSourceReadInNode(
+  sourceFile: ts.SourceFile,
+  root: ts.Node,
+  productionPathVars: ReadonlySet<string>,
+): SourceRead | null {
+  let sourceRead: SourceRead | null = null;
+
+  function visit(node: ts.Node): void {
+    if (sourceRead) return;
+    if (
+      ts.isCallExpression(node) &&
+      isReadFileCall(node) &&
+      node.arguments.length > 0 &&
+      isProductionPathExpression(node.arguments[0].getText(sourceFile), productionPathVars)
+    ) {
+      const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
+      sourceRead = {
+        line: line + 1,
+        column: character + 1,
+        variable: "<nested>",
+        expression: node.getText(sourceFile),
+      };
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(root);
+  return sourceRead;
+}
+
 function sourceReadFromInitializer(
   sourceFile: ts.SourceFile,
   variable: VariableDecl,
   productionPathVars: ReadonlySet<string>,
-  sourceFunctions: ReadonlyMap<string, SourceRead>,
+  sourceFunctions: ReadonlyMap<string, SourceFunction>,
 ): SourceRead | null {
   const init = variable.initializer;
+  const nestedRead = nestedSourceReadInNode(sourceFile, init, productionPathVars);
+  if (nestedRead) {
+    return { ...nestedRead, variable: variable.name };
+  }
   if (!ts.isCallExpression(init)) {
     return null;
   }
@@ -302,6 +370,14 @@ function sourceReadFromInitializer(
   if (!functionSourceRead) {
     return null;
   }
+  if (
+    functionSourceRead.parameterizedPathRead &&
+    !init.arguments.some((argument) =>
+      isProductionPathExpression(argument.getText(sourceFile), productionPathVars),
+    )
+  ) {
+    return null;
+  }
 
   const { line, character } = sourceFile.getLineAndCharacterOfPosition(
     variable.initializer.getStart(),
@@ -310,7 +386,7 @@ function sourceReadFromInitializer(
     line: line + 1,
     column: character + 1,
     variable: variable.name,
-    expression: `${variable.initializer.getText(sourceFile)} -> ${functionSourceRead.expression}`,
+    expression: `${variable.initializer.getText(sourceFile)} -> ${functionSourceRead.sourceRead.expression}`,
   };
 }
 
@@ -327,10 +403,19 @@ function isNestedFunctionLike(node: ts.Node): boolean {
 function collectSourceFunctions(
   sourceFile: ts.SourceFile,
   productionPathVars: ReadonlySet<string>,
-): Map<string, SourceRead> {
-  const sourceFunctions = new Map<string, SourceRead>();
+): Map<string, SourceFunction> {
+  const sourceFunctions = new Map<string, SourceFunction>();
 
-  function sourceReadFromExpression(expression: ts.Expression): SourceRead | null {
+  function parameterNamesFor(node: ts.FunctionDeclaration): string[] {
+    return node.parameters
+      .map((parameter) => (ts.isIdentifier(parameter.name) ? parameter.name.text : null))
+      .filter((name): name is string => Boolean(name));
+  }
+
+  function sourceReadFromExpression(
+    expression: ts.Expression,
+    parameterNames: readonly string[],
+  ): { sourceRead: SourceRead; parameterizedPathRead: boolean } | null {
     if (
       !ts.isCallExpression(expression) ||
       !isReadFileCall(expression) ||
@@ -339,31 +424,56 @@ function collectSourceFunctions(
       return null;
     }
     const targetText = expression.arguments[0].getText(sourceFile);
-    if (!isProductionPathExpression(targetText, productionPathVars)) {
+    const parameterizedPathRead = parameterNames.some((name) =>
+      textContainsIdentifier(targetText, name),
+    );
+    if (!parameterizedPathRead && !isProductionPathExpression(targetText, productionPathVars)) {
       return null;
     }
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(expression.getStart());
     return {
-      line: line + 1,
-      column: character + 1,
-      variable: "<return>",
-      expression: expression.getText(sourceFile),
+      parameterizedPathRead,
+      sourceRead: {
+        line: line + 1,
+        column: character + 1,
+        variable: "<return>",
+        expression: expression.getText(sourceFile),
+      },
     };
   }
 
   function visit(node: ts.Node): void {
     if (ts.isFunctionDeclaration(node) && node.name) {
+      const functionText = node.getText(sourceFile);
+      if (isExecutionResultDerivation(functionText)) {
+        ts.forEachChild(node, visit);
+        return;
+      }
       let sourceRead: SourceRead | null = null;
+      let parameterizedPathRead = false;
+      const parameterNames = parameterNamesFor(node);
       function visitFunctionBody(child: ts.Node): void {
         if (sourceRead) return;
         if (child !== node && isNestedFunctionLike(child)) return;
-        if (ts.isReturnStatement(child) && child.expression) {
-          sourceRead = sourceReadFromExpression(child.expression);
+        if (ts.isCallExpression(child)) {
+          const result = sourceReadFromExpression(child, parameterNames);
+          if (result) {
+            sourceRead = result.sourceRead;
+            parameterizedPathRead = result.parameterizedPathRead;
+            return;
+          }
         }
         ts.forEachChild(child, visitFunctionBody);
       }
       if (node.body) visitFunctionBody(node.body);
-      if (sourceRead) sourceFunctions.set(node.name.text, sourceRead);
+      if (sourceRead) {
+        sourceFunctions.set(node.name.text, {
+          name: node.name.text,
+          sourceRead,
+          parameterNames,
+          parameterizedPathRead,
+        });
+      }
     }
     ts.forEachChild(node, visit);
   }
@@ -376,7 +486,7 @@ function collectSourceVars(
   sourceFile: ts.SourceFile,
   variables: readonly VariableDecl[],
   productionPathVars: ReadonlySet<string>,
-  sourceFunctions: ReadonlyMap<string, SourceRead>,
+  sourceFunctions: ReadonlyMap<string, SourceFunction>,
 ): { sourceVars: Set<string>; sourceReads: SourceRead[] } {
   const sourceVars = new Set<string>();
   const sourceReads: SourceRead[] = [];
@@ -403,7 +513,13 @@ function collectSourceVars(
       const referencesSource = [...sourceVars].some((name) =>
         textContainsIdentifier(initText, name),
       );
-      if (referencesSource && (isSourceTextLikeName(variable.name) || isTextDerivation(initText))) {
+      const readsProductionFileCollection =
+        isReadFileExpressionText(initText) &&
+        [...productionPathVars].some((name) => textContainsIdentifier(initText, name));
+      if (
+        (referencesSource || readsProductionFileCollection) &&
+        !isExecutionResultDerivation(initText)
+      ) {
         sourceVars.add(variable.name);
         changed = true;
       }
