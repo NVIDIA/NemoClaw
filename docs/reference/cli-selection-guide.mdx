@@ -102,12 +102,12 @@ Use `openshell` when the docs explicitly call for a live OpenShell gateway opera
   $ openshell doctor check
   ```
 
-- Run one-off commands or move files without starting a NemoClaw chat session:
+- Move files, or run raw one-off commands when you intentionally want to bypass NemoClaw's sandbox registry and wrappers:
 
   ```console
-  $ openshell sandbox exec -n <sandbox-name> -- ls -la /sandbox
   $ openshell sandbox upload <sandbox-name> ./local-file /sandbox/
   $ openshell sandbox download <sandbox-name> /sandbox/output ./output
+  $ openshell sandbox exec -n <sandbox-name> -- env | grep '^HOME='
   ```
 
 - Inspect or replace raw OpenShell policy:
@@ -141,7 +141,14 @@ It waits for readiness, handles stale SSH host keys after gateway restarts, and 
 
 Use `openshell sandbox connect <name>` only when you intentionally want the raw OpenShell connection path.
 
-For a one-off command, use `openshell sandbox exec` instead of opening an interactive shell.
+For a one-off command in a NemoClaw-managed sandbox, use `nemoclaw <name> exec` instead of opening an interactive shell.
+The command runs as the sandbox user with `HOME=/sandbox` and uses the NemoClaw-provisioned sandbox environment, including agent configuration, inference routing, and policy state.
+
+```console
+$ nemoclaw my-assistant exec -- cat /tmp/gateway.log
+```
+
+Use `openshell sandbox exec` only when you intentionally need the raw OpenShell execution path and want to bypass NemoClaw's sandbox registry and wrapper behavior.
 
 ```console
 $ openshell sandbox exec -n my-assistant -- cat /tmp/gateway.log
