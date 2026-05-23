@@ -1410,8 +1410,8 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Done")).toBeTruthy();
   });
 
-  it(
-    "debug --quick explains restricted dmesg instead of printing raw stderr",
+  it.skipIf(os.platform() !== "linux")(
+    "debug --quick explains restricted dmesg instead of printing raw stderr on Linux",
     testTimeoutOptions(30_000),
     () => {
       const env = createDebugCommandTestEnv("nemoclaw-cli-debug-dmesg-");

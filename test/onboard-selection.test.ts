@@ -129,6 +129,7 @@ printf '%s' "$status"
 type CredentialBackScenario = {
   name: string;
   answers: string[];
+  menuSelections?: string[];
   credentialEnv: string;
   promptPattern: RegExp;
   expectedOutcome?: "back" | "exit";
@@ -181,11 +182,14 @@ function runCredentialBackScenario(scenario: CredentialBackScenario) {
 
   const script = String.raw`
 const answers = ${JSON.stringify(scenario.answers)};
+const menuSelections = ${JSON.stringify(scenario.menuSelections || [])};
+let menuSelectionIndex = 0;
 const expectedOutcome = ${JSON.stringify(scenario.expectedOutcome || "back")};
 const scenarioEnv = ${JSON.stringify(scenario.env || {})};
 const messages = [];
 const prompts = [];
 const saved = [];
+const lines = [];
 const clearCredentialEnv = [
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
@@ -215,9 +219,26 @@ const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const nim = require(${nimPath});
 
+function selectRecentMenuOption(patternText, lines) {
+  const pattern = new RegExp(patternText, "i");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const match = /^\s*(\d+)\)\s+(.+)$/.exec(lines[index]);
+    if (match && pattern.test(match[2])) return match[1];
+  }
+  throw new Error(
+    "Could not find menu option matching " +
+      pattern +
+      "\\nRecent output:\\n" +
+      lines.slice(-20).join("\\n"),
+  );
+}
+
 credentials.prompt = async (message, opts = {}) => {
   messages.push(message);
   prompts.push({ message, secret: opts.secret === true });
+  if (/Choose \[/.test(message) && menuSelectionIndex < menuSelections.length) {
+    return selectRecentMenuOption(menuSelections[menuSelectionIndex++], lines);
+  }
   return answers.shift() || "";
 };
 credentials.ensureApiKey = async () => {
@@ -249,7 +270,6 @@ const agent = ${JSON.stringify(scenario.agent || null)}
   const originalLog = console.log;
   const originalError = console.error;
   const originalExit = process.exit;
-  const lines = [];
   console.log = (...args) => lines.push(args.join(" "));
   console.error = (...args) => lines.push(args.join(" "));
   if (expectedOutcome === "exit") {
@@ -268,6 +288,7 @@ const agent = ${JSON.stringify(scenario.agent || null)}
       prompts,
       lines,
       saved,
+      menuSelectionIndex,
       credentialValue: process.env[${JSON.stringify(scenario.credentialEnv)}] || null,
     }));
   } catch (error) {
@@ -281,6 +302,7 @@ const agent = ${JSON.stringify(scenario.agent || null)}
       prompts,
       lines,
       saved,
+      menuSelectionIndex,
       credentialValue: process.env[${JSON.stringify(scenario.credentialEnv)}] || null,
     }));
   } finally {
@@ -308,6 +330,7 @@ const agent = ${JSON.stringify(scenario.agent || null)}
 
   assert.equal(result.status, 0, result.stderr);
   const payload = JSON.parse(result.stdout.trim());
+  assert.equal(payload.menuSelectionIndex, scenario.menuSelections?.length || 0);
   if (scenario.expectedOutcome === "exit") {
     assert.equal(payload.outcome, "exit");
     assert.equal(payload.exitCode, 1);
@@ -1476,7 +1499,7 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("applies the systemd loopback override for an existing running Ollama install", { timeout: 10_000 }, () => {
+  it("applies the systemd loopback override for an existing running Ollama install", { timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-systemd-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -3971,20 +3994,23 @@ const { setupNim } = require(${onboardPath});
     },
     {
       name: "Model Router",
-      answers: ["8", "back", "1", ""],
+      answers: ["back", ""],
+      menuSelections: ["Model Router", "NVIDIA Endpoints"],
       credentialEnv: "NVIDIA_API_KEY",
       promptPattern: /Model Router API key: /,
     },
     {
       name: "Hermes Provider Nous API key",
-      answers: ["9", "2", "back", "1", ""],
+      answers: ["back", ""],
+      menuSelections: ["Hermes Provider", "Nous API Key", "NVIDIA Endpoints"],
       credentialEnv: "NOUS_API_KEY",
       promptPattern: /Nous API Key: /,
       agent: "hermes",
     },
     {
       name: "Local NIM NGC API key",
-      answers: ["7", "", "back", "1", ""],
+      answers: ["", "back", ""],
+      menuSelections: ["Local NVIDIA NIM", "NVIDIA Endpoints"],
       credentialEnv: "NGC_API_KEY",
       promptPattern: /NGC API Key: /,
       env: { NEMOCLAW_EXPERIMENTAL: "1" },
