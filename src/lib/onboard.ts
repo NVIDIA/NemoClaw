@@ -2669,9 +2669,8 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
   const logPath = path.join(stateDir, "openshell-gateway.log");
   // The gateway state directory is NemoClaw-owned; creating it before opening
   // the append-only log is intentional and safe for this local runtime file.
-  // codeql[js/file-system-race]
-  const outFd = fs.openSync(logPath, "a", 0o600);
-  const errFd = fs.openSync(logPath, "a", 0o600);
+  const outFd = fs.openSync(logPath, "a", 0o600); // codeql[js/file-system-race]
+  const errFd = fs.openSync(logPath, "a", 0o600); // codeql[js/file-system-race]
   console.log("  Starting OpenShell Docker-driver gateway...");
   console.log(`  Gateway log: ${logPath}`);
   const launch = gatewayLaunch ?? {
