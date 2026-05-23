@@ -36,6 +36,7 @@ export class OnboardRuntimeBoundary {
       recordStateSkipped: this.recordStateSkipped.bind(this),
       recordRepairEvent: this.recordRepairEvent.bind(this),
       recordStepFailed: this.recordStepFailed.bind(this),
+      recordPostVerifyStarted: this.recordPostVerifyStarted.bind(this),
       recordSessionComplete: this.recordSessionComplete.bind(this),
     };
   }
@@ -88,6 +89,15 @@ export class OnboardRuntimeBoundary {
     } = {},
   ): Promise<Session> {
     return this.getRuntime().emitRepairEvent(type, options);
+  }
+
+  async recordPostVerifyStarted(): Promise<Session> {
+    const runtime = this.getRuntime();
+    const current = await runtime.session();
+    if (current.machine.state === "finalizing") {
+      return runtime.transition("post_verify");
+    }
+    return current;
   }
 
   async recordSessionComplete(updates: SessionUpdates = {}): Promise<Session> {
