@@ -116,6 +116,43 @@ function isProcessRunning(pid: number | null | undefined): boolean {
   }
 }
 
+export function isModelRouterCommandLineForPort(args: readonly string[], port: number): boolean {
+  const commandName = path.basename(args[0] || "");
+  if (commandName !== "model-router") return false;
+  if (!args.includes("proxy")) return false;
+  return args.some((arg, index) => {
+    if (arg === "--port") return args[index + 1] === String(port);
+    return arg === `--port=${String(port)}`;
+  });
+}
+
+function readProcessCommandLine(pid: number): string[] | null {
+  try {
+    return fs
+      .readFileSync(`/proc/${pid}/cmdline`, "utf8")
+      .split("\0")
+      .filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+export function doesModelRouterProcessOwnPort(
+  pid: number | null | undefined,
+  port: number,
+  deps: {
+    isRunning?: (pid: number | null | undefined) => boolean;
+    readCommandLine?: (pid: number) => string[] | null;
+  } = {},
+): boolean {
+  if (!Number.isInteger(pid) || Number(pid) <= 0) return false;
+  const isRunning = deps.isRunning ?? isProcessRunning;
+  if (!isRunning(pid)) return false;
+  const readCommandLine = deps.readCommandLine ?? readProcessCommandLine;
+  const args = readCommandLine(Number(pid));
+  return Array.isArray(args) && isModelRouterCommandLineForPort(args, port);
+}
+
 async function stopModelRouterProcess(pid: number, port: number): Promise<void> {
   try {
     process.kill(pid, "SIGTERM");
@@ -486,15 +523,16 @@ export async function reconcileModelRouter(): Promise<void> {
   const recordedCredentialHash = session?.routerCredentialHash ?? null;
 
   if (await isRouterHealthy(routerPort)) {
+    const recordedProcessOwnsRouter = doesModelRouterProcessOwnPort(recordedPid, routerPort);
     if (
       routerCredentialHash &&
       recordedCredentialHash === routerCredentialHash &&
-      isProcessRunning(recordedPid)
+      recordedProcessOwnsRouter
     ) {
       console.log(`  ✓ Model router is already healthy on port ${routerPort}`);
       return;
     }
-    if (isProcessRunning(recordedPid)) {
+    if (recordedProcessOwnsRouter) {
       console.log("  Restarting model router with updated credentials...");
       await stopModelRouterProcess(requireValue(recordedPid, "Expected recorded router PID"), routerPort);
     } else {
