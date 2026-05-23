@@ -4,6 +4,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { createSession, type Session } from "../../../state/onboard-session";
+import type { GatewayContainerState } from "../../gateway-container-running";
 import type { GatewayReuseState } from "../../../state/gateway";
 import { handleGatewayState, type GatewayStateOptions } from "./gateway";
 
@@ -13,9 +14,9 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
   const calls = {
     refresh: vi.fn(async (state: GatewayReuseState) => state),
     lifecycle: vi.fn(() => false),
-    verifyContainer: vi.fn(() => "running"),
+    verifyContainer: vi.fn((_gatewayName: string): GatewayContainerState => "running"),
     waitHttp: vi.fn(async () => true),
-    runOpenshell: vi.fn(),
+    stopDashboardForward: vi.fn(),
     destroy: vi.fn(() => true),
     destroyForReuse: vi.fn(() => "missing" as GatewayReuseState),
     imageDrift: vi.fn(() => null),
@@ -42,7 +43,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
       verifyGatewayContainerRunning: calls.verifyContainer,
       waitForGatewayHttpReady: calls.waitHttp,
       getGatewayLocalEndpoint: () => "http://127.0.0.1:31818",
-      runOpenshell: calls.runOpenshell,
+      stopDashboardForward: calls.stopDashboardForward,
       destroyGateway: calls.destroy,
       destroyGatewayForReuse: calls.destroyForReuse,
       getGatewayClusterImageDrift: calls.imageDrift,
@@ -75,7 +76,6 @@ function baseOptions(
     gpu: { type: "nvidia" },
     gpuPassthrough: true,
     gatewayName: "nemoclaw",
-    dashboardPort: 18789,
     recordedSandboxName: null,
     requestedSandboxName: "my-assistant",
     recreateSandbox: false,
@@ -125,18 +125,32 @@ describe("handleGatewayState", () => {
     expect(calls.startGateway).not.toHaveBeenCalled();
   });
 
+  it("reuses a lifecycle gateway when container, HTTP, and image checks are healthy", async () => {
+    const { deps, calls } = createDeps({
+      gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
+    });
+
+    await handleGatewayState(baseOptions(deps, "healthy"));
+
+    expect(calls.verifyContainer).toHaveBeenCalledWith("nemoclaw");
+    expect(calls.waitHttp).toHaveBeenCalledOnce();
+    expect(calls.imageDrift).toHaveBeenCalledOnce();
+    expect(calls.stopDashboardForward).not.toHaveBeenCalled();
+    expect(calls.destroyForReuse).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.complete).toHaveBeenCalledWith("gateway");
+  });
+
   it("cleans stale lifecycle metadata when the gateway container is missing", async () => {
     const { deps, calls } = createDeps({
       gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
-      verifyGatewayContainerRunning: vi.fn(() => "missing" as GatewayReuseState),
+      verifyGatewayContainerRunning: vi.fn(() => "missing" as GatewayContainerState),
       destroyGatewayForReuse: vi.fn(() => "missing" as GatewayReuseState),
     });
 
     await handleGatewayState(baseOptions(deps, "healthy"));
 
-    expect(calls.runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789"], {
-      ignoreError: true,
-    });
+    expect(calls.stopDashboardForward).toHaveBeenCalledOnce();
     expect(deps.destroyGatewayForReuse).toHaveBeenCalledWith(
       deps.destroyGateway,
       "  ✓ Stale gateway metadata cleaned up",
@@ -148,7 +162,7 @@ describe("handleGatewayState", () => {
   it("refuses to destroy an unknown container state when HTTP is also unavailable", async () => {
     const { deps, calls } = createDeps({
       gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
-      verifyGatewayContainerRunning: vi.fn(() => "unknown"),
+      verifyGatewayContainerRunning: vi.fn((_gatewayName: string): GatewayContainerState => "unknown"),
       waitForGatewayHttpReady: vi.fn(async () => false),
     });
 
@@ -167,9 +181,7 @@ describe("handleGatewayState", () => {
 
     await handleGatewayState(baseOptions(deps, "healthy"));
 
-    expect(calls.runOpenshell).toHaveBeenCalledWith(["forward", "stop", "18789"], {
-      ignoreError: true,
-    });
+    expect(calls.stopDashboardForward).toHaveBeenCalledOnce();
     expect(deps.destroyGatewayForReuse).toHaveBeenCalledWith(
       deps.destroyGateway,
       "  ✓ Stale gateway cleaned up",

@@ -6,9 +6,11 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import yaml from "js-yaml";
 
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_SUITES = path.join(REPO_ROOT, "test/e2e/runtime/run-suites.sh");
+const SUITES_YAML = path.join(REPO_ROOT, "test/e2e/validation_suites/suites.yaml");
 
 function runSuites(args: string[], env: Record<string, string> = {}): SpawnSyncReturns<string> {
   return spawnSync("bash", [RUN_SUITES, ...args], {
@@ -44,7 +46,78 @@ function fullContext(): Record<string, string> {
   };
 }
 
+describe("Issue #3810 messaging suite wiring", () => {
+  it("should_define_real_steps_for_messaging_provider_suites", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-messaging-suites-"));
+    try {
+      const baseContext = {
+        ...fullContext(),
+        E2E_PROVIDER: "telegram",
+        E2E_MESSAGING_PROVIDER: "telegram",
+        E2E_MESSAGING_BRIDGE_URL: "http://127.0.0.1:18789",
+        E2E_MESSAGING_CONFIG_CONTENT: "TELEGRAM_BOT_TOKEN=PLACEHOLDER",
+      };
+      seedContext(tmp, baseContext);
+      const telegram = runSuites(["messaging-telegram"], {
+        E2E_CONTEXT_DIR: tmp,
+        E2E_DRY_RUN: "1",
+      });
+      expect(telegram.status, `stderr:${telegram.stderr}\nstdout:${telegram.stdout}`).toBe(0);
+      seedContext(tmp, {
+        ...baseContext,
+        E2E_MESSAGING_PROVIDER: "discord",
+        E2E_MESSAGING_CONFIG_CONTENT: "DISCORD_BOT_TOKEN=PLACEHOLDER",
+      });
+      const discord = runSuites(["messaging-discord"], {
+        E2E_CONTEXT_DIR: tmp,
+        E2E_DRY_RUN: "1",
+      });
+      expect(discord.status, `stderr:${discord.stderr}\nstdout:${discord.stdout}`).toBe(0);
+      seedContext(tmp, {
+        ...baseContext,
+        E2E_MESSAGING_PROVIDER: "slack",
+        E2E_MESSAGING_CHANNEL: "bot",
+        E2E_MESSAGING_CONFIG_CONTENT: "SLACK_BOT_TOKEN=PLACEHOLDER",
+      });
+      const slack = runSuites(["messaging-slack"], {
+        E2E_CONTEXT_DIR: tmp,
+        E2E_DRY_RUN: "1",
+      });
+      expect(slack.status, `stderr:${slack.stderr}\nstdout:${slack.stdout}`).toBe(0);
+      const output = `${telegram.stdout}\n${discord.stdout}\n${slack.stdout}`;
+      for (const id of [
+        "messaging-provider-attached",
+        "messaging-placeholder-configured",
+        "messaging-no-secret-leak",
+        "messaging-bridge-reachable",
+        "telegram-injection-safety",
+        "discord-gateway-path",
+        "slack-provider-state",
+      ]) {
+        expect(output).toContain(id);
+      }
+      expect(output).not.toContain("cli-available");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("run-suites.sh", () => {
+  it("security_credentials_suite_should_emit_stable_assertion_ids", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-security-credentials-"));
+    try {
+      seedContext(tmp, { ...fullContext(), E2E_CREDENTIALS_EXPECTED: "present" });
+      const r = runSuites(["security-credentials"], { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1", HOME: tmp });
+      expect(r.status, `stderr:${r.stderr}\nstdout:${r.stdout}`).toBe(0);
+      expect(r.stdout).toContain("post-onboard.credentials.gateway-list-redacts-values");
+      expect(r.stdout).toContain("post-onboard.credentials.no-plaintext-host-store");
+      expect(r.stdout).not.toMatch(/no-credentials-leaked|assert\//);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("run_suites_should_run_steps_in_declared_order", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-suite-"));
     try {
@@ -125,6 +198,39 @@ describe("run-suites.sh", () => {
       const r = runSuites(["smoke"], { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" });
       expect(r.status).not.toBe(0);
       expect(`${r.stderr}${r.stdout}`).toMatch(/context\.env|E2E_SCENARIO|missing/i);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("rebuild_and_upgrade_suites_should_resolve_to_domain_specific_steps", () => {
+    const doc = yaml.load(fs.readFileSync(SUITES_YAML, "utf8")) as { suites: Record<string, { steps: Array<{ script: string }> }> };
+    for (const suiteId of ["rebuild", "upgrade"]) {
+      const scripts = doc.suites[suiteId].steps.map((step) => step.script);
+      expect(scripts.length).toBeGreaterThan(0);
+      expect(scripts.every((script) => script.startsWith("rebuild_upgrade/"))).toBe(true);
+      expect(scripts.some((script) => script.startsWith("smoke/"))).toBe(false);
+    }
+  });
+
+  it("rebuild_and_upgrade_suites_should_emit_stable_assertion_ids_in_dry_run", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-suite-"));
+    try {
+      seedContext(tmp, fullContext());
+      const r = runSuites(["rebuild", "upgrade"], { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" });
+      expect(r.status, `stderr:${r.stderr}\nstdout:${r.stdout}`).toBe(0);
+      for (const id of [
+        "suite.rebuild.workspace_state_preserved",
+        "suite.rebuild.agent_version_upgraded",
+        "suite.rebuild.inference_still_works",
+        "suite.rebuild.policy_presets_preserved",
+        "suite.rebuild.hermes_config_preserved",
+        "suite.upgrade.sandbox_registry_preserved",
+        "suite.upgrade.gateway_version_upgraded",
+        "suite.upgrade.survivor_agent_reachable",
+      ]) {
+        expect(r.stdout).toContain(id);
+      }
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

@@ -40,6 +40,7 @@ export interface InferenceSelectionValidationHelpers {
       requireChatCompletionsToolCalling?: boolean;
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
+      allowHostDockerInternal?: boolean;
     },
   ): Promise<EndpointValidationResult>;
   validateAnthropicSelectionWithRetryMessage(
@@ -82,6 +83,7 @@ export function createInferenceSelectionValidationHelpers(
       requireChatCompletionsToolCalling?: boolean;
       skipResponsesProbe?: boolean;
       probeStreaming?: boolean;
+      allowHostDockerInternal?: boolean;
     } = {},
   ): Promise<EndpointValidationResult> {
     const apiKey = credentialEnv ? getCredential(credentialEnv) : "";

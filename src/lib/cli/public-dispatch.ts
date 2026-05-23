@@ -14,7 +14,7 @@
 const { ROOT, validateName } = require("../runner");
 const { CLI_NAME } = require("./branding");
 const { help } = require("../actions/root-help");
-const { runOclifArgv, runCompatibilityOclifCommandById } = require("./oclif-runner");
+const { runOclifArgv, runOclifCommandById } = require("./oclif-runner");
 const {
   canonicalUsageList,
   directGlobalCommandIds,
@@ -69,8 +69,8 @@ function oclifRunOptions() {
   };
 }
 
-async function runCompatibilityOclifCommand(commandId: string, args: string[] = []): Promise<void> {
-  await runCompatibilityOclifCommandById(commandId, args, oclifRunOptions());
+async function runDirectOclifCommand(commandId: string, args: string[] = []): Promise<void> {
+  await runOclifCommandById(commandId, args, oclifRunOptions());
 }
 
 async function runNativeOclifArgv(args: string[]): Promise<void> {
@@ -128,12 +128,12 @@ function validSandboxActionsText(): string {
 // interpreted as command ID `status:bogus` instead of command `status` with an
 // unexpected positional arg `bogus`. Derive the leaf set from oclif metadata so
 // adding/removing global commands does not require maintaining a parallel list.
-const DIRECT_COMMAND_ID_GLOBAL_COMMANDS = directGlobalCommandIds();
+const DIRECT_OCLIF_COMMAND_ID_GLOBALS = directGlobalCommandIds();
 
 function shouldExecuteViaNativeArgv(result: Extract<PublicTranslationResult, { kind: "nativeArgv" }>): boolean {
   const helpArgs = result.commandId === "sandbox:exec" ? argsBeforeSeparator(result.args) : result.args;
   if (hasHelpFlag(helpArgs)) return false;
-  if (DIRECT_COMMAND_ID_GLOBAL_COMMANDS.has(result.commandId)) return false;
+  if (DIRECT_OCLIF_COMMAND_ID_GLOBALS.has(result.commandId)) return false;
   if (result.commandId.startsWith("root:")) return false;
   return true;
 }
@@ -219,7 +219,7 @@ async function runPublicTranslationResult(
       if (shouldExecuteViaNativeArgv(result)) {
         await runNativeOclifArgv(result.argv);
       } else {
-        await runCompatibilityOclifCommand(result.commandId, result.args);
+        await runDirectOclifCommand(result.commandId, result.args);
       }
       return;
     case "publicUsageError":
@@ -247,7 +247,7 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
   });
 
   if (normalized.kind === "rootHelp") {
-    await runCompatibilityOclifCommand("root:help", []);
+    await runDirectOclifCommand("root:help", []);
     return;
   }
 

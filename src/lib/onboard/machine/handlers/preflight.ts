@@ -13,6 +13,7 @@ export interface PreflightSandboxGpuOverrides {
 export interface PreflightSandboxGpuConfig {
   sandboxGpuEnabled: boolean;
   mode: string;
+  hostGpuPlatform?: string | null;
   sandboxGpuDevice?: string | null;
   errors?: readonly string[];
 }
@@ -41,7 +42,11 @@ export interface PreflightStateOptions<
     detectGpu(): Gpu;
     runPreflight(options: { optedOutGpuPassthrough?: boolean }): Promise<Gpu>;
     assessHost(): Host;
-    assertCdiNvidiaGpuSpecPresent(host: Host, optedOutGpuPassthrough: boolean): void;
+    assertCdiNvidiaGpuSpecPresent(
+      host: Host,
+      optedOutGpuPassthrough: boolean,
+      hostGpuPlatform?: string | null,
+    ): void;
     resolveSandboxGpuConfig(
       gpu: Gpu,
       options: { flag: PreflightSandboxGpuFlag; device: string | null | undefined },
@@ -109,13 +114,17 @@ export async function handlePreflightState<
     deps.skippedStepMessage("preflight", "cached");
     await deps.recordStateSkipped("preflight", { reason: "resume", validation: "gpu-cdi" });
     gpu = deps.detectGpu();
-    const resumeOptedOutGpuPassthrough = noGpu || (!gpuRequested && session?.gpuPassthrough === false);
-    deps.assertCdiNvidiaGpuSpecPresent(deps.assessHost(), resumeOptedOutGpuPassthrough);
-    deps.validateSandboxGpuPreflight(
-      deps.resolveSandboxGpuConfig(gpu, {
-        flag: effectiveSandboxGpuFlag,
-        device: effectiveSandboxGpuDevice,
-      }),
+    const resumeSandboxGpuConfig = deps.resolveSandboxGpuConfig(gpu, {
+      flag: effectiveSandboxGpuFlag,
+      device: effectiveSandboxGpuDevice,
+    });
+    deps.validateSandboxGpuPreflight(resumeSandboxGpuConfig);
+    const resumeOptedOutGpuPassthrough =
+      noGpu || (!gpuRequested && session?.gpuPassthrough === false) || !resumeSandboxGpuConfig.sandboxGpuEnabled;
+    deps.assertCdiNvidiaGpuSpecPresent(
+      deps.assessHost(),
+      resumeOptedOutGpuPassthrough,
+      resumeSandboxGpuConfig.hostGpuPlatform,
     );
   } else {
     await deps.startRecordedStep("preflight");

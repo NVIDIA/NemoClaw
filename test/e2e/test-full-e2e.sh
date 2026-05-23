@@ -69,6 +69,9 @@ except Exception as e:
 "
 }
 
+# shellcheck source=test/e2e/lib/openclaw-json.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/openclaw-json.sh"
+
 # Determine repo root
 if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
   REPO="/workspace"
@@ -371,8 +374,8 @@ fi
 #     routeLogsToStderr() (openclaw/src/commands/agent-via-gateway.ts:57),
 #     so stdout is a clean JSON envelope; prompt-echo on stderr cannot
 #     pollute the assertion.
-#   * Asserts on the model's reply text inside `result.payloads[].text`,
-#     not on the merged stdout/stderr.
+#   * Asserts on parsed model reply text from the JSON envelope, not on
+#     the merged stdout/stderr or a single brittle envelope shape.
 #   * The expected token (the integer 42) is not a literal substring of the
 #     prompt, so an error path that quoted the prompt back cannot satisfy
 #     the grep.
@@ -394,19 +397,7 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
 fi
 rm -f "$ssh_config"
 
-agent_reply=$(echo "$agent_response" | python3 -c "
-import json, sys
-try:
-    doc = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-result = doc.get('result') or {}
-parts = []
-for p in result.get('payloads') or []:
-    if isinstance(p, dict) and isinstance(p.get('text'), str):
-        parts.append(p['text'])
-print('\n'.join(parts))
-" 2>/dev/null) || true
+agent_reply=$(printf '%s' "$agent_response" | parse_openclaw_agent_text 2>/dev/null) || true
 
 if grep -qE "(^|[^0-9])42([^0-9]|$)" <<<"$agent_reply"; then
   pass "[LIVE] openclaw agent: model answered 6×7=42 through openclaw → inference.local"
@@ -432,6 +423,15 @@ if [ -n "$logs_output" ]; then
   pass "nemoclaw logs: produced output ($(echo "$logs_output" | wc -l | tr -d ' ') lines)"
 else
   fail "nemoclaw logs: no output"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Optional Phase 5b: Security posture regression checks
+# ══════════════════════════════════════════════════════════════════
+if [ "${NEMOCLAW_E2E_SECURITY_POSTURE:-}" = "1" ]; then
+  # shellcheck source=test/e2e/lib/security-posture-assertions.sh
+  . "$(dirname "${BASH_SOURCE[0]}")/lib/security-posture-assertions.sh"
+  security_posture_assertions_run "$SANDBOX_NAME" "openclaw"
 fi
 
 # ══════════════════════════════════════════════════════════════════

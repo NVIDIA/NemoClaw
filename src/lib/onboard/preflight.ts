@@ -625,7 +625,11 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
         kind: "sudo",
         reason:
           "Docker is installed and the service is running, but the current user cannot reach the daemon. " +
-          "This usually means your user is not in the docker group.",
+          "This usually means your user is not in the docker group. " +
+          "NemoClaw needs Docker access. " +
+          "On personal Linux development machines, adding your user to the docker group is the standard way to run Docker without sudo. " +
+          "Docker group members can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path. " +
+          "Background: https://docs.docker.com/engine/security/#docker-daemon-attack-surface.",
         commands: [
           "sudo usermod -aG docker $USER",
           "newgrp docker   # or log out and back in",

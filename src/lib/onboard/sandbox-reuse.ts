@@ -3,6 +3,7 @@
 
 import { DASHBOARD_PORT } from "../core/ports";
 import * as registry from "../state/registry";
+import { bestEffortForwardStop } from "./forward-cleanup";
 
 export interface SandboxReuseDeps {
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string;
@@ -27,7 +28,7 @@ export function createSandboxReuseHelpers(deps: SandboxReuseDeps): SandboxReuseH
   function repairRecordedSandbox(sandboxName: string | null): void {
     if (!sandboxName) return;
     deps.note(`  [resume] Cleaning up recorded sandbox '${sandboxName}' before recreating it.`);
-    deps.runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
+    bestEffortForwardStop(deps.runOpenshell, DASHBOARD_PORT);
     deps.runOpenshell(["sandbox", "delete", sandboxName], { ignoreError: true });
     registry.removeSandbox(sandboxName);
   }

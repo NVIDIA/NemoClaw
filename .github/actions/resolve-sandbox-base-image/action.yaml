@@ -16,6 +16,16 @@ runs:
         min_glibc="2.39"
         base_inputs=(Dockerfile.base nemoclaw-blueprint/blueprint.yaml)
 
+        normalize_version_tag() {
+          local raw="${1:-}" version
+          raw="${raw#refs/tags/}"
+          raw="${raw#release/}"
+          [[ -n "$raw" && "$raw" != "latest" ]] || return 1
+          version="${raw#v}"
+          [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,3}([-.][0-9A-Za-z][0-9A-Za-z.-]*)?$ ]] || return 1
+          printf 'v%s\n' "$version"
+        }
+
         glibc_version() {
           docker run --rm --entrypoint /usr/bin/ldd "$1" --version 2>/dev/null \
             | sed -nE 's/.*GLIBC ([0-9]+\.[0-9]+).*/\1/p; s/.* ([0-9]+\.[0-9]+)$/\1/p' \
@@ -69,6 +79,16 @@ runs:
         }
 
         candidates=()
+        if [[ "${GITHUB_REF_TYPE:-}" == "tag" ]] && tag="$(normalize_version_tag "${GITHUB_REF_NAME:-}")"; then
+          candidates+=("${image}:${tag}")
+        fi
+        exact_tag="$(git describe --tags --exact-match --match 'v*' HEAD 2>/dev/null || true)"
+        if tag="$(normalize_version_tag "$exact_tag")"; then
+          [[ -n "$tag" ]] && candidates+=("${image}:${tag}")
+        fi
+        if [[ -f .version ]] && tag="$(normalize_version_tag "$(cat .version)")"; then
+          candidates+=("${image}:${tag}")
+        fi
         if [[ -n "${GITHUB_SHA:-}" ]]; then
           candidates+=("${image}:${GITHUB_SHA:0:8}" "${image}:${GITHUB_SHA:0:7}")
         fi

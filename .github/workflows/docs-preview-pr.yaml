@@ -65,12 +65,15 @@ jobs:
           PREVIEW_ID: pr-${{ github.event.pull_request.number }}
         working-directory: ./fern
         run: |
+          set +e
           OUTPUT=$(fern generate --docs --preview --id "$PREVIEW_ID" 2>&1)
+          STATUS=$?
+          set -e
           echo "$OUTPUT"
-          URL=$(echo "$OUTPUT" | grep -oP 'Published docs to \K.*(?= \()')
+          URL=$(echo "$OUTPUT" | sed -nE 's/.*Published docs to (https?:\/\/[^[:space:]]+).*/\1/p' | head -n1)
           if [ -z "$URL" ]; then
             echo "::error::Failed to generate preview URL. See fern output above."
-            exit 1
+            exit "$STATUS"
           fi
           echo "preview_url=$URL" >> "$GITHUB_OUTPUT"
 

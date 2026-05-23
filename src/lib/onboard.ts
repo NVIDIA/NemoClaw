@@ -22,8 +22,10 @@ const {
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const {
+  ensureManagedOllamaLoopbackSystemdOverride,
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
+const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
 const {
   CUSTOM_BUILD_CONTEXT_WARN_BYTES,
   isInsideIgnoredCustomBuildContextPath,
@@ -37,6 +39,7 @@ const {
 }: typeof import("./onboard/compatible-endpoint-smoke") = require("./onboard/compatible-endpoint-smoke");
 const {
   buildSandboxConfigSyncScript,
+  runSandboxConfigSync,
   writeSandboxConfigSyncFile,
 }: typeof import("./onboard/config-sync") = require("./onboard/config-sync");
 const dockerGpuPatch: typeof import("./onboard/docker-gpu-patch") = require("./onboard/docker-gpu-patch");
@@ -87,9 +90,18 @@ const {
 const {
   setupSelectedMessagingChannels,
 } = require("./onboard/messaging-channel-setup") as typeof import("./onboard/messaging-channel-setup");
+const {
+  clearAgentScopedResumeState,
+}: typeof import("./onboard/agent-resume-state") = require("./onboard/agent-resume-state");
+const {
+  stopTrackedModelRouterForAgentChange,
+}: typeof import("./onboard/model-router-process") = require("./onboard/model-router-process");
 const bedrockRuntimeOnboard: typeof import("./onboard/bedrock-runtime") =
   require("./onboard/bedrock-runtime");
 const { buildVllmMenuEntries }: typeof import("./onboard/vllm-menu") = require("./onboard/vllm-menu");
+const {
+  detectWindowsHostOllama,
+}: typeof import("./onboard/windows-host-ollama") = require("./onboard/windows-host-ollama");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -191,6 +203,7 @@ const {
 } = inferenceConfig;
 
 const onboardProviders = require("./onboard/providers");
+const { ensureResumeProviderReady } = require("./onboard/resume-provider-shim");
 const hermesProviderAuth = require("./hermes-provider-auth");
 const hermesAuth: typeof import("./onboard/hermes-auth") = require("./onboard/hermes-auth");
 const {
@@ -317,6 +330,8 @@ const {
 const { createOpenshellCliHelpers }: typeof import("./onboard/openshell-cli") = require("./onboard/openshell-cli");
 const sandboxGpuPreflight: typeof import("./onboard/sandbox-gpu-preflight") = require("./onboard/sandbox-gpu-preflight");
 const {
+  exitOnSandboxGpuConfigErrors,
+  formatSandboxGpuPassthroughNote,
   resolveSandboxGpuFlagFromOptions,
   sandboxGpuRemediationLines,
   validateSandboxGpuPreflight,
@@ -331,6 +346,13 @@ const {
   shouldUseOpenshellDevChannel,
   versionGte,
 } = openshellVersion;
+const credentialNavigation: typeof import("./onboard/credential-navigation") =
+  require("./onboard/credential-navigation");
+const {
+  BACK_TO_SELECTION,
+  createCredentialPromptHelpers,
+  isBackToSelection,
+} = credentialNavigation;
 const { toSessionUpdates }: typeof import("./onboard/session-updates") = require("./onboard/session-updates");
 const gatewayReuse: typeof import("./onboard/gateway-reuse") = require("./onboard/gateway-reuse");
 const messagingConfig: typeof import("./onboard/messaging-config") = require("./onboard/messaging-config");
@@ -461,6 +483,7 @@ import {
   setupHermesToolGateways,
   stringSetsEqual,
 } from "./onboard/hermes-managed-tools";
+import { mergePolicyMessagingChannels } from "./onboard/messaging-policy-presets";
 import {
   filterEnabledChannelsByAgent,
   getAvailableMessagingChannelsForAgent,
@@ -477,6 +500,7 @@ import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
 import { getSuggestedPolicyPresets } from "./onboard/policy-presets";
 import {
   computeSetupPresetSuggestions as computeSetupPresetSuggestionsImpl,
+  preparePolicyPresetResumeSelection,
   type SetupPolicySelectionOptions,
   type SetupPresetSuggestionOptions,
   setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
@@ -507,7 +531,6 @@ const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
 const GATEWAY_NAME = "nemoclaw";
-const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
@@ -645,28 +668,6 @@ const {
   runCurlProbe,
 } = httpProbe;
 
-const {
-  promptHermesAuthMethod,
-  resolveHermesNousApiKey,
-  stageNousApiKeyProviderEnv,
-  ensureHermesNousApiKeyEnv,
-  openshellResultMessage,
-  checkHermesProviderStoreReachable,
-} = hermesAuth.createHermesAuthHelpers({
-  isNonInteractive,
-  note,
-  prompt,
-  getNavigationChoice,
-  exitOnboardFromPrompt,
-  validateNvidiaApiKeyValue: (value: string, envName: string) =>
-    validateNvidiaApiKeyValue(value, envName),
-  compactText,
-  redact,
-  runOpenshell,
-  backToSelection: BACK_TO_SELECTION,
-});
-
-
 const selectOnboardAgent = createSelectOnboardAgent({
   resolveAgent: agentOnboard.resolveAgent,
   loadAgent: agentDefs.loadAgent,
@@ -690,7 +691,31 @@ const {
 
 // validateNvidiaApiKeyValue — see validation import above
 
-const { replaceNamedCredential, promptValidationRecovery } = createValidationRecoveryPromptHelpers({
+const credentialPrompt = createCredentialPromptHelpers(exitOnboardFromPrompt);
+const replaceNamedCredential = credentialPrompt.replaceNamedCredential;
+
+const {
+  promptHermesAuthMethod,
+  resolveHermesNousApiKey,
+  stageNousApiKeyProviderEnv,
+  ensureHermesNousApiKeyEnv,
+  openshellResultMessage,
+  checkHermesProviderStoreReachable,
+} = hermesAuth.createHermesAuthHelpers({
+  isNonInteractive,
+  note,
+  prompt,
+  getNavigationChoice,
+  exitOnboardFromPrompt,
+  validateNvidiaApiKeyValue: (value: string, envName: string) =>
+    validateNvidiaApiKeyValue(value, envName),
+  compactText,
+  redact,
+  runOpenshell,
+  backToSelection: BACK_TO_SELECTION,
+});
+
+const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
   isNonInteractive,
   prompt,
   validateNvidiaApiKeyValue: (key: string, credentialEnv: string | null) =>
@@ -1718,17 +1743,8 @@ async function ensureNamedCredential(
   envName: string | null,
   label: string,
   helpUrl: string | null = null,
-): Promise<string> {
-  if (!envName) {
-    console.error(`  Missing credential target for ${label}.`);
-    process.exit(1);
-  }
-  let key = getCredential(envName);
-  if (key) {
-    process.env[envName] = key;
-    return key;
-  }
-  return replaceNamedCredential(envName, label, helpUrl);
+): Promise<string | typeof BACK_TO_SELECTION> {
+  return credentialPrompt.ensureNamedCredential(envName, label, helpUrl);
 }
 
 function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 2): boolean {
@@ -1771,19 +1787,14 @@ function waitForSandboxReady(sandboxName: string, attempts = 10, delaySeconds = 
 
 // ── Step 1: Preflight ────────────────────────────────────────────
 
-// CDI spec gap (#3152). When Docker is configured for CDI device injection
-// (CDISpecDirs is set) but no nvidia.com/gpu spec is present, OpenShell's
-// `gateway start --gpu` fails minutes later with `unresolvable CDI devices
-// nvidia.com/gpu=all`. Block now and surface `nvidia-ctk cdi generate`. The
-// check is a no-op when the user opts out of GPU passthrough (--no-gpu),
-// since the legacy nvidia runtime does not need a CDI spec.
-//
-// Extracted so the same guard runs on the `--resume` branch, where preflight()
-// itself is skipped via the cached session.
+// Keep the Docker CDI guard near preflight so resume hits the same early failure path.
+// Jetson/Tegra uses Docker's NVIDIA runtime backend and is exempt from CDI.
 function assertCdiNvidiaGpuSpecPresent(
   host: ReturnType<typeof assessHost>,
   optedOutGpuPassthrough: boolean,
+  hostGpuPlatform: string | null | undefined = null,
 ): void {
+  if (hostGpuPlatform === "jetson") return;
   if (!host.cdiNvidiaGpuSpecMissing || optedOutGpuPassthrough) return;
   console.error(
     "  Docker is configured for CDI device injection (CDISpecDirs is set), but no",
@@ -1820,9 +1831,17 @@ async function preflight(
   }
   console.log("  ✓ Docker is running");
   require("./onboard/http-proxy-preflight").warnIfHostProxyMissesLoopback();
+  const gpu = nim.detectGpu();
+  const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
+    flag: resolveSandboxGpuFlagFromOptions(preflightOpts),
+    device: preflightOpts.sandboxGpuDevice ?? null,
+  });
+  exitOnSandboxGpuConfigErrors(sandboxGpuConfig);
   const optedOutGpuPassthrough =
-    preflightOpts.optedOutGpuPassthrough === true || preflightOpts.noGpu === true;
-  assertCdiNvidiaGpuSpecPresent(host, optedOutGpuPassthrough);
+    preflightOpts.optedOutGpuPassthrough === true ||
+    preflightOpts.noGpu === true ||
+    !sandboxGpuConfig.sandboxGpuEnabled;
+  assertCdiNvidiaGpuSpecPresent(host, optedOutGpuPassthrough, sandboxGpuConfig.hostGpuPlatform);
 
   // DNS resolution from inside containers (#2101). A corp firewall that
   // blocks outbound UDP:53 to public resolvers leaves the sandbox build
@@ -2280,7 +2299,6 @@ async function preflight(
   dockerDriverGatewayEnv.warnIfGatewayWildcardBindAddress();
 
   // GPU
-  const gpu = nim.detectGpu();
   if (gpu && gpu.type === "nvidia") {
     const lines = nim.formatNvidiaGpuPreflightLines(gpu);
     console.log(`  ✓ ${lines[0]}`);
@@ -2299,10 +2317,6 @@ async function preflight(
     console.log("  ⓘ Local NIM unavailable — no GPU detected");
   }
 
-  const sandboxGpuConfig = resolveSandboxGpuConfig(gpu, {
-    flag: resolveSandboxGpuFlagFromOptions(preflightOpts),
-    device: preflightOpts.sandboxGpuDevice ?? null,
-  });
   validateSandboxGpuPreflight(sandboxGpuConfig);
   if (sandboxGpuConfig.sandboxGpuEnabled) {
     console.log(
@@ -3679,14 +3693,14 @@ async function createSandbox(
   // Pull the base image and resolve its digest so the Dockerfile is pinned to
   // exactly what we just fetched. This prevents stale :latest tags from
   // silently reusing a cached old image after NemoClaw upgrades (#1904).
-  const resolved = pullAndResolveBaseImageDigest({
+  const resolved = agent && !fromDockerfile ? null : pullAndResolveBaseImageDigest({
     requireOpenshellSandboxAbi: isLinuxDockerDriverGatewayEnabled(),
   });
   if (resolved?.digest) {
     console.log(`  Pinning base image to ${resolved.digest.slice(0, 19)}...`);
   } else if (resolved) {
     console.log(`  Using sandbox base image ${resolved.ref}`);
-  } else {
+  } else if (!(agent && !fromDockerfile)) {
     // Check if the image exists locally before falling back to unpinned :latest.
     // On a first-time install behind a firewall with no cached image, warn early
     // so the user knows the build will likely fail.
@@ -3806,20 +3820,21 @@ async function createSandbox(
   // from openshell because bash returns the status of the last pipeline
   // command (awk, always 0) unless pipefail is set. Removing the pipe
   // lets the real exit code flow through to run().
+  const sandboxStartupCommand = ["env", ...envArgs, "nemoclaw-start"];
   const createCommand = `${openshellShellCommand([
     "sandbox",
     "create",
     ...createArgs,
     "--",
-    "env",
-    ...envArgs,
-    "nemoclaw-start",
+    ...sandboxStartupCommand,
   ])} 2>&1`;
   const dockerGpuCreatePatch = dockerGpuSandboxCreate.createDockerGpuSandboxCreatePatch({
     enabled: useDockerGpuPatch,
     sandboxName,
     gpuDevice: effectiveSandboxGpuConfig.sandboxGpuDevice,
+    openshellSandboxCommand: sandboxStartupCommand,
     timeoutSecs: sandboxReadyTimeoutSecs,
+    backend: effectiveSandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
     deps: { runOpenshell, runCaptureOpenshell, sleep: sleepSeconds },
   });
   const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
@@ -4153,13 +4168,13 @@ async function selectAndValidateOllamaModel(
   const { requestedModel, recoveredModel } = defaults;
   while (true) {
     const installedModels = getOllamaModelOptions();
-    let model: string;
+    let model: string | typeof BACK_TO_SELECTION;
     if (isNonInteractive()) {
       model = requestedModel || recoveredModel || getDefaultOllamaModel(gpu);
     } else {
       model = await promptOllamaModel(gpu);
     }
-    if (model === BACK_TO_SELECTION) {
+    if (isBackToSelection(model)) {
       console.log("  Returning to provider selection.");
       console.log("");
       return { outcome: "back-to-selection" };
@@ -4216,6 +4231,8 @@ async function selectAndValidateOllamaModel(
       {
         skipResponsesProbe: true,
         requireChatCompletionsToolCalling: true,
+        allowHostDockerInternal:
+          localInference.getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
       },
     );
     if (validation.retry === "selection") return { outcome: "back-to-selection" };
@@ -4245,9 +4262,9 @@ async function setupNim(
   preferredInferenceApi: string | null;
   nimContainer: string | null;
 }> {
-  step(3, 8, "Configuring inference (NIM)");
+  step(3, 8, "Configuring inference provider");
 
-  let model: string | null = null;
+  let model: string | typeof BACK_TO_SELECTION | null = null;
   let provider: string = REMOTE_PROVIDER_CONFIG.build.providerName;
   let nimContainer: string | null = null;
   let endpointUrl: string | null = REMOTE_PROVIDER_CONFIG.build.endpointUrl;
@@ -4278,43 +4295,12 @@ async function setupNim(
     docker.dockerCapture(["images", "-q", vllmProfile.image], { ignoreError: true }).trim()
   );
   // Probed even when WSL has its own Ollama: users may prefer the Windows
-  // instance for GPU access and a unified model cache.
-  let hasWindowsOllama = false;
-  if (isWsl()) {
-    const winOllamaPath = runCapture(
-      [
-        "powershell.exe",
-        "-Command",
-        "Get-Command ollama.exe -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source",
-      ],
-      { ignoreError: true },
-    ).trim();
-    hasWindowsOllama = winOllamaPath.length > 0;
-  }
-
-  let winOllamaLoopbackOnly = false;
-  if (isWsl() && hasWindowsOllama) {
-    const winPid = runCapture(
-      [
-        "powershell.exe",
-        "-Command",
-        "Get-Process ollama -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id",
-      ],
-      { ignoreError: true },
-    ).trim();
-    if (winPid) {
-      const listenAddrs = runCapture(
-        [
-          "powershell.exe",
-          "-Command",
-          "Get-NetTCPConnection -LocalPort 11434 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalAddress",
-        ],
-        { ignoreError: true },
-      );
-      winOllamaLoopbackOnly =
-        /127\.0\.0\.1/.test(listenAddrs) && !/0\.0\.0\.0|^::\s*$/m.test(listenAddrs);
-    }
-  }
+  // instance for GPU access and a unified model cache. See
+  // src/lib/onboard/windows-host-ollama.ts for process/path fallback details.
+  const winOllamaState = detectWindowsHostOllama();
+  const hasWindowsOllama = winOllamaState.installed;
+  const winOllamaInstalledPath = winOllamaState.installedPath;
+  const winOllamaLoopbackOnly = winOllamaState.loopbackOnly;
 
   // Independent of findReachableOllamaHost: when WSL Ollama wins the cache
   // on 127.0.0.1, Windows-host may also be running on 0.0.0.0 and we want
@@ -4645,13 +4631,15 @@ async function setupNim(
 
         if (selected.key === "hermesProvider") {
           const selectedHermesAuthMethod = await promptHermesAuthMethod();
-          if (selectedHermesAuthMethod === BACK_TO_SELECTION) {
+          if (isBackToSelection(selectedHermesAuthMethod)) {
             hermesAuthMethod = null;
             console.log("  Returning to provider selection.");
             console.log("");
             continue selectionLoop;
           }
-          hermesAuthMethod = normalizeHermesAuthMethod(selectedHermesAuthMethod);
+          hermesAuthMethod = normalizeHermesAuthMethod(
+            selectedHermesAuthMethod as string | null | undefined,
+          );
           if (hermesAuthMethod === HERMES_AUTH_METHOD_API_KEY) {
             credentialEnv = HERMES_NOUS_API_KEY_CREDENTIAL_ENV;
             stageNousApiKeyProviderEnv();
@@ -4663,7 +4651,9 @@ async function setupNim(
                 process.exit(1);
               }
             } else {
-              await ensureHermesNousApiKeyEnv();
+              const hermesKeyResult = await ensureHermesNousApiKeyEnv();
+              if (credentialPrompt.returningToProviderSelection(hermesKeyResult))
+                continue selectionLoop;
             }
           } else {
             credentialEnv = remoteConfig.credentialEnv;
@@ -4706,7 +4696,7 @@ async function setupNim(
               },
             );
           }
-          if (model === BACK_TO_SELECTION) {
+          if (isBackToSelection(model)) {
             console.log("  Returning to provider selection.");
             console.log("");
             continue selectionLoop;
@@ -4757,7 +4747,7 @@ async function setupNim(
               ? DEFAULT_CLOUD_MODEL
               : await promptCloudModel({ defaultModelId: _envModel || undefined })) ||
             DEFAULT_CLOUD_MODEL;
-          if (model === BACK_TO_SELECTION) {
+          if (isBackToSelection(model)) {
             console.log("  Returning to provider selection.");
             console.log("");
             continue selectionLoop;
@@ -4815,11 +4805,12 @@ async function setupNim(
               process.exit(1);
             }
           } else {
-            await ensureNamedCredential(
+            const credentialResult = await ensureNamedCredential(
               selectedCredentialEnv,
               remoteConfig.label + " API key",
               remoteConfig.helpUrl,
             );
+            if (credentialPrompt.returningToProviderSelection(credentialResult)) continue selectionLoop;
           }
           let modelValidator: ((candidate: string) => ModelValidationResult) | null = null;
           if (selected.key === "openai" || selected.key === "gemini") {
@@ -4853,7 +4844,7 @@ async function setupNim(
             } else {
               model = await promptInputModel(remoteConfig.label, defaultModel, modelValidator);
             }
-            if (model === BACK_TO_SELECTION) {
+            if (isBackToSelection(model)) {
               console.log("  Returning to provider selection.");
               console.log("");
               continue selectionLoop;
@@ -5060,9 +5051,8 @@ async function setupNim(
             console.log("  NGC API Key required to pull NIM images.");
             console.log("  Get one from: https://org.ngc.nvidia.com/setup/api-key");
             console.log("");
-            let ngcKey = normalizeCredentialValue(
-              await prompt("  NGC API Key: ", { secret: true }),
-            );
+            let ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
+            if (credentialPrompt.returningToProviderSelection(ngcKey)) continue selectionLoop;
             if (!ngcKey) {
               console.error("  NGC API Key is required for Local NIM.");
               process.exit(1);
@@ -5070,7 +5060,8 @@ async function setupNim(
             if (!nim.dockerLoginNgc(ngcKey)) {
               console.error("  Failed to login to NGC registry. Check your API key and try again.");
               console.log("");
-              ngcKey = normalizeCredentialValue(await prompt("  NGC API Key: ", { secret: true }));
+              ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
+              if (credentialPrompt.returningToProviderSelection(ngcKey)) continue selectionLoop;
               if (!ngcKey || !nim.dockerLoginNgc(ngcKey)) {
                 console.error("  NGC login failed. Cannot pull NIM images.");
                 process.exit(1);
@@ -5092,9 +5083,9 @@ async function setupNim(
               console.log("");
               console.log("  NGC API Key required to download NIM model weights at runtime.");
               console.log("  (Docker is logged in to nvcr.io, but the key was not saved.)");
-              ngcApiKey = normalizeCredentialValue(
-                await prompt("  NGC API Key: ", { secret: true }),
-              );
+              const ngcKey = await credentialPrompt.readValue("  NGC API Key: ");
+              if (credentialPrompt.returningToProviderSelection(ngcKey)) continue selectionLoop;
+              ngcApiKey = ngcKey || null;
             }
           }
 
@@ -5253,7 +5244,12 @@ async function setupNim(
           }
           console.log(`  ✓ Using Ollama on host.docker.internal:${OLLAMA_PORT}`);
         } else {
-          if (!setupWindowsOllamaWith0000Binding({ announceStop: isRestart })) {
+          if (
+            !setupWindowsOllamaWith0000Binding({
+              announceStop: isRestart,
+              installedPath: winOllamaInstalledPath || undefined,
+            })
+          ) {
             printWindowsOllamaTimeoutDiagnostics();
             if (isNonInteractive()) process.exit(1);
             continue selectionLoop;
@@ -5304,9 +5300,9 @@ async function setupNim(
           ensureOllamaLinuxExtractionDependencies();
           console.log(
             "  The Ollama installer creates a system user, a systemd service, and writes to /usr/local. " +
-              "It uses sudo for those steps; you may be prompted for your password.",
+              "It uses sudo, may ask for your password, and can take a few minutes; installer output will stream below.",
           );
-          runShell("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh");
+          runShell("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh", { stdio: "inherit" });
           // Give the just-started ollama.service a moment to bind port
           // 11434 before we probe or apply the systemd drop-in override.
           sleepSeconds(2);
@@ -5315,7 +5311,7 @@ async function setupNim(
           // daemon with our own `ollama serve`). This also repairs older
           // NemoClaw-created overrides that exposed raw Ollama on all interfaces.
           // WSL and non-systemd Linux fall back to a manual loopback launch.
-          const overrideState = ensureOllamaLoopbackSystemdOverride({ isNonInteractive });
+          const overrideState = ensureManagedOllamaLoopbackSystemdOverride({ isNonInteractive });
           if (overrideState === "failed") {
             console.error(
               "  Ollama systemd restart did not recover after applying the loopback override.",
@@ -5427,7 +5423,7 @@ async function setupNim(
         const validation = await validateOpenAiLikeSelection(
           "Local vLLM",
           validationBaseUrl,
-          requireValue(model, "Expected a detected vLLM model"),
+          requireValue(model as string | null | undefined, "Expected a detected vLLM model"),
           null,
         );
         if (validation.retry === "selection" || validation.retry === "model") {
@@ -5480,7 +5476,13 @@ async function setupNim(
             console.log("  Model Router accepts NVIDIA API keys (nvapi-...).");
             console.log("  Get one at https://build.nvidia.com");
             console.log("");
-            await ensureNamedCredential(routerCredentialEnv, "Model Router API key", null);
+            const routerCredentialResult = await ensureNamedCredential(
+              routerCredentialEnv,
+              "Model Router API key",
+              null,
+            );
+            if (credentialPrompt.returningToProviderSelection(routerCredentialResult))
+              continue selectionLoop;
           }
         }
         provider = bp.provider_name || "nvidia-router";
@@ -5499,8 +5501,9 @@ async function setupNim(
     }
   }
 
+  const selectedModel = isBackToSelection(model) ? null : model;
   return {
-    model,
+    model: selectedModel,
     provider,
     endpointUrl,
     credentialEnv,
@@ -6140,6 +6143,18 @@ async function setupMessagingChannels(
 
 
 // ── Step 7: OpenClaw ─────────────────────────────────────────────
+
+function syncNemoClawConfigInSandbox(sandboxName: string, provider: string, model: string): void {
+  runSandboxConfigSync(sandboxName, {
+    getSelectionConfig: () => getProviderSelectionConfig(provider, model),
+    runConnectScript: (name, scriptContent) => {
+      run(openshellArgv(["sandbox", "connect", name]), {
+        stdio: ["pipe", "ignore", "inherit"],
+        input: scriptContent,
+      });
+    },
+  });
+}
 
 const setupOpenclaw = createOpenclawSetup({
   step,
@@ -7051,8 +7066,26 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       resume,
       canPrompt: !cannotPrompt,
     });
+    const selectedAgentName = normalizeSandboxAgentName(agent?.name);
+    const recordedAgentName = normalizeSandboxAgentName(session?.agent);
+    let resumeAgentChanged = false;
+    let forceProviderSelectionForAgentChange = false;
+    if (resume && session && recordedAgentName !== selectedAgentName) {
+      resumeAgentChanged = true;
+      forceProviderSelectionForAgentChange = true;
+      note(
+        `  Agent changed from ${formatSandboxAgentName(recordedAgentName)} to ${formatSandboxAgentName(selectedAgentName)}; refreshing provider selection.`,
+      );
+      await stopTrackedModelRouterForAgentChange(
+        session,
+        loadBlueprintProfile("routed")?.router.port || 4000,
+      );
+      onboardSession.updateSession((current: Session) =>
+        clearAgentScopedResumeState(current, selectedAgentName),
+      );
+    }
     setOnboardBrandingAgent(agent?.name || "openclaw");
-    onboardSession.updateSession((s: Session) => {
+    session = onboardSession.updateSession((s: Session) => {
       s.agent = agent?.name ?? null;
       return s;
     });
@@ -7068,6 +7101,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     console.log("  ===================");
 
     const explicitSandboxGpuFlag = resolveSandboxGpuFlagFromOptions(opts);
+    const recordedGpuPassthroughBeforePreflight = session?.gpuPassthrough === true;
     const preflightResult = await handlePreflightState({
       resume,
       session,
@@ -7104,14 +7138,16 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const gpu = preflightResult.gpu ?? null;
     if (gpuPassthrough) {
       note(
-        resumeHasResolvedGpuIntent && session?.gpuPassthrough === true
-          ? "  [resume] Continuing GPU passthrough from the saved onboarding session."
-          : requestedGpuPassthrough || sandboxGpuConfig.mode === "1"
-            ? "  GPU passthrough requested; passing --gpu to OpenShell gateway and sandbox creation."
-            : "  NVIDIA GPU detected; enabling OpenShell GPU passthrough. Use --no-gpu to opt out.",
+        formatSandboxGpuPassthroughNote({
+          hostGpuPlatform: sandboxGpuConfig.hostGpuPlatform,
+          resumeHasResolvedGpuIntent,
+          recordedGpuPassthroughBeforePreflight,
+          requestedGpuPassthrough,
+          sandboxGpuMode: sandboxGpuConfig.mode,
+        }),
       );
     } else if (gpu?.platform === "jetson") {
-      note("  GPU sandbox passthrough disabled by default on Jetson.");
+      note("  Sandbox GPU disabled by configuration on Jetson/Tegra.");
     } else if (process.platform === "linux" && !opts.noGpu) {
       try {
         const lspci = spawnSync("lspci", { encoding: "utf-8", timeout: 5000 });
@@ -7136,7 +7172,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       gpu,
       gpuPassthrough,
       gatewayName: GATEWAY_NAME,
-      dashboardPort: DASHBOARD_PORT,
       recordedSandboxName,
       requestedSandboxName,
       recreateSandbox: isRecreateSandbox(),
@@ -7146,7 +7181,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         verifyGatewayContainerRunning,
         waitForGatewayHttpReady,
         getGatewayLocalEndpoint,
-        runOpenshell,
+        stopDashboardForward: () => bestEffortForwardStop(runOpenshell, DASHBOARD_PORT),
         destroyGateway,
         destroyGatewayForReuse,
         getGatewayClusterImageDrift,
@@ -7185,6 +7220,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       gpu,
       sandboxName,
       agent,
+      forceProviderSelection: forceProviderSelectionForAgentChange,
       initial: {
         model: session?.model || null,
         provider: session?.provider || null,
@@ -7203,7 +7239,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       },
       selectedMessagingChannels,
       env: process.env,
-      constants: { hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME },
+      constants: {
+        hermesProviderName: hermesProviderAuth.HERMES_PROVIDER_NAME,
+        hermesApiKeyAuthMethod: HERMES_AUTH_METHOD_API_KEY,
+        hermesApiKeyCredentialEnv: HERMES_NOUS_API_KEY_CREDENTIAL_ENV,
+      },
       deps: {
         normalizeHermesAuthMethod,
         setupNim,
@@ -7212,6 +7252,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         recordStepComplete,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         skippedStepMessage,
+        ensureResumeProviderReady,
         recordStateSkipped,
         recordRepairEvent,
         hydrateCredentialEnv,
@@ -7256,6 +7297,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     const sandboxStateResult = await handleSandboxState({
       resume,
       fresh,
+      resumeAgentChanged,
       session,
       sandboxName,
       model,
@@ -7290,6 +7332,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         removeSandboxFromRegistry: registry.removeSandbox.bind(registry),
         repairRecordedSandbox,
         ensureValidatedBraveSearchCredential,
+        isBackToSelection,
         configureWebSearch,
         startRecordedStep,
         getRecordedMessagingChannelsForResume,
@@ -7349,6 +7392,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         recordStateSkipped,
         startRecordedStep,
         setupOpenclaw,
+        syncNemoClawConfigInSandbox,
         recordStepComplete,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
@@ -7369,18 +7413,16 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       agent,
       deps: {
         loadSession: onboardSession.loadSession,
-        getActiveMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
+        getActiveSandbox: (name) => registry.getSandbox(name),
+        mergePolicyMessagingChannels,
         verifyCompatibleEndpointSandboxSmoke: (options) =>
           verifyCompatibleEndpointSandboxSmoke({
             ...options,
             runOpenshell,
             redact,
           }),
-        listSetupPolicyPresets: policies.listSetupPolicyPresets,
-        getAppliedPolicyPresets: policies.getAppliedPresets,
-        listCustomPolicyPresets: policies.listCustomPresets,
-        clampSetupPolicyPresetNames: policies.clampSetupPolicyPresetNames,
-        mergeRequiredHermesToolGatewayPolicyPresets,
+        preparePolicyPresetResumeSelection: (name, options) =>
+          preparePolicyPresetResumeSelection({ policies }, name, options),
         arePolicyPresetsApplied,
         skippedStepMessage,
         recordStateSkipped,
@@ -7401,7 +7443,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       agent,
       hermesAuthMethod,
       hermesToolGateways,
-      selectedMessagingChannels,
       stagedLegacyKeys,
       migratedLegacyKeys,
       deps: {
@@ -7509,6 +7550,7 @@ module.exports = {
   hasStaleGateway,
   getRequestedSandboxNameHint,
   getResumeSandboxConflict,
+  clearAgentScopedResumeState,
   getSandboxReuseState,
   getSandboxStateFromOutputs,
   getPortConflictServiceHints,
@@ -7584,4 +7626,5 @@ module.exports = {
   checkTelegramReachability,
   TELEGRAM_NETWORK_CURL_CODES,
   verifyCompatibleEndpointSandboxSmoke,
+  resumeProviderShimDeps: { isRoutedInferenceProvider, replaceNamedCredential },
 };

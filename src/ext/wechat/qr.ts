@@ -38,7 +38,7 @@ export const WECHAT_ILINK_APP_ID = "bot";
  *  installed in the sandbox image, so the iLink gateway sees the same
  *  client version from both the host login and the in-sandbox plugin.
  *  Bump together with the version pinned in the Dockerfile. */
-export const WECHAT_ILINK_CLIENT_VERSION = encodeIlinkClientVersion("2.4.2");
+export const WECHAT_ILINK_CLIENT_VERSION = encodeIlinkClientVersion("2.4.3");
 
 /** Client-side ceiling for a single status long-poll. 35s keeps us within
  *  typical 60s gateway/proxy idle windows. */

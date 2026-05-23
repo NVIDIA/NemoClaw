@@ -65,14 +65,14 @@ export interface HermesAuthFlowDeps {
     stdout?: string | Buffer | null;
     stderr?: string | Buffer | null;
   };
-  backToSelection: string;
+  backToSelection: unknown;
 }
 
 export interface HermesAuthHelpers {
-  promptHermesAuthMethod(): Promise<HermesAuthMethod | string>;
+  promptHermesAuthMethod(): Promise<HermesAuthMethod | unknown>;
   resolveHermesNousApiKey(): string | null;
   stageNousApiKeyProviderEnv(): void;
-  ensureHermesNousApiKeyEnv(): Promise<string>;
+  ensureHermesNousApiKeyEnv(): Promise<string | unknown>;
   openshellResultMessage(result: {
     stdout?: string | Buffer | null;
     stderr?: string | Buffer | null;
@@ -83,7 +83,7 @@ export interface HermesAuthHelpers {
 }
 
 export function createHermesAuthHelpers(deps: HermesAuthFlowDeps): HermesAuthHelpers {
-  async function promptHermesAuthMethod(): Promise<HermesAuthMethod | string> {
+  async function promptHermesAuthMethod(): Promise<HermesAuthMethod | unknown> {
     const methods: Array<{ key: HermesAuthMethod; label: string }> = [
       { key: HERMES_AUTH_METHOD_OAUTH, label: "Nous Portal OAuth (authenticate via browser)" },
       {
@@ -134,7 +134,7 @@ export function createHermesAuthHelpers(deps: HermesAuthFlowDeps): HermesAuthHel
     }
   }
 
-  async function ensureHermesNousApiKeyEnv(): Promise<string> {
+  async function ensureHermesNousApiKeyEnv(): Promise<string | unknown> {
     const existing = resolveHermesNousApiKey();
     if (existing) {
       process.env[HERMES_NOUS_API_KEY_CREDENTIAL_ENV] = existing;
@@ -143,11 +143,13 @@ export function createHermesAuthHelpers(deps: HermesAuthFlowDeps): HermesAuthHel
     console.log("");
     console.log("  Hermes Provider Nous API Key");
     console.log(`  Create or copy a key from ${HERMES_NOUS_API_KEY_HELP_URL}`);
-    const key = normalizeCredentialValue(
-      await deps.prompt("  Nous API Key: ", {
-        secret: true,
-      }),
-    );
+    const rawKey = await deps.prompt("  Nous API Key: ", {
+      secret: true,
+    });
+    const navigation = deps.getNavigationChoice(rawKey);
+    if (navigation === "back") return deps.backToSelection;
+    if (navigation === "exit") deps.exitOnboardFromPrompt();
+    const key = normalizeCredentialValue(rawKey);
     const validationError = deps.validateNvidiaApiKeyValue(key, HERMES_NOUS_API_KEY_CREDENTIAL_ENV);
     if (validationError) {
       console.error(validationError);

@@ -353,12 +353,14 @@ reviews:
         - `hermes-discord-e2e` — Hermes Discord config schema + placeholder
           isolation
         - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
+        - `hermes-onboard-security-posture-e2e` — Hermes onboard under a
+          non-root host security posture
         - `rebuild-hermes-e2e` — Hermes upgrade path
         - `rebuild-hermes-stale-base-e2e` — Hermes rebuild with stale cached base image
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-inference-switch-e2e,hermes-discord-e2e,hermes-slack-e2e,rebuild-hermes-e2e,rebuild-hermes-stale-base-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-inference-switch-e2e,hermes-discord-e2e,hermes-slack-e2e,hermes-onboard-security-posture-e2e,rebuild-hermes-e2e,rebuild-hermes-stale-base-e2e
         ```
 
     - path: "test/e2e/test-hermes-slack-e2e.sh"
@@ -446,6 +448,56 @@ reviews:
         To run selectively:
         ```
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=issue-2478-crash-loop-recovery-e2e
+        ```
+
+    - path: "test/e2e/lib/security-posture-assertions.sh"
+      instructions: &e2e-security-posture |
+        This helper asserts the Linux Docker-driver posture that protects
+        static rc-file shims and runtime proxy-env configure guards under
+        a non-root host user. Changes here affect both full onboard
+        security posture lanes.
+
+        **E2E test recommendation:**
+        - `openclaw-onboard-security-posture-e2e` — OpenClaw onboard under a
+          non-root host security posture
+        - `hermes-onboard-security-posture-e2e` — Hermes onboard under a
+          non-root host security posture
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openclaw-onboard-security-posture-e2e,hermes-onboard-security-posture-e2e
+        ```
+
+    - path: "test/e2e/test-full-e2e.sh"
+      instructions: |
+        This script drives the full OpenClaw onboard path. Changes can
+        alter the install, sandbox creation, health, inference, and
+        security posture assertions used by the OpenClaw nightly lanes.
+
+        **E2E test recommendation:**
+        - `cloud-e2e` — full onboard + cloud inference
+        - `openclaw-onboard-security-posture-e2e` — OpenClaw onboard under a
+          non-root host security posture
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,openclaw-onboard-security-posture-e2e
+        ```
+
+    - path: "test/e2e/test-hermes-e2e.sh"
+      instructions: |
+        This script drives the full Hermes onboard path. Changes can alter
+        install, sandbox creation, health, inference, and security posture
+        assertions used by the Hermes nightly lanes.
+
+        **E2E test recommendation:**
+        - `hermes-e2e` — Hermes onboard + health probe + live inference
+        - `hermes-onboard-security-posture-e2e` — Hermes onboard under a
+          non-root host security posture
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-e2e,hermes-onboard-security-posture-e2e
         ```
 
     # ── Split cloud-experimental tests (#2644) ──────────────────

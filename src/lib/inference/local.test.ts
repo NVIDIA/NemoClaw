@@ -1,8 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { afterEach, describe, it, expect } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
 import path from "node:path";
 
 // Import from compiled dist/ for correct coverage attribution.
@@ -13,6 +15,7 @@ import {
   LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV,
   QWEN3_6_OLLAMA_MODEL,
   getOllamaContainerPort,
+  resetOllamaContainerPortCache,
   getDefaultOllamaModel,
   getBootstrapOllamaModelOptions,
   getLocalProviderBaseUrl,
@@ -26,6 +29,7 @@ import {
   getOllamaWarmupCommand,
   parseOllamaList,
   parseOllamaTags,
+  probeOllamaRuntimeModelStatus,
   probeLocalProviderHealth,
   validateOllamaModel,
   validateLocalProvider,
@@ -33,6 +37,40 @@ import {
 
 describe("local inference helpers", () => {
   const originalSandboxHostUrl = process.env[LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV];
+  const originalPath = process.env.PATH;
+  let fakeDockerDir: string | null = null;
+
+  beforeAll(() => {
+    fakeDockerDir = mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-docker-"));
+    const fakeDockerPath = path.join(fakeDockerDir, "docker");
+    writeFileSync(
+      fakeDockerPath,
+      [
+        "#!/bin/sh",
+        "if [ \"$1\" = \"info\" ]; then",
+        "  printf '%s\\n' 'Server: Docker Engine'",
+        "  exit 0",
+        "fi",
+        "exit 1",
+        "",
+      ].join("\n"),
+    );
+    chmodSync(fakeDockerPath, 0o755);
+    process.env.PATH = `${fakeDockerDir}${path.delimiter}${originalPath ?? ""}`;
+    resetOllamaContainerPortCache();
+  });
+
+  afterAll(() => {
+    if (originalPath === undefined) {
+      delete process.env.PATH;
+    } else {
+      process.env.PATH = originalPath;
+    }
+    if (fakeDockerDir) {
+      rmSync(fakeDockerDir, { recursive: true, force: true });
+    }
+    resetOllamaContainerPortCache();
+  });
 
   afterEach(() => {
     if (originalSandboxHostUrl === undefined) {
@@ -639,6 +677,59 @@ describe("local inference helpers", () => {
   it("treats non-JSON probe output as success once the model responds", () => {
     const captureEx = () => ({ stdout: "ok", exitCode: 0, timedOut: false });
     expect(validateOllamaModel("nemotron-3-nano:30b", () => "ok", undefined, captureEx)).toEqual({ ok: true });
+  });
+
+  it("parses Ollama runtime status from /api/ps", () => {
+    const capture = () =>
+      JSON.stringify({
+        models: [
+          { name: "qwen3.6:35b", size_vram: 0, processor: "100% CPU" },
+        ],
+      });
+
+    expect(probeOllamaRuntimeModelStatus("qwen3.6:35b", capture)).toEqual({
+      probed: true,
+      loaded: true,
+      cpuOnly: true,
+      processor: "100% CPU",
+      sizeVram: 0,
+    });
+  });
+
+  it("fails Spark Ollama validation when the model is CPU-only after warmup", () => {
+    const payload = JSON.stringify({ model: "qwen3.6:35b", response: "hello", done: true });
+    const psOutput = JSON.stringify({
+      models: [{ name: "qwen3.6:35b", size_vram: 0, processor: "100% CPU" }],
+    });
+    const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+    const capture = (cmd: string | string[]) => {
+      const rendered = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      if (rendered.includes("/api/ps")) return psOutput;
+      return payload;
+    };
+
+    const result = validateOllamaModel("qwen3.6:35b", capture, () => true, captureEx);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("CPU only");
+    expect(result.message).toContain("CUDA v13");
+  });
+
+  it("passes Spark Ollama validation when /api/ps reports GPU memory", () => {
+    const payload = JSON.stringify({ model: "qwen3.6:35b", response: "hello", done: true });
+    const psOutput = JSON.stringify({
+      models: [{ name: "qwen3.6:35b", size_vram: 24_000_000_000, processor: "100% GPU" }],
+    });
+    const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+    const capture = (cmd: string | string[]) => {
+      const rendered = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      if (rendered.includes("/api/ps")) return psOutput;
+      return payload;
+    };
+
+    const result = validateOllamaModel("qwen3.6:35b", capture, () => true, captureEx);
+
+    expect(result).toEqual({ ok: true });
   });
 
   it("passes ollama memory validation when total RAM covers the model on unified-memory hosts", () => {

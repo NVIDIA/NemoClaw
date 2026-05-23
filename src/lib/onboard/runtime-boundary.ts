@@ -3,7 +3,7 @@
 
 import type { Session, SessionUpdates } from "../state/onboard-session";
 import { OnboardRuntime } from "./machine/runtime";
-import type { OnboardMachineState } from "./machine/types";
+import type { OnboardMachineEventType, OnboardMachineState } from "./machine/types";
 
 export interface OnboardRuntimeBoundaryOptions {
   toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
@@ -28,6 +28,18 @@ export class OnboardRuntimeBoundary {
     return this.runtime;
   }
 
+  recorders() {
+    return {
+      startRecordedStep: this.startRecordedStep.bind(this),
+      recordStepComplete: this.recordStepComplete.bind(this),
+      recordStepSkipped: this.recordStepSkipped.bind(this),
+      recordStateSkipped: this.recordStateSkipped.bind(this),
+      recordRepairEvent: this.recordRepairEvent.bind(this),
+      recordStepFailed: this.recordStepFailed.bind(this),
+      recordSessionComplete: this.recordSessionComplete.bind(this),
+    };
+  }
+
   async startRecordedStep(
     stepName: string,
     updates: {
@@ -45,10 +57,7 @@ export class OnboardRuntimeBoundary {
     this.options.maybeForceE2eStepFailure(stepName);
   }
 
-  async recordStepComplete(
-    stepName: string,
-    updates: SessionUpdates = {},
-  ): Promise<Session> {
+  async recordStepComplete(stepName: string, updates: SessionUpdates = {}): Promise<Session> {
     return this.getRuntime().markStepComplete(stepName, updates);
   }
 
@@ -68,7 +77,10 @@ export class OnboardRuntimeBoundary {
   }
 
   async recordRepairEvent(
-    type: "state.repair.started" | "state.repair.completed" | "state.repair.failed",
+    type: Extract<
+      OnboardMachineEventType,
+      "state.repair.started" | "state.repair.completed" | "state.repair.failed"
+    >,
     options: {
       state?: OnboardMachineState | null;
       error?: string | null;
