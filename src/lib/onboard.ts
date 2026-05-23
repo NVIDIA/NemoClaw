@@ -2428,14 +2428,12 @@ async function startGatewayWithOptions(
   }
   // Also purge any known_hosts entries matching the gateway hostname pattern
   const knownHostsPath = path.join(os.homedir(), ".ssh", "known_hosts");
-  if (fs.existsSync(knownHostsPath)) {
-    try {
-      const kh = fs.readFileSync(knownHostsPath, "utf8");
-      const cleaned = pruneKnownHostsEntries(kh);
-      if (cleaned !== kh) fs.writeFileSync(knownHostsPath, cleaned);
-    } catch {
-      /* best-effort cleanup — ignore read/write errors */
-    }
+  try {
+    const kh = fs.readFileSync(knownHostsPath, "utf8");
+    const cleaned = pruneKnownHostsEntries(kh);
+    if (cleaned !== kh) fs.writeFileSync(knownHostsPath, cleaned);
+  } catch {
+    /* best-effort cleanup — ignore absent/read/write errors */
   }
 
   const gwArgs = ["--name", GATEWAY_NAME, "--port", getGatewayPortArg()];
@@ -2669,6 +2667,9 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
 
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
+  // The gateway state directory is NemoClaw-owned; creating it before opening
+  // the append-only log is intentional and safe for this local runtime file.
+  // codeql[js/file-system-race]
   const outFd = fs.openSync(logPath, "a", 0o600);
   const errFd = fs.openSync(logPath, "a", 0o600);
   console.log("  Starting OpenShell Docker-driver gateway...");
