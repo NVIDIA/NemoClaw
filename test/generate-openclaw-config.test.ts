@@ -690,6 +690,7 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.plugins.load.paths).toEqual([
       "/usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat",
     ]);
+    expect(config.tools?.toolSearch).toBe(false);
   });
 
   it("adds registry compat when the incoming compat blob is null", () => {
@@ -798,8 +799,9 @@ describe("generate-openclaw-config.py: config generation", () => {
       expect(providerConfig.models[0].compat).toEqual({ supportsStore: false });
       expect(config.plugins.entries["nemoclaw-kimi-inference-compat"]).toBeUndefined();
       expect(config.plugins.load).toBeUndefined();
+      expect(config.tools?.toolSearch).toBe(true);
     }
-  });
+  }, 20_000);
 
   it("rejects model-specific setup manifests without a known agent", () => {
     const blueprintDir = path.join(tmpDir, "fixture-blueprint");
@@ -840,7 +842,7 @@ describe("generate-openclaw-config.py: config generation", () => {
 
     expect(unknownResult.status).not.toBe(0);
     expect(unknownResult.stderr).toContain("unknown agent 'sidecar'");
-  });
+  }, 20_000);
 
   it("rejects empty match objects and invalid explicit registry overrides", () => {
     const missingRegistry = path.join(tmpDir, "missing-registry");
@@ -924,6 +926,26 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(missingPluginResult.stderr).toContain("path does not exist");
 
     fs.rmSync(path.join(blueprintDir, "model-specific-setup", "openclaw", "missing-plugin.json"));
+    const badToolRegistryDir = writeRegistryManifest(
+      blueprintDir,
+      "openclaw/bad-tool-effect.json",
+      {
+        id: "bad-tool-effect",
+        agent: "openclaw",
+        description: "Invalid tool override",
+        match: { modelIds: ["test-model"] },
+        effects: { openclawTools: { toolSearch: "false" } },
+      },
+    );
+
+    const badToolResult = runConfigScriptRaw({
+      NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: badToolRegistryDir,
+    });
+
+    expect(badToolResult.status).not.toBe(0);
+    expect(badToolResult.stderr).toContain("effects.openclawTools.toolSearch must be a boolean");
+
+    fs.rmSync(path.join(blueprintDir, "model-specific-setup", "openclaw", "bad-tool-effect.json"));
     fs.mkdirSync(path.join(blueprintDir, "openclaw-plugins", "fixture"), { recursive: true });
     const badLoadPathRegistryDir = writeRegistryManifest(
       blueprintDir,

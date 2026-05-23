@@ -52,7 +52,7 @@ from urllib.parse import urlparse
 
 KNOWN_MODEL_SETUP_AGENTS = {"openclaw", "hermes"}
 MODEL_SETUP_EFFECT_KEYS = {
-    "openclaw": {"openclawCompat", "openclawPlugins"},
+    "openclaw": {"openclawCompat", "openclawPlugins", "openclawTools"},
     "hermes": {"hermesCompat"},
 }
 DEFAULT_DASHBOARD_PORT = 18789
@@ -238,6 +238,21 @@ def _validate_selected_agent_effects(payload: dict, manifest_path: Path, registr
         if compat is not None and not isinstance(compat, dict):
             raise ValueError(f"{manifest_path}: effects.openclawCompat must be an object")
 
+        tools = effects.get("openclawTools")
+        if tools is not None:
+            if not isinstance(tools, dict):
+                raise ValueError(f"{manifest_path}: effects.openclawTools must be an object")
+            unknown_tool_keys = sorted(set(tools) - {"toolSearch"})
+            if unknown_tool_keys:
+                raise ValueError(
+                    f"{manifest_path}: unknown effects.openclawTools keys: "
+                    f"{', '.join(unknown_tool_keys)}"
+                )
+            if "toolSearch" in tools and not isinstance(tools["toolSearch"], bool):
+                raise ValueError(
+                    f"{manifest_path}: effects.openclawTools.toolSearch must be a boolean"
+                )
+
         plugins = effects.get("openclawPlugins", [])
         if not isinstance(plugins, list):
             raise ValueError(f"{manifest_path}: effects.openclawPlugins must be an array")
@@ -328,7 +343,11 @@ def _coerce_compat_dict(value: object) -> dict:
 
 
 def _apply_openclaw_setup_effects(
-    setup: dict, inference_compat: dict, openclaw_plugins: list[dict], plugin_ids: set[str]
+    setup: dict,
+    inference_compat: dict,
+    openclaw_plugins: list[dict],
+    plugin_ids: set[str],
+    openclaw_tools: dict,
 ) -> None:
     effects = setup["effects"]
     for key, value in effects.get("openclawCompat", {}).items():
@@ -338,6 +357,14 @@ def _apply_openclaw_setup_effects(
                 f"'{setup['id']}' conflicts with inference compat key '{key}'"
             )
         inference_compat[key] = value
+
+    for key, value in effects.get("openclawTools", {}).items():
+        if key in openclaw_tools and openclaw_tools[key] != value:
+            raise ValueError(
+                "model-specific setup "
+                f"'{setup['id']}' conflicts with OpenClaw tools key '{key}'"
+            )
+        openclaw_tools[key] = value
 
     for plugin in effects.get("openclawPlugins", []):
         plugin_id = plugin["id"]
@@ -434,10 +461,16 @@ def build_config(env: dict | None = None) -> dict:
     )
     openclaw_plugins: list[dict] = []
     openclaw_plugin_ids: set[str] = set()
+    openclaw_tool_overrides: dict = {}
     for setup in model_specific_setups:
         _apply_openclaw_setup_effects(
-            setup, inference_compat, openclaw_plugins, openclaw_plugin_ids
+            setup,
+            inference_compat,
+            openclaw_plugins,
+            openclaw_plugin_ids,
+            openclaw_tool_overrides,
         )
+    openclaw_tools = {"toolSearch": True, **openclaw_tool_overrides}
 
     # Ollama's OpenAI-compatible /v1/chat/completions stream omits the
     # `usage` chunk by default; OpenAI clients have to send
@@ -701,7 +734,7 @@ def build_config(env: dict | None = None) -> dict:
         },
         "models": {"mode": "merge", "providers": providers},
         "channels": {"defaults": {}, **_ch_cfg},
-        "tools": {"toolSearch": True},
+        "tools": openclaw_tools,
         "update": {"checkOnStart": False},
         # Disable bundled plugins/channels that hit the L7 proxy at startup
         # and either crash or hang the gateway:
