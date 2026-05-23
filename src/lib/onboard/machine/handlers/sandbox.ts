@@ -212,14 +212,24 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
         if (sandboxName) deps.removeSandboxFromRegistry(sandboxName);
       } else if (sandboxReuseState === "not_ready") {
         deps.note(`  [resume] Recorded sandbox '${sandboxName}' exists but is not ready; recreating it.`);
+        const repairMetadata = { repair: "recorded-sandbox-cleanup", sandboxName };
         await deps.recordRepairEvent("state.repair.started", {
           state: "sandbox",
-          metadata: { repair: "recorded-sandbox-cleanup", sandboxName },
+          metadata: repairMetadata,
         });
-        deps.repairRecordedSandbox(sandboxName);
+        try {
+          deps.repairRecordedSandbox(sandboxName);
+        } catch (err) {
+          await deps.recordRepairEvent("state.repair.failed", {
+            state: "sandbox",
+            error: err instanceof Error ? err.message : String(err),
+            metadata: repairMetadata,
+          });
+          throw err;
+        }
         await deps.recordRepairEvent("state.repair.completed", {
           state: "sandbox",
-          metadata: { repair: "recorded-sandbox-cleanup", sandboxName },
+          metadata: repairMetadata,
         });
       } else {
         deps.note("  [resume] Recorded sandbox state is unavailable; recreating it.");

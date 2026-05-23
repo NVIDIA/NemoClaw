@@ -246,6 +246,40 @@ describe("handleProviderInferenceState", () => {
     expect(result).toMatchObject({ provider: "ollama-local", model: "llama3.1" });
   });
 
+  it("records failed Ollama repair events before propagating resume repair errors", async () => {
+    const session = createSession({
+      provider: "ollama-local",
+      model: "llama3.1",
+      credentialEnv: null,
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      repairLocalInferenceSystemdOverrideOrExit: vi.fn(() => {
+        throw new Error("repair failed");
+      }),
+    });
+
+    await expect(
+      handleProviderInferenceState({
+        ...baseOptions(deps, session),
+        resume: true,
+        sandboxName: "my-assistant",
+      }),
+    ).rejects.toThrow("repair failed");
+
+    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.started", {
+      state: "provider_selection",
+      metadata: { repair: "ollama-systemd-loopback" },
+    });
+    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.failed", {
+      state: "provider_selection",
+      error: "repair failed",
+      metadata: { repair: "ollama-systemd-loopback" },
+    });
+    expect(calls.repairEvent).not.toHaveBeenCalledWith("state.repair.completed", expect.anything());
+  });
+
   it("reruns inference setup when resumed provider recovery forces recreation", async () => {
     const session = createSession({
       provider: "compatible-endpoint",

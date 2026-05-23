@@ -205,6 +205,33 @@ describe("handleSandboxState", () => {
     expect(calls.createSandbox).toHaveBeenCalled();
   });
 
+  it("records failed sandbox repair events before propagating repair errors", async () => {
+    const session = createSession({ sandboxName: "saved" });
+    session.steps.sandbox.status = "complete";
+    const { deps, calls } = createDeps({
+      getSandboxReuseState: () => "not_ready",
+      repairRecordedSandbox: vi.fn(() => {
+        throw new Error("cleanup failed");
+      }),
+    });
+
+    await expect(
+      handleSandboxState({ ...baseOptions(deps, session), resume: true, sandboxName: "saved" }),
+    ).rejects.toThrow("cleanup failed");
+
+    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.started", {
+      state: "sandbox",
+      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+    });
+    expect(calls.repairEvent).toHaveBeenCalledWith("state.repair.failed", {
+      state: "sandbox",
+      error: "cleanup failed",
+      metadata: { repair: "recorded-sandbox-cleanup", sandboxName: "saved" },
+    });
+    expect(calls.repairEvent).not.toHaveBeenCalledWith("state.repair.completed", expect.anything());
+    expect(calls.createSandbox).not.toHaveBeenCalled();
+  });
+
   it("recreates when a saved web search sandbox is no longer supported", async () => {
     const session = createSession({ sandboxName: "saved", webSearchConfig: { fetchEnabled: true } });
     session.steps.sandbox.status = "complete";

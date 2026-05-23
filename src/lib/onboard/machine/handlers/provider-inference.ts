@@ -187,17 +187,27 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       });
       deps.hydrateCredentialEnv(credentialEnv);
       if (provider === "ollama-local") {
+        const repairMetadata = { repair: "ollama-systemd-loopback" };
         await deps.recordRepairEvent("state.repair.started", {
           state: "provider_selection",
-          metadata: { repair: "ollama-systemd-loopback" },
+          metadata: repairMetadata,
         });
-      }
-      deps.repairLocalInferenceSystemdOverrideOrExit(provider, deps.isNonInteractive);
-      if (provider === "ollama-local") {
+        try {
+          deps.repairLocalInferenceSystemdOverrideOrExit(provider, deps.isNonInteractive);
+        } catch (err) {
+          await deps.recordRepairEvent("state.repair.failed", {
+            state: "provider_selection",
+            error: err instanceof Error ? err.message : String(err),
+            metadata: repairMetadata,
+          });
+          throw err;
+        }
         await deps.recordRepairEvent("state.repair.completed", {
           state: "provider_selection",
-          metadata: { repair: "ollama-systemd-loopback" },
+          metadata: repairMetadata,
         });
+      } else {
+        deps.repairLocalInferenceSystemdOverrideOrExit(provider, deps.isNonInteractive);
       }
     } else {
       await deps.startRecordedStep("provider_selection");
