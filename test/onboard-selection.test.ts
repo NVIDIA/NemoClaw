@@ -1523,6 +1523,87 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
+  it("adds Spark CUDA v13 and enables the Ollama systemd service on managed install", { timeout: 10_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-systemd-spark-"));
+    const scriptPath = path.join(tmpDir, "ollama-systemd-spark-check.js");
+    const ollamaSystemdPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "ollama-systemd.js"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    );
+
+    const script = String.raw`
+const fs = require("fs");
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+const localInference = require(${localInferencePath});
+
+let installedBody = "";
+const shellCommands = [];
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service disabled";
+  return "";
+};
+runner.runShell = (command) => {
+  shellCommands.push(command);
+  if (command.includes("cat") && command.includes("ollama.service.d/override.conf")) {
+    return {
+      status: 0,
+      stdout: [
+        "[Service]",
+        "Environment=\"OLLAMA_HOST=0.0.0.0:11434\"",
+        "Environment=\"OLLAMA_LLM_LIBRARY=cuda\"",
+        "",
+      ].join("\\n"),
+    };
+  }
+  const match = command.match(/(?:sudo(?: -n)? )?install -D -m 0644 '([^']+)'/);
+  if (match) installedBody = fs.readFileSync(match[1], "utf8");
+  return { status: 0, stdout: "" };
+};
+platform.isWsl = () => false;
+localInference.findReachableOllamaHost = () => true;
+Object.defineProperty(process, "platform", { value: "linux" });
+
+const { ensureOllamaLoopbackSystemdOverride } = require(${ollamaSystemdPath});
+const result = ensureOllamaLoopbackSystemdOverride({
+  isNonInteractive: () => true,
+  enableService: true,
+  detectNvidiaPlatformImpl: () => "spark",
+  hasOllamaCudaV13LibraryImpl: () => true,
+});
+console.log(JSON.stringify({ result, installedBody, shellCommands }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}");
+    const installedLines = payload.installedBody.split(/\r?\n/);
+    assert.equal(payload.result, "ready");
+    assert.ok(payload.installedBody.includes('Environment="OLLAMA_HOST=127.0.0.1:11434"'));
+    assert.ok(payload.installedBody.includes('Environment="OLLAMA_LLM_LIBRARY=cuda_v13"'));
+    assert.ok(!installedLines.includes('Environment="OLLAMA_LLM_LIBRARY=cuda"'));
+    assert.ok(
+      payload.shellCommands.some((command: string) => command.includes("systemctl enable ollama")),
+      "managed Ollama installs should enable the service for reboot survival",
+    );
+  });
+
   it("allows prompt-capable sudo in non-interactive Ollama systemd setup", { timeout: 10_000 }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-systemd-sudo-mode-"));

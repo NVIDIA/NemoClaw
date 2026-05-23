@@ -7093,7 +7093,10 @@ async function setupNim(
           // daemon with our own `ollama serve`). This also repairs older
           // NemoClaw-created overrides that exposed raw Ollama on all interfaces.
           // WSL and non-systemd Linux fall back to a manual loopback launch.
-          const overrideState = ensureOllamaLoopbackSystemdOverride({ isNonInteractive });
+          const overrideState = ensureOllamaLoopbackSystemdOverride({
+            isNonInteractive,
+            enableService: true,
+          });
           if (overrideState === "failed") {
             console.error(
               "  Ollama systemd restart did not recover after applying the loopback override.",

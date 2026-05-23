@@ -26,6 +26,7 @@ import {
   getOllamaWarmupCommand,
   parseOllamaList,
   parseOllamaTags,
+  probeOllamaRuntimeModelStatus,
   probeLocalProviderHealth,
   validateOllamaModel,
   validateLocalProvider,
@@ -639,6 +640,59 @@ describe("local inference helpers", () => {
   it("treats non-JSON probe output as success once the model responds", () => {
     const captureEx = () => ({ stdout: "ok", exitCode: 0, timedOut: false });
     expect(validateOllamaModel("nemotron-3-nano:30b", () => "ok", undefined, captureEx)).toEqual({ ok: true });
+  });
+
+  it("parses Ollama runtime status from /api/ps", () => {
+    const capture = () =>
+      JSON.stringify({
+        models: [
+          { name: "qwen3.6:35b", size_vram: 0, processor: "100% CPU" },
+        ],
+      });
+
+    expect(probeOllamaRuntimeModelStatus("qwen3.6:35b", capture)).toEqual({
+      probed: true,
+      loaded: true,
+      cpuOnly: true,
+      processor: "100% CPU",
+      sizeVram: 0,
+    });
+  });
+
+  it("fails Spark Ollama validation when the model is CPU-only after warmup", () => {
+    const payload = JSON.stringify({ model: "qwen3.6:35b", response: "hello", done: true });
+    const psOutput = JSON.stringify({
+      models: [{ name: "qwen3.6:35b", size_vram: 0, processor: "100% CPU" }],
+    });
+    const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+    const capture = (cmd: string | string[]) => {
+      const rendered = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      if (rendered.includes("/api/ps")) return psOutput;
+      return payload;
+    };
+
+    const result = validateOllamaModel("qwen3.6:35b", capture, () => true, captureEx);
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("CPU only");
+    expect(result.message).toContain("CUDA v13");
+  });
+
+  it("passes Spark Ollama validation when /api/ps reports GPU memory", () => {
+    const payload = JSON.stringify({ model: "qwen3.6:35b", response: "hello", done: true });
+    const psOutput = JSON.stringify({
+      models: [{ name: "qwen3.6:35b", size_vram: 24_000_000_000, processor: "100% GPU" }],
+    });
+    const captureEx = () => ({ stdout: payload, exitCode: 0, timedOut: false });
+    const capture = (cmd: string | string[]) => {
+      const rendered = Array.isArray(cmd) ? cmd.join(" ") : cmd;
+      if (rendered.includes("/api/ps")) return psOutput;
+      return payload;
+    };
+
+    const result = validateOllamaModel("qwen3.6:35b", capture, () => true, captureEx);
+
+    expect(result).toEqual({ ok: true });
   });
 
   it("passes ollama memory validation when total RAM covers the model on unified-memory hosts", () => {
