@@ -11,7 +11,6 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   agent: Agent;
   hermesAuthMethod: string | null;
   hermesToolGateways: string[];
-  selectedMessagingChannels: string[];
   stagedLegacyKeys: readonly string[];
   migratedLegacyKeys: ReadonlySet<string>;
   deps: {
@@ -51,7 +50,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   agent,
   hermesAuthMethod,
   hermesToolGateways,
-  selectedMessagingChannels: _selectedMessagingChannels,
   stagedLegacyKeys,
   migratedLegacyKeys,
   deps,
@@ -76,9 +74,12 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
     );
   }
 
+  // Sweep stale host files left by older credential migration paths (#3105).
   deps.cleanupStaleHostFiles();
+  // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
   deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
 
+  // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
   const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl());
   const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);
   const verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);

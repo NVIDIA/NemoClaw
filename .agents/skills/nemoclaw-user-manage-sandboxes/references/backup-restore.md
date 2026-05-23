@@ -46,6 +46,14 @@ $ nemoclaw my-assistant snapshot restore before-upgrade
 $ nemoclaw my-assistant snapshot restore 2026-04-14T
 ```
 
+To clone a snapshot into a different sandbox name, pass `--to <name>`.
+If the destination sandbox already exists, NemoClaw refuses to overwrite it unless you pass `--force`:
+
+```console
+$ nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone
+$ nemoclaw my-assistant snapshot restore before-upgrade --to my-assistant-clone --force --yes
+```
+
 The `nemoclaw <name> rebuild` command uses the same snapshot mechanism automatically.
 Snapshot restore performs a targeted repair for legacy `.openclaw-data` symlinks that were created by older images.
 Unsafe symlinks and hard links inside sandbox state are rejected during backup creation before they can enter a snapshot.

@@ -84,6 +84,9 @@ export async function setupSelectedMessagingChannels(
         continue;
       }
     }
+    for (const line of ch.setupNotes ?? []) {
+      console.log(`  ${line}`);
+    }
     if (ch.appTokenEnvKey) {
       const existingAppToken = getMessagingToken(ch.appTokenEnvKey);
       if (existingAppToken) {

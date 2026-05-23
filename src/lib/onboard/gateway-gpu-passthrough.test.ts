@@ -7,13 +7,15 @@ vi.mock("../adapters/docker", () => ({
   dockerInspect: vi.fn(),
 }));
 
+import * as docker from "../adapters/docker";
+import type { GatewayReuseState } from "../state/gateway";
 import {
   canRestartCpuOnlyGatewayForGpuIntent,
   decideGatewayGpuReuseForGpuIntent,
   inspectLegacyGatewayGpuPassthroughResult,
+  reconcileGatewayGpuReuseForGpuIntent,
   shouldInspectLegacyGatewayGpuPassthrough,
 } from "./gateway-gpu-passthrough";
-import type { GatewayReuseState } from "../state/gateway";
 
 describe("gateway GPU passthrough inspection", () => {
   const healthy: GatewayReuseState = "healthy";
@@ -137,5 +139,31 @@ describe("gateway GPU passthrough inspection", () => {
     );
     expect(canRestartCpuOnlyGatewayForGpuIntent(["alpha"], "beta", true)).toBe(false);
     expect(canRestartCpuOnlyGatewayForGpuIntent(["alpha", "beta"], "alpha", true)).toBe(false);
+  });
+
+  it("does not categorically abort Jetson GPU passthrough on Docker-driver gateways", () => {
+    vi.mocked(docker.dockerInspect).mockClear();
+    const stopDashboardForwards = vi.fn();
+    const retireLegacyGatewayForDockerDriverUpgrade = vi.fn();
+    const destroyGatewayRuntimeForGpuReuse = vi.fn();
+
+    const result = reconcileGatewayGpuReuseForGpuIntent({
+      gatewayReuseState: healthy,
+      gpuPassthrough: true,
+      gatewayName: "nemoclaw",
+      currentSandboxName: "jetson-box",
+      hostGpuPlatform: "jetson",
+      recreateSandbox: true,
+      confirmedDockerDriverGateway: true,
+      stopDashboardForwards,
+      retireLegacyGatewayForDockerDriverUpgrade,
+      destroyGatewayRuntimeForGpuReuse,
+    });
+
+    expect(result).toBe(healthy);
+    expect(docker.dockerInspect).not.toHaveBeenCalled();
+    expect(stopDashboardForwards).not.toHaveBeenCalled();
+    expect(retireLegacyGatewayForDockerDriverUpgrade).not.toHaveBeenCalled();
+    expect(destroyGatewayRuntimeForGpuReuse).not.toHaveBeenCalled();
   });
 });

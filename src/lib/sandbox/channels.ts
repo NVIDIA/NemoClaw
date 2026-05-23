@@ -7,6 +7,7 @@ export interface ChannelBase {
   description: string;
   help: string;
   label: string;
+  setupNotes?: readonly string[];
   userIdEnvKey?: string;
   userIdHelp?: string;
   userIdLabel?: string;
@@ -57,6 +58,10 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     description: "Telegram bot messaging",
     help: "Create a bot via @BotFather on Telegram, then copy the token.",
     label: "Telegram Bot Token",
+    setupNotes: [
+      "For Telegram group chats, disable privacy mode in @BotFather (/setprivacy -> your bot -> Disable).",
+      "After changing privacy mode, remove and re-add the bot to each group before testing @mentions.",
+    ],
     userIdEnvKey: "TELEGRAM_ALLOWED_IDS",
     userIdHelp: "Send /start to @userinfobot on Telegram to get your numeric user ID.",
     userIdLabel: "Telegram User ID (for DM access)",

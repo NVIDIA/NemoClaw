@@ -36,6 +36,29 @@ set -euo pipefail
 # cannot resolve id/chown/chmod/tee from an attacker-controlled location.
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+# Reject an invalid explicit dashboard port before installing the tee/fd startup
+# capture below. Some CI Docker runners can drop very early fd4 output from
+# short-lived containers, and this validation is meant to be fail-fast and
+# directly visible to callers.
+_EARLY_DASHBOARD_PORT_RAW="${NEMOCLAW_DASHBOARD_PORT:-}"
+if [ -n "$_EARLY_DASHBOARD_PORT_RAW" ]; then
+  _EARLY_DASHBOARD_PORT="$(printf '%s' "$_EARLY_DASHBOARD_PORT_RAW" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  _EARLY_DASHBOARD_PORT_VALID=1
+  case "$_EARLY_DASHBOARD_PORT" in
+    *[!0-9]* | '')
+      _EARLY_DASHBOARD_PORT_VALID=0
+      ;;
+  esac
+  if [ "$_EARLY_DASHBOARD_PORT_VALID" -eq 1 ] && { [ "$_EARLY_DASHBOARD_PORT" -lt 1024 ] || [ "$_EARLY_DASHBOARD_PORT" -gt 65535 ]; }; then
+    _EARLY_DASHBOARD_PORT_VALID=0
+  fi
+  if [ "$_EARLY_DASHBOARD_PORT_VALID" -ne 1 ]; then
+    printf '%s\n' "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
+    exit 1
+  fi
+fi
+unset _EARLY_DASHBOARD_PORT_RAW _EARLY_DASHBOARD_PORT _EARLY_DASHBOARD_PORT_VALID
+
 # ── Early stderr/stdout capture ──────────────────────────────────
 # Capture all entrypoint output to /tmp/nemoclaw-start.log so that if
 # the script crashes before touch /tmp/gateway.log (e.g., a Landlock
@@ -53,7 +76,9 @@ else
   : >"$_START_LOG"
   chmod 600 "$_START_LOG" 2>/dev/null || true
 fi
-exec > >(tee -a "$_START_LOG") 2> >(tee -a "$_START_LOG" >&2)
+exec 3>&1
+exec 4>&2
+exec > >(tee -a "$_START_LOG" >&3) 2> >(tee -a "$_START_LOG" >&4)
 
 # ── Source shared sandbox initialisation library ─────────────────
 # Single source of truth for security-sensitive primitives shared with
@@ -189,6 +214,18 @@ print(port)
 PYPORT
 }
 
+emit_startup_error() {
+  local message="$1"
+  if [ -n "${_START_LOG:-}" ]; then
+    printf '%s\n' "$message" >>"$_START_LOG" 2>/dev/null || true
+  fi
+  if { true >&4; } 2>/dev/null; then
+    printf '%s\n' "$message" >&4
+  else
+    printf '%s\n' "$message" >&2
+  fi
+}
+
 # Validate NEMOCLAW_DASHBOARD_PORT if set (same behavior as ports.js: fail fast).
 _DASHBOARD_PORT_RAW="${NEMOCLAW_DASHBOARD_PORT:-}"
 if [ -z "$_DASHBOARD_PORT_RAW" ]; then
@@ -209,7 +246,7 @@ else
     _DASHBOARD_PORT_VALID=0
   fi
   if [ "$_DASHBOARD_PORT_VALID" -ne 1 ]; then
-    echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535" >&2
+    emit_startup_error "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' — must be an integer between 1024 and 65535"
     exit 1
   fi
 fi
@@ -1564,12 +1601,9 @@ emit_sandbox_sourced_file "$_SECCOMP_GUARD_SCRIPT" <"$_SECCOMP_GUARD_SOURCE"
 export NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_SECCOMP_GUARD_SCRIPT"
 
 # OpenShell re-injects narrow NO_PROXY/no_proxy=127.0.0.1,localhost,::1 every
-# time a user connects via `openshell sandbox connect`.  The connect path spawns
-# `/bin/bash -i` (interactive, non-login), which sources ~/.bashrc — NOT
-# ~/.profile or /etc/profile.d/*.
-#
-# We write dynamic connect-session config to /tmp/nemoclaw-proxy-env.sh. The
-# pre-built .bashrc and .profile source this file automatically.
+# time a user connects via `openshell sandbox connect`. Dynamic connect-session
+# config lives in /tmp/nemoclaw-proxy-env.sh and is sourced by system-wide shell
+# hooks from the base image, keeping per-user rc files free of proxy entries.
 #
 # SECURITY: The proxy-env file is written via emit_sandbox_sourced_file()
 # which ensures root:root 444 in root mode (sandbox cannot modify) and
@@ -1776,10 +1810,9 @@ GUARDENVEOF
 # primary process whose exit status is returned).
 # Each code path below sets these before registering the trap.
 
-# Stale base images may have rc files from before the runtime env source shim
-# was baked into Dockerfile.base. Backfill the static shim before lock_rc_files
-# makes those files read-only so connect sessions still receive proxy config,
-# gateway auth, and command guards through /tmp/nemoclaw-proxy-env.sh.
+# Keep per-user rc files out of runtime proxy wiring. Older images and prior
+# entrypoint versions wrote a two-line shim into .bashrc/.profile; remove that
+# managed stanza before lock_rc_files makes the files read-only again.
 ensure_runtime_shell_env_shim() {
   local failed=0
   local rc_file
@@ -1795,40 +1828,131 @@ ensure_runtime_shell_env_shim() {
       failed=1
       continue
     fi
-    if [ -f "$rc_file" ] && grep -qxF "$_RUNTIME_SHELL_ENV_SHIM" "$rc_file" 2>/dev/null; then
+    if [ ! -f "$rc_file" ]; then
       continue
     fi
 
-    if [ "$(id -u)" -eq 0 ] && [ -f "$rc_file" ]; then
-      if ! chown root:root "$rc_file" 2>/dev/null; then
-        echo "[SECURITY] could not take ownership of $rc_file before shim backfill" >&2
-        failed=1
-        continue
-      fi
-      if ! chmod 644 "$rc_file" 2>/dev/null; then
-        echo "[SECURITY] could not make $rc_file writable before shim backfill" >&2
-        failed=1
-        continue
-      fi
-    elif [ -f "$rc_file" ]; then
-      chmod u+w "$rc_file" 2>/dev/null || true
-    fi
+    if ! command python3 - "$rc_file" "$_RUNTIME_SHELL_ENV_SHIM" "$(id -u)" <<'PY'; then
+import errno
+import os
+import stat
+import sys
+import tempfile
 
-    if [ -e "$rc_file" ]; then
-      if ! printf '\n%s\n%s\n' '# Source runtime proxy config' "$_RUNTIME_SHELL_ENV_SHIM" >>"$rc_file"; then
-        echo "[SECURITY] could not backfill runtime env shim into $rc_file" >&2
-        failed=1
-        continue
-      fi
-    elif ! printf '%s\n%s\n' '# Source runtime proxy config' "$_RUNTIME_SHELL_ENV_SHIM" >"$rc_file"; then
-      echo "[SECURITY] could not create $rc_file with runtime env shim" >&2
+rc_path, shim, uid_text = sys.argv[1:4]
+uid = int(uid_text)
+fd = None
+tmp_path = None
+
+
+def same_file(left, right):
+    return left.st_dev == right.st_dev and left.st_ino == right.st_ino
+
+
+def rewrite_open_rc_file(read_fd, original_stat, cleaned_lines):
+    # The runtime test image can make /sandbox non-writable while leaving legacy
+    # shims in the rc files. In that case atomic rename into /sandbox fails, so
+    # rewrite the already-validated inode through /proc/self/fd instead.
+    if uid == 0:
+        os.fchown(read_fd, 0, 0)
+    os.fchmod(read_fd, 0o600)
+    write_fd = os.open(
+        f"/proc/self/fd/{read_fd}",
+        os.O_WRONLY | os.O_TRUNC | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        if not same_file(original_stat, os.fstat(write_fd)):
+            raise RuntimeError("rc file descriptor target changed during cleanup")
+        with os.fdopen(write_fd, "w", encoding="utf-8", errors="surrogateescape") as handle:
+            write_fd = None
+            handle.writelines(cleaned_lines)
+            handle.flush()
+            os.fsync(handle.fileno())
+    finally:
+        if write_fd is not None:
+            os.close(write_fd)
+        os.fchmod(read_fd, 0o644)
+
+
+def rewrite_by_rename(cleaned_lines):
+    global tmp_path
+    tmp_fd, tmp_path = tempfile.mkstemp(prefix="nemoclaw-rc-clean.", dir="/tmp", text=True)
+    with os.fdopen(tmp_fd, "w", encoding="utf-8", errors="surrogateescape") as handle:
+        handle.writelines(cleaned_lines)
+        handle.flush()
+        os.fsync(handle.fileno())
+    if uid == 0:
+        os.chown(tmp_path, 0, 0)
+    os.chmod(tmp_path, 0o644)
+    os.replace(tmp_path, rc_path)
+    tmp_path = None
+
+try:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(rc_path, flags)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            print(f"[SECURITY] refusing symlinked rc file during cleanup: {rc_path}", file=sys.stderr)
+        else:
+            print(f"[SECURITY] could not open rc file for cleanup: {rc_path}: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode):
+        print(f"[SECURITY] refusing non-regular rc file during cleanup: {rc_path}", file=sys.stderr)
+        sys.exit(1)
+    with os.fdopen(os.dup(fd), "r", encoding="utf-8", errors="surrogateescape") as handle:
+        lines = handle.readlines()
+
+    cleaned = []
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        bare = line.rstrip("\n")
+        if bare == "# Source runtime proxy config":
+            if index + 1 < len(lines):
+                next_line = lines[index + 1]
+                next_bare = next_line.rstrip("\n")
+                if next_bare == shim or "/tmp/nemoclaw-proxy-env.sh" in next_line:
+                    index += 2
+                    continue
+                cleaned.append(line)
+                cleaned.append(next_line)
+                index += 2
+                continue
+        if bare == shim or "/tmp/nemoclaw-proxy-env.sh" in line:
+            index += 1
+            continue
+        cleaned.append(line)
+        index += 1
+
+    if any(line.rstrip("\n") == shim or "/tmp/nemoclaw-proxy-env.sh" in line for line in cleaned):
+        print(f"[SECURITY] runtime env shim still present after cleanup: {rc_path}", file=sys.stderr)
+        sys.exit(1)
+    if cleaned == lines:
+        sys.exit(0)
+
+    try:
+        rewrite_open_rc_file(fd, st, cleaned)
+    except OSError as exc:
+        if exc.errno != errno.ENOENT:
+            raise
+        rewrite_by_rename(cleaned)
+except Exception as exc:
+    print(f"[SECURITY] could not safely clean runtime env shim from {rc_path}: {exc}", file=sys.stderr)
+    sys.exit(1)
+finally:
+    if fd is not None:
+        os.close(fd)
+    if tmp_path:
+        try:
+            os.unlink(tmp_path)
+        except FileNotFoundError:
+            pass
+PY
       failed=1
       continue
-    fi
-
-    if ! grep -qxF "$_RUNTIME_SHELL_ENV_SHIM" "$rc_file" 2>/dev/null; then
-      echo "[SECURITY] runtime env shim missing after backfill: $rc_file" >&2
-      failed=1
     fi
   done
 
@@ -2105,13 +2229,41 @@ NODE
     return 0
   fi
   if [ -z "$templates_dir" ]; then
-    local npm_root
-    npm_root="$(npm root -g 2>/dev/null)" || return 0
-    [ -n "$npm_root" ] || return 0
-    templates_dir="${npm_root}/openclaw/dist/docs/reference/templates"
+    local npm_root openclaw_bin openclaw_real openclaw_pkg candidate searched_template_dirs=""
+    local openclaw_pkg_roots=()
+    npm_root="$(npm root -g 2>/dev/null || true)"
+    if [ -n "$npm_root" ]; then
+      openclaw_pkg_roots+=("${npm_root}/openclaw")
+    fi
+    openclaw_pkg_roots+=("/usr/local/lib/node_modules/openclaw")
+    if openclaw_bin="$(command -v openclaw 2>/dev/null)"; then
+      openclaw_real="$(readlink -f "$openclaw_bin" 2>/dev/null || printf '%s\n' "$openclaw_bin")"
+      openclaw_pkg="$(cd "$(dirname "$openclaw_real")/.." 2>/dev/null && pwd -P || true)"
+      if [ -n "$openclaw_pkg" ]; then
+        openclaw_pkg_roots+=("$openclaw_pkg")
+      fi
+    fi
+
+    templates_dir=""
+    for openclaw_pkg in "${openclaw_pkg_roots[@]}"; do
+      for candidate in \
+        "${openclaw_pkg}/docs/reference/templates" \
+        "${openclaw_pkg}/dist/docs/reference/templates"; do
+        searched_template_dirs="${searched_template_dirs}${searched_template_dirs:+, }${candidate}"
+        if [ -d "$candidate" ]; then
+          templates_dir="$candidate"
+          break
+        fi
+      done
+      [ -n "$templates_dir" ] && break
+    done
   fi
-  if [ ! -d "$templates_dir" ]; then
-    echo "[setup] openclaw templates dir not found at ${templates_dir}; skipping workspace seed" >&2
+  if [ -z "$templates_dir" ] || [ ! -d "$templates_dir" ]; then
+    if [ -n "${searched_template_dirs:-}" ]; then
+      echo "[setup] openclaw workspace templates dir not found; tried: ${searched_template_dirs}; skipping default workspace seed" >&2
+    else
+      echo "[setup] openclaw workspace templates dir not found: ${templates_dir}; skipping default workspace seed" >&2
+    fi
     return 0
   fi
   local file src dst tmp seeded=0
@@ -2134,6 +2286,10 @@ NODE
   if [ "$seeded" -gt 0 ]; then
     echo "[setup] seeded ${seeded} default workspace template(s) into ${workspace_dir}" >&2
   fi
+}
+
+seed_default_workspace_templates_as_sandbox() {
+  "${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "$(declare -f seed_default_workspace_templates); seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json"
 }
 
 # ── Main ─────────────────────────────────────────────────────────
@@ -2436,7 +2592,7 @@ provision_agent_workspaces
 # Run as the sandbox user so the seeded files inherit sandbox:sandbox
 # ownership (the function's own cp calls would otherwise produce
 # root-owned files in this branch). See function comment for context.
-gosu sandbox bash -c "$(declare -f seed_default_workspace_templates); seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json"
+seed_default_workspace_templates_as_sandbox
 
 # Defence-in-depth: verify /tmp file permissions before launching services.
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh

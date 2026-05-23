@@ -57,7 +57,7 @@ describe("dashboard access helpers", () => {
     });
 
     expect(access).toContainEqual({
-      label: "Alt 1",
+      label: "WSL fallback",
       url: "http://172.22.1.1:18789/#token=secret",
     });
   });
