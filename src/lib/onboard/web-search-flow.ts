@@ -179,7 +179,8 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     }
 
     if (deps.isNonInteractive()) {
-      const braveApiKey = normalizeCredentialValue(process.env[BRAVE_API_KEY_ENV]);
+      const braveApiKey =
+        getCredential(BRAVE_API_KEY_ENV) || normalizeCredentialValue(process.env[BRAVE_API_KEY_ENV]);
       if (!braveApiKey) {
         return null;
       }

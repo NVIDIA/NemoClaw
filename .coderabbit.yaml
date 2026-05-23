@@ -153,10 +153,12 @@ reviews:
         - `sandbox-survival-e2e` — gateway restart recovery
         - `hermes-e2e` — Hermes agent onboard + inference
         - `rebuild-openclaw-e2e` — workspace state survives rebuild
+        - `openclaw-tui-chat-correlation-e2e` — baked OpenClaw chat send
+          patch preserves user/assistant turn correlation
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-survival-e2e,hermes-e2e,rebuild-openclaw-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-survival-e2e,hermes-e2e,rebuild-openclaw-e2e,openclaw-tui-chat-correlation-e2e
         ```
 
     - path: "Dockerfile.base"
@@ -197,10 +199,12 @@ reviews:
         - `hermes-slack-e2e` — Hermes Slack policy + Python placeholder egress
         - `openshell-gateway-upgrade-e2e` — stale Linux Docker-driver gateway
           process restart after OpenShell upgrade
+        - `issue-3600-gpu-proof-optional-e2e` — direct GPU verification remains
+          optional when CUDA probing fails before sandbox creation
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,channels-stop-start-e2e,messaging-compatible-endpoint-e2e,bedrock-runtime-compatible-anthropic-e2e,hermes-discord-e2e,hermes-slack-e2e,openshell-gateway-upgrade-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=cloud-e2e,sandbox-operations-e2e,rebuild-openclaw-e2e,channels-stop-start-e2e,messaging-compatible-endpoint-e2e,bedrock-runtime-compatible-anthropic-e2e,hermes-discord-e2e,hermes-slack-e2e,openshell-gateway-upgrade-e2e,issue-3600-gpu-proof-optional-e2e
         ```
 
     - path: "src/lib/onboard/bedrock-runtime.ts"
@@ -376,6 +380,27 @@ reviews:
         ```
         gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=hermes-slack-e2e
         ```
+
+    - path: "scripts/patch-openclaw-chat-send.js"
+      instructions: &e2e-openclaw-tui-chat-correlation |
+        This helper patches OpenClaw chat send behavior inside the sandbox
+        image. Changes can affect TUI message ordering, duplicate sends, and
+        user/assistant turn correlation when OpenClaw is the active agent.
+
+        **E2E test recommendation:**
+        - `openclaw-tui-chat-correlation-e2e` - hermetic TUI chat proof for
+          correlated user/assistant turns
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=openclaw-tui-chat-correlation-e2e
+        ```
+
+    - path: "test/e2e/test-openclaw-tui-chat-correlation.sh"
+      instructions: *e2e-openclaw-tui-chat-correlation
+
+    - path: "test/openclaw-tui-chat-correlation.test.ts"
+      instructions: *e2e-openclaw-tui-chat-correlation
 
     - path: "test/e2e/test-openclaw-slack-pairing.sh"
       instructions: |

@@ -82,6 +82,8 @@ on:
           Valid: cloud-e2e, cloud-onboard-e2e, cloud-inference-e2e,
           skill-agent-e2e, docs-validation-e2e, messaging-providers-e2e,
           openclaw-slack-pairing-e2e,
+          openclaw-tui-chat-correlation-e2e,
+          issue-3600-gpu-proof-optional-e2e,
           openclaw-discord-pairing-e2e,
           messaging-compatible-endpoint-e2e,
           kimi-inference-compat-e2e,
@@ -394,6 +396,103 @@ jobs:
           name: install-log-openclaw-slack-pairing
           path: /tmp/nemoclaw-e2e-openclaw-slack-pairing-install.log
           if-no-files-found: ignore
+
+  # ── OpenClaw TUI Chat Correlation E2E (#2603/#3145) ───────────
+  # Creates a fresh OpenClaw sandbox, then runs the live gateway/webchat
+  # correlation harness against rapid sequential sends.
+  openclaw-tui-chat-correlation-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install test dependencies
+        run: npm ci --include=dev
+
+      - name: Run OpenClaw TUI chat correlation E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-tui-correlation"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-openclaw-tui-chat-correlation.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: install-log-openclaw-tui-chat-correlation
+          path: /tmp/nemoclaw-e2e-openclaw-tui-correlation-install.log
+          if-no-files-found: ignore
+
+  # ── DGX Station GPU optional proof validation (#3600) ──────────
+  # CI cannot emulate GB300, but this guards the release-blocker mitigation:
+  # optional direct GPU proofs must not abort onboard before the fatal throw.
+  issue-3600-gpu-proof-optional-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',issue-3600-gpu-proof-optional-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Verify optional GPU proof cannot abort onboard
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const source = fs.readFileSync('src/lib/onboard.ts', 'utf8');
+          const start = source.indexOf('function verifyDirectSandboxGpu');
+          if (start < 0) {
+            throw new Error('verifyDirectSandboxGpu function not found');
+          }
+          const bodyStart = source.indexOf('{', start);
+          let depth = 0;
+          let end = -1;
+          for (let i = bodyStart; i < source.length; i += 1) {
+            if (source[i] === '{') depth += 1;
+            if (source[i] === '}') depth -= 1;
+            if (depth === 0) {
+              end = i + 1;
+              break;
+            }
+          }
+          if (bodyStart < 0 || end < 0) {
+            throw new Error('verifyDirectSandboxGpu function body not found');
+          }
+          const fn = source.slice(start, end);
+          const optional = fn.indexOf('if (proof.optional === true) return;');
+          const throwing = fn.indexOf('throw new Error(`GPU proof failed:');
+          if (!(optional >= 0 && throwing >= 0 && optional < throwing)) {
+            throw new Error('optional GPU proof handling does not precede fatal throw');
+          }
+          console.log('optional-before-throw=true');
+          NODE
 
   # ── OpenClaw Discord Pairing E2E (#4061) ──────────────────────
   # Hermetic Discord Gateway placeholder rewrite proof, then connect-shell
@@ -1716,7 +1815,7 @@ jobs:
           ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
           node-version: "22"
 
@@ -2359,6 +2458,8 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
+        openclaw-tui-chat-correlation-e2e,
+        issue-3600-gpu-proof-optional-e2e,
         openclaw-discord-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-add-remove-e2e,
@@ -2459,6 +2560,8 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
+        openclaw-tui-chat-correlation-e2e,
+        issue-3600-gpu-proof-optional-e2e,
         openclaw-discord-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-add-remove-e2e,
@@ -2616,6 +2719,8 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
+        openclaw-tui-chat-correlation-e2e,
+        issue-3600-gpu-proof-optional-e2e,
         openclaw-discord-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-add-remove-e2e,
