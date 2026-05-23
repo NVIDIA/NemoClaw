@@ -185,6 +185,12 @@ export function ensureOllamaLoopbackSystemdOverride(
   return "failed";
 }
 
+export function ensureManagedOllamaLoopbackSystemdOverride(
+  options: Omit<OllamaLoopbackSystemdOverrideOptions, "enableService"> = {},
+): OllamaLoopbackSystemdOverrideState {
+  return ensureOllamaLoopbackSystemdOverride({ ...options, enableService: true });
+}
+
 function mergeOllamaLoopbackSystemdOverride(
   existingDropIn: string,
   options: { libraryOverride?: string | null } = {},

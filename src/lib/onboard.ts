@@ -19,9 +19,7 @@ const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onb
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
 const { looksLikeForwardPortConflict, runBackgroundForwardStartWithPortReleaseRetries }: typeof import("./onboard/forward-start") = require("./onboard/forward-start");
-const {
-  ensureOllamaLoopbackSystemdOverride,
-}: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
+const { ensureManagedOllamaLoopbackSystemdOverride, ensureOllamaLoopbackSystemdOverride }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
 const {
   CUSTOM_BUILD_CONTEXT_WARN_BYTES,
   isInsideIgnoredCustomBuildContextPath,
@@ -7093,10 +7091,7 @@ async function setupNim(
           // daemon with our own `ollama serve`). This also repairs older
           // NemoClaw-created overrides that exposed raw Ollama on all interfaces.
           // WSL and non-systemd Linux fall back to a manual loopback launch.
-          const overrideState = ensureOllamaLoopbackSystemdOverride({
-            isNonInteractive,
-            enableService: true,
-          });
+          const overrideState = ensureManagedOllamaLoopbackSystemdOverride({ isNonInteractive });
           if (overrideState === "failed") {
             console.error(
               "  Ollama systemd restart did not recover after applying the loopback override.",
