@@ -7,6 +7,8 @@ import path from "node:path";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
 import { ROOT, runCapture } from "../runner";
 
+export const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.0.44";
+
 export function getInstalledOpenshellVersion(versionOutput: string | null = null): string | null {
   const openshellBin = resolveOpenshell();
   if (!versionOutput && !openshellBin) return null;
@@ -58,7 +60,7 @@ function getBlueprintVersionField(field: string, rootDir = ROOT): string | null 
     const value = parsed && parsed[field];
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
-    if (!/^[0-9]+\.[0-9]+\.[0-9]+/.test(trimmed)) return null;
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(trimmed)) return null;
     return trimmed;
   } catch {
     return null;

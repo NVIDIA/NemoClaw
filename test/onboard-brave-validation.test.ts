@@ -314,6 +314,62 @@ const { loadAgent } = require(${agentDefsPath});
     }
   });
 
+  it("uses a saved Brave credential in non-interactive mode", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-brave-saved-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "configure-web-search-saved.js");
+    const outputPath = path.join(tmpDir, "outcome.json");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    setupBraveCurlShim(fakeBin, { status: "200", body: '{"web":{"results":[]}}' });
+    fs.writeFileSync(
+      scriptPath,
+      `
+const fs = require("node:fs");
+const actualCredentials = require(${credentialsPath});
+const mockedCredentials = {
+  ...actualCredentials,
+  getCredential: (key) => (key === "BRAVE_API_KEY" ? "saved-brave-key" : actualCredentials.getCredential(key)),
+};
+require.cache[require.resolve(${credentialsPath})] = {
+  id: require.resolve(${credentialsPath}),
+  filename: require.resolve(${credentialsPath}),
+  loaded: true,
+  exports: mockedCredentials,
+};
+delete process.env.BRAVE_API_KEY;
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { configureWebSearch } = require(${onboardPath});
+(async () => {
+  const result = await configureWebSearch(null);
+  fs.writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({ result, braveKey: process.env.BRAVE_API_KEY || null }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`,
+    );
+
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+      });
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(fs.readFileSync(outputPath, "utf-8"));
+      expect(payload.result).toEqual({ fetchEnabled: true });
+      expect(payload.braveKey).toBe("saved-brave-key");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("skips Brave Web Search and returns null when key validation hits HTTP 429", () => {
     const { exitCode, payload } = runConfigureWebSearch({
       status: "429",
