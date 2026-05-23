@@ -6,21 +6,22 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import * as agentRuntime from "../../agent/runtime";
-import { DASHBOARD_PORT } from "../../core/ports";
-import { ROOT, shellQuote } from "../../runner";
 import {
   captureOpenshell,
   captureOpenshellForStatus,
+  captureSandboxSshConfig,
   getOpenshellBinary,
   isCommandTimeout,
   runOpenshell,
 } from "../../adapters/openshell/runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
+import * as agentRuntime from "../../agent/runtime";
+import { G, R } from "../../cli/terminal-style";
+import { DASHBOARD_PORT } from "../../core/ports";
+import { sleepSeconds } from "../../core/wait";
+import { ROOT, shellQuote } from "../../runner";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
-import { G, R } from "../../cli/terminal-style";
-import { sleepSeconds } from "../../core/wait";
 
 export type SandboxCommandResult = {
   status: number;
@@ -83,7 +84,7 @@ export function executeSandboxCommand(
   sandboxName: string,
   command: string,
 ): SandboxCommandResult | null {
-  const sshConfigResult = captureOpenshell(["sandbox", "ssh-config", sandboxName], {
+  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
     ignoreError: true,
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });

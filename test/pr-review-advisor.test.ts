@@ -208,7 +208,9 @@ describe("PR review advisor", () => {
     expect(summary).not.toContain("## Security review");
     expect(detailed).toContain("## Acceptance coverage");
     expect(detailed).toContain("## Security review");
-    expect(comment).not.toContain("<details>");
+    expect(comment).toContain("<details>");
+    expect(comment).toContain("<summary>Review findings</summary>");
+    expect(comment).toContain("### 🛠️ Needs attention");
     expect(comment).not.toContain("Full advisor summary");
     expect(comment).not.toContain("## Acceptance coverage");
     expect(comment).not.toContain("## Security review");
@@ -242,6 +244,41 @@ describe("PR review advisor", () => {
       result: followUpResult,
     });
     expect(followUp).toContain("**Since last review:** 1 prior item resolved, 1 still applies, 1 new item found");
+    expect(followUp).toContain("<summary>Review findings</summary>");
+    expect(followUp).toContain("<summary>Since last review details</summary>");
+  });
+
+  it("escapes advisor finding text before rendering sticky comments", () => {
+    const result = normalizeReviewResult(validResult({
+      summary: {
+        recommendation: "merge_after_fixes",
+        confidence: "high",
+        oneLine: "Review found one fixable issue.",
+        topItem: "top @team <b> **x**",
+      },
+      findings: [
+        {
+          severity: "blocker",
+          category: "correctness",
+          file: "src/<bad>(1).ts",
+          line: 7,
+          title: "</details> @team **boom** [x](https://bad.invalid)",
+          description: "first\n### injected <script>",
+          recommendation: "ping @here & fix _now_",
+          evidence: "`code` <tag>",
+        },
+      ],
+    }), metadata());
+    const comment = buildComment({ summary: renderSummary(result), result });
+
+    expect(comment).toContain("**Top item:** top &#64;team &lt;b&gt; \\*\\*x\\*\\*");
+    expect(comment).toContain("&lt;/details&gt; &#64;team \\*\\*boom\\*\\* \\[x\\]\\(https://bad.invalid\\)");
+    expect(comment).toContain("src/&lt;bad&gt;\\(1\\).ts:7");
+    expect(comment).toContain("first ### injected &lt;script&gt;");
+    expect(comment).toContain("ping &#64;here &amp; fix \\_now\\_");
+    expect(comment).toContain("\\`code\\` &lt;tag&gt;");
+    expect(comment).not.toContain("</details> @team");
+    expect(comment).not.toContain("### injected <script>");
   });
 
   it("normalizes output that validates against the JSON schema", () => {

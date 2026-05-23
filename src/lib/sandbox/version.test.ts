@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Mock heavy dependencies that pull in the full module graph
 vi.mock("../adapters/openshell/resolve.js", () => ({
@@ -28,7 +28,7 @@ vi.mock("../adapters/openshell/client.js", () => ({
     }
     return true;
   },
-  captureOpenshellCommand: vi.fn(),
+  captureSandboxSshConfigCommand: vi.fn(),
 }));
 
 vi.mock("../agent/defs.js", () => ({
@@ -47,11 +47,11 @@ vi.mock("child_process", async (importOriginal) => {
   return { ...actual, spawnSync: vi.fn() };
 });
 
-import { checkAgentVersion, formatStalenessWarning } from "./version.js";
-import * as registry from "../state/registry.js";
-import { captureOpenshellCommand } from "../adapters/openshell/client.js";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import { spawnSync } from "child_process";
+import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
+import * as registry from "../state/registry.js";
+import { checkAgentVersion, formatStalenessWarning } from "./version.js";
 
 describe("checkAgentVersion", () => {
   let tmpDir: string;
@@ -113,7 +113,7 @@ describe("checkAgentVersion", () => {
   it("slow path: probes via SSH when no cached version", () => {
     registry.registerSandbox({ name: "test-sb", agent: null });
 
-    vi.mocked(captureOpenshellCommand).mockReturnValue({
+    vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
       status: 0,
       output: "Host openshell-test-sb\n  HostName 127.0.0.1\n",
     });
@@ -131,9 +131,9 @@ describe("checkAgentVersion", () => {
     expect(result.detectionMethod).toBe("ssh-exec");
     expect(result.sandboxVersion).toBe("2026.5.18");
     expect(result.isStale).toBe(false);
-    expect(captureOpenshellCommand).toHaveBeenCalledWith(
+    expect(captureSandboxSshConfigCommand).toHaveBeenCalledWith(
       "/usr/local/bin/openshell",
-      ["sandbox", "ssh-config", "test-sb"],
+      "test-sb",
       { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
     );
 
@@ -145,7 +145,7 @@ describe("checkAgentVersion", () => {
   it("returns unavailable when SSH config fails", () => {
     registry.registerSandbox({ name: "test-sb", agent: null });
 
-    vi.mocked(captureOpenshellCommand).mockReturnValue({
+    vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
       status: 1,
       output: "",
     });
@@ -157,7 +157,7 @@ describe("checkAgentVersion", () => {
 
   it("can skip live probing when no cached version is available", () => {
     registry.registerSandbox({ name: "test-sb", agent: null });
-    vi.mocked(captureOpenshellCommand).mockClear();
+    vi.mocked(captureSandboxSshConfigCommand).mockClear();
     vi.mocked(spawnSync).mockClear();
 
     const result = checkAgentVersion("test-sb", { skipProbe: true });
@@ -165,7 +165,7 @@ describe("checkAgentVersion", () => {
     expect(result.detectionMethod).toBe("unavailable");
     expect(result.sandboxVersion).toBeNull();
     expect(result.isStale).toBe(false);
-    expect(captureOpenshellCommand).not.toHaveBeenCalled();
+    expect(captureSandboxSshConfigCommand).not.toHaveBeenCalled();
     expect(spawnSync).not.toHaveBeenCalled();
   });
 
@@ -176,7 +176,7 @@ describe("checkAgentVersion", () => {
       agentVersion: "2026.3.11",
     });
 
-    vi.mocked(captureOpenshellCommand).mockReturnValue({
+    vi.mocked(captureSandboxSshConfigCommand).mockReturnValue({
       status: 0,
       output: "Host openshell-test-sb\n  HostName 127.0.0.1\n",
     });

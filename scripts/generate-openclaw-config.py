@@ -35,7 +35,7 @@ Environment variables:
     NEMOCLAW_DISABLE_DEVICE_AUTH        Set to "1" to force-disable device auth
     NEMOCLAW_PROXY_HOST                 Egress proxy host (default: 10.200.0.1)
     NEMOCLAW_PROXY_PORT                 Egress proxy port (default: 3128)
-    NEMOCLAW_DISCORD_PROXY_PORT         Loopback proxy port for Discord (default: 3128)
+    NEMOCLAW_OPENCLAW_MANAGED_PROXY     Set to "0" to defer OpenClaw managed proxy config
     NEMOCLAW_WEB_SEARCH_ENABLED         Set to "1" to enable web search tools
 """
 
@@ -52,12 +52,13 @@ from urllib.parse import urlparse
 
 KNOWN_MODEL_SETUP_AGENTS = {"openclaw", "hermes"}
 MODEL_SETUP_EFFECT_KEYS = {
-    "openclaw": {"openclawCompat", "openclawPlugins"},
+    "openclaw": {"openclawCompat", "openclawPlugins", "openclawTools"},
     "hermes": {"hermesCompat"},
 }
 DEFAULT_DASHBOARD_PORT = 18789
 MIN_DASHBOARD_PORT = 1024
 MAX_DASHBOARD_PORT = 65535
+FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 def _coerce_positive_int(env: dict, name: str, default: int) -> int:
@@ -92,6 +93,13 @@ def _normalize_url_for_parse(raw_url: str) -> str:
     if raw_url and not re.match(r"^[a-z][a-z0-9+.-]*://", raw_url, re.IGNORECASE):
         return f"http://{raw_url}"
     return raw_url
+
+
+def _truthy_env_default(env: dict, name: str, default: bool) -> bool:
+    raw = env.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() not in FALSE_VALUES
 
 
 def _validate_dashboard_port(raw: str, env_name: str) -> int:
@@ -230,6 +238,21 @@ def _validate_selected_agent_effects(payload: dict, manifest_path: Path, registr
         if compat is not None and not isinstance(compat, dict):
             raise ValueError(f"{manifest_path}: effects.openclawCompat must be an object")
 
+        tools = effects.get("openclawTools")
+        if tools is not None:
+            if not isinstance(tools, dict):
+                raise ValueError(f"{manifest_path}: effects.openclawTools must be an object")
+            unknown_tool_keys = sorted(set(tools) - {"toolSearch"})
+            if unknown_tool_keys:
+                raise ValueError(
+                    f"{manifest_path}: unknown effects.openclawTools keys: "
+                    f"{', '.join(unknown_tool_keys)}"
+                )
+            if "toolSearch" in tools and not isinstance(tools["toolSearch"], bool):
+                raise ValueError(
+                    f"{manifest_path}: effects.openclawTools.toolSearch must be a boolean"
+                )
+
         plugins = effects.get("openclawPlugins", [])
         if not isinstance(plugins, list):
             raise ValueError(f"{manifest_path}: effects.openclawPlugins must be an array")
@@ -320,7 +343,11 @@ def _coerce_compat_dict(value: object) -> dict:
 
 
 def _apply_openclaw_setup_effects(
-    setup: dict, inference_compat: dict, openclaw_plugins: list[dict], plugin_ids: set[str]
+    setup: dict,
+    inference_compat: dict,
+    openclaw_plugins: list[dict],
+    plugin_ids: set[str],
+    openclaw_tools: dict,
 ) -> None:
     effects = setup["effects"]
     for key, value in effects.get("openclawCompat", {}).items():
@@ -330,6 +357,14 @@ def _apply_openclaw_setup_effects(
                 f"'{setup['id']}' conflicts with inference compat key '{key}'"
             )
         inference_compat[key] = value
+
+    for key, value in effects.get("openclawTools", {}).items():
+        if key in openclaw_tools and openclaw_tools[key] != value:
+            raise ValueError(
+                "model-specific setup "
+                f"'{setup['id']}' conflicts with OpenClaw tools key '{key}'"
+            )
+        openclaw_tools[key] = value
 
     for plugin in effects.get("openclawPlugins", []):
         plugin_id = plugin["id"]
@@ -360,11 +395,11 @@ def build_config(env: dict | None = None) -> dict:
     proxy_host = env.get("NEMOCLAW_PROXY_HOST") or "10.200.0.1"
     proxy_port = env.get("NEMOCLAW_PROXY_PORT") or "3128"
     proxy_url = f"http://{proxy_host}:{proxy_port}"
-    # OpenClaw's Discord channel accepts only loopback proxy URLs for REST and
-    # gateway traffic. NemoClaw starts a loopback bridge in nemoclaw-start.sh
-    # that forwards to the real OpenShell proxy.
-    discord_proxy_port = env.get("NEMOCLAW_DISCORD_PROXY_PORT") or "3128"
-    discord_proxy_url = f"http://127.0.0.1:{discord_proxy_port}"
+    emit_openclaw_managed_proxy = _truthy_env_default(
+        env,
+        "NEMOCLAW_OPENCLAW_MANAGED_PROXY",
+        True,
+    )
     model = env["NEMOCLAW_MODEL"]
     raw_chat_ui_url = env.get("CHAT_UI_URL") or ""
     chat_ui_url = raw_chat_ui_url or f"http://127.0.0.1:{DEFAULT_DASHBOARD_PORT}"
@@ -426,10 +461,16 @@ def build_config(env: dict | None = None) -> dict:
     )
     openclaw_plugins: list[dict] = []
     openclaw_plugin_ids: set[str] = set()
+    openclaw_tool_overrides: dict = {}
     for setup in model_specific_setups:
         _apply_openclaw_setup_effects(
-            setup, inference_compat, openclaw_plugins, openclaw_plugin_ids
+            setup,
+            inference_compat,
+            openclaw_plugins,
+            openclaw_plugin_ids,
+            openclaw_tool_overrides,
         )
+    openclaw_tools = {"toolSearch": True, **openclaw_tool_overrides}
 
     # Ollama's OpenAI-compatible /v1/chat/completions stream omits the
     # `usage` chunk by default; OpenAI clients have to send
@@ -520,9 +561,7 @@ def build_config(env: dict | None = None) -> dict:
         }
         if ch == "slack":
             account["appToken"] = _placeholder(ch, "SLACK_APP_TOKEN")
-        if ch == "discord":
-            account["proxy"] = discord_proxy_url
-        elif ch == "telegram":
+        if ch == "telegram":
             account["proxy"] = proxy_url
         if ch == "telegram":
             account["groupPolicy"] = "open"
@@ -695,6 +734,7 @@ def build_config(env: dict | None = None) -> dict:
         },
         "models": {"mode": "merge", "providers": providers},
         "channels": {"defaults": {}, **_ch_cfg},
+        "tools": openclaw_tools,
         "update": {"checkOnStart": False},
         # Disable bundled plugins/channels that hit the L7 proxy at startup
         # and either crash or hang the gateway:
@@ -732,16 +772,21 @@ def build_config(env: dict | None = None) -> dict:
         },
     }
 
+    if emit_openclaw_managed_proxy:
+        config["proxy"] = {
+            "enabled": True,
+            "proxyUrl": proxy_url,
+            "loopbackMode": "proxy",
+        }
+
     if env.get("NEMOCLAW_WEB_SEARCH_ENABLED", "") == "1":
-        config["tools"] = {
-            "web": {
-                "search": {
-                    "enabled": True,
-                    "provider": "brave",
-                    "apiKey": "openshell:resolve:env:BRAVE_API_KEY",
-                },
-                "fetch": {"enabled": True},
-            }
+        config.setdefault("tools", {})["web"] = {
+            "search": {
+                "enabled": True,
+                "provider": "brave",
+                "apiKey": "openshell:resolve:env:BRAVE_API_KEY",
+            },
+            "fetch": {"enabled": True},
         }
 
     return config

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  DockerGpuPatchBackend,
   DockerGpuPatchDeps,
   DockerGpuPatchMode,
   DockerGpuPatchResult,
@@ -27,12 +28,14 @@ type DockerGpuSandboxCreatePatchOptions = {
   gpuDevice?: string | null;
   openshellSandboxCommand?: readonly string[] | null;
   timeoutSecs: number;
+  backend?: DockerGpuPatchBackend;
   deps: DockerGpuSandboxCreateDeps;
 };
 
 type DockerGpuSandboxConfig = {
   sandboxGpuEnabled: boolean;
   sandboxGpuDevice?: string | null;
+  hostGpuPlatform?: string | null;
 };
 
 type DockerGpuSandboxCreatePlan = {
@@ -61,6 +64,7 @@ export function createDockerGpuSandboxCreatePatch(
     gpuDevice: options.gpuDevice,
     openshellSandboxCommand: options.openshellSandboxCommand ?? null,
     timeoutSecs: options.timeoutSecs,
+    backend: options.backend,
   };
 
   return {
@@ -145,7 +149,9 @@ export function shouldUseDockerGpuPatchForCreate(
   });
   if (enabled) {
     options.log?.(
-      "  Docker-driver GPU patch active; creating sandbox first, then recreating the Docker container with GPU access.",
+      config.hostGpuPlatform === "jetson"
+        ? "  Jetson Docker GPU patch active; creating sandbox first, then recreating the Docker container with NVIDIA runtime GPU access."
+        : "  Docker-driver GPU patch active; creating sandbox first, then recreating the Docker container with GPU access.",
     );
   }
   return enabled;
@@ -158,7 +164,9 @@ export function resolveDockerGpuSandboxCreatePlan(
   const useDockerGpuPatch = shouldUseDockerGpuPatchForCreate(config, options);
   const logMessage = config.sandboxGpuEnabled
     ? useDockerGpuPatch
-      ? "  Docker-driver GPU patch active; allowing /proc writes required by Docker GPU initialization."
+      ? config.hostGpuPlatform === "jetson"
+        ? "  Jetson sandbox GPU enabled; using NVIDIA Container Runtime instead of CDI/--gpus."
+        : "  Docker-driver GPU patch active; allowing /proc writes required by Docker GPU initialization."
       : "  Direct sandbox GPU enabled; allowing OpenShell GPU policy enrichment."
     : null;
   return { useDockerGpuPatch, logMessage };

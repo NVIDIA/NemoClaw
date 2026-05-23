@@ -54,6 +54,7 @@ export interface GatewayStateOptions<Gpu> {
       detail?: string | null,
       reason?: "resume" | "reuse",
     ): void;
+    recordStateSkipped(state: "gateway", metadata?: Record<string, unknown> | null): Promise<Session>;
     note(message: string): void;
     startRecordedStep(stepName: string): Promise<void>;
     startGateway(gpu: Gpu, options: { gpuPassthrough: boolean }): Promise<void>;
@@ -150,9 +151,11 @@ export async function handleGatewayState<Gpu>({
   const resumeGateway = resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
   if (resumeGateway) {
     deps.skippedStepMessage("gateway", "running");
+    await deps.recordStateSkipped("gateway", { reason: "resume", reuseState: gatewayReuseState });
     session = await deps.recordStepComplete("gateway");
   } else if (!resume && canReuseHealthyGateway) {
     deps.skippedStepMessage("gateway", "running", "reuse");
+    await deps.recordStateSkipped("gateway", { reason: "reuse", reuseState: gatewayReuseState });
     deps.note("  Reusing healthy NemoClaw gateway.");
     session = await deps.recordStepComplete("gateway");
   } else {

@@ -26,6 +26,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
     retireLegacy: vi.fn(),
     destroyGpuRuntime: vi.fn(() => true),
     skipped: vi.fn(),
+    recordSkip: vi.fn(async () => createSession()),
     note: vi.fn(),
     startStep: vi.fn(async () => undefined),
     startGateway: vi.fn(async () => undefined),
@@ -52,6 +53,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
       retireLegacyGatewayForDockerDriverUpgrade: calls.retireLegacy,
       destroyGatewayRuntimeForGpuReuse: calls.destroyGpuRuntime,
       skippedStepMessage: calls.skipped,
+      recordStateSkipped: calls.recordSkip,
       note: calls.note,
       startRecordedStep: calls.startStep,
       startGateway: calls.startGateway,
@@ -99,6 +101,10 @@ describe("handleGatewayState", () => {
     await handleGatewayState(baseOptions(deps, "healthy"));
 
     expect(calls.skipped).toHaveBeenCalledWith("gateway", "running", "reuse");
+    expect(calls.recordSkip).toHaveBeenCalledWith("gateway", {
+      reason: "reuse",
+      reuseState: "healthy",
+    });
     expect(calls.note).toHaveBeenCalledWith("  Reusing healthy NemoClaw gateway.");
     expect(calls.startGateway).not.toHaveBeenCalled();
     expect(calls.complete).toHaveBeenCalledWith("gateway");
@@ -112,6 +118,10 @@ describe("handleGatewayState", () => {
     await handleGatewayState({ ...baseOptions(deps, "healthy", session), resume: true });
 
     expect(calls.skipped).toHaveBeenCalledWith("gateway", "running");
+    expect(calls.recordSkip).toHaveBeenCalledWith("gateway", {
+      reason: "resume",
+      reuseState: "healthy",
+    });
     expect(calls.startGateway).not.toHaveBeenCalled();
   });
 

@@ -35,6 +35,19 @@ components:
     name: "openclaw"
     forward_ports:
       - 18789
+    resource_profiles:
+      creator:
+        cpu: "50%"
+        memory: "50%"
+      gamer:
+        cpu: "25%"
+        memory: "25%"
+      game-developer:
+        cpu: "60%"
+        memory: "60%"
+      developer:
+        cpu: "75%"
+        memory: "75%"
 
   inference:
     profiles:

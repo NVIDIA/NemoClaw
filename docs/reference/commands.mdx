@@ -45,6 +45,17 @@ Print the installed NemoClaw CLI version.
 $ nemoclaw --version
 ```
 
+### `nemoclaw resources`
+
+Display host hardware inventory and configured sandbox resource profiles.
+Use `--json` for machine-readable CPU, memory, GPU, Kubernetes allocatable-capacity, and profile data.
+
+```console
+$ nemoclaw resources [--json]
+```
+
+If the gateway is not running, Kubernetes allocatable fields are omitted and host CPU/RAM totals are still shown.
+
 ### `nemoclaw onboard`
 
 Run the interactive setup wizard (recommended for new installs).
@@ -1257,6 +1268,9 @@ These flags toggle optional behaviors during onboarding; set them before running
 | `NEMOCLAW_OVERLAY_SNAPSHOTTER` | snapshotter name | Selects the containerd overlay snapshotter for sandbox builds. Empty (default) preserves containerd's choice. |
 | `NEMOCLAW_SKIP_TELEGRAM_REACHABILITY` | `1` to enable | Skips the Telegram bot reachability probe during onboard (useful in restricted networks). |
 | `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH` | `1` to enable | Accepts a new sandbox config path without an interactive prompt when the stored path differs from the discovered one. |
+| `NEMOCLAW_RESOURCE_PROFILE` | profile name or `default` | Selects a sandbox CPU/RAM resource profile from the blueprint during onboarding. `default` means no resource preference, so NemoClaw passes no OpenShell CPU or memory flags. Unknown names fail fast. |
+| `NEMOCLAW_CPU` | percentage or Kubernetes CPU quantity | Overrides the selected profile's CPU size passed to OpenShell `--cpu`. Percentages resolve against detected capacity. |
+| `NEMOCLAW_RAM` | percentage or Kubernetes memory quantity | Overrides the selected profile's memory size passed to OpenShell `--memory`. Percentages resolve against detected capacity. |
 | `NEMOCLAW_SANDBOX_GPU` | `auto`, `1`, or `0` | Controls sandbox GPU passthrough during onboarding. `auto` enables GPU passthrough when an NVIDIA GPU is detected, `1` requires GPU passthrough, and `0` forces CPU-only sandbox creation. |
 | `NEMOCLAW_SANDBOX_GPU_DEVICE` | OpenShell GPU device selector | Selects the GPU device passed with `openshell sandbox create --gpu-device`. Requires explicit sandbox GPU enablement with `NEMOCLAW_SANDBOX_GPU=1` (or `--sandbox-gpu` for CLI-driven onboarding); otherwise onboarding rejects the selector instead of treating it as an implicit opt-in. |
 | `NEMOCLAW_DOCKER_GPU_PATCH` | `0` to disable, anything else to keep the default | Controls the Linux Docker-driver GPU sandbox compatibility patch. Set to `0` only as an escape hatch when the patch fails and you need onboarding to continue without patching the GPU sandbox container. |

@@ -126,6 +126,240 @@ printf '%s' "$status"
   );
 }
 
+type CredentialBackScenario = {
+  name: string;
+  answers: string[];
+  menuSelections?: string[];
+  credentialEnv: string;
+  promptPattern: RegExp;
+  expectedOutcome?: "back" | "exit";
+  env?: Record<string, string>;
+  agent?: "hermes";
+  gpu?: Record<string, unknown> | null;
+  stubNim?: boolean;
+};
+
+function writeAlwaysOkCurl(fakeBin: string) {
+  fs.writeFileSync(
+    path.join(fakeBin, "curl"),
+    `#!/usr/bin/env bash
+body='{"id":"resp_123"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+fi
+printf '%s' "$status"
+`,
+    { mode: 0o755 },
+  );
+}
+
+function runCredentialBackScenario(scenario: CredentialBackScenario) {
+  const repoRoot = path.join(import.meta.dirname, "..");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-credential-back-"));
+  const fakeBin = path.join(tmpDir, "bin");
+  const scriptPath = path.join(
+    tmpDir,
+    `${scenario.name.toLowerCase().replace(/[^a-z0-9]+/g, "-")}.js`,
+  );
+  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const credentialsPath = JSON.stringify(
+    path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+  );
+  const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+  const agentDefsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent", "defs.js"));
+  const nimPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "nim.js"));
+
+  fs.mkdirSync(fakeBin, { recursive: true });
+  writeAlwaysOkCurl(fakeBin);
+
+  const script = String.raw`
+const answers = ${JSON.stringify(scenario.answers)};
+const menuSelections = ${JSON.stringify(scenario.menuSelections || [])};
+let menuSelectionIndex = 0;
+const expectedOutcome = ${JSON.stringify(scenario.expectedOutcome || "back")};
+const scenarioEnv = ${JSON.stringify(scenario.env || {})};
+const messages = [];
+const prompts = [];
+const saved = [];
+const lines = [];
+const clearCredentialEnv = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "COMPATIBLE_API_KEY",
+  "COMPATIBLE_ANTHROPIC_API_KEY",
+  "NOUS_API_KEY",
+  "NVIDIA_API_KEY",
+  "NGC_API_KEY",
+  "NEMOCLAW_PROVIDER_KEY",
+];
+const clearOnboardControlEnv = [
+  "NEMOCLAW_NON_INTERACTIVE",
+  "NEMOCLAW_PROVIDER",
+  "NEMOCLAW_MODEL",
+  "NEMOCLAW_YES",
+  "NEMOCLAW_PREFERRED_API",
+  "NEMOCLAW_EXPERIMENTAL",
+];
+
+for (const key of [...clearCredentialEnv, ...clearOnboardControlEnv]) {
+  delete process.env[key];
+}
+Object.assign(process.env, scenarioEnv);
+
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const nim = require(${nimPath});
+
+function selectRecentMenuOption(patternText, lines) {
+  const pattern = new RegExp(patternText, "i");
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const match = /^\s*(\d+)\)\s+(.+)$/.exec(lines[index]);
+    if (match && pattern.test(match[2])) return match[1];
+  }
+  throw new Error(
+    "Could not find menu option matching " +
+      pattern +
+      "\\nRecent output:\\n" +
+      lines.slice(-20).join("\\n"),
+  );
+}
+
+credentials.prompt = async (message, opts = {}) => {
+  messages.push(message);
+  prompts.push({ message, secret: opts.secret === true });
+  if (/Choose \[/.test(message) && menuSelectionIndex < menuSelections.length) {
+    return selectRecentMenuOption(menuSelections[menuSelectionIndex++], lines);
+  }
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => {
+  return { kind: "credential", value: "nvapi-good" };
+};
+const originalSaveCredential = credentials.saveCredential;
+credentials.saveCredential = (key, value) => {
+  saved.push({ key, value });
+  return originalSaveCredential(key, value);
+};
+runner.runCapture = () => "";
+
+if (${JSON.stringify(scenario.stubNim === true)}) {
+  nim.isNgcLoggedIn = () => false;
+  nim.dockerLoginNgc = () => {
+    throw new Error("NGC login should not run after back navigation");
+  };
+  nim.pullNimImage = () => "image";
+  nim.startNimContainerByName = () => "container";
+  nim.waitForNimHealth = () => true;
+}
+
+const { setupNim } = require(${onboardPath});
+const agent = ${JSON.stringify(scenario.agent || null)}
+  ? require(${agentDefsPath}).loadAgent(${JSON.stringify(scenario.agent || null)})
+  : null;
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  const originalExit = process.exit;
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  if (expectedOutcome === "exit") {
+    process.exit = (code) => {
+      const error = new Error("process.exit:" + code);
+      error.exitCode = code;
+      throw error;
+    };
+  }
+  try {
+    const result = await setupNim(${JSON.stringify(scenario.gpu ?? null)}, null, agent);
+    originalLog(JSON.stringify({
+      outcome: "completed",
+      result,
+      messages,
+      prompts,
+      lines,
+      saved,
+      menuSelectionIndex,
+      credentialValue: process.env[${JSON.stringify(scenario.credentialEnv)}] || null,
+    }));
+  } catch (error) {
+    if (expectedOutcome !== "exit" || error.exitCode === undefined) {
+      throw error;
+    }
+    originalLog(JSON.stringify({
+      outcome: "exit",
+      exitCode: error.exitCode,
+      messages,
+      prompts,
+      lines,
+      saved,
+      menuSelectionIndex,
+      credentialValue: process.env[${JSON.stringify(scenario.credentialEnv)}] || null,
+    }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+    process.exit = originalExit;
+  }
+})().catch((error) => {
+  console.error(error && error.stack ? error.stack : String(error));
+  process.exit(1);
+});
+`;
+  fs.writeFileSync(scriptPath, script);
+
+  const result = spawnSync(process.execPath, [scriptPath], {
+    cwd: repoRoot,
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      HOME: tmpDir,
+      PATH: `${fakeBin}:${process.env.PATH || ""}`,
+    },
+    timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
+  });
+
+  assert.equal(result.status, 0, result.stderr);
+  const payload = JSON.parse(result.stdout.trim());
+  assert.equal(payload.menuSelectionIndex, scenario.menuSelections?.length || 0);
+  if (scenario.expectedOutcome === "exit") {
+    assert.equal(payload.outcome, "exit");
+    assert.equal(payload.exitCode, 1);
+    assert.equal(payload.credentialValue, null);
+    assert.deepEqual(payload.saved, []);
+    assert.ok(payload.lines.some((line: string) => line.includes("Exiting onboarding.")));
+    assert.ok(
+      payload.prompts.some(
+        (entry: { message: string; secret: boolean }) =>
+          scenario.promptPattern.test(entry.message) && entry.secret,
+      ),
+    );
+    return;
+  }
+  assert.equal(payload.outcome, "completed");
+  assert.equal(payload.result.provider, "nvidia-prod");
+  assert.ok(payload.lines.some((line: string) => line.includes("Returning to provider selection.")));
+  assert.ok(
+    payload.prompts.some(
+      (entry: { message: string; secret: boolean }) =>
+        scenario.promptPattern.test(entry.message) && entry.secret,
+    ),
+  );
+  assert.ok(
+    payload.saved.every((entry: { key: string; value: string }) => entry.value !== "back"),
+  );
+  assert.equal(payload.credentialValue, null);
+}
+
 describe("onboard provider selection UX", { timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS }, () => {
   it("prompts explicitly instead of silently auto-selecting detected Ollama", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -1265,7 +1499,7 @@ const { setupNim } = require(${onboardPath});
     );
   });
 
-  it("applies the systemd loopback override for an existing running Ollama install", { timeout: 10_000 }, () => {
+  it("applies the systemd loopback override for an existing running Ollama install", { timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS }, () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-systemd-"));
     const fakeBin = path.join(tmpDir, "bin");
@@ -1520,6 +1754,87 @@ const { setupNim } = require(${onboardPath});
     assert.ok(
       payload.installedBody.includes('Environment="HTTPS_PROXY=http://proxy.internal:8080"'),
       "other Environment= settings should be preserved",
+    );
+  });
+
+  it("adds Spark CUDA v13 and enables the Ollama systemd service on managed install", { timeout: 10_000 }, () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-systemd-spark-"));
+    const scriptPath = path.join(tmpDir, "ollama-systemd-spark-check.js");
+    const ollamaSystemdPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "ollama-systemd.js"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    );
+
+    const script = String.raw`
+const fs = require("fs");
+const runner = require(${runnerPath});
+const platform = require(${platformPath});
+const localInference = require(${localInferencePath});
+
+let installedBody = "";
+const shellCommands = [];
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("systemctl list-unit-files ollama.service")) return "ollama.service disabled";
+  return "";
+};
+runner.runShell = (command) => {
+  shellCommands.push(command);
+  if (command.includes("cat") && command.includes("ollama.service.d/override.conf")) {
+    return {
+      status: 0,
+      stdout: [
+        "[Service]",
+        "Environment=\"OLLAMA_HOST=0.0.0.0:11434\"",
+        "Environment=\"OLLAMA_LLM_LIBRARY=cuda\"",
+        "",
+      ].join("\\n"),
+    };
+  }
+  const match = command.match(/(?:sudo(?: -n)? )?install -D -m 0644 '([^']+)'/);
+  if (match) installedBody = fs.readFileSync(match[1], "utf8");
+  return { status: 0, stdout: "" };
+};
+platform.isWsl = () => false;
+localInference.findReachableOllamaHost = () => true;
+Object.defineProperty(process, "platform", { value: "linux" });
+
+const { ensureOllamaLoopbackSystemdOverride } = require(${ollamaSystemdPath});
+const result = ensureOllamaLoopbackSystemdOverride({
+  isNonInteractive: () => true,
+  enableService: true,
+  detectNvidiaPlatformImpl: () => "spark",
+  hasOllamaCudaV13LibraryImpl: () => true,
+});
+console.log(JSON.stringify({ result, installedBody, shellCommands }));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim().split("\n").at(-1) || "{}");
+    const installedLines = payload.installedBody.split(/\r?\n/);
+    assert.equal(payload.result, "ready");
+    assert.ok(payload.installedBody.includes('Environment="OLLAMA_HOST=127.0.0.1:11434"'));
+    assert.ok(payload.installedBody.includes('Environment="OLLAMA_LLM_LIBRARY=cuda_v13"'));
+    assert.ok(!installedLines.includes('Environment="OLLAMA_LLM_LIBRARY=cuda"'));
+    assert.ok(
+      payload.shellCommands.some((command: string) => command.includes("systemctl enable ollama")),
+      "managed Ollama installs should enable the service for reboot survival",
     );
   });
 
@@ -3509,6 +3824,214 @@ const { setupNim } = require(${onboardPath});
       1,
     );
   });
+
+  it("lets users type back at a secret provider credential prompt to return to provider selection", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-credential-back-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "credential-back-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"resp_123"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const clearCredentialEnv = [
+  "OPENAI_API_KEY",
+  "ANTHROPIC_API_KEY",
+  "GEMINI_API_KEY",
+  "COMPATIBLE_API_KEY",
+  "COMPATIBLE_ANTHROPIC_API_KEY",
+  "NOUS_API_KEY",
+  "NVIDIA_API_KEY",
+  "NGC_API_KEY",
+  "NEMOCLAW_PROVIDER_KEY",
+];
+const clearOnboardControlEnv = [
+  "NEMOCLAW_NON_INTERACTIVE",
+  "NEMOCLAW_PROVIDER",
+  "NEMOCLAW_MODEL",
+  "NEMOCLAW_YES",
+  "NEMOCLAW_PREFERRED_API",
+  "NEMOCLAW_EXPERIMENTAL",
+];
+
+for (const key of [...clearCredentialEnv, ...clearOnboardControlEnv]) {
+  delete process.env[key];
+}
+
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+
+const answers = ["2", "back", "1", ""];
+const messages = [];
+const prompts = [];
+const saved = [];
+
+credentials.prompt = async (message, opts = {}) => {
+  messages.push(message);
+  prompts.push({ message, secret: opts.secret === true });
+  return answers.shift() || "";
+};
+credentials.ensureApiKey = async () => {
+  return { kind: "credential", value: "nvapi-good" };
+};
+const originalSaveCredential = credentials.saveCredential;
+credentials.saveCredential = (key, value) => {
+  saved.push({ key, value });
+  return originalSaveCredential(key, value);
+};
+runner.runCapture = () => "";
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const originalError = console.error;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  console.error = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(null);
+    originalLog(JSON.stringify({
+      result,
+      messages,
+      prompts,
+      lines,
+      saved,
+      openaiKey: process.env.OPENAI_API_KEY || null,
+    }));
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+      },
+      timeout: PROVIDER_SELECTION_TEST_TIMEOUT_MS,
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.equal(payload.result.provider, "nvidia-prod");
+    assert.equal(payload.openaiKey, null);
+    assert.ok(
+      payload.saved.every((entry: { key: string; value: string }) => entry.value !== "back"),
+    );
+    assert.ok(
+      payload.lines.some((line: string) => line.includes("Returning to provider selection.")),
+    );
+    assert.ok(
+      payload.prompts.some(
+        (entry: { message: string; secret: boolean }) =>
+          /OpenAI API key: /.test(entry.message) && entry.secret,
+      ),
+    );
+    assert.equal(payload.messages.filter((message: string) => /Choose \[/.test(message)).length, 2);
+  });
+
+  const secretCredentialBackScenarios: CredentialBackScenario[] = [
+    {
+      name: "Anthropic",
+      answers: ["4", "back", "1", ""],
+      credentialEnv: "ANTHROPIC_API_KEY",
+      promptPattern: /Anthropic API key: /,
+    },
+    {
+      name: "Anthropic exit",
+      answers: ["4", "exit"],
+      credentialEnv: "ANTHROPIC_API_KEY",
+      promptPattern: /Anthropic API key: /,
+      expectedOutcome: "exit",
+    },
+    {
+      name: "Google Gemini",
+      answers: ["6", "back", "1", ""],
+      credentialEnv: "GEMINI_API_KEY",
+      promptPattern: /Google Gemini API key: /,
+    },
+    {
+      name: "Other OpenAI-compatible endpoint",
+      answers: ["3", "https://proxy.example.com/v1", "back", "1", ""],
+      credentialEnv: "COMPATIBLE_API_KEY",
+      promptPattern: /Other OpenAI-compatible endpoint API key: /,
+    },
+    {
+      name: "Other Anthropic-compatible endpoint",
+      answers: ["5", "https://proxy.example.com", "back", "1", ""],
+      credentialEnv: "COMPATIBLE_ANTHROPIC_API_KEY",
+      promptPattern: /Other Anthropic-compatible endpoint API key: /,
+    },
+    {
+      name: "Model Router",
+      answers: ["back", ""],
+      menuSelections: ["Model Router", "NVIDIA Endpoints"],
+      credentialEnv: "NVIDIA_API_KEY",
+      promptPattern: /Model Router API key: /,
+    },
+    {
+      name: "Hermes Provider Nous API key",
+      answers: ["back", ""],
+      menuSelections: ["Hermes Provider", "Nous API Key", "NVIDIA Endpoints"],
+      credentialEnv: "NOUS_API_KEY",
+      promptPattern: /Nous API Key: /,
+      agent: "hermes",
+    },
+    {
+      name: "Local NIM NGC API key",
+      answers: ["", "back", ""],
+      menuSelections: ["Local NVIDIA NIM", "NVIDIA Endpoints"],
+      credentialEnv: "NGC_API_KEY",
+      promptPattern: /NGC API Key: /,
+      env: { NEMOCLAW_EXPERIMENTAL: "1" },
+      gpu: {
+        type: "nvidia",
+        name: "test-gpu",
+        count: 1,
+        totalMemoryMB: 999999,
+        perGpuMB: 999999,
+        nimCapable: true,
+      },
+      stubNim: true,
+    },
+  ];
+
+  for (const scenario of secretCredentialBackScenarios) {
+    const action = scenario.expectedOutcome === "exit" ? "exit" : "back";
+    it(`lets users type ${action} at the ${scenario.name} secret credential prompt`, () => {
+      runCredentialBackScenario(scenario);
+    });
+  }
 
   it("lets users type back after a transport validation failure to return to provider selection", () => {
     const repoRoot = path.join(import.meta.dirname, "..");

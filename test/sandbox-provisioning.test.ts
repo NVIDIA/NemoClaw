@@ -376,7 +376,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
     );
   });
 
-  it("provisions unified mutable .openclaw layout and trusted rc shims", () => {
+  it("provisions unified mutable .openclaw layout and clean trusted rc files", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-layout-"));
     const sandboxRoot = path.join(tmp, "sandbox");
@@ -418,11 +418,11 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         sandboxRoot,
       );
       expect(rc.result.status).toBe(0);
-      const runtimeEnvShim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
       for (const rcName of [".bashrc", ".profile"]) {
         const rcPath = path.join(sandboxRoot, rcName);
         const content = fs.readFileSync(rcPath, "utf-8");
-        expect(content.split(runtimeEnvShim).length - 1).toBe(1);
+        expect(content.toLowerCase()).not.toContain("proxy");
+        expect(content).not.toContain("/tmp/nemoclaw-proxy-env.sh");
         expect((fs.statSync(rcPath).mode & 0o777).toString(8)).toBe("444");
       }
       expect(rc.calls).toContain(

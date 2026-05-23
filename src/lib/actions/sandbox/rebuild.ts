@@ -34,13 +34,18 @@ import {
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
+import { runOpenshell } from "../../adapters/openshell/runtime";
 import { loadAgent } from "../../agent/defs";
-import * as agentRuntime from "../../agent/runtime";
 import { ensureAgentBaseImage } from "../../agent/onboard";
+import * as agentRuntime from "../../agent/runtime";
 import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
+import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import {
+  captureSandboxListWithGatewayRecovery,
+  printSandboxListFailureWithRecoveryContext,
+} from "../../openshell-sandbox-list";
 import * as policies from "../../policy";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
@@ -387,7 +392,8 @@ export async function rebuildSandbox(
 
   // Step 1: Ensure sandbox is live for backup
   log("Checking sandbox liveness: openshell sandbox list");
-  const isLive = captureOpenshell(["sandbox", "list"]);
+  const liveRecovery = await captureSandboxListWithGatewayRecovery();
+  const isLive = liveRecovery.result;
   log(
     `openshell sandbox list exit=${isLive.status}, output=${(isLive.output || "").substring(0, 200)}`,
   );
@@ -401,8 +407,7 @@ export async function rebuildSandbox(
     return;
   }
   if (isLive.status !== 0) {
-    console.error("  Failed to query running sandboxes from OpenShell.");
-    console.error("  Ensure OpenShell is running: openshell status");
+    printSandboxListFailureWithRecoveryContext(liveRecovery);
     bail("Failed to query running sandboxes from OpenShell.", isLive.status || 1);
     return;
   }
@@ -756,7 +761,10 @@ export async function rebuildSandbox(
   // Policy presets live in the gateway policy engine, not the sandbox filesystem.
   // They are lost when the sandbox is destroyed and recreated. Re-apply any
   // presets that were captured in the backup manifest.
-  const savedPresets = backupManifest.policyPresets || [];
+  const savedPresets = pruneDisabledMessagingPolicyPresets(
+    backupManifest.policyPresets || [],
+    rebuildDisabledChannels,
+  );
   if (savedPresets.length > 0) {
     console.log("");
     console.log("  Restoring policy presets...");

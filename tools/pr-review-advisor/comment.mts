@@ -22,7 +22,15 @@ type ReviewAdvisorResult = {
       newItems?: number;
     };
   };
-  findings?: Array<{ severity?: string; title?: string }>;
+  findings?: Array<{
+    severity?: string;
+    title?: string;
+    file?: string | null;
+    line?: number | null;
+    description?: string;
+    recommendation?: string;
+    evidence?: string;
+  }>;
   reviewCompleteness?: {
     limitations?: string[];
   };
@@ -78,6 +86,8 @@ export function buildComment({
   const warningCount = result?.findings?.filter((finding) => finding.severity === "warning").length ?? 0;
   const suggestionCount = result?.findings?.filter((finding) => finding.severity === "suggestion").length ?? 0;
   const secondary = buildSecondarySummary(result);
+  const findingsDetails = renderFindingsDetails(result);
+  const previousReviewDetails = renderPreviousReviewDetails(result);
   const details = runUrl
     ? `\n[Workflow run details](${runUrl})`
     : "";
@@ -85,7 +95,7 @@ export function buildComment({
 ## PR Review Advisor
 
 **Findings:** ${blockerCount} needs attention, ${warningCount} worth checking, ${suggestionCount} nice ideas
-${secondary}${details}
+${secondary}${findingsDetails}${previousReviewDetails}${details}
 
 This is an automated advisory review. A human maintainer must make the final merge decision.
 
@@ -98,13 +108,75 @@ function buildSecondarySummary(result?: ReviewAdvisorResult): string {
     return `**Since last review:** ${countLabel(sinceLastReview.resolved, "prior item")} resolved, ${countLabel(sinceLastReview.stillApplies, "still applies", "still apply")}, ${countLabel(sinceLastReview.newItems, "new item")} found\n`;
   }
   const topItem = result?.summary?.topItem || topFindingTitle(result);
-  return topItem ? `**Top item:** ${topItem}\n` : "";
+  return topItem ? `**Top item:** ${escapeCommentText(topItem)}\n` : "";
 }
 
 function topFindingTitle(result?: ReviewAdvisorResult): string | undefined {
   return result?.findings?.find((finding) => finding.severity === "blocker")?.title ||
     result?.findings?.find((finding) => finding.severity === "warning")?.title ||
     result?.findings?.find((finding) => finding.severity === "suggestion")?.title;
+}
+
+function renderFindingsDetails(result?: ReviewAdvisorResult): string {
+  if (!result?.findings?.length) return "";
+  const sections = [
+    { summary: "🛠️ Needs attention", findings: result.findings.filter((finding) => finding.severity === "blocker") },
+    { summary: "🔎 Worth checking", findings: result.findings.filter((finding) => finding.severity === "warning") },
+    { summary: "🌱 Nice ideas", findings: result.findings.filter((finding) => finding.severity === "suggestion") },
+  ];
+  const lines: string[] = ["", "<details>", "<summary>Review findings</summary>", ""];
+  for (const section of sections) {
+    lines.push(`### ${section.summary}`);
+    if (section.findings.length === 0) {
+      lines.push("- _None._");
+    } else {
+      for (const finding of section.findings.slice(0, 20)) {
+        lines.push(formatFinding(finding));
+      }
+    }
+    lines.push("");
+  }
+  lines.push("</details>", "");
+  return `${lines.join("\n")}\n`;
+}
+
+function renderPreviousReviewDetails(result?: ReviewAdvisorResult): string {
+  const sinceLastReview = result?.summary?.sinceLastReview;
+  if (!sinceLastReview || !result?.findings?.length) return "";
+  const lines: string[] = ["<details>", "<summary>Since last review details</summary>", ""];
+  lines.push("Current findings:");
+  for (const finding of result.findings.slice(0, 20)) lines.push(formatFinding(finding));
+  lines.push("", "</details>", "");
+  return `${lines.join("\n")}\n`;
+}
+
+function formatFinding(finding: NonNullable<ReviewAdvisorResult["findings"]>[number]): string {
+  const title = escapeCommentText(finding.title || "Review finding");
+  const location = formatFindingLocation(finding);
+  const description = finding.description ? `: ${escapeCommentText(finding.description)}` : "";
+  const lines = [`- **${title}**${location}${description}`];
+  if (finding.recommendation) {
+    lines.push(`  - Recommendation: ${escapeCommentText(finding.recommendation)}`);
+  }
+  if (finding.evidence) lines.push(`  - Evidence: ${escapeCommentText(finding.evidence)}`);
+  return lines.join("\n");
+}
+
+function formatFindingLocation(finding: NonNullable<ReviewAdvisorResult["findings"]>[number]): string {
+  if (!finding.file) return "";
+  const line = Number.isInteger(finding.line) && Number(finding.line) > 0 ? `:${finding.line}` : "";
+  return ` (${escapeCommentText(finding.file)}${line})`;
+}
+
+function escapeCommentText(value: string): string {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replace(/([\\`*_\[\]()!|])/g, "\\$1")
+    .replaceAll("@", "&#64;");
 }
 
 function countLabel(count: unknown, singular: string, plural = `${singular}s`): string {

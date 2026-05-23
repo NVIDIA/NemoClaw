@@ -6,7 +6,7 @@
 
 .DESCRIPTION
     Prepares a Windows host for NemoClaw by enabling WSL 2, installing an
-    Ubuntu WSL distro when needed, installing Docker Desktop, verifying Docker
+    Ubuntu 24.04 WSL distro when needed, installing Docker Desktop, verifying Docker
     from WSL, and then opening Ubuntu so the user can run the standard
     curl|bash installer in a native Linux terminal:
 
@@ -17,7 +17,7 @@
     onboarding to scripts/install.sh and nemoclaw onboard.
 
 .PARAMETER DistroName
-    WSL distro to install/use. Defaults to Ubuntu.
+    WSL distro to install/use. Defaults to Ubuntu-24.04.
 
 .PARAMETER InstallerUrl
     NemoClaw installer URL to print in the final WSL handoff command.
@@ -41,7 +41,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$DistroName = 'Ubuntu',
+    [string]$DistroName = 'Ubuntu-24.04',
     [string]$InstallerUrl = 'https://www.nvidia.com/nemoclaw.sh',
     [string]$InstallerArgs = '',
     [bool]$InstallDockerDesktop = $true,
@@ -62,7 +62,6 @@ $script:DockerDesktopExe = 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
 $script:DockerCli = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
 $script:WingetDockerId = 'Docker.DockerDesktop'
 $script:InstallerWindowTitle = "NVIDIA NemoClaw Installer ($PID)"
-$script:InstallDistroAtHandoff = $false
 
 function Write-Status {
     param(
@@ -653,18 +652,84 @@ function Ensure-WslDistroVersion2 {
     Write-Status "$Name is now WSL 2."
 }
 
-function Ensure-UbuntuWsl {
-    $wsl = Resolve-WslExe
-    $script:InstallDistroAtHandoff = $false
+function Get-WslInstallCommandText {
+    param([Parameter(Mandatory)] [string]$Name)
 
-    $distros = Get-WslDistros
-    if ($distros -notcontains $DistroName) {
-        Write-Status "$DistroName is not registered yet. It will be installed during the final Ubuntu handoff."
-        $script:InstallDistroAtHandoff = $true
-        return
+    return "wsl --install $Name"
+}
+
+function Write-WslUbuntuRequiredNotice {
+    param([Parameter(Mandatory)] [string]$Name)
+
+    Write-Host ''
+    if ($Name -eq 'Ubuntu-24.04') {
+        Write-Host 'NemoClaw on Windows ARM requires WSL2 Ubuntu 24.04.' -ForegroundColor Yellow
+        Write-Host 'Please run: wsl --install Ubuntu-24.04' -ForegroundColor Yellow
+        Write-Host 'Then re-run this installer.' -ForegroundColor Yellow
+    } else {
+        Write-Host "NemoClaw on Windows requires a WSL2 distro named $Name." -ForegroundColor Yellow
+        Write-Host "Please run: $(Get-WslInstallCommandText -Name $Name)" -ForegroundColor Yellow
+        Write-Host 'Then re-run this installer.' -ForegroundColor Yellow
+    }
+    Write-Host ''
+}
+
+function Wait-WslDistroRegistration {
+    param(
+        [Parameter(Mandatory)] [string]$Name,
+        [int]$TimeoutSeconds = 300
+    )
+
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    while ((Get-Date) -lt $deadline) {
+        $distros = Get-WslDistros
+        if ($distros -contains $Name) {
+            return $true
+        }
+        Start-Sleep -Seconds 5
+    }
+    return $false
+}
+
+function Install-WslDistro {
+    param([Parameter(Mandatory)] [string]$Name)
+
+    $wsl = Resolve-WslExe
+    $displayCommand = Get-WslInstallCommandText -Name $Name
+    Write-Status "$Name is not registered. Installing with: $displayCommand"
+    $installExitCode = Invoke-NativeCommand -FilePath $wsl -ArgumentList @('--install', $Name)
+    if ($installExitCode -ne 0) {
+        Write-Status -Level WARN "$displayCommand failed with exit code $installExitCode."
+        Write-WslUbuntuRequiredNotice -Name $Name
+        throw "Could not install WSL distro '$Name'."
     }
 
-    Write-Status "WSL distro already registered: $DistroName"
+    if (-not (Wait-WslDistroRegistration -Name $Name)) {
+        Write-WslUbuntuRequiredNotice -Name $Name
+        throw "WSL distro '$Name' was not registered after running $displayCommand."
+    }
+}
+
+function Ensure-UbuntuWsl {
+    $wsl = Resolve-WslExe
+
+    $installedDistro = $false
+    $distros = Get-WslDistros
+    if ($distros -notcontains $DistroName) {
+        Install-WslDistro -Name $DistroName
+        $installedDistro = $true
+        $distros = Get-WslDistros
+        if ($distros -notcontains $DistroName) {
+            Write-WslUbuntuRequiredNotice -Name $DistroName
+            throw "WSL distro '$DistroName' is still not registered after install."
+        }
+    }
+
+    if ($installedDistro) {
+        Write-Status "WSL distro registered: $DistroName"
+    } else {
+        Write-Status "WSL distro already registered: $DistroName"
+    }
 
     Ensure-WslDistroVersion2 -Name $DistroName
 
@@ -781,11 +846,6 @@ function Get-NemoClawInstallerCommand {
 function Open-UbuntuForInstaller {
     $wsl = Resolve-WslExe
     try {
-        if ($script:InstallDistroAtHandoff) {
-            Start-Process -FilePath $wsl -ArgumentList @('--install', '-d', $DistroName) | Out-Null
-            return
-        }
-
         $ubuntuLauncher = Resolve-UbuntuLauncher
         $windowsTerminal = Get-Command 'wt.exe' -ErrorAction SilentlyContinue
         if ($windowsTerminal) {
@@ -803,9 +863,6 @@ function Open-UbuntuForInstaller {
         Start-Process -FilePath $wsl -ArgumentList @('-d', $DistroName) | Out-Null
     } catch {
         Write-Status -Level WARN "Could not open $DistroName automatically: $($_.Exception.Message)"
-        if ($script:InstallDistroAtHandoff) {
-            throw
-        }
     }
 }
 
@@ -814,11 +871,7 @@ function Write-InstallerHandoff {
     Write-Host ''
     Write-Host 'Windows preparation is complete.' -ForegroundColor Green
     Write-Host ''
-    if ($script:InstallDistroAtHandoff) {
-        Write-Host "Ubuntu will install and launch now. After first-run setup completes, run this command inside Ubuntu to install NemoClaw:" -ForegroundColor Cyan
-    } else {
-        Write-Host "An Ubuntu window is opening. Run this command inside Ubuntu to install NemoClaw:" -ForegroundColor Cyan
-    }
+    Write-Host "An Ubuntu window is opening. Run this command inside Ubuntu to install NemoClaw:" -ForegroundColor Cyan
     Write-Host ''
     Write-Host "  $installerCommand" -ForegroundColor White
     Write-Host ''
@@ -837,15 +890,13 @@ function Invoke-Main {
     Ensure-UbuntuWsl
     Install-DockerDesktop
     Start-DockerDesktop
-    if ($script:InstallDistroAtHandoff) {
-        Write-Status "Skipping Docker-in-WSL verification until $DistroName is installed and first-run setup completes."
-    } else {
-        Ensure-DockerWslIntegration
-    }
+    Ensure-DockerWslIntegration
     Write-DockerDesktopNotice
     Unregister-ResumeRunOnce
     Write-Status 'Windows preparation completed successfully.'
     Write-InstallerHandoff
 }
 
-Invoke-Main
+if ($env:NEMOCLAW_BOOTSTRAP_WINDOWS_SOURCE_ONLY -ne '1') {
+    Invoke-Main
+}

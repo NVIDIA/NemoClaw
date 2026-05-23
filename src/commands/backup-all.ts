@@ -15,6 +15,6 @@ export default class BackupAllCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     await this.parse(BackupAllCommand);
-    runBackupAllAction();
+    await runBackupAllAction();
   }
 }
