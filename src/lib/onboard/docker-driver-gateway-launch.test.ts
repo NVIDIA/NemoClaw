@@ -111,6 +111,8 @@ describe("docker-driver-gateway-launch", () => {
           "OPENSHELL_DRIVERS",
           "--env",
           "OPENSHELL_DOCKER_SUPERVISOR_BIN",
+          "--env",
+          "OPENSHELL_GATEWAY_CONFIG",
           "ubuntu:24.04",
           "/opt/nemoclaw/openshell-gateway",
         ]),

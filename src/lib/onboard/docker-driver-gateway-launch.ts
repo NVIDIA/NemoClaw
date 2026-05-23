@@ -280,6 +280,7 @@ export function buildDockerDriverGatewayLaunch(
   for (const key of Object.keys(gatewayEnv).sort()) {
     addEnv(args, key, gatewayEnv[key]);
   }
+  addEnv(args, "OPENSHELL_GATEWAY_CONFIG", env.OPENSHELL_GATEWAY_CONFIG);
   addEnv(args, "DOCKER_HOST", dockerHost);
   addEnv(args, "RUST_LOG", env.RUST_LOG);
   args.push(image, GATEWAY_MOUNT_PATH);
