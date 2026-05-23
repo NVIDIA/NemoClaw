@@ -9640,7 +9640,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         log: (message) => console.log(message),
       },
     });
-    session = finalizationResult.session;
     completed = true;
   } finally {
     releaseOnboardLock();
