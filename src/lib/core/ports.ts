@@ -1,0 +1,128 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+/**
+ * Central port configuration — override any port via environment variables.
+ * TypeScript counterpart of bin/lib/ports.js.
+ */
+
+/**
+ * Read an environment variable as a port number, falling back to a default.
+ * Validates that the value is a valid non-privileged port (1024-65535).
+ */
+export function parsePort(envVar: string, fallback: number): number {
+  const raw = process.env[envVar];
+  if (raw === undefined || raw === "") return fallback;
+  const trimmed = String(raw).trim();
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(
+      `Invalid port: ${envVar}="${raw}" — must be an integer between 1024 and 65535`,
+    );
+  }
+  const parsed = Number(trimmed);
+  if (parsed < 1024 || parsed > 65535) {
+    throw new Error(
+      `Invalid port: ${envVar}="${raw}" — must be an integer between 1024 and 65535`,
+    );
+  }
+  return parsed;
+}
+
+export interface GatewayPortValidationOptions {
+  dashboardPort: number;
+  dashboardRangeStart: number;
+  dashboardRangeEnd: number;
+  vllmPort: number;
+  ollamaPort: number;
+  ollamaProxyPort: number;
+  bedrockRuntimeAdapterPort: number;
+}
+
+/**
+ * The default port the OpenClaw dashboard listens on inside the sandbox.
+ * The sandbox image is built with CHAT_UI_URL=http://127.0.0.1:SANDBOX_DASHBOARD_PORT
+ * (patched by patchStagedDockerfile), so the gateway starts on whichever port was
+ * configured via NEMOCLAW_DASHBOARD_PORT at onboard time. This constant represents
+ * the hardcoded default when no override is set.
+ */
+const SANDBOX_DASHBOARD_PORT = 18789;
+/** Dashboard UI port (default SANDBOX_DASHBOARD_PORT, override via NEMOCLAW_DASHBOARD_PORT). This is the host-side port. */
+export const DASHBOARD_PORT = parsePort("NEMOCLAW_DASHBOARD_PORT", SANDBOX_DASHBOARD_PORT);
+/** Start of the auto-allocation range for dashboard ports (inclusive). */
+export const DASHBOARD_PORT_RANGE_START = SANDBOX_DASHBOARD_PORT;
+/** End of the auto-allocation range for dashboard ports (inclusive). */
+export const DASHBOARD_PORT_RANGE_END = 18799;
+/** vLLM / NIM inference port (default 8000, override via NEMOCLAW_VLLM_PORT). */
+export const VLLM_PORT = parsePort("NEMOCLAW_VLLM_PORT", 8000);
+/** Ollama inference port (default 11434, override via NEMOCLAW_OLLAMA_PORT). */
+export const OLLAMA_PORT = parsePort("NEMOCLAW_OLLAMA_PORT", 11434);
+/** Ollama auth proxy port (default 11435, override via NEMOCLAW_OLLAMA_PROXY_PORT). */
+export const OLLAMA_PROXY_PORT = parsePort("NEMOCLAW_OLLAMA_PROXY_PORT", 11435);
+/** Bedrock Runtime adapter port (default 11436, override via NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT). */
+export const BEDROCK_RUNTIME_ADAPTER_PORT = parsePort(
+  "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+  11436,
+);
+
+export function validateGatewayPort(
+  envVar: string,
+  port: number,
+  options: GatewayPortValidationOptions,
+): void {
+  if (port >= options.dashboardRangeStart && port <= options.dashboardRangeEnd) {
+    throw new Error(
+      `Invalid port: ${envVar}="${port}" — must not overlap the ${options.dashboardRangeStart}-${options.dashboardRangeEnd} dashboard port range`,
+    );
+  }
+
+  const reservedDefaults = [
+    { label: "vLLM / NIM inference", port: 8000 },
+    { label: "Ollama inference", port: 11434 },
+    { label: "Ollama auth proxy", port: 11435 },
+    { label: "Bedrock Runtime adapter", port: 11436 },
+  ];
+  const reservedDefault = reservedDefaults.find((entry) => entry.port === port);
+  if (reservedDefault) {
+    throw new Error(
+      `Invalid port: ${envVar}="${port}" — must not overlap the ${reservedDefault.label} default port (${reservedDefault.port})`,
+    );
+  }
+
+  const conflicts = [
+    { envVar: "NEMOCLAW_DASHBOARD_PORT", port: options.dashboardPort },
+    { envVar: "NEMOCLAW_VLLM_PORT", port: options.vllmPort },
+    { envVar: "NEMOCLAW_OLLAMA_PORT", port: options.ollamaPort },
+    { envVar: "NEMOCLAW_OLLAMA_PROXY_PORT", port: options.ollamaProxyPort },
+    {
+      envVar: "NEMOCLAW_BEDROCK_RUNTIME_ADAPTER_PORT",
+      port: options.bedrockRuntimeAdapterPort,
+    },
+  ];
+  const conflict = conflicts.find((entry) => entry.port === port);
+  if (conflict) {
+    throw new Error(
+      `Invalid port: ${envVar}="${port}" — conflicts with ${conflict.envVar} (${conflict.port})`,
+    );
+  }
+}
+
+export function parseGatewayPort(
+  envVar: string,
+  fallback: number,
+  options: GatewayPortValidationOptions,
+): number {
+  const port = parsePort(envVar, fallback);
+  validateGatewayPort(envVar, port, options);
+  return port;
+}
+
+/** OpenShell gateway port (default 8080, override via NEMOCLAW_GATEWAY_PORT). */
+export const GATEWAY_PORT = parseGatewayPort("NEMOCLAW_GATEWAY_PORT", 8080, {
+  dashboardPort: DASHBOARD_PORT,
+  dashboardRangeStart: DASHBOARD_PORT_RANGE_START,
+  dashboardRangeEnd: DASHBOARD_PORT_RANGE_END,
+  vllmPort: VLLM_PORT,
+  ollamaPort: OLLAMA_PORT,
+  ollamaProxyPort: OLLAMA_PROXY_PORT,
+  bedrockRuntimeAdapterPort: BEDROCK_RUNTIME_ADAPTER_PORT,
+});

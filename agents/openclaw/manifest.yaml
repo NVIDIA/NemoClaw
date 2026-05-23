@@ -18,6 +18,8 @@ homepage: "https://openclaw.ai"
 # ── Binary & process ────────────────────────────────────────────
 install_method: npm  # npm install -g openclaw@<version>
 binary_path: /usr/local/bin/openclaw
+version_command: "openclaw --version"
+expected_version: "2026.5.18"
 gateway_command: "openclaw gateway run"
 
 # ── Health probe ────────────────────────────────────────────────
@@ -32,9 +34,8 @@ forward_ports:
 
 # ── Configuration ───────────────────────────────────────────────
 config:
-  immutable_dir: /sandbox/.openclaw
-  writable_dir: /sandbox/.openclaw-data
-  config_file: openclaw.json      # relative to immutable_dir
+  dir: /sandbox/.openclaw
+  config_file: openclaw.json
   format: json
 
 # ── State directories ──────────────────────────────────────────
@@ -50,6 +51,8 @@ state_dirs:
   - cron
   - memory
   - telegram
+  - wechat
+  - whatsapp
   - credentials
 
 # ── Authentication ──────────────────────────────────────────────
@@ -62,6 +65,8 @@ messaging_platforms:
     - telegram
     - discord
     - slack
+    - wechat
+    - whatsapp
 
 # ── Inference ───────────────────────────────────────────────────
 inference:

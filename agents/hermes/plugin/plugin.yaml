@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 name: nemoclaw
-version: "0.0.11"
+version: "0.0.12"
 description: "NemoClaw sandbox management for Hermes running inside OpenShell"
 author: "NVIDIA Corporation"
 manifest_version: 1
@@ -10,6 +10,7 @@ manifest_version: 1
 provides_tools:
   - nemoclaw_status
   - nemoclaw_info
+  - nemoclaw_reload_skills
 
 provides_hooks:
   - on_session_start

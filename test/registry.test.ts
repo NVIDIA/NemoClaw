@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -15,7 +14,7 @@ const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-test-"));
 process.env.HOME = tmpDir;
 
 const require = createRequire(import.meta.url);
-const registry = require("../dist/lib/registry");
+const registry = require("../dist/lib/state/registry");
 
 const regFile = path.join(tmpDir, ".nemoclaw", "sandboxes.json");
 
@@ -97,6 +96,20 @@ describe("registry", () => {
     expect(registry.getDefault()).toBe("y");
   });
 
+  it("getDefault falls back when defaultSandbox points to a stale name", () => {
+    registry.registerSandbox({ name: "alive" });
+    const data = registry.load();
+    data.defaultSandbox = "deleted-sandbox";
+    registry.save(data);
+    expect(registry.getDefault()).toBe("alive");
+  });
+
+  it("getDefault returns null when registry is empty with stale pointer", () => {
+    const data = { sandboxes: {}, defaultSandbox: "ghost" };
+    registry.save(data);
+    expect(registry.getDefault()).toBe(null);
+  });
+
   it("removeSandbox last sandbox sets default to null", () => {
     registry.registerSandbox({ name: "only" });
     registry.removeSandbox("only");
@@ -120,12 +133,166 @@ describe("registry", () => {
     expect(data.defaultSandbox).toBe("persist");
   });
 
+  it("clearAll removes persisted sandboxes and the default pointer", () => {
+    registry.registerSandbox({ name: "alpha", model: "m1" });
+    registry.registerSandbox({ name: "beta", model: "m2" });
+    registry.setDefault("beta");
+
+    registry.clearAll();
+
+    expect(registry.listSandboxes()).toEqual({
+      sandboxes: [],
+      defaultSandbox: null,
+    });
+    expect(registry.getDefault()).toBe(null);
+    expect(registry.getSandbox("alpha")).toBe(null);
+    expect(JSON.parse(fs.readFileSync(regFile, "utf-8"))).toEqual({
+      sandboxes: {},
+      defaultSandbox: null,
+    });
+  });
+
+  it("stores imageTag at registration time", () => {
+    registry.registerSandbox({
+      name: "tagged",
+      imageTag: "openshell/sandbox-from:1776766054",
+    });
+    const sb = registry.getSandbox("tagged");
+    expect(sb.imageTag).toBe("openshell/sandbox-from:1776766054");
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.tagged.imageTag).toBe("openshell/sandbox-from:1776766054");
+  });
+
+  it("stores messaging channel config at registration time", () => {
+    registry.registerSandbox({
+      name: "messaging",
+      messagingChannels: ["telegram"],
+      messagingChannelConfig: {
+        TELEGRAM_ALLOWED_IDS: "123,456",
+        TELEGRAM_REQUIRE_MENTION: "1",
+      },
+    });
+
+    const sb = registry.getSandbox("messaging");
+    expect(sb.messagingChannelConfig).toEqual({
+      TELEGRAM_ALLOWED_IDS: "123,456",
+      TELEGRAM_REQUIRE_MENTION: "1",
+    });
+    const data = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(data.sandboxes.messaging.messagingChannelConfig).toEqual({
+      TELEGRAM_ALLOWED_IDS: "123,456",
+      TELEGRAM_REQUIRE_MENTION: "1",
+    });
+  });
+
+  it("imageTag defaults to null when not provided", () => {
+    registry.registerSandbox({ name: "no-tag" });
+    const sb = registry.getSandbox("no-tag");
+    expect(sb.imageTag).toBe(null);
+  });
+
+  it("imageTag can be updated via updateSandbox", () => {
+    registry.registerSandbox({ name: "updatable" });
+    registry.updateSandbox("updatable", { imageTag: "openshell/sandbox-from:9999" });
+    expect(registry.getSandbox("updatable").imageTag).toBe("openshell/sandbox-from:9999");
+  });
+
   it("handles corrupt registry file gracefully", () => {
     fs.mkdirSync(path.dirname(regFile), { recursive: true });
     fs.writeFileSync(regFile, "NOT JSON");
     // Should not throw, returns empty
     const { sandboxes } = registry.listSandboxes();
     expect(sandboxes.length).toBe(0);
+  });
+
+  it("setChannelDisabled toggles a channel on and off for a sandbox", () => {
+    registry.registerSandbox({ name: "s1" });
+    expect(registry.getDisabledChannels("s1")).toEqual([]);
+
+    expect(registry.setChannelDisabled("s1", "telegram", true)).toBe(true);
+    expect(registry.getDisabledChannels("s1")).toEqual(["telegram"]);
+
+    expect(registry.setChannelDisabled("s1", "discord", true)).toBe(true);
+    expect(registry.getDisabledChannels("s1")).toEqual(["discord", "telegram"]);
+
+    registry.setChannelDisabled("s1", "telegram", false);
+    expect(registry.getDisabledChannels("s1")).toEqual(["discord"]);
+  });
+
+  it("setChannelDisabled clears the disabledChannels field when empty", () => {
+    registry.registerSandbox({ name: "s1" });
+    registry.setChannelDisabled("s1", "telegram", true);
+    registry.setChannelDisabled("s1", "telegram", false);
+    const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(persisted.sandboxes.s1.disabledChannels).toBeUndefined();
+  });
+
+  it("updateSandbox clears disabledChannels when explicitly set to undefined", () => {
+    registry.registerSandbox({ name: "s1" });
+    registry.setChannelDisabled("s1", "telegram", true);
+    expect(registry.updateSandbox("s1", { disabledChannels: undefined })).toBe(true);
+    const persisted = JSON.parse(fs.readFileSync(regFile, "utf-8"));
+    expect(persisted.sandboxes.s1.disabledChannels).toBeUndefined();
+  });
+
+  it("setChannelDisabled returns false when sandbox is missing", () => {
+    expect(registry.setChannelDisabled("missing", "telegram", true)).toBe(false);
+  });
+
+  it("registerSandbox preserves disabledChannels when re-registering", () => {
+    registry.registerSandbox({ name: "s1" });
+    registry.setChannelDisabled("s1", "telegram", true);
+    registry.registerSandbox({
+      name: "s1",
+      disabledChannels: registry.getDisabledChannels("s1"),
+    });
+    expect(registry.getDisabledChannels("s1")).toEqual(["telegram"]);
+  });
+
+  it("addCustomPolicy persists name, content, and sourcePath", () => {
+    registry.registerSandbox({ name: "cp1" });
+    const added = registry.addCustomPolicy("cp1", {
+      name: "my-api",
+      content: "preset:\n  name: my-api\nnetwork_policies: {}\n",
+      sourcePath: "/tmp/my-api.yaml",
+    });
+    expect(added).toBe(true);
+    const list = registry.getCustomPolicies("cp1");
+    expect(list.length).toBe(1);
+    expect(list[0].name).toBe("my-api");
+    expect(list[0].content).toMatch(/name: my-api/);
+    expect(list[0].sourcePath).toBe("/tmp/my-api.yaml");
+    expect(typeof list[0].appliedAt).toBe("string");
+  });
+
+  it("addCustomPolicy replaces an existing entry with the same name", () => {
+    registry.registerSandbox({ name: "cp2" });
+    registry.addCustomPolicy("cp2", { name: "dup", content: "v1" });
+    registry.addCustomPolicy("cp2", { name: "dup", content: "v2" });
+    const list = registry.getCustomPolicies("cp2");
+    expect(list.length).toBe(1);
+    expect(list[0].content).toBe("v2");
+  });
+
+  it("removeCustomPolicyByName removes an entry and returns true", () => {
+    registry.registerSandbox({ name: "cp3" });
+    registry.addCustomPolicy("cp3", { name: "a", content: "x" });
+    registry.addCustomPolicy("cp3", { name: "b", content: "y" });
+    expect(registry.removeCustomPolicyByName("cp3", "a")).toBe(true);
+    const list = registry.getCustomPolicies("cp3");
+    expect(list.length).toBe(1);
+    expect(list[0].name).toBe("b");
+  });
+
+  it("removeCustomPolicyByName returns false when the entry is missing", () => {
+    registry.registerSandbox({ name: "cp4" });
+    expect(registry.removeCustomPolicyByName("cp4", "nope")).toBe(false);
+  });
+
+  it("getCustomPolicies returns [] for unknown or fresh sandboxes", () => {
+    expect(registry.getCustomPolicies("nonexistent")).toEqual([]);
+    registry.registerSandbox({ name: "cp5" });
+    expect(registry.getCustomPolicies("cp5")).toEqual([]);
   });
 });
 
@@ -265,7 +432,7 @@ describe("advisory file locking", () => {
   it("concurrent writers do not corrupt the registry", () => {
     const { spawnSync } = require("child_process");
     const registryPath = path.resolve(
-      path.join(import.meta.dirname, "..", "dist", "lib", "registry.js"),
+      path.join(import.meta.dirname, "..", "dist", "lib", "state", "registry.js"),
     );
     const homeDir = path.dirname(path.dirname(regFile));
     // Script that spawns 4 workers in parallel, each writing 5 sandboxes

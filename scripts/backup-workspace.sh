@@ -37,6 +37,49 @@ EOF
   exit 1
 }
 
+require_cmd() {
+  command -v "$1" >/dev/null 2>&1 || fail "'$1' is required but not found in PATH."
+}
+
+shell_quote() {
+  printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+}
+
+RESTORE_DIR_COUNT=0
+restore_directory() {
+  local sandbox="$1"
+  local src_dir="$2"
+  local dir_name="$3"
+  local failed=0
+  RESTORE_DIR_COUNT=0
+
+  while IFS= read -r -d '' file; do
+    local rel="${file#"${src_dir}/"}"
+    local rel_parent
+    rel_parent="$(dirname -- "$rel")"
+
+    local remote_parent="${WORKSPACE_PATH}/${dir_name}"
+    if [ "$rel_parent" != "." ]; then
+      remote_parent="${remote_parent}/${rel_parent}"
+    fi
+
+    if ! openshell sandbox exec --name "$sandbox" -- sh -c "mkdir -p $(shell_quote "$remote_parent")"; then
+      warn "Failed to create restore directory ${remote_parent}"
+      failed=1
+      continue
+    fi
+
+    if openshell sandbox upload "$sandbox" "$file" "${remote_parent}/"; then
+      RESTORE_DIR_COUNT=$((RESTORE_DIR_COUNT + 1))
+    else
+      warn "Failed to restore ${dir_name}/${rel}"
+      failed=1
+    fi
+  done < <(find "$src_dir" -type f -print0)
+
+  return "$failed"
+}
+
 do_backup() {
   local sandbox="$1"
   local ts
@@ -53,7 +96,7 @@ do_backup() {
 
   local count=0
   for f in "${FILES[@]}"; do
-    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/"; then
+    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${f}" "${dest}/" 2>/dev/null; then
       count=$((count + 1))
     else
       warn "Skipped ${f} (not found or download failed)"
@@ -61,7 +104,7 @@ do_backup() {
   done
 
   for d in "${DIRS[@]}"; do
-    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/"; then
+    if openshell sandbox download "$sandbox" "${WORKSPACE_PATH}/${d}/" "${dest}/${d}/" 2>/dev/null; then
       count=$((count + 1))
     else
       warn "Skipped ${d}/ (not found or download failed)"
@@ -69,6 +112,7 @@ do_backup() {
   done
 
   if [ "$count" -eq 0 ]; then
+    rmdir "$dest" 2>/dev/null || true
     fail "No files were backed up. Check that the sandbox '${sandbox}' exists and has workspace files."
   fi
 
@@ -80,7 +124,7 @@ do_restore() {
   local ts="${2:-}"
 
   if [ -z "$ts" ]; then
-    ts="$(find "$BACKUP_BASE" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | sort -r | head -n1 || true)"
+    ts="$(find "$BACKUP_BASE" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; 2>/dev/null | sort -r | head -n1 || true)"
     [ -n "$ts" ] || fail "No backups found in ${BACKUP_BASE}/"
     info "Using most recent backup: ${ts}"
   fi
@@ -103,10 +147,15 @@ do_restore() {
 
   for d in "${DIRS[@]}"; do
     if [ -d "${src}/${d}" ]; then
-      if openshell sandbox upload "$sandbox" "${src}/${d}/" "${WORKSPACE_PATH}/${d}/"; then
-        count=$((count + 1))
+      if restore_directory "$sandbox" "${src}/${d}" "$d"; then
+        if [ "$RESTORE_DIR_COUNT" -gt 0 ]; then
+          count=$((count + RESTORE_DIR_COUNT))
+        else
+          warn "Skipped empty restore directory ${d}/"
+        fi
       else
-        warn "Failed to restore ${d}/"
+        count=$((count + RESTORE_DIR_COUNT))
+        warn "Failed to restore one or more files from ${d}/"
       fi
     fi
   done
@@ -121,7 +170,7 @@ do_restore() {
 # --- Main ---
 
 [ $# -ge 2 ] || usage
-command -v openshell >/dev/null 2>&1 || fail "'openshell' is required but not found in PATH."
+require_cmd openshell
 
 action="$1"
 sandbox="$2"

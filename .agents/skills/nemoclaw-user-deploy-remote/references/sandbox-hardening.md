@@ -11,6 +11,11 @@ Build toolchains (`gcc`, `g++`, `make`) and network probes (`netcat`) are
 explicitly purged from the runtime image. These tools are not needed at runtime
 and would unnecessarily widen the attack surface.
 
+The runtime image keeps a small set of operational utilities for normal sandbox
+workflows, including `vi`, `jq`, and `dos2unix`. Use these for lightweight
+inspection and file cleanup inside the sandbox, but make durable image or policy
+changes in the NemoClaw source tree and rebuild the sandbox.
+
 If you need a compiler during build, use the existing multi-stage build
 (the `builder` stage has full Node.js tooling) and copy only artifacts into the
 runtime stage.
@@ -26,8 +31,17 @@ Adjust the value via the `--ulimit nproc=512:512` flag if launching with
 
 ## Dropping Linux Capabilities
 
-When running the sandbox container, drop all Linux capabilities and re-add only
-what is strictly required:
+The NemoClaw entrypoint drops dangerous capabilities from the process bounding
+set before it starts agent services.
+It removes `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_NET_RAW`,
+`CAP_DAC_OVERRIDE`, `CAP_SYS_CHROOT`, `CAP_FSETID`, `CAP_SETFCAP`,
+`CAP_MKNOD`, `CAP_AUDIT_WRITE`, and `CAP_NET_BIND_SERVICE`.
+When `setpriv` is available, the entrypoint also removes the remaining
+privilege-separation capabilities during the switch from root to the
+`sandbox` and `gateway` users.
+
+For defense-in-depth, also drop all Linux capabilities at the container runtime
+when you launch the image directly:
 
 ```console
 $ docker run --rm \
@@ -62,25 +76,27 @@ services:
 > capability dropping in your `docker run` flags, Compose file, or Kubernetes
 > `securityContext`.
 
-## Read-Only Home Directory
+## Filesystem Layout
 
-The sandbox Landlock policy restricts `/sandbox` (the agent's home directory) to read-only access.
-Only explicitly declared directories are writable:
+The sandbox Landlock policy declares which paths are writable.
+The agent's home directory (`/sandbox`) is writable by default:
 
 | Path | Access | Purpose |
 |------|--------|---------|
-| `/sandbox` | read-only | Home directory — agents cannot create arbitrary files |
-| `/sandbox/.openclaw` | read-only | Immutable gateway config (auth tokens, CORS) |
-| `/sandbox/.openclaw-data` | read-write | Agent state, workspace, plugins (via symlinks) |
+| `/sandbox` | read-write | Home directory — agents can create files and use standard home paths |
+| `/sandbox/.openclaw` | read-write | Agent config, state, workspace, plugins |
 | `/sandbox/.nemoclaw` | read-write | Plugin state and config; blueprints within are DAC-protected (root-owned) |
 | `/tmp` | read-write | Temporary files and logs |
 
-This prevents agents from:
+This writable default is intentional.
+Seeing the sandbox user create files under `/sandbox` or `/sandbox/.openclaw` in a fresh sandbox does not mean Landlock failed.
+Landlock still enforces the fixed read-only system paths below.
 
-- Writing scripts and executing them later
-- Modifying their own runtime environment
-- Creating hidden files that persist across invocations
-- Using writable space for data staging before exfiltration
+System paths remain read-only to prevent agents from:
+
+- Replacing system binaries with trojanized versions
+- Modifying DNS resolution or TLS trust stores
+- Tampering with libraries or shell configuration outside `/sandbox`
 
 The image build pre-creates shell init files `.bashrc` and `.profile`.
 These files source runtime proxy configuration from `/tmp/nemoclaw-proxy-env.sh`.
@@ -91,7 +107,7 @@ Landlock LSM requires Linux kernel 5.13 or later with `CONFIG_SECURITY_LANDLOCK=
 The NemoClaw sandbox policy uses `compatibility: best_effort`, which means Landlock enforcement is silently skipped on kernels that do not support it.
 
 On such kernels, protection falls back to DAC (file ownership and permissions) only.
-Files owned by the sandbox user (e.g., `.bashrc`, `.profile`) would be writable by the agent despite the Landlock read-only policy.
+Files outside the writable paths would be inaccessible to the agent regardless of DAC permissions.
 
 Operators should verify Landlock availability:
 
@@ -104,7 +120,7 @@ The `test/e2e/e2e-cloud-experimental/checks/04-landlock-readonly.sh` script vali
 
 ## References
 
-- [#804](https://github.com/NVIDIA/NemoClaw/issues/804): Read-only home directory
+- [#804](https://github.com/NVIDIA/NemoClaw/issues/804): Filesystem layout and Landlock policy
 - [#807](https://github.com/NVIDIA/NemoClaw/issues/807): gcc in sandbox image
 - [#808](https://github.com/NVIDIA/NemoClaw/issues/808): netcat in sandbox image
 - [#809](https://github.com/NVIDIA/NemoClaw/issues/809): No process limit

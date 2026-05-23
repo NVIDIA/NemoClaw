@@ -1,10 +1,9 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it } from "vitest";
 
-import { resolveOpenshell } from "../dist/lib/resolve-openshell";
+import { resolveOpenshell } from "../dist/lib/adapters/openshell/resolve";
 
 describe("resolveOpenshell", () => {
   it("returns an absolute command -v result immediately", () => {

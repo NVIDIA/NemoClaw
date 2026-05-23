@@ -1,0 +1,13 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# copy-pr-bot configuration
+# See: https://docs.gha-runners.nvidia.com/platform/apps/copy-pr-bot/
+#
+# This enables copy-pr-bot to automatically push PR code to pull-request/*
+# branches when the PR comes from a trusted user with signed commits.
+# Untrusted PRs require a maintainer to comment "/ok to test <SHA>".
+
+enabled: true
+auto_sync_draft: false
+auto_sync_ready: true
