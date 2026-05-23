@@ -394,19 +394,24 @@ describe("policy-preset.schema.json", () => {
 describe("openclaw-plugin.schema.json", () => {
   const validate = compileSchema("schemas/openclaw-plugin.schema.json");
   const data = loadJSON(repoPath("nemoclaw/openclaw.plugin.json"));
+  const validPluginFixture = {
+    id: "fixture-plugin",
+    name: "Fixture Plugin",
+    version: "1.2.3",
+    description: "Schema fixture",
+  };
 
   it("openclaw.plugin.json passes schema validation", () => {
     expectValid(validate, data, "openclaw.plugin.json");
   });
 
   it("rejects plugin with missing id", () => {
-    const bad = cloneObject(data);
-    delete bad.id;
+    const { id: _id, ...bad } = validPluginFixture;
     expect(validate(bad)).toBe(false);
   });
 
   it("rejects plugin with invalid version format", () => {
-    const bad = { ...cloneObject(data), version: "not-semver" };
+    const bad = { ...validPluginFixture, version: "not-semver" };
     expect(validate(bad)).toBe(false);
   });
 });

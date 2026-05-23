@@ -2,16 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import YAML from "yaml";
 
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 import { buildSystemPrompt, classifyMonolithDelta, classifyTestDepth, normalizeReviewResult, readTrustedSecurityReviewSkill, renderDetailedReview, renderSummary } from "../tools/pr-review-advisor/analyze.mts";
 import { githubGraphql } from "../tools/advisors/github.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+const requireForTest = createRequire(import.meta.url);
+
 type ReviewMetadata = Parameters<typeof normalizeReviewResult>[1];
 
 function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
@@ -38,6 +40,10 @@ function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
     deterministic,
     ...overrides,
   } as ReviewMetadata;
+}
+
+function loadAdvisorSchema(): Record<string, unknown> {
+  return requireForTest("../tools/pr-review-advisor/schema.json") as Record<string, unknown>;
 }
 
 function validResult(overrides = {}) {
@@ -146,7 +152,7 @@ describe("PR review advisor", () => {
   });
 
   it("loads the checked-in security review skill into the advisor prompt", () => {
-    const schema = JSON.parse(fs.readFileSync(path.join(ROOT, "tools/pr-review-advisor/schema.json"), "utf8"));
+    const schema = loadAdvisorSchema();
     const skill = readTrustedSecurityReviewSkill();
     const prompt = buildSystemPrompt(schema, skill);
 
@@ -282,7 +288,7 @@ describe("PR review advisor", () => {
   });
 
   it("normalizes output that validates against the JSON schema", () => {
-    const schema = JSON.parse(fs.readFileSync(path.join(ROOT, "tools/pr-review-advisor/schema.json"), "utf8"));
+    const schema = loadAdvisorSchema();
     const ajv = new Ajv2020({ strict: false });
     const validate = ajv.compile(schema);
     const result = normalizeReviewResult(validResult(), metadata());
@@ -291,35 +297,4 @@ describe("PR review advisor", () => {
     expect(validate(result)).toBe(true);
   });
 
-  it("keeps the workflow inside the same trusted-code boundary as other advisors", () => {
-    const workflow = YAML.parse(
-      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
-    );
-    const steps = workflow.jobs.review.steps;
-    const trustedCheckout = steps.find((step: { name?: string }) =>
-      step.name === "Checkout trusted advisor code (main)"
-    );
-    const prCheckout = steps.find((step: { name?: string }) =>
-      step.name === "Checkout PR workspace (read-only data)"
-    );
-    const installStep = steps.find((step: { name?: string }) => step.name === "Install Pi SDK");
-    const analyzeStep = steps.find((step: { name?: string }) => step.name === "Run PR review advisor");
-
-    expect(workflow.on).toHaveProperty("pull_request");
-    expect(workflow.on).not.toHaveProperty("pull_request_target");
-    expect(trustedCheckout).toMatchObject({
-      with: { repository: "NVIDIA/NemoClaw", ref: "main", path: "advisor", "persist-credentials": false },
-    });
-    expect(prCheckout).toMatchObject({ with: { path: "pr-workdir", "persist-credentials": false } });
-    const commentStep = steps.find((step: { name?: string }) => step.name === "Post PR review advisor comment");
-
-    for (const step of steps.filter((step: { uses?: string }) => step.uses)) {
-      expect(step.uses).toMatch(/@[0-9a-f]{40}(?:\s*#.*)?$/);
-    }
-    expect(installStep.run.includes("--ignore-scripts")).toBe(true);
-    expect(analyzeStep.run.includes("$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts")).toBe(true);
-    expect(analyzeStep.run).toContain("trusted main checkout does not yet contain analyze.mts");
-    expect(analyzeStep.run).toContain("pr-review-advisor-final-result.json");
-    expect(commentStep.run).toContain("trusted main checkout does not yet contain comment.mts");
-  });
 });

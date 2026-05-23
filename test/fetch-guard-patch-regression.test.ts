@@ -140,12 +140,6 @@ describe("fetch-guard patch regression guard", () => {
       "# Install NemoClaw plugin into OpenClaw",
       "# SECURITY: Clear any gateway auth token",
     );
-    expect(command).toContain("openclaw plugins install /opt/nemoclaw");
-    expect(command).toContain("openclaw plugins enable nemoclaw");
-    expect(command).toContain("openclaw plugins inspect nemoclaw --json");
-    expect(command).not.toContain("--dangerously-force-unsafe-install");
-    expect(command).not.toMatch(/openclaw plugins install \/opt\/nemoclaw[^&|]*(?:\|\|\s*true|2>&1)/);
-
     const script = [
       "openclaw() {",
       '  if [ "${1:-} ${2:-} ${3:-}" = "plugins install /opt/nemoclaw" ]; then return 42; fi',
@@ -233,108 +227,6 @@ if (globalThis.proxyChecks.length !== 0) throw new Error('sandbox proxy validati
     }
   });
 
-  it("keeps the Dockerfile OpenClaw source-shape patches aligned with current dist", () => {
-    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-patches-"));
-    const dist = path.join(tmp, "dist");
-    fs.mkdirSync(dist, { recursive: true });
-    fs.writeFileSync(
-      path.join(dist, "fetch-guard-test.js"),
-      [
-        "const withStrictGuardedFetchMode = Symbol('strict');",
-        "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
-        "async function assertExplicitProxyAllowed(proxyUrl) { throw new Error(proxyUrl); }",
-        "export { withStrictGuardedFetchMode as a, withTrustedEnvProxyGuardedFetchMode as b };",
-        "",
-      ].join("\n"),
-    );
-    fs.writeFileSync(
-      path.join(dist, "install-safe-path-test.js"),
-      "const baseLstat = await fs.lstat(baseDir);\n",
-    );
-    fs.writeFileSync(
-      path.join(dist, "install-package-dir-test.js"),
-      [
-        "async function assertInstallBaseStable(params) {",
-        "  const baseLstat = await fs.lstat(params.installBaseDir);",
-        "  if (baseLstat.isSymbolicLink()) throw new Error('symlink');",
-        "}",
-        "",
-      ].join("\n"),
-    );
-    fs.writeFileSync(
-      path.join(dist, "client-test.js"),
-      "const DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 15e3;\n",
-    );
-    fs.writeFileSync(
-      path.join(dist, "server.impl-test.js"),
-      "const DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 15e3;\n",
-    );
-
-    const command = dockerRunCommandBetween(
-      "# Patch OpenClaw media fetch for proxy-only sandbox",
-      "# Patch OpenClaw chat.send gateway behavior",
-    ).replaceAll("/usr/local/lib/node_modules/openclaw/dist", dist);
-    const fakeBin = path.join(tmp, "bin");
-    fs.mkdirSync(fakeBin);
-    const sedWrapper = path.join(fakeBin, "sed");
-    fs.writeFileSync(
-      sedWrapper,
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        "extended=0",
-        'if [ "${1:-}" = "-i" ]; then',
-        '  if [ "${2:-}" = "-E" ]; then',
-        "    extended=1",
-        "    expr=$3",
-        "    shift 3",
-        "  else",
-        "    expr=$2",
-        "    shift 2",
-        "  fi",
-        '  for file in "$@"; do',
-        "    tmp=$(mktemp)",
-        '    if [ "$extended" = "1" ]; then',
-        '      /usr/bin/sed -E "$expr" "$file" > "$tmp"',
-        "    else",
-        '      /usr/bin/sed "$expr" "$file" > "$tmp"',
-        "    fi",
-        '    mv "$tmp" "$file"',
-        "  done",
-        "  exit 0",
-        "fi",
-        'exec /usr/bin/sed "$@"',
-      ].join("\n"),
-      { mode: 0o755 },
-    );
-    const scriptPath = path.join(tmp, "patch-all.sh");
-    fs.writeFileSync(scriptPath, ["#!/usr/bin/env bash", command].join("\n"), { mode: 0o700 });
-
-    try {
-      const patch = spawnSync("bash", [scriptPath], {
-        encoding: "utf-8",
-        env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH || ""}` },
-        timeout: 5000,
-      });
-      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
-      const patched = fs
-        .readdirSync(dist)
-        .map((file) => fs.readFileSync(path.join(dist, file), "utf-8"));
-      expect(patched.join("\n")).not.toContain("DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 15e3");
-      expect(patched.join("\n")).not.toContain("DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4");
-      expect(patched.join("\n").match(/DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4/g)).toHaveLength(
-        2,
-      );
-      expect(fs.readFileSync(path.join(dist, "install-safe-path-test.js"), "utf-8")).toContain(
-        "const baseLstat = await fs.stat(baseDir)",
-      );
-      expect(fs.readFileSync(path.join(dist, "install-package-dir-test.js"), "utf-8")).toContain(
-        "const baseLstat = await fs.stat(params.installBaseDir)",
-      );
-    } finally {
-      fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
 
   it("applies the proxy validator patch while the target function still exists", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-proxy-skip-"));

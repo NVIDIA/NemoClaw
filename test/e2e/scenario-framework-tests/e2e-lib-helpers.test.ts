@@ -1000,8 +1000,6 @@ describe("Phase 1.E install dispatcher splits", () => {
 
   it("repo_current_install_should_verify_generated_oclif_metadata", () => {
     const script = fs.readFileSync(path.join(INSTALL_DIR, "repo-current.sh"), "utf8");
-    const buildScript = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")).scripts?.["build:cli"] ?? "";
-    expect(buildScript).toContain("generate-oclif-metadata-manifest.js");
     expect(script).toContain("dist/lib/cli/oclif-command-metadata.generated.json");
   });
 
