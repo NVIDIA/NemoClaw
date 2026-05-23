@@ -431,6 +431,8 @@ const { trackChildExit } =
   require("./onboard/child-exit-tracker") as typeof import("./onboard/child-exit-tracker");
 const { reportDockerDriverGatewayStartFailure } =
   require("./onboard/docker-driver-gateway-failure") as typeof import("./onboard/docker-driver-gateway-failure");
+const { printDockerDaemonRecovery, reportLegacyGatewayStartResultFailure } =
+  require("./onboard/gateway-start-failure") as typeof import("./onboard/gateway-start-failure");
 const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env") =
   require("./onboard/docker-driver-gateway-env");
 const { getDockerDriverGatewayEndpoint } = dockerDriverGatewayEnv;
@@ -682,7 +684,6 @@ const {
   classifyValidationFailure,
   classifyApplyFailure,
   classifySandboxCreateFailure,
-  classifyGatewayStartFailure,
   validateNvidiaApiKeyValue,
   isSafeModelId,
   shouldSkipResponsesProbe,
@@ -1232,16 +1233,7 @@ function handleFinalGatewayStartFailure({
   printError = (message = "") => console.error(message),
 }: FinalGatewayStartFailureOptions): never {
   if (dockerUnreachable) {
-    printError("  Docker daemon is not running — cannot start the gateway.");
-    printError("");
-    printError("  Start Docker, then rerun `nemoclaw onboard`:");
-    if (process.platform === "darwin") {
-      printError("    colima start            # or start Docker Desktop");
-    } else if (process.platform === "linux") {
-      printError("    sudo systemctl start docker");
-    } else {
-      printError("    Start the Docker daemon.");
-    }
+    printDockerDaemonRecovery(printError);
     return exitProcess(1);
   }
 
@@ -2427,22 +2419,16 @@ async function startGatewayWithOptions(
     );
   }
 
-  // When a stale gateway is detected (metadata exists but container is gone,
-  // e.g. after a Docker/Colima restart), skip the destroy — `gateway start`
-  // can recover the container without wiping metadata and mTLS certs.
-  // The retry loop below will destroy only if start genuinely fails.
   if (hasStaleGateway(gatewaySnapshot.gwInfo)) {
     console.log("  Stale gateway detected — attempting restart without destroy...");
   }
 
-  // Clear stale SSH host keys from previous gateway (fixes #768)
   try {
     const { execFileSync } = require("child_process");
     execFileSync("ssh-keygen", ["-R", `openshell-${GATEWAY_NAME}`], { stdio: "ignore" });
   } catch {
     /* ssh-keygen -R may fail if entry doesn't exist — safe to ignore */
   }
-  // Also purge any known_hosts entries matching the gateway hostname pattern
   const knownHostsPath = path.join(os.homedir(), ".ssh", "known_hosts");
   try {
     const kh = fs.readFileSync(knownHostsPath, "utf8");
@@ -2453,9 +2439,6 @@ async function startGatewayWithOptions(
   }
 
   const gwArgs = ["--name", GATEWAY_NAME, "--port", getGatewayPortArg()];
-  // On NVIDIA hosts, pass --gpu unless the user explicitly opted out. This
-  // makes direct CUDA tools available in the sandbox by default while still
-  // supporting host-side inference providers.
   if (gpuPassthrough) {
     gwArgs.push("--gpu");
   }
@@ -2464,11 +2447,6 @@ async function startGatewayWithOptions(
     console.log(`  Using pinned OpenShell gateway image: ${gatewayEnv.OPENSHELL_CLUSTER_IMAGE}`);
   }
 
-  // Retry gateway start with exponential backoff. On some hosts (Horde VMs,
-  // first-run environments) the embedded k3s needs more time than OpenShell's
-  // internal health-check window allows. Retrying after a clean destroy lets
-  // the second attempt benefit from cached images and cleaner cgroup state.
-  // See: https://github.com/NVIDIA/OpenShell/issues/433
   const retries = exitOnFailure ? 2 : 0;
   let dockerUnreachable = false;
   try {
@@ -2482,20 +2460,10 @@ async function startGatewayWithOptions(
           },
         );
         if (startResult.status !== 0) {
-          const lines = String(redact(startResult.output || ""))
-            .split("\n")
-            .map((l) => compactText(l.replace(ANSI_RE, "")))
-            .filter(Boolean)
-            .map((l) => `    ${l}`);
-          if (lines.length > 0) {
-            console.log(`  Gateway start returned before healthy:\n${lines.join("\n")}`);
-          }
-          // Fast-fail when the underlying Docker daemon is unreachable
-          // (e.g. `colima stop` on macOS). Retrying the health poll against
-          // a dead socket wastes ~5–15 minutes and produces an unactionable
-          // error; short-circuit with a "start Docker" message instead.
-          // See NemoClaw #2347.
-          const failure = classifyGatewayStartFailure(startResult.output || "");
+          const failure = reportLegacyGatewayStartResultFailure(
+            startResult.output || "",
+            console.log,
+          );
           if (failure.kind === "docker_unreachable") {
             dockerUnreachable = true;
             throw new pRetry.AbortError(
