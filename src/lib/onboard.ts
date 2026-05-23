@@ -8901,13 +8901,7 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   toSessionUpdates,
   maybeForceE2eStepFailure,
 });
-const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
-const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
-const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardRuntimeBoundary);
-const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboardRuntimeBoundary);
-const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
-const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
-const recordSessionComplete = onboardRuntimeBoundary.recordSessionComplete.bind(onboardRuntimeBoundary);
+const onboardRuntimeRecorders = onboardRuntimeBoundary.recorders();
 
 const ONBOARD_STEP_INDEX: Record<string, { number: number; title: string }> = {
   preflight: { number: 1, title: "Preflight checks" },
@@ -9295,9 +9289,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         resolveSandboxGpuConfig,
         validateSandboxGpuPreflight,
         skippedStepMessage,
-        recordStateSkipped,
-        startRecordedStep,
-        recordStepComplete,
+        ...onboardRuntimeRecorders,
         updateSession: onboardSession.updateSession,
       },
     });
@@ -9364,11 +9356,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         retireLegacyGatewayForDockerDriverUpgrade,
         destroyGatewayRuntimeForGpuReuse: () => destroyGateway(() => undefined, () => false),
         skippedStepMessage,
-        recordStateSkipped,
+        ...onboardRuntimeRecorders,
         note,
-        startRecordedStep,
         startGateway,
-        recordStepComplete,
         exitProcess: (code) => process.exit(code),
       },
     });
@@ -9416,13 +9406,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         normalizeHermesAuthMethod,
         setupNim,
         setupInference,
-        startRecordedStep,
-        recordStepComplete,
+        ...onboardRuntimeRecorders,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         skippedStepMessage,
         ensureResumeProviderReady,
-        recordStateSkipped,
-        recordRepairEvent,
         hydrateCredentialEnv,
         repairLocalInferenceSystemdOverrideOrExit,
         isNonInteractive,
@@ -9502,7 +9489,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         ensureValidatedBraveSearchCredential,
         isBackToSelection,
         configureWebSearch,
-        startRecordedStep,
+        ...onboardRuntimeRecorders,
         getRecordedMessagingChannelsForResume,
         getSandboxMessagingChannels: (name) => registry.getSandbox(name)?.messagingChannels,
         setupMessagingChannels,
@@ -9514,11 +9501,8 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         updateSandboxRegistry: (name, updates) => registry.updateSandbox(name, updates),
         setDefaultSandbox: registry.setDefault,
         getSandboxAgentRegistryFields,
-        recordStepComplete,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         skippedStepMessage,
-        recordStateSkipped,
-        recordRepairEvent,
         error: (message) => console.error(message),
         exitProcess: (code) => process.exit(code),
       },
@@ -9545,20 +9529,15 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           runCaptureOpenshell,
           openshellShellCommand,
           openshellBinary: getOpenshellBinary(),
-          startRecordedStep,
-          recordStepComplete,
-          recordStepFailed,
+          ...onboardRuntimeRecorders,
           skippedStepMessage,
         }),
         ensureAgentDashboardForward,
-        recordStepSkipped,
+        ...onboardRuntimeRecorders,
         isOpenclawReady,
         skippedStepMessage,
-        recordStateSkipped,
-        startRecordedStep,
         setupOpenclaw,
         syncNemoClawConfigInSandbox,
-        recordStepComplete,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
     });
@@ -9590,11 +9569,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
           preparePolicyPresetResumeSelection({ policies }, name, options),
         arePolicyPresetsApplied,
         skippedStepMessage,
-        recordStateSkipped,
-        startRecordedStep,
+        ...onboardRuntimeRecorders,
         setupPoliciesWithSelection,
         updateSession: onboardSession.updateSession,
-        recordStepComplete,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
     });
@@ -9612,7 +9589,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       migratedLegacyKeys,
       deps: {
         ensureAgentDashboardForward,
-        recordSessionComplete,
+        ...onboardRuntimeRecorders,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         removeLegacyCredentialsFile,
         cleanupStaleHostFiles,

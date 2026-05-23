@@ -28,6 +28,18 @@ export class OnboardRuntimeBoundary {
     return this.runtime;
   }
 
+  recorders() {
+    return {
+      startRecordedStep: this.startRecordedStep.bind(this),
+      recordStepComplete: this.recordStepComplete.bind(this),
+      recordStepSkipped: this.recordStepSkipped.bind(this),
+      recordStateSkipped: this.recordStateSkipped.bind(this),
+      recordRepairEvent: this.recordRepairEvent.bind(this),
+      recordStepFailed: this.recordStepFailed.bind(this),
+      recordSessionComplete: this.recordSessionComplete.bind(this),
+    };
+  }
+
   async startRecordedStep(
     stepName: string,
     updates: {
