@@ -296,7 +296,7 @@ print(json.dumps({
 PY")
 info "Discord config summary: ${discord_config_check:0:500}"
 if echo "$discord_config_check" | grep -q '"hasToken": true' \
-  && echo "$discord_config_check" | grep -q 'openshell:resolve:env:DISCORD_BOT_TOKEN' \
+  && echo "$discord_config_check" | grep -Eq 'openshell:resolve:env:[^"]*DISCORD_BOT_TOKEN' \
   && ! echo "$discord_config_check" | grep -q '"dmPolicy": "allowlist"'; then
   pass "Discord config uses a placeholder token and remains on pairing policy"
 else
