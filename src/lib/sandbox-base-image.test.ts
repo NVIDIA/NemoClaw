@@ -18,7 +18,6 @@ import {
 
 const tmpRoots: string[] = [];
 const emptyGitConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-gitconfig-"));
-tmpRoots.push(emptyGitConfigDir);
 const emptyGitConfig = path.join(emptyGitConfigDir, "gitconfig");
 const emptyGitConfigFd = fs.openSync(emptyGitConfig, "wx", 0o600);
 fs.closeSync(emptyGitConfigFd);
@@ -88,7 +87,7 @@ afterEach(() => {
 });
 
 afterAll(() => {
-  fs.rmSync(emptyGitConfig, { force: true });
+  fs.rmSync(emptyGitConfigDir, { recursive: true, force: true });
 });
 
 describe("sandbox base image helpers", () => {
