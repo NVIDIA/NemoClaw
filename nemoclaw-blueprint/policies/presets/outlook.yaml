@@ -13,15 +13,14 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
+          - allow: { method: PATCH, path: "/**" }
       - host: login.microsoftonline.com
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -29,7 +28,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -37,7 +35,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }

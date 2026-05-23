@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, expect, it, vi } from "vitest";
+import path from "node:path";
 
 import {
   buildVersionedUninstallUrl,
@@ -9,6 +10,10 @@ import {
   resolveUninstallScript,
   runUninstallCommand,
 } from "../../dist/lib/uninstall-command";
+
+function exitWithCode(code: number): never {
+  throw new Error(`exit:${code}`);
+}
 
 describe("uninstall command", () => {
   it("builds a version-pinned uninstall URL", () => {
@@ -26,14 +31,9 @@ describe("uninstall command", () => {
   });
 
   it("maps spawn signals to shell-style exit codes", () => {
-    expect(() =>
-      exitWithSpawnResult(
-        { status: null, signal: "SIGTERM" },
-        ((code: number) => {
-          throw new Error(`exit:${code}`);
-        }) as never,
-      ),
-    ).toThrow("exit:143");
+    expect(() => exitWithSpawnResult({ status: null, signal: "SIGTERM" }, exitWithCode)).toThrow(
+      "exit:143",
+    );
   });
 
   it("runs the local uninstall script when present", () => {
@@ -46,26 +46,26 @@ describe("uninstall command", () => {
         remoteScriptUrl: "https://example.invalid/uninstall.sh",
         env: process.env,
         spawnSyncImpl,
-        execFileSyncImpl: vi.fn(),
-        existsSyncImpl: (candidate) => candidate === "/repo/uninstall.sh",
+        existsSyncImpl: (candidate) => candidate === path.join("/repo", "uninstall.sh"),
         log: () => {},
         error: () => {},
-        exit: ((code: number) => {
-          throw new Error(`exit:${code}`);
-        }) as never,
+        exit: exitWithCode,
       }),
     ).toThrow("exit:0");
-    expect(spawnSyncImpl).toHaveBeenCalledWith("bash", ["/repo/uninstall.sh", "--yes"], {
-      stdio: "inherit",
-      cwd: "/repo",
-      env: process.env,
-    });
+    expect(spawnSyncImpl).toHaveBeenCalledWith(
+      "bash",
+      [path.join("/repo", "uninstall.sh"), "--yes"],
+      {
+        stdio: "inherit",
+        cwd: "/repo",
+        env: process.env,
+      },
+    );
   });
 
-  it("downloads and runs the remote uninstall script when no local copy exists", () => {
-    const execFileSyncImpl = vi.fn();
+  it("does not download or run a remote uninstall script when no local copy exists", () => {
     const spawnSyncImpl = vi.fn(() => ({ status: 0, signal: null }));
-    const rmSyncImpl = vi.fn();
+    const errors: string[] = [];
     expect(() =>
       runUninstallCommand({
         args: ["--yes"],
@@ -74,26 +74,16 @@ describe("uninstall command", () => {
         remoteScriptUrl: "https://example.invalid/uninstall.sh",
         env: process.env,
         spawnSyncImpl,
-        execFileSyncImpl,
         existsSyncImpl: () => false,
-        mkdtempSyncImpl: () => "/tmp/nemoclaw-uninstall-123",
-        rmSyncImpl,
-        tmpdirFn: () => "/tmp",
         log: () => {},
-        error: () => {},
-        exit: ((code: number) => {
-          throw new Error(`exit:${code}`);
-        }) as never,
+        error: (message) => {
+          errors.push(message ?? "");
+        },
+        exit: exitWithCode,
       }),
-    ).toThrow("exit:0");
-    expect(execFileSyncImpl).toHaveBeenCalledWith(
-      "curl",
-      ["-fsSL", "https://example.invalid/uninstall.sh", "-o", "/tmp/nemoclaw-uninstall-123/uninstall.sh"],
-      { stdio: "inherit" },
-    );
-    expect(rmSyncImpl).toHaveBeenCalledWith("/tmp/nemoclaw-uninstall-123", {
-      recursive: true,
-      force: true,
-    });
+    ).toThrow("exit:1");
+    expect(spawnSyncImpl).not.toHaveBeenCalled();
+    expect(errors.join("\n")).toContain("Remote uninstall fallback is disabled for security.");
+    expect(errors.join("\n")).toContain("https://example.invalid/uninstall.sh");
   });
 });

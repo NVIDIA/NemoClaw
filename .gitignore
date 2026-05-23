@@ -14,6 +14,9 @@ node_modules/
 desktop.ini
 Thumbs.db
 
+# IDE metadata
+.idea/
+
 # Project-specific
 .nemoclaw-maintainer/
 draft_newsletter_*
@@ -46,3 +49,4 @@ secrets.json
 secrets.yaml
 service-account*.json
 token.json
+.e2e/

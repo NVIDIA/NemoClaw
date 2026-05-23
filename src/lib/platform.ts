@@ -1,11 +1,38 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const os = require("os");
-const path = require("path");
+import { existsSync as defaultExistsSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-function isWsl(opts = {}) {
+export type ContainerRuntime = "podman" | "colima" | "docker-desktop" | "docker" | "unknown";
+
+export interface PlatformLookupOptions {
+  platform?: NodeJS.Platform;
+  home?: string;
+  uid?: number;
+}
+
+export interface WslDetectionOptions {
+  isWsl?: boolean;
+  platform?: NodeJS.Platform;
+  env?: NodeJS.ProcessEnv;
+  release?: string;
+  procVersion?: string;
+}
+
+export interface DockerHostDetectionOptions extends PlatformLookupOptions, WslDetectionOptions {
+  env?: NodeJS.ProcessEnv;
+  existsSync?: (filePath: string) => boolean;
+}
+
+export interface DockerHostDetection {
+  dockerHost: string;
+  source: "env" | "socket";
+  socketPath: string | null;
+}
+
+function isWsl(opts: WslDetectionOptions = {}): boolean {
   // Explicit override — lets tests pin behavior regardless of the host kernel.
   // Useful because the WSL detection below consults `os.release()`, which
   // returns a "microsoft"-tagged string on WSL2 hosts even when env vars are
@@ -28,7 +55,7 @@ function isWsl(opts = {}) {
   );
 }
 
-function inferContainerRuntime(info = "") {
+function inferContainerRuntime(info = ""): ContainerRuntime {
   const normalized = String(info).toLowerCase();
   if (!normalized.trim()) return "unknown";
   if (normalized.includes("podman")) return "podman";
@@ -38,27 +65,55 @@ function inferContainerRuntime(info = "") {
   return "unknown";
 }
 
-function shouldPatchCoredns(runtime, opts = {}) {
+function containerCanReachHostLoopback(
+  runtime: ContainerRuntime,
+  opts: WslDetectionOptions = {},
+): boolean {
+  // Whether a sandbox container can reach the host's 127.0.0.1 directly,
+  // without an auth proxy fronting host-side services like Ollama or vLLM.
+  //
+  // Docker Desktop bridges the WSL host's loopback back into containers
+  // (running in the docker-desktop VM) via host.docker.internal — so the
+  // local Ollama daemon bound to 127.0.0.1:11434 is reachable as-is.
+  //
+  // Native dockerd installed inside a WSL distro only sees the Docker
+  // bridge gateway (e.g. 172.17.0.1); 127.0.0.1 on the WSL host is
+  // invisible from any container on that bridge. NemoClaw fronts Ollama
+  // with the auth proxy in this topology (issue #3695).
+  //
+  // Anywhere off WSL (macOS Docker Desktop, regular Linux native Docker),
+  // NemoClaw always runs the auth proxy.
+  return isWsl(opts) && runtime === "docker-desktop";
+}
+
+function shouldPatchCoredns(runtime: ContainerRuntime, opts: WslDetectionOptions = {}): boolean {
   // CoreDNS patching is needed for Colima and Podman (both use custom network bridges).
   // On WSL2, the host DNS is not routable from k3s pods — skip and let setup-dns-proxy.sh handle it.
   if (isWsl(opts)) return false;
   return runtime === "colima" || runtime === "podman";
 }
 
-function getColimaDockerSocketCandidates(opts = {}) {
+function getColimaDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   const home = opts.home ?? process.env.HOME ?? "/tmp";
   return [
     path.join(home, ".colima/default/docker.sock"),
     path.join(home, ".config/colima/default/docker.sock"),
+    // Some Colima profiles (and older layouts) place the socket at the
+    // top-level ~/.colima/docker.sock rather than under default/. Reported
+    // in #3503 — keep as a candidate so detection succeeds without the
+    // user having to symlink to /var/run/docker.sock.
+    path.join(home, ".colima/docker.sock"),
   ];
 }
 
-function findColimaDockerSocket(opts = {}) {
-  const existsSync = opts.existsSync ?? require("fs").existsSync;
-  return getColimaDockerSocketCandidates(opts).find((socketPath) => existsSync(socketPath)) ?? null;
+function findColimaDockerSocket(
+  opts: PlatformLookupOptions & { existsSync?: (filePath: string) => boolean } = {},
+): string | null {
+  const fileExists = opts.existsSync ?? defaultExistsSync;
+  return getColimaDockerSocketCandidates(opts).find((socketPath) => fileExists(socketPath)) ?? null;
 }
 
-function getPodmanSocketCandidates(opts = {}) {
+function getPodmanSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   const home = opts.home ?? process.env.HOME ?? "/tmp";
   const platform = opts.platform ?? process.platform;
   const uid = opts.uid ?? process.getuid?.() ?? 1000;
@@ -70,10 +125,14 @@ function getPodmanSocketCandidates(opts = {}) {
     ];
   }
 
-  return [`/run/user/${uid}/podman/podman.sock`, "/run/podman/podman.sock"];
+  if (platform === "linux") {
+    return [`/run/user/${String(uid)}/podman/podman.sock`, "/run/podman/podman.sock"];
+  }
+
+  return [];
 }
 
-function getDockerSocketCandidates(opts = {}) {
+function getDockerSocketCandidates(opts: PlatformLookupOptions = {}): string[] {
   const home = opts.home ?? process.env.HOME ?? "/tmp";
   const platform = opts.platform ?? process.platform;
 
@@ -96,7 +155,7 @@ function getDockerSocketCandidates(opts = {}) {
   return [];
 }
 
-function detectDockerHost(opts = {}) {
+function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDetection | null {
   const env = opts.env ?? process.env;
   if (env.DOCKER_HOST) {
     return {
@@ -106,9 +165,9 @@ function detectDockerHost(opts = {}) {
     };
   }
 
-  const existsSync = opts.existsSync ?? require("fs").existsSync;
+  const fileExists = opts.existsSync ?? defaultExistsSync;
   for (const socketPath of getDockerSocketCandidates(opts)) {
-    if (existsSync(socketPath)) {
+    if (fileExists(socketPath)) {
       return {
         dockerHost: `unix://${socketPath}`,
         source: "socket",
@@ -121,6 +180,7 @@ function detectDockerHost(opts = {}) {
 }
 
 export {
+  containerCanReachHostLoopback,
   detectDockerHost,
   findColimaDockerSocket,
   getColimaDockerSocketCandidates,

@@ -246,18 +246,19 @@ if node --input-type=module -e "
 
   // Simulate corruption: modify the host config
   const configPath = path.join(os.homedir(), '.openclaw', 'openclaw.json');
-  const original = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+  const originalRaw = fs.readFileSync(configPath, 'utf-8');
+  JSON.parse(originalRaw);
   fs.writeFileSync(configPath, JSON.stringify({ corrupted: true }));
 
   // Rollback
   const success = rollbackFromSnapshot(snapPath);
   if (!success) throw new Error('Rollback returned false');
 
-  // Verify restoration
-  const restored = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  const version = (restored.meta || {}).lastTouchedVersion;
-  if (version !== '2026.3.11') throw new Error('Restored config wrong: ' + JSON.stringify(restored));
-  if ('corrupted' in restored) throw new Error('Config still corrupted after rollback');
+	  // Verify restoration
+	  const restoredRaw = fs.readFileSync(configPath, 'utf-8');
+	  const restored = JSON.parse(restoredRaw);
+	  if ('corrupted' in restored) throw new Error('Config still corrupted after rollback');
+  if (restoredRaw !== originalRaw) throw new Error('Restored config differs from pre-corruption content: ' + JSON.stringify(restored));
   console.log('Restored config: ' + JSON.stringify(restored));
 "; then
   pass "Snapshot rollback restores original config"
@@ -411,6 +412,23 @@ console.log('State management: create, save, load, clear all working');
   pass "NemoClaw state management works"
 else
   fail "State management broken"
+fi
+
+# -------------------------------------------------------
+info "11. Verify procps debug tools are present (#2343)"
+# -------------------------------------------------------
+for cmd in ps top free uptime vmstat; do
+  if command -v "$cmd" >/dev/null 2>&1; then
+    pass "$cmd is available at $(command -v "$cmd")"
+  else
+    fail "$cmd not found — procps package missing from sandbox image"
+  fi
+done
+# Smoke-test: ps must actually execute, not just resolve
+if ps --version >/dev/null 2>&1; then
+  pass "ps executes successfully"
+else
+  fail "ps found but failed to execute"
 fi
 
 echo ""

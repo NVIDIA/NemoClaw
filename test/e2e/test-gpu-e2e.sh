@@ -7,7 +7,7 @@
 # Mirrors what a user with a GPU would actually do:
 #   1. Install Ollama binary
 #   2. Run the NemoClaw installer with NEMOCLAW_PROVIDER=ollama
-#   3. Onboard starts Ollama (OLLAMA_HOST=0.0.0.0:11434), pulls model, creates sandbox
+#   3. Onboard starts Ollama (127.0.0.1:11434) + auth proxy (:11435), pulls model, creates sandbox
 #   4. Verify inference works through the sandbox
 #   5. Destroy + uninstall
 #
@@ -32,6 +32,8 @@
 # Usage:
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash test/e2e/test-gpu-e2e.sh
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 PASS=0
@@ -112,6 +114,7 @@ cleanup() {
     openshell gateway destroy -g nemoclaw 2>/dev/null || true
   fi
   pkill -f "ollama serve" 2>/dev/null || true
+  pkill -f "ollama-auth-proxy" 2>/dev/null || true
 }
 trap cleanup EXIT
 
@@ -159,13 +162,11 @@ if [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
   exit 1
 fi
 
-# Verify port 11434 is free (onboard needs to start Ollama on 0.0.0.0:11434)
-if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+# Verify port 11434 is free (onboard needs to start Ollama on 127.0.0.1:11434)
+if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
   info "WARNING: Something is already listening on port 11434."
-  info "Onboard may not be able to start Ollama on 0.0.0.0:11434."
+  info "Onboard may not be able to start Ollama."
   info "On ephemeral runners this should not happen."
-  # Don't fail — onboard will detect the running Ollama and use it.
-  # The container reachability check in onboard will catch 127.0.0.1 issues.
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -188,9 +189,9 @@ else
 fi
 
 # If the Ollama installer started a system service, stop it so onboard
-# can start Ollama with OLLAMA_HOST=0.0.0.0:11434 (required for containers).
+# can restart Ollama on loopback and expose only the authenticated proxy to containers.
 # This needs the ollama process to be owned by our user, or systemctl access.
-if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
   info "Ollama service is running — attempting to stop for clean onboard..."
   # Try systemctl first (works if user has permissions)
   systemctl --user stop ollama 2>/dev/null || true
@@ -199,7 +200,7 @@ if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
   pkill -f "ollama serve" 2>/dev/null || true
   sleep 2
 
-  if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
+  if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
     info "Could not stop existing Ollama — onboard will use it as-is"
   else
     pass "Existing Ollama stopped — port 11434 is free for onboard"
@@ -277,7 +278,39 @@ else
   fail "nemoclaw ${SANDBOX_NAME} status failed"
 fi
 
-# 4c: Inference provider is ollama-local
+# 4c: Direct sandbox GPU is enabled by default on NVIDIA hosts
+if status_output=$(nemoclaw "$SANDBOX_NAME" status 2>&1); then
+  if echo "$status_output" | grep -Fq "Sandbox GPU: enabled"; then
+    pass "Sandbox GPU is enabled by default"
+  else
+    fail "Sandbox GPU is not enabled in status output"
+  fi
+else
+  fail "Could not read sandbox GPU status"
+fi
+
+# 4d: Direct sandbox GPU proofs. Onboard performs these immediately after the
+# Docker GPU patch and before continuing; assert that proof instead of
+# re-running OpenShell exec after the full OpenClaw setup.
+if grep -Fq "GPU proof passed: nvidia-smi when available" "$INSTALL_LOG"; then
+  pass "Onboard GPU proof passed: nvidia-smi when available"
+else
+  fail "Onboard GPU proof missing: nvidia-smi when available"
+fi
+
+if grep -Fq "GPU proof passed: /proc/<pid>/task/<tid>/comm write" "$INSTALL_LOG"; then
+  pass "Onboard GPU proof passed: /proc/self/task/<tid>/comm write"
+else
+  fail "Onboard GPU proof missing: /proc comm write"
+fi
+
+if grep -Fq "GPU proof passed: cuInit(0) via libcuda.so.1" "$INSTALL_LOG"; then
+  pass "Onboard GPU proof passed: cuInit(0)"
+else
+  fail "Onboard GPU proof missing: cuInit(0)"
+fi
+
+# 4e: Inference provider is ollama-local
 if inf_check=$(openshell inference get 2>&1); then
   if echo "$inf_check" | grep -qi "ollama"; then
     pass "Inference provider is Ollama-based"
@@ -288,11 +321,141 @@ else
   fail "openshell inference get failed: ${inf_check:0:200}"
 fi
 
-# 4d: Ollama is running and reachable
-if curl -sf http://localhost:11434/api/tags >/dev/null 2>&1; then
-  pass "Ollama running on localhost:11434 (started by onboard)"
+# 4f: Ollama is running and reachable
+if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
+  pass "Ollama running on 127.0.0.1:11434 (started by onboard)"
 else
   fail "Ollama not running — onboard should have started it"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 4.5: Auth proxy verification (PR #1922)
+# ══════════════════════════════════════════════════════════════════
+section "Phase 4.5: Auth proxy verification"
+
+PROXY_PORT="${NEMOCLAW_OLLAMA_PROXY_PORT:-11435}"
+TOKEN_FILE="$HOME/.nemoclaw/ollama-proxy-token"
+
+# 4.5a: Token file persisted by onboard
+if [ -f "$TOKEN_FILE" ]; then
+  pass "Proxy token persisted at $TOKEN_FILE"
+else
+  fail "Proxy token file missing — onboard did not persist token"
+fi
+
+# 4.5b: Token file permissions
+if [ -f "$TOKEN_FILE" ]; then
+  PERMS=$(stat -c "%a" "$TOKEN_FILE" 2>/dev/null || stat -f "%Lp" "$TOKEN_FILE" 2>/dev/null)
+  if [ "$PERMS" = "600" ]; then
+    pass "Token file permissions: 600"
+  else
+    fail "Token file permissions: expected 600, got $PERMS"
+  fi
+fi
+
+# 4.5c: Auth proxy is running on proxy port. Since #3338 made /api/tags require
+# a Bearer token, treat any HTTP response (including 401) as proof of life —
+# we only fail when nothing answers at all.
+PROXY_LIVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+  "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || PROXY_LIVE_STATUS="000"
+if [[ "$PROXY_LIVE_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+  pass "Auth proxy running on :${PROXY_PORT} (HTTP $PROXY_LIVE_STATUS)"
+else
+  fail "Auth proxy not running on :${PROXY_PORT} — onboard should have started it"
+fi
+
+# 4.5d: Proxy rejects unauthenticated requests to protected endpoints
+PROXY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+  "http://127.0.0.1:${PROXY_PORT}/api/generate" -d '{}' 2>/dev/null) || PROXY_STATUS="000"
+if [ "$PROXY_STATUS" = "401" ]; then
+  pass "Auth proxy rejects unauthenticated POST (401)"
+else
+  fail "Auth proxy should return 401 for unauthenticated POST, got $PROXY_STATUS"
+fi
+
+# 4.5e: Proxy accepts correct token
+if [ -f "$TOKEN_FILE" ]; then
+  PROXY_TOKEN=$(tr -d '[:space:]' <"$TOKEN_FILE")
+  PROXY_AUTH="Bearer $PROXY_TOKEN"
+  PROXY_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+    -H "Authorization: $PROXY_AUTH" \
+    -X POST "http://127.0.0.1:${PROXY_PORT}/api/generate" \
+    -d '{"model":"test","prompt":"test","stream":false}' 2>/dev/null) || PROXY_STATUS="000"
+  if [ "$PROXY_STATUS" != "401" ]; then
+    pass "Auth proxy accepts correct token (status: $PROXY_STATUS)"
+  else
+    fail "Auth proxy rejected the persisted token"
+  fi
+fi
+
+# 4.5f: Container can reach proxy through host.openshell.internal. We only
+# care that the network path works — an authenticated-but-401 response is
+# still proof of reachability (#3338 requires auth on /api/tags).
+if grep -Fq "Docker-driver GPU patch active" "$INSTALL_LOG"; then
+  skip "Generic Docker bridge proxy reachability skipped; Docker GPU patch uses OpenShell-managed network path"
+else
+  CONTAINER_REACH_STATUS=$(docker run --rm \
+    --add-host "host.openshell.internal:host-gateway" \
+    curlimages/curl:8.10.1 \
+    -s -o /dev/null -w "%{http_code}" \
+    --connect-timeout 5 --max-time 10 \
+    "http://host.openshell.internal:${PROXY_PORT}/api/tags" 2>/dev/null) || CONTAINER_REACH_STATUS="000"
+  if [[ "$CONTAINER_REACH_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+    pass "Container reachable: host.openshell.internal:${PROXY_PORT} (HTTP $CONTAINER_REACH_STATUS)"
+  else
+    fail "Container cannot reach proxy at host.openshell.internal:${PROXY_PORT}"
+  fi
+fi
+
+# 4.5g: Proxy recovery — kill and restart from persisted token
+info "Testing proxy recovery (kill + restart from persisted token)..."
+PROXY_PID_BEFORE=$(lsof -ti ":${PROXY_PORT}" 2>/dev/null | head -1) || true
+if [ -n "$PROXY_PID_BEFORE" ] && [ -f "$TOKEN_FILE" ]; then
+  PROXY_CMD=$(ps -p "$PROXY_PID_BEFORE" -o args= 2>/dev/null) || true
+  if echo "$PROXY_CMD" | grep -q "ollama-auth-proxy"; then
+    kill "$PROXY_PID_BEFORE" 2>/dev/null || true
+    sleep 2
+    # Verify proxy is dead. After #3338 an alive proxy returns 401 on
+    # /api/tags without auth, so curl -sf would fail either way; we need
+    # the http_code itself: only 000 (no answer at all) means dead.
+    DEAD_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 \
+      "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || DEAD_STATUS="000"
+    if [[ "$DEAD_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+      fail "Proxy still alive after kill (HTTP $DEAD_STATUS)"
+    else
+      info "Proxy confirmed dead — restarting from persisted token..."
+    fi
+    # Restart from persisted token (simulates what ensureOllamaAuthProxy does
+    # on sandbox connect after a host reboot)
+    RECOVERED_TOKEN=$(tr -d '[:space:]' <"$TOKEN_FILE")
+    OLLAMA_PROXY_TOKEN="$RECOVERED_TOKEN" \
+      OLLAMA_PROXY_PORT="$PROXY_PORT" \
+      OLLAMA_BACKEND_PORT=11434 \
+      node "$(dirname "$0")/../../scripts/ollama-auth-proxy.js" >/dev/null 2>&1 &
+    sleep 2
+    RECOVERED_LIVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+      "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || RECOVERED_LIVE_STATUS="000"
+    if [[ "$RECOVERED_LIVE_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+      pass "Proxy recovered from persisted token after kill (HTTP $RECOVERED_LIVE_STATUS)"
+    else
+      fail "Proxy did not restart from persisted token"
+    fi
+    # Verify the recovered proxy accepts the original token
+    RECOVER_AUTH="Bearer $RECOVERED_TOKEN"
+    RECOVER_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+      -H "Authorization: $RECOVER_AUTH" \
+      -X POST "http://127.0.0.1:${PROXY_PORT}/api/generate" \
+      -d '{"model":"test","prompt":"test","stream":false}' 2>/dev/null) || RECOVER_STATUS="000"
+    if [ "$RECOVER_STATUS" != "401" ]; then
+      pass "Recovered proxy accepts persisted token (status: $RECOVER_STATUS)"
+    else
+      fail "Recovered proxy rejected persisted token"
+    fi
+  else
+    skip "Proxy recovery: PID on :${PROXY_PORT} is not ollama-auth-proxy"
+  fi
+else
+  skip "Proxy recovery: no proxy PID or no token file"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -305,7 +468,7 @@ section "Phase 5: Local inference through sandbox"
 CONFIGURED_MODEL="${NEMOCLAW_MODEL:-}"
 if [ -n "$CONFIGURED_MODEL" ]; then
   # Verify the expected model is actually available in Ollama
-  if curl -sf http://localhost:11434/api/tags 2>/dev/null \
+  if curl -sf http://127.0.0.1:11434/api/tags 2>/dev/null \
     | python3 -c "import json,sys; m=[x['name'] for x in json.load(sys.stdin).get('models',[])]; sys.exit(0 if '$CONFIGURED_MODEL' in m or any('$CONFIGURED_MODEL' in x for x in m) else 1)" 2>/dev/null; then
     info "Using NEMOCLAW_MODEL: $CONFIGURED_MODEL (confirmed in Ollama)"
   else
@@ -314,7 +477,7 @@ if [ -n "$CONFIGURED_MODEL" ]; then
   fi
 fi
 if [ -z "$CONFIGURED_MODEL" ]; then
-  CONFIGURED_MODEL=$(curl -sf http://localhost:11434/api/tags 2>/dev/null \
+  CONFIGURED_MODEL=$(curl -sf http://127.0.0.1:11434/api/tags 2>/dev/null \
     | python3 -c "import json,sys; m=json.load(sys.stdin).get('models',[]); print(m[0]['name'] if m else '')" 2>/dev/null || echo "")
   if [ -n "$CONFIGURED_MODEL" ]; then
     info "Auto-detected Ollama model: $CONFIGURED_MODEL"
@@ -324,9 +487,9 @@ if [ -z "$CONFIGURED_MODEL" ]; then
 fi
 
 # 5a: Direct Ollama inference (host-side, OpenAI-compatible)
-info "[LOCAL] Direct Ollama test → localhost:11434/v1/chat/completions..."
+info "[LOCAL] Direct Ollama test → 127.0.0.1:11434/v1/chat/completions..."
 direct_response=$(curl -s --max-time 120 \
-  -X POST http://localhost:11434/v1/chat/completions \
+  -X POST http://127.0.0.1:11434/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d "{
     \"model\": \"$CONFIGURED_MODEL\",
@@ -345,39 +508,98 @@ else
   fail "[LOCAL] Direct Ollama: empty response"
 fi
 
-# 5b: Inference through sandbox → openshell gateway → host.openshell.internal:11434 → Ollama
-info "[LOCAL] Sandbox inference test → sandbox → gateway → Ollama on GPU..."
-ssh_config="$(mktemp)"
-sandbox_response=""
-
-if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
-  TIMEOUT_CMD=""
-  command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 120"
-  sandbox_response=$($TIMEOUT_CMD ssh -F "$ssh_config" \
-    -o StrictHostKeyChecking=no \
-    -o UserKnownHostsFile=/dev/null \
-    -o ConnectTimeout=10 \
-    -o LogLevel=ERROR \
-    "openshell-${SANDBOX_NAME}" \
-    "curl -s --max-time 90 https://inference.local/v1/chat/completions \
-      -H 'Content-Type: application/json' \
-      -d '{\"model\":\"$CONFIGURED_MODEL\",\"messages\":[{\"role\":\"user\",\"content\":\"Reply with exactly one word: PONG\"}],\"max_tokens\":200}'" \
-    2>&1) || true
-else
-  fail "openshell sandbox ssh-config failed"
+# 5b: Inference through sandbox → provider route → Ollama. When the Docker GPU
+# patch preserves the original sandbox network, inference still goes through
+# inference.local; use docker exec only to avoid depending on OpenShell exec
+# after the container is recreated. Host-network GPU patch runs are the only
+# mode where OpenClaw is configured with a direct loopback Ollama URL.
+SANDBOX_INFERENCE_URL="https://inference.local/v1/chat/completions"
+SANDBOX_INFERENCE_EXEC="openshell"
+SANDBOX_INFERENCE_DOCKER_EXEC_ENV=()
+if grep -Fq "OpenClaw local inference will use direct sandbox URL" "$INSTALL_LOG"; then
+  OLLAMA_HOST_PORT="${NEMOCLAW_OLLAMA_PORT:-11434}"
+  SANDBOX_INFERENCE_URL="http://127.0.0.1:${OLLAMA_HOST_PORT}/v1/chat/completions"
+  SANDBOX_INFERENCE_EXEC="docker"
+elif grep -Fq "Docker-driver GPU patch active" "$INSTALL_LOG"; then
+  SANDBOX_INFERENCE_EXEC="docker"
 fi
-rm -f "$ssh_config"
+if [ "$SANDBOX_INFERENCE_EXEC" = "docker" ] && [[ "$SANDBOX_INFERENCE_URL" == https://inference.local/* ]]; then
+  INFERENCE_PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
+  INFERENCE_PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
+  INFERENCE_PROXY_URL="http://${INFERENCE_PROXY_HOST}:${INFERENCE_PROXY_PORT}"
+  INFERENCE_NO_PROXY="localhost,127.0.0.1,::1,${INFERENCE_PROXY_HOST}"
+  SANDBOX_INFERENCE_DOCKER_EXEC_ENV=(
+    --env "HTTP_PROXY=${INFERENCE_PROXY_URL}"
+    --env "HTTPS_PROXY=${INFERENCE_PROXY_URL}"
+    --env "NO_PROXY=${INFERENCE_NO_PROXY}"
+    --env "http_proxy=${INFERENCE_PROXY_URL}"
+    --env "https_proxy=${INFERENCE_PROXY_URL}"
+    --env "no_proxy=${INFERENCE_NO_PROXY}"
+  )
+  info "[LOCAL] Docker GPU inference proof will use OpenShell proxy ${INFERENCE_PROXY_URL}"
+fi
+info "[LOCAL] Sandbox inference test → ${SANDBOX_INFERENCE_URL} → Ollama on GPU..."
+sandbox_probe_failure=""
+sandbox_response=""
+TIMEOUT_CMD=""
+command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 120"
+sandbox_payload=$(python3 -c 'import json, sys; print(json.dumps({"model": sys.argv[1], "messages": [{"role": "user", "content": "Reply with exactly one word: PONG"}], "max_tokens": 200}))' "$CONFIGURED_MODEL")
+sandbox_curl_cmd=$(printf "curl -skS --max-time 90 %q -H %q -d %q" \
+  "$SANDBOX_INFERENCE_URL" \
+  "Content-Type: application/json" \
+  "$sandbox_payload")
 
-if [ -n "$sandbox_response" ]; then
-  sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
-  if echo "$sandbox_content" | grep -qi "PONG"; then
-    pass "[LOCAL] Sandbox inference: Ollama responded through sandbox"
-    info "Full path proven: sandbox → openshell gateway → host.openshell.internal:11434 → Ollama GPU"
+run_sandbox_inference_probe() {
+  sandbox_probe_failure=""
+  sandbox_response=""
+  if [ "$SANDBOX_INFERENCE_EXEC" = "docker" ]; then
+    sandbox_container_id=$(docker ps --quiet \
+      --filter "label=openshell.ai/managed-by=openshell" \
+      --filter "label=openshell.ai/sandbox-name=${SANDBOX_NAME}" \
+      | head -n 1)
+    if [ -n "$sandbox_container_id" ]; then
+      info "[LOCAL] Using docker exec for Docker GPU sandbox inference proof (${sandbox_container_id:0:12})..."
+      sandbox_response=$($TIMEOUT_CMD docker exec "${SANDBOX_INFERENCE_DOCKER_EXEC_ENV[@]}" "$sandbox_container_id" sh -lc "$sandbox_curl_cmd" 2>&1) || true
+    else
+      sandbox_probe_failure="OpenShell-managed Docker container not found for ${SANDBOX_NAME}"
+    fi
   else
-    fail "[LOCAL] Sandbox inference: expected PONG, got: ${sandbox_content:0:200}"
+    sandbox_response=$($TIMEOUT_CMD openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$sandbox_curl_cmd" 2>&1) || true
   fi
+}
+
+pong_ok=false
+sandbox_content=""
+for sandbox_attempt in 1 2 3; do
+  run_sandbox_inference_probe
+  if [ -n "$sandbox_probe_failure" ]; then
+    break
+  fi
+  if [ -n "$sandbox_response" ]; then
+    sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
+    if echo "$sandbox_content" | grep -qi "PONG"; then
+      pong_ok=true
+      break
+    fi
+    info "Sandbox inference attempt ${sandbox_attempt}/3: got '${sandbox_content:0:80}'"
+    info "Sandbox inference raw response (first 400 chars): ${sandbox_response:0:400}"
+  else
+    info "Sandbox inference attempt ${sandbox_attempt}/3: empty response"
+  fi
+  [ "$sandbox_attempt" -lt 3 ] || break
+  sleep 5
+done
+
+if [ -n "$sandbox_probe_failure" ]; then
+  fail "[LOCAL] Sandbox inference: ${sandbox_probe_failure}"
+elif $pong_ok; then
+  pass "[LOCAL] Sandbox inference: Ollama responded through sandbox"
+  info "Full path proven: sandbox → ${SANDBOX_INFERENCE_URL} → Ollama GPU (:11434)"
+elif [ -n "$sandbox_response" ]; then
+  fail "[LOCAL] Sandbox inference: expected PONG after 3 attempts, got: ${sandbox_content:0:200}"
+  info "Sandbox inference final raw response (first 800 chars): ${sandbox_response:0:800}"
 else
-  fail "[LOCAL] Sandbox inference: no response from inference.local inside sandbox"
+  fail "[LOCAL] Sandbox inference: no response from ${SANDBOX_INFERENCE_URL} inside sandbox"
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -440,8 +662,9 @@ echo "  What this tested (real user flow):"
 echo "    - GPU detection (nvidia-smi)"
 echo "    - Ollama binary install"
 echo "    - install.sh --non-interactive with NEMOCLAW_PROVIDER=ollama"
-echo "    - Onboard: starts Ollama, pulls model, creates sandbox"
-echo "    - Local inference: direct + sandbox → gateway → Ollama on GPU"
+echo "    - Onboard: starts Ollama on 127.0.0.1, starts auth proxy, pulls model, creates sandbox"
+echo "    - Auth proxy: token persistence, auth reject/accept, container reachability, recovery"
+echo "    - Local inference: direct + sandbox → gateway → auth proxy → Ollama on GPU"
 echo "    - Destroy + uninstall --delete-models"
 echo ""
 

@@ -22,26 +22,68 @@ function repoPath(...segments: string[]): string {
   return join(REPO_ROOT, ...segments);
 }
 
-function loadYAML(path: string): unknown {
-  return YAML.parse(readFileSync(path, "utf-8"));
+type LooseScalar = string | number | boolean | null;
+type LooseValue = LooseScalar | LooseObject | LooseValue[];
+type LooseObject = { [key: string]: LooseValue };
+
+function parseJson<T>(text: string): T {
+  return JSON.parse(text);
 }
 
-function loadJSON(path: string): unknown {
-  return JSON.parse(readFileSync(path, "utf-8"));
+function isLooseValue(value: LooseValue | object | undefined): value is LooseValue {
+  if (value === null) return true;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return true;
+  }
+  if (Array.isArray(value)) {
+    return value.every((entry) => isLooseValue(entry));
+  }
+  return isLooseObject(value);
+}
+
+function isLooseObject(value: LooseValue | object | undefined): value is LooseObject {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    !Array.isArray(value) &&
+    Object.values(value).every((entry) => isLooseValue(entry))
+  );
+}
+
+function loadYAML(path: string): LooseObject {
+  const parsed = YAML.parse(readFileSync(path, "utf-8"));
+  if (!isLooseObject(parsed)) {
+    throw new Error(`Expected YAML object in ${path}`);
+  }
+  return parsed;
+}
+
+function loadJSON(path: string): LooseObject {
+  const parsed = parseJson<LooseValue>(readFileSync(path, "utf-8"));
+  if (!isLooseObject(parsed)) {
+    throw new Error(`Expected JSON object in ${path}`);
+  }
+  return parsed;
 }
 
 function compileSchema(schemaRelPath: string): ValidateFunction {
   const ajv = new Ajv({ allErrors: true, strict: false });
   const schema = loadJSON(repoPath(schemaRelPath));
-  return ajv.compile(schema as object);
+  return ajv.compile(schema);
 }
 
-function expectValid(validate: ValidateFunction, data: unknown, label: string): void {
+function asRecord(value: LooseValue | undefined): LooseObject {
+  return isLooseObject(value) ? value : {};
+}
+
+function cloneObject(value: LooseObject | undefined): LooseObject {
+  return { ...asRecord(value) };
+}
+
+function expectValid(validate: ValidateFunction, data: object, label: string): void {
   const valid = validate(data);
   if (!valid) {
-    const messages = (validate.errors ?? []).map(
-      (e) => `  ${e.instancePath || "/"}: ${e.message}`,
-    );
+    const messages = (validate.errors ?? []).map((e) => `  ${e.instancePath || "/"}: ${e.message}`);
     expect.unreachable(`${label} failed schema validation:\n${messages.join("\n")}`);
   }
 }
@@ -57,28 +99,31 @@ describe("blueprint.schema.json", () => {
   });
 
   it("rejects blueprint with missing required field", () => {
-    const bad = { ...(data as object) };
-    delete (bad as Record<string, unknown>).version;
+    const bad = cloneObject(data);
+    delete bad.version;
     expect(validate(bad)).toBe(false);
   });
 
   it("rejects blueprint with wrong type for version", () => {
-    const bad = { ...(data as object), version: 123 };
+    const bad = { ...cloneObject(data), version: 123 };
     expect(validate(bad)).toBe(false);
   });
 
   it("rejects blueprint with unknown top-level property", () => {
-    const bad = { ...(data as object), unknownField: true };
+    const bad = { ...cloneObject(data), unknownField: true };
     expect(validate(bad)).toBe(false);
   });
 
   it("rejects blueprint with unknown nested component property", () => {
+    const root = asRecord(data);
+    const components = asRecord(root.components);
+    const inference = asRecord(components.inference);
     const bad = {
-      ...(data as object),
+      ...root,
       components: {
-        ...((data as Record<string, any>).components),
+        ...components,
         inference: {
-          ...((data as Record<string, any>).components.inference),
+          ...inference,
           extraField: true,
         },
       },
@@ -87,16 +132,21 @@ describe("blueprint.schema.json", () => {
   });
 
   it("rejects blueprint inference profile with unknown property", () => {
+    const root = asRecord(data);
+    const components = asRecord(root.components);
+    const inference = asRecord(components.inference);
+    const profiles = asRecord(inference.profiles);
+    const defaultProfile = asRecord(profiles.default);
     const bad = {
-      ...(data as object),
+      ...root,
       components: {
-        ...((data as Record<string, any>).components),
+        ...components,
         inference: {
-          ...((data as Record<string, any>).components.inference),
+          ...inference,
           profiles: {
-            ...((data as Record<string, any>).components.inference.profiles),
+            ...profiles,
             default: {
-              ...((data as Record<string, any>).components.inference.profiles.default),
+              ...defaultProfile,
               typoField: true,
             },
           },
@@ -136,22 +186,20 @@ describe("blueprint.schema.json", () => {
 
 describe("sandbox-policy.schema.json", () => {
   const validate = compileSchema("schemas/sandbox-policy.schema.json");
-  const data = loadYAML(
-    repoPath("nemoclaw-blueprint/policies/openclaw-sandbox.yaml"),
-  );
+  const data = loadYAML(repoPath("nemoclaw-blueprint/policies/openclaw-sandbox.yaml"));
 
   it("openclaw-sandbox.yaml passes schema validation", () => {
     expectValid(validate, data, "openclaw-sandbox.yaml");
   });
 
   it("rejects policy with missing network_policies", () => {
-    const bad = { ...(data as object) };
-    delete (bad as Record<string, unknown>).network_policies;
+    const bad = cloneObject(data);
+    delete bad.network_policies;
     expect(validate(bad)).toBe(false);
   });
 
   it("rejects policy with unknown top-level property", () => {
-    const bad = { ...(data as object), extra: true };
+    const bad = { ...cloneObject(data), extra: true };
     expect(validate(bad)).toBe(false);
   });
 
@@ -162,6 +210,67 @@ describe("sandbox-policy.schema.json", () => {
         test_service: {
           name: "Test Service",
           endpoints: [{ host: "api.example.com", port: 443, protocol: "rest" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("accepts sandbox-policy native WebSocket text rules and credential rewrite", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [
+            {
+              host: "gateway.example.com",
+              port: 443,
+              protocol: "websocket",
+              enforcement: "enforce",
+              websocket_credential_rewrite: true,
+              allowed_ips: ["10.0.0.0/8", "172.16.0.0/12"],
+              rules: [
+                { allow: { method: "GET", path: "/**" } },
+                { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "websocket policy");
+  });
+
+  it("accepts sandbox-policy request-body credential rewrite on REST endpoints", () => {
+    const valid = {
+      version: 1,
+      network_policies: {
+        slack: {
+          name: "Slack",
+          endpoints: [
+            {
+              host: "api.slack.com",
+              port: 443,
+              protocol: "rest",
+              enforcement: "enforce",
+              request_body_credential_rewrite: true,
+              rules: [{ allow: { method: "POST", path: "/**" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "rest body rewrite policy");
+  });
+
+  it("rejects sandbox-policy endpoint with protocol websocket but no rules or access", () => {
+    const bad = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "gateway.example.com", port: 443, protocol: "websocket" }],
         },
       },
     };
@@ -179,7 +288,8 @@ describe("policy-preset.schema.json", () => {
   try {
     presetFiles = readdirSync(presetsDir).filter((f) => f.endsWith(".yaml") || f.endsWith(".yml"));
   } catch (err) {
-    if ((err as { code?: string }).code !== "ENOENT") throw err;
+    const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
+    if (code !== "ENOENT") throw err;
     // directory may not exist
   }
 
@@ -191,7 +301,11 @@ describe("policy-preset.schema.json", () => {
   }
 
   it("rejects preset without preset metadata", () => {
-    const bad = { network_policies: { test: { name: "test", endpoints: [{ host: "a.com", port: 443, access: "full" }] } } };
+    const bad = {
+      network_policies: {
+        test: { name: "test", endpoints: [{ host: "a.com", port: 443, access: "full" }] },
+      },
+    };
     expect(validate(bad)).toBe(false);
   });
 
@@ -212,6 +326,67 @@ describe("policy-preset.schema.json", () => {
     };
     expect(validate(bad)).toBe(false);
   });
+
+  it("accepts preset native WebSocket text rules and credential rewrite", () => {
+    const valid = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [
+            {
+              host: "gateway.example.com",
+              port: 443,
+              protocol: "websocket",
+              enforcement: "enforce",
+              websocket_credential_rewrite: true,
+              allowed_ips: ["10.0.0.0/8", "172.16.0.0/12"],
+              rules: [
+                { allow: { method: "GET", path: "/**" } },
+                { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "websocket preset");
+  });
+
+  it("accepts preset request-body credential rewrite on REST endpoints", () => {
+    const valid = {
+      preset: { name: "slack", description: "Slack" },
+      network_policies: {
+        slack: {
+          name: "Slack",
+          endpoints: [
+            {
+              host: "api.slack.com",
+              port: 443,
+              protocol: "rest",
+              enforcement: "enforce",
+              request_body_credential_rewrite: true,
+              rules: [{ allow: { method: "POST", path: "/**" } }],
+            },
+          ],
+        },
+      },
+    };
+    expectValid(validate, valid, "rest body rewrite preset");
+  });
+
+  it("rejects preset endpoint with protocol websocket but no rules", () => {
+    const bad = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "gateway.example.com", port: 443, protocol: "websocket" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
 });
 
 // ── OpenClaw plugin manifest ─────────────────────────────────────────────────
@@ -225,13 +400,112 @@ describe("openclaw-plugin.schema.json", () => {
   });
 
   it("rejects plugin with missing id", () => {
-    const bad = { ...(data as object) };
-    delete (bad as Record<string, unknown>).id;
+    const bad = cloneObject(data);
+    delete bad.id;
     expect(validate(bad)).toBe(false);
   });
 
   it("rejects plugin with invalid version format", () => {
-    const bad = { ...(data as object), version: "not-semver" };
+    const bad = { ...cloneObject(data), version: "not-semver" };
+    expect(validate(bad)).toBe(false);
+  });
+});
+
+// ── Model-Specific Setup ────────────────────────────────────────────────────
+
+describe("model-specific-setup/schema.json", () => {
+  const validate = compileSchema("nemoclaw-blueprint/model-specific-setup/schema.json");
+  const data = loadJSON(
+    repoPath("nemoclaw-blueprint/model-specific-setup/openclaw/kimi-k2.6-managed-inference.json"),
+  );
+
+  it("accepts the OpenClaw Kimi manifest", () => {
+    expectValid(validate, data, "kimi-k2.6-managed-inference.json");
+  });
+
+  it("rejects OpenClaw manifests with Hermes effects", () => {
+    const bad = {
+      ...cloneObject(data),
+      effects: {
+        hermesCompat: {
+          future: true,
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects manifests with empty match objects", () => {
+    const bad = {
+      ...cloneObject(data),
+      match: {},
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects whitespace-only manifest strings", () => {
+    const bad = {
+      ...cloneObject(data),
+      description: "   ",
+      match: {
+        modelIds: ["   "],
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects OpenClaw plugin paths outside the staged plugin trees", () => {
+    for (const [pathValue, loadPathValue] of [
+      ["/etc/passwd", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+      ["../secrets", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+      ["openclaw-plugins/subdir/../escape", "/usr/local/share/nemoclaw/openclaw-plugins/fixture"],
+      ["openclaw-plugins/fixture", "/etc/passwd"],
+      ["openclaw-plugins/fixture", "/usr/local/share/nemoclaw/openclaw-plugins/subdir/../escape"],
+    ]) {
+      const bad = {
+        ...cloneObject(data),
+        effects: {
+          openclawPlugins: [
+            {
+              id: "fixture-plugin",
+              path: pathValue,
+              loadPath: loadPathValue,
+            },
+          ],
+        },
+      };
+      expect(validate(bad)).toBe(false);
+    }
+  });
+
+  it("accepts OpenClaw plugin paths inside the staged plugin trees", () => {
+    const valid = {
+      ...cloneObject(data),
+      effects: {
+        openclawPlugins: [
+          {
+            id: "fixture-plugin",
+            path: "openclaw-plugins/pluginA/main.js",
+            loadPath: "/usr/local/share/nemoclaw/openclaw-plugins/dir/sub_dir/plugin.so",
+          },
+        ],
+      },
+    };
+    expectValid(validate, valid, "fixture plugin paths");
+  });
+
+  it("rejects Hermes manifests with OpenClaw effects", () => {
+    const bad = {
+      id: "fixture-hermes",
+      agent: "hermes",
+      description: "Fixture Hermes setup",
+      match: {
+        modelIds: ["fixture/hermes"],
+      },
+      effects: {
+        openclawCompat: {},
+      },
+    };
     expect(validate(bad)).toBe(false);
   });
 });

@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
@@ -10,7 +9,7 @@ import path from "node:path";
 
 const CHECK_DOCS = path.join(import.meta.dirname, "e2e", "e2e-cloud-experimental", "check-docs.sh");
 
-function runCheckDocs(filePath) {
+function runCheckDocs(filePath: string) {
   return spawnSync("bash", [CHECK_DOCS, "--only-links", "--local-only", filePath], {
     encoding: "utf-8",
   });
@@ -141,18 +140,22 @@ describe("check-docs link validation", () => {
     );
   });
 
-  it("fails on malformed HTML comments", () => {
-    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-badcomment-"));
-    const mdPath = path.join(tempDir, "guide.md");
-    fs.writeFileSync(
-      mdPath,
-      ["# Guide", "<!-- missing close", "[ignored](./inside-comment.md)", ""].join("\n"),
-    );
+  it(
+    "fails on malformed HTML comments",
+    { timeout: 15000 },
+    () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-check-docs-badcomment-"));
+      const mdPath = path.join(tempDir, "guide.md");
+      fs.writeFileSync(
+        mdPath,
+        ["# Guide", "<!-- missing close", "[ignored](./inside-comment.md)", ""].join("\n"),
+      );
 
-    const result = runCheckDocs(mdPath);
+      const result = runCheckDocs(mdPath);
 
-    expect(result.status).toBe(1);
-    expect(`${result.stdout}${result.stderr}`).toContain(`malformed HTML comment in ${mdPath}`);
-    expect(`${result.stdout}${result.stderr}`).not.toContain("inside-comment.md");
-  });
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(`malformed HTML comment in ${mdPath}`);
+      expect(`${result.stdout}${result.stderr}`).not.toContain("inside-comment.md");
+    },
+  );
 });

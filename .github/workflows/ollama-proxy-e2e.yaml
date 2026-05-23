@@ -1,0 +1,43 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Ollama Auth Proxy E2E — manual trigger.
+#
+# Installs real Ollama, pulls a small model, and validates the auth proxy
+# end-to-end: token auth, real inference, persistence, recovery, and
+# container reachability.
+#
+# Trigger manually: Actions → "E2E / Ollama Auth Proxy" → Run workflow
+# Or via CLI: gh workflow run ollama-proxy-e2e.yaml
+
+name: E2E / Ollama Auth Proxy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ollama-proxy-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+
+      - name: Run Ollama Auth Proxy E2E
+        run: bash test/e2e/test-ollama-auth-proxy-e2e.sh
+
+      - name: Upload test log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ollama-proxy-e2e-log
+          path: /tmp/nemoclaw-ollama-proxy-e2e.log
+          if-no-files-found: ignore

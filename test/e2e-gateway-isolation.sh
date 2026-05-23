@@ -63,33 +63,31 @@ info "1. Gateway user exists with separate UID"
 OUT=$(run_as_root "id gateway && id sandbox")
 GW_UID=$(echo "$OUT" | grep "^uid=" | head -1 | sed 's/uid=\([0-9]*\).*/\1/')
 SB_UID=$(echo "$OUT" | grep "^uid=" | tail -1 | sed 's/uid=\([0-9]*\).*/\1/')
-if [ -n "$GW_UID" ] && [ -n "$SB_UID" ] && [ "$GW_UID" != "$SB_UID" ]; then
+SB_GID=$(echo "$OUT" | grep "^uid=" | tail -1 | sed 's/.*gid=\([0-9]*\).*/\1/')
+if [ -n "$GW_UID" ] && [ -n "$SB_UID" ] && [ -n "$SB_GID" ] && [ "$GW_UID" != "$SB_UID" ]; then
   pass "gateway (uid=$GW_UID) and sandbox (uid=$SB_UID) are different users"
 else
-  fail "gateway and sandbox UIDs not distinct: $OUT"
+  fail "gateway and sandbox IDs not distinct or incomplete: $OUT"
 fi
 
-# ── Test 2: openclaw.json is not writable by sandbox user ────────
+# ── Test 2: openclaw.json is writable by sandbox user (mutable default) ──
 
-info "2. openclaw.json is not writable by sandbox user"
-OUT=$(run_as_sandbox "touch /sandbox/.openclaw/openclaw.json 2>&1 || echo BLOCKED")
-if echo "$OUT" | grep -q "BLOCKED\|Permission denied\|Read-only"; then
-  pass "sandbox cannot write to openclaw.json"
+info "2. openclaw.json is writable by sandbox user (mutable default)"
+OUT=$(run_as_sandbox "test -w /sandbox/.openclaw/openclaw.json && echo WRITABLE || echo BLOCKED")
+if echo "$OUT" | grep -q "WRITABLE"; then
+  pass "sandbox can write to openclaw.json (mutable default)"
 else
-  fail "sandbox CAN write to openclaw.json: $OUT"
+  fail "sandbox should be able to write to openclaw.json in mutable default: $OUT"
 fi
 
-# ── Test 3: .openclaw directory is not writable by sandbox ───────
+# ── Test 3: .openclaw directory is writable by sandbox (mutable default) ──
 
-info "3. .openclaw directory not writable by sandbox (no symlink replacement)"
-# ln -sf may return 0 even when it fails to replace (silent failure on perm denied).
-# Verify the symlink still points to the expected target after the attempt.
-OUT=$(run_as_sandbox "ln -sf /tmp/evil /sandbox/.openclaw/hooks 2>&1; readlink /sandbox/.openclaw/hooks")
-TARGET=$(echo "$OUT" | tail -1)
-if [ "$TARGET" = "/sandbox/.openclaw-data/hooks" ]; then
-  pass "sandbox cannot replace symlinks in .openclaw (target unchanged)"
+info "3. .openclaw directory is writable by sandbox (mutable default)"
+OUT=$(run_as_sandbox "touch /sandbox/.openclaw/test-write && rm /sandbox/.openclaw/test-write && echo OK || echo BLOCKED")
+if echo "$OUT" | grep -q "OK"; then
+  pass "sandbox can write to .openclaw directory (mutable default)"
 else
-  fail "sandbox replaced symlink — hooks now points to: $TARGET"
+  fail "sandbox should be able to write to .openclaw in mutable default: $OUT"
 fi
 
 # ── Test 4: Config hash file exists and is valid ─────────────────
@@ -102,19 +100,29 @@ else
   fail "config hash mismatch: $OUT"
 fi
 
-# ── Test 5: Config hash is not writable by sandbox ───────────────
+# ── Test 5: Update hints are disabled in sandbox config ──────────
 
-info "5. Config hash not writable by sandbox user"
-OUT=$(run_as_sandbox "echo fake > /sandbox/.openclaw/.config-hash 2>&1 || echo BLOCKED")
-if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
-  pass "sandbox cannot tamper with config hash"
+info "5. Sandbox config disables startup update hints"
+OUT=$(run_as_root "python3 -c 'import json; cfg=json.load(open(\"/sandbox/.openclaw/openclaw.json\")); print(\"OK\" if cfg.get(\"update\", {}).get(\"checkOnStart\") is False else \"BAD\")'")
+if echo "$OUT" | grep -q "OK"; then
+  pass "startup update hints disabled"
 else
-  fail "sandbox CAN write to config hash: $OUT"
+  fail "startup update hints not disabled: $OUT"
 fi
 
-# ── Test 6: gosu is installed ────────────────────────────────────
+# ── Test 6: Config hash is writable by sandbox (mutable default) ──
 
-info "6. gosu binary is available"
+info "6. Config hash writable by sandbox user (mutable default)"
+OUT=$(run_as_sandbox "test -w /sandbox/.openclaw/.config-hash && echo WRITABLE || echo BLOCKED")
+if echo "$OUT" | grep -q "WRITABLE"; then
+  pass "sandbox can write to config hash (mutable default)"
+else
+  fail "sandbox cannot write to config hash — should be writable: $OUT"
+fi
+
+# ── Test 7: gosu is installed ────────────────────────────────────
+
+info "7. gosu binary is available"
 OUT=$(run_as_root "command -v gosu && gosu --version")
 if echo "$OUT" | grep -q "gosu"; then
   pass "gosu installed"
@@ -122,9 +130,9 @@ else
   fail "gosu not found: $OUT"
 fi
 
-# ── Test 7: Entrypoint PATH is locked to system dirs ─────────────
+# ── Test 8: Entrypoint PATH is locked to system dirs ─────────────
 
-info "7. Entrypoint locks PATH to system directories"
+info "8. Entrypoint locks PATH to system directories"
 # Walk the entrypoint line-by-line, eval only export lines, stop after PATH.
 OUT=$(run_as_root "bash -c 'while IFS= read -r line; do case \"\$line\" in export\\ *) eval \"\$line\" 2>/dev/null;; esac; case \"\$line\" in \"export PATH=\"*) break;; esac; done < /usr/local/bin/nemoclaw-start; echo \$PATH'")
 if echo "$OUT" | grep -q "^/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin$"; then
@@ -133,9 +141,9 @@ else
   fail "PATH not locked as expected: $OUT"
 fi
 
-# ── Test 8: openclaw resolves to expected absolute path ──────────
+# ── Test 9: openclaw resolves to expected absolute path ──────────
 
-info "8. Gateway runs the expected openclaw binary"
+info "9. Gateway runs the expected openclaw binary"
 OUT=$(run_as_root "gosu gateway which openclaw")
 if [ "$OUT" = "/usr/local/bin/openclaw" ]; then
   pass "openclaw resolves to /usr/local/bin/openclaw"
@@ -143,25 +151,25 @@ else
   fail "openclaw resolves to unexpected path: $OUT"
 fi
 
-# ── Test 9: Symlinks point to expected targets ───────────────────
+# ── Test 10: State directories exist directly in .openclaw ──────
 
-info "9. All .openclaw symlinks point to .openclaw-data"
-FAILED_LINKS=""
-for link in agents extensions workspace skills hooks identity devices canvas cron memory logs credentials sandbox telegram; do
-  OUT=$(run_as_root "readlink -f /sandbox/.openclaw/$link")
-  if [ "$OUT" != "/sandbox/.openclaw-data/$link" ]; then
-    FAILED_LINKS="$FAILED_LINKS $link->$OUT"
+info "10. Agent state directories exist in .openclaw"
+MISSING_DIRS=""
+for dir in agents extensions workspace skills hooks memory; do
+  OUT=$(run_as_root "test -d /sandbox/.openclaw/$dir && echo EXISTS || echo MISSING")
+  if echo "$OUT" | grep -q "MISSING"; then
+    MISSING_DIRS="$MISSING_DIRS $dir"
   fi
 done
-if [ -z "$FAILED_LINKS" ]; then
-  pass "all symlinks point to .openclaw-data"
+if [ -z "$MISSING_DIRS" ]; then
+  pass "all expected state directories exist in .openclaw"
 else
-  fail "symlink targets wrong:$FAILED_LINKS"
+  fail "missing directories in .openclaw:$MISSING_DIRS"
 fi
 
-# ── Test 10: iptables is installed (required for network policy enforcement) ──
+# ── Test 11: iptables is installed (required for network policy enforcement) ──
 
-info "10. iptables is installed"
+info "11. iptables is installed"
 OUT=$(run_as_root "iptables --version 2>&1")
 if echo "$OUT" | grep -q "iptables v"; then
   pass "iptables installed: $OUT"
@@ -169,19 +177,19 @@ else
   fail "iptables not found — sandbox network policies will not be enforced: $OUT"
 fi
 
-# ── Test 11: chattr is available for immutable hardening ─────────
+# ── Test 12: chattr is available for immutable hardening ─────────
 
-info "11. chattr is available for immutable symlink hardening"
+info "12. chattr is available for shields up immutability"
 OUT=$(run_as_root "command -v chattr 2>/dev/null || true")
 if [ -n "$OUT" ]; then
   pass "chattr available at $OUT"
 else
-  fail "chattr not found — nemoclaw-start immutable hardening will be skipped"
+  fail "chattr not found — shields up immutability will not work"
 fi
 
-# ── Test 12: Sandbox user cannot kill gateway-user processes ─────
+# ── Test 13: Sandbox user cannot kill gateway-user processes ─────
 
-info "12. Sandbox user cannot kill gateway-user processes"
+info "13. Sandbox user cannot kill gateway-user processes"
 # Start a dummy process as gateway, try to kill it as sandbox
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
   gosu gateway sleep 60 &
@@ -197,42 +205,80 @@ else
   fail "sandbox CAN kill gateway processes: $OUT"
 fi
 
-# ── Test 13: Dangerous capabilities are dropped by entrypoint ────
+# ── Test 14: Dangerous capabilities are dropped by entrypoint ────
 
-info "13. Entrypoint drops dangerous capabilities from bounding set"
-# Run capsh directly with the same --drop flags as the entrypoint, then
-# check CapBnd. This avoids running the full entrypoint which starts
-# gateway services that fail in CI without a running OpenShell environment.
-# Extract the --drop list from the entrypoint to stay in sync.
-DROP_LIST=$(run_as_root "grep -oP '(?<=--drop=)[^ \\\\]+' /usr/local/bin/nemoclaw-start")
-if [ -z "$DROP_LIST" ]; then
-  fail "could not extract --drop list from entrypoint"
+info "14. Entrypoint drops the full issue #3280 dangerous-cap inventory from sandbox-user bounding set"
+# Inventory every cap named in issue #3280 against CapBnd of the
+# sandbox-user process AFTER both stages of the entrypoint's privilege
+# step-down: (1) the entrypoint-wide capsh drop in drop_capabilities()
+# and (2) the per-user setpriv drop in STEP_DOWN_PREFIX_SANDBOX. The
+# previous test (#3328) only exercised stage 1 and classified
+# CAP_FOWNER/SETUID/SETGID as load-bearing because gosu needed them;
+# the follow-up replaces gosu with setpriv so those three drop
+# atomically with reuid, and ALL eight issue-named caps must be absent.
+#
+# IMPORTANT: docker's default bounding set already excludes CAP_SYS_ADMIN
+# and CAP_SYS_PTRACE, so a plain "docker run" cannot reproduce the issue
+# #3280 condition (permissive OpenShell runtime). We --cap-add those two
+# caps here so the bounding set entering the entrypoint resembles the
+# runtime that triggered T6002104.
+#
+# Strategy: replay the two production drop stages inline by sourcing
+# sandbox-init.sh and using its drop_capabilities() function and
+# STEP_DOWN_PREFIX_SANDBOX array directly. This avoids depending on the
+# entrypoint's volume mounts / config files while still exercising the
+# exact production code paths.
+OUT=$(docker run --rm --entrypoint "" \
+  --cap-add=CAP_SYS_ADMIN --cap-add=CAP_SYS_PTRACE \
+  "$IMAGE" \
+  bash -c '
+    source /usr/local/lib/nemoclaw/sandbox-init.sh
+    # Stage 1: drop_capabilities re-execs via capsh with the entrypoint-
+    # wide --drop list. The argument is the inner script that runs after
+    # the re-exec, which then does stage 2 (setpriv step-down) via
+    # STEP_DOWN_PREFIX_SANDBOX and prints CapBnd. We exec grep directly
+    # rather than wrapping in bash -c "awk ..." to avoid a triple-quoted
+    # awk script — the $2 in $print $2$ would otherwise be expanded by
+    # bash on its way through capsh re-exec.
+    drop_capabilities /bin/bash -c "
+      source /usr/local/lib/nemoclaw/sandbox-init.sh
+      exec \"\${STEP_DOWN_PREFIX_SANDBOX[@]}\" grep ^CapBnd: /proc/self/status
+    "
+  ' 2>&1 || true)
+echo "Sandbox-user CapBnd output: $OUT"
+
+CAP_BND=$(echo "$OUT" | grep ^CapBnd: | head -1 | awk '{print $2}')
+if [ -z "$CAP_BND" ]; then
+  fail "could not capture CapBnd from post-stepdown process: $OUT"
 else
-  OUT=$(run_as_root "capsh --drop=${DROP_LIST} -- -c '
-    CAP_BND=\$(grep \"^CapBnd:\" /proc/self/status | awk \"{print \\\$2}\")
-    echo \"CapBnd=\$CAP_BND\"
-    BND_DEC=\$((16#\$CAP_BND))
-    NET_RAW_BIT=\$((1 << 13))
-    if [ \$((BND_DEC & NET_RAW_BIT)) -ne 0 ]; then
-      echo \"DANGEROUS: cap_net_raw present\"
-    else
-      echo \"SAFE: cap_net_raw dropped\"
+  val=$((16#$CAP_BND))
+  bad=0
+  for entry in \
+    21:CAP_SYS_ADMIN \
+    19:CAP_SYS_PTRACE \
+    13:CAP_NET_RAW \
+    10:CAP_NET_BIND_SERVICE \
+    1:CAP_DAC_OVERRIDE \
+    3:CAP_FOWNER \
+    7:CAP_SETUID \
+    6:CAP_SETGID; do
+    bit=${entry%%:*}
+    name=${entry#*:}
+    if [ $(((val >> bit) & 1)) -ne 0 ]; then
+      bad=$((bad + 1))
+      fail "$name still present in sandbox-user CapBnd (issue #3280)"
     fi
-  '")
-  if echo "$OUT" | grep -q "SAFE: cap_net_raw dropped"; then
-    pass "entrypoint drops dangerous capabilities (cap_net_raw not in bounding set)"
-  elif echo "$OUT" | grep -q "DANGEROUS"; then
-    fail "cap_net_raw still present after capsh drop: $OUT"
-  else
-    fail "could not verify capability state: $OUT"
+  done
+  if [ "$bad" -eq 0 ]; then
+    pass "entrypoint drops the full issue #3280 dangerous-cap inventory (all 8 caps absent from sandbox-user CapBnd: 0x$CAP_BND)"
   fi
 fi
 
-# ── Test 13: Sandbox user cannot write to .nemoclaw parent ────────
-# Note: /sandbox itself is sandbox-owned (DAC allows writes). Landlock makes it
-# read-only in production — tested in checks/04-landlock-readonly.sh instead.
+# ── Test 13b: Sandbox user cannot write to .nemoclaw parent ───────
+# Note: /sandbox itself is sandbox-owned and writable in the mutable-default
+# policy. This check only covers the root-owned .nemoclaw parent.
 
-info "13. Sandbox user cannot create files in /sandbox/.nemoclaw"
+info "13b. Sandbox user cannot create files in /sandbox/.nemoclaw"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/testfile 2>&1 || echo BLOCKED")
 if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
   pass "sandbox cannot create files in .nemoclaw parent (root-owned)"
@@ -240,9 +286,9 @@ else
   fail "sandbox CAN create files in .nemoclaw parent: $OUT"
 fi
 
-# ── Test 14: Sandbox user cannot modify blueprints ────────────────
+# ── Test 14b: Sandbox user cannot modify blueprints ──────────────
 
-info "14. Sandbox user cannot modify blueprints"
+info "14b. Sandbox user cannot modify blueprints"
 OUT=$(run_as_sandbox "touch /sandbox/.nemoclaw/blueprints/testfile 2>&1 || echo BLOCKED")
 if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
   pass "sandbox cannot write to blueprints (root-owned)"
@@ -260,14 +306,14 @@ else
   fail "sandbox cannot write to .nemoclaw/state: $OUT"
 fi
 
-# ── Test 16: Sandbox user CAN write to .openclaw-data ─────────────
+# ── Test 16: Sandbox user CAN write to .openclaw ──────────────────
 
-info "16. Sandbox user can write to .openclaw-data"
-OUT=$(run_as_sandbox "touch /sandbox/.openclaw-data/testfile && echo OK || echo FAILED")
+info "16. Sandbox user can write to .openclaw"
+OUT=$(run_as_sandbox "touch /sandbox/.openclaw/testfile && rm -f /sandbox/.openclaw/testfile && echo OK || echo FAILED")
 if echo "$OUT" | grep -q "OK"; then
-  pass "sandbox can write to .openclaw-data (sandbox-owned)"
+  pass "sandbox can write to .openclaw (sandbox-owned, mutable default)"
 else
-  fail "sandbox cannot write to .openclaw-data: $OUT"
+  fail "sandbox cannot write to .openclaw: $OUT"
 fi
 
 # ── Test 17: Sandbox user cannot rename/delete blueprints dir ─────
@@ -320,60 +366,151 @@ else
   fail "sandbox cannot write to .nemoclaw/config.json: $OUT"
 fi
 
-# ── Test 22: Sandbox user cannot create new files in .openclaw ────
+# ── Test 22: Sandbox user can create new files in .openclaw (mutable default) ──
 
-info "22. Sandbox user cannot create new files in .openclaw directory"
-OUT=$(run_as_sandbox "touch /sandbox/.openclaw/newfile 2>&1 || echo BLOCKED")
-if echo "$OUT" | grep -q "BLOCKED\|Permission denied"; then
-  pass "sandbox cannot create new files in .openclaw (root-owned dir)"
+info "22. Sandbox user can create new files in .openclaw directory (mutable default)"
+OUT=$(run_as_sandbox "touch /sandbox/.openclaw/newfile && rm -f /sandbox/.openclaw/newfile && echo OK || echo BLOCKED")
+if echo "$OUT" | grep -q "OK"; then
+  pass "sandbox can create new files in .openclaw (mutable default)"
 else
-  fail "sandbox CAN create new files in .openclaw: $OUT"
+  fail "sandbox cannot create new files in .openclaw — should be writable: $OUT"
 fi
 
-# ── Test 23: .bashrc sources proxy-env from /tmp ──────────────────
-# Requires base image with pre-built .bashrc (#804). Skip gracefully
-# if the file doesn't exist yet (base image not rebuilt).
+# ── Test 23: .bashrc has no proxy entries ────────────────────────
 
-info "23. .bashrc sources proxy config from /tmp"
-OUT=$(run_as_sandbox "cat /sandbox/.bashrc 2>/dev/null || echo MISSING")
-if echo "$OUT" | grep -q "/tmp/nemoclaw-proxy-env.sh"; then
-  pass ".bashrc sources /tmp/nemoclaw-proxy-env.sh"
+info "23. .bashrc has no proxy entries"
+OUT=$(run_as_sandbox "if [ ! -f /sandbox/.bashrc ]; then echo MISSING; elif grep -i proxy /sandbox/.bashrc; then echo FOUND; else echo OK; fi")
+if echo "$OUT" | grep -qx "OK"; then
+  pass ".bashrc has no proxy entries"
 elif echo "$OUT" | grep -q "MISSING\|No such file"; then
-  info "SKIP: .bashrc not present (base image needs rebuild for #804)"
+  fail ".bashrc is missing"
 else
-  fail ".bashrc does not source from expected path: $OUT"
+  fail ".bashrc contains proxy entries: $OUT"
 fi
 
-# ── Test 24: .profile sources proxy-env from /tmp ─────────────────
+# ── Test 24: .profile has no proxy entries ───────────────────────
 
-info "24. .profile sources proxy config from /tmp"
-OUT=$(run_as_sandbox "cat /sandbox/.profile 2>/dev/null || echo MISSING")
-if echo "$OUT" | grep -q "/tmp/nemoclaw-proxy-env.sh"; then
-  pass ".profile sources /tmp/nemoclaw-proxy-env.sh"
+info "24. .profile has no proxy entries"
+OUT=$(run_as_sandbox "if [ ! -f /sandbox/.profile ]; then echo MISSING; elif grep -i proxy /sandbox/.profile; then echo FOUND; else echo OK; fi")
+if echo "$OUT" | grep -qx "OK"; then
+  pass ".profile has no proxy entries"
 elif echo "$OUT" | grep -q "MISSING\|No such file"; then
-  info "SKIP: .profile not present (base image needs rebuild for #804)"
+  fail ".profile is missing"
 else
-  fail ".profile does not source from expected path: $OUT"
+  fail ".profile contains proxy entries: $OUT"
 fi
 
-# ── Test 25: Non-root mode executes without gosu ──────────────────
+# ── Test 25: proxy-env.sh is NOT writable by sandbox user (#2181) ──
+# The entrypoint writes /tmp/nemoclaw-proxy-env.sh via emit_sandbox_sourced_file()
+# which sets mode 444 and root ownership. The sandbox user must not be able to
+# modify this file, as the system-wide shell hooks source it on every connect.
+# Since the E2E bypasses the entrypoint (--entrypoint ""), we simulate what the
+# entrypoint does: create the file as root with mode 444, then verify sandbox
+# cannot modify it.
+
+info "25. proxy-env.sh is not writable by sandbox user"
+OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+  echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
+  chown root:root /tmp/nemoclaw-proxy-env.sh
+  chmod 444 /tmp/nemoclaw-proxy-env.sh
+  gosu sandbox bash -c "echo test >> /tmp/nemoclaw-proxy-env.sh 2>&1; echo EXIT=\$?"
+' 2>&1)
+if echo "$OUT" | grep -q "EXIT=1\|Permission denied"; then
+  pass "sandbox user cannot write to /tmp/nemoclaw-proxy-env.sh"
+else
+  fail "sandbox user CAN write to proxy-env.sh: $OUT"
+fi
+
+# ── Test 26: proxy-env.sh has correct permissions (#2181) ─────────
+
+info "26. proxy-env.sh is read-only (mode 444, root-owned)"
+OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+  echo "# proxy config placeholder" > /tmp/nemoclaw-proxy-env.sh
+  chown root:root /tmp/nemoclaw-proxy-env.sh
+  chmod 444 /tmp/nemoclaw-proxy-env.sh
+  stat -c "%a %U" /tmp/nemoclaw-proxy-env.sh
+' 2>&1)
+if echo "$OUT" | grep -q "444 root"; then
+  pass "proxy-env.sh is 444 root-owned"
+else
+  fail "proxy-env.sh has unexpected permissions: $OUT"
+fi
+
+# ── Test 26a: /etc/profile.d/nemoclaw-proxy.sh sources proxy-env (#2704) ──
+# Login shells (bash -lc) run /etc/profile, which dot-sources every
+# /etc/profile.d/*.sh.  Without this hook, login shells started as a user
+# whose HOME ≠ /sandbox (root, container exec without --user) silently miss
+# the proxy env even when /tmp/nemoclaw-proxy-env.sh is populated.
+
+info "26a. /etc/profile.d/nemoclaw-proxy.sh sources proxy config"
+OUT=$(run_as_root "cat /etc/profile.d/nemoclaw-proxy.sh 2>/dev/null || echo MISSING")
+if echo "$OUT" | grep -q "/tmp/nemoclaw-proxy-env.sh"; then
+  pass "/etc/profile.d/nemoclaw-proxy.sh sources /tmp/nemoclaw-proxy-env.sh"
+elif echo "$OUT" | grep -q "MISSING"; then
+  fail "/etc/profile.d/nemoclaw-proxy.sh is missing (#2704)"
+else
+  fail "/etc/profile.d/nemoclaw-proxy.sh does not source from expected path: $OUT"
+fi
+
+# ── Test 26b: /etc/bash.bashrc prepends the proxy hook (#2704) ────
+# Interactive non-login bash (bash -ic) sources /etc/bash.bashrc.  The
+# stock Debian/Ubuntu file has `[ -z "$PS1" ] && return` near the top, so
+# the hook must precede that guard to fire reliably in non-TTY contexts.
+
+info "26b. /etc/bash.bashrc prepends proxy source line ahead of PS1 guard"
+OUT=$(run_as_root "head -3 /etc/bash.bashrc")
+if echo "$OUT" | head -2 | grep -q "/tmp/nemoclaw-proxy-env.sh"; then
+  pass "/etc/bash.bashrc sources /tmp/nemoclaw-proxy-env.sh before the PS1 guard"
+else
+  fail "/etc/bash.bashrc does not source the proxy hook in the first 3 lines: $OUT"
+fi
+
+# ── Test 26c: bash -ic and bash -lc both pick up /tmp/nemoclaw-proxy-env.sh (#2704) ──
+# End-to-end check: write a sentinel export into the runtime proxy-env
+# file, then verify both interactive (bash -ic) and login (bash -lc)
+# bash modes export it, regardless of which user is running. Mirrors the
+# QA test T5893674.
+
+info "26c. bash -ic and bash -lc export proxy env from /tmp/nemoclaw-proxy-env.sh"
+OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
+  printf "export NEMOCLAW_PROXY_PROBE=https://probe.invalid:9999\n" \
+    > /tmp/nemoclaw-proxy-env.sh
+  chmod 444 /tmp/nemoclaw-proxy-env.sh
+  echo "ROOT_BASH_IC=$(bash -ic "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
+  echo "ROOT_BASH_LC=$(bash -lc "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
+  echo "SANDBOX_BASH_IC=$(gosu sandbox bash -ic "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
+  echo "SANDBOX_BASH_LC=$(gosu sandbox bash -lc "echo \$NEMOCLAW_PROXY_PROBE" 2>/dev/null)"
+' 2>&1)
+EXPECTED="https://probe.invalid:9999"
+if echo "$OUT" | grep -qE "ROOT_BASH_IC=$EXPECTED" \
+  && echo "$OUT" | grep -qE "ROOT_BASH_LC=$EXPECTED" \
+  && echo "$OUT" | grep -qE "SANDBOX_BASH_IC=$EXPECTED" \
+  && echo "$OUT" | grep -qE "SANDBOX_BASH_LC=$EXPECTED"; then
+  pass "bash -ic / bash -lc export proxy env for both root and sandbox"
+else
+  fail "proxy env not set in all bash modes (#2704): $OUT"
+fi
+
+# ── Test 27: Non-root mode executes without gosu ──────────────────
 # The entrypoint detects uid != 0, skips gosu, and execs the command directly.
-# Verifies the non-root fallback path works after read-only /sandbox (#804).
+# Use the image's actual sandbox uid/gid here: the system-assigned sandbox uid
+# is not guaranteed to be 1000 on every runner, and the non-root fallback is
+# designed to run as that sandbox user.
 
-info "25. Non-root mode executes command without gosu"
-OUT=$(docker run --rm --user 1000:1000 "$IMAGE" echo "NON_ROOT_EXEC_OK" 2>&1 || true)
+info "27. Non-root mode executes command without gosu"
+OUT=$(docker run --rm --user "${SB_UID}:${SB_GID}" "$IMAGE" bash -c 'printf "%s\n" "NON_ROOT_EXEC_OK"; sleep 0.2' 2>&1 || true)
 if echo "$OUT" | grep -q "NON_ROOT_EXEC_OK"; then
   pass "non-root mode executed command directly (no gosu)"
 else
   fail "non-root command execution failed: $OUT"
 fi
 
-# ── Test 26: Model override patches openclaw.json at startup ─────
+# ── Test 28: Model override patches openclaw.json at startup ─────
 # NEMOCLAW_MODEL_OVERRIDE should patch agents.defaults.model.primary,
 # model id, and model name in openclaw.json before Landlock locks it.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/759
 
-info "26. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
+info "28. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
 OUT=$(docker run --rm -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
   --entrypoint "" "$IMAGE" bash -c '
   # Source the entrypoint functions without running the full startup
@@ -403,9 +540,9 @@ else
   fail "model override did not patch correctly: $OUT"
 fi
 
-# ── Test 27: Model override is a no-op when env var is unset ─────
+# ── Test 29: Model override is a no-op when env var is unset ─────
 
-info "27. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
+info "29. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
   source <(sed -n "/^apply_model_override/,/^}/p" /usr/local/bin/nemoclaw-start)
   ORIGINAL=$(python3 -c "import json; print(json.load(open(\"/sandbox/.openclaw/openclaw.json\"))[\"agents\"][\"defaults\"][\"model\"][\"primary\"])")

@@ -16,6 +16,14 @@ vi.mock("../onboard/config.js", () => ({
   describeOnboardProvider: vi.fn(),
 }));
 
+vi.mock("./shields-status.js", () => ({
+  slashShieldsStatus: vi.fn(() => ({ text: "**Shields: UP**" })),
+}));
+
+vi.mock("./config-show.js", () => ({
+  slashConfigShow: vi.fn(() => ({ text: "**NemoClaw Config**" })),
+}));
+
 import { handleSlashCommand } from "./slash.js";
 import { loadState } from "../blueprint/state.js";
 import {
@@ -63,6 +71,14 @@ function blankState(): NemoClawState {
     hostBackupPath: null,
     createdAt: null,
     updatedAt: new Date().toISOString(),
+    lastRebuildAt: null,
+    lastRebuildBackupPath: null,
+    shieldsDown: false,
+    shieldsDownAt: null,
+    shieldsDownTimeout: null,
+    shieldsDownReason: null,
+    shieldsDownPolicy: null,
+    shieldsPolicySnapshotPath: null,
   };
 }
 
@@ -83,6 +99,8 @@ describe("commands/slash", () => {
       expect(result.text).toContain("NemoClaw");
       expect(result.text).toContain("Subcommands:");
       expect(result.text).toContain("status");
+      expect(result.text).toContain("shields");
+      expect(result.text).toContain("config");
       expect(result.text).toContain("eject");
       expect(result.text).toContain("onboard");
     });
@@ -94,43 +112,93 @@ describe("commands/slash", () => {
   });
 
   // -------------------------------------------------------------------------
+  // shields (routing)
+  // -------------------------------------------------------------------------
+
+  describe("shields", () => {
+    it("routes to shields status handler", () => {
+      const result = handleSlashCommand(makeCtx("shields"), makeApi());
+      expect(result.text).toContain("Shields");
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // config (routing)
+  // -------------------------------------------------------------------------
+
+  describe("config", () => {
+    it("routes to config show handler", () => {
+      const result = handleSlashCommand(makeCtx("config"), makeApi());
+      expect(result.text).toContain("Config");
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // status
   // -------------------------------------------------------------------------
 
   describe("status", () => {
-    it("reports no operations when state is blank", () => {
+    const onboardConfig: NemoClawOnboardConfig = {
+      endpointType: "build",
+      endpointUrl: "https://api.build.nvidia.com/v1",
+      ncpPartner: null,
+      model: "nvidia/nemotron-3-super-120b-a12b",
+      profile: "default",
+      credentialEnv: "NVIDIA_API_KEY",
+      onboardedAt: "2026-03-01T00:00:00.000Z",
+    };
+
+    it("reports the onboard hint when no onboard config exists", () => {
       const result = handleSlashCommand(makeCtx("status"), makeApi());
-      expect(result.text).toContain("No operations performed yet");
+      expect(result.text).toContain("No onboard configuration found");
+      expect(result.text).toContain("nemoclaw onboard");
     });
 
-    it("reports state when last action exists", () => {
+    it("reports sandbox, endpoint, provider, and model when onboarded", () => {
+      mockedLoadOnboardConfig.mockReturnValue(onboardConfig);
+      mockedDescribeOnboardEndpoint.mockReturnValue("build (https://api.build.nvidia.com/v1)");
+      mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Endpoints");
+      const api = makeApi();
+      api.pluginConfig = { sandboxName: "prachi-restricted" };
+      const result = handleSlashCommand(makeCtx("status"), api);
+      expect(result.text).toContain("NemoClaw Status");
+      expect(result.text).toContain("Sandbox: prachi-restricted");
+      expect(result.text).toContain("Endpoint: build (https://api.build.nvidia.com/v1)");
+      expect(result.text).toContain("Provider: NVIDIA Endpoints");
+      expect(result.text).toContain("Model: nvidia/nemotron-3-super-120b-a12b");
+      expect(result.text).toContain("Onboarded: 2026-03-01T00:00:00.000Z");
+      expect(result.text).not.toContain("No operations performed yet");
+    });
+
+    it("falls back to default sandbox name when pluginConfig is empty", () => {
+      mockedLoadOnboardConfig.mockReturnValue(onboardConfig);
+      mockedDescribeOnboardEndpoint.mockReturnValue("build (...)");
+      mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Endpoints");
+      const result = handleSlashCommand(makeCtx("status"), makeApi());
+      expect(result.text).toContain("Sandbox: openclaw");
+    });
+
+    it("includes rebuild info when present", () => {
+      mockedLoadOnboardConfig.mockReturnValue(onboardConfig);
+      mockedDescribeOnboardEndpoint.mockReturnValue("build (...)");
+      mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Endpoints");
       mockedLoadState.mockReturnValue({
-        lastRunId: "run-123",
-        lastAction: "deploy",
-        blueprintVersion: "1.0.0",
-        sandboxName: "test-sandbox",
-        migrationSnapshot: null,
-        hostBackupPath: null,
-        createdAt: "2026-03-01T00:00:00.000Z",
-        updatedAt: "2026-03-01T00:00:00.000Z",
+        ...blankState(),
+        lastRebuildAt: "2026-04-15T10:00:00Z",
+        lastRebuildBackupPath: "/backups/rebuild-001",
       });
       const result = handleSlashCommand(makeCtx("status"), makeApi());
-      expect(result.text).toContain("Last action: deploy");
-      expect(result.text).toContain("Blueprint: 1.0.0");
-      expect(result.text).toContain("Run ID: run-123");
-      expect(result.text).toContain("Sandbox: test-sandbox");
+      expect(result.text).toContain("Last rebuild: 2026-04-15T10:00:00Z");
+      expect(result.text).toContain("Rebuild backup: /backups/rebuild-001");
     });
 
     it("includes rollback snapshot when present", () => {
+      mockedLoadOnboardConfig.mockReturnValue(onboardConfig);
+      mockedDescribeOnboardEndpoint.mockReturnValue("build (...)");
+      mockedDescribeOnboardProvider.mockReturnValue("NVIDIA Endpoints");
       mockedLoadState.mockReturnValue({
-        lastRunId: "run-456",
-        lastAction: "migrate",
-        blueprintVersion: "2.0.0",
-        sandboxName: "sb",
+        ...blankState(),
         migrationSnapshot: "/snapshots/snap-001",
-        hostBackupPath: null,
-        createdAt: "2026-03-01T00:00:00.000Z",
-        updatedAt: "2026-03-01T00:00:00.000Z",
       });
       const result = handleSlashCommand(makeCtx("status"), makeApi());
       expect(result.text).toContain("Rollback snapshot: /snapshots/snap-001");
@@ -149,12 +217,11 @@ describe("commands/slash", () => {
 
     it("reports manual rollback required when no snapshot exists", () => {
       mockedLoadState.mockReturnValue({
+        ...blankState(),
         lastRunId: "run-1",
         lastAction: "deploy",
         blueprintVersion: "1.0.0",
         sandboxName: "sb",
-        migrationSnapshot: null,
-        hostBackupPath: null,
         createdAt: "2026-03-01T00:00:00.000Z",
         updatedAt: "2026-03-01T00:00:00.000Z",
       });
@@ -164,12 +231,12 @@ describe("commands/slash", () => {
 
     it("shows eject instructions when migration snapshot exists", () => {
       mockedLoadState.mockReturnValue({
+        ...blankState(),
         lastRunId: "run-1",
         lastAction: "migrate",
         blueprintVersion: "1.0.0",
         sandboxName: "sb",
         migrationSnapshot: "/snapshots/snap-001",
-        hostBackupPath: null,
         createdAt: "2026-03-01T00:00:00.000Z",
         updatedAt: "2026-03-01T00:00:00.000Z",
       });
@@ -181,11 +248,11 @@ describe("commands/slash", () => {
 
     it("uses hostBackupPath when migrationSnapshot is absent", () => {
       mockedLoadState.mockReturnValue({
+        ...blankState(),
         lastRunId: "run-1",
         lastAction: "deploy",
         blueprintVersion: "1.0.0",
         sandboxName: "sb",
-        migrationSnapshot: null,
         hostBackupPath: "/backups/backup-001",
         createdAt: "2026-03-01T00:00:00.000Z",
         updatedAt: "2026-03-01T00:00:00.000Z",

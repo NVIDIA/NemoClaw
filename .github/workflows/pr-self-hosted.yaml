@@ -1,0 +1,196 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Self-hosted runner PR workflow — triggered by copy-pr-bot.
+#
+# copy-pr-bot pushes PR code to pull-request/<number> branches only after
+# a maintainer has vetted the changes (or the author is a trusted NVIDIA
+# employee with signed commits). This ensures community PRs never run on
+# self-hosted runners without explicit maintainer approval.
+#
+# Lightweight checks (lint, unit tests) still run on GitHub-hosted runners
+# via the regular pr.yaml workflow, which triggers on pull_request events.
+#
+# See: https://docs.gha-runners.nvidia.com/platform/onboarding/pull-request-testing/
+
+name: CI / Self-Hosted PR
+
+on:
+  push:
+    branches:
+      - "pull-request/[0-9]+"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  get-pr-info:
+    runs-on: ubuntu-latest
+    outputs:
+      pr-info: ${{ steps.get-pr-info.outputs.pr-info }}
+    steps:
+      - id: get-pr-info
+        uses: nv-gha-runners/get-pr-info@090577647b8ddc4e06e809e264f7881650ecdccf # main
+
+  unit-vitest-linux:
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci --ignore-scripts
+          cd nemoclaw
+          npm ci --ignore-scripts
+
+      - name: Build CLI and plugin
+        run: |
+          npm run build:cli
+          cd nemoclaw
+          npm run build
+
+      - name: Run full Vitest suite
+        run: npx vitest run --testTimeout 60000
+
+  build-sandbox-images:
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Resolve sandbox base image
+        uses: ./.github/actions/resolve-sandbox-base-image
+
+      - name: Build production image
+        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production .
+
+      - name: Build sandbox test image (fixtures layered on production)
+        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production -t nemoclaw-sandbox-test .
+
+      - name: Save images to tarballs
+        run: |
+          docker save nemoclaw-sandbox-test | gzip > /tmp/sandbox-test-image.tar.gz
+          docker save nemoclaw-production | gzip > /tmp/isolation-image.tar.gz
+
+      - name: Upload sandbox test image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sandbox-test-image
+          path: /tmp/sandbox-test-image.tar.gz
+          retention-days: 1
+
+      - name: Upload isolation image
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: isolation-image
+          path: /tmp/isolation-image.tar.gz
+          retention-days: 1
+
+  build-sandbox-images-arm64:
+    runs-on: linux-arm64-cpu4
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Resolve sandbox base image
+        uses: ./.github/actions/resolve-sandbox-base-image
+
+      - name: Build production image on arm64
+        run: docker build --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} -t nemoclaw-production-arm64 .
+
+      - name: Build sandbox test image on arm64
+        run: docker build -f test/Dockerfile.sandbox --build-arg BASE_IMAGE=nemoclaw-production-arm64 -t nemoclaw-sandbox-test-arm64 .
+
+  test-e2e-sandbox:
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 15
+    needs: build-sandbox-images
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: sandbox-test-image
+          path: /tmp
+
+      - name: Load image
+        run: gunzip -c /tmp/sandbox-test-image.tar.gz | docker load
+
+      - name: Run sandbox E2E tests
+        run: docker run --rm -v "${{ github.workspace }}/test:/opt/test" nemoclaw-sandbox-test /opt/test/e2e-test.sh
+
+  test-e2e-gateway-isolation:
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 15
+    needs: build-sandbox-images
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: isolation-image
+          path: /tmp
+
+      - name: Load image
+        run: gunzip -c /tmp/isolation-image.tar.gz | docker load
+
+      - name: Run gateway isolation E2E tests
+        run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-gateway-isolation.sh
+
+  test-e2e-port-overrides:
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 10
+    needs: build-sandbox-images
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: isolation-image
+          path: /tmp
+
+      - name: Load image
+        run: gunzip -c /tmp/isolation-image.tar.gz | docker load
+
+      - name: Run port override E2E tests
+        run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-port-overrides.sh
+
+  test-non-root-sandbox-smoke:
+    runs-on: linux-amd64-cpu4
+    timeout-minutes: 5
+    needs: build-sandbox-images
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Download image artifact
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: isolation-image
+          path: /tmp
+
+      - name: Load image
+        run: gunzip -c /tmp/isolation-image.tar.gz | docker load
+
+      - name: Run non-root sandbox smoke test
+        run: NEMOCLAW_TEST_IMAGE=nemoclaw-production bash test/e2e-non-root-smoke.sh
