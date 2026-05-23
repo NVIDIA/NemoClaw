@@ -116,10 +116,14 @@ describe("pruneKnownHostsEntries", () => {
       "[openshell-sandbox]:2222 ssh-ed25519 AAAA...",
       "github.com ssh-rsa AAAA...",
     ].join("\n");
-    // The host field starts with "[openshell-" which starts with "["
-    // not "openshell-", so this line would be preserved by current logic.
-    // Documenting current behavior — bracket-prefixed entries are kept.
-    const result = pruneKnownHostsEntries(input);
-    expect(result).toBe(input);
+    expect(pruneKnownHostsEntries(input)).toBe("github.com ssh-rsa AAAA...");
+  });
+
+  it("removes marked openshell host entries", () => {
+    const input = [
+      "@cert-authority openshell-sandbox ssh-ed25519 AAAA...",
+      "github.com ssh-rsa AAAA...",
+    ].join("\n");
+    expect(pruneKnownHostsEntries(input)).toBe("github.com ssh-rsa AAAA...");
   });
 });

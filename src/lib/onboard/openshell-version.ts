@@ -58,7 +58,7 @@ function getBlueprintVersionField(field: string, rootDir = ROOT): string | null 
     const value = parsed && parsed[field];
     if (typeof value !== "string") return null;
     const trimmed = value.trim();
-    if (!/^[0-9]+\.[0-9]+\.[0-9]+/.test(trimmed)) return null;
+    if (!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(trimmed)) return null;
     return trimmed;
   } catch {
     return null;

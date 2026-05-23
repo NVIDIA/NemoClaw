@@ -532,6 +532,7 @@ const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
 const GATEWAY_NAME = "nemoclaw";
+const SUPPORTED_OPENSHELL_FALLBACK_VERSION = "0.0.44";
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
@@ -1407,7 +1408,7 @@ function getOpenShellDockerSupervisorImage(versionOutput: string | null = null):
   if (shouldUseOpenshellDevChannel() || isOpenshellDevVersion(versionOutput)) {
     return "ghcr.io/nvidia/openshell/supervisor:dev";
   }
-  const supportedVersion = installedVersion ?? getBlueprintMaxOpenshellVersion() ?? "0.0.39";
+  const supportedVersion = installedVersion ?? getBlueprintMaxOpenshellVersion() ?? SUPPORTED_OPENSHELL_FALLBACK_VERSION;
   return `ghcr.io/nvidia/openshell/supervisor:${supportedVersion}`;
 }
 
@@ -2644,7 +2645,9 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
   }
   if (!gatewayBin) {
     console.error("  OpenShell Docker-driver gateway binary not found.");
-    console.error("  Install OpenShell v0.0.39, or set NEMOCLAW_OPENSHELL_GATEWAY_BIN.");
+    console.error(
+      `  Install OpenShell v${SUPPORTED_OPENSHELL_FALLBACK_VERSION}, or set NEMOCLAW_OPENSHELL_GATEWAY_BIN.`,
+    );
     if (exitOnFailure) process.exit(1);
     throw new Error("OpenShell gateway binary not found");
   }
@@ -2666,10 +2669,19 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
 
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
-  // The gateway state directory is NemoClaw-owned; creating it before opening
-  // the append-only log is intentional and safe for this local runtime file.
-  const outFd = fs.openSync(logPath, "a", 0o600); // codeql[js/file-system-race]
-  const errFd = fs.openSync(logPath, "a", 0o600); // codeql[js/file-system-race]
+  const appendNoFollow =
+    fs.constants.O_APPEND |
+    fs.constants.O_CREAT |
+    fs.constants.O_WRONLY |
+    fs.constants.O_NOFOLLOW;
+  let logFd: number;
+  try {
+    logFd = fs.openSync(logPath, appendNoFollow, 0o600);
+  } catch (error) {
+    console.error(`  Failed to open OpenShell Docker-driver gateway log '${logPath}': ${String(error)}`);
+    if (exitOnFailure) process.exit(1);
+    throw error;
+  }
   console.log("  Starting OpenShell Docker-driver gateway...");
   console.log(`  Gateway log: ${logPath}`);
   const launch = gatewayLaunch ?? {
@@ -2682,7 +2694,7 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
   dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(launch);
   const child = spawn(launch.command, launch.args, {
     detached: true,
-    stdio: ["ignore", outFd, errFd],
+    stdio: ["ignore", logFd, logFd],
     env: launch.env,
   });
   const childExit = trackChildExit(child); // #3111 zombie-safe liveness
