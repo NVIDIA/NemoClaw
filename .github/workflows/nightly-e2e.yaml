@@ -466,10 +466,10 @@ jobs:
         run: |
           node - <<'NODE'
           const fs = require('node:fs');
-          const source = fs.readFileSync('src/lib/onboard.ts', 'utf8');
-          const start = source.indexOf('function verifyDirectSandboxGpu');
+          const source = fs.readFileSync('src/lib/onboard/sandbox-gpu-preflight.ts', 'utf8');
+          const start = source.indexOf('export function createDirectSandboxGpuVerifier');
           if (start < 0) {
-            throw new Error('verifyDirectSandboxGpu function not found');
+            throw new Error('createDirectSandboxGpuVerifier function not found');
           }
           const bodyStart = source.indexOf('{', start);
           let depth = 0;
@@ -483,7 +483,7 @@ jobs:
             }
           }
           if (bodyStart < 0 || end < 0) {
-            throw new Error('verifyDirectSandboxGpu function body not found');
+            throw new Error('createDirectSandboxGpuVerifier function body not found');
           }
           const fn = source.slice(start, end);
           const optional = fn.indexOf('if (proof.optional === true) return;');
