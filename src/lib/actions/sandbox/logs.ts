@@ -4,7 +4,7 @@
 import { spawn } from "node:child_process";
 
 import { ROOT } from "../../runner";
-import { getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
+import { captureOpenshell, getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import {
   buildEnableSandboxAuditLogsArgs,
   buildSandboxLogsArgs,
@@ -179,16 +179,60 @@ export function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions
   }
 
   enableSandboxAuditLogs(sandboxName);
-  if (!logsOptions.since) {
-    runOpenclawGatewayLogs(sandboxName, logsOptions);
+
+  if (logsOptions.since) {
+    // --since mode: only openshell logs, pipe directly
+    const args = buildSandboxLogsArgs(sandboxName, logsOptions);
+    const result = runOpenshell(args, {
+      stdio: "inherit",
+      ignoreError: true,
+    });
+    if (result.status !== 0) {
+      console.error(`  Command failed (exit ${result.status}): openshell ${args.join(" ")}`);
+    }
+    exitWithSpawnResult(result);
+    return;
   }
-  const args = buildSandboxLogsArgs(sandboxName, logsOptions);
-  const result = runOpenshell(args, {
-    stdio: "inherit",
+
+  // Capture both sources, merge, then apply --tail once.
+  const merged: string[] = [];
+  let lastResult: LogProbeResult = { status: 0 };
+
+  const gwArgs = buildSandboxOpenclawGatewayLogsArgs(sandboxName, logsOptions);
+  const gwResult = captureOpenshell(gwArgs, {
+    ignoreError: true,
+    timeout: getLogsProbeTimeoutMs(),
+  });
+  if (gwResult.status !== 0) {
+    console.error(
+      `  OpenClaw log source unavailable (${describeLogProbeResult(gwResult)}): ` +
+        `openshell ${gwArgs.join(" ")}`,
+    );
+  }
+  if (gwResult.output) {
+    const lines = gwResult.output.replace(/\n$/, "").split("\n");
+    merged.push(...lines);
+  }
+
+  const osArgs = buildSandboxLogsArgs(sandboxName, logsOptions);
+  const osResult = captureOpenshell(osArgs, {
     ignoreError: true,
   });
-  if (result.status !== 0) {
-    console.error(`  Command failed (exit ${result.status}): openshell ${args.join(" ")}`);
+  if (osResult.status !== 0) {
+    console.error(`  Command failed (exit ${osResult.status}): openshell ${osArgs.join(" ")}`);
   }
-  exitWithSpawnResult(result);
+  lastResult = osResult;
+  if (osResult.output) {
+    const lines = osResult.output.replace(/\n$/, "").split("\n");
+    merged.push(...lines);
+  }
+
+  const limit = Number(logsOptions.lines);
+  const tailed = Number.isFinite(limit) && limit > 0 ? merged.slice(-limit) : merged;
+
+  if (tailed.length > 0) {
+    process.stdout.write(tailed.join("\n") + "\n");
+  }
+
+  exitWithSpawnResult(lastResult);
 }
