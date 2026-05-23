@@ -5801,6 +5801,7 @@ runner.runShell = (command, opts = {}) => {
 registry.updateSandbox = (_name, update) => updates.push(update);
 
 Object.defineProperty(process, "platform", { value: "linux" });
+Object.defineProperty(process, "getuid", { value: () => 1000 });
 platform.isWsl = () => false;
 
 const { setupNim } = require(${onboardPath});
