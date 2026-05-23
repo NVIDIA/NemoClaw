@@ -162,7 +162,7 @@ sandbox_exec_sh_script() {
   for arg in "$@"; do
     remote_cmd+=" $(quote_for_remote_sh "$arg")"
   done
-  openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc "$remote_cmd"
+  run_with_timeout 60 openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc "$remote_cmd"
 }
 
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
@@ -229,13 +229,16 @@ if command -v nemoclaw >/dev/null 2>&1; then
 fi
 if openshell --version >/dev/null 2>&1; then
   openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
-  openshell gateway destroy -g nemoclaw 2>/dev/null || true
+  if [[ "${CI:-}" = "true" || "${NEMOCLAW_E2E_DESTROY_GATEWAY:-}" = "1" ]]; then
+    openshell gateway destroy -g nemoclaw 2>/dev/null || true
+  fi
 fi
 pass "Pre-cleanup complete"
 
 INSTALL_LOG="/tmp/nemoclaw-e2e-openclaw-discord-pairing-install.log"
+INSTALL_TIMEOUT_SECONDS="${NEMOCLAW_E2E_INSTALL_TIMEOUT_SECONDS:-1800}"
 info "Running install.sh --non-interactive..."
-bash install.sh --non-interactive >"$INSTALL_LOG" 2>&1 &
+run_with_timeout "$INSTALL_TIMEOUT_SECONDS" bash install.sh --non-interactive >"$INSTALL_LOG" 2>&1 &
 install_pid=$!
 tail -f "$INSTALL_LOG" --pid=$install_pid 2>/dev/null &
 tail_pid=$!
@@ -582,7 +585,9 @@ else
 fi
 
 repeat_approve=$(sandbox_exec "openclaw pairing approve discord '$pairing_code' 2>&1")
-if echo "$repeat_approve" | grep -q "No pending pairing request found"; then
+repeat_approve_status=$?
+if [ $repeat_approve_status -ne 0 ] \
+  && echo "$repeat_approve" | grep -q "No pending pairing request found"; then
   pass "Second approval fails closed after request consumption"
 else
   fail "Second approval did not report missing pending request: ${repeat_approve:0:300}"
