@@ -71,6 +71,14 @@ run_with_timeout() {
   fi
 }
 
+require_timeout_command() {
+  if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
+    return 0
+  fi
+  fail "Neither timeout nor gtimeout is available; cannot enforce INSTALL_TIMEOUT_SECONDS"
+  exit 1
+}
+
 if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
   REPO="/workspace"
 elif [ -f "$(cd "$(dirname "$0")/../.." && pwd)/install.sh" ]; then
@@ -237,6 +245,7 @@ pass "Pre-cleanup complete"
 
 INSTALL_LOG="/tmp/nemoclaw-e2e-openclaw-discord-pairing-install.log"
 INSTALL_TIMEOUT_SECONDS="${NEMOCLAW_E2E_INSTALL_TIMEOUT_SECONDS:-1800}"
+require_timeout_command
 info "Running install.sh --non-interactive..."
 run_with_timeout "$INSTALL_TIMEOUT_SECONDS" bash install.sh --non-interactive >"$INSTALL_LOG" 2>&1 &
 install_pid=$!
