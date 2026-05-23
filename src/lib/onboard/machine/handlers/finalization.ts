@@ -15,6 +15,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   migratedLegacyKeys: ReadonlySet<string>;
   deps: {
     ensureAgentDashboardForward(sandboxName: string, agent: NonNullable<Agent>): number;
+    recordPostVerifyStarted(): Promise<Session>;
     recordSessionComplete(updates: SessionUpdates): Promise<Session>;
     toSessionUpdates(updates: Record<string, unknown>): SessionUpdates;
     removeLegacyCredentialsFile(): void;
@@ -56,10 +57,6 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
 }: FinalizationStateOptions<Agent, VerifyChain, VerificationResult>): Promise<FinalizationStateResult> {
   if (agent) deps.ensureAgentDashboardForward(sandboxName, agent as NonNullable<Agent>);
 
-  const session = await deps.recordSessionComplete(
-    deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
-  );
-
   const allStagedMigrated =
     stagedLegacyKeys.length > 0 && stagedLegacyKeys.every((key) => migratedLegacyKeys.has(key));
   const unmigratedLegacyKeys = stagedLegacyKeys.filter((key) => !migratedLegacyKeys.has(key));
@@ -79,6 +76,8 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   // Policy application can restart the sandbox; recover OpenClaw before verification (#3573).
   deps.checkAndRecoverSandboxProcesses(sandboxName, { quiet: true });
 
+  await deps.recordPostVerifyStarted();
+
   // Confirm the delivered sandbox is reachable before printing the live dashboard (#2342).
   const verifyChain = deps.buildVerifyChain(deps.getChatUiUrl());
   const verificationResult = await deps.verifyDeployment(sandboxName, verifyChain);
@@ -86,6 +85,10 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   for (const line of verificationDiagnostics) deps.log(line);
 
   deps.printDashboard(sandboxName, model, provider, nimContainer, agent);
+
+  const session = await deps.recordSessionComplete(
+    deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),
+  );
 
   return { session, unmigratedLegacyKeys, verificationDiagnostics };
 }
