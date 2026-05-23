@@ -9590,7 +9590,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     });
     session = policiesResult.session;
 
-    const finalizationResult = await handleFinalizationState({
+    await handleFinalizationState({
       sandboxName,
       model,
       provider,
