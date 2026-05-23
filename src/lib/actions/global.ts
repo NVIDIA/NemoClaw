@@ -1,11 +1,13 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runDeployAction as executeDeployAction } from "./deploy";
+import { runOpenshell } from "../adapters/openshell/runtime";
 import {
   type GarbageCollectImagesOptions,
   type UpgradeSandboxesOptions,
 } from "../domain/lifecycle/options";
+import { recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction } from "../gateway-runtime-action";
+import { runDeployAction as executeDeployAction } from "./deploy";
 import {
   backupAll as executeBackupAllAction,
   garbageCollectImages as executeGarbageCollectImagesAction,
@@ -15,8 +17,6 @@ import {
   runSetupAction as executeSetupAction,
   runSetupSparkAction as executeSetupSparkAction,
 } from "./onboard";
-import { recoverNamedGatewayRuntime as recoverNamedGatewayRuntimeAction } from "../gateway-runtime-action";
-import { runOpenshell } from "../adapters/openshell/runtime";
 import { help, version } from "./root-help";
 
 type GatewayRecovery = { recovered: boolean };
@@ -51,8 +51,8 @@ export async function runDeployAction(instanceName?: string): Promise<void> {
   await executeDeployAction(instanceName);
 }
 
-export function runBackupAllAction(): void {
-  executeBackupAllAction();
+export async function runBackupAllAction(): Promise<void> {
+  await executeBackupAllAction();
 }
 
 export async function runUpgradeSandboxesAction(

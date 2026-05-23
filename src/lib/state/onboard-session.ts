@@ -449,6 +449,7 @@ function transitionMachineSnapshot(session: Session, state: OnboardMachineState,
 
 export function createSession(overrides: Partial<Session> = {}): Session {
   const now = new Date().toISOString();
+  const startedAt = overrides.startedAt ?? now;
   const steps = {
     ...defaultSteps(),
     ...(overrides.steps ?? {}),
@@ -459,7 +460,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     resumable: true,
     status: "in_progress",
     mode: overrides.mode ?? "interactive",
-    startedAt: overrides.startedAt ?? now,
+    startedAt,
     updatedAt: overrides.updatedAt ?? now,
     lastStepStarted: overrides.lastStepStarted ?? null,
     lastCompletedStep: overrides.lastCompletedStep ?? null,
@@ -493,7 +494,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
     },
     machine: parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??
-      createMachineSnapshot("init", now),
+      createMachineSnapshot("init", startedAt),
     steps,
   };
   return session;
@@ -1071,7 +1072,7 @@ export function markStepSkipped(stepName: string): Session {
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
-    if (step.status === "complete" || step.status === "failed") return session;
+    if (step.status === "complete" || step.status === "failed" || step.status === "skipped") return session;
     step.status = "skipped";
     step.startedAt = null;
     step.completedAt = null;
@@ -1130,8 +1131,10 @@ export function markStepFailed(stepName: string, message: string | null = null):
 
 export function completeSession(updates: SessionUpdates = {}): Session {
   const safeUpdates = filterSafeUpdates(updates);
+  let wasComplete = false;
   const updatedSession = updateSession((session) => {
     const now = new Date().toISOString();
+    wasComplete = session.status === "complete";
     Object.assign(session, safeUpdates);
     session.status = "complete";
     session.resumable = false;
@@ -1149,13 +1152,15 @@ export function completeSession(updates: SessionUpdates = {}): Session {
       }),
     );
   }
-  emitOnboardMachineEvent(
-    createOnboardMachineEvent({
-      type: "onboard.completed",
-      session: updatedSession,
-      state: "complete",
-    }),
-  );
+  if (!wasComplete) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "onboard.completed",
+        session: updatedSession,
+        state: "complete",
+      }),
+    );
+  }
   return updatedSession;
 }
 

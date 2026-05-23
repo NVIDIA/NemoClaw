@@ -90,7 +90,7 @@ export interface OnboardMachineContext {
   sandboxName?: string | null;
   provider?: string | null;
   model?: string | null;
-  endpointUrl?: string | null;
+  endpointOrigin?: string | null;
   credentialEnv?: string | null;
   preferredInferenceApi?: string | null;
   hermesAuthMethod?: "oauth" | "api_key" | null;

@@ -57,7 +57,6 @@ function baseOptions(
     agent: null,
     hermesAuthMethod: null,
     hermesToolGateways: [],
-    selectedMessagingChannels: ["telegram"],
     stagedLegacyKeys: [],
     migratedLegacyKeys: new Set(),
     deps,

@@ -131,9 +131,39 @@ describe("handlePreflightState", () => {
     expect(harness.deps.assertCdiNvidiaGpuSpecPresent).toHaveBeenCalledWith(
       { cdiNvidiaGpuSpecMissing: false },
       true,
+      undefined,
     );
     expect(harness.deps.validateSandboxGpuPreflight).toHaveBeenCalledOnce();
     expect(result.resumePreflight).toBe(true);
+  });
+
+  it("passes host GPU platform into the resumed CDI guard", async () => {
+    const session = createSession();
+    session.steps.preflight.status = "complete";
+    const assertCdiNvidiaGpuSpecPresent = vi.fn();
+    const harness = createDeps({
+      assertCdiNvidiaGpuSpecPresent,
+      resolveSandboxGpuConfig: vi.fn(
+        (_gpu: Gpu, opts: { flag: "enable" | "disable" | null; device: string | null | undefined }) => ({
+          sandboxGpuEnabled: opts.flag === "enable",
+          mode: opts.flag === "enable" ? "1" : "0",
+          sandboxGpuDevice: opts.device,
+          hostGpuPlatform: "jetson",
+        }),
+      ),
+    });
+
+    await handlePreflightState({
+      ...baseOptions(harness.deps, session),
+      resume: true,
+      explicitSandboxGpuFlag: "enable",
+    });
+
+    expect(assertCdiNvidiaGpuSpecPresent).toHaveBeenCalledWith(
+      { cdiNvidiaGpuSpecMissing: false },
+      true,
+      "jetson",
+    );
   });
 
   it("restores saved sandbox GPU intent only when resume has no explicit override", async () => {

@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Scenario-based E2E fan-out. Runs every setup scenario from the current
+# migration catalog by calling the single-scenario runner workflow.
+
+name: E2E / Scenario Runner / All
+
+on:
+  workflow_dispatch:
+    inputs:
+      suite_filter:
+        description: "Comma-separated suite ids to run for every scenario (optional; defaults to each scenario's full suite list)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-scenarios-all-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  ubuntu-repo-cloud-openclaw:
+    uses: ./.github/workflows/e2e-scenarios.yaml
+    with:
+      scenario: ubuntu-repo-cloud-openclaw
+      suite_filter: ${{ inputs.suite_filter }}
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+  ubuntu-repo-cloud-hermes:
+    uses: ./.github/workflows/e2e-scenarios.yaml
+    with:
+      scenario: ubuntu-repo-cloud-hermes
+      suite_filter: ${{ inputs.suite_filter }}
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+  gpu-repo-local-ollama-openclaw:
+    uses: ./.github/workflows/e2e-scenarios.yaml
+    with:
+      scenario: gpu-repo-local-ollama-openclaw
+      suite_filter: ${{ inputs.suite_filter }}
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+  macos-repo-cloud-openclaw:
+    uses: ./.github/workflows/e2e-scenarios.yaml
+    with:
+      scenario: macos-repo-cloud-openclaw
+      suite_filter: ${{ inputs.suite_filter }}
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+  wsl-repo-cloud-openclaw:
+    uses: ./.github/workflows/e2e-scenarios.yaml
+    with:
+      scenario: wsl-repo-cloud-openclaw
+      suite_filter: ${{ inputs.suite_filter }}
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+  brev-launchable-cloud-openclaw:
+    uses: ./.github/workflows/e2e-scenarios.yaml
+    with:
+      scenario: brev-launchable-cloud-openclaw
+      suite_filter: ${{ inputs.suite_filter }}
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+
+  ubuntu-no-docker-preflight-negative:
+    uses: ./.github/workflows/e2e-scenarios.yaml
+    with:
+      scenario: ubuntu-no-docker-preflight-negative
+      suite_filter: ${{ inputs.suite_filter }}
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}

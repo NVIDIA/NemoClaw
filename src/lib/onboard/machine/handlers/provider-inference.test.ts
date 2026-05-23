@@ -32,6 +32,10 @@ function createDeps(overrides: Partial<ProviderInferenceStateOptions<Gpu, Agent,
     startStep: vi.fn(async () => undefined),
     complete: vi.fn(async () => createSession()),
     skipped: vi.fn(),
+    recoverProvider: vi.fn(async (_provider: string | null | undefined, credentialEnv: string | null | undefined) => ({
+      forceInferenceSetup: false,
+      credentialEnv: credentialEnv ?? null,
+    })),
     hydrate: vi.fn(),
     repair: vi.fn(),
     routeReady: vi.fn(() => false),
@@ -56,6 +60,7 @@ function createDeps(overrides: Partial<ProviderInferenceStateOptions<Gpu, Agent,
       recordStepComplete: calls.complete,
       toSessionUpdates: (updates: Record<string, unknown>) => updates as SessionUpdates,
       skippedStepMessage: calls.skipped,
+      ensureResumeProviderReady: calls.recoverProvider,
       hydrateCredentialEnv: calls.hydrate,
       repairLocalInferenceSystemdOverrideOrExit: calls.repair,
       isNonInteractive: () => true,
@@ -107,7 +112,11 @@ function baseOptions(
     },
     selectedMessagingChannels: [],
     env: {},
-    constants: { hermesProviderName: "hermes-provider" },
+    constants: {
+      hermesProviderName: "hermes-provider",
+      hermesApiKeyAuthMethod: "api_key",
+      hermesApiKeyCredentialEnv: "NOUS_API_KEY",
+    },
     deps,
   };
 }
@@ -145,6 +154,51 @@ describe("handleProviderInferenceState", () => {
     });
   });
 
+  it("clears non-NVIDIA provider credentials when inference setup fails", async () => {
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      provider: "compatible-endpoint",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    }));
+    const setupInference = vi.fn(async () => {
+      throw new Error("probe failed");
+    });
+    const { deps, calls } = createDeps({ setupNim, setupInference });
+
+    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("probe failed");
+
+    expect(calls.deleteEnv).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
+  });
+
+  it("exits through the injected CLI boundary when provider selection is incomplete", async () => {
+    const setupNim = vi.fn(async () => ({ ...baseSelection, model: null }));
+    const { deps, calls } = createDeps({ setupNim });
+
+    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("exit 1");
+
+    expect(calls.error).toHaveBeenCalledWith("  Inference selection did not yield a provider/model.");
+    expect(calls.exit).toHaveBeenCalledWith(1);
+    expect(calls.complete).not.toHaveBeenCalledWith("provider_selection", expect.anything());
+    expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
+  it("clears provider credentials when inference step recording fails", async () => {
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      provider: "compatible-endpoint",
+      credentialEnv: "COMPATIBLE_API_KEY",
+    }));
+    const startRecordedStep = vi.fn(async (stepName: string) => {
+      if (stepName === "inference") throw new Error("recording failed");
+    });
+    const { deps, calls } = createDeps({ setupNim, startRecordedStep });
+
+    await expect(handleProviderInferenceState(baseOptions(deps))).rejects.toThrow("recording failed");
+
+    expect(calls.deleteEnv).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
+    expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
   it("skips provider selection and inference setup when resume state is already ready", async () => {
     const session = createSession({
       provider: "ollama-local",
@@ -162,11 +216,46 @@ describe("handleProviderInferenceState", () => {
 
     expect(calls.setupNim).not.toHaveBeenCalled();
     expect(calls.setupInference).not.toHaveBeenCalled();
+    expect(calls.recoverProvider).toHaveBeenCalledWith("ollama-local", null);
     expect(calls.skipped).toHaveBeenCalledWith("provider_selection", "ollama-local / llama3.1");
     expect(calls.hydrate).toHaveBeenCalledWith(null);
     expect(calls.repair).toHaveBeenCalledWith("ollama-local", deps.isNonInteractive);
     expect(calls.skipped).toHaveBeenCalledWith("inference", "ollama-local / llama3.1");
     expect(result).toMatchObject({ provider: "ollama-local", model: "llama3.1" });
+  });
+
+  it("reruns inference setup when resumed provider recovery forces recreation", async () => {
+    const session = createSession({
+      provider: "compatible-endpoint",
+      model: "custom-model",
+      credentialEnv: null,
+    });
+    session.steps.provider_selection.status = "complete";
+    const { deps, calls } = createDeps({
+      isInferenceRouteReady: vi.fn(() => true),
+      ensureResumeProviderReady: vi.fn(async () => ({
+        forceInferenceSetup: true,
+        credentialEnv: "COMPATIBLE_API_KEY",
+      })),
+    });
+
+    await handleProviderInferenceState({
+      ...baseOptions(deps, session),
+      resume: true,
+      sandboxName: "my-assistant",
+    });
+
+    expect(calls.setupNim).not.toHaveBeenCalled();
+    expect(calls.hydrate).toHaveBeenCalledWith("COMPATIBLE_API_KEY");
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "custom-model",
+      "compatible-endpoint",
+      null,
+      "COMPATIBLE_API_KEY",
+      null,
+      [],
+    );
   });
 
   it("reconciles model router on resumed routed inference", async () => {

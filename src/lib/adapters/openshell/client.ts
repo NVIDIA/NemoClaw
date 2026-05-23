@@ -2,12 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  spawn,
-  spawnSync,
   type ChildProcess,
   type SpawnSyncOptions,
   type SpawnSyncOptionsWithStringEncoding,
   type SpawnSyncReturns,
+  spawn,
+  spawnSync,
 } from "node:child_process";
 
 export type OpenshellSpawnSync = (
@@ -32,7 +32,9 @@ export interface RunOpenshellOptions extends OpenshellSpawnOptions {
   stdio?: SpawnSyncOptions["stdio"];
 }
 
-export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {}
+export interface CaptureOpenshellOptions extends OpenshellSpawnOptions {
+  includeStderr?: boolean;
+}
 
 export interface CaptureOpenshellAsyncOptions extends CaptureOpenshellOptions {
   killGraceMs?: number;
@@ -86,6 +88,14 @@ function handleSpawnError(
 
 function isIgnoredTimeout(error: Error, opts: OpenshellSpawnOptions): boolean {
   return opts.ignoreError === true && (error as NodeJS.ErrnoException).code === "ETIMEDOUT";
+}
+
+function shouldIncludeStderr(opts: CaptureOpenshellOptions): boolean {
+  return opts.includeStderr === true || opts.ignoreError !== true;
+}
+
+function captureOutput(result: SpawnSyncReturns<string>, opts: CaptureOpenshellOptions): string {
+  return `${result.stdout || ""}${shouldIncludeStderr(opts) ? result.stderr || "" : ""}`.trim();
 }
 
 function timeoutError(binary: string, args: string[], timeout: number): NodeJS.ErrnoException {
@@ -158,7 +168,7 @@ export function captureOpenshellCommand(
     if (isIgnoredTimeout(result.error, opts)) {
       return {
         status: result.status,
-        output: `${result.stdout || ""}${opts.ignoreError ? "" : result.stderr || ""}`.trim(),
+        output: captureOutput(result, opts),
         error: result.error,
         signal: result.signal,
       };
@@ -167,8 +177,29 @@ export function captureOpenshellCommand(
   }
   return {
     status: result.status ?? 1,
-    output: `${result.stdout || ""}${opts.ignoreError ? "" : result.stderr || ""}`.trim(),
+    output: captureOutput(result, opts),
   };
+}
+
+export function captureSandboxSshConfigCommand(
+  binary: string,
+  sandboxName: string,
+  opts: CaptureOpenshellOptions = {},
+): CaptureOpenshellResult {
+  const sandboxGet = captureOpenshellCommand(binary, ["sandbox", "get", sandboxName], {
+    ...opts,
+    ignoreError: true,
+    includeStderr: true,
+  });
+  if (sandboxGet.status !== 0) {
+    const output = sandboxGet.output || `failed to query sandbox '${sandboxName}'`;
+    const sandboxMissing = /\bnot[- ]?found\b/i.test(output);
+    return {
+      ...sandboxGet,
+      output: sandboxMissing ? `sandbox '${sandboxName}' not found` : output,
+    };
+  }
+  return captureOpenshellCommand(binary, ["sandbox", "ssh-config", sandboxName], opts);
 }
 
 export function captureOpenshellCommandAsync(
@@ -200,7 +231,7 @@ export function captureOpenshellCommandAsync(
       if (forceTimer) clearTimeout(forceTimer);
     };
 
-    const buildOutput = () => `${stdout}${opts.ignoreError ? "" : stderr}`.trim();
+    const buildOutput = () => `${stdout}${shouldIncludeStderr(opts) ? stderr : ""}`.trim();
 
     const settle = (
       status: number | null,

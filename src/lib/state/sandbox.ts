@@ -25,8 +25,9 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "child_process";
 
-import { captureOpenshellCommand } from "../adapters/openshell/client.js";
+import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
 import { shellQuote } from "../runner.js";
@@ -469,8 +470,9 @@ function getSshConfig(sandboxName: string): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
-  const result = captureOpenshellCommand(openshellBinary, ["sandbox", "ssh-config", sandboxName], {
+  const result = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
     ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (result.status !== 0) return null;
   return result.output;
@@ -582,6 +584,7 @@ const AUDIT_SYMLINK_WHITELIST: ReadonlyMap<string, string> = new Map([
 ]);
 
 const EXTENSION_NPM_BIN_RE = /^extensions\/[^/]+\/node_modules\/\.bin\/[^/]+$/;
+const OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS = ["nemoclaw", "openclaw-weixin"] as const;
 
 function isAllowedExtensionNpmBinSymlink(relPath: string, linkTarget: string): boolean {
   const normalizedRelPath = relPath.split(path.sep).join("/");
@@ -666,6 +669,71 @@ function existingBackupDirs(backupPath: string, dirNames: string[]): string[] {
     }
   }
   return existing;
+}
+
+function shouldPreserveOpenClawManagedExtensions(
+  manifest: RebuildManifest,
+  dir: string,
+  localDirs: readonly string[],
+): boolean {
+  return (
+    localDirs.includes("extensions") &&
+    (manifest.agentType === "openclaw" || dir.replace(/\/+$/, "") === "/sandbox/.openclaw")
+  );
+}
+
+function buildRestoreTarArgs(
+  backupPath: string,
+  localDirs: readonly string[],
+  preserveManagedExtensions: boolean,
+): string[] {
+  const args = ["-cf", "-", "-C", backupPath];
+  if (preserveManagedExtensions) {
+    for (const extensionName of OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS) {
+      args.push("--exclude", `extensions/${extensionName}`);
+    }
+  }
+  args.push("--", ...localDirs);
+  return args;
+}
+
+function buildOpenClawExtensionsCleanupCommand(dir: string): string {
+  const extensionsDir = `${dir}/extensions`;
+  const quotedExtensionsDir = shellQuote(extensionsDir);
+  const validationCommands = OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS.map((extensionName) => {
+    const managedPath = `${extensionsDir}/${extensionName}`;
+    return (
+      `p=${shellQuote(managedPath)}; ` +
+      'if [ -e "$p" ] && { [ ! -d "$p" ] || [ -L "$p" ]; }; then ' +
+      'echo "refusing to preserve unsafe managed extension: $p" >&2; exit 20; fi'
+    );
+  }).join("; ");
+  const validateManagedPaths = `{ ${validationCommands}; }`;
+  const preservedNames = OPENCLAW_IMAGE_MANAGED_EXTENSION_DIRS.map(
+    (extensionName) => `! -name ${shellQuote(extensionName)}`,
+  ).join(" ");
+
+  return [
+    `mkdir -p -- ${quotedExtensionsDir}`,
+    validateManagedPaths,
+    `find ${quotedExtensionsDir} -mindepth 1 -maxdepth 1 ${preservedNames} -exec rm -rf -- {} +`,
+  ].join(" && ");
+}
+
+function buildRestoreCleanupCommand(
+  dir: string,
+  localDirs: readonly string[],
+  preserveManagedExtensions: boolean,
+): string {
+  const commands: string[] = [];
+  for (const dirName of localDirs) {
+    if (preserveManagedExtensions && dirName === "extensions") continue;
+    commands.push(`rm -rf -- ${shellQuote(`${dir}/${dirName}`)}`);
+  }
+  if (preserveManagedExtensions) {
+    commands.push(buildOpenClawExtensionsCleanupCommand(dir));
+  }
+  return commands.length > 0 ? commands.join(" && ") : ":";
 }
 
 function normalizeStateFileSpec(spec: AgentStateFile | StateFileSpec): StateFileSpec | null {
@@ -1305,11 +1373,20 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
     if (localDirs.length > 0) {
       // Upload via tar pipe
       // NC-2227-04: Removed -h flag from restore as well — no symlink following.
-      const tarResult = spawnSync("tar", ["-cf", "-", "-C", backupPath, ...localDirs], {
-        stdio: ["ignore", "pipe", "pipe"],
-        timeout: 60000,
-        maxBuffer: 256 * 1024 * 1024,
-      });
+      const preserveManagedExtensions = shouldPreserveOpenClawManagedExtensions(
+        manifest,
+        dir,
+        localDirs,
+      );
+      const tarResult = spawnSync(
+        "tar",
+        buildRestoreTarArgs(backupPath, localDirs, preserveManagedExtensions),
+        {
+          stdio: ["ignore", "pipe", "pipe"],
+          timeout: 60000,
+          maxBuffer: 256 * 1024 * 1024,
+        },
+      );
 
       if (tarResult.status !== 0 || !tarResult.stdout) {
         return {
@@ -1321,9 +1398,12 @@ export function restoreSandboxState(sandboxName: string, backupPath: string): Re
         };
       }
 
-      // Remove existing state dirs before extracting so stale files from
-      // later snapshots don't persist after restoring an earlier one.
-      const rmCmd = localDirs.map((d) => `rm -rf -- ${shellQuote(`${dir}/${d}`)}`).join(" && ");
+      // Remove existing state dirs before extracting so stale files from later
+      // snapshots don't persist after restoring an earlier one. OpenClaw's
+      // image-managed extensions are preserved from the freshly built image and
+      // excluded from the restore tar; only user/non-managed extension entries
+      // are cleared and restored from the backup.
+      const rmCmd = buildRestoreCleanupCommand(dir, localDirs, preserveManagedExtensions);
       _log(`Cleaning target dirs before restore: ${rmCmd}`);
       const rmResult = spawnSync("ssh", [...sshArgs(configFile, sandboxName), rmCmd], {
         stdio: ["ignore", "pipe", "pipe"],

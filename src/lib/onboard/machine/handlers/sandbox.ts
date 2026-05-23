@@ -6,6 +6,7 @@ import type { Session, SessionUpdates } from "../../../state/onboard-session";
 export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig> {
   resume: boolean;
   fresh: boolean;
+  resumeAgentChanged: boolean;
   session: Session | null;
   sandboxName: string | null;
   model: string;
@@ -39,7 +40,8 @@ export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChann
     stringSetsEqual(left: string[], right: string[]): boolean;
     removeSandboxFromRegistry(sandboxName: string): void;
     repairRecordedSandbox(sandboxName: string | null): void;
-    ensureValidatedBraveSearchCredential(): Promise<string | null>;
+    ensureValidatedBraveSearchCredential(): Promise<unknown>;
+    isBackToSelection(value: unknown): boolean;
     configureWebSearch(
       existingConfig: WebSearchConfig | null,
       agent: Agent,
@@ -97,6 +99,7 @@ function sameEffectiveTelegramRequireMention(left: boolean | null, right: boolea
 export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingChannelConfig, SandboxGpuConfig>({
   resume,
   fresh,
+  resumeAgentChanged,
   session,
   sandboxName,
   model,
@@ -122,7 +125,8 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
 >): Promise<SandboxStateResult<WebSearchConfig>> {
   const webSearchSupportProbePath = fromDockerfile ? deps.resolvePath(fromDockerfile) : null;
   const webSearchSupported = deps.agentSupportsWebSearch(agent, webSearchSupportProbePath, rootDir);
-  if (webSearchConfig && !webSearchSupported) {
+  const webSearchSupportDropped = Boolean(webSearchConfig) && !webSearchSupported;
+  if (webSearchSupportDropped) {
     deps.note(
       `  Web search is not yet supported by ${(agent as { displayName?: string } | null)?.displayName ?? "this sandbox image"}. Clearing stale config.`,
     );
@@ -146,9 +150,12 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
   }
 
   const sandboxReuseState = deps.getSandboxReuseState(sandboxName);
-  const webSearchConfigChanged = Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
+  const webSearchConfigChanged = webSearchSupportDropped || Boolean(session?.webSearchConfig) !== Boolean(webSearchConfig);
   const currentTelegramRequireMention = deps.computeTelegramRequireMention();
   const recordedTelegramRequireMention = session?.telegramConfig?.requireMention ?? null;
+  // Telegram mention-mode is baked into openclaw.json at sandbox build time.
+  // Compare effective modes because null and false both produce groupPolicy: open
+  // during config generation. This preserves the original #1737/#2417 drift rule.
   const telegramConfigChanged = !sameEffectiveTelegramRequireMention(
     currentTelegramRequireMention,
     recordedTelegramRequireMention,
@@ -161,6 +168,7 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
   const hermesToolGatewayConfigChanged = !deps.stringSetsEqual(recordedHermesToolGateways, hermesToolGateways);
   const resumeSandbox =
     resume &&
+    !resumeAgentChanged &&
     !webSearchConfigChanged &&
     !telegramConfigChanged &&
     !sandboxGpuConfigChanged &&
@@ -176,7 +184,9 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
     deps.skippedStepMessage("sandbox", sandboxName);
   } else {
     if (resume && session?.steps?.sandbox?.status === "complete") {
-      if (webSearchConfigChanged) {
+      if (resumeAgentChanged) {
+        deps.note("  [resume] Agent selection changed; revalidating sandbox compatibility.");
+      } else if (webSearchConfigChanged) {
         deps.note("  [resume] Web Search configuration changed; recreating sandbox.");
         if (sandboxName) deps.removeSandboxFromRegistry(sandboxName);
       } else if (telegramConfigChanged) {
@@ -207,7 +217,11 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
     if (nextWebSearchConfig) {
       deps.note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
       const braveApiKey = await deps.ensureValidatedBraveSearchCredential();
-      nextWebSearchConfig = braveApiKey ? webSearchConfig : null;
+      if (deps.isBackToSelection(braveApiKey)) {
+        nextWebSearchConfig = null;
+      } else {
+        nextWebSearchConfig = braveApiKey ? webSearchConfig : null;
+      }
       if (nextWebSearchConfig) deps.note("  [resume] Reusing Brave Search configuration.");
     } else {
       nextWebSearchConfig = await deps.configureWebSearch(null, agent, webSearchSupportProbePath);
