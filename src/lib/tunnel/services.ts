@@ -21,6 +21,7 @@ import { renderBox } from "../cli/banner";
 import { dockerSpawnSync } from "../adapters/docker";
 import { DASHBOARD_PORT } from "../core/ports";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
+import { isRecord } from "../core/json-types";
 import { buildSubprocessEnv } from "../subprocess-env";
 
 // ---------------------------------------------------------------------------
@@ -173,15 +174,12 @@ function serviceTargetsDashboard(service: string, dashboardPort: number): boolea
 }
 
 function getConfigIngressEntries(config: unknown): Array<{ hostname: string; service: string }> {
-  if (typeof config !== "object" || config === null) return [];
-
-  const ingress = (config as { ingress?: unknown }).ingress;
-  if (!Array.isArray(ingress)) return [];
+  if (!isRecord(config) || !Array.isArray(config.ingress)) return [];
 
   const entries: Array<{ hostname: string; service: string }> = [];
-  for (const entry of ingress) {
-    if (typeof entry !== "object" || entry === null) continue;
-    const { hostname, service } = entry as { hostname?: unknown; service?: unknown };
+  for (const entry of config.ingress) {
+    if (!isRecord(entry)) continue;
+    const { hostname, service } = entry;
     if (typeof hostname === "string" && typeof service === "string") {
       entries.push({ hostname, service });
     }

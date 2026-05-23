@@ -14,15 +14,13 @@ import { spawnSync } from "node:child_process";
 // yaml is a production dependency (used by policies.ts, onboard.ts)
 import YAML from "yaml";
 
+import { isRecord } from "./core/json-types";
+
 // ── Frontmatter parsing ──────────────────────────────────────────
 
 type FrontmatterScalar = string | number | boolean | null | undefined;
 type FrontmatterValue = FrontmatterScalar | FrontmatterRecord | FrontmatterValue[];
 type FrontmatterRecord = { [key: string]: FrontmatterValue };
-
-function isRecord(value: FrontmatterValue): value is FrontmatterRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 export interface SkillFrontmatter {
   name: string;
