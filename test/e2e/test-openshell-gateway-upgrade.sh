@@ -146,6 +146,9 @@ rewrote_base=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --build-arg)
+      if [ "$#" -ge 2 ] && [ "${2#BASE_IMAGE=}" != "$2" ]; then
+        rewrote_base=1
+      fi
       if [ "$#" -ge 2 ] && [ "${2#OPENCLAW_VERSION=}" != "$2" ]; then
         args+=("--build-arg" "OPENCLAW_VERSION=${old_openclaw}")
         rewrote_openclaw=1
@@ -174,6 +177,9 @@ while [ "$#" -gt 0 ]; do
       printf 'rewrite build-arg %s -> BASE_IMAGE=%s\n' "$1" "$base_ref" >>"$log_file"
       shift
       continue
+      ;;
+    --build-arg=BASE_IMAGE=*)
+      rewrote_base=1
       ;;
   esac
   args+=("$1")

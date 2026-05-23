@@ -148,6 +148,16 @@ To remove a channel and clear its stored credentials, run:
 $ nemoclaw my-assistant channels remove telegram
 ```
 
+For QR-paired channels (today: WhatsApp), `channels remove` destructively clears the in-sandbox session directory before the rebuild so the next rebuild does not restore stale auth files and reconnect the channel.
+The cleanup targets `/sandbox/.openclaw/<channel>/` for OpenClaw and `/sandbox/.hermes/platforms/<channel>/` for Hermes.
+The cleanup tries `openshell sandbox exec` and falls back to SSH if that does not produce the success sentinel.
+If neither transport can reach a running sandbox for a QR-paired channel, the command exits non-zero and asks you to start the sandbox and re-run.
+NemoClaw deliberately leaves the registry, policy preset, and `session.policyPresets` unchanged on that failure path, so a follow-up re-run completes the removal cleanly.
+
+`channels remove whatsapp` clears the client-side Baileys session inside the sandbox; it cannot deregister the linked device with WhatsApp's servers because that requires an active Baileys connection to issue the logout RPC, which we no longer have once the session files are gone.
+The phone account will continue to list the sandbox as a Linked Device until you remove it manually from your phone (Settings → Linked Devices → tap the entry → Log out) or until WhatsApp's 14-day inactivity timeout expires.
+Removing the entry from the phone is recommended if you plan to re-pair the same phone with a different sandbox.
+
 Use `channels stop` when you want to pause a bridge without deleting credentials:
 
 ```console

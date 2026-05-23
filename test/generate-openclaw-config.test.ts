@@ -456,6 +456,11 @@ describe("generate-openclaw-config.py: config generation", () => {
   it("emits canonical placeholders and proxy routing for non-Slack channels", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.proxy).toMatchObject({
+      enabled: true,
+      proxyUrl: "http://10.200.0.1:3128",
+      loopbackMode: "proxy",
+    });
     expect(config.channels.telegram.accounts.default.botToken).toBe(
       "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     );
@@ -463,36 +468,74 @@ describe("generate-openclaw-config.py: config generation", () => {
       "openshell:resolve:env:DISCORD_BOT_TOKEN",
     );
     expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.200.0.1:3128");
-    expect(config.channels.discord.accounts.default.proxy).toBe("http://127.0.0.1:3128");
+    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
   });
 
-  it("#3894: routes Discord gateway traffic through the sandbox loopback proxy", () => {
+  it("#3894: routes Discord gateway traffic through OpenClaw's managed proxy", () => {
     const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
       NEMOCLAW_PROXY_HOST: "10.201.0.9",
       NEMOCLAW_PROXY_PORT: "43128",
-      NEMOCLAW_DISCORD_PROXY_PORT: "43129",
     });
 
+    expect(config.proxy).toEqual({
+      enabled: true,
+      proxyUrl: "http://10.201.0.9:43128",
+      loopbackMode: "proxy",
+    });
     expect(config.channels.discord.accounts.default).toMatchObject({
       token: "openshell:resolve:env:DISCORD_BOT_TOKEN",
       enabled: true,
-      proxy: "http://127.0.0.1:43129",
     });
+    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
   });
 
-  it("keeps Telegram on the OpenShell proxy when Discord uses loopback", () => {
+  it("does not write a Discord account proxy when the managed proxy is configured", () => {
+    const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_PROXY_PORT: "43128",
+    });
+
+    expect(config.proxy.proxyUrl).toBe("http://10.200.0.1:43128");
+    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+  });
+
+  it("can defer OpenClaw managed proxy config for build-time doctor", () => {
+    const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_OPENCLAW_MANAGED_PROXY: "0",
+    });
+
+    expect(config.proxy).toBeUndefined();
+    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+  });
+
+  it("ignores the OpenShell loopback proxy env var when using OpenClaw managed proxy", () => {
+    const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      OPENSHELL_LOOPBACK_PROXY_URL: "http://127.0.0.1:45211",
+      NEMOCLAW_DISCORD_PROXY_PORT: "43129",
+    });
+
+    expect(config.proxy.proxyUrl).toBe("http://10.200.0.1:3128");
+    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
+  });
+
+  it("keeps Telegram on the OpenShell proxy while Discord relies on the managed proxy", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
     const config = runConfigScript({
       NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
       NEMOCLAW_PROXY_HOST: "10.201.0.9",
       NEMOCLAW_PROXY_PORT: "43128",
-      NEMOCLAW_DISCORD_PROXY_PORT: "43129",
     });
 
+    expect(config.proxy.proxyUrl).toBe("http://10.201.0.9:43128");
     expect(config.channels.telegram.accounts.default.proxy).toBe("http://10.201.0.9:43128");
-    expect(config.channels.discord.accounts.default.proxy).toBe("http://127.0.0.1:43129");
+    expect(config.channels.discord.accounts.default.proxy).toBeUndefined();
   });
 
   it("emits Bolt-shape placeholders for Slack so the SDK's prefix regex passes", () => {

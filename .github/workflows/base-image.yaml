@@ -16,6 +16,8 @@ name: Images / Base Images
 on:
   push:
     branches: [main]
+    tags:
+      - "v*"
     paths:
       - "Dockerfile.base"
       - "agents/hermes/Dockerfile.base"
@@ -71,6 +73,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
             type=sha,prefix=,format=short
 
       - name: Validate OpenClaw version input
@@ -121,6 +124,7 @@ jobs:
           images: ${{ env.REGISTRY }}/nvidia/nemoclaw/hermes-sandbox-base
           tags: |
             type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=ref,event=tag
             type=sha,prefix=,format=short
 
       - name: Build and push

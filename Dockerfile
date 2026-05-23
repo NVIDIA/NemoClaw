@@ -445,20 +445,15 @@ USER sandbox
 # is opt-in via `shields up` (DAC 444 root:root + chattr +i).
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 #
-# Temporary workaround for NemoClaw#1738: the OpenClaw Discord extension's
-# gateway uses `ws` (via @buape/carbon), which ignores HTTPS_PROXY/HTTP_PROXY
-# env vars and opens a direct TCP socket to gateway.discord.gg. Sandbox netns
-# blocks direct egress, so the WSS handshake never reaches Discord and the
-# bot loops on close-code 1006. Baking `accounts.default.proxy` into
-# openclaw.json feeds DiscordAccountConfig.proxy, which the gateway plugin
-# threads through to the `ws` `agent` option, routing the upgrade through
-# the OpenShell proxy. Mirror of the Telegram treatment immediately below.
-# Remove once OpenClaw lands an env-var-honouring fix for the Discord
-# gateway equivalent to openclaw/openclaw#62878 (Slack Socket Mode).
 # Generate openclaw.json from environment variables. Config generation logic
 # lives in scripts/generate-openclaw-config.py — see that file for the full
 # list of env vars and derivation rules.
-RUN python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
+#
+# OpenClaw's managed proxy config activates process-wide HTTP_PROXY/HTTPS_PROXY
+# for child npm processes. During image build the OpenShell gateway is not
+# available at the runtime sandbox proxy address yet, so defer the final proxy
+# block until after build-time OpenClaw doctor/plugin commands complete.
+RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
 
 # hadolint ignore=DL3059,DL4006
 RUN openclaw doctor --fix --non-interactive
@@ -497,11 +492,21 @@ RUN openclaw plugins install /opt/nemoclaw \
 # SECURITY: Clear any gateway auth token that openclaw doctor/plugins may have
 # auto-generated. The real token is created at container startup by the
 # entrypoint (generate_gateway_token) and never stored in openclaw.json.
+# Also add the final OpenClaw managed proxy config after build-time OpenClaw
+# commands are done, so runtime Discord/WebSocket traffic uses the OpenShell
+# gateway proxy without forcing image-build npm traffic through that proxy.
 RUN python3 -c "\
 import json, os; \
 path = os.path.expanduser('~/.openclaw/openclaw.json'); \
 cfg = json.load(open(path)); \
 cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = ''; \
+proxy_host = os.environ.get('NEMOCLAW_PROXY_HOST') or '10.200.0.1'; \
+proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; \
+cfg['proxy'] = { \
+    'enabled': True, \
+    'proxyUrl': f'http://{proxy_host}:{proxy_port}', \
+    'loopbackMode': 'proxy', \
+}; \
 json.dump(cfg, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
 

@@ -127,19 +127,15 @@ RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
     && chmod -R g+w /sandbox/.openclaw \
     && find /sandbox/.openclaw -type d -exec chmod g+s {} +
 
-# Pre-create shell init files for the sandbox user.
-# Runtime proxy config is written by the entrypoint to /tmp/nemoclaw-proxy-env.sh
-# (root-owned, mode 444, sticky-bit protected) and sourced from here on every
-# interactive session.
-# Ref: #2181 — the file must not be writable by the sandbox user.
+# Pre-create shell init files for the sandbox user. Runtime environment hooks
+# are installed system-wide below; user rc files stay clean and locked so
+# per-user startup files are not part of the trust boundary.
 # hadolint ignore=SC2028
 RUN printf '%s\n' \
-        '# Source runtime proxy config' \
-        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        '# NemoClaw sandbox shell init' \
         > /sandbox/.bashrc \
     && printf '%s\n' \
-        '# Source runtime proxy config' \
-        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        '# NemoClaw sandbox login init' \
         > /sandbox/.profile \
     && chown root:root /sandbox/.bashrc /sandbox/.profile \
     && chmod 444 /sandbox/.bashrc /sandbox/.profile

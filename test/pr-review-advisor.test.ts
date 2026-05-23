@@ -8,21 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import YAML from "yaml";
 
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
-import {
-  assertPrHeadStillCurrent,
-  buildSystemPrompt,
-  classifyMonolithDelta,
-  classifyTestDepth,
-  deriveGateStatus,
-  discoverRequiredStatusCheckContexts,
-  extractRequiredStatusChecksFromRulesets,
-  extractStatusCheckSummaries,
-  normalizeBaseBranch,
-  normalizeReviewResult,
-  pendingRequiredContexts,
-  readTrustedSecurityReviewSkill,
-  renderSummary,
-} from "../tools/pr-review-advisor/analyze.mts";
+import { buildSystemPrompt, classifyMonolithDelta, classifyTestDepth, normalizeReviewResult, readTrustedSecurityReviewSkill, renderDetailedReview, renderSummary } from "../tools/pr-review-advisor/analyze.mts";
 import { githubGraphql } from "../tools/advisors/github.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
@@ -38,14 +24,7 @@ function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
       rationale: "deterministic fallback",
       suggestedTests: ["run unit tests"],
     },
-    gateStatus: {
-      ci: { status: "unknown", evidence: "No statusCheckRollup data was available." },
-      mergeability: { status: "unknown", evidence: "Merge state was unavailable." },
-      reviewThreads: { status: "unknown", evidence: "No review thread state was available." },
-      riskyCodeTested: { status: "pass", evidence: "No risky code areas detected by path heuristics." },
-    },
-    requiredStatusCheckContexts: [],
-    additionalWaitContexts: [],
+    previousAdvisorReview: null,
     workflowSignals: [],
     monolithDeltas: [],
     driftEvidence: [],
@@ -61,14 +40,6 @@ function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
   } as ReviewMetadata;
 }
 
-function restoreEnv(name: string, value: string | undefined): void {
-  if (value === undefined) {
-    delete process.env[name];
-  } else {
-    process.env[name] = value;
-  }
-}
-
 function validResult(overrides = {}) {
   return {
     version: 1,
@@ -80,12 +51,7 @@ function validResult(overrides = {}) {
       recommendation: "merge_after_fixes",
       confidence: "high",
       oneLine: "Review found one fixable issue.",
-    },
-    gateStatus: {
-      ci: { status: "pass", evidence: "checks passed" },
-      mergeability: { status: "pass", evidence: "clean" },
-      reviewThreads: { status: "pass", evidence: "none unresolved" },
-      riskyCodeTested: { status: "warning", evidence: "risky workflow touched" },
+      topItem: "trusted-code boundary",
     },
     findings: [
       {
@@ -109,13 +75,6 @@ function validResult(overrides = {}) {
       verdict: "mocks_recommended",
       rationale: "GitHub API and filesystem paths are mocked in unit tests.",
       suggestedTests: ["comment builder test"],
-    },
-    e2eAdvisorStatus: {
-      found: false,
-      requiredJobs: [],
-      passedForHeadSha: [],
-      missingForHeadSha: [],
-      verdict: "not_found",
     },
     positives: ["Uses a sticky marker for idempotent comments."],
     reviewCompleteness: {
@@ -144,10 +103,8 @@ describe("PR review advisor", () => {
     const result = normalizeReviewResult(
       {
         summary: { recommendation: "ship_it", confidence: "certain", oneLine: "bad enum" },
-        gateStatus: { ci: { status: "green", evidence: "bad enum" } },
         findings: [{ severity: "critical", category: "style", title: "x" }],
         testDepth: { verdict: "integration_only" },
-        e2eAdvisorStatus: { verdict: "shrug" },
         reviewCompleteness: {},
       },
       metadata(),
@@ -155,14 +112,12 @@ describe("PR review advisor", () => {
 
     expect(result.summary.recommendation).toBe("info_only");
     expect(result.summary.confidence).toBe("medium");
-    expect(result.gateStatus.ci.status).toBe("unknown");
     expect(result.findings[0]).toMatchObject({ severity: "suggestion", category: "correctness" });
     expect(result.testDepth.verdict).toBe("unit_sufficient");
-    expect(result.e2eAdvisorStatus.verdict).toBe("not_found");
   });
 
   it("classifies sandbox and workflow changes as requiring deeper validation", () => {
-    expect(classifyTestDepth(["nemoclaw-blueprint/policies/presets/slack.yaml"]).verdict).toBe("e2e_required");
+    expect(classifyTestDepth(["nemoclaw-blueprint/policies/presets/slack.yaml"]).verdict).toBe("runtime_validation_recommended");
     expect(classifyTestDepth(["src/lib/credentials.ts"]).verdict).toBe("mocks_recommended");
     expect(classifyTestDepth(["docs/get-started/quickstart.mdx"]).verdict).toBe("unit_sufficient");
   });
@@ -177,225 +132,6 @@ describe("PR review advisor", () => {
     expect(classifyMonolithDelta({ file: "src/lib/small.ts", baseLines: 20, headLines: 60, delta: 40 })).toMatchObject({
       severity: "none",
     });
-  });
-
-  it("treats mergeable-but-not-ready GitHub merge states as warnings", () => {
-    for (const mergeStateStatus of ["UNSTABLE", "HAS_HOOKS", "unstable"]) {
-      const gates = deriveGateStatus(
-        { graphQl: { data: { repository: { pullRequest: { mergeStateStatus } } } } } as never,
-        [],
-        [],
-      );
-
-      expect(gates.mergeability).toMatchObject({ status: "warning", evidence: `mergeStateStatus=${mergeStateStatus}` });
-    }
-
-    const clean = deriveGateStatus(
-      { graphQl: { data: { repository: { pullRequest: { mergeStateStatus: "CLEAN" } } } } } as never,
-      [],
-      [],
-    );
-    expect(clean.mergeability.status).toBe("pass");
-  });
-
-  it("extracts required checks from active branch rulesets", () => {
-    const rulesets = [
-      {
-        target: "branch",
-        enforcement: "active",
-        conditions: { ref_name: { include: ["refs/heads/main"], exclude: [] } },
-        rules: [
-          {
-            type: "required_status_checks",
-            parameters: {
-              required_status_checks: [
-                { context: "checks" },
-                { context: "commit-lint" },
-              ],
-            },
-          },
-        ],
-      },
-      {
-        target: "branch",
-        enforcement: "active",
-        conditions: { ref_name: { include: ["refs/heads/release/*"], exclude: [] } },
-        rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "release-only" }] } }],
-      },
-      {
-        target: "branch",
-        enforcement: "disabled",
-        conditions: { ref_name: { include: ["refs/heads/main"], exclude: [] } },
-        rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "disabled" }] } }],
-      },
-    ];
-
-    expect(extractRequiredStatusChecksFromRulesets(rulesets, "main")).toEqual(["checks", "commit-lint"]);
-    expect(extractRequiredStatusChecksFromRulesets(rulesets, "release/1.0")).toEqual(["release-only"]);
-  });
-
-  it("normalizes analyzed base refs before ruleset lookup", () => {
-    expect(normalizeBaseBranch("origin/main")).toBe("main");
-    expect(normalizeBaseBranch("target/release/1.0")).toBe("release/1.0");
-    expect(normalizeBaseBranch("refs/heads/feature/x")).toBe("feature/x");
-    expect(normalizeBaseBranch("refs/remotes/upstream/main")).toBe("main");
-  });
-
-  it("uses the analyzed base ref for required-check ruleset discovery", async () => {
-    const previous = {
-      repo: process.env.GITHUB_REPOSITORY,
-      token: process.env.GH_TOKEN,
-      githubToken: process.env.GITHUB_TOKEN,
-      base: process.env.GITHUB_BASE_REF,
-      override: process.env.PR_REVIEW_ADVISOR_REQUIRED_CHECK_BASE,
-      fallback: process.env.PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS,
-    };
-    process.env.GITHUB_REPOSITORY = "NVIDIA/NemoClaw";
-    process.env.GH_TOKEN = "token";
-    delete process.env.GITHUB_TOKEN;
-    delete process.env.GITHUB_BASE_REF;
-    delete process.env.PR_REVIEW_ADVISOR_REQUIRED_CHECK_BASE;
-    delete process.env.PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS;
-    vi.spyOn(globalThis, "fetch")
-      .mockResolvedValueOnce({ ok: true, json: async () => [{ id: 1, target: "branch", enforcement: "active" }] } as Response)
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({
-          target: "branch",
-          enforcement: "active",
-          conditions: { ref_name: { include: ["refs/heads/release/*"], exclude: [] } },
-          rules: [{ type: "required_status_checks", parameters: { required_status_checks: [{ context: "release-only" }] } }],
-        }),
-      } as Response);
-
-    try {
-      await expect(discoverRequiredStatusCheckContexts("origin/release/1.0")).resolves.toEqual(["release-only"]);
-    } finally {
-      restoreEnv("GITHUB_REPOSITORY", previous.repo);
-      restoreEnv("GH_TOKEN", previous.token);
-      restoreEnv("GITHUB_TOKEN", previous.githubToken);
-      restoreEnv("GITHUB_BASE_REF", previous.base);
-      restoreEnv("PR_REVIEW_ADVISOR_REQUIRED_CHECK_BASE", previous.override);
-      restoreEnv("PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS", previous.fallback);
-    }
-  });
-
-  it("falls back to configured required checks when rulesets cannot be read", async () => {
-    const previous = {
-      repo: process.env.GITHUB_REPOSITORY,
-      token: process.env.GH_TOKEN,
-      githubToken: process.env.GITHUB_TOKEN,
-      fallback: process.env.PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS,
-    };
-    process.env.GITHUB_REPOSITORY = "NVIDIA/NemoClaw";
-    process.env.GH_TOKEN = "token";
-    delete process.env.GITHUB_TOKEN;
-    process.env.PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS = "checks,commit-lint";
-    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce({ ok: false, text: async () => "rulesets unavailable" } as Response);
-    vi.spyOn(console, "log").mockImplementation(() => {});
-
-    try {
-      await expect(discoverRequiredStatusCheckContexts()).resolves.toEqual(["checks", "commit-lint"]);
-    } finally {
-      restoreEnv("GITHUB_REPOSITORY", previous.repo);
-      restoreEnv("GH_TOKEN", previous.token);
-      restoreEnv("GITHUB_TOKEN", previous.githubToken);
-      restoreEnv("PR_REVIEW_ADVISOR_REQUIRED_CHECK_FALLBACK_CONTEXTS", previous.fallback);
-    }
-  });
-
-  it("aborts when the PR head advances during required-check wait", () => {
-    expect(() => assertPrHeadStillCurrent("def456789012", "abc123456789")).toThrow(
-      "PR head advanced from abc123456789 to def456789012",
-    );
-    expect(() => assertPrHeadStillCurrent("abc123456789", "abc123456789")).not.toThrow();
-  });
-
-  it("bases the CI gate on required contexts when they are known", () => {
-    const gates = deriveGateStatus(
-      {
-        graphQl: {
-          data: {
-            repository: {
-              pullRequest: {
-                statusCheckRollup: {
-                  contexts: {
-                    nodes: [
-                      { __typename: "CheckRun", name: "checks", status: "COMPLETED", conclusion: "SUCCESS" },
-                      { __typename: "CheckRun", name: "commit-lint", status: "COMPLETED", conclusion: "SUCCESS" },
-                      { __typename: "CheckRun", name: "PR review advisor", status: "IN_PROGRESS", conclusion: null },
-                      { __typename: "CheckRun", name: "optional-gpu-e2e", status: "IN_PROGRESS", conclusion: null },
-                    ],
-                  },
-                },
-              },
-            },
-          },
-        },
-      } as never,
-      [],
-      [],
-      ["checks", "commit-lint"],
-    );
-
-    expect(gates.ci.status).toBe("pass");
-    expect(gates.ci.evidence).toContain("2 required status context(s) completed");
-    expect(gates.ci.evidence).toContain("Non-required contexts still pending: 1");
-  });
-
-  it("keeps empty required-check rollups pending instead of unknown", () => {
-    const gates = deriveGateStatus(
-      { graphQl: { data: { repository: { pullRequest: { statusCheckRollup: { contexts: { nodes: [] } } } } } } } as never,
-      [],
-      [],
-      ["checks", "commit-lint"],
-    );
-
-    expect(gates.ci.status).toBe("pending");
-    expect(gates.ci.evidence).toContain("Required status context(s) pending or missing: checks, commit-lint");
-  });
-
-  it("fails the CI gate when required contexts fail", () => {
-    const gates = deriveGateStatus(
-      {
-        graphQl: {
-          data: {
-            repository: {
-              pullRequest: {
-                statusCheckRollup: {
-                  contexts: {
-                    nodes: [
-                      { __typename: "CheckRun", name: "checks", status: "COMPLETED", conclusion: "FAILURE" },
-                      { __typename: "CheckRun", name: "commit-lint", status: "COMPLETED", conclusion: "SUCCESS" },
-                    ],
-                  },
-                },
-              },
-            },
-          },
-        },
-      } as never,
-      [],
-      [],
-      ["checks", "commit-lint"],
-    );
-
-    expect(gates.ci.status).toBe("fail");
-    expect(gates.ci.evidence).toContain("Required status context(s) failed: checks");
-  });
-
-  it("wait logic treats missing or in-progress required contexts as pending", () => {
-    const statuses = extractStatusCheckSummaries([
-      { __typename: "CheckRun", name: "checks", status: "COMPLETED", conclusion: "SUCCESS" },
-      { __typename: "CheckRun", name: "commit-lint", status: "IN_PROGRESS", conclusion: null },
-      { __typename: "StatusContext", context: "dco-check", state: "SUCCESS" },
-      { __typename: "StatusContext", context: "check-hash", state: "FAILURE" },
-    ]);
-
-    expect(pendingRequiredContexts(["checks", "commit-lint", "dco-check", "check-hash", "changes"], statuses)).toEqual([
-      "commit-lint",
-      "changes",
-    ]);
   });
 
   it("surfaces GitHub GraphQL errors even when the HTTP status is successful", async () => {
@@ -418,6 +154,9 @@ describe("PR review advisor", () => {
     expect(skill).toContain("Category 1: Secrets and Credentials");
     expect(prompt).toContain("Trusted security review skill from main checkout");
     expect(prompt).toContain("For NemoClaw PRs, pay special attention to sandbox escape vectors");
+    expect(prompt).toContain("Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status");
+    expect(prompt).toContain("compare it with the current diff and explicitly decide whether prior code-review findings were addressed");
+    expect(prompt).toContain("any unmet acceptance clause or security fail/warning must be represented as a finding");
   });
 
   it("loads the security review skill from the trusted module checkout, not cwd", () => {
@@ -454,13 +193,92 @@ describe("PR review advisor", () => {
   it("renders summaries and sticky comments with human-review framing", () => {
     const result = normalizeReviewResult(validResult(), metadata());
     const summary = renderSummary(result);
+    const detailed = renderDetailedReview(result);
     const comment = buildComment({ summary, result, runUrl: "https://example.invalid/run" });
 
     expect(summary).toContain("# PR Review Advisor");
     expect(summary).toContain("trusted-code boundary");
+    expect(summary).toContain("Needs attention");
+    expect(summary).toContain("Worth checking");
+    expect(summary).toContain("Nice ideas");
+    expect(summary).not.toContain("🛠️");
+    expect(summary).not.toContain("🔎");
+    expect(summary).not.toContain("🌱");
+    expect(summary).not.toContain("## Acceptance coverage");
+    expect(summary).not.toContain("## Security review");
+    expect(detailed).toContain("## Acceptance coverage");
+    expect(detailed).toContain("## Security review");
+    expect(comment).toContain("<details>");
+    expect(comment).toContain("<summary>Review findings</summary>");
+    expect(comment).toContain("### 🛠️ Needs attention");
+    expect(comment).not.toContain("Full advisor summary");
+    expect(comment).not.toContain("## Acceptance coverage");
+    expect(comment).not.toContain("## Security review");
+    expect(comment).toContain("[Workflow run details](https://example.invalid/run)");
+    expect(comment).not.toContain("Full AC/security review artifact");
+    expect(summary).not.toContain("Recommendation: **merge after fixes**");
+    expect(summary).not.toContain("Confidence: **high**");
     expect(comment).toContain("<!-- nemoclaw-pr-review-advisor -->");
     expect(comment).toContain("A human maintainer must make the final merge decision");
-    expect(comment).toContain("abc123def456");
+    expect(summary).not.toContain("## Review completeness");
+    expect(summary).not.toContain("Human maintainer review required");
+    expect(comment).toContain("1 needs attention, 0 worth checking, 0 nice ideas");
+    expect(comment).toContain("**Top item:** trusted-code boundary");
+    expect(summary).not.toContain("Base: `origin/main`");
+    expect(summary).not.toContain("Head: `HEAD`");
+    expect(summary).not.toContain("Analyzed SHA: `abc123def456`");
+    expect(comment).not.toContain("abc123def456");
+    expect(comment).not.toContain("**Recommendation:** merge after fixes");
+    expect(comment).not.toContain("**Confidence:** high");
+
+    const followUpResult = normalizeReviewResult(validResult({
+      summary: {
+        recommendation: "merge_after_fixes",
+        confidence: "high",
+        oneLine: "Follow-up review completed.",
+        sinceLastReview: { resolved: 1, stillApplies: 1, newItems: 1 },
+      },
+    }), metadata());
+    const followUp = buildComment({
+      summary: renderSummary(followUpResult),
+      result: followUpResult,
+    });
+    expect(followUp).toContain("**Since last review:** 1 prior item resolved, 1 still applies, 1 new item found");
+    expect(followUp).toContain("<summary>Review findings</summary>");
+    expect(followUp).toContain("<summary>Since last review details</summary>");
+  });
+
+  it("escapes advisor finding text before rendering sticky comments", () => {
+    const result = normalizeReviewResult(validResult({
+      summary: {
+        recommendation: "merge_after_fixes",
+        confidence: "high",
+        oneLine: "Review found one fixable issue.",
+        topItem: "top @team <b> **x**",
+      },
+      findings: [
+        {
+          severity: "blocker",
+          category: "correctness",
+          file: "src/<bad>(1).ts",
+          line: 7,
+          title: "</details> @team **boom** [x](https://bad.invalid)",
+          description: "first\n### injected <script>",
+          recommendation: "ping @here & fix _now_",
+          evidence: "`code` <tag>",
+        },
+      ],
+    }), metadata());
+    const comment = buildComment({ summary: renderSummary(result), result });
+
+    expect(comment).toContain("**Top item:** top &#64;team &lt;b&gt; \\*\\*x\\*\\*");
+    expect(comment).toContain("&lt;/details&gt; &#64;team \\*\\*boom\\*\\* \\[x\\]\\(https://bad.invalid\\)");
+    expect(comment).toContain("src/&lt;bad&gt;\\(1\\).ts:7");
+    expect(comment).toContain("first ### injected &lt;script&gt;");
+    expect(comment).toContain("ping &#64;here &amp; fix \\_now\\_");
+    expect(comment).toContain("\\`code\\` &lt;tag&gt;");
+    expect(comment).not.toContain("</details> @team");
+    expect(comment).not.toContain("### injected <script>");
   });
 
   it("normalizes output that validates against the JSON schema", () => {
@@ -473,7 +291,7 @@ describe("PR review advisor", () => {
     expect(validate(result)).toBe(true);
   });
 
-  it("keeps the workflow inside the same trusted-code boundary as the E2E advisor", () => {
+  it("keeps the workflow inside the same trusted-code boundary as other advisors", () => {
     const workflow = YAML.parse(
       fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
     );
@@ -498,12 +316,6 @@ describe("PR review advisor", () => {
     for (const step of steps.filter((step: { uses?: string }) => step.uses)) {
       expect(step.uses).toMatch(/@[0-9a-f]{40}(?:\s*#.*)?$/);
     }
-    expect(analyzeStep.env.PR_REVIEW_ADVISOR_API_KEY).toBe(
-      "${{ secrets.PR_REVIEW_ADVISOR_API_KEY || secrets.PI_PR_REVIEW_ADVISOR_API_KEY }}",
-    );
-    expect(workflow.jobs.review["timeout-minutes"]).toBe(40);
-    expect(workflow.jobs.review.env.PR_REVIEW_ADVISOR_WAIT_FOR_REQUIRED_CHECKS).toBe("1");
-    expect(workflow.jobs.review.env.PR_REVIEW_ADVISOR_WAIT_ADDITIONAL_CONTEXTS).toBe("E2E recommendation");
     expect(installStep.run.includes("--ignore-scripts")).toBe(true);
     expect(analyzeStep.run.includes("$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts")).toBe(true);
     expect(analyzeStep.run).toContain("trusted main checkout does not yet contain analyze.mts");

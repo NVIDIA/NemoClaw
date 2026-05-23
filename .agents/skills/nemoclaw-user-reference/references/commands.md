@@ -1,6 +1,6 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# CLI Commands Reference
+# NemoClaw CLI Commands Reference
 
 The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes.
 It is installed automatically by the installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`).
@@ -313,6 +313,26 @@ $ nemoclaw my-assistant connect [--probe-only]
 The `--probe-only` flag verifies the sandbox is reachable over SSH and exits without opening a shell.
 Use it for health checks and scripted readiness probes.
 
+### `nemoclaw <name> exec`
+
+Run a single command non-interactively in a running sandbox via the OpenShell exec endpoint.
+The command runs as the sandbox user with `HOME=/sandbox`, so in-sandbox tooling resolves NemoClaw-provisioned config under `/sandbox/.openclaw` the same way it does for `connect` and `openshell sandbox connect`.
+This is the supported substitute for `docker exec` on the sandbox container; raw `docker exec` runs as root and lands on `HOME=/root`, where the agent config is not present and `openclaw agent` falls back to its built-in defaults.
+
+```console
+$ nemoclaw my-assistant exec -- openclaw agent -m "What is 2+2?"
+$ nemoclaw my-assistant exec --workdir /sandbox/workspace -- ls -la
+```
+
+Everything after `--` is forwarded verbatim to the sandbox command, including flags the inner command needs.
+The exit code is the remote command's exit code.
+
+| Flag | Description |
+|------|-------------|
+| `--workdir <dir>` | Working directory inside the sandbox |
+| `--tty` / `--no-tty` | Allocate a pseudo-terminal; defaults to auto-detection (on when stdin and stdout are terminals) |
+| `--timeout <seconds>` | Timeout in seconds (`0` means no timeout) |
+
 ### `nemoclaw <name> recover`
 
 Restart the in-sandbox gateway and re-establish the host-side dashboard port-forward without opening an SSH session.
@@ -420,6 +440,7 @@ Use `--tail <lines>` or `-n <lines>` to limit the number of returned lines.
 Use `--since <duration>` to show recent logs only, such as `5m`, `1h`, or `30s`.
 The command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear alongside the gateway log stream.
 If one log source is unavailable, NemoClaw prints a warning and keeps reading the remaining source.
+NemoClaw's `--tail <lines>` flag is a line-count flag; the lower-level `openshell logs --tail` flag means follow live output, so use `openshell logs <sandbox> -n <lines>` when running OpenShell directly for a fixed line count.
 
 ```console
 $ nemoclaw my-assistant logs [--follow] [--tail <lines>|-n <lines>] [--since <duration>]
@@ -509,6 +530,8 @@ $ nemoclaw my-assistant policy-add pypi --yes
 The positional form is required in scripted workflows.
 Set `NEMOCLAW_NON_INTERACTIVE=1` instead of `--yes` if you want the same behavior from an environment variable.
 If the preset name is unknown or already applied, the command exits non-zero with a clear error.
+Custom preset files are tracked with the sandbox that applied them.
+`policy-list`, `policy-add`, and `policy-remove` compare the local registry and live gateway state using that sandbox-scoped preset metadata, so custom presets do not appear missing just because they are not part of the built-in preset catalog.
 
 | Flag | Description |
 |------|-------------|
@@ -642,6 +665,7 @@ $ nemoclaw my-assistant channels add telegram
 
 Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn.
 When `NEMOCLAW_NON_INTERACTIVE=1` is set, any missing token fails fast and no rebuild prompt is shown — instead, the change is queued and you are told to run `nemoclaw <name> rebuild` manually.
+If you omit the required `<channel>` argument, the CLI prints the `channels add <channel>` usage with the supported channel list instead of falling back to top-level help.
 
 ### `nemoclaw <name> channels remove <channel>`
 
@@ -649,6 +673,14 @@ Clear the stored credentials for a messaging channel and rebuild the sandbox so 
 Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt.
 When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway.
 If the matching built-in policy preset is applied, such as `telegram`, `discord`, `slack`, or `whatsapp`, NemoClaw also removes that preset so the upstream API is no longer allow-listed after the channel is gone.
+NemoClaw also strips the channel from `session.policyPresets` so a subsequent `onboard --resume` does not re-apply the preset on the next rebuild.
+
+For QR-paired channels (today: WhatsApp), NemoClaw destructively clears the in-sandbox session directory before the rebuild so the `state_dirs` backup does not restore the auth blob and let the channel reconnect:
+
+- OpenClaw: `/sandbox/.openclaw/<channel>/` (for example `/sandbox/.openclaw/whatsapp/`).
+- Hermes: `/sandbox/.hermes/platforms/<channel>/` (for example `/sandbox/.hermes/platforms/whatsapp/`).
+
+The cleanup tries `openshell sandbox exec` first and falls back to SSH if the exec wrapper does not return the success sentinel. If both transports fail (the sandbox is stopped, the gateway is down, or SSH cannot reach it) the command refuses to proceed to the rebuild and asks you to start the sandbox and re-run, so a half-removed state cannot leave stale Baileys auth files behind for the next rebuild to restore.
 
 ```console
 $ nemoclaw my-assistant channels remove telegram
@@ -659,6 +691,7 @@ $ nemoclaw my-assistant channels remove telegram
 | `--dry-run` | Report the channel that would be removed without clearing credentials or rebuilding |
 
 As with `channels add`, `NEMOCLAW_NON_INTERACTIVE=1` skips the rebuild prompt and queues the change for a manual `nemoclaw <name> rebuild`.
+If you omit the required `<channel>` argument, the CLI prints the `channels remove <channel>` usage with the supported channel list.
 
 Host-side removal is the supported path because agent channel config is baked into the container image at build time (`/sandbox/.openclaw/openclaw.json` for OpenClaw and `/sandbox/.hermes/.env` for Hermes); agent-specific channel removals inside the sandbox would modify the running config but not persist changes across rebuilds.
 
@@ -815,7 +848,7 @@ Versions (`v1`, `v2`, ...) are computed on read from timestamp-ascending order, 
 $ nemoclaw my-assistant snapshot list
 ```
 
-### `nemoclaw <name> snapshot restore [selector] [--to <dst>]`
+### `nemoclaw <name> snapshot restore [selector] [--to <dst>] [--force] [--yes|-y]`
 
 Restore sandbox state from a snapshot.
 The sandbox must be running before you restore.
@@ -826,10 +859,15 @@ The selector accepts any of:
 
 - A version (`v1`, `v2`, ..., `vN`) from `snapshot list`.
 - An exact name passed to `snapshot create --name`.
-- An exact or prefix timestamp (partial prefixes are accepted when they match exactly one snapshot).
+- An exact timestamp.
 
 Pass `--to <dst>` to restore the snapshot into a different sandbox instead of the source.
 When `dst` does not exist, it is auto-created by reusing the source sandbox's container image — no re-onboarding needed.
+When `dst` already exists, `snapshot restore --to <dst>` refuses by default to avoid silently mutating the destination's filesystem.
+To overwrite an existing destination, pass `--force`: the command deletes `dst`, then recreates it from the source's image and restores the snapshot into the fresh copy.
+The `--force` path prompts interactively to confirm the destination name before deleting.
+Pass `--yes` (or set `NEMOCLAW_NON_INTERACTIVE=1`) to skip the prompt.
+The snapshot selector and source pod image are both validated before any deletion, so a bad selector or unresolvable image cannot destroy `dst` and only fail afterwards.
 
 ```console
 # restore latest snapshot in-place
@@ -844,9 +882,16 @@ $ nemoclaw my-assistant snapshot restore before-upgrade
 # restore by exact timestamp
 $ nemoclaw my-assistant snapshot restore 2026-04-21T07-35-55-987Z
 
-# clone v3 into another sandbox
+# clone v3 into a new sandbox
 $ nemoclaw my-assistant snapshot restore v3 --to my-assistant-clone
+
+# overwrite an existing destination with v3, non-interactively
+$ nemoclaw my-assistant snapshot restore v3 --to my-assistant-clone --force --yes
 ```
+
+When `--to` names an existing sandbox, restore refuses to overwrite it unless you pass `--force`.
+With `--force`, NemoClaw confirms the destructive restore unless you also pass `--yes` or run with `NEMOCLAW_NON_INTERACTIVE=1`.
+Use this path only when the destination sandbox can be replaced by the selected snapshot.
 
 ## `nemoclaw <name> share mount`
 
@@ -962,7 +1007,8 @@ $ nemoclaw status --json
 ```
 
 When at least one sandbox is registered and the named NemoClaw gateway is unreachable, unhealthy, or attached to a different sandbox, the command prints a `gateway: down [state] (reason)` line between the sandbox list and the host-service list.
-The command suggests `openshell gateway start --name nemoclaw` or `nemoclaw onboard --resume` to recover.
+The command classifies the failing layer when possible: the named gateway port is not accepting connections, the named gateway is running but not Connected, the active OpenShell gateway points at a different name, or the named gateway is not configured at all.
+It then suggests `openshell gateway start --name nemoclaw` or `nemoclaw onboard --resume` to recover.
 It exits with code `1` so shell scripts and CI can detect the degraded state from `$?`.
 For `--json`, the structured output includes `gatewayHealth`, and the exit code is set after the report is generated.
 A clean machine with no registered sandboxes keeps the legacy `0` exit because no gateway is expected to be configured yet.

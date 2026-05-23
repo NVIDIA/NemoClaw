@@ -2120,7 +2120,6 @@ describe("Telegram diagnostics (#2766)", () => {
         'ensure_runtime_shell_env_shim() { :; }',
         'lock_rc_files() { :; }',
         'configure_messaging_channels() { echo "ORDER:configure"; }',
-        'start_discord_loopback_proxy() { echo "ORDER:discord-loopback"; }',
         'install_slack_channel_guard() { :; }',
         'verify_no_slack_secrets_on_disk() { :; }',
         'seed_default_workspace_templates() { :; }',
@@ -2146,7 +2145,6 @@ describe("Telegram diagnostics (#2766)", () => {
         `_SECCOMP_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "seccomp-guard.js"))}`,
         `_CIAO_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "ciao-guard.js"))}`,
         `_SLACK_GUARD_SCRIPT=${JSON.stringify(path.join(tmpDir, "slack-guard.js"))}`,
-        `_DISCORD_LOOPBACK_PROXY_SCRIPT=${JSON.stringify(path.join(tmpDir, "discord-loopback-proxy.js"))}`,
         "NEMOCLAW_CMD=()",
         telegramDiagnosticsSection(preloadPath, configPath),
         preGatewaySetupBlock(kind, gatewayLog, autoPairLog),
@@ -2269,7 +2267,6 @@ process.stderr.write('FailoverError: token=123456:LATER\\n');
       expect(setup.preloadExists).toBe(true);
       expect(setup.preloadMode).toBe("444");
       expect(setup.result.stdout).toContain("ORDER:configure");
-      expect(setup.result.stdout).toContain("ORDER:discord-loopback");
       expect(setup.result.stdout).toContain("VALIDATE:");
       expect(setup.result.stdout).toContain(setup.preloadPath);
     }

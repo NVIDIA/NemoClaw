@@ -13,12 +13,15 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 
-import { parseVersionFromText, versionGte } from "../adapters/openshell/client.js";
-import * as registry from "../state/registry.js";
-import { loadAgent } from "../agent/defs.js";
+import {
+  captureSandboxSshConfigCommand,
+  parseVersionFromText,
+  versionGte,
+} from "../adapters/openshell/client.js";
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
-import { captureOpenshellCommand } from "../adapters/openshell/client.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
+import { loadAgent } from "../agent/defs.js";
+import * as registry from "../state/registry.js";
 
 export interface VersionCheckResult {
   sandboxVersion: string | null;
@@ -47,11 +50,10 @@ export function probeAgentVersion(sandboxName: string): string | null {
   const openshellBinary = resolveOpenshell();
   if (!openshellBinary) return null;
 
-  const sshConfigResult = captureOpenshellCommand(
-    openshellBinary,
-    ["sandbox", "ssh-config", sandboxName],
-    { ignoreError: true, timeout: OPENSHELL_PROBE_TIMEOUT_MS },
-  );
+  const sshConfigResult = captureSandboxSshConfigCommand(openshellBinary, sandboxName, {
+    ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
+  });
   if (sshConfigResult.status !== 0) return null;
 
   const tmpFile = path.join(os.tmpdir(), `nemoclaw-ver-${process.pid}-${Date.now()}.conf`);
