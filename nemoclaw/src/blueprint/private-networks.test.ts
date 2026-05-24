@@ -4,9 +4,16 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import type fs from "node:fs";
 
+interface FakeFile {
+  content: string;
+  mtimeMs: number;
+  size: number;
+}
+
 // In-memory fs shared with the mocked module.
-const store = new Map<string, string>();
+const store = new Map<string, FakeFile>();
 let existsCalls: string[] = [];
+let mtimeCounter = 1000;
 
 vi.mock("node:fs", async (importOriginal) => {
   const original = await importOriginal<typeof fs>();
@@ -17,9 +24,20 @@ vi.mock("node:fs", async (importOriginal) => {
       return store.has(p);
     },
     readFileSync: (p: string) => {
-      const content = store.get(p);
-      if (content === undefined) throw new Error(`ENOENT: ${p}`);
-      return content;
+      const file = store.get(p);
+      if (file === undefined) throw new Error(`ENOENT: ${p}`);
+      return file.content;
+    },
+    statSync: (p: string) => {
+      const file = store.get(p);
+      if (!file) {
+        const err = new Error(
+          `ENOENT: no such file or directory, stat '${p}'`,
+        ) as NodeJS.ErrnoException;
+        err.code = "ENOENT";
+        throw err;
+      }
+      return { mtimeMs: file.mtimeMs, size: file.size } as ReturnType<typeof original.statSync>;
     },
   };
 });
@@ -49,13 +67,15 @@ names:
 `;
 
 function seedYaml(path: string, body: string): void {
-  store.set(path, body);
+  mtimeCounter += 1;
+  store.set(path, { content: body, mtimeMs: mtimeCounter, size: Buffer.byteLength(body) });
 }
 
 describe("private-networks loader", () => {
   beforeEach(() => {
     store.clear();
     existsCalls = [];
+    mtimeCounter = 1000;
     delete process.env.NEMOCLAW_BLUEPRINT_PATH;
     resetCache();
   });
@@ -254,6 +274,30 @@ describe("private-networks loader", () => {
       const first = getPrivateNetworks();
       const second = getPrivateNetworks();
       expect(first).toBe(second);
+    });
+
+    it("reloads the YAML when its mtimeMs or size changes (closes #4091)", () => {
+      const before = getPrivateNetworks();
+      expect(isPrivateHostname("10.0.0.1")).toBe(true);
+      expect(isPrivateHostname("8.8.8.1")).toBe(false);
+      // Re-seed with a different blocklist; seedYaml bumps mtimeCounter so
+      // the file appears modified to statSync without resetCache().
+      seedYaml(
+        "/blueprint/private-networks.yaml",
+        "ipv4:\n  - address: 8.8.8.0\n    prefix: 24\n    purpose: hot reload\nipv6: []\nnames: []\n",
+      );
+      const after = getPrivateNetworks();
+      expect(after).not.toBe(before);
+      expect(isPrivateHostname("8.8.8.1")).toBe(true);
+      expect(isPrivateHostname("10.0.0.1")).toBe(false);
+    });
+
+    it("keeps the cached BlockList across calls without re-seed", () => {
+      const a = getPrivateNetworks();
+      const b = getPrivateNetworks();
+      const c = getPrivateNetworks();
+      expect(b).toBe(a);
+      expect(c).toBe(a);
     });
 
     it("resetCache forces a reload", () => {

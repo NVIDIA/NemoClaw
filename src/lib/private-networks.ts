@@ -9,6 +9,7 @@
 // identical results.
 
 import fs from "node:fs";
+import { statSync } from "node:fs";
 import { BlockList, isIP } from "node:net";
 import path from "node:path";
 import YAML from "yaml";
@@ -40,7 +41,14 @@ interface LoadedNetworks {
   normalisedNames: string[];
 }
 
-let cached: LoadedNetworks | null = null;
+interface CacheEntry {
+  source: string;
+  mtimeMs: number;
+  size: number;
+  loaded: LoadedNetworks;
+}
+
+let cached: CacheEntry | null = null;
 
 function validateNetworkEntry(entry: unknown, family: "ipv4" | "ipv6", index: number): NetworkEntry {
   const where = `${NETWORKS_FILE}: ${family}[${String(index)}]`;
@@ -105,7 +113,6 @@ function parseDocument(raw: string): NetworkDocument {
 }
 
 function load(): LoadedNetworks {
-  if (cached) return cached;
   if (!fs.existsSync(NETWORKS_FILE)) {
     throw new Error(
       `private-networks.yaml not found at ${NETWORKS_FILE}. ` +
@@ -114,13 +121,23 @@ function load(): LoadedNetworks {
         `(the plugin has a separate NEMOCLAW_BLUEPRINT_PATH override).`,
     );
   }
+  const stat = statSync(NETWORKS_FILE);
+  if (
+    cached &&
+    cached.source === NETWORKS_FILE &&
+    cached.mtimeMs === stat.mtimeMs &&
+    cached.size === stat.size
+  ) {
+    return cached.loaded;
+  }
   const networks = parseDocument(fs.readFileSync(NETWORKS_FILE, "utf-8"));
   const blockList = new BlockList();
   for (const { address, prefix } of networks.ipv4) blockList.addSubnet(address, prefix, "ipv4");
   for (const { address, prefix } of networks.ipv6) blockList.addSubnet(address, prefix, "ipv6");
   const normalisedNames = networks.names.map((e) => e.name.replace(/\.$/, "").toLowerCase());
-  cached = { networks, blockList, normalisedNames };
-  return cached;
+  const loaded: LoadedNetworks = { networks, blockList, normalisedNames };
+  cached = { source: NETWORKS_FILE, mtimeMs: stat.mtimeMs, size: stat.size, loaded };
+  return loaded;
 }
 
 export function getPrivateNetworks(): BlockList {

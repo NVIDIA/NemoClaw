@@ -14,7 +14,7 @@
 // exist, so NEMOCLAW_BLUEPRINT_PATH (set by the CLI launcher) or a
 // cwd-located blueprint is required at runtime.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { BlockList, isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -44,7 +44,14 @@ interface LoadedNetworks {
   normalisedNames: string[];
 }
 
-let cached: LoadedNetworks | null = null;
+interface CacheEntry {
+  source: string;
+  mtimeMs: number;
+  size: number;
+  loaded: LoadedNetworks;
+}
+
+let cached: CacheEntry | null = null;
 
 function resolveBlueprintPath(): string {
   const fromEnv = process.env.NEMOCLAW_BLUEPRINT_PATH;
@@ -131,7 +138,6 @@ function parseDocument(raw: string, source: string): NetworkDocument {
 }
 
 function load(): LoadedNetworks {
-  if (cached) return cached;
   const source = join(resolveBlueprintPath(), "private-networks.yaml");
   if (!existsSync(source)) {
     throw new Error(
@@ -140,13 +146,23 @@ function load(): LoadedNetworks {
         `or run from a checkout that includes nemoclaw-blueprint/.`,
     );
   }
+  const stat = statSync(source);
+  if (
+    cached &&
+    cached.source === source &&
+    cached.mtimeMs === stat.mtimeMs &&
+    cached.size === stat.size
+  ) {
+    return cached.loaded;
+  }
   const networks = parseDocument(readFileSync(source, "utf-8"), source);
   const blockList = new BlockList();
   for (const { address, prefix } of networks.ipv4) blockList.addSubnet(address, prefix, "ipv4");
   for (const { address, prefix } of networks.ipv6) blockList.addSubnet(address, prefix, "ipv6");
   const normalisedNames = networks.names.map((e) => e.name.replace(/\.$/, "").toLowerCase());
-  cached = { networks, blockList, normalisedNames };
-  return cached;
+  const loaded: LoadedNetworks = { networks, blockList, normalisedNames };
+  cached = { source, mtimeMs: stat.mtimeMs, size: stat.size, loaded };
+  return loaded;
 }
 
 export function getPrivateNetworks(): BlockList {
