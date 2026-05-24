@@ -44,38 +44,6 @@ section() {
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
-is_transient_inference_set_failure() {
-  grep -qiE 'timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|502|503|504|temporar' <<<"$1"
-}
-
-run_inference_set_with_retry() {
-  local attempt rc output fallback_output
-  local attempts="${NEMOCLAW_SWITCH_SET_ATTEMPTS:-3}"
-  for attempt in $(seq 1 "$attempts"); do
-    output=$(nemoclaw inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL" --sandbox "$SANDBOX_NAME" 2>&1)
-    rc=$?
-    if [ "$rc" -eq 0 ]; then
-      printf '%s\n' "$output"
-      return 0
-    fi
-
-    if ! is_transient_inference_set_failure "$output" || [ "$attempt" -ge "$attempts" ]; then
-      if is_transient_inference_set_failure "$output"; then
-        info "Verified inference switch failed after ${attempts} transient attempt(s); retrying with --no-verify before live route checks..."
-        fallback_output=$(nemoclaw inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL" --sandbox "$SANDBOX_NAME" --no-verify 2>&1)
-        rc=$?
-        printf '%s\n%s\n' "$output" "$fallback_output"
-        return "$rc"
-      fi
-      printf '%s\n' "$output"
-      return "$rc"
-    fi
-
-    info "Verified inference switch attempt ${attempt}/${attempts} hit a transient failure; retrying..."
-    sleep $((attempt * 5))
-  done
-}
-
 run_with_timeout() {
   local seconds="$1"
   shift
@@ -327,6 +295,8 @@ fi
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=test/e2e/lib/openclaw-json.sh
 . "${E2E_DIR}/lib/openclaw-json.sh"
+# shellcheck source=test/e2e/lib/inference-switch-retry.sh
+. "${E2E_DIR}/lib/inference-switch-retry.sh"
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-openclaw-inference-switch}"
 SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-nvidia-prod}"
 SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-z-ai/glm-5.1}"
@@ -423,7 +393,7 @@ pass "nemoclaw and openshell are on PATH"
 section "Phase 3: Switch inference"
 pid_before="$(openclaw_gateway_pid)"
 info "Switching ${SANDBOX_NAME} to ${SWITCH_PROVIDER} / ${SWITCH_MODEL}..."
-switch_output=$(run_inference_set_with_retry)
+switch_output=$(run_inference_set_with_retry nemoclaw inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL" --sandbox "$SANDBOX_NAME")
 switch_rc=$?
 if [ "$switch_rc" -eq 0 ]; then
   pass "nemoclaw inference set completed"
