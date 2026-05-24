@@ -44,6 +44,38 @@ section() {
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
+is_transient_inference_set_failure() {
+  grep -qiE 'timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|502|503|504|temporar' <<<"$1"
+}
+
+run_inference_set_with_retry() {
+  local attempt rc output fallback_output
+  local attempts="${NEMOCLAW_SWITCH_SET_ATTEMPTS:-3}"
+  for attempt in $(seq 1 "$attempts"); do
+    output=$(nemoclaw inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL" --sandbox "$SANDBOX_NAME" 2>&1)
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+      printf '%s\n' "$output"
+      return 0
+    fi
+
+    if ! is_transient_inference_set_failure "$output" || [ "$attempt" -ge "$attempts" ]; then
+      if is_transient_inference_set_failure "$output"; then
+        info "Verified inference switch failed after ${attempts} transient attempt(s); retrying with --no-verify before live route checks..."
+        fallback_output=$(nemoclaw inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL" --sandbox "$SANDBOX_NAME" --no-verify 2>&1)
+        rc=$?
+        printf '%s\n%s\n' "$output" "$fallback_output"
+        return "$rc"
+      fi
+      printf '%s\n' "$output"
+      return "$rc"
+    fi
+
+    info "Verified inference switch attempt ${attempt}/${attempts} hit a transient failure; retrying..."
+    sleep $((attempt * 5))
+  done
+}
+
 run_with_timeout() {
   local seconds="$1"
   shift
@@ -391,7 +423,7 @@ pass "nemoclaw and openshell are on PATH"
 section "Phase 3: Switch inference"
 pid_before="$(openclaw_gateway_pid)"
 info "Switching ${SANDBOX_NAME} to ${SWITCH_PROVIDER} / ${SWITCH_MODEL}..."
-switch_output=$(nemoclaw inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL" --sandbox "$SANDBOX_NAME" 2>&1)
+switch_output=$(run_inference_set_with_retry)
 switch_rc=$?
 if [ "$switch_rc" -eq 0 ]; then
   pass "nemoclaw inference set completed"
