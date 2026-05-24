@@ -9,6 +9,7 @@ vi.mock("../adapters/docker", () => ({
 
 import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 import {
+  createDirectSandboxGpuVerifier,
   dockerNvidiaRuntimeAvailable,
   formatSandboxGpuPassthroughNote,
   parseDockerRuntimeNames,
@@ -89,6 +90,35 @@ describe("sandbox GPU preflight", () => {
     expect(getDockerCdiSpecDirs).toHaveBeenCalled();
     expect(findReadableNvidiaCdiSpecFiles).toHaveBeenCalledWith(["/etc/cdi"]);
     expect(dockerInfo).not.toHaveBeenCalled();
+  });
+
+  it("treats optional direct sandbox GPU proof failures as non-fatal", () => {
+    const runOpenshell = vi.fn(() => ({ status: 1, stdout: "", stderr: "optional proof failed" }));
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell,
+      buildDirectSandboxGpuProofCommands: vi.fn(() => [
+        { args: ["sandbox", "exec", "demo", "--", "nvidia-smi"], label: "nvidia-smi", optional: true },
+        { args: ["sandbox", "exec", "demo", "--", "false"], label: "fatal proof" },
+      ]),
+      compactText: (value) => value.trim(),
+      redact: (value) => String(value),
+    });
+
+    expect(() => verifier("demo")).not.toThrow();
+    expect(runOpenshell).toHaveBeenCalledTimes(1);
+  });
+
+  it("throws on required direct sandbox GPU proof failures", () => {
+    const verifier = createDirectSandboxGpuVerifier({
+      runOpenshell: vi.fn(() => ({ status: 1, stdout: "", stderr: "required proof failed" })),
+      buildDirectSandboxGpuProofCommands: vi.fn(() => [
+        { args: ["sandbox", "exec", "demo", "--", "false"], label: "fatal proof" },
+      ]),
+      compactText: (value) => value.trim(),
+      redact: (value) => String(value),
+    });
+
+    expect(() => verifier("demo")).toThrow("GPU proof failed: fatal proof");
   });
 
   it("exits with an explicit Jetson NVIDIA runtime message when runtime support is missing", () => {
