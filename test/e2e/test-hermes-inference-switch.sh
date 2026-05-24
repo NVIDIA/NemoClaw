@@ -44,9 +44,9 @@ section() {
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
-is_transient_live_inference_failure() {
+is_transient_live_http_code() {
   case "${1:-}" in
-    *"curl failed with exit 28"* | *"transient HTTP 502"* | *"transient HTTP 503"* | *"transient HTTP 504"*) return 0 ;;
+    502 | 503 | 504) return 0 ;;
     *) return 1 ;;
   esac
 }
@@ -293,7 +293,7 @@ assert_env_hash_unchanged() {
 }
 
 check_inference_local() {
-  local payload payload_arg response rc content attempt last_fail http_code body remote
+  local payload payload_arg response rc content attempt last_fail http_code body remote transient=0
   payload=$(SWITCH_MODEL="$SWITCH_MODEL" python3 -c '
 import json
 import os
@@ -309,14 +309,17 @@ print(json.dumps({
 
   for attempt in 1 2 3; do
     rc=0
+    transient=0
     response=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc "$remote" 2>&1) || rc=$?
     http_code=$(http_status_from_response "$response")
     [ -n "$http_code" ] || http_code="000"
     body=$(http_body_from_response "$response")
 
     if [ "$rc" -ne 0 ]; then
+      [ "$rc" -eq 28 ] && transient=1
       last_fail="curl failed with exit ${rc}; HTTP ${http_code}: ${body:0:300}"
-    elif [[ "$http_code" =~ ^50[234]$ ]]; then
+    elif is_transient_live_http_code "$http_code"; then
+      transient=1
       last_fail="transient HTTP ${http_code}: ${body:0:300}"
     elif [ "$http_code" != "200" ]; then
       last_fail="HTTP ${http_code}: ${body:0:300}"
@@ -335,7 +338,7 @@ print(json.dumps({
     }
   done
 
-  if is_transient_live_inference_failure "$last_fail"; then
+  if [ "$transient" -eq 1 ]; then
     skip "Hermes sandbox inference.local transient failure after switch; route/config checks already passed"
   else
     fail "Hermes sandbox inference.local did not work after switch: ${last_fail}"
@@ -343,7 +346,7 @@ print(json.dumps({
 }
 
 check_hermes_api_chat() {
-  local payload payload_arg response rc content remote attempt last_fail http_code body
+  local payload payload_arg response rc content remote attempt last_fail http_code body transient=0
   payload=$(SWITCH_MODEL="$SWITCH_MODEL" python3 -c '
 import json
 import os
@@ -359,14 +362,17 @@ print(json.dumps({
 
   for attempt in 1 2 3; do
     rc=0
+    transient=0
     response=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc "$remote" 2>&1) || rc=$?
     http_code=$(http_status_from_response "$response")
     [ -n "$http_code" ] || http_code="000"
     body=$(http_body_from_response "$response")
 
     if [ "$rc" -ne 0 ]; then
+      [ "$rc" -eq 28 ] && transient=1
       last_fail="Hermes API curl failed with exit ${rc}; HTTP ${http_code}: ${body:0:300}"
-    elif [[ "$http_code" =~ ^50[234]$ ]]; then
+    elif is_transient_live_http_code "$http_code"; then
+      transient=1
       last_fail="transient HTTP ${http_code}: ${body:0:300}"
     elif [ "$http_code" != "200" ]; then
       last_fail="HTTP ${http_code}: ${body:0:300}"
@@ -385,7 +391,7 @@ print(json.dumps({
     }
   done
 
-  if is_transient_live_inference_failure "$last_fail"; then
+  if [ "$transient" -eq 1 ]; then
     skip "Hermes API chat transient failure after switch; route/config checks already passed"
   else
     fail "Hermes API chat did not work after switch: ${last_fail}"
