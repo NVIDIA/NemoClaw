@@ -384,7 +384,7 @@ function applyStateDirLockMode(
   configDir: string,
   owner: string,
   isLocking: boolean,
-): void {
+): string[] {
   // Locking (shields-up) strips group + world write. Unlocking (shields-down)
   // restores the same group-readable/writable + o-rwx mutable-default contract
   // as startup, plus setgid so the gateway UID — now in the sandbox group via
@@ -395,18 +395,20 @@ function applyStateDirLockMode(
   // shields-down would leave nested files readable/writable only by owner.
   const recursiveMode = isLocking ? "go-w" : "g+rwX,o-rwx";
   const dirMode = isLocking ? "755" : "2770";
-
   const clearSetgid = isLocking ? "1" : "0";
 
   // Reject symlinked state-dir roots (and workspace-* dirs) before any
   // recursive ownership/mode mutation. A pre-lockdown agent that swapped
   // e.g. `extensions/` for a symlink to /etc could otherwise redirect the
   // privileged `chown -R`/`chmod -R` at an attacker-controlled host path.
-  try {
-    privilegedSandboxExec(sandboxName, [
-      "sh",
-      "-c",
-      `
+  // The script always exits 0 and reports symlinked roots on stdout so the
+  // TS layer can surface them as lock failures (caller fails shields-up
+  // rather than reporting "locked" while a state-dir root is still a
+  // symlink to a writable host path).
+  const symlinkReports: string[] = [];
+
+  const stateDirReport = runStateDirLockScript(sandboxName, {
+    script: `
 set -u
 config_dir="$1"
 owner="$2"
@@ -416,7 +418,10 @@ clear_setgid="$5"
 shift 5
 for dir in "$@"; do
   path="$config_dir/$dir"
-  [ -L "$path" ] && continue
+  if [ -L "$path" ]; then
+    printf 'symlinked-root\\t%s\\n' "$path"
+    continue
+  fi
   [ -d "$path" ] || continue
   chown -R "$owner" "$path" 2>/dev/null || true
   chmod "$dir_mode" "$path" 2>/dev/null || true
@@ -424,25 +429,21 @@ for dir in "$@"; do
   chmod -R "$recursive_mode" "$path" 2>/dev/null || true
 done
 `,
-      "sh",
+    args: [
       configDir,
       owner,
       recursiveMode,
       dirMode,
       clearSetgid,
       ...HIGH_RISK_STATE_DIRS,
-    ]);
-  } catch {
-    // Best effort; verification below catches the primary config lock.
-  }
+    ],
+  });
+  symlinkReports.push(...stateDirReport);
 
   // Multi-agent OpenClaw workspaces are named workspace-<agent>. They are
   // discovered dynamically because they are configured by openclaw.json.
-  try {
-    privilegedSandboxExec(sandboxName, [
-      "sh",
-      "-c",
-      `
+  const workspaceReport = runStateDirLockScript(sandboxName, {
+    script: `
 set -u
 config_dir="$1"
 owner="$2"
@@ -450,7 +451,10 @@ recursive_mode="$3"
 dir_mode="$4"
 clear_setgid="$5"
 for dir in "$config_dir"/workspace-*; do
-  [ -L "$dir" ] && continue
+  if [ -L "$dir" ]; then
+    printf 'symlinked-root\\t%s\\n' "$dir"
+    continue
+  fi
   [ -d "$dir" ] || continue
   chown -R "$owner" "$dir" 2>/dev/null || true
   chmod "$dir_mode" "$dir" 2>/dev/null || true
@@ -458,20 +462,55 @@ for dir in "$config_dir"/workspace-*; do
   chmod -R "$recursive_mode" "$dir" 2>/dev/null || true
 done
 `,
-      "sh",
-      configDir,
-      owner,
-      recursiveMode,
-      dirMode,
-      clearSetgid,
-    ]);
-  } catch {
-    // Best effort; verification below catches the primary config lock.
-  }
+    args: [configDir, owner, recursiveMode, dirMode, clearSetgid],
+  });
+  symlinkReports.push(...workspaceReport);
 
   if (isLocking) {
     restoreWritableRuntimeSubpaths(sandboxName, configDir);
   }
+
+  // Surface symlinked roots only when locking. Unlock is best-effort and
+  // tolerating a stale symlink there is safer than refusing to relax the
+  // tree at all.
+  if (!isLocking) return [];
+  return symlinkReports.map(
+    (path) => `state dir root is a symlink: ${path} (refusing to lock)`,
+  );
+}
+
+interface StateDirLockScript {
+  script: string;
+  args: string[];
+}
+
+// Run a privileged shell script that mutates state-dir permissions and
+// reports any symlinked roots it refused to touch via tab-prefixed stdout
+// lines ("symlinked-root\t<path>"). Returns the parsed list of skipped
+// paths; on any other failure, returns an empty list so the caller can
+// continue with the rest of the lock fan-out.
+function runStateDirLockScript(
+  sandboxName: string,
+  script: StateDirLockScript,
+): string[] {
+  let stdout = "";
+  try {
+    stdout = privilegedSandboxExecCapture(sandboxName, [
+      "sh",
+      "-c",
+      script.script,
+      "sh",
+      ...script.args,
+    ]);
+  } catch {
+    return [];
+  }
+  const skipped: string[] = [];
+  for (const line of stdout.split("\n")) {
+    const [tag, path] = line.split("\t");
+    if (tag === "symlinked-root" && path) skipped.push(path);
+  }
+  return skipped;
 }
 
 function restoreWritableRuntimeSubpaths(
@@ -766,7 +805,18 @@ function lockAgentConfig(
   // sandbox group) can still read plugin/agent code while the sandbox user
   // is denied write through `chmod -R go-w`. See HIGH_RISK_STATE_DIRS doc
   // above. Top-level configDir stays root:root.
-  applyStateDirLockMode(sandboxName, target.configDir, "root:sandbox", true);
+  const stateDirLockIssues = applyStateDirLockMode(
+    sandboxName,
+    target.configDir,
+    "root:sandbox",
+    true,
+  );
+  if (stateDirLockIssues.length > 0) {
+    // Symlinked state-dir roots are a security-relevant violation:
+    // continuing would let shields-up report "locked" while a state
+    // dir still points at a writable host path. Refuse the lock.
+    throw new Error(`Config not locked: ${stateDirLockIssues.join(", ")}`);
+  }
 
   // OpenClaw's mutable-default config root is setgid (#2681). Clear setgid
   // after descendant locking so shields-up verifies the root config dir as

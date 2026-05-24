@@ -53,6 +53,65 @@ process.stdout.write(JSON.stringify(calls));
   return JSON.parse(probe.stdout) as string[][];
 }
 
+function runLockAgentConfigProbeExpectingThrow(
+  symlinkedPath: string,
+): { stdout: string; stderr: string; status: number | null } {
+  return spawnSync(
+    process.execPath,
+    [
+      "-e",
+      String.raw`
+const Module = require("node:module");
+const originalLoad = Module._load;
+const symlinkedPath = ${JSON.stringify(symlinkedPath)};
+Module._load = function patchedLoad(request, parent, isMain) {
+  if (request === "../adapters/docker/exec") {
+    return {
+      dockerExecFileSync(args) {
+        const separator = args.indexOf("--");
+        const command = separator >= 0 ? args.slice(separator + 1) : args;
+        if (
+          command[0] === "sh" &&
+          command[1] === "-c" &&
+          typeof command[2] === "string" &&
+          command[2].includes("symlinked-root")
+        ) {
+          return "symlinked-root\t" + symlinkedPath + "\n";
+        }
+        if (command[0] === "stat" && command[1] === "-c") {
+          return command.at(-1) === "/sandbox/.openclaw"
+            ? "755 root:root\n"
+            : "444 root:root\n";
+        }
+        if (command[0] === "lsattr") {
+          return "----i----------------- " + command.at(-1) + "\n";
+        }
+        return "";
+      },
+    };
+  }
+  return originalLoad.call(this, request, parent, isMain);
+};
+try {
+  const { lockAgentConfig } = require("./dist/lib/shields/index.js");
+  lockAgentConfig("sandbox-pod", {
+    agentName: "openclaw",
+    configPath: "/sandbox/.openclaw/openclaw.json",
+    configDir: "/sandbox/.openclaw",
+    sensitiveFiles: ["/sandbox/.openclaw/.config-hash"],
+  });
+  process.stdout.write("UNEXPECTED_SUCCESS");
+  process.exit(0);
+} catch (err) {
+  process.stderr.write(err && err.message ? err.message : String(err));
+  process.exit(2);
+}
+`,
+    ],
+    { encoding: "utf-8", timeout: 5000 },
+  );
+}
+
 function findStateDirLockShell(commands: string[][]): string[] | undefined {
   return commands.find(
     (command) =>
@@ -85,7 +144,8 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     const stateDirLockShell = findStateDirLockShell(commands);
     expect(stateDirLockShell).toBeDefined();
     const script = stateDirLockShell?.[2] ?? "";
-    expect(script).toContain('[ -L "$path" ] && continue');
+    expect(script).toContain('if [ -L "$path" ]; then');
+    expect(script).toContain('symlinked-root');
     expect(script).toContain('[ -d "$path" ] || continue');
   });
 
@@ -100,7 +160,21 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     );
     expect(workspaceLockShell).toBeDefined();
     const script = workspaceLockShell?.[2] ?? "";
-    expect(script).toContain('[ -L "$dir" ] && continue');
+    expect(script).toContain('if [ -L "$dir" ]; then');
+    expect(script).toContain('symlinked-root');
+  });
+
+  // A symlinked state-dir root must abort shields-up; otherwise the lock
+  // would report success while the dir still points at a writable host
+  // path.
+  it("throws when shields-up encounters a symlinked state-dir root", () => {
+    const result = runLockAgentConfigProbeExpectingThrow(
+      "/sandbox/.openclaw/extensions",
+    );
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain("Config not locked");
+    expect(result.stderr).toContain("state dir root is a symlink");
+    expect(result.stderr).toContain("/sandbox/.openclaw/extensions");
   });
 
   it("keeps the top-level config dir owned by root:root (lock contract unchanged)", () => {
