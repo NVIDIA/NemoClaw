@@ -82,8 +82,14 @@ function requireRunContains(
 export function validatePrReviewAdvisorWorkflowBoundary(
   workflowPath = DEFAULT_WORKFLOW_PATH,
 ): string[] {
-  const workflow = asRecord(YAML.parse(readFileSync(workflowPath, "utf-8")));
   const errors: string[] = [];
+  let workflow: WorkflowRecord;
+  try {
+    workflow = asRecord(YAML.parse(readFileSync(workflowPath, "utf-8")));
+  } catch {
+    errors.push(`failed to read or parse workflow: ${workflowPath}`);
+    return errors;
+  }
 
   const triggers = asRecord(workflow.on ?? workflow[true as unknown as string]);
   if (!Object.hasOwn(triggers, "pull_request")) {
@@ -112,7 +118,8 @@ export function validatePrReviewAdvisorWorkflowBoundary(
   const prCheckout = requireStep(errors, steps, "Checkout PR workspace (read-only data)");
   requireStepWith(errors, prCheckout, "path", "pr-workdir");
   requireStepWith(errors, prCheckout, "persist-credentials", false);
-  if (!stringValue(asRecord(prCheckout?.with).ref).includes("github.event.pull_request.head.sha")) {
+  const prRef = stringValue(asRecord(prCheckout?.with).ref).trim();
+  if (prRef !== "${{ github.event.pull_request.head.sha }}") {
     errors.push("PR checkout must use the pull request head SHA as inert analysis data");
   }
 

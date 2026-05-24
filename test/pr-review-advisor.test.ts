@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -13,7 +12,6 @@ import { githubGraphql } from "../tools/advisors/github.mts";
 import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const requireForTest = createRequire(import.meta.url);
 
 type ReviewMetadata = Parameters<typeof normalizeReviewResult>[1];
 
@@ -44,7 +42,8 @@ function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
 }
 
 function loadAdvisorSchema(): Record<string, unknown> {
-  return requireForTest("../tools/pr-review-advisor/schema.json") as Record<string, unknown>;
+  const schemaPath = path.join(ROOT, "tools", "pr-review-advisor", "schema.json");
+  return JSON.parse(fs.readFileSync(schemaPath, "utf-8")) as Record<string, unknown>;
 }
 
 function validResult(overrides = {}) {
@@ -323,6 +322,12 @@ jobs:
           ref: main
           path: advisor
           persist-credentials: true
+      - name: Checkout PR workspace (read-only data)
+        uses: actions/checkout@0123456789abcdef0123456789abcdef01234567
+        with:
+          ref: refs/pull/\${{ github.event.pull_request.head.sha }}/merge
+          path: pr-workdir
+          persist-credentials: false
 `,
     );
 
@@ -334,6 +339,7 @@ jobs:
           "workflow must not run untrusted PR code under pull_request_target",
           "workflow permissions.contents must be read",
           "review job must not be globally continue-on-error",
+          "PR checkout must use the pull request head SHA as inert analysis data",
         ]),
       );
       expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);
@@ -341,6 +347,13 @@ jobs:
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("reports workflow parse failures through boundary errors", () => {
+    const missingPath = path.join(ROOT, ".tmp-pr-advisor-missing", "workflow.yaml");
+    expect(validatePrReviewAdvisorWorkflowBoundary(missingPath)).toEqual([
+      `failed to read or parse workflow: ${missingPath}`,
+    ]);
   });
 
 });

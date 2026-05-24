@@ -95,4 +95,19 @@ describe("source-shape scanner", () => {
 
     expect(cases).toEqual(["asserts function-expression source text"]);
   });
+
+  it("does not treat uncalled source-reader helpers as source text", () => {
+    const cases = detectedCaseNames(`
+      import { readFileSync } from "node:fs";
+      import { expect, it } from "vitest";
+
+      const loadSource = () => readFileSync("src/lib/example.ts", "utf8");
+
+      it("asserts helper shape only", () => {
+        expect(loadSource).toBeTypeOf("function");
+      });
+    `);
+
+    expect(cases).toEqual([]);
+  });
 });

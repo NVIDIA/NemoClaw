@@ -5,7 +5,7 @@
 // Finds tests that read production source text and assert on its shape. These
 // tests tend to couple coverage to implementation strings instead of behavior.
 
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
@@ -322,6 +322,7 @@ function nestedSourceReadInNode(
 
   function visit(node: ts.Node): void {
     if (sourceRead) return;
+    if (isNestedFunctionLike(node)) return;
     if (
       ts.isCallExpression(node) &&
       isReadFileCall(node) &&

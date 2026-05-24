@@ -291,6 +291,7 @@ describe("sandbox-policy.schema.json", () => {
       network_policies: {
         test_service: {
           name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [{ host: "api.example.com", port: 443, protocol: "rest" }],
         },
       },
@@ -367,6 +368,7 @@ describe("sandbox-policy.schema.json", () => {
       network_policies: {
         test_service: {
           name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [{ host: "gateway.example.com", port: 443, protocol: "websocket" }],
         },
       },
@@ -417,6 +419,7 @@ describe("policy-preset.schema.json", () => {
       network_policies: {
         test_service: {
           name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [{ host: "api.example.com", port: 443, protocol: "rest" }],
         },
       },
@@ -493,6 +496,7 @@ describe("policy-preset.schema.json", () => {
       network_policies: {
         test_service: {
           name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [{ host: "gateway.example.com", port: 443, protocol: "websocket" }],
         },
       },

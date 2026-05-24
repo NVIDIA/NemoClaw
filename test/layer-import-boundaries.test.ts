@@ -66,6 +66,31 @@ describe("CLI layer import boundaries", () => {
     }
   });
 
+  it("blocks bare fs imports in messaging manifests", () => {
+    const fixture = path.join(
+      REPO_ROOT,
+      "src",
+      "lib",
+      "messaging",
+      "manifest",
+      `__boundary-bare-fs-${process.pid}.ts`,
+    );
+    try {
+      fs.writeFileSync(fixture, 'import { readFile } from "fs/promises";\nexport const value = readFile;\n');
+      const result = spawnSync(TSX, [BOUNDARY_SCRIPT], {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+      });
+
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        "messaging manifest modules must not import fs",
+      );
+    } finally {
+      fs.rmSync(fixture, { force: true });
+    }
+  });
+
   it("counts only classes that extend Command as oclif command classes", () => {
     const fixture = path.join(REPO_ROOT, "src", "commands", `__boundary-implements-${process.pid}.ts`);
     try {

@@ -284,6 +284,17 @@ function checkMessagingManifestFile(
   ];
 
   for (const ref of collectImportRefs(absPath)) {
+    if (ref.specifier === "fs" || ref.specifier.startsWith("fs/")) {
+      addViolation(
+        violations,
+        repoPath,
+        ref.line,
+        ref.column,
+        "messaging-manifest-purity",
+        "messaging manifest modules must not import fs",
+      );
+      continue;
+    }
     const target = resolveInternalImport(absPath, ref.specifier);
     const haystack = `${ref.specifier}\n${target ?? ""}`;
     const fragment = forbiddenFragments.find((candidate) => haystack.includes(candidate));
