@@ -753,10 +753,10 @@ function lockAgentConfig(
     }
   }
 
-  // NC-2227-05: Lock state directories. Owned by `root:sandbox` so the
-  // gateway (in sandbox group) can still read plugin/agent code while the
-  // sandbox user is denied write through `chmod -R go-w`. See
-  // HIGH_RISK_STATE_DIRS doc above. Top-level configDir stays root:root.
+  // Lock state directories. Owned by `root:sandbox` so the gateway (in
+  // sandbox group) can still read plugin/agent code while the sandbox user
+  // is denied write through `chmod -R go-w`. See HIGH_RISK_STATE_DIRS doc
+  // above. Top-level configDir stays root:root.
   applyStateDirLockMode(sandboxName, target.configDir, "root:sandbox", true);
 
   // OpenClaw's mutable-default config root is setgid (#2681). Clear setgid

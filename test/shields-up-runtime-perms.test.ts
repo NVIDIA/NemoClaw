@@ -133,7 +133,7 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     const patterns = restoreShell.slice(5);
 
     const result = spawnSync(
-      "bash",
+      "sh",
       ["-c", `${script}\n`, "sh", configDir, ...patterns],
       { encoding: "utf-8", timeout: 5000 },
     );
@@ -171,7 +171,7 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     const patterns = restoreShell.slice(5);
 
     const result = spawnSync(
-      "bash",
+      "sh",
       ["-c", `${script}\n`, "sh", configDir, ...patterns],
       { encoding: "utf-8", timeout: 5000 },
     );
