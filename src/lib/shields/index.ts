@@ -478,16 +478,25 @@ set -u
 config_dir="$1"
 shift
 for pattern in "$@"; do
-  for entry in "$config_dir"/$pattern; do
-    case "$entry" in
+  case "$pattern" in
+    */*) prefix="\${pattern%/*}"; leaf="\${pattern##*/}" ;;
+    *) prefix=""; leaf="$pattern" ;;
+  esac
+  if [ -n "$prefix" ]; then
+    set -- "$config_dir"/$prefix
+  else
+    set -- "$config_dir"
+  fi
+  for parent in "$@"; do
+    case "$parent" in
       *"*"*) continue ;;
     esac
-    parent="$(dirname "$entry")"
     [ -d "$parent" ] || continue
-    mkdir -p "$entry" 2>/dev/null || continue
-    chown -R sandbox:sandbox "$entry" 2>/dev/null || true
-    chmod 2770 "$entry" 2>/dev/null || true
-    chmod -R g+rwX,o-rwx "$entry" 2>/dev/null || true
+    target="$parent/$leaf"
+    mkdir -p "$target" 2>/dev/null || continue
+    chown -R sandbox:sandbox "$target" 2>/dev/null || true
+    chmod 2770 "$target" 2>/dev/null || true
+    chmod -R g+rwX,o-rwx "$target" 2>/dev/null || true
   done
 done
 `,

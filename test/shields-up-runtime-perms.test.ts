@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
@@ -101,5 +104,40 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
         command[2].includes("chmod 2770"),
     );
     expect(restoreShell).toBeDefined();
+  });
+
+  // Behavioral check against a real filesystem fixture: the restore script
+  // must mkdir `agents/<id>/sessions` even when the leaf does not yet exist
+  // (fresh sandbox, never-run TUI). The pre-fix script's case-`*` guard
+  // skipped the literal pattern when the glob matched nothing, leaving
+  // `sessions/` uncreated and the post-lockdown TUI mkdir blocked.
+  it("creates agents/<id>/sessions under a fresh agent dir that has no sessions yet", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-runtime-"));
+    const configDir = path.join(fixture, ".openclaw");
+    const agentDir = path.join(configDir, "agents", "main");
+    fs.mkdirSync(agentDir, { recursive: true });
+
+    const restoreShell = runLockAgentConfigProbe().find(
+      (command) =>
+        command[0] === "sh" &&
+        command[1] === "-c" &&
+        command.includes("agents/*/sessions"),
+    );
+    if (!restoreShell) {
+      throw new Error("restore-writable-runtime-subpaths shell command not found");
+    }
+    const script = restoreShell[2];
+    const patterns = restoreShell.slice(4);
+
+    const result = spawnSync(
+      "bash",
+      ["-c", `${script}\n`, "sh", configDir, ...patterns],
+      { encoding: "utf-8", timeout: 5000 },
+    );
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(agentDir, "sessions"))).toBe(true);
+    expect(fs.statSync(path.join(agentDir, "sessions")).isDirectory()).toBe(true);
+
+    fs.rmSync(fixture, { recursive: true, force: true });
   });
 });

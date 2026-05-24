@@ -1069,6 +1069,15 @@ if (cmd.includes("[ -d ")) {
   process.exit(0);
 }
 if (cmd.includes("find ")) {
+  // Simulate a permission-denied subdir: when the audit cmd lacks the
+  // \`|| true\` tolerance wrapper (pre-fix shape), exit non-zero so the
+  // caller treats it as audit failure. The post-fix shape wraps each
+  // \`find\` with \`|| true\` and joins with \`;\`, so the audit cmd as a
+  // whole exits 0 even though a remote \`find\` would have exited 1.
+  if (!cmd.includes("|| true")) {
+    process.stderr.write("find: '/sandbox/.openclaw/extensions/nemoclaw': Permission denied\\n");
+    process.exit(1);
+  }
   process.exit(0);
 }
 if (cmd.includes("tar -cf -")) {
@@ -1129,6 +1138,15 @@ if (cmd.includes("[ -d ")) {
   process.exit(0);
 }
 if (cmd.includes("find ")) {
+  // Match real-shell behaviour: without the \`|| true\` tolerance wrapper
+  // the perm-denied sibling \`find\` would have aborted the chain. The
+  // post-fix audit cmd still emits the violation stdout because \`;\`
+  // joins each per-dir block so the readable sibling's output is
+  // preserved.
+  if (!cmd.includes("|| true")) {
+    process.stderr.write("find: '/sandbox/.openclaw/agents/main': Permission denied\\n");
+    process.exit(1);
+  }
   process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
   process.exit(0);
 }
