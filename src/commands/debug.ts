@@ -7,7 +7,10 @@ import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
 import { CLI_NAME } from "../lib/cli/branding";
 import { runDebug } from "../lib/diagnostics/debug";
 import type { DebugOptions } from "../lib/diagnostics/debug";
-import type { RunDebugCommandDeps } from "../lib/diagnostics/debug-command";
+import type {
+  ExplicitSandboxValidation,
+  RunDebugCommandDeps,
+} from "../lib/diagnostics/debug-command";
 import { runDebugCommandWithOptions } from "../lib/diagnostics/debug-command";
 import type { CaptureOpenshellResult } from "../lib/adapters/openshell/client";
 import { captureOpenshellCommand } from "../lib/adapters/openshell/client";
@@ -59,8 +62,23 @@ function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
     return defaultSandbox;
   };
 
+  const validateExplicitSandbox = (name: string): ExplicitSandboxValidation => {
+    const { sandboxes } = registry.listSandboxes();
+    if (!sandboxes.find((sandbox) => sandbox.name === name)) {
+      return {
+        ok: false,
+        message:
+          `${RD}Error:${R} sandbox '${name}' is not in the local registry.\n` +
+          `  Use ${B}${CLI_NAME} sandbox list${R} to see available sandboxes, ` +
+          `or run ${B}${CLI_NAME} onboard${R} to create one.`,
+      };
+    }
+    return { ok: true };
+  };
+
   return {
     getDefaultSandbox,
+    validateExplicitSandbox,
     runDebug,
   };
 }
