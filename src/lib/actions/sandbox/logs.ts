@@ -12,6 +12,7 @@ import {
   describeLogProbeResult,
   exitCodeFromSignal,
   getLogsProbeTimeoutMs,
+  mergeTailLogLines,
   normalizeSandboxLogsOptions,
   type LogProbeResult,
 } from "../../domain/sandbox/logs";
@@ -30,8 +31,10 @@ function runOpenclawGatewayLogs(
   options: SandboxLogsOptions,
 ): LogProbeResult {
   const args = buildSandboxOpenclawGatewayLogsArgs(sandboxName, options);
+  // Capture stdout so the caller can merge with the OpenShell source
+  // (closes #4100). stderr still inherits so warnings print directly.
   const result = runOpenshell(args, {
-    stdio: "inherit",
+    stdio: ["ignore", "pipe", "inherit"],
     ignoreError: true,
     timeout: getLogsProbeTimeoutMs(),
   });
@@ -179,16 +182,35 @@ export function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions
   }
 
   enableSandboxAuditLogs(sandboxName);
+
+  // Capture stdout from both sources so --tail N can be applied once
+  // to the merged stream rather than independently per source
+  // (which previously returned up to 2*N lines). Closes #4100.
+  let gatewayResult: LogProbeResult | null = null;
   if (!logsOptions.since) {
-    runOpenclawGatewayLogs(sandboxName, logsOptions);
+    gatewayResult = runOpenclawGatewayLogs(sandboxName, logsOptions);
   }
-  const args = buildSandboxLogsArgs(sandboxName, logsOptions);
-  const result = runOpenshell(args, {
-    stdio: "inherit",
+
+  const openshellArgs = buildSandboxLogsArgs(sandboxName, logsOptions);
+  const openshellResult = runOpenshell(openshellArgs, {
+    stdio: ["ignore", "pipe", "inherit"],
     ignoreError: true,
   });
-  if (result.status !== 0) {
-    console.error(`  Command failed (exit ${result.status}): openshell ${args.join(" ")}`);
+
+  const targetLines = Number(logsOptions.lines);
+  const maxLines = Number.isFinite(targetLines) && targetLines > 0 ? targetLines : 0;
+  const sources: string[] = [];
+  if (gatewayResult?.stdout) sources.push(String(gatewayResult.stdout));
+  if (openshellResult.stdout) sources.push(String(openshellResult.stdout));
+  const merged = mergeTailLogLines(sources, maxLines);
+  if (merged) {
+    process.stdout.write(merged);
   }
-  exitWithSpawnResult(result);
+
+  if (openshellResult.status !== 0) {
+    console.error(
+      `  Command failed (exit ${openshellResult.status}): openshell ${openshellArgs.join(" ")}`,
+    );
+  }
+  exitWithSpawnResult(openshellResult);
 }
