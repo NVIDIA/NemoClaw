@@ -45,7 +45,18 @@ section() {
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
 is_transient_live_inference_failure() {
-  grep -qiE 'curl failed with exit 28|timed? out|timeout|Operation timed out|request timed out|LLM idle timeout|502|503|504|temporar' <<<"$1"
+  case "${1:-}" in
+    *"curl failed with exit 28"* | *"transient HTTP 502"* | *"transient HTTP 503"* | *"transient HTTP 504"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+http_status_from_response() {
+  sed -n 's/^__NEMOCLAW_HTTP_STATUS__=//p' <<<"$1" | tail -1
+}
+
+http_body_from_response() {
+  sed '/^__NEMOCLAW_HTTP_STATUS__=/d' <<<"$1"
 }
 
 parse_chat_content() {
@@ -282,7 +293,7 @@ assert_env_hash_unchanged() {
 }
 
 check_inference_local() {
-  local payload payload_arg response rc content attempt last_fail
+  local payload payload_arg response rc content attempt last_fail http_code body remote
   payload=$(SWITCH_MODEL="$SWITCH_MODEL" python3 -c '
 import json
 import os
@@ -293,18 +304,24 @@ print(json.dumps({
 }))
 ')
   payload_arg="$(printf '%q' "$payload")"
+  remote="tmp=\$(mktemp); code=\$(curl -sS -o \"\$tmp\" -w '%{http_code}' --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d $payload_arg); rc=\$?; cat \"\$tmp\"; rm -f \"\$tmp\"; printf '\n__NEMOCLAW_HTTP_STATUS__=%s\n' \"\${code:-000}\"; exit \"\$rc\""
   last_fail=""
 
   for attempt in 1 2 3; do
     rc=0
-    response=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc \
-      "curl -sS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d $payload_arg" \
-      2>&1) || rc=$?
+    response=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc "$remote" 2>&1) || rc=$?
+    http_code=$(http_status_from_response "$response")
+    [ -n "$http_code" ] || http_code="000"
+    body=$(http_body_from_response "$response")
 
     if [ "$rc" -ne 0 ]; then
-      last_fail="curl failed with exit ${rc}: ${response:0:300}"
+      last_fail="curl failed with exit ${rc}; HTTP ${http_code}: ${body:0:300}"
+    elif [[ "$http_code" =~ ^50[234]$ ]]; then
+      last_fail="transient HTTP ${http_code}: ${body:0:300}"
+    elif [ "$http_code" != "200" ]; then
+      last_fail="HTTP ${http_code}: ${body:0:300}"
     else
-      content=$(printf '%s' "$response" | parse_chat_content 2>/dev/null) || content=""
+      content=$(printf '%s' "$body" | parse_chat_content 2>/dev/null) || content=""
       if grep -qi "PONG" <<<"$content"; then
         pass "Hermes sandbox inference.local returned PONG with ${SWITCH_MODEL}"
         return
@@ -319,14 +336,14 @@ print(json.dumps({
   done
 
   if is_transient_live_inference_failure "$last_fail"; then
-    skip "Hermes sandbox inference.local timed out after switch; route/config checks already passed"
+    skip "Hermes sandbox inference.local transient failure after switch; route/config checks already passed"
   else
     fail "Hermes sandbox inference.local did not work after switch: ${last_fail}"
   fi
 }
 
 check_hermes_api_chat() {
-  local payload payload_arg response rc content remote attempt last_fail
+  local payload payload_arg response rc content remote attempt last_fail http_code body
   payload=$(SWITCH_MODEL="$SWITCH_MODEL" python3 -c '
 import json
 import os
@@ -337,21 +354,29 @@ print(json.dumps({
 }))
 ')
   payload_arg="$(printf '%q' "$payload")"
-  remote="set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; if [ -n \"\${API_SERVER_KEY:-}\" ]; then curl -sS --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H \"Authorization: Bearer \${API_SERVER_KEY}\" -d $payload_arg; else curl -sS --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -d $payload_arg; fi"
+  remote="set -a; [ ! -f /sandbox/.hermes/.env ] || . /sandbox/.hermes/.env; set +a; tmp=\$(mktemp); if [ -n \"\${API_SERVER_KEY:-}\" ]; then code=\$(curl -sS -o \"\$tmp\" -w '%{http_code}' --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -H \"Authorization: Bearer \${API_SERVER_KEY}\" -d $payload_arg); else code=\$(curl -sS -o \"\$tmp\" -w '%{http_code}' --max-time 120 http://localhost:8642/v1/chat/completions -H 'Content-Type: application/json' -d $payload_arg); fi; rc=\$?; cat \"\$tmp\"; rm -f \"\$tmp\"; printf '\n__NEMOCLAW_HTTP_STATUS__=%s\n' \"\${code:-000}\"; exit \"\$rc\""
   last_fail=""
 
   for attempt in 1 2 3; do
     rc=0
     response=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc "$remote" 2>&1) || rc=$?
+    http_code=$(http_status_from_response "$response")
+    [ -n "$http_code" ] || http_code="000"
+    body=$(http_body_from_response "$response")
+
     if [ "$rc" -ne 0 ]; then
-      last_fail="Hermes API curl failed with exit ${rc}: ${response:0:300}"
+      last_fail="Hermes API curl failed with exit ${rc}; HTTP ${http_code}: ${body:0:300}"
+    elif [[ "$http_code" =~ ^50[234]$ ]]; then
+      last_fail="transient HTTP ${http_code}: ${body:0:300}"
+    elif [ "$http_code" != "200" ]; then
+      last_fail="HTTP ${http_code}: ${body:0:300}"
     else
-      content=$(printf '%s' "$response" | parse_chat_content 2>/dev/null) || content=""
+      content=$(printf '%s' "$body" | parse_chat_content 2>/dev/null) || content=""
       if grep -qi "PONG" <<<"$content"; then
         pass "Hermes API chat works after inference switch"
         return
       fi
-      last_fail="expected PONG from Hermes API, got ${content:0:300}; response=${response:0:300}"
+      last_fail="expected PONG from Hermes API, got ${content:0:300}; response=${body:0:300}"
     fi
 
     [ "$attempt" -ge 3 ] || {
@@ -361,7 +386,7 @@ print(json.dumps({
   done
 
   if is_transient_live_inference_failure "$last_fail"; then
-    skip "Hermes API chat timed out after switch; route/config checks already passed"
+    skip "Hermes API chat transient failure after switch; route/config checks already passed"
   else
     fail "Hermes API chat did not work after switch: ${last_fail}"
   fi
