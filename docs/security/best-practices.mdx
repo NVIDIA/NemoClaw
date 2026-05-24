@@ -200,7 +200,10 @@ In root mode, the gateway process still runs as the separate `gateway` user, but
 Writable agent state such as plugins, skills, hooks, and workspace metadata lives directly under `/sandbox/.openclaw`.
 
 By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
-For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so config and writable state entry points cannot be changed by the sandbox user.
+For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so config and high-risk state entry points cannot be changed by the sandbox user.
+Under lockdown, the high-risk state directories (`skills`, `hooks`, `cron`, `agents`, `extensions`, `plugins`, `workspace`, `memory`, `credentials`, `identity`, `devices`, `canvas`, `telegram`) are owned by `root:sandbox` rather than `root:root`, so the OpenClaw gateway (a member of the `sandbox` group) keeps read access to plugin and agent code while the sandbox user is denied write through `chmod -R go-w`.
+A narrow set of runtime-data subpaths is exempted from the lock so the agent can keep operating — currently `agents/<agent-id>/sessions/`, which the OpenClaw TUI creates and writes session metadata into; the lock helper restores those subpaths to `sandbox:sandbox 2770` after the surrounding tree is locked.
+If any high-risk state-dir root is a symlink when shields-up runs, the lock refuses to proceed and reports "Config not locked: state dir root is a symlink" rather than silently following the link with privileged `chown -R` / `chmod -R`.
 
 - **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `700` and `openclaw.json` with mode `600`, so the agent can read and write config directly.
 - **Config integrity hash.** The image includes a SHA256 hash of `openclaw.json`. In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash. When the hash is root-owned and read-only, startup enforces it and refuses to start if the hash does not match.

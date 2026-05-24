@@ -397,17 +397,27 @@ function applyStateDirLockMode(
   const dirMode = isLocking ? "755" : "2770";
   const clearSetgid = isLocking ? "1" : "0";
 
-  // Reject symlinked state-dir roots (and workspace-* dirs) before any
-  // recursive ownership/mode mutation. A pre-lockdown agent that swapped
-  // e.g. `extensions/` for a symlink to /etc could otherwise redirect the
-  // privileged `chown -R`/`chmod -R` at an attacker-controlled host path.
-  // The script always exits 0 and reports symlinked roots on stdout so the
-  // TS layer can surface them as lock failures (caller fails shields-up
-  // rather than reporting "locked" while a state-dir root is still a
-  // symlink to a writable host path).
-  const symlinkReports: string[] = [];
+  // Preflight: before any chown/chmod runs, scan every high-risk state-dir
+  // root and every workspace-* dir for symlinked roots. A pre-lockdown
+  // agent that swapped e.g. `extensions/` for a symlink to /etc could
+  // otherwise redirect the privileged `chown -R`/`chmod -R` at an
+  // attacker-controlled host path. Doing the symlink check inline in the
+  // mutation script would still leave any earlier (non-symlinked) dirs
+  // already mutated by the time the script reaches the bad entry, so
+  // shields-up could half-lock the tree and then fail. The preflight
+  // returns all symlinked paths up front; we abort lock without touching
+  // anything when any are present.
+  const symlinkedRoots = preflightSymlinkedRoots(sandboxName, configDir);
+  if (isLocking && symlinkedRoots.length > 0) {
+    return symlinkedRoots.map(
+      (path) => `state dir root is a symlink: ${path} (refusing to lock)`,
+    );
+  }
 
-  const stateDirReport = runStateDirLockScript(sandboxName, {
+  // Mutation pass — still skips symlinked roots inline as a defence-in-depth
+  // measure in case the preflight and mutation observe different fs state
+  // (the preflight pass already aborted shields-up in the common case).
+  runStateDirLockScript(sandboxName, {
     script: `
 set -u
 config_dir="$1"
@@ -438,11 +448,10 @@ done
       ...HIGH_RISK_STATE_DIRS,
     ],
   });
-  symlinkReports.push(...stateDirReport);
 
   // Multi-agent OpenClaw workspaces are named workspace-<agent>. They are
   // discovered dynamically because they are configured by openclaw.json.
-  const workspaceReport = runStateDirLockScript(sandboxName, {
+  runStateDirLockScript(sandboxName, {
     script: `
 set -u
 config_dir="$1"
@@ -464,19 +473,48 @@ done
 `,
     args: [configDir, owner, recursiveMode, dirMode, clearSetgid],
   });
-  symlinkReports.push(...workspaceReport);
 
   if (isLocking) {
     restoreWritableRuntimeSubpaths(sandboxName, configDir);
   }
+  return [];
+}
 
-  // Surface symlinked roots only when locking. Unlock is best-effort and
-  // tolerating a stale symlink there is safer than refusing to relax the
-  // tree at all.
-  if (!isLocking) return [];
-  return symlinkReports.map(
-    (path) => `state dir root is a symlink: ${path} (refusing to lock)`,
-  );
+// Probe every high-risk state-dir root and every workspace-* dir for
+// symlinks before any mutation runs. Returns the absolute paths of all
+// symlinked roots; an empty list means it is safe to proceed with the
+// lock fan-out. Best-effort: a failed shell exec returns an empty list,
+// matching the rest of the lock pipeline's "verification below catches
+// the primary config lock" stance.
+function preflightSymlinkedRoots(sandboxName: string, configDir: string): string[] {
+  let stdout = "";
+  try {
+    stdout = privilegedSandboxExecCapture(sandboxName, [
+      "sh",
+      "-c",
+      `
+set -u
+config_dir="$1"
+shift
+for dir in "$@"; do
+  path="$config_dir/$dir"
+  [ -L "$path" ] && printf '%s\\n' "$path"
+done
+for dir in "$config_dir"/workspace-*; do
+  [ -L "$dir" ] && printf '%s\\n' "$dir"
+done
+`,
+      "sh",
+      configDir,
+      ...HIGH_RISK_STATE_DIRS,
+    ]);
+  } catch {
+    return [];
+  }
+  return stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 }
 
 interface StateDirLockScript {
