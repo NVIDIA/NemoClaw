@@ -44,38 +44,6 @@ section() {
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
-is_transient_inference_set_failure() {
-  grep -qiE 'timed? out|timeout|ETIMEDOUT|ECONNRESET|EAI_AGAIN|ENOTFOUND|502|503|504|temporar' <<<"$1"
-}
-
-run_inference_set_with_retry() {
-  local attempt rc output fallback_output
-  local attempts="${NEMOCLAW_SWITCH_SET_ATTEMPTS:-3}"
-  for attempt in $(seq 1 "$attempts"); do
-    output=$(nemohermes inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL" 2>&1)
-    rc=$?
-    if [ "$rc" -eq 0 ]; then
-      printf '%s\n' "$output"
-      return 0
-    fi
-
-    if ! is_transient_inference_set_failure "$output" || [ "$attempt" -ge "$attempts" ]; then
-      if is_transient_inference_set_failure "$output"; then
-        info "Verified Hermes inference switch failed after ${attempts} transient attempt(s); retrying with --no-verify before live route checks..."
-        fallback_output=$(nemohermes inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL" --no-verify 2>&1)
-        rc=$?
-        printf '%s\n%s\n' "$output" "$fallback_output"
-        return "$rc"
-      fi
-      printf '%s\n' "$output"
-      return "$rc"
-    fi
-
-    info "Verified Hermes inference switch attempt ${attempt}/${attempts} hit a transient failure; retrying..."
-    sleep $((attempt * 5))
-  done
-}
-
 parse_chat_content() {
   python3 -c "
 import json, sys
@@ -397,6 +365,8 @@ else
 fi
 
 E2E_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=test/e2e/lib/inference-switch-retry.sh
+. "${E2E_DIR}/lib/inference-switch-retry.sh"
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-hermes-inference-switch}"
 SWITCH_PROVIDER="${NEMOCLAW_SWITCH_PROVIDER:-nvidia-prod}"
 SWITCH_MODEL="${NEMOCLAW_SWITCH_MODEL:-z-ai/glm-5.1}"
@@ -501,7 +471,7 @@ pid_before="$(hermes_gateway_pid)"
 ENV_HASH_BEFORE=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sha256sum /sandbox/.hermes/.env 2>/dev/null | awk '{print $1}') || true
 
 info "Switching Hermes to ${SWITCH_PROVIDER} / ${SWITCH_MODEL} with nemohermes inference set..."
-switch_output=$(run_inference_set_with_retry)
+switch_output=$(run_inference_set_with_retry nemohermes inference set --provider "$SWITCH_PROVIDER" --model "$SWITCH_MODEL")
 switch_rc=$?
 if [ "$switch_rc" -eq 0 ]; then
   pass "nemohermes inference set completed without --sandbox"
