@@ -7,9 +7,9 @@
 // OpenClaw). Non-OpenClaw agents get a "restart gateway" hint until a
 // generic refresh contract is defined in the manifest schema.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 // yaml is a production dependency (used by policies.ts, onboard.ts)
 import YAML from "yaml";
@@ -115,6 +115,7 @@ export function resolveSkillPaths(
 // Re-export shellQuote from runner.ts — a repo-wide test enforces
 // a single definition lives in runner.ts.
 const { shellQuote } = require("./runner");
+
 export { shellQuote };
 
 const SAFE_PATH_RE = /^[A-Za-z0-9._\-/]+$/;

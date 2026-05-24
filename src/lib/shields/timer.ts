@@ -10,11 +10,10 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
+import { isRecord, type UnknownRecord } from "../core/json-types";
 import { buildPolicySetCommand } from "../policy";
 import { run } from "../runner";
 import { DEFAULT_AGENT_CONFIG, resolveAgentConfig } from "../sandbox/config";
-import { isRecord, type UnknownRecord } from "../core/json-types";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
 import { lockAgentConfig } from "./index";

@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import childProcess, { type SpawnSyncReturns } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import from compiled dist/ so coverage is attributed correctly.
 import {

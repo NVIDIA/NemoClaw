@@ -29,8 +29,8 @@ import { captureSandboxSshConfigCommand } from "../adapters/openshell/client.js"
 import { resolveOpenshell } from "../adapters/openshell/resolve.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
-import { isRecord, type UnknownRecord } from "../core/json-types.js";
 import { loadAgent } from "../agent/defs.js";
+import { isRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import * as registry from "./registry.js";

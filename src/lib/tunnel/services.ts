@@ -11,17 +11,16 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  writeFileSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-
-import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
-import { renderBox } from "../cli/banner";
 import { dockerSpawnSync } from "../adapters/docker";
-import { DASHBOARD_PORT } from "../core/ports";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
+import { renderBox } from "../cli/banner";
+import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { isRecord } from "../core/json-types";
+import { DASHBOARD_PORT } from "../core/ports";
 import { buildSubprocessEnv } from "../subprocess-env";
 
 // ---------------------------------------------------------------------------
