@@ -1122,7 +1122,8 @@ process.exit(0);
       for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
 
       // `agents` simulates perm-denied (no rows emitted); `workspace` emits
-      // a non-whitelisted symlink that the audit must still catch.
+      // a symlink that is not in the audit allow-list, which must still be
+      // caught even when a sibling find exits non-zero.
       const auditLines = [
         "l\t/sandbox/.openclaw/workspace/leak\t../openclaw.json",
       ].join("\n");

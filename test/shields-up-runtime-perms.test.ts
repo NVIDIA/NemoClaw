@@ -127,7 +127,10 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
       throw new Error("restore-writable-runtime-subpaths shell command not found");
     }
     const script = restoreShell[2];
-    const patterns = restoreShell.slice(4);
+    // Captured argv: ["sh", "-c", script, "sh", "/sandbox/.openclaw", ...patterns].
+    // Drop everything up to and including the probed configDir so the fixture
+    // configDir is passed exactly once when re-running the script body.
+    const patterns = restoreShell.slice(5);
 
     const result = spawnSync(
       "bash",
@@ -137,6 +140,44 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     expect(result.status).toBe(0);
     expect(fs.existsSync(path.join(agentDir, "sessions"))).toBe(true);
     expect(fs.statSync(path.join(agentDir, "sessions")).isDirectory()).toBe(true);
+
+    fs.rmSync(fixture, { recursive: true, force: true });
+  });
+
+  // Defence in depth: if a malicious agent points `agents/<id>` at /etc or
+  // any other host path before shields-up runs, the privileged restore
+  // helper must not mkdir/chown/chmod through that symlink. The script
+  // must drop symlinked parents (and symlinked targets) before touching
+  // them.
+  it("refuses to follow a symlinked agents/<id> parent during the runtime-subpath restore", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-shields-symlink-"));
+    const configDir = path.join(fixture, ".openclaw");
+    const agentsRoot = path.join(configDir, "agents");
+    const hostTarget = path.join(fixture, "host-target");
+    fs.mkdirSync(agentsRoot, { recursive: true });
+    fs.mkdirSync(hostTarget, { recursive: true });
+    fs.symlinkSync(hostTarget, path.join(agentsRoot, "main"));
+
+    const restoreShell = runLockAgentConfigProbe().find(
+      (command) =>
+        command[0] === "sh" &&
+        command[1] === "-c" &&
+        command.includes("agents/*/sessions"),
+    );
+    if (!restoreShell) {
+      throw new Error("restore-writable-runtime-subpaths shell command not found");
+    }
+    const script = restoreShell[2];
+    const patterns = restoreShell.slice(5);
+
+    const result = spawnSync(
+      "bash",
+      ["-c", `${script}\n`, "sh", configDir, ...patterns],
+      { encoding: "utf-8", timeout: 5000 },
+    );
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(path.join(hostTarget, "sessions"))).toBe(false);
+    expect(fs.existsSync(path.join(agentsRoot, "main", "sessions"))).toBe(false);
 
     fs.rmSync(fixture, { recursive: true, force: true });
   });

@@ -491,8 +491,10 @@ for pattern in "$@"; do
     case "$parent" in
       *"*"*) continue ;;
     esac
+    [ -L "$parent" ] && continue
     [ -d "$parent" ] || continue
     target="$parent/$leaf"
+    [ -L "$target" ] && continue
     mkdir -p "$target" 2>/dev/null || continue
     chown -R sandbox:sandbox "$target" 2>/dev/null || true
     chmod 2770 "$target" 2>/dev/null || true
