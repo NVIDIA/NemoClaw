@@ -173,6 +173,13 @@ is_cloudflare_transient_text() {
   grep -qiE 'failed to unmarshal quick Tunnel|quick tunnels? (are )?(temporarily )?disabled|failed to (dial|register)|tunnel server.*error|i/o timeout|EOF.*tunnel|couldn.?t start tunnel|tunnel creation failed|bad gateway|\b50[234]\b' <<<"$1"
 }
 
+is_cloudflare_transient_http_code() {
+  case "${1:-}" in
+    000 | 502 | 503 | 504) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # Classify failure cause from cloudflared.log. Echoes one of:
 #   nemoclaw_no_spawn / nemoclaw_capture_bug / nemoclaw_local / cloudflare / unknown
 classify_cloudflared_log() {
@@ -372,10 +379,16 @@ test_tunnel_lifecycle() {
         fail "TC-DEPLOY-01b" "[NemoClaw fault] HTTP 200 but body lacks OpenClaw dashboard markers — dashboard may be serving wrong content on port (first 200B: $(head -c 200 "$body_file" | tr -d '\n'))"
       fi
     else
-      # If we get here, every retry re-checked local and found it healthy
-      # → attribute the failure to Cloudflare quick-tunnel (third-party).
-      skip "TC-DEPLOY-01b: CloudflareEdge" \
-        "[Cloudflare fault] Tunnel URL never became reachable after $max_retries retries (last status '$http_code') while local stayed healthy throughout — Cloudflare quick-tunnel did not become reachable in time (slow DNS propagation or edge instability)."
+      # If we get here, every retry re-checked local and found it healthy.
+      # Only classify known quick-tunnel edge failures as external; unexpected
+      # statuses such as 400/401/403/404 may indicate a NemoClaw URL/routing bug.
+      if is_cloudflare_transient_http_code "$http_code" || is_cloudflare_transient_text "$(cat "$body_file" 2>/dev/null)"; then
+        skip "TC-DEPLOY-01b: CloudflareEdge" \
+          "[Cloudflare fault] Tunnel URL never became reachable after $max_retries retries (last status '$http_code') while local stayed healthy throughout — Cloudflare quick-tunnel did not become reachable in time (slow DNS propagation or edge instability)."
+      else
+        fail "TC-DEPLOY-01b: UnexpectedStatus" \
+          "[NemoClaw fault] Tunnel returned unexpected HTTP $http_code while local stayed healthy; not classified as external Cloudflare flake (first 200B: $(head -c 200 "$body_file" | tr -d '\n'))."
+      fi
     fi
     rm -f "$body_file"
   else
