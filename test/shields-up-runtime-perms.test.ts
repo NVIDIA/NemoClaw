@@ -53,28 +53,54 @@ process.stdout.write(JSON.stringify(calls));
   return JSON.parse(probe.stdout) as string[][];
 }
 
+function findStateDirLockShell(commands: string[][]): string[] | undefined {
+  return commands.find(
+    (command) =>
+      command[0] === "sh" &&
+      command[1] === "-c" &&
+      typeof command[2] === "string" &&
+      command[2].includes('chown -R "$owner"') &&
+      command.includes("root:sandbox") &&
+      command.includes("agents") &&
+      command.includes("extensions"),
+  );
+}
+
 describe("shields-up state-dir lock preserves sandbox-group access + runtime sessions writable", () => {
-  it("locks each high-risk state dir to root:sandbox so the gateway keeps r-x via the sandbox group", () => {
+  it("locks the high-risk state dirs via a single sh-c script with root:sandbox ownership", () => {
     const commands = runLockAgentConfigProbe();
 
-    const stateDirChowns = commands.filter(
-      (command) =>
-        command[0] === "chown" &&
-        command[1] === "-R" &&
-        typeof command[3] === "string" &&
-        command[3].startsWith("/sandbox/.openclaw/"),
+    const stateDirLockShell = findStateDirLockShell(commands);
+    expect(stateDirLockShell).toBeDefined();
+    expect(stateDirLockShell).toEqual(
+      expect.arrayContaining(["root:sandbox", "go-w", "755"]),
     );
+    expect(stateDirLockShell).toEqual(
+      expect.arrayContaining(["agents", "extensions", "skills", "hooks"]),
+    );
+  });
 
-    expect(stateDirChowns.length).toBeGreaterThan(0);
-    for (const command of stateDirChowns) {
-      expect(command[2]).toBe("root:sandbox");
-    }
-    expect(stateDirChowns.map((command) => command[3])).toContain(
-      "/sandbox/.openclaw/extensions",
+  it("guards the state-dir lock script against symlinked roots", () => {
+    const commands = runLockAgentConfigProbe();
+    const stateDirLockShell = findStateDirLockShell(commands);
+    expect(stateDirLockShell).toBeDefined();
+    const script = stateDirLockShell?.[2] ?? "";
+    expect(script).toContain('[ -L "$path" ] && continue');
+    expect(script).toContain('[ -d "$path" ] || continue');
+  });
+
+  it("guards the workspace-* lock script against symlinked roots", () => {
+    const commands = runLockAgentConfigProbe();
+    const workspaceLockShell = commands.find(
+      (command) =>
+        command[0] === "sh" &&
+        command[1] === "-c" &&
+        typeof command[2] === "string" &&
+        command[2].includes('workspace-*'),
     );
-    expect(stateDirChowns.map((command) => command[3])).toContain(
-      "/sandbox/.openclaw/agents",
-    );
+    expect(workspaceLockShell).toBeDefined();
+    const script = workspaceLockShell?.[2] ?? "";
+    expect(script).toContain('[ -L "$dir" ] && continue');
   });
 
   it("keeps the top-level config dir owned by root:root (lock contract unchanged)", () => {
@@ -140,6 +166,45 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     expect(result.status).toBe(0);
     expect(fs.existsSync(path.join(agentDir, "sessions"))).toBe(true);
     expect(fs.statSync(path.join(agentDir, "sessions")).isDirectory()).toBe(true);
+
+    fs.rmSync(fixture, { recursive: true, force: true });
+  });
+
+  // If a pre-lockdown agent swaps a high-risk state dir (here `extensions`)
+  // for a symlink to a host path, the consolidated state-dir lock script
+  // must skip the symlink without recursing into the target.
+  it("does not chown/chmod through a symlinked high-risk state dir", () => {
+    const fixture = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-shields-statedir-symlink-"),
+    );
+    const configDir = path.join(fixture, ".openclaw");
+    const hostTarget = path.join(fixture, "host-target");
+    fs.mkdirSync(configDir, { recursive: true });
+    fs.mkdirSync(hostTarget, { recursive: true });
+    const innocentFile = path.join(hostTarget, "host-file");
+    fs.writeFileSync(innocentFile, "untouched\n", { mode: 0o600 });
+    const hostFilePerms = fs.statSync(innocentFile).mode & 0o7777;
+    fs.symlinkSync(hostTarget, path.join(configDir, "extensions"));
+
+    const stateDirLockShell = findStateDirLockShell(runLockAgentConfigProbe());
+    if (!stateDirLockShell) {
+      throw new Error("state-dir lock shell command not found");
+    }
+    const script = stateDirLockShell[2];
+    // Captured argv: ["sh", "-c", script, "sh", configDir, owner,
+    // recursiveMode, dirMode, clearSetgid, ...stateDirs]. Drop the probed
+    // configDir from index 4 and substitute the fixture path.
+    const args = stateDirLockShell.slice(4);
+    args[0] = configDir;
+
+    const result = spawnSync(
+      "sh",
+      ["-c", `${script}\n`, "sh", ...args],
+      { encoding: "utf-8", timeout: 5000 },
+    );
+    expect(result.status).toBe(0);
+    expect(fs.lstatSync(path.join(configDir, "extensions")).isSymbolicLink()).toBe(true);
+    expect(fs.statSync(innocentFile).mode & 0o7777).toBe(hostFilePerms);
 
     fs.rmSync(fixture, { recursive: true, force: true });
   });

@@ -335,7 +335,7 @@ function isShieldsState(value: unknown): value is ShieldsState {
 }
 
 // ---------------------------------------------------------------------------
-// NC-2227-05: State directories locked by shields-up.
+// State directories locked by shields-up.
 //
 // During shields-up, these must be locked so the sandbox user cannot create
 // new entries or modify existing ones. This covers both executable state
@@ -396,40 +396,48 @@ function applyStateDirLockMode(
   const recursiveMode = isLocking ? "go-w" : "g+rwX,o-rwx";
   const dirMode = isLocking ? "755" : "2770";
 
-  for (const dirName of HIGH_RISK_STATE_DIRS) {
-    const dirPath = `${configDir}/${dirName}`;
-    try {
-      privilegedSandboxExec(sandboxName, ["chown", "-R", owner, dirPath]);
-    } catch {
-      // Directory may not exist for this agent — silently skip
-    }
-    try {
-      privilegedSandboxExec(sandboxName, ["chmod", dirMode, dirPath]);
-    } catch {
-      // Silently skip
-    }
-    if (isLocking) {
-      try {
-        privilegedSandboxExec(sandboxName, ["chmod", "g-s", dirPath]);
-      } catch {
-        // Best effort; do not skip recursive write stripping.
-      }
-    }
-    try {
-      privilegedSandboxExec(sandboxName, [
-        "chmod",
-        "-R",
-        recursiveMode,
-        dirPath,
-      ]);
-    } catch {
-      // Silently skip
-    }
+  const clearSetgid = isLocking ? "1" : "0";
+
+  // Reject symlinked state-dir roots (and workspace-* dirs) before any
+  // recursive ownership/mode mutation. A pre-lockdown agent that swapped
+  // e.g. `extensions/` for a symlink to /etc could otherwise redirect the
+  // privileged `chown -R`/`chmod -R` at an attacker-controlled host path.
+  try {
+    privilegedSandboxExec(sandboxName, [
+      "sh",
+      "-c",
+      `
+set -u
+config_dir="$1"
+owner="$2"
+recursive_mode="$3"
+dir_mode="$4"
+clear_setgid="$5"
+shift 5
+for dir in "$@"; do
+  path="$config_dir/$dir"
+  [ -L "$path" ] && continue
+  [ -d "$path" ] || continue
+  chown -R "$owner" "$path" 2>/dev/null || true
+  chmod "$dir_mode" "$path" 2>/dev/null || true
+  [ "$clear_setgid" = "1" ] && chmod g-s "$path" 2>/dev/null || true
+  chmod -R "$recursive_mode" "$path" 2>/dev/null || true
+done
+`,
+      "sh",
+      configDir,
+      owner,
+      recursiveMode,
+      dirMode,
+      clearSetgid,
+      ...HIGH_RISK_STATE_DIRS,
+    ]);
+  } catch {
+    // Best effort; verification below catches the primary config lock.
   }
 
   // Multi-agent OpenClaw workspaces are named workspace-<agent>. They are
   // discovered dynamically because they are configured by openclaw.json.
-  const clearSetgid = isLocking ? "1" : "0";
   try {
     privilegedSandboxExec(sandboxName, [
       "sh",
@@ -442,6 +450,7 @@ recursive_mode="$3"
 dir_mode="$4"
 clear_setgid="$5"
 for dir in "$config_dir"/workspace-*; do
+  [ -L "$dir" ] && continue
   [ -d "$dir" ] || continue
   chown -R "$owner" "$dir" 2>/dev/null || true
   chmod "$dir_mode" "$dir" 2>/dev/null || true
