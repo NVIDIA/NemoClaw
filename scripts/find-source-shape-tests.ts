@@ -223,6 +223,14 @@ function isExecutionResultDerivation(initText: string): boolean {
   );
 }
 
+function looksLikeSourceFileExtensionFilter(text: string): boolean {
+  return /\.endsWith\(\s*["'`]\.(?:[cm]?[jt]sx?|mts|cts)["'`]\s*\)/.test(text);
+}
+
+function looksLikeSourceTreeEnumeration(text: string): boolean {
+  return /\breaddirSync\s*\(/.test(text) && looksLikeSourceFileExtensionFilter(text);
+}
+
 function collectVariableDecls(sourceFile: ts.SourceFile): VariableDecl[] {
   const variables: VariableDecl[] = [];
 
@@ -404,6 +412,43 @@ function isNestedFunctionLike(node: ts.Node): boolean {
   );
 }
 
+function functionLikeNameAndBody(
+  node: ts.Node,
+): {
+  name: string;
+  body: ts.ConciseBody;
+  node: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction;
+} | null {
+  if (ts.isFunctionDeclaration(node) && node.name && node.body) {
+    return { name: node.name.text, body: node.body, node };
+  }
+  if (
+    ts.isVariableDeclaration(node) &&
+    ts.isIdentifier(node.name) &&
+    node.initializer &&
+    (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer)) &&
+    node.initializer.body
+  ) {
+    return { name: node.name.text, body: node.initializer.body, node: node.initializer };
+  }
+  return null;
+}
+
+function collectSourceTreeFunctionNames(sourceFile: ts.SourceFile): Set<string> {
+  const names = new Set<string>();
+
+  function visit(node: ts.Node): void {
+    const functionLike = functionLikeNameAndBody(node);
+    if (functionLike && looksLikeSourceTreeEnumeration(functionLike.body.getText(sourceFile))) {
+      names.add(functionLike.name);
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return names;
+}
+
 function collectSourceFunctions(
   sourceFile: ts.SourceFile,
   productionPathVars: ReadonlySet<string>,
@@ -502,13 +547,82 @@ function collectSourceFunctions(
   return sourceFunctions;
 }
 
+function collectSourceTreeShapeVars(
+  sourceFile: ts.SourceFile,
+  body: ts.Node,
+  variables: readonly VariableDecl[],
+  productionPathVars: ReadonlySet<string>,
+): { sourceVars: Set<string>; pathVars: Set<string>; sourceTreeFunctions: Set<string> } {
+  const sourceTreeFunctions = collectSourceTreeFunctionNames(sourceFile);
+  const sourceVars = new Set<string>();
+  const pathVars = new Set<string>();
+  const bodyText = body.getText(sourceFile);
+
+  for (const variable of variables) {
+    const init = variable.initializer;
+    const helperRead =
+      ts.isCallExpression(init) &&
+      ts.isIdentifier(init.expression) &&
+      sourceTreeFunctions.has(init.expression.text) &&
+      init.arguments.some((argument) =>
+        isProductionPathExpression(argument.getText(sourceFile), productionPathVars),
+      );
+    const localCollector =
+      ts.isArrayLiteralExpression(init) &&
+      textContainsIdentifier(bodyText, variable.name) &&
+      looksLikeSourceTreeEnumeration(bodyText) &&
+      new RegExp(`\\b${escapeRegExp(variable.name)}\\.push\\s*\\(`).test(bodyText);
+
+    if (helperRead || localCollector) {
+      sourceVars.add(variable.name);
+    }
+  }
+
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const variable of variables) {
+      if (sourceVars.has(variable.name)) continue;
+      const initText = variable.initializer.getText(sourceFile);
+      if ([...sourceVars].some((name) => textContainsIdentifier(initText, name))) {
+        sourceVars.add(variable.name);
+        changed = true;
+      }
+    }
+  }
+
+  function visit(node: ts.Node): void {
+    if (ts.isForOfStatement(node)) {
+      const expressionText = node.expression.getText(sourceFile);
+      const iteratesSourceTree = [...sourceVars].some((name) =>
+        textContainsIdentifier(expressionText, name),
+      );
+      if (iteratesSourceTree) {
+        const initializer = node.initializer;
+        if (ts.isVariableDeclarationList(initializer)) {
+          for (const declaration of initializer.declarations) {
+            if (ts.isIdentifier(declaration.name)) pathVars.add(declaration.name.text);
+          }
+        } else if (ts.isIdentifier(initializer)) {
+          pathVars.add(initializer.text);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(body);
+
+  return { sourceVars, pathVars, sourceTreeFunctions };
+}
+
 function collectSourceVars(
   sourceFile: ts.SourceFile,
   variables: readonly VariableDecl[],
   productionPathVars: ReadonlySet<string>,
   sourceFunctions: ReadonlyMap<string, SourceFunction>,
+  initialSourceVars: ReadonlySet<string> = new Set(),
 ): { sourceVars: Set<string>; sourceReads: SourceRead[] } {
-  const sourceVars = new Set<string>();
+  const sourceVars = new Set(initialSourceVars);
   const sourceReads: SourceRead[] = [];
 
   for (const variable of variables) {
@@ -654,10 +768,20 @@ function expressionReferencesSource(
   expression: ts.Expression,
   sourceVars: ReadonlySet<string>,
   productionPathVars: ReadonlySet<string>,
+  sourceTreeFunctions: ReadonlySet<string>,
 ): boolean {
   const text = expression.getText();
+  const callsSourceTreeHelper =
+    ts.isCallExpression(expression) &&
+    ts.isIdentifier(expression.expression) &&
+    sourceTreeFunctions.has(expression.expression.text) &&
+    (expression.arguments.length === 0 ||
+      expression.arguments.some((argument) =>
+        isProductionPathExpression(argument.getText(), productionPathVars),
+      ));
   return (
     [...sourceVars].some((name) => textContainsIdentifier(text, name)) ||
+    callsSourceTreeHelper ||
     (ts.isCallExpression(expression) &&
       isReadFileCall(expression) &&
       expression.arguments.length > 0 &&
@@ -670,6 +794,7 @@ function assertionFromExpectCall(
   node: ts.CallExpression,
   sourceVars: ReadonlySet<string>,
   productionPathVars: ReadonlySet<string>,
+  sourceTreeFunctions: ReadonlySet<string>,
 ): Assertion | null {
   if (
     sourceVars.size > 0 &&
@@ -705,7 +830,7 @@ function assertionFromExpectCall(
 
   if (
     node.arguments.some((argument) =>
-      expressionReferencesSource(argument, sourceVars, productionPathVars),
+      expressionReferencesSource(argument, sourceVars, productionPathVars, sourceTreeFunctions),
     )
   ) {
     const { line, character } = sourceFile.getLineAndCharacterOfPosition(node.getStart());
@@ -726,10 +851,16 @@ function assertionFromCall(
   node: ts.CallExpression,
   sourceVars: ReadonlySet<string>,
   productionPathVars: ReadonlySet<string>,
+  sourceTreeFunctions: ReadonlySet<string>,
 ): Assertion | null {
   return (
-    assertionFromExpectCall(sourceFile, node, sourceVars, productionPathVars) ||
-    assertionFromAssertCall(sourceFile, node, sourceVars, productionPathVars)
+    assertionFromExpectCall(
+      sourceFile,
+      node,
+      sourceVars,
+      productionPathVars,
+      sourceTreeFunctions,
+    ) || assertionFromAssertCall(sourceFile, node, sourceVars, productionPathVars)
   );
 }
 
@@ -777,12 +908,19 @@ function collectAssertionsInNode(
   root: ts.Node,
   sourceVars: ReadonlySet<string>,
   productionPathVars: ReadonlySet<string>,
+  sourceTreeFunctions: ReadonlySet<string> = new Set(),
 ): Assertion[] {
   const assertions: Assertion[] = [];
 
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node)) {
-      const assertion = assertionFromCall(sourceFile, node, sourceVars, productionPathVars);
+      const assertion = assertionFromCall(
+        sourceFile,
+        node,
+        sourceVars,
+        productionPathVars,
+        sourceTreeFunctions,
+      );
       if (assertion) assertions.push(assertion);
     }
     ts.forEachChild(node, visit);
@@ -829,7 +967,7 @@ function fallbackLineScan(sourceFile: ts.SourceFile, root: ts.Node): Assertion[]
 
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node)) {
-      const assertion = assertionFromCall(sourceFile, node, sourceVars, new Set());
+      const assertion = assertionFromCall(sourceFile, node, sourceVars, new Set(), new Set());
       if (assertion) assertions.push(assertion);
     }
     ts.forEachChild(node, visit);
@@ -849,15 +987,29 @@ function scanSourceText(fileName: string, relPath: string, text: string): Source
       if (body) {
         const variables = scopedVariableDecls(sourceFile, allVariables, node, body);
         const productionPathVars = collectProductionPathVars(sourceFile, variables);
-        const sourceFunctions = collectSourceFunctions(sourceFile, productionPathVars);
+        const sourceTreeShapeVars = collectSourceTreeShapeVars(
+          sourceFile,
+          body,
+          variables,
+          productionPathVars,
+        );
+        const sourcePathVars = new Set([...productionPathVars, ...sourceTreeShapeVars.pathVars]);
+        const sourceFunctions = collectSourceFunctions(sourceFile, sourcePathVars);
         const { sourceVars, sourceReads } = collectSourceVars(
           sourceFile,
           variables,
-          productionPathVars,
+          sourcePathVars,
           sourceFunctions,
+          sourceTreeShapeVars.sourceVars,
         );
         const assertions = dedupeAssertions([
-          ...collectAssertionsInNode(sourceFile, body, sourceVars, productionPathVars),
+          ...collectAssertionsInNode(
+            sourceFile,
+            body,
+            sourceVars,
+            sourcePathVars,
+            sourceTreeShapeVars.sourceTreeFunctions,
+          ),
           ...fallbackLineScan(sourceFile, body),
         ]);
         if (assertions.length > 0) {

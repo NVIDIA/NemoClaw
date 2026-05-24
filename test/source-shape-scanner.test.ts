@@ -27,6 +27,56 @@ describe("source-shape scanner", () => {
     expect(cases).toEqual(["asserts source text"]);
   });
 
+  it("detects source-tree walks that feed source text assertions", () => {
+    const cases = detectedCaseNames(`
+      import fs from "node:fs";
+      import path from "node:path";
+      import { expect, it } from "vitest";
+
+      function collectProductionFiles(dir: string): string[] {
+        return fs.readdirSync(dir).flatMap((entry) => {
+          const absolute = path.join(dir, entry);
+          const stats = fs.statSync(absolute);
+          if (stats.isDirectory()) return collectProductionFiles(absolute);
+          if (absolute.endsWith(".ts") && !absolute.endsWith(".test.ts")) return [absolute];
+          return [];
+        });
+      }
+
+      it("asserts import boundaries by reading source files", () => {
+        const files = collectProductionFiles(path.join(process.cwd(), "src/lib/example"));
+        for (const file of files) {
+          const source = fs.readFileSync(file, "utf8");
+          const specifiers = source.match(/node:fs/g) ?? [];
+          expect(specifiers).toEqual([]);
+        }
+      });
+    `);
+
+    expect(cases).toEqual(["asserts import boundaries by reading source files"]);
+  });
+
+  it("detects direct assertions against source-tree helper results", () => {
+    const cases = detectedCaseNames(`
+      import fs from "node:fs";
+      import path from "node:path";
+      import { expect, it } from "vitest";
+
+      function expectedIds(dir = path.join(process.cwd(), "src/commands")): string[] {
+        return fs.readdirSync(dir).flatMap((entry) => {
+          if (!entry.endsWith(".ts") || entry.endsWith(".test.ts")) return [];
+          return [entry.replace(/\\.ts$/, "")];
+        });
+      }
+
+      it("asserts discovered command ids", () => {
+        expect(["onboard"]).toEqual(expectedIds());
+      });
+    `);
+
+    expect(cases).toEqual(["asserts discovered command ids"]);
+  });
+
   it("detects source reads through variable-declared function expression helpers", () => {
     const cases = detectedCaseNames(`
       import fs from "node:fs";
