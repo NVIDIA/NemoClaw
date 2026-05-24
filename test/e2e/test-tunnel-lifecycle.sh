@@ -169,6 +169,10 @@ get_cloudflared_log_path() {
   return 0
 }
 
+is_cloudflare_transient_text() {
+  grep -qiE 'failed to unmarshal quick Tunnel|quick tunnels? (are )?(temporarily )?disabled|failed to (dial|register)|tunnel server.*error|i/o timeout|EOF.*tunnel|couldn.?t start tunnel|tunnel creation failed|bad gateway|\b50[234]\b' <<<"$1"
+}
+
 # Classify failure cause from cloudflared.log. Echoes one of:
 #   nemoclaw_no_spawn / nemoclaw_capture_bug / nemoclaw_local / cloudflare / unknown
 classify_cloudflared_log() {
@@ -186,7 +190,7 @@ classify_cloudflared_log() {
     echo "nemoclaw_local"
     return
   fi
-  if grep -qiE 'failed to (dial|register)|quick tunnels (are )?(temporarily )?disabled|tunnel server.*error|i/o timeout|EOF.*tunnel|couldn.?t start tunnel|tunnel creation failed' "$cf_log" 2>/dev/null; then
+  if is_cloudflare_transient_text "$(cat "$cf_log" 2>/dev/null)"; then
     echo "cloudflare"
     return
   fi
@@ -272,6 +276,14 @@ test_tunnel_lifecycle() {
   log "$start_output"
   log "  ---"
   if [[ $start_rc -ne 0 ]]; then
+    show_cloudflared_log
+    if is_cloudflare_transient_text "$start_output" || [[ "$(classify_cloudflared_log)" == "cloudflare" ]]; then
+      skip "TC-DEPLOY-01a: CloudflareRegister" \
+        "[Cloudflare fault] 'nemoclaw tunnel start' exited with code $start_rc because quick-tunnel registration returned a transient external error."
+      log "  Stopping tunnel after Cloudflare start failure..."
+      nemoclaw tunnel stop 2>/dev/null || true
+      return
+    fi
     fail "TC-DEPLOY-01a: Start" "[NemoClaw fault] 'nemoclaw tunnel start' exited with code $start_rc — start command itself failed."
     return
   fi
@@ -307,7 +319,7 @@ test_tunnel_lifecycle() {
           "[NemoClaw fault] cloudflared log reports it cannot reach localhost:${LOCAL_DASHBOARD_PORT} (origin not serving). Pre-check should have caught this — review pre-check timeout."
         ;;
       cloudflare)
-        fail "TC-DEPLOY-01a: CloudflareRegister" \
+        skip "TC-DEPLOY-01a: CloudflareRegister" \
           "[Cloudflare fault] cloudflared failed to register with Cloudflare."
         ;;
       *)
@@ -362,7 +374,7 @@ test_tunnel_lifecycle() {
     else
       # If we get here, every retry re-checked local and found it healthy
       # → attribute the failure to Cloudflare quick-tunnel (third-party).
-      fail "TC-DEPLOY-01b: CloudflareEdge" \
+      skip "TC-DEPLOY-01b: CloudflareEdge" \
         "[Cloudflare fault] Tunnel URL never became reachable after $max_retries retries (last status '$http_code') while local stayed healthy throughout — Cloudflare quick-tunnel did not become reachable in time (slow DNS propagation or edge instability)."
     fi
     rm -f "$body_file"
