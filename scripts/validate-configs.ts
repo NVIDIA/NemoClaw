@@ -209,6 +209,8 @@ interface DangerousHostFinding {
   host: string;
 }
 
+const ROUTER_API_BASE_HOST_ALLOWLIST: ReadonlySet<string> = new Set(["integrate.api.nvidia.com"]);
+
 /**
  * Walk a parsed policy document (full `network_policies` map or a preset
  * fragment with a `preset:` block) and return every endpoint whose host
@@ -236,6 +238,38 @@ function findDangerousHosts(data: unknown): DangerousHostFinding[] {
       }
     });
   }
+  return findings;
+}
+
+function findDangerousRouterApiBases(data: unknown): DangerousHostFinding[] {
+  const findings: DangerousHostFinding[] = [];
+  if (!data || typeof data !== "object") return findings;
+  const models = (data as Record<string, unknown>).models;
+  if (!Array.isArray(models)) return findings;
+
+  models.forEach((model, index) => {
+    if (!model || typeof model !== "object") return;
+    const apiBase = (model as Record<string, unknown>).api_base;
+    if (typeof apiBase !== "string") return;
+    let url: URL;
+    try {
+      url = new URL(apiBase);
+    } catch {
+      return;
+    }
+    const hostname = url.hostname.toLowerCase();
+    if (
+      url.protocol !== "https:" ||
+      isDangerousHost(hostname) ||
+      !ROUTER_API_BASE_HOST_ALLOWLIST.has(hostname)
+    ) {
+      findings.push({
+        path: `/models/${index}/api_base`,
+        host: apiBase,
+      });
+    }
+  });
+
   return findings;
 }
 
@@ -305,7 +339,7 @@ function main(): void {
       const schemaErrors = !valid && validate.errors ? validate.errors.length : 0;
       // Semantic check: walk the parsed doc and reject catch-all hosts.
       // Runs regardless of schema outcome so operators see all issues at once.
-      const dangerous = findDangerousHosts(data);
+      const dangerous = [...findDangerousHosts(data), ...findDangerousRouterApiBases(data)];
 
       if (schemaErrors > 0 || dangerous.length > 0) {
         console.error(`FAIL: ${file}`);
@@ -316,8 +350,8 @@ function main(): void {
         }
         for (const finding of dangerous) {
           console.error(
-            `  ${finding.path}: host "${finding.host}" grants access to any destination — ` +
-              `use a specific hostname (subdomain wildcards like "*.example.com" are allowed)`,
+            `  ${finding.path}: host "${finding.host}" is not allowed — ` +
+              `use a specific public hostname (subdomain wildcards like "*.example.com" are allowed for policy hosts)`,
           );
         }
         totalErrors += schemaErrors + dangerous.length;
@@ -337,7 +371,14 @@ function main(): void {
 }
 
 // Export for unit tests without re-running main().
-export { DANGEROUS_HOSTS, isDangerousHost, findDangerousHosts, discoverTargets };
+export {
+  DANGEROUS_HOSTS,
+  ROUTER_API_BASE_HOST_ALLOWLIST,
+  isDangerousHost,
+  findDangerousHosts,
+  findDangerousRouterApiBases,
+  discoverTargets,
+};
 
 // Only run main() when invoked directly (skip on test `import`).
 if (

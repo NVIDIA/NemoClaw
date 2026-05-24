@@ -39,7 +39,7 @@
           "litellm_model": { "type": "string", "minLength": 1 },
           "cost_per_m_input_tokens": { "type": "number", "minimum": 0 },
           "cost_per_m_output_tokens": { "type": "number", "minimum": 0 },
-          "api_base": { "type": "string", "pattern": "^https?://" }
+          "api_base": { "type": "string", "pattern": "^https://" }
         }
       }
     }
