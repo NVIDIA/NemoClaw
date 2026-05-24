@@ -216,7 +216,7 @@ process.stdout.write(JSON.stringify(calls));
         command[0] === "sh" &&
         command[1] === "-c" &&
         command.includes("/sandbox/.openclaw") &&
-        command.includes("root:root") &&
+        command.includes("root:sandbox") &&
         command.includes("go-w") &&
         command.includes("755"),
     );

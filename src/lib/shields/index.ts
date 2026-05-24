@@ -337,11 +337,20 @@ function isShieldsState(value: unknown): value is ShieldsState {
 // ---------------------------------------------------------------------------
 // NC-2227-05: State directories locked by shields-up.
 //
-// During shields-up, these must be locked (root:root 755) so the sandbox
-// user cannot create new entries or modify existing ones. This covers both
-// executable state (skills, hooks, cron jobs, extensions, plugins, agent
-// definitions) and writable agent state entry points such as workspace and
-// memory, so a stale symlink bridge cannot bypass the lockdown.
+// During shields-up, these must be locked so the sandbox user cannot create
+// new entries or modify existing ones. This covers both executable state
+// (skills, hooks, cron jobs, extensions, plugins, agent definitions) and
+// writable agent state entry points such as workspace and memory, so a stale
+// symlink bridge cannot bypass the lockdown.
+//
+// Lock ownership is `root:sandbox` (not `root:root`): the OpenClaw gateway
+// runs as `gateway`, which is a member of the sandbox group via
+// `Dockerfile.base`. Owning these dirs as `root:sandbox` preserves the
+// sandbox group's `r-x` access to descendant files (after `chmod -R go-w`),
+// so plugin discovery (NemoClaw #4065) can still scan `extensions/<plugin>/`
+// while the sandbox user is denied write through the stripped group/other
+// write bits. The top-level config dir is still owned by `root:root`
+// (lockAgentConfig) — only the high-risk state subtrees switch.
 //
 // The list is a superset: directories that don't exist in a given agent's
 // config dir are silently skipped.
@@ -363,10 +372,18 @@ const HIGH_RISK_STATE_DIRS = [
   "telegram",
 ];
 
+// Runtime-data subpaths the agent must keep writing to under shields-up.
+// Each entry is a shell glob relative to the agent config dir; after the
+// main lock loop the matching directories are restored to
+// `sandbox:sandbox 2770` so they remain writable inside an otherwise-locked
+// tree (NemoClaw #4065).
+const WRITABLE_RUNTIME_SUBPATHS = ["agents/*/sessions"];
+
 function applyStateDirLockMode(
   sandboxName: string,
   configDir: string,
   owner: string,
+  isLocking: boolean,
 ): void {
   // Locking (shields-up) strips group + world write. Unlocking (shields-down)
   // restores the same group-readable/writable + o-rwx mutable-default contract
@@ -376,7 +393,6 @@ function applyStateDirLockMode(
   // The unlock variant uses `g+rwX,o-rwx` because a prior lock can strip group
   // access from descendants. Without re-adding group read/write explicitly,
   // shields-down would leave nested files readable/writable only by owner.
-  const isLocking = owner === "root:root";
   const recursiveMode = isLocking ? "go-w" : "g+rwX,o-rwx";
   const dirMode = isLocking ? "755" : "2770";
 
@@ -442,6 +458,45 @@ done
     ]);
   } catch {
     // Best effort; verification below catches the primary config lock.
+  }
+
+  if (isLocking) {
+    restoreWritableRuntimeSubpaths(sandboxName, configDir);
+  }
+}
+
+function restoreWritableRuntimeSubpaths(
+  sandboxName: string,
+  configDir: string,
+): void {
+  try {
+    privilegedSandboxExec(sandboxName, [
+      "sh",
+      "-c",
+      `
+set -u
+config_dir="$1"
+shift
+for pattern in "$@"; do
+  for entry in "$config_dir"/$pattern; do
+    case "$entry" in
+      *"*"*) continue ;;
+    esac
+    parent="$(dirname "$entry")"
+    [ -d "$parent" ] || continue
+    mkdir -p "$entry" 2>/dev/null || continue
+    chown -R sandbox:sandbox "$entry" 2>/dev/null || true
+    chmod 2770 "$entry" 2>/dev/null || true
+    chmod -R g+rwX,o-rwx "$entry" 2>/dev/null || true
+  done
+done
+`,
+      "sh",
+      configDir,
+      ...WRITABLE_RUNTIME_SUBPATHS,
+    ]);
+  } catch {
+    // Best effort; sandbox can recreate sessions/ in shields-down if missing.
   }
 }
 
@@ -550,7 +605,12 @@ function unlockAgentConfig(
   // NC-2227-05: Restore sandbox ownership on locked state directories.
   // Use chown -R to restore the full tree (files within may have been
   // locked to root:root by a prior shields-up).
-  applyStateDirLockMode(sandboxName, target.configDir, "sandbox:sandbox");
+  applyStateDirLockMode(
+    sandboxName,
+    target.configDir,
+    "sandbox:sandbox",
+    false,
+  );
 
   if (errors.length > 0) {
     console.error(
@@ -682,10 +742,11 @@ function lockAgentConfig(
     }
   }
 
-  // NC-2227-05: Lock state directories. Root-own the directory and set 755 so
-  // the sandbox user can read/execute but cannot create new entries or modify
-  // existing ones.
-  applyStateDirLockMode(sandboxName, target.configDir, "root:root");
+  // NC-2227-05: Lock state directories. Owned by `root:sandbox` so the
+  // gateway (in sandbox group) can still read plugin/agent code while the
+  // sandbox user is denied write through `chmod -R go-w`. See
+  // HIGH_RISK_STATE_DIRS doc above. Top-level configDir stays root:root.
+  applyStateDirLockMode(sandboxName, target.configDir, "root:sandbox", true);
 
   // OpenClaw's mutable-default config root is setgid (#2681). Clear setgid
   // after descendant locking so shields-up verifies the root config dir as
