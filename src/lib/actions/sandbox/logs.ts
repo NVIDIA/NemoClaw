@@ -2,9 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn } from "node:child_process";
-
-import { ROOT } from "../../runner";
 import { getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
+import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
 import {
   buildEnableSandboxAuditLogsArgs,
   buildSandboxLogsArgs,
@@ -12,11 +11,11 @@ import {
   describeLogProbeResult,
   exitCodeFromSignal,
   getLogsProbeTimeoutMs,
+  type LogProbeResult,
   mergeTailLogLines,
   normalizeSandboxLogsOptions,
-  type LogProbeResult,
 } from "../../domain/sandbox/logs";
-import type { SandboxLogsOptions } from "../../domain/sandbox/log-options";
+import { ROOT } from "../../runner";
 
 function exitWithSpawnResult(result: LogProbeResult) {
   if (result.status !== null) {
