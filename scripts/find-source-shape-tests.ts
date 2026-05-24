@@ -130,8 +130,7 @@ function looksLikeDeclarativeConfigPath(text: string): boolean {
     /nemoclaw-blueprint\/policies\//.test(normalized) ||
     /nemoclaw-blueprint\/router\/pool-config\.yaml/.test(normalized) ||
     /nemoclaw-blueprint\/model-specific-setup\//.test(normalized) ||
-    /agents\/[^/]+\/policy-(?:additions|permissive)\.yaml/.test(normalized) ||
-    /test\/e2e\/(?:nemoclaw_scenarios|validation_suites)\//.test(normalized)
+    /agents\/[^/]+\/policy-(?:additions|permissive)\.yaml/.test(normalized)
   );
 }
 
@@ -412,9 +411,7 @@ function isNestedFunctionLike(node: ts.Node): boolean {
   );
 }
 
-function functionLikeNameAndBody(
-  node: ts.Node,
-): {
+function functionLikeNameAndBody(node: ts.Node): {
   name: string;
   body: ts.ConciseBody;
   node: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction;

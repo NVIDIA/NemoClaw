@@ -10,7 +10,7 @@
 //   npx tsx scripts/validate-configs.ts --file <config> --schema <schema>  # validate one file
 
 import { existsSync, readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv/dist/2020.js";
 import YAML from "yaml";
@@ -26,6 +26,10 @@ type ConfigScalar = string | number | boolean | null;
 type ConfigValue = ConfigScalar | ConfigObject | ConfigValue[];
 type ConfigObject = { [key: string]: ConfigValue };
 
+function pathRelativeToRepo(absPath: string): string {
+  return relative(REPO_ROOT, absPath).replaceAll("\\", "/");
+}
+
 /**
  * Build the list of config files and their corresponding JSON Schemas.
  * Preset YAML files are discovered dynamically from the presets directory.
@@ -39,7 +43,10 @@ function discoverTargets(): ConfigTarget[] {
     },
     {
       schema: "schemas/sandbox-policy.schema.json",
-      files: ["nemoclaw-blueprint/policies/openclaw-sandbox.yaml"],
+      files: [
+        "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+        "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+      ],
     },
     {
       schema: "schemas/openclaw-plugin.schema.json",
@@ -70,6 +77,32 @@ function discoverTargets(): ConfigTarget[] {
     const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
     if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
     // agents directory may not exist — not an error
+  }
+
+  const modelSetupDir = join(REPO_ROOT, "nemoclaw-blueprint", "model-specific-setup");
+  try {
+    const modelSetupFiles: string[] = [];
+    const walkModelSetup = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const abs = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walkModelSetup(abs);
+        } else if (entry.isFile() && entry.name.endsWith(".json") && entry.name !== "schema.json") {
+          modelSetupFiles.push(pathRelativeToRepo(abs));
+        }
+      }
+    };
+    walkModelSetup(modelSetupDir);
+    if (modelSetupFiles.length > 0) {
+      targets.push({
+        schema: "nemoclaw-blueprint/model-specific-setup/schema.json",
+        files: modelSetupFiles.sort(),
+      });
+    }
+  } catch (err) {
+    const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
+    // model-specific setup directory may not exist — not an error
   }
 
   // Discover all preset YAML files dynamically.
@@ -304,7 +337,7 @@ function main(): void {
 }
 
 // Export for unit tests without re-running main().
-export { DANGEROUS_HOSTS, isDangerousHost, findDangerousHosts };
+export { DANGEROUS_HOSTS, isDangerousHost, findDangerousHosts, discoverTargets };
 
 // Only run main() when invoked directly (skip on test `import`).
 if (

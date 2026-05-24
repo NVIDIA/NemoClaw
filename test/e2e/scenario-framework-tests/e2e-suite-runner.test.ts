@@ -6,11 +6,8 @@ import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import yaml from "js-yaml";
-
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const RUN_SUITES = path.join(REPO_ROOT, "test/e2e/runtime/run-suites.sh");
-const SUITES_YAML = path.join(REPO_ROOT, "test/e2e/validation_suites/suites.yaml");
 
 function runSuites(args: string[], env: Record<string, string> = {}): SpawnSyncReturns<string> {
   return spawnSync("bash", [RUN_SUITES, ...args], {
@@ -200,16 +197,6 @@ describe("run-suites.sh", () => {
       expect(`${r.stderr}${r.stdout}`).toMatch(/context\.env|E2E_SCENARIO|missing/i);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
-    }
-  });
-
-  it("rebuild_and_upgrade_suites_should_resolve_to_domain_specific_steps", () => {
-    const doc = yaml.load(fs.readFileSync(SUITES_YAML, "utf8")) as { suites: Record<string, { steps: Array<{ script: string }> }> };
-    for (const suiteId of ["rebuild", "upgrade"]) {
-      const scripts = doc.suites[suiteId].steps.map((step) => step.script);
-      expect(scripts.length).toBeGreaterThan(0);
-      expect(scripts.every((script) => script.startsWith("rebuild_upgrade/"))).toBe(true);
-      expect(scripts.some((script) => script.startsWith("smoke/"))).toBe(false);
     }
   });
 

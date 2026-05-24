@@ -16,6 +16,8 @@ import { describe, it, expect } from "vitest";
 import Ajv, { type ValidateFunction } from "ajv/dist/2020.js";
 import YAML from "yaml";
 
+import { discoverTargets } from "../scripts/validate-configs";
+
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 function repoPath(...segments: string[]): string {
@@ -87,6 +89,34 @@ function expectValid(validate: ValidateFunction, data: object, label: string): v
     expect.unreachable(`${label} failed schema validation:\n${messages.join("\n")}`);
   }
 }
+
+// ── Validation target discovery ─────────────────────────────────────────────
+
+describe("config validation target discovery", () => {
+  const targets = discoverTargets();
+  const filesBySchema = new Map(targets.map((target) => [target.schema, target.files]));
+  const sandboxPolicyFiles = filesBySchema.get("schemas/sandbox-policy.schema.json") ?? [];
+
+  it("includes every binary-scoped sandbox policy family", () => {
+    expect(sandboxPolicyFiles).toEqual(
+      expect.arrayContaining([
+        "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+        "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+        "agents/hermes/policy-additions.yaml",
+        "agents/hermes/policy-permissive.yaml",
+        "agents/openclaw/policy-permissive.yaml",
+      ]),
+    );
+  });
+
+  it("discovers model-specific setup manifests", () => {
+    expect(filesBySchema.get("nemoclaw-blueprint/model-specific-setup/schema.json") ?? []).toEqual(
+      expect.arrayContaining([
+        "nemoclaw-blueprint/model-specific-setup/openclaw/kimi-k2.6-managed-inference.json",
+      ]),
+    );
+  });
+});
 
 // ── Blueprint ────────────────────────────────────────────────────────────────
 
@@ -215,6 +245,14 @@ describe("sandbox-policy.schema.json", () => {
 
   it("openclaw-sandbox.yaml passes schema validation", () => {
     expectValid(validate, data, "openclaw-sandbox.yaml");
+  });
+
+  it("openclaw-sandbox-permissive.yaml passes schema validation", () => {
+    expectValid(
+      validate,
+      loadYAML(repoPath("nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml")),
+      "openclaw-sandbox-permissive.yaml",
+    );
   });
 
   for (const file of [
