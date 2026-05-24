@@ -347,9 +347,9 @@ function isShieldsState(value: unknown): value is ShieldsState {
 // runs as `gateway`, which is a member of the sandbox group via
 // `Dockerfile.base`. Owning these dirs as `root:sandbox` preserves the
 // sandbox group's `r-x` access to descendant files (after `chmod -R go-w`),
-// so plugin discovery (NemoClaw #4065) can still scan `extensions/<plugin>/`
-// while the sandbox user is denied write through the stripped group/other
-// write bits. The top-level config dir is still owned by `root:root`
+// so plugin discovery can still scan `extensions/<plugin>/` while the
+// sandbox user is denied write through the stripped group/other write
+// bits. The top-level config dir is still owned by `root:root`
 // (lockAgentConfig) — only the high-risk state subtrees switch.
 //
 // The list is a superset: directories that don't exist in a given agent's
@@ -376,7 +376,7 @@ const HIGH_RISK_STATE_DIRS = [
 // Each entry is a shell glob relative to the agent config dir; after the
 // main lock loop the matching directories are restored to
 // `sandbox:sandbox 2770` so they remain writable inside an otherwise-locked
-// tree (NemoClaw #4065).
+// tree.
 const WRITABLE_RUNTIME_SUBPATHS = ["agents/*/sessions"];
 
 function applyStateDirLockMode(

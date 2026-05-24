@@ -1045,15 +1045,7 @@ process.exit(0);
     }
   });
 
-  // Regression for NemoClaw #4059: when `find` walks a state dir that
-  // contains a root-owned subdir (e.g. base-image `extensions/<plugin>` or
-  // `agents/<id>`), the sandbox-user SSH session emits "Permission denied"
-  // on those subdirs and `find` exits non-zero. The pre-fix audit joined
-  // each per-dir `find` with `&&`, so a single non-zero exit aborted the
-  // whole audit and rebuild treated every state dir as failed. The audit's
-  // real signal is its stdout (symlink / hardlink / special-file rows);
-  // exit codes from permission-denied subdirs are noise.
-  it("treats audit-find exit 1 with empty stdout as a successful audit (NemoClaw #4059)", () => {
+  it("treats audit-find exit 1 with empty stdout as a successful audit", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-perm-denied-"));
     const oldPath = process.env.PATH;
     const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -1077,10 +1069,6 @@ if (cmd.includes("[ -d ")) {
   process.exit(0);
 }
 if (cmd.includes("find ")) {
-  // No symlinks / hardlinks / special files, but pretend one of the per-dir
-  // \`find\` invocations hit a root-owned subdir and exited 1. With the
-  // post-#4059 audit shape (\`{ find … || true; }\` joined by \`;\`), the
-  // overall SSH exit code is 0 and stdout is empty.
   process.exit(0);
 }
 if (cmd.includes("tar -cf -")) {
@@ -1113,10 +1101,6 @@ process.exit(0);
     }
   });
 
-  // Complement to the test above: even when per-dir `find` exits non-zero on
-  // root-owned subdirs, real violations from other dirs in the chain must
-  // still surface. With `;`-joining each find still runs; stdout from the
-  // dirs the SSH user can traverse remains intact.
   it("still rejects violations from readable dirs even if a sibling find exits non-zero", () => {
     const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-mixed-perm-"));
     const oldPath = process.env.PATH;

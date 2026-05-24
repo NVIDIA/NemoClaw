@@ -1,20 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-/**
- * Regression coverage for NemoClaw #4065.
- *
- * Pre-fix: shields-up `chown -R root:root` on state dirs left descendants
- * unreadable to the sandbox-group gateway (plugin discovery emitted "plugin
- * not found"), and `agents/main/sessions/` could not be created by OpenClaw
- * TUI at runtime.
- *
- * Post-fix: state dirs are owned by `root:sandbox` (sandbox group preserves
- * `r-x` to descendants), and `agents/*\/sessions` is restored to
- * `sandbox:sandbox 2770` after the main lock loop so the agent keeps
- * writing session metadata under lockdown.
- */
-
 import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
@@ -64,7 +50,7 @@ process.stdout.write(JSON.stringify(calls));
   return JSON.parse(probe.stdout) as string[][];
 }
 
-describe("Issue #4065 — shields-up preserves sandbox-group access + runtime sessions writable", () => {
+describe("shields-up state-dir lock preserves sandbox-group access + runtime sessions writable", () => {
   it("locks each high-risk state dir to root:sandbox so the gateway keeps r-x via the sandbox group", () => {
     const commands = runLockAgentConfigProbe();
 
@@ -80,9 +66,6 @@ describe("Issue #4065 — shields-up preserves sandbox-group access + runtime se
     for (const command of stateDirChowns) {
       expect(command[2]).toBe("root:sandbox");
     }
-    // Plugin discovery (#4065): extensions/ must be locked as root:sandbox so
-    // openclaw can scan extensions/<plugin>/ via the sandbox group; root:root
-    // would block opendir from descendants stripped to 2750 by `chmod -R go-w`.
     expect(stateDirChowns.map((command) => command[3])).toContain(
       "/sandbox/.openclaw/extensions",
     );

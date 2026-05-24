@@ -1112,7 +1112,7 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
         // session exits 1 on permission denied. The audit's real signal is
         // stdout (the printf-emitted symlink/hardlink/special-file rows);
         // letting one perm-denied subdir abort the whole chain blocks legitimate
-        // rebuilds on a fresh sandbox (NemoClaw #4059).
+        // rebuilds.
         const auditCmd = existingDirs
           .map(
             (d) =>
