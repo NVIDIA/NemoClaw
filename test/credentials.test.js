@@ -8,80 +8,73 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import credentialsModule from "../bin/lib/credentials.js";
 
-describe("credentials", () => {
+const credentials = credentialsModule;
+const TRACKED_ENV_KEYS = [...credentials.KNOWN_CREDENTIAL_ENV_KEYS, "TEST_KEY"];
+
+function clearTrackedEnv() {
+  for (const key of TRACKED_ENV_KEYS) {
+    delete process.env[key];
+  }
+}
+
+describe("credentials shim", () => {
   let tmpDir;
   let origHome;
-  let creds;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cred-test-"));
     origHome = process.env.HOME;
     process.env.HOME = tmpDir;
-    creds = credentialsModule;
+    clearTrackedEnv();
   });
 
   afterEach(() => {
+    clearTrackedEnv();
     process.env.HOME = origHome;
     fs.rmSync(tmpDir, { recursive: true, force: true });
-    delete process.env.MY_KEY;
   });
 
-  describe("loadCredentials", () => {
-    it("returns empty object when no file exists", () => {
-      const result = creds.loadCredentials();
-      expect(result).toEqual({});
-    });
+  it("exposes HOME-relative legacy paths without creating files", () => {
+    const dir = path.join(tmpDir, ".nemoclaw");
+    const file = path.join(dir, "credentials.json");
 
-    it("returns empty object for corrupt file", () => {
-      const dir = path.join(tmpDir, ".nemoclaw");
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, "credentials.json"), "not json");
-      const result = creds.loadCredentials();
-      expect(result).toEqual({});
-    });
+    expect(Reflect.get(credentials, "CREDS_DIR")).toBe(dir);
+    expect(Reflect.get(credentials, "CREDS_FILE")).toBe(file);
+    expect(fs.existsSync(dir)).toBe(false);
   });
 
-  describe("saveCredential + getCredential", () => {
-    it("saves and retrieves a credential", () => {
-      creds.saveCredential("TEST_KEY", "test-value");
-      const result = creds.getCredential("TEST_KEY");
-      expect(result).toBe("test-value");
-    });
+  it("stages and lists allowlisted credentials from process.env only", () => {
+    credentials.saveCredential("NVIDIA_API_KEY", "  nvapi-js-shim \r\n");
+    credentials.saveCredential("TEST_KEY", "fixture-only");
 
-    it("creates directory with restricted permissions", () => {
-      creds.saveCredential("KEY", "val");
-      const dir = path.join(tmpDir, ".nemoclaw");
-      const file = path.join(dir, "credentials.json");
-      expect(fs.existsSync(dir)).toBe(true);
-      expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
-      expect(fs.statSync(file).mode & 0o777).toBe(0o600);
-    });
-
-    it("overwrites existing credential", () => {
-      creds.saveCredential("KEY", "v1");
-      creds.saveCredential("KEY", "v2");
-      expect(creds.getCredential("KEY")).toBe("v2");
-    });
-
-    it("preserves other credentials when adding new one", () => {
-      creds.saveCredential("A", "1");
-      creds.saveCredential("B", "2");
-      expect(creds.getCredential("A")).toBe("1");
-      expect(creds.getCredential("B")).toBe("2");
-    });
+    expect(credentials.getCredential("NVIDIA_API_KEY")).toBe("nvapi-js-shim");
+    expect(credentials.getCredential("TEST_KEY")).toBe("fixture-only");
+    expect(credentials.loadCredentials()).toEqual({ NVIDIA_API_KEY: "nvapi-js-shim" });
+    expect(credentials.listCredentialKeys()).toEqual(["NVIDIA_API_KEY"]);
   });
 
-  describe("getCredential", () => {
-    it("prefers environment variable over stored credential", () => {
-      creds.saveCredential("MY_KEY", "stored");
-      process.env.MY_KEY = "from-env";
-      const result = creds.getCredential("MY_KEY");
-      expect(result).toBe("from-env");
-      delete process.env.MY_KEY;
-    });
+  it("clears blank values instead of persisting them", () => {
+    credentials.saveCredential("OPENAI_API_KEY", "sk-js-shim");
+    expect(credentials.getCredential("OPENAI_API_KEY")).toBe("sk-js-shim");
 
-    it("returns null for missing credential", () => {
-      expect(creds.getCredential("NONEXISTENT_KEY_12345")).toBe(null);
-    });
+    credentials.saveCredential("OPENAI_API_KEY", " \r\n ");
+    expect(credentials.getCredential("OPENAI_API_KEY")).toBe(null);
+    expect(credentials.loadCredentials()).toEqual({});
+  });
+
+  it("does not read from or write to the legacy credentials file", () => {
+    const dir = path.join(tmpDir, ".nemoclaw");
+    const file = path.join(dir, "credentials.json");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(file, JSON.stringify({ NVIDIA_API_KEY: "nvapi-from-disk" }), { mode: 0o600 });
+
+    expect(credentials.getCredential("NVIDIA_API_KEY")).toBe(null);
+    expect(credentials.loadCredentials()).toEqual({});
+
+    credentials.saveCredential("NVIDIA_API_KEY", "nvapi-from-env");
+    expect(fs.readFileSync(file, "utf8")).toBe(
+      JSON.stringify({ NVIDIA_API_KEY: "nvapi-from-disk" }),
+    );
+    expect(credentials.getCredential("NVIDIA_API_KEY")).toBe("nvapi-from-env");
   });
 });
