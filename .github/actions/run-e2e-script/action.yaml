@@ -28,7 +28,32 @@ runs:
     - name: Run E2E script
       shell: bash
       working-directory: ${{ inputs.working-directory }}
-      run: bash "${{ inputs.script }}"
+      env:
+        E2E_SCRIPT: ${{ inputs.script }}
+      run: |
+        set -euo pipefail
+
+        case "$E2E_SCRIPT" in
+          test/e2e/*.sh) ;;
+          *)
+            echo "::error::E2E script must match test/e2e/*.sh: $E2E_SCRIPT" >&2
+            exit 1
+            ;;
+        esac
+
+        case "$E2E_SCRIPT" in
+          *..*|/*|*\"*|*\'*)
+            echo "::error::E2E script path contains unsafe characters: $E2E_SCRIPT" >&2
+            exit 1
+            ;;
+        esac
+
+        if [ ! -f "$E2E_SCRIPT" ]; then
+          echo "::error::E2E script does not exist: $E2E_SCRIPT" >&2
+          exit 1
+        fi
+
+        bash "$E2E_SCRIPT"
 
     - name: Upload E2E artifacts on failure
       if: failure()
