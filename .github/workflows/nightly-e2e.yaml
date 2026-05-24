@@ -462,37 +462,11 @@ jobs:
         with:
           node-version: "22"
 
+      - name: Install test dependencies
+        run: npm ci --include=dev
+
       - name: Verify optional GPU proof cannot abort onboard
-        run: |
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const source = fs.readFileSync('src/lib/onboard.ts', 'utf8');
-          const start = source.indexOf('function verifyDirectSandboxGpu');
-          if (start < 0) {
-            throw new Error('verifyDirectSandboxGpu function not found');
-          }
-          const bodyStart = source.indexOf('{', start);
-          let depth = 0;
-          let end = -1;
-          for (let i = bodyStart; i < source.length; i += 1) {
-            if (source[i] === '{') depth += 1;
-            if (source[i] === '}') depth -= 1;
-            if (depth === 0) {
-              end = i + 1;
-              break;
-            }
-          }
-          if (bodyStart < 0 || end < 0) {
-            throw new Error('verifyDirectSandboxGpu function body not found');
-          }
-          const fn = source.slice(start, end);
-          const optional = fn.indexOf('if (proof.optional === true) return;');
-          const throwing = fn.indexOf('throw new Error(`GPU proof failed:');
-          if (!(optional >= 0 && throwing >= 0 && optional < throwing)) {
-            throw new Error('optional GPU proof handling does not precede fatal throw');
-          }
-          console.log('optional-before-throw=true');
-          NODE
+        run: npx vitest run src/lib/onboard/sandbox-gpu-preflight.test.ts --pool=forks -t "direct sandbox GPU proof"
 
   # ── OpenClaw Discord Pairing E2E (#4061) ──────────────────────
   # Hermetic Discord Gateway placeholder rewrite proof, then connect-shell
