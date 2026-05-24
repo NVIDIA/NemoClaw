@@ -978,9 +978,21 @@ For a remote Brev instance, SSH to the instance and run `openshell term` there, 
 
 ### `nemoclaw tunnel start`
 
-Start optional host auxiliary services. This is the cloudflared tunnel when `cloudflared` is installed (for a public URL to the dashboard). Channel messaging (Telegram, Discord, Slack) is not started here; it is configured during `nemoclaw onboard` and runs through OpenShell-managed constructs.
+Start optional host auxiliary services.
+This is the cloudflared tunnel when `cloudflared` is installed, which exposes the dashboard with a public URL.
+Channel messaging (Telegram, Discord, Slack) is not started here; it is configured during `nemoclaw onboard` and runs through OpenShell-managed constructs.
 
 ```console
+$ nemoclaw tunnel start
+```
+
+By default, NemoClaw starts a Cloudflare quick tunnel and prints the generated `*.trycloudflare.com` URL when `cloudflared` reports it.
+Set `CLOUDFLARE_TUNNEL_TOKEN` to start a Cloudflare named tunnel instead.
+The named tunnel hostname and `localhost:<dashboard-port>` route must already be configured in the Cloudflare dashboard.
+NemoClaw passes the token to `cloudflared` through the `TUNNEL_TOKEN` environment variable, so the token does not appear in the `cloudflared` command-line arguments.
+
+```console
+$ export CLOUDFLARE_TUNNEL_TOKEN=<cloudflare-tunnel-token>
 $ nemoclaw tunnel start
 ```
 
