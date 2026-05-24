@@ -85,6 +85,17 @@ describe("E2E reusable workflow contract", () => {
     }
   });
 
+  it("validates env_json keys before writing GITHUB_ENV", () => {
+    const exportStep = runnerWorkflow.jobs.run.steps.find(
+      (step) => step.name === "Export script environment",
+    );
+
+    expect(exportStep?.run).toContain('name_pattern = re.compile(r"^[A-Z_][A-Z0-9_]*$")');
+    expect(exportStep?.run).toContain('reserved_prefixes = ("ACTIONS_", "GITHUB_", "INPUT_", "RUNNER_")');
+    expect(exportStep?.run).toContain('reserved_names = {"CI", "HOME", "PATH", "PWD", "SHELL"}');
+    expect(exportStep?.run).toContain('delimiter = f"EOF_{secrets.token_hex(16)}"');
+  });
+
   it("keeps env_json valid and aligned with target-ref installs", () => {
     const reusableJobs = Object.entries(nightlyWorkflow.jobs).filter(
       ([, job]) => job.uses === "./.github/workflows/e2e-script.yaml",

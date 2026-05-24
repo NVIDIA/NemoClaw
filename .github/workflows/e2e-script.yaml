@@ -89,14 +89,31 @@ jobs:
           python3 - <<'PY'
           import json
           import os
+          import re
           import secrets
+          import sys
 
           values = json.loads(os.environ.get("E2E_ENV_JSON") or "{}")
+          if not isinstance(values, dict):
+            print("::error::env_json must be a JSON object", file=sys.stderr)
+            sys.exit(1)
+
+          name_pattern = re.compile(r"^[A-Z_][A-Z0-9_]*$")
+          reserved_prefixes = ("ACTIONS_", "GITHUB_", "INPUT_", "RUNNER_")
+          reserved_names = {"CI", "HOME", "PATH", "PWD", "SHELL"}
+
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as out:
             for name, value in values.items():
+              if not isinstance(name, str) or not name_pattern.fullmatch(name):
+                print(f"::error::Invalid env_json variable name: {name!r}", file=sys.stderr)
+                sys.exit(1)
+              if name in reserved_names or name.startswith(reserved_prefixes):
+                print(f"::error::Reserved env_json variable name: {name}", file=sys.stderr)
+                sys.exit(1)
+
               rendered = str(value)
               if "\n" in rendered:
-                delimiter = f"EOF_{name}_{secrets.token_hex(8)}"
+                delimiter = f"EOF_{secrets.token_hex(16)}"
                 out.write(f"{name}<<{delimiter}\n{rendered}\n{delimiter}\n")
               else:
                 out.write(f"{name}={rendered}\n")
