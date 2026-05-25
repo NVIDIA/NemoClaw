@@ -111,6 +111,9 @@ describe("E2E reusable workflow contract", () => {
       if (parsed.NEMOCLAW_INSTALL_REF !== undefined) {
         expect(parsed.NEMOCLAW_INSTALL_REF, name).toBe("${{ inputs.target_ref || github.ref }}");
       }
+      if (parsed.NEMOCLAW_PUBLIC_INSTALL_REF !== undefined) {
+        expect(parsed.NEMOCLAW_PUBLIC_INSTALL_REF, name).toBe("${{ inputs.target_ref || github.ref }}");
+      }
     }
   });
 

@@ -171,7 +171,7 @@ jobs:
       script: test/e2e/test-cloud-onboard-e2e.sh
       artifact_name: "install-log-cloud-onboard"
       artifact_path: "/tmp/nemoclaw-e2e-cloud-onboard-install.log"
-      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_INSTALL_REF":"${{ inputs.target_ref || github.ref }}","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_MODE":"custom","NEMOCLAW_POLICY_PRESETS":"npm,pypi","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-onboard"}'
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_INSTALL_REF":"${{ inputs.target_ref || github.ref }}","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_MODE":"custom","NEMOCLAW_POLICY_PRESETS":"npm,pypi","NEMOCLAW_PUBLIC_INSTALL_REF":"${{ inputs.target_ref || github.ref }}","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-onboard"}'
       nvidia_api_key: true
       github_token: true
     secrets:
