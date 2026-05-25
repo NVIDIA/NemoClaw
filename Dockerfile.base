@@ -74,6 +74,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # gosu for privilege separation (gateway vs sandbox user).
 # Install from GitHub release with checksum verification instead of
 # Debian's packaged gosu can lag upstream. Pinned to 1.19 (2025-09).
+# Binary release asset downloads can be slower than hash fetches; keep
+# longer bounded transfer timeouts while preserving checksum verification.
 # hadolint ignore=DL4006
 RUN arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
@@ -81,7 +83,9 @@ RUN arch="$(dpkg --print-architecture)" \
         arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
         *) echo "Unsupported architecture for gosu: $arch" >&2; exit 1 ;; \
     esac \
-    && curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
     && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
     && chmod +x /usr/local/bin/gosu \
     && gosu --version

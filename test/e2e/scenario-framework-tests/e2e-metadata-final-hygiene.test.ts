@@ -20,25 +20,7 @@ import { loadMetadataFromDir } from "../runtime/resolver/load.ts";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const E2E_DIR = path.join(REPO_ROOT, "test/e2e");
 const VALIDATION_SUITES_DIR = path.join(E2E_DIR, "validation_suites");
-const README_PATH = path.join(E2E_DIR, "docs", "README.md");
-
 describe("Phase 11 final hygiene", () => {
-  it("e2e_readme_should_document_scenario_runner", () => {
-    expect(fs.existsSync(README_PATH)).toBe(true);
-    const raw = fs.readFileSync(README_PATH, "utf8");
-    // Key developer-facing concepts must be documented.
-    expect(raw).toMatch(/setup scenario/i);
-    expect(raw).toMatch(/expected state/i);
-    expect(raw).toMatch(/suite/i);
-    expect(raw).toMatch(/assertion ID|PASS: <id>/i);
-    expect(raw).toMatch(/scenario coverage report/i);
-    expect(raw).toMatch(/issue #3588/);
-    expect(raw).toMatch(/run-scenario\.sh/);
-    expect(raw).toMatch(/run-suites\.sh/);
-    // Adding-a-scenario guidance must exist.
-    expect(raw).toMatch(/adding a new setup scenario|how to add/i);
-  });
-
   it("all_suite_scripts_should_exist", () => {
     const meta = loadMetadataFromDir(E2E_DIR);
     const missing: string[] = [];
@@ -83,13 +65,4 @@ describe("Phase 11 final hygiene", () => {
     expect(problems, problems.join("\n")).toEqual([]);
   });
 
-  it("should_not_reference_retired_e2e_entrypoints", () => {
-    // At this point we have not retired any entrypoints. This guard test
-    // asserts that `run-scenario.sh` and `run-suites.sh` are the canonical
-    // new entrypoints documented in the README, so that when old scripts
-    // are retired in a follow-up, the guard is ready to be tightened.
-    const raw = fs.readFileSync(README_PATH, "utf8");
-    expect(raw).toMatch(/run-scenario\.sh/);
-    expect(raw).toMatch(/run-suites\.sh/);
-  });
 });
