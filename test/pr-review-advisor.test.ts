@@ -183,10 +183,11 @@ describe("PR review advisor", () => {
 
   it("detects localized patch signals from added diff lines", () => {
     const signals = detectLocalizedPatchSignals(`diff --git a/src/lib/example.ts b/src/lib/example.ts
-@@ -1,2 +1,5 @@
+@@ -1,2 +1,6 @@
  export function run() {
 +  process.on("uncaughtException", () => {});
 +  return fallbackConfig;
++  +++fallbackEnabled;
  }
 `);
 
@@ -200,6 +201,12 @@ describe("PR review advisor", () => {
         file: "src/lib/example.ts",
         line: 3,
         kind: "fallback/recovery/tolerance path",
+      }),
+      expect.objectContaining({
+        file: "src/lib/example.ts",
+        line: 4,
+        kind: "fallback/recovery/tolerance path",
+        evidence: "+++fallbackEnabled;",
       }),
     ]);
     expect(signals[0]?.reviewRule).toContain("invalid state");
@@ -227,6 +234,42 @@ describe("PR review advisor", () => {
       category: "architecture",
       title: "Source-of-truth review needed: Ollama proxy fallback",
     }));
+  });
+
+  it("preserves generated source-of-truth findings when model findings hit the cap", () => {
+    const findings = Array.from({ length: 50 }, (_, index) => ({
+      severity: "suggestion",
+      category: "correctness",
+      file: "src/lib/example.ts",
+      line: index + 1,
+      title: `Existing finding ${index + 1}`,
+      description: "Existing model finding.",
+      recommendation: "Review manually.",
+      evidence: `existing evidence ${index + 1}`,
+    }));
+    const result = normalizeReviewResult(validResult({
+      findings,
+      sourceOfTruthReview: [
+        {
+          surface: "Ollama proxy fallback",
+          status: "missing",
+          invalidState: "Provider tools support is unknown.",
+          sourceBoundary: "provider capability registry",
+          whyNotSourceFix: "Not explained.",
+          regressionTest: "Not specified.",
+          removalCondition: "Not specified.",
+          evidence: "Diff adds a fallback branch without explaining the source fix.",
+        },
+      ],
+    }), metadata());
+
+    expect(result.findings).toHaveLength(50);
+    expect(result.findings[0]).toMatchObject({
+      severity: "warning",
+      category: "architecture",
+      title: "Source-of-truth review needed: Ollama proxy fallback",
+    });
+    expect(result.findings.some((finding) => finding.title === "Existing finding 50")).toBe(false);
   });
 
   it("loads the security review skill from the trusted module checkout, not cwd", () => {

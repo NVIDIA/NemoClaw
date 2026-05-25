@@ -456,7 +456,7 @@ export function detectLocalizedPatchSignals(diff: string): LocalizedPatchSignal[
       if (!Number.isFinite(nextLine)) nextLine = null;
       continue;
     }
-    if (rawLine.startsWith("+++")) continue;
+    if (rawLine === "+++" || rawLine.startsWith("+++ ")) continue;
     if (rawLine.startsWith("+")) {
       const content = rawLine.slice(1).trim();
       if (content) {
@@ -827,14 +827,14 @@ function sanitizeSourceOfTruthReview(value: unknown): SourceOfTruthReview[] {
 }
 
 function addSourceOfTruthFindings(findings: Finding[], sourceOfTruthReview: SourceOfTruthReview[]): Finding[] {
-  const augmented = [...findings];
+  const injected: Finding[] = [];
   for (const review of sourceOfTruthReview) {
     if (review.status !== "missing" && review.status !== "needs_followup") continue;
-    const alreadyCovered = augmented.some((finding) =>
+    const alreadyCovered = [...injected, ...findings].some((finding) =>
       `${finding.title}\n${finding.description}\n${finding.evidence}`.toLowerCase().includes(review.surface.toLowerCase()),
     );
     if (alreadyCovered) continue;
-    augmented.push({
+    injected.push({
       severity: "warning",
       category: "architecture",
       file: null,
@@ -845,7 +845,8 @@ function addSourceOfTruthFindings(findings: Finding[], sourceOfTruthReview: Sour
       evidence: review.evidence,
     });
   }
-  return augmented.slice(0, 50);
+  const originalSlots = Math.max(0, 50 - injected.length);
+  return [...injected, ...findings.slice(0, originalSlots)];
 }
 
 function sanitizeTestDepth(value: unknown, fallback: ReviewAdvisorResult["testDepth"]): ReviewAdvisorResult["testDepth"] {
