@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createBuiltInChannelManifestRegistry } from "../channels";
+import { FAKE_TELEGRAM_HOOK_REGISTRATIONS } from "../channels/telegram/hooks/fakes";
 import { FAKE_WECHAT_HOOK_REGISTRATIONS } from "../channels/wechat/hooks/fakes";
 import { MessagingHookRegistry } from "../hooks";
 import { FAKE_COMMON_HOOK_REGISTRATIONS } from "../hooks/common";
@@ -14,6 +15,7 @@ function planner(): MessagingWorkflowPlanner {
     createBuiltInChannelManifestRegistry(),
     new MessagingHookRegistry([
       ...FAKE_COMMON_HOOK_REGISTRATIONS,
+      ...FAKE_TELEGRAM_HOOK_REGISTRATIONS,
       ...FAKE_WECHAT_HOOK_REGISTRATIONS,
     ]),
   );

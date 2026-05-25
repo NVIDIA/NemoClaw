@@ -37,19 +37,17 @@ function renderJson(manifest: ChannelManifest): string {
 }
 
 function expectTokenPasteEnrollHook(manifest: ChannelManifest, outputIds: readonly string[]): void {
-  expect(manifest.hooks).toEqual([
-    {
-      id: `${manifest.id}-token-paste`,
-      phase: "enroll",
-      handler: COMMON_TOKEN_PASTE_HOOK_HANDLER_ID,
-      outputs: outputIds.map((id) => ({
-        id,
-        kind: "secret",
-        required: true,
-      })),
-      onFailure: "skip-channel",
-    },
-  ]);
+  expect(manifest.hooks).toContainEqual({
+    id: `${manifest.id}-token-paste`,
+    phase: "enroll",
+    handler: COMMON_TOKEN_PASTE_HOOK_HANDLER_ID,
+    outputs: outputIds.map((id) => ({
+      id,
+      kind: "secret",
+      required: true,
+    })),
+    onFailure: "skip-channel",
+  });
 }
 
 describe("built-in channel manifests", () => {
@@ -151,6 +149,13 @@ describe("built-in channel manifests", () => {
     expect(renderJson(telegramManifest)).toContain("channels.telegram.groups");
     expect(renderJson(telegramManifest)).toContain("telegramConfig.requireMention");
     expectTokenPasteEnrollHook(telegramManifest, ["botToken"]);
+    expect(telegramManifest.hooks).toContainEqual({
+      id: "telegram-reachability",
+      phase: "reachability-check",
+      handler: "telegram.getMeReachability",
+      inputs: ["botToken"],
+      onFailure: "abort",
+    });
   });
 
   it("declares Discord guild and allowlist render intent for both agents", () => {

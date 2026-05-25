@@ -135,9 +135,12 @@ export interface ChannelRebuildHydrationSpec {
 /** Lifecycle phase where a referenced hook may run. */
 export type ChannelHookPhase =
   | "enroll"
+  | "reachability-check"
   | "apply"
   | "post-agent-install"
-  | "health-check";
+  | "health-check"
+  | "diagnostic"
+  | "status";
 
 /** How the planner/applier should treat a hook failure. */
 export type ChannelHookFailureMode = "abort" | "skip-channel";
@@ -147,6 +150,7 @@ export interface ChannelHookSpec {
   readonly id: string;
   readonly phase: ChannelHookPhase;
   readonly handler: string;
+  readonly agents?: readonly MessagingAgentId[];
   readonly inputs?: readonly string[];
   readonly outputs?: readonly ChannelHookOutputSpec[];
   readonly onFailure?: ChannelHookFailureMode;
@@ -255,6 +259,7 @@ export interface SandboxMessagingJsonRenderPlan
   readonly kind: "json-fragment";
   readonly path: MessagingStatePath;
   readonly value: MessagingSerializableValue;
+  readonly templateRefs: readonly string[];
 }
 
 /** Compiled env-file lines ready for an applier/render engine. */
@@ -262,6 +267,7 @@ export interface SandboxMessagingEnvLinesRenderPlan
   extends SandboxMessagingAgentRenderBasePlan {
   readonly kind: "env-lines";
   readonly lines: readonly MessagingTemplateString[];
+  readonly templateRefs: readonly string[];
 }
 
 /** Build-time input the applier may pass into sandbox create/rebuild. */

@@ -8,7 +8,12 @@ import type {
   SandboxMessagingJsonRenderPlan,
 } from "../../manifest";
 import type { ManifestCompilerContext } from "../types";
-import { resolveCredentialTemplatesInLines, resolveCredentialTemplatesInValue } from "./template";
+import {
+  collectTemplateReferencesInLines,
+  collectTemplateReferencesInValue,
+  resolveCredentialTemplatesInLines,
+  resolveCredentialTemplatesInValue,
+} from "./template";
 
 export function planAgentRender(
   manifest: ChannelManifest,
@@ -18,6 +23,10 @@ export function planAgentRender(
     .filter((render) => render.agent === context.agent)
     .map((render) => {
       if (render.kind === "json-fragment") {
+        const value = resolveCredentialTemplatesInValue(
+          render.fragment.value,
+          manifest.credentials,
+        );
         return {
           channelId: manifest.id,
           renderId: render.id,
@@ -25,17 +34,20 @@ export function planAgentRender(
           agent: render.agent,
           target: render.target,
           path: render.fragment.path,
-          value: resolveCredentialTemplatesInValue(render.fragment.value, manifest.credentials),
+          value,
+          templateRefs: collectTemplateReferencesInValue(value),
         } satisfies SandboxMessagingJsonRenderPlan;
       }
 
+      const lines = resolveCredentialTemplatesInLines(render.lines, manifest.credentials);
       return {
         channelId: manifest.id,
         renderId: render.id,
         kind: "env-lines",
         agent: render.agent,
         target: render.target,
-        lines: resolveCredentialTemplatesInLines(render.lines, manifest.credentials),
+        lines,
+        templateRefs: collectTemplateReferencesInLines(lines),
       } satisfies SandboxMessagingEnvLinesRenderPlan;
     });
 }

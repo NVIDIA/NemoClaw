@@ -254,6 +254,7 @@ const telegramPlan = {
         botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
         enabled: true,
       },
+      templateRefs: [],
     },
   ],
   buildSteps: [],

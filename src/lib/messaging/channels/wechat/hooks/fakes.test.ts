@@ -95,6 +95,13 @@ describe("WeChat fake hook implementations", () => {
           value: {
             path: "openclaw.json",
             merge: {
+              plugins: {
+                entries: {
+                  "openclaw-weixin": {
+                    enabled: true,
+                  },
+                },
+              },
               channels: {
                 "openclaw-weixin": {
                   accounts: {

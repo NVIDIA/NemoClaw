@@ -145,5 +145,12 @@ export const telegramManifest = {
       ],
       onFailure: "skip-channel",
     },
+    {
+      id: "telegram-reachability",
+      phase: "reachability-check",
+      handler: "telegram.getMeReachability",
+      inputs: ["botToken"],
+      onFailure: "abort",
+    },
   ],
 } as const satisfies ChannelManifest;

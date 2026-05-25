@@ -15,6 +15,9 @@ const FAKE_WECHAT_BASE_URL = "https://ilinkai.wechat.example";
 const FAKE_WECHAT_USER_ID = "fake-wechat-user";
 const FAKE_WECHAT_TOKEN_PLACEHOLDER = "openshell:resolve:env:WECHAT_BOT_TOKEN";
 const FAKE_WECHAT_SAVED_AT = "2026-01-01T00:00:00.000Z";
+const WECHAT_PLUGIN_ID = "openclaw-weixin";
+const WECHAT_PLUGIN_INSTALL_PATH = "/sandbox/.openclaw/extensions/openclaw-weixin";
+const WECHAT_PLUGIN_SPEC = "@tencent-weixin/openclaw-weixin@2.4.2";
 
 export const fakeWechatIlinkLoginHook: MessagingHookHandler = () => ({
   outputs: {
@@ -80,14 +83,25 @@ export const fakeWechatSeedOpenClawAccountHook: MessagingHookHandler = (context)
           path: "openclaw.json",
           merge: {
             plugins: {
+              installs: {
+                [WECHAT_PLUGIN_ID]: {
+                  source: "npm",
+                  spec: WECHAT_PLUGIN_SPEC,
+                  installPath: WECHAT_PLUGIN_INSTALL_PATH,
+                },
+              },
+              load: {
+                paths: [WECHAT_PLUGIN_INSTALL_PATH],
+              },
               entries: {
-                "openclaw-weixin": {
+                [WECHAT_PLUGIN_ID]: {
                   enabled: true,
                 },
               },
             },
             channels: {
-              "openclaw-weixin": {
+              [WECHAT_PLUGIN_ID]: {
+                channelConfigUpdatedAt: FAKE_WECHAT_SAVED_AT,
                 accounts: {
                   [accountId]: {
                     enabled: true,
