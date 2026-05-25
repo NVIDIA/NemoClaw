@@ -7,6 +7,7 @@
  * step-level progress tracking and file-based locking.
  */
 
+import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -17,9 +18,17 @@ import {
   sanitizeMessagingChannelConfig,
   type MessagingChannelConfig,
 } from "../messaging-channel-config";
+import {
+  createOnboardMachineEvent,
+  emitOnboardMachineEvent,
+  machineStateFromOnboardSessionStep,
+} from "../onboard/machine/events";
+import { isOnboardMachineState } from "../onboard/machine/transitions";
+import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 
 export const SESSION_VERSION = 1;
+export const MACHINE_SNAPSHOT_VERSION = 1;
 export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
@@ -59,6 +68,13 @@ export interface SessionMetadata {
   fromDockerfile: string | null;
 }
 
+export interface OnboardMachineSnapshot {
+  version: typeof MACHINE_SNAPSHOT_VERSION;
+  state: OnboardMachineState;
+  stateEnteredAt: string | null;
+  revision: number;
+}
+
 export interface Session {
   version: number;
   sessionId: string;
@@ -82,9 +98,18 @@ export interface Session {
   routerPid: number | null;
   routerCredentialHash: string | null;
   webSearchConfig: WebSearchConfig | null;
+  hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   messagingChannels: string[] | null;
   messagingChannelConfig: MessagingChannelConfig | null;
+  // Channels the operator paused via `nemoclaw <sb> channels stop <ch>`.
+  // Mirrors `SandboxEntry.disabledChannels` so that `rebuild` — which
+  // destroys the registry entry before calling `onboard --resume` —
+  // can carry the paused set across the destroy/recreate window.
+  // Without this mirror, the disabledChannels filter inside createSandbox
+  // reads back `[]` from the freshly-empty registry and the channel
+  // comes back live after rebuild. See #(channels-stop-rebuild bug).
+  disabledChannels: string[] | null;
   // SHA-256 hex digest of every legacy credential value successfully
   // written to the OpenShell gateway during this onboard session, keyed by
   // env-name. Persisted across process restarts so a `--resume` run that
@@ -99,12 +124,26 @@ export interface Session {
   migratedLegacyValueHashes: Record<string, string> | null;
   gpuPassthrough: boolean;
   telegramConfig: TelegramConfig | null;
+  wechatConfig: WechatConfig | null;
   metadata: SessionMetadata;
+  machine: OnboardMachineSnapshot;
   steps: Record<string, StepState>;
 }
 
 export interface TelegramConfig {
   requireMention: boolean;
+}
+
+export interface WechatConfig {
+  // Stable per-account id returned by iLink (`ilink_bot_id`). Non-secret.
+  accountId?: string;
+  // Per-account base URL. Rotates via IDC redirects, so a change here is a
+  // signal that we are now talking to a different gateway and the sandbox
+  // must be rebuilt.
+  baseUrl?: string;
+  // WeChat user id of the operator who scanned the QR. PII-adjacent but not
+  // secret — added to the DM allowlist by default.
+  userId?: string;
 }
 
 export interface LockInfo {
@@ -137,12 +176,15 @@ export interface SessionUpdates {
   routerPid?: number;
   routerCredentialHash?: string;
   webSearchConfig?: WebSearchConfig | null;
-  policyPresets?: string[];
-  messagingChannels?: string[];
+  hermesToolGateways?: string[] | null;
+  policyPresets?: string[] | null;
+  messagingChannels?: string[] | null;
   messagingChannelConfig?: MessagingChannelConfig | null;
+  disabledChannels?: string[] | null;
   migratedLegacyValueHashes?: Record<string, string>;
   gpuPassthrough?: boolean;
   telegramConfig?: TelegramConfig | null;
+  wechatConfig?: WechatConfig | null;
   metadata?: { gatewayName?: string; fromDockerfile?: string | null };
 }
 
@@ -162,11 +204,13 @@ export interface DebugSessionSummary {
   hermesAuthMethod: HermesAuthMethod | null;
   preferredInferenceApi: string | null;
   nimContainer: string | null;
+  hermesToolGateways: string[] | null;
   policyPresets: string[] | null;
   gpuPassthrough: boolean;
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
+  machine: OnboardMachineSnapshot;
   steps: Record<string, StepState>;
 }
 
@@ -178,10 +222,6 @@ function ensureSessionDir(): void {
 
 export function sessionPath(): string {
   return SESSION_FILE;
-}
-
-export function lockPath(): string {
-  return LOCK_FILE;
 }
 
 function defaultSteps(): Record<string, StepState> {
@@ -211,6 +251,10 @@ function readHermesAuthMethod(value: SessionJsonValue | undefined): HermesAuthMe
 
 function readPositiveInteger(value: SessionJsonValue | undefined): number | null {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function readNonNegativeInteger(value: SessionJsonValue | undefined): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function readStringArray(value: SessionJsonValue | undefined): string[] | null {
@@ -249,6 +293,18 @@ function parseTelegramConfig(value: unknown): TelegramConfig | null {
   return null;
 }
 
+function parseWechatConfig(value: unknown): WechatConfig | null {
+  if (!isObject(value)) return null;
+  const result: WechatConfig = {};
+  const accountId = readString(value.accountId);
+  const baseUrl = readString(value.baseUrl);
+  const userId = readString(value.userId);
+  if (accountId) result.accountId = accountId;
+  if (baseUrl) result.baseUrl = baseUrl;
+  if (userId) result.userId = userId;
+  return Object.keys(result).length > 0 ? result : null;
+}
+
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
   if (!isObject(value)) return undefined;
   return {
@@ -266,6 +322,17 @@ function parseStepState(value: SessionJsonValue | undefined): StepState | null {
     startedAt: readString(value.startedAt),
     completedAt: readString(value.completedAt),
     error: redactSensitiveText(value.error),
+  };
+}
+
+function parseMachineSnapshot(value: SessionJsonValue | undefined): OnboardMachineSnapshot | null {
+  if (!isObject(value) || value.version !== MACHINE_SNAPSHOT_VERSION) return null;
+  if (!isOnboardMachineState(value.state)) return null;
+  return {
+    version: MACHINE_SNAPSHOT_VERSION,
+    state: value.state,
+    stateEnteredAt: readString(value.stateEnteredAt),
+    revision: readNonNegativeInteger(value.revision) ?? 0,
   };
 }
 
@@ -294,21 +361,106 @@ export function sanitizeFailure(
   return step || message ? { step, message, recordedAt } : null;
 }
 
-export function validateStep(step: SessionJsonValue | undefined): boolean {
-  return parseStepState(step) !== null;
+// ── Session CRUD ─────────────────────────────────────────────────
+
+function createMachineSnapshot(
+  state: OnboardMachineState,
+  stateEnteredAt: string | null,
+  revision = 0,
+): OnboardMachineSnapshot {
+  return {
+    version: MACHINE_SNAPSHOT_VERSION,
+    state,
+    stateEnteredAt,
+    revision: Math.max(0, Math.trunc(revision)),
+  };
 }
 
-// ── Session CRUD ─────────────────────────────────────────────────
+function nextMachineStateAfterCompletedStep(
+  stepName: string | null | undefined,
+  session: Pick<Session, "agent">,
+): OnboardMachineState | null {
+  switch (stepName) {
+    case "preflight":
+      return "gateway";
+    case "gateway":
+      return "provider_selection";
+    case "provider_selection":
+      return "inference";
+    case "inference":
+      return "sandbox";
+    case "sandbox":
+      return session.agent ? "agent_setup" : "openclaw";
+    case "openclaw":
+    case "agent_setup":
+      return "policies";
+    case "policies":
+      return "finalizing";
+    default:
+      return null;
+  }
+}
+
+function inferMachineState(session: Session): OnboardMachineState {
+  if (session.status === "complete") return "complete";
+  if (session.status === "failed") return "failed";
+
+  const startedState = machineStateFromOnboardSessionStep(session.lastStepStarted);
+  const startedStep = session.lastStepStarted ? session.steps[session.lastStepStarted] : null;
+  if (startedState && startedStep?.status === "in_progress") return startedState;
+
+  return nextMachineStateAfterCompletedStep(session.lastCompletedStep, session) ?? "init";
+}
+
+function inferMachineStateEnteredAt(session: Session, state: OnboardMachineState): string | null {
+  if (state === "failed") return session.failure?.recordedAt ?? session.updatedAt;
+  if (state === "complete") return session.updatedAt;
+
+  const startedState = machineStateFromOnboardSessionStep(session.lastStepStarted);
+  const startedStep = session.lastStepStarted ? session.steps[session.lastStepStarted] : null;
+  if (state === startedState && startedStep?.status === "in_progress") {
+    return startedStep.startedAt ?? session.updatedAt;
+  }
+
+  if (nextMachineStateAfterCompletedStep(session.lastCompletedStep, session) === state) {
+    const completedStep = session.lastCompletedStep ? session.steps[session.lastCompletedStep] : null;
+    return completedStep?.completedAt ?? session.updatedAt;
+  }
+
+  return session.startedAt;
+}
+
+function inferMachineSnapshot(session: Session): OnboardMachineSnapshot {
+  const state = inferMachineState(session);
+  return createMachineSnapshot(state, inferMachineStateEnteredAt(session, state));
+}
+
+function transitionMachineSnapshot(session: Session, state: OnboardMachineState, now: string): void {
+  const current = session.machine ?? createMachineSnapshot("init", session.startedAt);
+  if (current.state === state) {
+    session.machine = {
+      ...current,
+      stateEnteredAt: current.stateEnteredAt ?? now,
+    };
+    return;
+  }
+  session.machine = createMachineSnapshot(state, now, current.revision + 1);
+}
 
 export function createSession(overrides: Partial<Session> = {}): Session {
   const now = new Date().toISOString();
-  return {
+  const startedAt = overrides.startedAt ?? now;
+  const steps = {
+    ...defaultSteps(),
+    ...(overrides.steps ?? {}),
+  };
+  const session: Session = {
     version: SESSION_VERSION,
-    sessionId: overrides.sessionId ?? `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+    sessionId: overrides.sessionId ?? `${Date.now()}-${randomUUID()}`,
     resumable: true,
     status: "in_progress",
     mode: overrides.mode ?? "interactive",
-    startedAt: overrides.startedAt ?? now,
+    startedAt,
     updatedAt: overrides.updatedAt ?? now,
     lastStepStarted: overrides.lastStepStarted ?? null,
     lastCompletedStep: overrides.lastCompletedStep ?? null,
@@ -326,23 +478,26 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     routerCredentialHash: overrides.routerCredentialHash ?? null,
     webSearchConfig:
       overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
+    hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
     messagingChannelConfig: sanitizeMessagingChannelConfig(overrides.messagingChannelConfig),
+    disabledChannels: readStringArray(overrides.disabledChannels),
     migratedLegacyValueHashes: overrides.migratedLegacyValueHashes
       ? readStringRecord(overrides.migratedLegacyValueHashes)
       : null,
     gpuPassthrough: overrides.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(overrides.telegramConfig),
+    wechatConfig: parseWechatConfig(overrides.wechatConfig),
     metadata: {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
     },
-    steps: {
-      ...defaultSteps(),
-      ...(overrides.steps ?? {}),
-    },
+    machine: parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??
+      createMachineSnapshot("init", startedAt),
+    steps,
   };
+  return session;
 }
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
@@ -365,12 +520,15 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
     routerPid: readPositiveInteger(data.routerPid),
     routerCredentialHash: readString(data.routerCredentialHash),
     webSearchConfig: parseWebSearchConfig(data.webSearchConfig),
+    hermesToolGateways: readStringArray(data.hermesToolGateways),
     policyPresets: readStringArray(data.policyPresets),
     messagingChannels: readStringArray(data.messagingChannels),
     messagingChannelConfig: sanitizeMessagingChannelConfig(data.messagingChannelConfig),
+    disabledChannels: readStringArray(data.disabledChannels),
     migratedLegacyValueHashes: readStringRecord(data.migratedLegacyValueHashes),
     gpuPassthrough: data.gpuPassthrough === true,
     telegramConfig: parseTelegramConfig(data.telegramConfig),
+    wechatConfig: parseWechatConfig(data.wechatConfig),
     lastStepStarted: readString(data.lastStepStarted),
     lastCompletedStep: readString(data.lastCompletedStep),
     failure: sanitizeFailure(isObject(data.failure) ? data.failure : null),
@@ -387,6 +545,8 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
       }
     }
   }
+
+  normalized.machine = parseMachineSnapshot(data.machine) ?? inferMachineSnapshot(normalized);
 
   return normalized;
 }
@@ -409,7 +569,7 @@ export function saveSession(session: Session): Session {
   ensureSessionDir();
   const tmpFile = path.join(
     SESSION_DIR,
-    `.onboard-session.${process.pid}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}.tmp`,
+    `.onboard-session.${process.pid}.${Date.now()}.${randomUUID()}.tmp`,
   );
   fs.writeFileSync(tmpFile, JSON.stringify(normalized, null, 2), { mode: 0o600 });
   fs.renameSync(tmpFile, SESSION_FILE);
@@ -776,10 +936,21 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else if (updates.webSearchConfig === null) {
     safe.webSearchConfig = null;
   }
-  if (Array.isArray(updates.policyPresets)) {
+  if (updates.hermesToolGateways === null) {
+    safe.hermesToolGateways = null;
+  } else if (Array.isArray(updates.hermesToolGateways)) {
+    safe.hermesToolGateways = updates.hermesToolGateways.filter(
+      (value) => typeof value === "string",
+    );
+  }
+  if (updates.policyPresets === null) {
+    safe.policyPresets = null;
+  } else if (Array.isArray(updates.policyPresets)) {
     safe.policyPresets = updates.policyPresets.filter((value) => typeof value === "string");
   }
-  if (Array.isArray(updates.messagingChannels)) {
+  if (updates.messagingChannels === null) {
+    safe.messagingChannels = null;
+  } else if (Array.isArray(updates.messagingChannels)) {
     safe.messagingChannels = updates.messagingChannels.filter((value) => typeof value === "string");
   }
   if (updates.messagingChannelConfig === null) {
@@ -787,6 +958,13 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
   } else {
     const messagingChannelConfig = sanitizeMessagingChannelConfig(updates.messagingChannelConfig);
     if (messagingChannelConfig) safe.messagingChannelConfig = messagingChannelConfig;
+  }
+  if (updates.disabledChannels === null) {
+    safe.disabledChannels = null;
+  } else if (Array.isArray(updates.disabledChannels)) {
+    safe.disabledChannels = updates.disabledChannels.filter(
+      (value) => typeof value === "string",
+    );
   }
   if (isObject(updates.migratedLegacyValueHashes)) {
     const cleaned: Record<string, string> = {};
@@ -802,6 +980,12 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     safe.telegramConfig = { requireMention: updates.telegramConfig.requireMention };
   } else if (updates.telegramConfig === null) {
     safe.telegramConfig = null;
+  }
+  if (isObject(updates.wechatConfig)) {
+    const parsed = parseWechatConfig(updates.wechatConfig);
+    if (parsed) safe.wechatConfig = parsed;
+  } else if (updates.wechatConfig === null) {
+    safe.wechatConfig = null;
   }
   if (isObject(updates.metadata) && typeof updates.metadata.gatewayName === "string") {
     safe.metadata = {
@@ -822,72 +1006,162 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
 }
 
 export function markStepStarted(stepName: string): Session {
-  return updateSession((session) => {
+  let shouldEmit = false;
+  const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
+    const now = new Date().toISOString();
     step.status = "in_progress";
-    step.startedAt = new Date().toISOString();
+    step.startedAt = now;
     step.completedAt = null;
     step.error = null;
     session.lastStepStarted = stepName;
     session.failure = null;
     session.status = "in_progress";
+    const state = machineStateFromOnboardSessionStep(stepName);
+    if (state) transitionMachineSnapshot(session, state, now);
+    shouldEmit = true;
     return session;
   });
+  if (shouldEmit) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({ type: "state.entered", session: updatedSession, step: stepName }),
+    );
+  }
+  return updatedSession;
 }
 
 export function markStepComplete(stepName: string, updates: SessionUpdates = {}): Session {
-  return updateSession((session) => {
+  const safeUpdates = filterSafeUpdates(updates);
+  let shouldEmit = false;
+  const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
+    const now = new Date().toISOString();
     step.status = "complete";
-    step.completedAt = new Date().toISOString();
+    step.completedAt = now;
     step.error = null;
     session.lastCompletedStep = stepName;
     session.failure = null;
-    Object.assign(session, filterSafeUpdates(updates));
+    Object.assign(session, safeUpdates);
+    const nextState = nextMachineStateAfterCompletedStep(stepName, session);
+    if (nextState) transitionMachineSnapshot(session, nextState, now);
+    shouldEmit = true;
     return session;
   });
+  if (shouldEmit) {
+    if (Object.keys(safeUpdates).length > 0) {
+      emitOnboardMachineEvent(
+        createOnboardMachineEvent({
+          type: "context.updated",
+          session: updatedSession,
+          step: stepName,
+          metadata: { fields: Object.keys(safeUpdates) },
+        }),
+      );
+    }
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({ type: "state.completed", session: updatedSession, step: stepName }),
+    );
+  }
+  return updatedSession;
 }
 
 export function markStepSkipped(stepName: string): Session {
-  return updateSession((session) => {
+  let shouldEmit = false;
+  const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
-    if (step.status === "complete" || step.status === "failed") return session;
+    if (step.status === "complete" || step.status === "failed" || step.status === "skipped") return session;
     step.status = "skipped";
     step.startedAt = null;
     step.completedAt = null;
     step.error = null;
+    shouldEmit = true;
     return session;
   });
+  if (shouldEmit) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({ type: "state.skipped", session: updatedSession, step: stepName }),
+    );
+  }
+  return updatedSession;
 }
 
 export function markStepFailed(stepName: string, message: string | null = null): Session {
-  return updateSession((session) => {
+  let shouldEmit = false;
+  const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
+    const now = new Date().toISOString();
     step.status = "failed";
     step.completedAt = null;
     step.error = redactSensitiveText(message);
     session.failure = sanitizeFailure({
       step: stepName,
       message,
-      recordedAt: new Date().toISOString(),
+      recordedAt: now,
     });
     session.status = "failed";
+    transitionMachineSnapshot(session, "failed", now);
+    shouldEmit = true;
     return session;
   });
+  if (shouldEmit) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "state.failed",
+        session: updatedSession,
+        step: stepName,
+        error: message,
+      }),
+    );
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "onboard.failed",
+        session: updatedSession,
+        state: "failed",
+        step: stepName,
+        error: message,
+      }),
+    );
+  }
+  return updatedSession;
 }
 
 export function completeSession(updates: SessionUpdates = {}): Session {
-  return updateSession((session) => {
-    Object.assign(session, filterSafeUpdates(updates));
+  const safeUpdates = filterSafeUpdates(updates);
+  let wasComplete = false;
+  const updatedSession = updateSession((session) => {
+    const now = new Date().toISOString();
+    wasComplete = session.status === "complete";
+    Object.assign(session, safeUpdates);
     session.status = "complete";
     session.resumable = false;
     session.failure = null;
+    transitionMachineSnapshot(session, "complete", now);
     return session;
   });
+  if (Object.keys(safeUpdates).length > 0) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "context.updated",
+        session: updatedSession,
+        state: "complete",
+        metadata: { fields: Object.keys(safeUpdates) },
+      }),
+    );
+  }
+  if (!wasComplete) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "onboard.completed",
+        session: updatedSession,
+        state: "complete",
+      }),
+    );
+  }
+  return updatedSession;
 }
 
 export function summarizeForDebug(
@@ -910,11 +1184,13 @@ export function summarizeForDebug(
     hermesAuthMethod: session.hermesAuthMethod,
     preferredInferenceApi: session.preferredInferenceApi,
     nimContainer: session.nimContainer,
+    hermesToolGateways: session.hermesToolGateways,
     policyPresets: session.policyPresets,
     gpuPassthrough: session.gpuPassthrough,
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
     failure: sanitizeFailure(session.failure),
+    machine: session.machine,
     steps: Object.fromEntries(
       Object.entries(session.steps).map(([name, step]) => [
         name,

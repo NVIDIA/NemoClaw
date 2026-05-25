@@ -17,6 +17,14 @@ const DIST_AUTH = path.join(
   "lib",
   "hermes-provider-auth.js",
 );
+const DIST_BROKER = path.join(
+  import.meta.dirname,
+  "..",
+  "..",
+  "dist",
+  "lib",
+  "hermes-tool-gateway-broker.js",
+);
 
 function clearDistModule(modulePath: string): void {
   try {
@@ -31,8 +39,17 @@ function loadAuth(): Record<string, any> {
   return require(DIST_AUTH);
 }
 
+function loadAuthWithBrokerStub(brokerStub: Record<string, any>): Record<string, any> {
+  clearDistModule(DIST_AUTH);
+  clearDistModule(DIST_BROKER);
+  const broker = require(DIST_BROKER);
+  Object.assign(broker, brokerStub);
+  return require(DIST_AUTH);
+}
+
 afterEach(() => {
   clearDistModule(DIST_AUTH);
+  clearDistModule(DIST_BROKER);
 });
 
 describe("Hermes provider OpenShell credential handoff", () => {
@@ -140,6 +157,86 @@ describe("Hermes provider OpenShell credential handoff", () => {
           call.args.includes("OPENAI_BASE_URL=https://staging.nous.example/v1"),
         ),
       ).toBe(true);
+      expect(fs.existsSync(path.join(tmp, ".nemoclaw", "hermes-oauth"))).toBe(false);
+    } finally {
+      if (originalHome === undefined) delete process.env.HOME;
+      else process.env.HOME = originalHome;
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("registers a separate managed-tool refresh provider without writing raw OAuth state", async () => {
+    const originalHome = process.env.HOME;
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-tool-oauth-"));
+    try {
+      process.env.HOME = tmp;
+      const brokerCalls: Array<{ sandboxName?: string; refreshToken?: string }> = [];
+      const auth = loadAuthWithBrokerStub({
+        registerHermesToolGatewayRefreshProvider: (
+          sandboxName: string,
+          refreshToken: string,
+        ) => {
+          brokerCalls.push({ sandboxName, refreshToken });
+          return { providerName: `${sandboxName}-hermes-tool-gateway`, brokerToken: "broker-3" };
+        },
+        ensureHermesToolGatewayBroker: (options: { refreshToken?: string }) => {
+          expect(options.refreshToken).toBe("refresh-3");
+          return true;
+        },
+      });
+      const providerCalls: Array<{ args: string[]; env?: Record<string, string> }> = [];
+      const state = await auth.ensureHermesProviderOAuthCredentials("my-assistant", {
+        allowInteractiveLogin: true,
+        fetch: (async (url, init) => {
+          if (String(url).endsWith("/api/oauth/device/code")) {
+            return new Response(
+              JSON.stringify({
+                device_code: "device-1",
+                user_code: "USER-1",
+                verification_uri: "https://portal.example/verify",
+                expires_in: 900,
+                interval: 1,
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          if (String(url).endsWith("/api/oauth/token")) {
+            return new Response(
+              JSON.stringify({
+                access_token: "access-3",
+                refresh_token: "refresh-3",
+                expires_in: 900,
+                token_type: "Bearer",
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            );
+          }
+          const headers = new Headers(init?.headers);
+          expect(headers.get("authorization")).toBe("Bearer access-3");
+          return new Response(
+            JSON.stringify({
+              api_key: "agent-key-3",
+              key_id: "agent-key-id",
+              expires_in: 1800,
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          );
+        }) as typeof fetch,
+        log: () => {},
+        noBrowser: true,
+        runOpenshell: (args: string[], opts: { env?: Record<string, string> } = {}) => {
+          providerCalls.push({ args, env: opts.env });
+          if (args[0] === "provider" && args[1] === "get") {
+            return { status: 1, stdout: "", stderr: "" };
+          }
+          return { status: 0, stdout: "", stderr: "" };
+        },
+        toolGatewayPresets: ["nous-web", "nous-audio"],
+      });
+
+      expect(state.auth_method).toBe("oauth");
+      expect(providerCalls.some((call) => call.env?.OPENAI_API_KEY === "agent-key-3")).toBe(true);
+      expect(brokerCalls).toEqual([{ sandboxName: "my-assistant", refreshToken: "refresh-3" }]);
       expect(fs.existsSync(path.join(tmp, ".nemoclaw", "hermes-oauth"))).toBe(false);
     } finally {
       if (originalHome === undefined) delete process.env.HOME;

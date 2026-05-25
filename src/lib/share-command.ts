@@ -17,6 +17,23 @@ import path from "path";
 import { buildShareCommandDeps } from "./share-command-deps";
 import type { ShareCommandDeps } from "./share-command-deps";
 
+export class ShareCommandError extends Error {
+  readonly lines: readonly string[];
+  readonly exitCode: number;
+
+  constructor(lines: string | readonly string[], exitCode = 1) {
+    const normalized = Array.isArray(lines) ? lines : [lines];
+    super(normalized.join("\n"));
+    this.name = "ShareCommandError";
+    this.lines = normalized;
+    this.exitCode = exitCode;
+  }
+}
+
+function shareFail(lines: string | readonly string[], exitCode = 1): never {
+  throw new ShareCommandError(lines, exitCode);
+}
+
 // ── Helpers ──────────────────────────────────────────────────────
 
 /**
@@ -48,6 +65,36 @@ export function defaultShareMountDir(sandboxName: string): string {
 }
 
 /**
+ * Pre-flight: confirm the remote source path actually exists inside the
+ * sandbox. sshfs exits non-zero with empty stderr when the remote path is
+ * missing (e.g. a typo), and the bare "SSHFS mount failed." line we used to
+ * emit left the user with nothing actionable. Returns normally when the path
+ * can be verified; emits a structured error and exits the process non-zero
+ * when it cannot. The success path has no return value.
+ * Exported so the behavior is testable without driving the full sshfs
+ * lifecycle. See #3414.
+ */
+export function assertSandboxPathExistsOrExit(
+  deps: ShareCommandDeps,
+  sandboxName: string,
+  remotePath: string,
+): void {
+  if (deps.checkSandboxPathExists(sandboxName, remotePath)) return;
+  // The probe returns false for both "path is missing" and "exec itself
+  // failed" (transient gRPC, sandbox just restarted, etc.), so phrase the
+  // headline as a verification failure rather than a definitive claim that
+  // the path is missing.
+  console.error(
+    `  Could not verify sandbox path '${remotePath}' in sandbox '${sandboxName}' (missing path or probe failure).`,
+  );
+  console.error(
+    `  Verify the path with: ${deps.cliName} ${sandboxName} connect, then ls ${remotePath}`,
+  );
+  console.error(`  The default is /sandbox; check for typos in any custom path you passed.`);
+  process.exit(1);
+}
+
+/**
  * Resolve the fusermount binary for Linux. FUSE 3 ships `fusermount3`;
  * older FUSE 2 ships `fusermount`. Probe both, preferring v3.
  */
@@ -62,6 +109,34 @@ export function resolveLinuxUnmount(): string | null {
     }
   }
   return null;
+}
+
+/**
+ * Verify that `localMount` exists and is writable so FUSE can mount onto it.
+ * Creates the directory (recursive) if missing, and reports the specific
+ * failure reason (read-only filesystem, permission denied, etc.) when the
+ * mount target is unusable. Returning a structured result instead of
+ * throwing keeps the helper unit-testable; the caller decides how to surface
+ * the error to the user.
+ */
+export function checkLocalMountWritable(localMount: string): { writable: boolean; reason?: string } {
+  try {
+    fs.mkdirSync(localMount, { recursive: true });
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "EROFS") return { writable: false, reason: "parent filesystem is read-only" };
+    if (code === "EACCES") return { writable: false, reason: "permission denied creating the directory" };
+    return { writable: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+  try {
+    fs.accessSync(localMount, fs.constants.W_OK);
+  } catch (err: unknown) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "EROFS") return { writable: false, reason: "filesystem is read-only" };
+    if (code === "EACCES") return { writable: false, reason: "directory is not writable" };
+    return { writable: false, reason: err instanceof Error ? err.message : String(err) };
+  }
+  return { writable: true };
 }
 
 export type ShareMountOptions = {
@@ -96,37 +171,55 @@ export async function runShareMount(
     stdio: ["ignore", "pipe", "pipe"],
   });
   if (sshfsCheck.status !== 0) {
-    console.error("  sshfs is not installed.");
-    if (process.platform === "darwin") {
-      console.error("  Install with: brew install macfuse && brew install sshfs");
-    } else {
-      console.error("  Install with: sudo apt-get install sshfs  (or: sudo dnf install fuse-sshfs)");
-    }
-    process.exit(1);
+    shareFail([
+      "  sshfs is not installed.",
+      process.platform === "darwin"
+        ? "  Install with: brew install macfuse && brew install sshfs"
+        : "  Install with: sudo apt-get install sshfs  (or: sudo dnf install fuse-sshfs)",
+    ]);
   }
 
   // Check not already mounted
   if (isMountPoint(localMount)) {
-    console.error(`  ${localMount} is already mounted.`);
-    console.error(`  Run '${deps.cliName} ${sandboxName} share unmount' first.`);
-    process.exit(1);
+    shareFail([
+      `  ${localMount} is already mounted.`,
+      `  Run '${deps.cliName} ${sandboxName} share unmount' first.`,
+    ]);
   }
 
   // Verify sandbox is running
   await deps.ensureLive(sandboxName);
 
+  // Pre-flight: confirm the remote source path actually exists. See #3414.
+  assertSandboxPathExistsOrExit(deps, sandboxName, remotePath);
+
   // Get SSH config
   const sshConfigResult = deps.getSshConfig(sandboxName);
   if (sshConfigResult.status !== 0) {
-    console.error("  Failed to obtain SSH configuration for the sandbox.");
-    process.exit(1);
+    shareFail("  Failed to obtain SSH configuration for the sandbox.");
   }
 
   // Use a private temp directory to prevent symlink attacks on predictable paths.
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-sshfs-"));
   const tmpFile = path.join(tmpDir, `${sandboxName}.conf`);
   fs.writeFileSync(tmpFile, sshConfigResult.output, { mode: 0o600, flag: "wx" });
-  fs.mkdirSync(localMount, { recursive: true });
+
+  const writable = checkLocalMountWritable(localMount);
+  if (!writable.writable) {
+    console.error(`  Local mount path '${localMount}' is not usable: ${writable.reason}.`);
+    console.error("  share mount projects sandbox files onto a host directory via SSHFS,");
+    console.error("  so the local target must be on a writable filesystem.");
+    console.error(
+      `  Pick a writable directory: ${deps.cliName} ${sandboxName} share mount ${remotePath} <writable-path>`,
+    );
+    try {
+      fs.unlinkSync(tmpFile);
+      fs.rmdirSync(tmpDir);
+    } catch {
+      /* ignore */
+    }
+    process.exit(1);
+  }
 
   let mountFailed = false;
   try {
@@ -154,18 +247,19 @@ export async function runShareMount(
     );
     if (result.status !== 0) {
       const stderr = (result.stderr || "").trim();
-      console.error("  SSHFS mount failed.");
-      if (stderr) console.error(`  ${stderr}`);
+      mountFailed = true;
+      const lines = ["  SSHFS mount failed."];
+      if (stderr) lines.push(`  ${stderr}`);
       if (/sftp/i.test(stderr)) {
-        console.error("  The sandbox may lack openssh-sftp-server.");
-        console.error(
+        lines.push("  The sandbox may lack openssh-sftp-server.");
+        lines.push(
           `  If this sandbox uses the default base image, rebuild with: ${deps.cliName} ${sandboxName} rebuild --yes`,
         );
-        console.error(
+        lines.push(
           "  If it was created from a custom `--from` image, add openssh-sftp-server at /usr/lib/openssh/sftp-server and rebuild.",
         );
       }
-      mountFailed = true;
+      shareFail(lines);
     } else {
       console.log(`  ${G}✓${R} Mounted ${remotePath} → ${localMount}`);
       console.log(`  Edit files at ${localMount} — changes appear in the sandbox instantly.`);
@@ -178,7 +272,7 @@ export async function runShareMount(
       /* ignore */
     }
   }
-  if (mountFailed) process.exit(1);
+  if (mountFailed) shareFail("  SSHFS mount failed.");
 }
 
 export function runShareUnmount(
@@ -198,10 +292,10 @@ export function runShareUnmount(
   } else {
     const resolved = resolveLinuxUnmount();
     if (!resolved) {
-      console.error("  Could not find fusermount3 or fusermount on this host.");
-      console.error("  Install with: sudo apt-get install fuse3  (or: sudo dnf install fuse3)");
-      process.exit(1);
-      return;
+      shareFail([
+        "  Could not find fusermount3 or fusermount on this host.",
+        "  Install with: sudo apt-get install fuse3  (or: sudo dnf install fuse3)",
+      ]);
     }
     unmountCmd = resolved;
     unmountArgs = ["-u", localMount];
@@ -214,14 +308,13 @@ export function runShareUnmount(
   if (result.status !== 0) {
     const stderr = (result.stderr || "").trim();
     if (/not mounted|not found|no mount/i.test(stderr)) {
-      console.error(`  ${localMount} is not currently mounted.`);
-    } else {
-      console.error(`  Unmount failed: ${stderr || "unknown error"}`);
-      if (process.platform !== "darwin") {
-        console.error(`  Try: ${unmountCmd} -uz ${localMount}`);
-      }
+      shareFail(`  ${localMount} is not currently mounted.`);
     }
-    process.exit(1);
+    const lines = [`  Unmount failed: ${stderr || "unknown error"}`];
+    if (process.platform !== "darwin") {
+      lines.push(`  Try: ${unmountCmd} -uz ${localMount}`);
+    }
+    shareFail(lines);
   }
   console.log(`  ${G}✓${R} Unmounted ${localMount}`);
 }
@@ -243,9 +336,10 @@ export function runShareStatus(
 
 export function printShareUsageAndExit(exitCode = 1): never {
   const { cliName } = buildShareCommandDeps();
-  console.error(`  Usage: ${cliName} <name> share <mount|unmount|status>`);
-  console.error("    mount   [sandbox-path] [local-mount-point]  Mount sandbox filesystem via SSHFS");
-  console.error("    unmount [local-mount-point]                 Unmount a previously mounted filesystem");
-  console.error("    status  [local-mount-point]                 Check current mount status");
-  process.exit(exitCode);
+  shareFail([
+    `  Usage: ${cliName} <name> share <mount|unmount|status>`,
+    "    mount   [sandbox-path] [local-mount-point]  Mount sandbox filesystem via SSHFS",
+    "    unmount [local-mount-point]                 Unmount a previously mounted filesystem",
+    "    status  [local-mount-point]                 Check current mount status",
+  ], exitCode);
 }

@@ -69,11 +69,28 @@ export function getNamedGatewayLifecycleState() {
   };
 }
 
+type NamedGatewayLifecycleStateName = ReturnType<typeof getNamedGatewayLifecycleState>["state"];
+
+export type RecoverNamedGatewayRuntimeOptions = {
+  recoverableStates?: readonly NamedGatewayLifecycleStateName[];
+};
+
 /** Attempt to recover the named NemoClaw gateway after a restart or connectivity loss. */
-export async function recoverNamedGatewayRuntime() {
+export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRuntimeOptions = {}) {
+  const recoverableStates = new Set<NamedGatewayLifecycleStateName>(
+    options.recoverableStates ?? [
+      "missing_named",
+      "named_unhealthy",
+      "named_unreachable",
+      "connected_other",
+    ],
+  );
   const before = getNamedGatewayLifecycleState();
   if (before.state === "healthy_named") {
     return { recovered: true, before, after: before, attempted: false };
+  }
+  if (!recoverableStates.has(before.state)) {
+    return { recovered: false, before, after: before, attempted: false };
   }
 
   runOpenshell(["gateway", "select", "nemoclaw"], {
@@ -87,7 +104,8 @@ export async function recoverNamedGatewayRuntime() {
   }
 
   const shouldStartGateway = [before.state, after.state].some((state) =>
-    ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"].includes(state),
+    recoverableStates.has(state) &&
+      ["missing_named", "named_unhealthy", "named_unreachable", "connected_other"].includes(state),
   );
 
   if (shouldStartGateway) {

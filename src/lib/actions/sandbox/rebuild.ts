@@ -28,34 +28,45 @@ const { LOCAL_INFERENCE_PROVIDERS, REMOTE_PROVIDER_CONFIG } = require("../../onb
   REMOTE_PROVIDER_CONFIG: Record<string, { providerName: string; credentialEnv: string | null }>;
 };
 
+import {
+  detectOpenShellStateRpcPreflightIssue,
+  detectOpenShellStateRpcResultIssue,
+  printOpenShellStateRpcIssue,
+} from "../../adapters/openshell/gateway-drift";
+import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import { runOpenshell } from "../../adapters/openshell/runtime";
 import { loadAgent } from "../../agent/defs";
 import { ensureAgentBaseImage } from "../../agent/onboard";
+import * as agentRuntime from "../../agent/runtime";
+import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
+import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import {
+  captureSandboxListWithGatewayRecovery,
+  printSandboxListFailureWithRecoveryContext,
+} from "../../openshell-sandbox-list";
+import * as policies from "../../policy";
+import { parseLiveSandboxNames } from "../../runtime-recovery";
+import * as sandboxVersion from "../../sandbox/version";
+import { redact } from "../../security/redact";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
-import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
-import * as policies from "../../policy";
 import * as registry from "../../state/registry";
-import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { parseLiveSandboxNames } from "../../runtime-recovery";
-import { removeSandboxRegistryEntry } from "./destroy";
-import { executeSandboxCommand } from "./process-recovery";
+import * as sandboxState from "../../state/sandbox";
 import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
-import * as sandboxState from "../../state/sandbox";
-import * as sandboxVersion from "../../sandbox/version";
-import { B, D, G, R, RD as _RD, YW } from "../../cli/terminal-style";
-
-const agentRuntime = require("../../../../bin/lib/agent-runtime");
+import { removeSandboxRegistryEntry } from "./destroy";
+import { executeSandboxCommand } from "./process-recovery";
+import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
 
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
  */
 function _rebuildLog(msg: string) {
-  console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${msg}${R}`);
+  console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${redact(msg)}${R}`);
 }
 
 /**
@@ -117,7 +128,7 @@ function preflightHermesProviderCredentials(
       nonEmptyString(process.env[hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV]) ||
       nonEmptyString(process.env.NEMOCLAW_PROVIDER_KEY);
     log(
-      `Hermes Provider rebuild preflight: OpenShell provider missing; ${hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV} env=${envKey ? "present" : "missing"}`,
+      `Hermes Provider rebuild preflight: OpenShell provider missing; API key env=${envKey ? "present" : "missing"}`,
     );
     if (envKey) {
       try {
@@ -140,7 +151,7 @@ function preflightHermesProviderCredentials(
   console.error("  Hermes Provider credentials must be stored in OpenShell, not host-side files.");
   if (authMethod === "api_key") {
     console.error(
-      `  Export ${hermesProviderAuth.HERMES_NOUS_API_KEY_CREDENTIAL_ENV} and rerun rebuild, or re-run ${CLI_NAME} onboard to register it.`,
+      `  Export the Hermes Provider API key and rerun rebuild, or re-run ${CLI_NAME} onboard to register it.`,
     );
   } else {
     console.error(`  Re-run ${CLI_NAME} onboard interactively to authorize Hermes Provider and register it with OpenShell.`);
@@ -206,6 +217,45 @@ export async function rebuildSandbox(
   const rebuildAgent = sb.agent || null;
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
+
+  const gatewayPreflightIssue = detectOpenShellStateRpcPreflightIssue();
+  if (gatewayPreflightIssue) {
+    printOpenShellStateRpcIssue(gatewayPreflightIssue, {
+      action: `rebuilding sandbox '${sandboxName}'`,
+      command: `${CLI_NAME} ${sandboxName} rebuild`,
+    });
+    bail("OpenShell gateway schema mismatch.");
+    return;
+  }
+
+  // Stash WeChat per-account metadata into process.env before the rebuild
+  // touches anything destructive. The metadata lives in session.wechatConfig
+  // (captured during the original onboard's host-side QR login) — the only
+  // durable source today. Surfacing it as WECHAT_ACCOUNT_ID / WECHAT_BASE_URL
+  // / WECHAT_USER_ID lets the in-process onboard --resume that fires later
+  // see it directly via the wechatConfig builder's process.env path.
+  // `openclaw-weixin/` runtime state is intentionally NOT in state_dirs —
+  // seed-wechat-accounts.py rebuilds the account files from these envs
+  // every image build, so keeping the envs here is the only thing the next
+  // image needs to put the right accountId/baseUrl/userId back into
+  // openclaw.json + the accounts state file.
+  {
+    // Only hydrate from the session when it belongs to THIS sandbox. The
+    // global session file holds the most recent onboard, which may be for a
+    // different sandbox — pulling its wechatConfig would leak that
+    // sandbox's accountId / baseUrl / userId into this image build.
+    const rebuildSession = onboardSession.loadSession();
+    const wc =
+      rebuildSession?.sandboxName === sandboxName
+        ? rebuildSession.wechatConfig ?? null
+        : null;
+    if (wc?.accountId && !process.env.WECHAT_ACCOUNT_ID) process.env.WECHAT_ACCOUNT_ID = wc.accountId;
+    if (wc?.baseUrl && !process.env.WECHAT_BASE_URL) process.env.WECHAT_BASE_URL = wc.baseUrl;
+    if (wc?.userId && !process.env.WECHAT_USER_ID) process.env.WECHAT_USER_ID = wc.userId;
+    if (wc?.accountId) {
+      log(`Stashed WeChat account metadata for rebuild: accountId=${wc.accountId}`);
+    }
+  }
 
   // Version check — show what's changing
   const versionCheck = sandboxVersion.checkAgentVersion(sandboxName);
@@ -343,10 +393,25 @@ export async function rebuildSandbox(
 
   // Step 1: Ensure sandbox is live for backup
   log("Checking sandbox liveness: openshell sandbox list");
-  const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  const liveRecovery = await captureSandboxListWithGatewayRecovery();
+  const isLive = liveRecovery.result;
   log(
     `openshell sandbox list exit=${isLive.status}, output=${(isLive.output || "").substring(0, 200)}`,
   );
+  const liveListIssue = detectOpenShellStateRpcResultIssue(isLive);
+  if (liveListIssue) {
+    printOpenShellStateRpcIssue(liveListIssue, {
+      action: `rebuilding sandbox '${sandboxName}'`,
+      command: `${CLI_NAME} ${sandboxName} rebuild`,
+    });
+    bail("OpenShell gateway schema mismatch.");
+    return;
+  }
+  if (isLive.status !== 0) {
+    printSandboxListFailureWithRecoveryContext(liveRecovery);
+    bail("Failed to query running sandboxes from OpenShell.", isLive.status || 1);
+    return;
+  }
   const liveNames = parseLiveSandboxNames(isLive.output || "");
   log(`Live sandboxes: ${Array.from(liveNames).join(", ") || "(none)"}`);
   if (!liveNames.has(sandboxName)) {
@@ -374,6 +439,20 @@ export async function rebuildSandbox(
     }
   }
 
+  const rebuildShieldsWindow = openRebuildShieldsWindow(sandboxName, CLI_NAME);
+  if (!rebuildShieldsWindow) return bail("Failed to auto-unlock shields.");
+
+  const relockShieldsIfNeeded = (sandboxStillExists: boolean): boolean =>
+    relockRebuildShieldsWindow(
+      sandboxName,
+      rebuildShieldsWindow,
+      sandboxStillExists,
+      CLI_NAME,
+    );
+
+  let sandboxStillExists = true;
+
+  try {
   // Step 2: Backup
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
@@ -392,6 +471,7 @@ export async function rebuildSandbox(
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     }
     console.error("  Aborting rebuild to prevent data loss.");
+    relockShieldsIfNeeded(true);
     bail("Failed to back up sandbox state.");
     return;
   }
@@ -399,6 +479,7 @@ export async function rebuildSandbox(
   if (!backupManifest) {
     console.error("  Failed to record backup metadata.");
     console.error("  Aborting rebuild to prevent data loss.");
+    relockShieldsIfNeeded(true);
     bail("Failed to record backup metadata.");
     return;
   }
@@ -451,9 +532,11 @@ export async function rebuildSandbox(
   if (deleteResult.status !== 0 && !alreadyGone) {
     console.error("  Failed to delete sandbox. Aborting rebuild.");
     console.error("  State backup is preserved at: " + backupManifest.backupPath);
+    relockShieldsIfNeeded(true);
     bail("Failed to delete sandbox.", deleteResult.status || 1);
     return;
   }
+  sandboxStillExists = false;
   removeSandboxRegistryEntry(sandboxName);
   log(
     `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,
@@ -482,8 +565,43 @@ export async function rebuildSandbox(
     sessionMatchesSandbox ? sessionBefore?.messagingChannelConfig ?? null : null;
   const rebuildMessagingChannelConfig =
     sb.messagingChannelConfig ?? sessionMessagingChannelConfig ?? null;
+  const rebuildsHermesSandbox = rebuildAgent === "hermes";
+  let registryHermesToolGateways: string[] | null = null;
+  if (rebuildsHermesSandbox && Array.isArray(sb.hermesToolGateways)) {
+    registryHermesToolGateways = sb.hermesToolGateways.filter(
+      (value: unknown): value is string => typeof value === "string",
+    );
+  }
+  const sessionHermesToolGateways =
+    rebuildsHermesSandbox &&
+    sessionMatchesSandbox && Array.isArray(sessionBefore?.hermesToolGateways)
+      ? sessionBefore.hermesToolGateways.filter(
+          (value: unknown): value is string => typeof value === "string",
+        )
+      : null;
+  const rebuildHermesToolGateways = rebuildsHermesSandbox
+    ? registryHermesToolGateways ?? sessionHermesToolGateways ?? []
+    : [];
+  const hasRebuildHermesToolGateways =
+    rebuildsHermesSandbox &&
+    (registryHermesToolGateways !== null || sessionHermesToolGateways !== null);
   const hasRebuildMessagingChannels =
     registryMessagingChannels !== null || sessionMessagingChannels !== null;
+  // Snapshot the operator's paused channel set BEFORE `removeSandboxRegistryEntry`
+  // wipes the registry entry. Otherwise the `disabledChannels` filter inside
+  // `createSandbox` (onboard.ts) reads back `[]` from the freshly-empty registry
+  // and the stopped channel comes back live in the rebuilt image. The session
+  // mirror is the only place this list can survive the destroy/recreate window.
+  //
+  // Always re-stash from `sb` — do NOT fall back to a prior session value.
+  // `sb` is loaded fresh from the registry at the top of rebuildSandbox, so it
+  // already reflects the latest `channels stop|start` write. The session mirror
+  // is downstream of the registry; re-stashing on every rebuild keeps a stale
+  // ["telegram"] from a prior stop/rebuild cycle from leaking into the next
+  // start/rebuild and filtering the channel back out.
+  const rebuildDisabledChannels = Array.isArray(sb.disabledChannels)
+    ? sb.disabledChannels.filter((value: unknown): value is string => typeof value === "string")
+    : [];
   log(
     `Session before update: sandboxName=${sessionBefore?.sandboxName}, status=${sessionBefore?.status}, resumable=${sessionBefore?.resumable}, provider=${sessionBefore?.provider}, model=${sessionBefore?.model}, sessionMatch=${sessionMatchesSandbox}`,
   );
@@ -499,6 +617,8 @@ export async function rebuildSandbox(
     s.agent = rebuildAgent;
     s.messagingChannels = rebuildMessagingChannels;
     s.messagingChannelConfig = rebuildMessagingChannelConfig;
+    s.disabledChannels = rebuildDisabledChannels;
+    s.hermesToolGateways = rebuildsHermesSandbox ? rebuildHermesToolGateways : [];
     // Persist inference selection from the about-to-be-removed registry entry
     // so onboard --resume can recreate with the same provider/model in
     // non-interactive mode. Without this the registry is gone by the time
@@ -582,6 +702,10 @@ export async function rebuildSandbox(
     process.exit = _savedExit;
   }
 
+  if (!onboardFailed) {
+    sandboxStillExists = true;
+  }
+
   if (onboardFailed) {
     // Clean up onboard's internal state that normally runs in
     // process.once("exit") listeners — those never fire because we
@@ -614,7 +738,9 @@ export async function rebuildSandbox(
     console.error(
       `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
     );
+    printRebuildShieldsRecovery(sandboxName, rebuildShieldsWindow, CLI_NAME);
     console.error("");
+    relockShieldsIfNeeded(false);
     bail(
       `Recreate failed (sandbox destroyed). Backup: ${backupManifest.backupPath}`,
       onboardExitCode,
@@ -624,8 +750,10 @@ export async function rebuildSandbox(
 
   const preservedRegistryFields = {
     ...(hasRebuildMessagingChannels ? { messagingChannels: [...rebuildMessagingChannels] } : {}),
-    ...(Array.isArray(sb.disabledChannels) && sb.disabledChannels.length > 0
-      ? { disabledChannels: [...sb.disabledChannels] }
+    disabledChannels:
+      rebuildDisabledChannels.length > 0 ? [...rebuildDisabledChannels] : undefined,
+    ...(hasRebuildHermesToolGateways
+      ? { hermesToolGateways: [...rebuildHermesToolGateways] }
       : {}),
     ...(sb.providerCredentialHashes ? { providerCredentialHashes: sb.providerCredentialHashes } : {}),
   };
@@ -658,7 +786,10 @@ export async function rebuildSandbox(
   // Policy presets live in the gateway policy engine, not the sandbox filesystem.
   // They are lost when the sandbox is destroyed and recreated. Re-apply any
   // presets that were captured in the backup manifest.
-  const savedPresets = backupManifest.policyPresets || [];
+  const savedPresets = pruneDisabledMessagingPolicyPresets(
+    backupManifest.policyPresets || [],
+    rebuildDisabledChannels,
+  );
   if (savedPresets.length > 0) {
     console.log("");
     console.log("  Restoring policy presets...");
@@ -709,6 +840,33 @@ export async function rebuildSandbox(
         `  ${D}Post-upgrade structure check skipped (doctor returned ${doctorResult?.status ?? "null"})${R}`,
       );
     }
+
+    // doctor --fix may rewrite openclaw.json after the image build seeded the
+    // WeChat account/channel block. Re-run the image-bundled seed helper when
+    // present so channels.openclaw-weixin remains paired with the preserved
+    // openclaw-weixin extension after rebuild restore.
+    log("Reapplying WeChat account seed after post-upgrade structure repair");
+    const seedWechatCommand = [
+      "if [ -f /usr/local/lib/nemoclaw/seed-wechat-accounts.py ]; then",
+      "python3 /usr/local/lib/nemoclaw/seed-wechat-accounts.py;",
+      "else",
+      "echo '[nemoclaw] seed-wechat-accounts.py not present; skipping';",
+      "fi",
+    ].join(" ");
+    const seedWechatResult = executeSandboxCommand(sandboxName, seedWechatCommand);
+    log(
+      `seed-wechat-accounts.py: exit=${seedWechatResult?.status}, stdout=${(seedWechatResult?.stdout || "").substring(0, 200)}`,
+    );
+    if (seedWechatResult && seedWechatResult.status === 0) {
+      const seedWechatStdout = seedWechatResult.stdout ?? "";
+      if (!seedWechatStdout.includes("not present; skipping")) {
+        console.log(`  ${G}\u2713${R} WeChat account seed reapplied`);
+      }
+    } else {
+      console.log(
+        `  ${D}WeChat account seed skipped (seed helper returned ${seedWechatResult?.status ?? "null"})${R}`,
+      );
+    }
   }
   // Hermes: no explicit post-restore step needed. Hermes's SessionDB._init_schema()
   // auto-migrates state.db (SQLite) on first connection via sequential ALTER TABLE
@@ -722,6 +880,8 @@ export async function rebuildSandbox(
   });
   log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
 
+  if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
+
   console.log("");
   if (restore.success) {
     console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
@@ -733,5 +893,10 @@ export async function rebuildSandbox(
       `  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but state restore was incomplete`,
     );
     console.log(`    Backup available at: ${backupManifest.backupPath}`);
+  }
+  } finally {
+    if (!rebuildShieldsWindow.relocked) {
+      relockShieldsIfNeeded(sandboxStillExists);
+    }
   }
 }

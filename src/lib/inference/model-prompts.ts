@@ -1,14 +1,20 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { CLOUD_MODEL_OPTIONS, HERMES_PROVIDER_MODEL_OPTIONS } from "./config";
+import {
+  BACK_TO_SELECTION,
+  type BackToSelection,
+} from "../navigation";
 import { isSafeModelId } from "../validation";
+import { CLOUD_MODEL_OPTIONS, HERMES_PROVIDER_MODEL_OPTIONS } from "./config";
 import { validateNvidiaEndpointModel } from "./provider-models";
 
 // credentials.ts still uses CommonJS-style exports.
 const { getCredential, prompt } = require("../credentials/store");
 
-export const BACK_TO_SELECTION = "__NEMOCLAW_BACK_TO_SELECTION__";
+export type { BackToSelection };
+export { BACK_TO_SELECTION };
+export type ModelPromptResult = string | BackToSelection;
 
 export const REMOTE_MODEL_OPTIONS: Record<string, string[]> = {
   openai: ["gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano", "gpt-5.4-pro-2026-03-05"],
@@ -40,7 +46,7 @@ export interface ModelPromptOptions {
   validateNvidiaEndpointModelFn?: (model: string, apiKey: string) => PromptValidationResult;
   cloudModelOptions?: Array<{ id: string; label: string }>;
   remoteModelOptions?: Record<string, string[]>;
-  backToSelection?: string;
+  backToSelection?: BackToSelection;
   /** Pre-fill this model ID as the default in interactive prompts. */
   defaultModelId?: string;
   /** Show only this many remote models in the first menu before offering Other. */
@@ -91,7 +97,7 @@ export async function promptManualModelId(
   errorLabel: string,
   validator: ((model: string) => PromptValidationResult) | null = null,
   options: ModelPromptOptions = {},
-): Promise<string> {
+): Promise<ModelPromptResult> {
   const deps = resolvePromptOptions(options);
   while (true) {
     const manual = await deps.promptFn(promptLabel);
@@ -123,7 +129,7 @@ export async function promptManualModelId(
   }
 }
 
-export async function promptCloudModel(options: ModelPromptOptions = {}): Promise<string> {
+export async function promptCloudModel(options: ModelPromptOptions = {}): Promise<ModelPromptResult> {
   const deps = resolvePromptOptions(options);
   const defaultModelId = options.defaultModelId ?? "";
 
@@ -180,7 +186,7 @@ export async function promptRemoteModel(
   defaultModel: string,
   validator: ((model: string) => PromptValidationResult) | null = null,
   options: ModelPromptOptions = {},
-): Promise<string> {
+): Promise<ModelPromptResult> {
   const deps = resolvePromptOptions(options);
   const modelOptions = deps.remoteModelOptions[providerKey] || [];
   const defaultIndex = modelOptions.indexOf(defaultModel);
@@ -242,7 +248,7 @@ async function promptFullRemoteModelList(
   defaultModel: string,
   validator: ((model: string) => PromptValidationResult) | null,
   options: ModelPromptOptions,
-): Promise<string> {
+): Promise<ModelPromptResult> {
   const deps = resolvePromptOptions(options);
   const defaultIndex = Math.max(0, modelOptions.indexOf(defaultModel));
 
@@ -275,7 +281,7 @@ export async function promptInputModel(
   defaultModel: string,
   validator: ((model: string) => PromptValidationResult) | null = null,
   options: ModelPromptOptions = {},
-): Promise<string> {
+): Promise<ModelPromptResult> {
   const deps = resolvePromptOptions(options);
   while (true) {
     const value = await deps.promptFn(`  ${label} model [${defaultModel}]: `);

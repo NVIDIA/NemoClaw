@@ -176,7 +176,7 @@ console.log = () => {};
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.tier, "open");
     const names: string[] = payload.presets.map((p: { name: string }) => p.name);
-    const social = ["slack", "discord", "telegram"];
+    const social = ["slack", "discord", "telegram", "whatsapp"];
     const hasSocial = social.some((n) => names.includes(n));
     assert.ok(
       hasSocial,
@@ -262,6 +262,7 @@ console.log = (...args) => lines.push(args.join(" "));
       String.raw`
 const policies = require(${policiesPath});
 policies.applyPreset = () => {};
+policies.applyPresets = () => true;
 policies.getAppliedPresets = () => [];
 
 const lines = [];
@@ -307,6 +308,7 @@ console.log = (...args) => lines.push(args.join(" "));
 const policies = require(${policiesPath});
 const appliedCalls = [];
 policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.getAppliedPresets = () => [];
 
 console.log = () => {};
@@ -349,6 +351,7 @@ const policies = require(${policiesPath});
 const appliedCalls = [];
 const removedCalls = [];
 policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
 policies.getAppliedPresets = () => ["brave", "npm"];
 
@@ -381,6 +384,95 @@ console.log = () => {};
     );
   });
 
+  it("removes a previously-applied built-in Brave preset when Brave search is declined", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "suggested",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+const appliedCalls = [];
+const removedCalls = [];
+policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
+policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
+policies.getAppliedPresets = () => ["brave", "npm"];
+
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", {
+      webSearchConfig: null,
+      webSearchSupported: true,
+    });
+    process.stdout.write(JSON.stringify({ applied, appliedCalls, removedCalls }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    assert.ok(
+      !payload.applied.includes("brave"),
+      `Declined Brave search flow kept built-in Brave: ${payload.applied}`,
+    );
+    assert.ok(
+      payload.removedCalls.includes("brave"),
+      `Declined Brave search flow did not remove built-in Brave: ${payload.removedCalls}`,
+    );
+    assert.ok(
+      !payload.appliedCalls.includes("brave"),
+      `Declined Brave search flow applied built-in Brave: ${payload.appliedCalls}`,
+    );
+  });
+
+  it("keeps explicitly requested built-in Brave when web search is supported", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "custom",
+        policyPresets: "brave,npm",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+const appliedCalls = [];
+policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
+policies.getAppliedPresets = () => [];
+
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", {
+      webSearchConfig: null,
+      webSearchSupported: true,
+    });
+    process.stdout.write(JSON.stringify({ applied, appliedCalls }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    assert.deepEqual(payload.applied, ["brave", "npm"]);
+    assert.deepEqual(payload.appliedCalls, ["brave", "npm"]);
+  });
+
   it("clamps resumed policy presets to web-search-supported presets", () => {
     const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
     const script =
@@ -395,6 +487,7 @@ const policies = require(${policiesPath});
 const appliedCalls = [];
 const removedCalls = [];
 policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
 policies.getAppliedPresets = () => ["brave"];
 
@@ -435,6 +528,7 @@ const policies = require(${policiesPath});
 const appliedCalls = [];
 const removedCalls = [];
 policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
 policies.getAppliedPresets = () => ["brave"];
 
@@ -475,6 +569,7 @@ const policies = require(${policiesPath});
 const appliedCalls = [];
 const removedCalls = [];
 policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
 policies.getAppliedPresets = () => ["brave"];
 policies.listCustomPresets = () => [{ name: "brave", description: "custom preset" }];
@@ -516,6 +611,7 @@ const policies = require(${policiesPath});
 const appliedCalls = [];
 const removedCalls = [];
 policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
 policies.getAppliedPresets = () => ["brave"];
 policies.listCustomPresets = () => [{ name: "brave", description: "custom preset" }];
@@ -564,6 +660,7 @@ console.log = () => {};
 const policies = require(${policiesPath});
 const appliedCalls = [];
 policies.applyPreset = (sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
 policies.getAppliedPresets = () => [];
 
 // Silence onboard's note()/console.log so stdout is pure JSON.
@@ -606,6 +703,7 @@ console.log = () => {};
       String.raw`
 const policies = require(${policiesPath});
 policies.applyPreset = () => true;
+policies.applyPresets = () => true;
 policies.getAppliedPresets = () => [];
 
 console.log = () => {};

@@ -5,12 +5,12 @@ import { run, runCapture } from "../../runner";
 
 export type DockerRunOptions = Parameters<typeof run>[1];
 export type DockerCaptureOptions = Parameters<typeof runCapture>[1];
-
+export type DockerRunResult = ReturnType<typeof run>;
 export function dockerArgv(args: readonly string[]): string[] {
   return ["docker", ...args];
 }
 
-export function dockerRun(args: readonly string[], opts: DockerRunOptions = {}) {
+export function dockerRun(args: readonly string[], opts: DockerRunOptions = {}): DockerRunResult {
   return run(dockerArgv(args), opts);
 }
 

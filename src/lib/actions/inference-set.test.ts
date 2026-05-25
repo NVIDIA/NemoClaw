@@ -79,13 +79,22 @@ function baseSession(overrides: Partial<Session> = {}): Session {
     policyPresets: null,
     messagingChannels: null,
     messagingChannelConfig: null,
+    disabledChannels: null,
     migratedLegacyValueHashes: null,
+    hermesToolGateways: null,
     gpuPassthrough: false,
     telegramConfig: null,
+    wechatConfig: null,
     metadata: { gatewayName: "nemoclaw", fromDockerfile: null },
+    machine: {
+      version: 1,
+      state: "complete",
+      stateEnteredAt: "2026-05-11T00:00:00.000Z",
+      revision: 0,
+    },
     steps: {},
     ...overrides,
-  };
+  } as Session;
 }
 
 function createDeps(options: {

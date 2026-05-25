@@ -222,6 +222,10 @@ describe("nemoclaw-start non-root fallback", () => {
         'printf "OPENCLAW_GATEWAY_PORT=%s\\n" "$OPENCLAW_GATEWAY_PORT"',
         'printf "OPENCLAW_GATEWAY_URL=%s\\n" "$OPENCLAW_GATEWAY_URL"',
         'printf "SANDBOX_HOME=%s\\n" "$_SANDBOX_HOME"',
+        'printf "OPENCLAW_HOME=%s\\n" "$OPENCLAW_HOME"',
+        'printf "OPENCLAW_STATE_DIR=%s\\n" "$OPENCLAW_STATE_DIR"',
+        'printf "OPENCLAW_CONFIG_PATH=%s\\n" "$OPENCLAW_CONFIG_PATH"',
+        'printf "OPENCLAW_OAUTH_DIR=%s\\n" "$OPENCLAW_OAUTH_DIR"',
         'printf "CMD=%s\\n" "${NEMOCLAW_CMD[*]}"',
       ].join("\n");
       fs.writeFileSync(scriptPath, script, { mode: 0o700 });
@@ -247,6 +251,10 @@ describe("nemoclaw-start non-root fallback", () => {
       expect(injected.stdout).toContain("OPENCLAW_GATEWAY_PORT=19000");
       expect(injected.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:19000");
       expect(injected.stdout).toContain("SANDBOX_HOME=/sandbox");
+      expect(injected.stdout).toContain("OPENCLAW_HOME=/sandbox");
+      expect(injected.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
+      expect(injected.stdout).toContain("OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json");
+      expect(injected.stdout).toContain("OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials");
       expect(injected.stdout).toContain("CMD=openclaw agent --agent main");
 
       const bakedCustomPort = runScenario("set -- nemoclaw-start openclaw agent", {
@@ -257,6 +265,10 @@ describe("nemoclaw-start non-root fallback", () => {
       expect(bakedCustomPort.stdout).toContain("PUBLIC_PORT=18790");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_GATEWAY_PORT=18790");
       expect(bakedCustomPort.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18790");
+      expect(bakedCustomPort.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
+      expect(bakedCustomPort.stdout).toContain(
+        "OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials",
+      );
       expect(bakedCustomPort.stdout).toContain("CMD=openclaw agent");
 
       const baked = runScenario("set -- nemoclaw-start openclaw agent", {
@@ -268,7 +280,15 @@ describe("nemoclaw-start non-root fallback", () => {
       expect(baked.stdout).toContain("OPENCLAW_GATEWAY_PORT=18789");
       expect(baked.stdout).toContain("OPENCLAW_GATEWAY_URL=ws://127.0.0.1:18789");
       expect(baked.stdout).toContain("SANDBOX_HOME=/sandbox");
+      expect(baked.stdout).toContain("OPENCLAW_STATE_DIR=/sandbox/.openclaw");
       expect(baked.stdout).toContain("CMD=openclaw agent");
+
+      const invalidHighPort = runScenario("set -- nemoclaw-start openclaw agent", {
+        NEMOCLAW_DASHBOARD_PORT: "70000",
+      });
+      expect(invalidHighPort.status).toBe(1);
+      expect(invalidHighPort.stderr).toContain("Invalid NEMOCLAW_DASHBOARD_PORT='70000'");
+      expect(invalidHighPort.stderr).toContain("must be an integer between 1024 and 65535");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -487,6 +507,10 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
         `export OPENCLAW_GATEWAY_TOKEN=${JSON.stringify(initialToken)}`,
         `export OPENCLAW_GATEWAY_PORT=${JSON.stringify(port)}`,
         `export OPENCLAW_GATEWAY_URL=${JSON.stringify(`ws://127.0.0.1:${port}`)}`,
+        'export OPENCLAW_HOME="/sandbox"',
+        'export OPENCLAW_STATE_DIR="/sandbox/.openclaw"',
+        'export OPENCLAW_CONFIG_PATH="/sandbox/.openclaw/openclaw.json"',
+        'export OPENCLAW_OAUTH_DIR="/sandbox/.openclaw/credentials"',
         `PUBLIC_PORT=${JSON.stringify(port)}`,
         'CHAT_UI_URL="https://remote.example.test/ui"',
         'PROXY_HOST="10.200.0.1"',
@@ -561,6 +585,21 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(envFile).toContain("export OPENCLAW_GATEWAY_PORT='18790'");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_URL='ws://127.0.0.1:18790'");
     expect(envFile).toContain("export OPENCLAW_GATEWAY_TOKEN='token'");
+  });
+
+  it("#3730: writes OpenClaw state env for connect-shell pairing approval", () => {
+    const { result, envFile } = runGatewayTokenHarness(
+      JSON.stringify({ gateway: { auth: { token: "token" } } }),
+    );
+
+    expect(result.status).toBe(0);
+    expect(envFile).toContain("export OPENCLAW_HOME='/sandbox'");
+    expect(envFile).toContain("export OPENCLAW_STATE_DIR='/sandbox/.openclaw'");
+    expect(envFile).toContain("export OPENCLAW_CONFIG_PATH='/sandbox/.openclaw/openclaw.json'");
+    expect(envFile).toContain("export OPENCLAW_OAUTH_DIR='/sandbox/.openclaw/credentials'");
+    expect(envFile.indexOf("export OPENCLAW_STATE_DIR=")).toBeLessThan(
+      envFile.indexOf("export OPENCLAW_GATEWAY_TOKEN="),
+    );
   });
 
   it("#3256: generates a gateway token before writing the runtime shell env", () => {
@@ -764,7 +803,7 @@ describe("nemoclaw-start configure guard behavior", () => {
   it("#2592: blocks every (channel × op) mutating combo and surfaces the host-side hint", () => {
     const setup = writeProxyEnvWithGuard();
     try {
-      const channels = ["slack", "telegram", "discord"];
+      const channels = ["slack", "telegram", "discord", "wechat", "whatsapp"];
       const ops = ["add", "remove"];
       for (const op of ops) {
         for (const channel of channels) {
@@ -774,6 +813,46 @@ describe("nemoclaw-start configure guard behavior", () => {
           expect(result.stderr).toContain(`nemoclaw <sandbox> channels ${op}`);
         }
       }
+    } finally {
+      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // WhatsApp pairs entirely inside the sandbox via `openclaw channels login
+  // --channel whatsapp`, so the guard must allow that exact in-sandbox login
+  // path. WeChat completes pairing host-side and must stay blocked here so it
+  // cannot bypass NemoClaw's host-side registry/provider/rebuild path.
+  // `status` is read-only diagnostics and is similarly safe to allow.
+  it("allows only WhatsApp `channels login` and read-only `channels status` inside the sandbox", () => {
+    const setup = writeProxyEnvWithGuard();
+    try {
+      const allowed = [
+        ["channels", "login", "--channel", "whatsapp"],
+        ["channels", "login", "--channel=whatsapp"],
+        ["channels", "status", "--channel", "whatsapp"],
+        ["channels", "status"],
+      ];
+      for (const argv of allowed) {
+        const result = runGuardedOpenclaw(setup, argv);
+        expect(result.status, `${argv.join(" ")} should pass the guard`).toBe(0);
+      }
+
+      const blocked = [
+        ["channels", "login"],
+        ["channels", "login", "--channel", "wechat"],
+        ["channels", "login", "--channel=telegram"],
+      ];
+      for (const argv of blocked) {
+        const result = runGuardedOpenclaw(setup, argv);
+        expect(result.status, `${argv.join(" ")} should be blocked`).toBe(1);
+        expect(result.stderr).toContain("only supported inside the sandbox for WhatsApp");
+      }
+
+      const log = fs.readFileSync(setup.commandLog, "utf-8");
+      expect(log).toContain("channels login --channel whatsapp");
+      expect(log).toContain("channels login --channel=whatsapp");
+      expect(log).toContain("channels status");
+      expect(log).not.toContain("channels login --channel wechat");
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
@@ -1201,14 +1280,31 @@ const cases = [
   new Error('token_revoked'),
   Object.assign(new Error('stack path'), { stack: 'at @slack/web-api' }),
   new Error('CONNECT failed for slack.com'),
+  new Error('CONNECT failed for https://hooks.slack.com/services/T/B/C'),
 ];
 for (const err of cases) process.emit('unhandledRejection', err, {});
 setImmediate(function () { console.log('cases=' + cases.length); });
 `);
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("cases=4");
-    expect((result.stderr.match(/provider failed to start/g) || []).length).toBe(4);
+    expect(result.stdout).toContain("cases=5");
+    expect((result.stderr.match(/provider failed to start/g) || []).length).toBe(5);
     expect(result.stderr).toContain("caught by safety net, gateway continues");
+  });
+
+  it("does not classify arbitrary hosts containing slack.com as Slack errors", () => {
+    const result = runSlackGuardHarness(`
+let downstreamCalled = false;
+process.on('unhandledRejection', function () {
+  downstreamCalled = true;
+});
+process.emit('unhandledRejection', new Error('CONNECT failed for https://slack.com.evil.example'), {});
+setImmediate(function () {
+  console.log('downstream=' + downstreamCalled);
+});
+`);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("downstream=true");
+    expect(result.stderr).not.toContain("provider failed to start");
   });
 });
 
@@ -1318,7 +1414,7 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
+      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(openclawLog)}\nprintf 'state=%s oauth=%s home=%s config=%s\\n' "$OPENCLAW_STATE_DIR" "$OPENCLAW_OAUTH_DIR" "$OPENCLAW_HOME" "$OPENCLAW_CONFIG_PATH" >> ${JSON.stringify(openclawLog)}\nprintf 'gateway stdout marker\\n'\nprintf 'gateway stderr marker\\n' >&2\nexec sleep 30\n`,
       { mode: 0o755 },
     );
     fs.writeFileSync(
@@ -1334,6 +1430,10 @@ describe("nemoclaw-start gateway launch signal handling", () => {
         "set -euo pipefail",
         `export PATH=${JSON.stringify(`${fakeBin}:${process.env.PATH || ""}`)}`,
         `OPENCLAW=${JSON.stringify(path.join(fakeBin, "openclaw"))}`,
+        "export OPENCLAW_HOME=/sandbox",
+        "export OPENCLAW_STATE_DIR=/sandbox/.openclaw",
+        "export OPENCLAW_CONFIG_PATH=/sandbox/.openclaw/openclaw.json",
+        "export OPENCLAW_OAUTH_DIR=/sandbox/.openclaw/credentials",
         '_DASHBOARD_PORT="19000"',
         "start_persistent_gateway_log_mirror() { sleep 30 & GATEWAY_LOG_PERSIST_PID=$!; }",
         "start_auto_pair() { sleep 30 & AUTO_PAIR_PID=$!; }",
@@ -1374,6 +1474,9 @@ describe("nemoclaw-start gateway launch signal handling", () => {
     const { result, openclaw, gateway } = runLaunchBlock("non-root");
     expect(result.status).toBe(0);
     expect(openclaw).toContain("gateway run --port 19000");
+    expect(openclaw).toContain(
+      "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
+    );
     expect(gateway).toContain("gateway stdout marker");
     expect(gateway).toContain("gateway stderr marker");
     expect(result.stdout).not.toContain("gateway stdout marker");
@@ -1389,10 +1492,13 @@ describe("nemoclaw-start gateway launch signal handling", () => {
   });
 
   it("launches the root gateway through gosu with the configured port and tracks child PIDs", () => {
-    const { result, gosu } = runLaunchBlock("root");
+    const { result, openclaw, gosu } = runLaunchBlock("root");
     expect(result.status).toBe(0);
     expect(gosu).toContain("user=gateway");
     expect(gosu).toContain("gateway run --port 19000");
+    expect(openclaw).toContain(
+      "state=/sandbox/.openclaw oauth=/sandbox/.openclaw/credentials home=/sandbox config=/sandbox/.openclaw/openclaw.json",
+    );
     const gatewayPid = result.stdout.match(/GATEWAY_PID=(\d+)/)?.[1];
     expect(gatewayPid).toBeTruthy();
     expect(result.stdout).toContain(`WAIT_PID=${gatewayPid}`);
@@ -1587,6 +1693,311 @@ describe("NC-2227-01: legacy migration behavior", () => {
   }, 15_000);
 });
 
+describe("seed_default_workspace_templates (#3240)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  function runSeed(
+    workspaceDir: string,
+    templatesDir: string,
+    scriptPath: string,
+    options: { skipBootstrap?: boolean; env?: Record<string, string> } = {},
+  ) {
+    const configPath = path.join(path.dirname(scriptPath), "openclaw.json");
+    fs.writeFileSync(
+      configPath,
+      JSON.stringify({ agents: { defaults: { skipBootstrap: options.skipBootstrap ?? true } } }),
+    );
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        extractShellFunctionFromSource(src, "seed_default_workspace_templates"),
+        `seed_default_workspace_templates ${JSON.stringify(workspaceDir)} ${JSON.stringify(templatesDir)} ${JSON.stringify(configPath)}`,
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      env: { ...process.env, ...(options.env ?? {}) },
+      timeout: 5000,
+    });
+  }
+
+  function writeTemplates(templatesDir: string) {
+    fs.mkdirSync(templatesDir, { recursive: true });
+    for (const name of [
+      "AGENTS.md",
+      "SOUL.md",
+      "IDENTITY.md",
+      "USER.md",
+      "TOOLS.md",
+      "HEARTBEAT.md",
+      "BOOTSTRAP.md",
+    ]) {
+      fs.writeFileSync(
+        path.join(templatesDir, name),
+        `---\nsummary: "${name} template"\n---\n# ${name} template content\n`,
+      );
+    }
+  }
+
+  it("seeds the documented workspace templates and skips BOOTSTRAP.md", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    writeTemplates(templatesDir);
+    try {
+      const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"));
+      expect(result.status).toBe(0);
+      for (const name of [
+        "AGENTS.md",
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "TOOLS.md",
+        "HEARTBEAT.md",
+      ]) {
+        expect(fs.existsSync(path.join(workspaceDir, name))).toBe(true);
+      }
+      expect(fs.existsSync(path.join(workspaceDir, "BOOTSTRAP.md"))).toBe(false);
+      expect(fs.readFileSync(path.join(workspaceDir, "SOUL.md"), "utf-8")).toBe(
+        "# SOUL.md template content\n",
+      );
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("resolves supported OpenClaw package template layouts", () => {
+    for (const relativeTemplatesDir of [
+      path.join("docs", "reference", "templates"),
+      path.join("dist", "docs", "reference", "templates"),
+    ]) {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-package-"));
+      const workspaceDir = path.join(tmpDir, "workspace");
+      const fakeBin = path.join(tmpDir, "bin");
+      const npmRoot = path.join(tmpDir, "npm-root");
+      const templatesDir = path.join(npmRoot, "openclaw", relativeTemplatesDir);
+      fs.mkdirSync(workspaceDir, { recursive: true });
+      fs.mkdirSync(fakeBin, { recursive: true });
+      writeTemplates(templatesDir);
+      fs.writeFileSync(
+        path.join(fakeBin, "npm"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "${1:-}" = "root" ] && [ "${2:-}" = "-g" ]; then',
+          `  printf '%s\\n' ${JSON.stringify(npmRoot)}`,
+          "  exit 0",
+          "fi",
+          'printf "unexpected npm args: %s\\n" "$*" >&2',
+          "exit 2",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+
+      try {
+        const result = runSeed(workspaceDir, "", path.join(tmpDir, "seed.sh"), {
+          env: { PATH: `${fakeBin}:${process.env.PATH || ""}` },
+        });
+        expect(result.status).toBe(0);
+        expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
+        expect(result.stderr).toContain("seeded 6 default workspace template");
+      } finally {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("resolves the OpenClaw package root from the openclaw binary", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-openclaw-bin-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const openclawPkg = path.join(tmpDir, "openclaw-package");
+    const binDir = path.join(openclawPkg, "bin");
+    const npmRoot = path.join(tmpDir, "empty-npm-root");
+    const templatesDir = path.join(openclawPkg, "docs", "reference", "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(binDir, { recursive: true });
+    fs.mkdirSync(npmRoot, { recursive: true });
+    writeTemplates(templatesDir);
+    fs.writeFileSync(path.join(binDir, "openclaw"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o700,
+    });
+    fs.writeFileSync(
+      path.join(binDir, "npm"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "${1:-}" = "root" ] && [ "${2:-}" = "-g" ]; then',
+        `  printf '%s\n' ${JSON.stringify(npmRoot)}`,
+        "  exit 0",
+        "fi",
+        "exit 2",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = runSeed(workspaceDir, "", path.join(tmpDir, "seed.sh"), {
+        env: { PATH: `${binDir}:${process.env.PATH || ""}` },
+      });
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
+      expect(result.stderr).toContain("seeded 6 default workspace template");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not synthesize templates when OpenClaw templates are missing", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-missing-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const fakeBin = path.join(tmpDir, "bin");
+    const npmRoot = path.join(tmpDir, "empty-npm-root");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.mkdirSync(npmRoot, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openclaw"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o700,
+    });
+    fs.writeFileSync(
+      path.join(fakeBin, "npm"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "${1:-}" = "root" ] && [ "${2:-}" = "-g" ]; then',
+        `  printf '%s\n' ${JSON.stringify(npmRoot)}`,
+        "  exit 0",
+        "fi",
+        "exit 2",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+
+    try {
+      const result = runSeed(workspaceDir, "", path.join(tmpDir, "seed.sh"), {
+        env: { PATH: `${fakeBin}:${path.dirname(process.execPath)}:${process.env.PATH || ""}` },
+      });
+      expect(result.status).toBe(0);
+      for (const name of [
+        "AGENTS.md",
+        "SOUL.md",
+        "IDENTITY.md",
+        "USER.md",
+        "TOOLS.md",
+        "HEARTBEAT.md",
+      ]) {
+        expect(fs.existsSync(path.join(workspaceDir, name))).toBe(false);
+      }
+      expect(result.stderr).toContain("openclaw workspace templates dir not found");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not seed unless OpenClaw bootstrap is explicitly skipped", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-bootstrap-on-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(templatesDir, { recursive: true });
+    fs.writeFileSync(path.join(templatesDir, "SOUL.md"), "soul template");
+    try {
+      const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"), {
+        skipBootstrap: false,
+      });
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not clobber an already-populated workspace", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-existing-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    fs.mkdirSync(templatesDir, { recursive: true });
+    fs.writeFileSync(path.join(workspaceDir, "USER.md"), "user content");
+    fs.writeFileSync(path.join(templatesDir, "USER.md"), "template content");
+    fs.writeFileSync(path.join(templatesDir, "SOUL.md"), "soul template");
+    try {
+      const result = runSeed(workspaceDir, templatesDir, path.join(tmpDir, "seed.sh"));
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(path.join(workspaceDir, "USER.md"), "utf-8")).toBe("user content");
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses to seed a symlinked workspace dir", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-symlink-"));
+    const realDir = path.join(tmpDir, "real");
+    const linkDir = path.join(tmpDir, "link");
+    const templatesDir = path.join(tmpDir, "templates");
+    fs.mkdirSync(realDir);
+    fs.mkdirSync(templatesDir);
+    fs.symlinkSync(realDir, linkDir);
+    fs.writeFileSync(path.join(templatesDir, "SOUL.md"), "soul template");
+    try {
+      const result = runSeed(linkDir, templatesDir, path.join(tmpDir, "seed.sh"));
+      expect(result.status).toBe(0);
+      expect(result.stderr).toContain("refusing to seed symlinked workspace dir");
+      expect(fs.existsSync(path.join(realDir, "SOUL.md"))).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("seeds through the shared sandbox step-down prefix", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-seed-step-down-"));
+    const workspaceDir = path.join(tmpDir, "workspace");
+    const templatesDir = path.join(tmpDir, "templates");
+    const stepDownLog = path.join(tmpDir, "step-down.log");
+    fs.mkdirSync(workspaceDir, { recursive: true });
+    writeTemplates(templatesDir);
+    fs.mkdirSync(path.join(tmpDir, "openclaw", "docs", "reference"), { recursive: true });
+    fs.cpSync(templatesDir, path.join(tmpDir, "openclaw", "docs", "reference", "templates"), {
+      recursive: true,
+    });
+    const configPath = path.join(tmpDir, "openclaw.json");
+    fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { skipBootstrap: true } } }));
+    const scriptPath = path.join(tmpDir, "seed-as-sandbox.sh");
+    const seedAsSandbox = extractShellFunctionFromSource(
+      src,
+      "seed_default_workspace_templates_as_sandbox",
+    )
+      .replaceAll("/sandbox/.openclaw/workspace", workspaceDir)
+      .replaceAll("/sandbox/.openclaw/openclaw.json", configPath);
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `STEP_DOWN_LOG=${JSON.stringify(stepDownLog)}`,
+        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$0" >"$STEP_DOWN_LOG"; exec "$@"' sandbox-step-down)`,
+        `seed_default_workspace_templates() { printf 'seeded\\n' > ${JSON.stringify(path.join(workspaceDir, "SOUL.md"))}; }`,
+        seedAsSandbox,
+        "seed_default_workspace_templates_as_sandbox",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: { ...process.env, STEP_DOWN_LOG: stepDownLog },
+        timeout: 5000,
+      });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(fs.readFileSync(stepDownLog, "utf-8").trim()).toBe("sandbox-step-down");
+      expect(fs.existsSync(path.join(workspaceDir, "SOUL.md"))).toBe(true);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("Slack secrets-on-disk tripwire (#2085)", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
@@ -1712,6 +2123,7 @@ describe("Telegram diagnostics (#2766)", () => {
         'install_slack_channel_guard() { :; }',
         'verify_no_slack_secrets_on_disk() { :; }',
         'seed_default_workspace_templates() { :; }',
+        'seed_default_workspace_templates_as_sandbox() { seed_default_workspace_templates; }',
         'write_auth_profile() { :; }',
         'harden_auth_profiles() { :; }',
         'chown() { :; }',

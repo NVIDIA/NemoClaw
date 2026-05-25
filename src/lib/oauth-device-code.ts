@@ -143,6 +143,7 @@ async function postForm(
   body: Record<string, string>,
   fetchImpl: typeof fetch,
   requestTimeoutMs?: number,
+  extraHeaders: Record<string, string> = {},
 ): Promise<Response> {
   const timeout = createRequestTimeout(requestTimeoutMs);
   try {
@@ -151,6 +152,7 @@ async function postForm(
       headers: {
         Accept: "application/json",
         "Content-Type": "application/x-www-form-urlencoded",
+        ...extraHeaders,
       },
       body: new URLSearchParams(body).toString(),
       signal: timeout.signal,
@@ -283,11 +285,11 @@ export async function refreshAccessTokenWithRefreshToken(
     `${portalBaseUrl}/api/oauth/token`,
     {
       grant_type: "refresh_token",
-      refresh_token: refreshToken,
       client_id: clientId,
     },
     fetchImpl,
     opts.requestTimeoutMs,
+    { "x-nous-refresh-token": refreshToken },
   );
 
   if (resp.status !== 200) {

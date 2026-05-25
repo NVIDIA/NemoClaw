@@ -2,23 +2,31 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
+import {
+  detectOpenShellStateRpcPreflightIssue,
+  detectOpenShellStateRpcResultIssue,
+  printOpenShellStateRpcIssue,
+} from "../adapters/openshell/gateway-drift";
 import { CLI_NAME } from "../cli/branding";
+import { B, D, G, R, YW } from "../cli/terminal-style";
 import { prompt as askPrompt } from "../credentials/store";
 import {
   normalizeUpgradeSandboxesOptions,
   type UpgradeSandboxesOptions,
 } from "../domain/lifecycle/options";
-import { captureOpenshell } from "../adapters/openshell/runtime";
-import * as registry from "../state/registry";
-import { parseLiveSandboxNames } from "../runtime-recovery";
-import { rebuildSandbox } from "./sandbox/rebuild";
-import * as sandboxVersion from "../sandbox/version";
-import { B, D, G, R, YW } from "../cli/terminal-style";
 import {
   classifyUpgradeableSandboxes,
   shouldSkipUpgradeConfirmation,
   splitRebuildableSandboxes,
 } from "../domain/maintenance/upgrade";
+import {
+  captureSandboxListWithGatewayRecovery,
+  printSandboxListFailureWithRecoveryContext,
+} from "../openshell-sandbox-list";
+import { parseLiveSandboxNames } from "../runtime-recovery";
+import * as sandboxVersion from "../sandbox/version";
+import * as registry from "../state/registry";
+import { rebuildSandbox } from "./sandbox/rebuild";
 
 // ── Upgrade sandboxes (#1904) ────────────────────────────────────
 // Detect sandboxes running stale agent versions and offer to rebuild them.
@@ -37,10 +45,27 @@ export async function upgradeSandboxes(
   }
 
   // Query live sandboxes so we can tell the user which are running
-  const liveResult = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue();
+  if (preflightIssue) {
+    printOpenShellStateRpcIssue(preflightIssue, {
+      action: "checking sandbox upgrade state",
+      command: `${CLI_NAME} upgrade-sandboxes`,
+    });
+    process.exit(1);
+  }
+
+  const liveRecovery = await captureSandboxListWithGatewayRecovery();
+  const liveResult = liveRecovery.result;
+  const resultIssue = detectOpenShellStateRpcResultIssue(liveResult);
+  if (resultIssue) {
+    printOpenShellStateRpcIssue(resultIssue, {
+      action: "checking sandbox upgrade state",
+      command: `${CLI_NAME} upgrade-sandboxes`,
+    });
+    process.exit(1);
+  }
   if (liveResult.status !== 0) {
-    console.error("  Failed to query running sandboxes from OpenShell.");
-    console.error("  Ensure OpenShell is running: openshell status");
+    printSandboxListFailureWithRecoveryContext(liveRecovery);
     process.exit(liveResult.status || 1);
   }
   const liveNames = parseLiveSandboxNames(liveResult.output || "");

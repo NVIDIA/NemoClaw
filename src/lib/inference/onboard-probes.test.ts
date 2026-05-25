@@ -11,10 +11,263 @@ const {
   getChatCompletionsProbePayload,
   getDeepSeekV4ProValidationProbeCurlArgs,
   getKimiK26ValidationProbeCurlArgs,
+  hasChatCompletionsToolCall,
+  hasChatCompletionsToolCallLeak,
+  hasResponsesToolCall,
   isSandboxInternalUrl,
   probeOpenAiLikeEndpoint,
   RETRIABLE_HTTP_PROBE_STATUSES,
 } = require("../../../dist/lib/inference/onboard-probes");
+
+describe("OpenAI-compatible inference probe response parsing", () => {
+  it("detects tool-calling responses payloads conservatively", () => {
+    expect(
+      hasResponsesToolCall(
+        JSON.stringify({
+          output: [
+            {
+              type: "function_call",
+              name: "emit_ok",
+              arguments: '{"value":"OK"}',
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasResponsesToolCall(
+        JSON.stringify({
+          output: [
+            {
+              type: "message",
+              content: [
+                {
+                  type: "function_call",
+                  name: "emit_ok",
+                  arguments: '{"value":"OK"}',
+                },
+              ],
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasResponsesToolCall(
+        JSON.stringify({
+          output: [
+            {
+              type: "message",
+              content: [{ type: "output_text", text: "OK" }],
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(hasResponsesToolCall("{")).toBe(false);
+  });
+
+  it("detects structured chat-completions tool_calls", () => {
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    type: "function",
+                    function: { name: "sessions_send", arguments: '{"message":"hello"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [{ message: { role: "assistant", content: "OK", tool_calls: [] } }],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    type: "function",
+                    function: { name: "sessions_send" },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCall(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "",
+                tool_calls: [
+                  {
+                    type: "text",
+                    function: { name: "sessions_send", arguments: '{"message":"hello"}' },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(hasChatCompletionsToolCall("{")).toBe(false);
+  });
+
+  it("detects leaked stringified tool-call JSON in chat-completions content", () => {
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: '{\n  "arguments":{"message":"hello?"},\n  "name":"sessions_send"\n}',
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: JSON.stringify({
+                  type: "function",
+                  function: {
+                    name: "sessions_send",
+                    arguments: JSON.stringify({ message: "hello?" }),
+                  },
+                }),
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: JSON.stringify({
+                  tool_calls: [
+                    {
+                      type: "function",
+                      function: {
+                        name: "sessions_send",
+                        arguments: JSON.stringify({ message: "hello?" }),
+                      },
+                    },
+                  ],
+                }),
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: [
+                  {
+                    type: "text",
+                    text: '{"arguments":{"message":"hello?"},"name":"sessions_send"}',
+                  },
+                ],
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: "Regular assistant text response.",
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: '{"type":"function","function":{"name":"sessions_send"}}',
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      hasChatCompletionsToolCallLeak(
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                role: "assistant",
+                content: [{ type: "text", text: "Regular assistant text response." }],
+                tool_calls: null,
+              },
+            },
+          ],
+        }),
+      ),
+    ).toBe(false);
+    expect(hasChatCompletionsToolCallLeak("{")).toBe(false);
+  });
+});
 
 describe("OpenAI-compatible inference probes", () => {
   it("uses the NVIDIA Build request shape for DeepSeek V4 Pro", () => {
@@ -96,9 +349,8 @@ describe("OpenAI-compatible inference probes", () => {
   });
 
   describe("sandbox-internal URL handling", () => {
-    it("identifies host.openshell.internal and host.docker.internal as sandbox-internal", () => {
+    it("identifies host.openshell.internal as sandbox-internal", () => {
       expect(isSandboxInternalUrl("http://host.openshell.internal:8001/v1")).toBe(true);
-      expect(isSandboxInternalUrl("http://host.docker.internal:11434/v1")).toBe(true);
     });
 
     it("does not treat normal hostnames as sandbox-internal", () => {
@@ -119,69 +371,6 @@ describe("OpenAI-compatible inference probes", () => {
         note: expect.stringContaining("host.openshell.internal"),
       });
       expect(result.note).toMatch(/only resolves inside the sandbox/);
-    });
-
-    it("skips the curl probe for host.docker.internal and returns ok with a note", () => {
-      const result = probeOpenAiLikeEndpoint(
-        "http://host.docker.internal:11434/v1",
-        "openai/nemotron-mini",
-        "",
-      );
-      expect(result).toMatchObject({ ok: true, api: null });
-      expect(result.note).toMatch(/host\.docker\.internal/);
-    });
-
-    it("probes host.docker.internal when strict chat-completions tool calling is required", () => {
-      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-docker-probe-"));
-      const fakeBin = path.join(tmpDir, "bin");
-      const seenUrl = path.join(tmpDir, "url");
-      fs.mkdirSync(fakeBin, { recursive: true });
-      fs.writeFileSync(
-        path.join(fakeBin, "curl"),
-        `#!/usr/bin/env bash
-outfile=""
-url=""
-while [ "$#" -gt 0 ]; do
-  case "$1" in
-    -o) outfile="$2"; shift 2 ;;
-    -w) shift 2 ;;
-    *) url="$1"; shift ;;
-  esac
-done
-printf '%s' "$url" > "${seenUrl}"
-if [ -n "$outfile" ]; then
-  cat <<'JSON' > "$outfile"
-{"choices":[{"message":{"tool_calls":[{"id":"call_1","type":"function","function":{"name":"sessions_send","arguments":"{\\"message\\":\\"hello\\"}"}}]}}]}
-JSON
-fi
-printf '200'
-exit 0
-`,
-        { mode: 0o755 },
-      );
-
-      const originalPath = process.env.PATH;
-      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
-      try {
-        const result = probeOpenAiLikeEndpoint(
-          "http://host.docker.internal:11434/v1",
-          "openai/nemotron-mini",
-          "",
-          { skipResponsesProbe: true, requireChatCompletionsToolCalling: true },
-        );
-
-        expect(result).toMatchObject({
-          ok: true,
-          api: "openai-completions",
-          label: "Chat Completions API",
-        });
-        expect(fs.readFileSync(seenUrl, "utf8")).toBe(
-          "http://host.docker.internal:11434/v1/chat/completions",
-        );
-      } finally {
-        process.env.PATH = originalPath;
-        fs.rmSync(tmpDir, { recursive: true, force: true });
-      }
     });
 
     it("fails closed for unprobeable sandbox-internal URLs when strict tool calling is required", () => {

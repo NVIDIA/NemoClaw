@@ -22,4 +22,18 @@ describe("root help", () => {
     expect(output).not.toContain("Agent config is read-only inside the sandbox");
     expect(output).not.toContain("Landlock enforced");
   });
+
+  it("shows channel as a required positional argument in channel command signatures", () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    renderRootHelp();
+
+    const output = log.mock.calls.map(([line]) => String(line)).join("\n");
+    for (const action of ["add", "remove", "start", "stop"]) {
+      expect(output).toContain(`nemoclaw <name> channels ${action} <channel>`);
+      expect(output).not.toMatch(
+        new RegExp(`nemoclaw <name> channels ${action}\\\\s{2,}[^\\n]*<channel>`),
+      );
+    }
+  });
 });

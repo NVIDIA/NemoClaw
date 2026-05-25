@@ -50,6 +50,7 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Python Package Index | `pypi` |
 | Slack messaging | `slack` |
 | Telegram Bot API | `telegram` |
+| WhatsApp Web messaging | `whatsapp` |
 
 Preview the endpoints before applying:
 
@@ -109,7 +110,7 @@ If delivery fails, open the TUI and send a test message to the bot:
 $ openshell term
 ```
 
-The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, or `slack`).
+The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, `slack`, or `whatsapp`).
 
 ## Slack or Discord Messaging
 
@@ -210,6 +211,18 @@ $ nemoclaw my-assistant policy-remove brew --yes
 $ nemoclaw my-assistant policy-remove huggingface --yes
 ```
 
+### Homebrew Specifics
+
+The sandbox base image includes Homebrew (Linuxbrew), so applying the `brew` preset is the only step needed before installing a formula.
+A `/usr/local/bin/brew` symlink puts the entry point on the sandbox `PATH`, so the agent can run `brew install <formula>` directly:
+
+```console
+$ nemoclaw my-assistant policy-add brew --yes
+$ nemoclaw my-assistant exec -- brew install <formula>
+```
+
+You do not need to bootstrap Homebrew, install build dependencies, or source `brew shellenv` inside the sandbox.
+
 ## Local Inference
 
 Use `local-inference` when the sandbox needs access to host-side local inference services such as Ollama or vLLM through the OpenShell host gateway.
@@ -255,5 +268,5 @@ Use `nemoclaw my-assistant policy-add` for maintained NemoClaw presets.
 
 - Approve or Deny Agent Network Requests (use the `nemoclaw-user-manage-policy` skill) for the interactive OpenShell TUI flow.
 - Customize the Sandbox Network Policy (use the `nemoclaw-user-manage-policy` skill) for static policy edits and raw OpenShell policy files.
-- Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) for Telegram, Discord, and Slack channel configuration.
+- Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) for Telegram, Discord, Slack, and WhatsApp channel configuration.
 - Commands (use the `nemoclaw-user-reference` skill) for the full `policy-add`, `policy-list`, `policy-remove`, and `channels` command reference.

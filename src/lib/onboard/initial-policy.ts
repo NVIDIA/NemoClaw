@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import path from "node:path";
 import YAML from "yaml";
 
 import * as policies from "../policy";
+import { requiredMessagingChannelPolicyPresets } from "./messaging-policy-presets";
 import { cleanupTempDir, secureTempFile } from "./temp-files";
 
 export type InitialSandboxPolicy = {
@@ -13,18 +15,28 @@ export type InitialSandboxPolicy = {
   cleanup?: () => boolean;
 };
 
-const CREATE_TIME_POLICY_PRESETS_BY_CHANNEL: Record<string, string[]> = {
+const HERMES_MESSAGING_POLICY_KEYS: Record<string, string[]> = {
+  discord: ["discord"],
   slack: ["slack"],
+  telegram: ["telegram"],
+  wechat: ["wechat_bridge"],
 };
 
 const PROC_PATH = "/proc";
-const STALE_PROC_COMM_READ_WRITE_PATH = "/proc/self/task/*/comm";
+const PROC_COMM_READ_WRITE_PATHS = ["/proc/self/comm", "/proc/self/task/*/comm"];
 
 function isProcEntryOwnedByOpenShell(entry: string): boolean {
-  return entry === PROC_PATH || entry === STALE_PROC_COMM_READ_WRITE_PATH;
+  return entry === PROC_PATH || PROC_COMM_READ_WRITE_PATHS.includes(entry);
 }
 
-export function buildDirectGpuPolicyYaml(basePolicy: string): string {
+type DirectGpuPolicyOptions = {
+  procReadWrite?: boolean;
+};
+
+export function buildDirectGpuPolicyYaml(
+  basePolicy: string,
+  options: DirectGpuPolicyOptions = {},
+): string {
   const parsed = YAML.parse(basePolicy);
   if (!parsed || typeof parsed !== "object") {
     throw new Error("Cannot prepare direct GPU sandbox policy; base policy is not a YAML mapping.");
@@ -41,12 +53,20 @@ export function buildDirectGpuPolicyYaml(basePolicy: string): string {
     ? fsPolicy.read_write.map((entry: unknown) => String(entry))
     : [];
   fsPolicy.read_write = readWrite.filter((entry: string) => !isProcEntryOwnedByOpenShell(entry));
+  if (options.procReadWrite && !fsPolicy.read_write.includes(PROC_PATH)) {
+    // Linux Docker-driver GPU patching recreates the container with GPU flags
+    // after `openshell sandbox create`, so OpenShell never sees `--gpu` and
+    // cannot add its native /proc GPU enrichment. Mirror that enrichment here
+    // for the patched path; without it Landlock denies the NVIDIA runtime's
+    // /proc/<pid>/task/<tid>/comm write even though Docker GPU access works.
+    fsPolicy.read_write.push(PROC_PATH);
+  }
   return YAML.stringify(parsed);
 }
 
 const PROC_COMM_WRITE_PROBE = [
   "set -eu;",
-  'comm="/proc/$$/task/$$/comm";',
+  'comm="/proc/self/comm";',
   'old="$(cat "$comm" 2>/dev/null || true)";',
   'printf nemoclaw-gpu >"$comm";',
   'if [ -n "$old" ]; then',
@@ -66,29 +86,52 @@ const CUDA_INIT_PROBE = [
   ].join(" "),
 ].join(" ");
 
+const NVIDIA_SMI_OPTIONAL_PROBE = [
+  "set -eu;",
+  "if command -v nvidia-smi >/dev/null 2>&1; then",
+  "exec nvidia-smi;",
+  "fi;",
+  'echo "nvidia-smi not installed; skipping optional visibility check"',
+].join(" ");
+
+export type DirectSandboxGpuProofCommand = {
+  id: string;
+  label: string;
+  args: string[];
+  optional?: boolean;
+};
+
 export function buildDirectSandboxGpuProofCommands(
   sandboxName: string,
-): { label: string; args: string[] }[] {
+): DirectSandboxGpuProofCommand[] {
   return [
     {
-      label: "nvidia-smi",
-      args: ["sandbox", "exec", "-n", sandboxName, "--", "nvidia-smi"],
+      id: "nvidia-smi",
+      label: "nvidia-smi when available",
+      args: ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", NVIDIA_SMI_OPTIONAL_PROBE],
     },
     {
+      id: "proc-comm-write",
       label: "/proc/<pid>/task/<tid>/comm write",
+      optional: true,
       args: ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", PROC_COMM_WRITE_PROBE],
     },
     {
+      id: "cuda-init",
       label: "cuInit(0) via libcuda.so.1",
+      optional: true,
       args: ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", CUDA_INIT_PROBE],
     },
   ];
 }
 
-function prepareDirectGpuSandboxPolicy(basePolicyPath: string): InitialSandboxPolicy {
+function prepareDirectGpuSandboxPolicy(
+  basePolicyPath: string,
+  options: DirectGpuPolicyOptions = {},
+): InitialSandboxPolicy {
   const basePolicy = fs.readFileSync(basePolicyPath, "utf-8");
   const policyPath = secureTempFile("nemoclaw-gpu-policy", ".yaml");
-  fs.writeFileSync(policyPath, buildDirectGpuPolicyYaml(basePolicy), {
+  fs.writeFileSync(policyPath, buildDirectGpuPolicyYaml(basePolicy, options), {
     encoding: "utf-8",
     mode: 0o600,
   });
@@ -123,41 +166,112 @@ export function getNetworkPolicyNames(policyContent: string): Set<string> | null
   }
 }
 
+function isYamlObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function filterHermesInactiveMessagingPolicies(
+  policyContent: string,
+  activeMessagingChannels: string[],
+): { content: string; changed: boolean } {
+  const parsed = YAML.parse(policyContent);
+  if (!isYamlObject(parsed) || !isYamlObject(parsed.network_policies)) {
+    return { content: policyContent, changed: false };
+  }
+
+  const active = new Set(activeMessagingChannels);
+  let changed = false;
+  for (const [channel, policyKeys] of Object.entries(HERMES_MESSAGING_POLICY_KEYS)) {
+    if (active.has(channel)) continue;
+    for (const key of policyKeys) {
+      if (Object.prototype.hasOwnProperty.call(parsed.network_policies, key)) {
+        delete parsed.network_policies[key];
+        changed = true;
+      }
+    }
+  }
+
+  return {
+    content: changed ? YAML.stringify(parsed) : policyContent,
+    changed,
+  };
+}
+
+function isHermesPolicyPath(policyPath: string): boolean {
+  const normalized = policyPath.split(path.sep).join("/");
+  return /(^|\/)agents\/hermes\/policy-additions\.yaml$/.test(normalized);
+}
+
 export function prepareInitialSandboxCreatePolicy(
   basePolicyPath: string,
   activeMessagingChannels: string[],
-  options: { directGpu?: boolean } = {},
+  options: {
+    directGpu?: boolean;
+    dockerGpuPatch?: boolean;
+    additionalPresets?: string[];
+    agentName?: string | null;
+  } = {},
 ): InitialSandboxPolicy {
-  const directGpuPolicy = options.directGpu ? prepareDirectGpuSandboxPolicy(basePolicyPath) : null;
-  const effectiveBasePolicyPath = directGpuPolicy?.policyPath || basePolicyPath;
+  const directGpuPolicy = options.directGpu
+    ? prepareDirectGpuSandboxPolicy(basePolicyPath, {
+        procReadWrite: options.dockerGpuPatch === true,
+      })
+    : null;
+  let effectiveBasePolicyPath = directGpuPolicy?.policyPath || basePolicyPath;
   const cleanupFns = directGpuPolicy?.cleanup ? [directGpuPolicy.cleanup] : [];
+  const buildCleanup = () =>
+    cleanupFns.length > 0
+      ? () => cleanupFns.map((cleanup) => cleanup()).every(Boolean)
+      : undefined;
   const requestedCreateTimePresets = [
     ...new Set(
-      activeMessagingChannels.flatMap(
-        (channel) => CREATE_TIME_POLICY_PRESETS_BY_CHANNEL[channel] || [],
-      ),
+      [
+        ...requiredMessagingChannelPolicyPresets(activeMessagingChannels),
+        ...(options.additionalPresets || []),
+      ],
     ),
   ];
-  const combinedCleanup =
-    cleanupFns.length > 0 ? () => cleanupFns.map((cleanup) => cleanup()).every(Boolean) : undefined;
+  const dedupe = (values: string[]) => [...new Set(values.filter(Boolean))];
 
-  if (requestedCreateTimePresets.length === 0) {
-    return {
-      policyPath: effectiveBasePolicyPath,
-      appliedPresets: [],
-      cleanup: combinedCleanup,
-    };
+  let basePolicy = fs.readFileSync(effectiveBasePolicyPath, "utf-8");
+  if (options.agentName === "hermes" || isHermesPolicyPath(basePolicyPath)) {
+    const filtered = filterHermesInactiveMessagingPolicies(basePolicy, activeMessagingChannels);
+    if (filtered.changed) {
+      const policyPath = secureTempFile("nemoclaw-agent-policy", ".yaml");
+      fs.writeFileSync(policyPath, filtered.content, { encoding: "utf-8", mode: 0o600 });
+      cleanupFns.push(() => {
+        try {
+          cleanupTempDir(policyPath, "nemoclaw-agent-policy");
+          return true;
+        } catch {
+          return false;
+        }
+      });
+      effectiveBasePolicyPath = policyPath;
+      basePolicy = filtered.content;
+    }
   }
 
-  const basePolicy = fs.readFileSync(effectiveBasePolicyPath, "utf-8");
   const basePolicyNames = getNetworkPolicyNames(basePolicy);
   if (basePolicyNames === null) {
     return {
       policyPath: effectiveBasePolicyPath,
       appliedPresets: [],
-      cleanup: combinedCleanup,
+      cleanup: buildCleanup(),
     };
   }
+  const existingChannelPresets = activeMessagingChannels.filter((channel) =>
+    basePolicyNames.has(channel),
+  );
+
+  if (requestedCreateTimePresets.length === 0) {
+    return {
+      policyPath: effectiveBasePolicyPath,
+      appliedPresets: dedupe(existingChannelPresets),
+      cleanup: buildCleanup(),
+    };
+  }
+
   const existingCreateTimePresets = requestedCreateTimePresets.filter((preset) =>
     basePolicyNames.has(preset),
   );
@@ -167,8 +281,8 @@ export function prepareInitialSandboxCreatePolicy(
   if (createTimePresets.length === 0) {
     return {
       policyPath: effectiveBasePolicyPath,
-      appliedPresets: existingCreateTimePresets,
-      cleanup: combinedCleanup,
+      appliedPresets: dedupe([...existingChannelPresets, ...existingCreateTimePresets]),
+      cleanup: buildCleanup(),
     };
   }
 
@@ -192,7 +306,11 @@ export function prepareInitialSandboxCreatePolicy(
 
   return {
     policyPath,
-    appliedPresets: [...existingCreateTimePresets, ...mergedPolicy.appliedPresets],
-    cleanup: () => cleanupFns.map((cleanup) => cleanup()).every(Boolean),
+    appliedPresets: dedupe([
+      ...existingChannelPresets,
+      ...existingCreateTimePresets,
+      ...mergedPolicy.appliedPresets,
+    ]),
+    cleanup: buildCleanup(),
   };
 }

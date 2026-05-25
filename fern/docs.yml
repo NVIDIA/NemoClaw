@@ -1,0 +1,94 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+#
+# Fern site config. Mirrors the OpenShell Fern layout while the NemoClaw docs
+# are migrated from the legacy Sphinx/MyST source.
+instances:
+  - url: nvidia-nemoclaw.docs.buildwithfern.com/nemoclaw
+    custom-domain: docs.nvidia.com/nemoclaw
+    multi-source: true
+
+title: NVIDIA NemoClaw
+
+global-theme: nvidia
+
+announcement:
+  message: "🔔 NVIDIA NemoClaw is <strong>alpha software</strong>. APIs and behavior may change without notice. Do not use in production."
+
+layout:
+  searchbar-placement: header
+  page-width: 1376px
+  sidebar-width: 248px
+  content-width: 812px
+  tabs-placement: header
+  hide-feedback: true
+
+colors:
+  accentPrimary:
+    dark: "#76B900"
+    light: "#76B900"
+  background:
+    light: "#FFFFFF"
+    dark: "#000000"
+
+theme:
+  page-actions: toolbar
+  footer-nav: minimal
+
+logo:
+  href: /nemoclaw/latest
+  right-text: NemoClaw
+
+favicon: ./assets/NVIDIA_symbol.svg
+
+js:
+  - url: https://assets.adobedtm.com/5d4962a43b79/c1061d2c5e7b/launch-191c2462b890.min.js
+    strategy: beforeInteractive
+
+css:
+  - ./main.css
+
+navbar-links:
+  - type: github
+    value: https://github.com/NVIDIA/NemoClaw
+
+experimental:
+  mdx-components:
+    - ../docs/_components
+    - ./components
+
+versions:
+  - display-name: Latest
+    path: ../docs/index.yml
+    slug: latest
+
+redirects:
+  # Paths are relative to the site root; subpath prefix matches instances + custom-domain.
+  # Legacy HTML URLs used .../path/to/page/index.html; Fern canonical URLs omit index.html.
+  # List explicit /index.html routes before :path*/index.html so empty path segments do not
+  # mis-resolve (see NeMo-Curator fern/docs.yml). :path*.html must follow :path*/index.html rules.
+  # https://www.buildwithfern.com/learn/docs/configuration/site-level-settings#redirects-configuration
+  - source: "/nemoclaw/index.html"
+    destination: "/nemoclaw/latest"
+  - source: "/nemoclaw/index"
+    destination: "/nemoclaw/latest"
+  - source: "/nemoclaw/latest/index.html"
+    destination: "/nemoclaw/latest"
+  - source: "/nemoclaw/latest/index"
+    destination: "/nemoclaw/latest"
+  - source: "/nemoclaw/latest/:path*/index.html"
+    destination: "/nemoclaw/latest/:path*"
+  - source: "/nemoclaw/:path*/index.html"
+    destination: "/nemoclaw/:path*"
+  - source: "/nemoclaw/:path*.html"
+    destination: "/nemoclaw/:path*"
+  - source: "/nemoclaw/latest/reference/inference-profiles"
+    destination: "/nemoclaw/latest/inference/inference-options"
+  - source: "/nemoclaw/latest/get-started/windows-setup"
+    destination: "/nemoclaw/latest/get-started/windows-preparation"
+  - source: "/nemoclaw/latest/deployment/set-up-telegram-bridge"
+    destination: "/nemoclaw/latest/manage-sandboxes/messaging-channels"
+  - source: "/nemoclaw/latest/workspace/workspace-files"
+    destination: "/nemoclaw/latest/manage-sandboxes/workspace-files"
+  - source: "/nemoclaw/latest/workspace/backup-restore"
+    destination: "/nemoclaw/latest/manage-sandboxes/backup-restore"

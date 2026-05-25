@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: Docs Links PR
+name: Docs / Link Check
 
 on:
   pull_request:
@@ -9,6 +9,7 @@ on:
     types: [opened, reopened, synchronize]
     paths:
       - "**/*.md"
+      - "**/*.mdx"
       - ".github/workflows/docs-links-pr.yaml"
       - "test/e2e/e2e-cloud-experimental/check-docs.sh"
 
@@ -21,20 +22,21 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
-      - name: Determine changed markdown files
+      - name: Determine changed documentation files
         id: changed
         shell: bash
         run: |
           set -euo pipefail
           base="${{ github.event.pull_request.base.sha }}"
           head="${{ github.event.pull_request.head.sha }}"
-          mapfile -t md_files < <(
+          mapfile -t doc_files < <(
             git diff --name-only --diff-filter=ACMR "$base" "$head" -- \
               '*.md' \
+              '*.mdx' \
               ':(exclude)node_modules/**' \
               ':(exclude)dist/**' \
               ':(exclude)vendor/**' \
@@ -42,7 +44,7 @@ jobs:
             | LC_ALL=C sort -u
           )
 
-          if [[ "${#md_files[@]}" -eq 0 ]]; then
+          if [[ "${#doc_files[@]}" -eq 0 ]]; then
             echo "has_files=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -50,7 +52,7 @@ jobs:
           echo "has_files=true" >> "$GITHUB_OUTPUT"
           {
             echo "files<<EOF"
-            printf '%s\n' "${md_files[@]}"
+            printf '%s\n' "${doc_files[@]}"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -59,5 +61,5 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t md_files <<< "${{ steps.changed.outputs.files }}"
-          bash test/e2e/e2e-cloud-experimental/check-docs.sh --only-links --local-only "${md_files[@]}"
+          mapfile -t doc_files <<< "${{ steps.changed.outputs.files }}"
+          bash test/e2e/e2e-cloud-experimental/check-docs.sh --only-links --local-only "${doc_files[@]}"

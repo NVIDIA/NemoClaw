@@ -27,12 +27,15 @@ Environment variables:
                                         disable). Empty/unset preserves the OpenClaw default.
     NEMOCLAW_INFERENCE_COMPAT_B64       Base64-encoded inference compat JSON
     NEMOCLAW_MESSAGING_CHANNELS_B64     Base64-encoded channel list
-    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map
+    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64  Base64-encoded allowed IDs map (Slack IDs cover
+                                        DMs and channel @mentions)
     NEMOCLAW_DISCORD_GUILDS_B64         Base64-encoded Discord guild config
     NEMOCLAW_TELEGRAM_CONFIG_B64        Base64-encoded Telegram config (e.g. {"requireMention": true})
+    NEMOCLAW_WECHAT_CONFIG_B64          Base64-encoded WeChat config (e.g. {"accountId": "...", "baseUrl": "...", "userId": "..."})
     NEMOCLAW_DISABLE_DEVICE_AUTH        Set to "1" to force-disable device auth
     NEMOCLAW_PROXY_HOST                 Egress proxy host (default: 10.200.0.1)
     NEMOCLAW_PROXY_PORT                 Egress proxy port (default: 3128)
+    NEMOCLAW_OPENCLAW_MANAGED_PROXY     Set to "0" to defer OpenClaw managed proxy config
     NEMOCLAW_WEB_SEARCH_ENABLED         Set to "1" to enable web search tools
 """
 
@@ -42,18 +45,20 @@ import base64
 import json
 import os
 import re
+import runpy
 import sys
 from pathlib import Path
 from urllib.parse import urlparse
 
 KNOWN_MODEL_SETUP_AGENTS = {"openclaw", "hermes"}
 MODEL_SETUP_EFFECT_KEYS = {
-    "openclaw": {"openclawCompat", "openclawPlugins"},
+    "openclaw": {"openclawCompat", "openclawPlugins", "openclawTools"},
     "hermes": {"hermesCompat"},
 }
 DEFAULT_DASHBOARD_PORT = 18789
 MIN_DASHBOARD_PORT = 1024
 MAX_DASHBOARD_PORT = 65535
+FALSE_VALUES = {"0", "false", "no", "off"}
 
 
 def _coerce_positive_int(env: dict, name: str, default: int) -> int:
@@ -88,6 +93,13 @@ def _normalize_url_for_parse(raw_url: str) -> str:
     if raw_url and not re.match(r"^[a-z][a-z0-9+.-]*://", raw_url, re.IGNORECASE):
         return f"http://{raw_url}"
     return raw_url
+
+
+def _truthy_env_default(env: dict, name: str, default: bool) -> bool:
+    raw = env.get(name)
+    if raw is None or raw.strip() == "":
+        return default
+    return raw.strip().lower() not in FALSE_VALUES
 
 
 def _validate_dashboard_port(raw: str, env_name: str) -> int:
@@ -226,6 +238,21 @@ def _validate_selected_agent_effects(payload: dict, manifest_path: Path, registr
         if compat is not None and not isinstance(compat, dict):
             raise ValueError(f"{manifest_path}: effects.openclawCompat must be an object")
 
+        tools = effects.get("openclawTools")
+        if tools is not None:
+            if not isinstance(tools, dict):
+                raise ValueError(f"{manifest_path}: effects.openclawTools must be an object")
+            unknown_tool_keys = sorted(set(tools) - {"toolSearch"})
+            if unknown_tool_keys:
+                raise ValueError(
+                    f"{manifest_path}: unknown effects.openclawTools keys: "
+                    f"{', '.join(unknown_tool_keys)}"
+                )
+            if "toolSearch" in tools and not isinstance(tools["toolSearch"], bool):
+                raise ValueError(
+                    f"{manifest_path}: effects.openclawTools.toolSearch must be a boolean"
+                )
+
         plugins = effects.get("openclawPlugins", [])
         if not isinstance(plugins, list):
             raise ValueError(f"{manifest_path}: effects.openclawPlugins must be an array")
@@ -316,7 +343,11 @@ def _coerce_compat_dict(value: object) -> dict:
 
 
 def _apply_openclaw_setup_effects(
-    setup: dict, inference_compat: dict, openclaw_plugins: list[dict], plugin_ids: set[str]
+    setup: dict,
+    inference_compat: dict,
+    openclaw_plugins: list[dict],
+    plugin_ids: set[str],
+    openclaw_tools: dict,
 ) -> None:
     effects = setup["effects"]
     for key, value in effects.get("openclawCompat", {}).items():
@@ -326,6 +357,14 @@ def _apply_openclaw_setup_effects(
                 f"'{setup['id']}' conflicts with inference compat key '{key}'"
             )
         inference_compat[key] = value
+
+    for key, value in effects.get("openclawTools", {}).items():
+        if key in openclaw_tools and openclaw_tools[key] != value:
+            raise ValueError(
+                "model-specific setup "
+                f"'{setup['id']}' conflicts with OpenClaw tools key '{key}'"
+            )
+        openclaw_tools[key] = value
 
     for plugin in effects.get("openclawPlugins", []):
         plugin_id = plugin["id"]
@@ -356,6 +395,11 @@ def build_config(env: dict | None = None) -> dict:
     proxy_host = env.get("NEMOCLAW_PROXY_HOST") or "10.200.0.1"
     proxy_port = env.get("NEMOCLAW_PROXY_PORT") or "3128"
     proxy_url = f"http://{proxy_host}:{proxy_port}"
+    emit_openclaw_managed_proxy = _truthy_env_default(
+        env,
+        "NEMOCLAW_OPENCLAW_MANAGED_PROXY",
+        True,
+    )
     model = env["NEMOCLAW_MODEL"]
     raw_chat_ui_url = env.get("CHAT_UI_URL") or ""
     chat_ui_url = raw_chat_ui_url or f"http://127.0.0.1:{DEFAULT_DASHBOARD_PORT}"
@@ -417,10 +461,34 @@ def build_config(env: dict | None = None) -> dict:
     )
     openclaw_plugins: list[dict] = []
     openclaw_plugin_ids: set[str] = set()
+    openclaw_tool_overrides: dict = {}
     for setup in model_specific_setups:
         _apply_openclaw_setup_effects(
-            setup, inference_compat, openclaw_plugins, openclaw_plugin_ids
+            setup,
+            inference_compat,
+            openclaw_plugins,
+            openclaw_plugin_ids,
+            openclaw_tool_overrides,
         )
+    openclaw_tools = {"toolSearch": True, **openclaw_tool_overrides}
+
+    # Ollama's OpenAI-compatible /v1/chat/completions stream omits the
+    # `usage` chunk by default; OpenAI clients have to send
+    # `stream_options.include_usage: true` to receive it. OpenClaw gates
+    # that request flag on `model.compat.supportsUsageInStreaming`
+    # (src/agents/openai-transport-stream.ts) and its Ollama extension
+    # only opts in when its own detector recognises the endpoint as
+    # Ollama. NemoClaw routes ollama-local traffic via the standardised
+    # `https://inference.local/v1` URL through the OpenShell gateway, so
+    # the upstream detector misses it and the TUI token counter stays
+    # `?` indefinitely (#2747). Set the flag here so the request is sent
+    # with `stream_options.include_usage: true` regardless of how
+    # OpenClaw resolves the provider id. Mirrors the LM Studio extension
+    # workaround (`withLmstudioUsageCompat` in
+    # extensions/lmstudio/src/stream.ts). Keep the set of provider keys
+    # in sync with `_bundled_provider_plugins["ollama"]` below.
+    if provider_key in {"ollama", "ollama-local"}:
+        inference_compat.setdefault("supportsUsageInStreaming", True)
 
     msg_channels = json.loads(
         base64.b64decode(
@@ -442,8 +510,18 @@ def build_config(env: dict | None = None) -> dict:
             env.get("NEMOCLAW_TELEGRAM_CONFIG_B64", "e30=") or "e30="
         ).decode("utf-8")
     )
+    # NEMOCLAW_WECHAT_CONFIG_B64 is intentionally not decoded here. The
+    # WeChat plugin's per-account state (accountId/baseUrl/userId) is read by
+    # seed-wechat-accounts.py, which runs after the base image has installed
+    # the WeChat plugin and registered its metadata/channel id.
+    # Decoding it here too would create a misleading second consumer that
+    # nothing acts on.
 
-    _token_keys = {"discord": "token", "telegram": "botToken", "slack": "botToken"}
+    _token_keys = {
+        "discord": "token",
+        "telegram": "botToken",
+        "slack": "botToken",
+    }
     _env_keys = {
         "discord": "DISCORD_BOT_TOKEN",
         "telegram": "TELEGRAM_BOT_TOKEN",
@@ -464,6 +542,16 @@ def build_config(env: dict | None = None) -> dict:
 
     _ch_cfg = {}
     for ch in msg_channels:
+        if ch == "whatsapp":
+            _ch_cfg[ch] = {
+                "accounts": {
+                    "default": {
+                        "enabled": True,
+                        "healthMonitor": {"enabled": False},
+                    }
+                }
+            }
+            continue
         if ch not in _token_keys:
             continue
         account = {
@@ -480,7 +568,34 @@ def build_config(env: dict | None = None) -> dict:
         if ch in _allowed_ids and _allowed_ids[ch]:
             account["dmPolicy"] = "allowlist"
             account["allowFrom"] = _allowed_ids[ch]
+            if ch == "slack":
+                account["groupPolicy"] = "allowlist"
+                account["channels"] = {
+                    "*": {
+                        "enabled": True,
+                        "requireMention": True,
+                        "users": _allowed_ids[ch],
+                    }
+                }
         _ch_cfg[ch] = {"accounts": {"default": account}}
+
+    # WeChat (openclaw-weixin) is NOT added to channels.* here in build
+    # contexts where the plugin has not been installed yet — writing it upfront
+    # makes `openclaw plugins install` fail with "unknown channel id:
+    # openclaw-weixin" because the plugin registry hasn't seen the channel yet
+    # (chicken-and-egg). When the base image has already installed the plugin,
+    # scripts/seed-wechat-accounts.py adds:
+    #   channels.openclaw-weixin.channelConfigUpdatedAt = <ISO timestamp>
+    #   channels.openclaw-weixin.accounts.<accountId>.enabled = true
+    # The upstream plugin's auth/accounts.ts reads that block at boot to
+    # decide which accounts to start; without enabled=true the bridge no-ops.
+    #
+    # Per-account secrets (token, baseUrl, userId) still live in the plugin's
+    # own state dir at <stateDir>/openclaw-weixin/accounts/<accountId>.json
+    # (also seeded by seed-wechat-accounts.py). DM allowlist uses the
+    # framework allowFrom file at credentials/openclaw-weixin-{accountId}-
+    # allowFrom.json — not the openclaw.json accounts.<id>.allowFrom mechanism
+    # that telegram/discord/slack use.
 
     if "discord" in _ch_cfg and _discord_guilds:
         _ch_cfg["discord"].update(
@@ -561,6 +676,12 @@ def build_config(env: dict | None = None) -> dict:
         "acpx": {"enabled": False},
         "bonjour": {"enabled": False},
         "qqbot": {"enabled": False},
+        # The @tencent-weixin/openclaw-weixin plugin is pre-installed in the
+        # base image (Dockerfile.base) so onboarding does not depend on the
+        # public npm registry for it. Enable the entry unconditionally — the
+        # bridge no-ops at startup unless seed-wechat-accounts.py has also
+        # registered an accountId under channels.openclaw-weixin.accounts.
+        "openclaw-weixin": {"enabled": True},
     }
     _bundled_provider_plugins = {
         "amazon-bedrock": {"amazon-bedrock", "bedrock"},
@@ -600,7 +721,7 @@ def build_config(env: dict | None = None) -> dict:
                 ),
                 # NemoClaw sandboxes are provisioned non-interactively and the
                 # E2E CLI contract expects the first agent turn to answer the
-                # caller's prompt. OpenClaw 2026.4.24 seeds BOOTSTRAP.md by
+                # caller's prompt. OpenClaw 2026.4.24+ seeds BOOTSTRAP.md by
                 # default, which redirects a fresh workspace into an identity
                 # setup conversation before normal replies.
                 "skipBootstrap": True,
@@ -613,6 +734,7 @@ def build_config(env: dict | None = None) -> dict:
         },
         "models": {"mode": "merge", "providers": providers},
         "channels": {"defaults": {}, **_ch_cfg},
+        "tools": openclaw_tools,
         "update": {"checkOnStart": False},
         # Disable bundled plugins/channels that hit the L7 proxy at startup
         # and either crash or hang the gateway:
@@ -627,7 +749,7 @@ def build_config(env: dict | None = None) -> dict:
         #     load. The sandbox L7 proxy denies the registry URL, the
         #     install retries for ~6 minutes, and while it's stuck the
         #     gateway can't service openclaw-agent requests — that's the
-        #     TC-SBX-02 hang in 2026.4.24.
+        #     TC-SBX-02 hang observed in 2026.4.24.
         #
         # acpx is disabled by default because its runtime dependency staging
         # also reaches npm during gateway startup. NemoClaw's primary CLI path
@@ -650,29 +772,145 @@ def build_config(env: dict | None = None) -> dict:
         },
     }
 
+    if emit_openclaw_managed_proxy:
+        config["proxy"] = {
+            "enabled": True,
+            "proxyUrl": proxy_url,
+            "loopbackMode": "proxy",
+        }
+
     if env.get("NEMOCLAW_WEB_SEARCH_ENABLED", "") == "1":
-        config["tools"] = {
-            "web": {
-                "search": {
-                    "enabled": True,
-                    "provider": "brave",
-                    "apiKey": "openshell:resolve:env:BRAVE_API_KEY",
-                },
-                "fetch": {"enabled": True},
-            }
+        config.setdefault("tools", {})["web"] = {
+            "search": {
+                "enabled": True,
+                "provider": "brave",
+                "apiKey": "openshell:resolve:env:BRAVE_API_KEY",
+            },
+            "fetch": {"enabled": True},
         }
 
     return config
+
+
+def _preserve_existing_plugin_installs(config: dict, path: str) -> None:
+    try:
+        with open(path) as f:
+            existing = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return
+
+    if not isinstance(existing, dict):
+        return
+    existing_plugins = existing.get("plugins")
+    if not isinstance(existing_plugins, dict):
+        return
+    existing_installs = existing_plugins.get("installs")
+    if not isinstance(existing_installs, dict) or not existing_installs:
+        return
+
+    plugins = config.setdefault("plugins", {})
+    current_installs = plugins.get("installs")
+    if not isinstance(current_installs, dict):
+        current_installs = {}
+    plugins["installs"] = {**existing_installs, **current_installs}
+
+
+def _has_plugin_install(config: dict, plugin_id: str) -> bool:
+    plugins = config.get("plugins")
+    if not isinstance(plugins, dict):
+        return False
+    installs = plugins.get("installs")
+    return isinstance(installs, dict) and plugin_id in installs
+
+
+def _has_installed_wechat_plugin_metadata() -> bool:
+    package_dir = (
+        Path(os.path.expanduser("~/.openclaw"))
+        / "npm"
+        / "node_modules"
+        / "@tencent-weixin"
+        / "openclaw-weixin"
+    )
+    for filename in ("openclaw.plugin.json", "package.json"):
+        path = package_dir / filename
+        try:
+            metadata = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(metadata, dict) and (
+            metadata.get("id") == "openclaw-weixin"
+            or metadata.get("name") == "@tencent-weixin/openclaw-weixin"
+            or "openclaw-weixin" in str(path).lower()
+        ):
+            return True
+
+    extensions_dir = Path(os.path.expanduser("~/.openclaw/extensions"))
+    if not extensions_dir.exists():
+        return False
+
+    for root, dirs, files in os.walk(extensions_dir):
+        dirs[:] = [
+            item
+            for item in dirs
+            if item not in {"node_modules", "plugin-runtime-deps", ".git"}
+        ]
+        root_path = Path(root)
+        for filename in files:
+            if filename not in {"openclaw.plugin.json", "package.json"}:
+                continue
+            path = root_path / filename
+            try:
+                metadata = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if not isinstance(metadata, dict):
+                continue
+            if (
+                metadata.get("id") == "openclaw-weixin"
+                or metadata.get("name") == "@tencent-weixin/openclaw-weixin"
+                or "openclaw-weixin" in str(path).lower()
+            ):
+                return True
+    return False
+
+
+def _has_preinstalled_wechat_plugin_signal() -> bool:
+    return os.environ.get("NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _seed_wechat_accounts_if_available(config: dict) -> None:
+    if (
+        not _has_plugin_install(config, "openclaw-weixin")
+        and not _has_installed_wechat_plugin_metadata()
+        and not _has_preinstalled_wechat_plugin_signal()
+    ):
+        return
+
+    seed_script = Path(__file__).resolve().with_name("seed-wechat-accounts.py")
+    namespace = runpy.run_path(str(seed_script))
+    main = namespace.get("main")
+    if not callable(main):
+        raise RuntimeError(f"{seed_script} does not expose main()")
+    exit_code = main()
+    if exit_code not in (None, 0):
+        raise SystemExit(exit_code)
 
 
 def main() -> None:
     """Generate openclaw.json from environment variables."""
     config = build_config()
     path = os.path.expanduser("~/.openclaw/openclaw.json")
+    _preserve_existing_plugin_installs(config, path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         json.dump(config, f, indent=2)
     os.chmod(path, 0o600)
+    _seed_wechat_accounts_if_available(config)
 
 
 if __name__ == "__main__":

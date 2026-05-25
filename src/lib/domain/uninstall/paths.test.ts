@@ -4,7 +4,12 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { defaultUninstallPaths, gatewayVolumeCandidates, uninstallStatePaths } from "./paths";
+import {
+  defaultUninstallPaths,
+  gatewayVolumeCandidates,
+  OPENSHELL_MANAGED_BINARIES,
+  uninstallStatePaths,
+} from "./paths";
 
 describe("uninstall paths", () => {
   it("returns the gateway volume candidate used by uninstall.sh", () => {
@@ -18,7 +23,10 @@ describe("uninstall paths", () => {
     expect(paths.openshellConfigDir).toBe(path.join("/home/test", ".config", "openshell"));
     expect(paths.nemoclawConfigDir).toBe(path.join("/home/test", ".config", "nemoclaw"));
     expect(paths.nemoclawShimPath).toBe(path.join("/home/test", ".local", "bin", "nemoclaw"));
-    expect(paths.openshellInstallPaths).toEqual(["/usr/local/bin/openshell", path.join("/xdg/bin", "openshell")]);
+    expect(paths.openshellInstallPaths).toEqual([
+      ...OPENSHELL_MANAGED_BINARIES.map((binary) => path.join("/usr/local/bin", binary)),
+      ...OPENSHELL_MANAGED_BINARIES.map((binary) => path.join("/xdg/bin", binary)),
+    ]);
     expect(paths.helperServiceGlob).toBe(path.join("/tmp/nemo", "nemoclaw-services-*"));
     expect(paths.runtimeTempGlobs).toEqual([
       path.join("/tmp/nemo", "nemoclaw-create-*.log"),
@@ -36,8 +44,18 @@ describe("uninstall paths", () => {
     const paths = defaultUninstallPaths({ home: "/home/test" });
     expect(uninstallStatePaths(paths)).toEqual([
       path.join("/home/test", ".nemoclaw"),
+      path.join("/home/test", ".local", "state", "nemoclaw"),
       path.join("/home/test", ".config", "openshell"),
       path.join("/home/test", ".config", "nemoclaw"),
     ]);
+  });
+  it("#3456: exposes the Linux Docker-driver gateway state dir so uninstall can clean it", () => {
+    // ~/.local/state/nemoclaw/ holds the openshell-gateway PID file, SQLite
+    // database, audit log, and vm-driver/ state. Documented as
+    // NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR in docs/reference/commands.mdx.
+    // Before this fix, uninstall left it behind (#3456 hulynn comment).
+    const paths = defaultUninstallPaths({ home: "/home/test" });
+    expect(paths.gatewayLocalStateDir).toBe(path.join("/home/test", ".local", "state", "nemoclaw"));
+    expect(uninstallStatePaths(paths)).toContain(path.join("/home/test", ".local", "state", "nemoclaw"));
   });
 });

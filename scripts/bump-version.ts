@@ -28,11 +28,6 @@ type BlueprintManifest = {
   version?: string;
 };
 
-type DocsProjectJson = {
-  name?: string;
-  version?: string;
-};
-
 type DocsVersionEntry = {
   preferred?: boolean;
   version: string;
@@ -71,13 +66,11 @@ const REPO_ROOT = process.cwd();
 const ROOT_PACKAGE_JSON = path.join(REPO_ROOT, "package.json");
 const PLUGIN_PACKAGE_JSON = path.join(REPO_ROOT, "nemoclaw", "package.json");
 const BLUEPRINT_YAML = path.join(REPO_ROOT, "nemoclaw-blueprint", "blueprint.yaml");
-const DOCS_CONF = path.join(REPO_ROOT, "docs", "conf.py");
-const DOCS_PROJECT_JSON = path.join(REPO_ROOT, "docs", "project.json");
 const DOCS_VERSIONS_JSON = path.join(REPO_ROOT, "docs", "versions1.json");
 const INSTALL_SH = path.join(REPO_ROOT, "scripts", "install.sh");
 const README_MD = path.join(REPO_ROOT, "README.md");
-const QUICKSTART_MD = path.join(REPO_ROOT, "docs", "get-started", "quickstart.md");
-const VERSIONED_DOC_LINK_FILES = [README_MD, QUICKSTART_MD];
+const QUICKSTART_MDX = path.join(REPO_ROOT, "docs", "get-started", "quickstart.mdx");
+const VERSIONED_DOC_LINK_FILES = [README_MD, QUICKSTART_MDX];
 const FILES_TO_STAGE = [
   ROOT_PACKAGE_JSON,
   PLUGIN_PACKAGE_JSON,
@@ -347,26 +340,6 @@ function updateInstallScriptDefaultVersion(previousVersion: string, nextVersion:
   );
 }
 
-function updateDocsConf(nextVersion: string): void {
-  const current = readText(DOCS_CONF);
-  const releaseReplacement = `release = "${nextVersion}"`;
-
-  let updated = current;
-  if (/^release = ".*"$/m.test(updated)) {
-    updated = updated.replace(/^release = ".*"$/m, releaseReplacement);
-  } else {
-    throw new Error("Could not find release assignment in docs/conf.py");
-  }
-
-  writeFileSync(DOCS_CONF, updated, "utf8");
-}
-
-function updateDocsProjectJson(version: string): void {
-  const project = readJson<DocsProjectJson>(DOCS_PROJECT_JSON);
-  project.version = version;
-  writeFileSync(DOCS_PROJECT_JSON, `${JSON.stringify(project, null, 2)}\n`, "utf8");
-}
-
 function updateDocsVersionsJson(version: string): void {
   const currentEntries = readDocsVersionsJson();
   const filteredEntries = currentEntries.filter((entry) => entry.version !== version);
@@ -449,7 +422,7 @@ function updateInstallAndUninstallDocs(nextDocsVersion: string): void {
     installReplacement,
   );
   replaceCodeBlockLine(
-    QUICKSTART_MD,
+    QUICKSTART_MDX,
     /^curl -fsSL https:\/\/www\.nvidia\.com\/nemoclaw\.sh \| bash(?: # v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)?$/m,
     installReplacement,
   );
@@ -459,7 +432,7 @@ function updateInstallAndUninstallDocs(nextDocsVersion: string): void {
     uninstallReplacement,
   );
   replaceCodeBlockLine(
-    QUICKSTART_MD,
+    QUICKSTART_MDX,
     /^curl -fsSL https:\/\/raw\.githubusercontent\.com\/NVIDIA\/NemoClaw\/refs\/heads\/main\/uninstall\.sh \| bash(?: # v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)?$/m,
     uninstallReplacement,
   );
@@ -499,7 +472,7 @@ function verifyVersionState(
   verifyDocsVersionsJson(version);
   requireContains(README_MD, docsPublicUrl);
   requireContains(README_MD, docsDisplayVersion);
-  requireContains(QUICKSTART_MD, docsDisplayVersion);
+  requireContains(QUICKSTART_MDX, docsDisplayVersion);
   for (const filePath of VERSIONED_DOC_LINK_FILES) {
     verifyDocsLinks(filePath, docsPublicUrl);
   }

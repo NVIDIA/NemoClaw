@@ -29,6 +29,34 @@ type SandboxResource = {
 
 type BuildHostAliases = (resource: SandboxResource) => HostAlias[];
 
+export type AddSandboxHostAliasOptions = {
+  hostname?: string;
+  ip?: string;
+  dryRun?: boolean;
+};
+
+export type RemoveSandboxHostAliasOptions = {
+  hostname?: string;
+  dryRun?: boolean;
+};
+
+export class HostAliasesCommandError extends Error {
+  readonly lines: readonly string[];
+  readonly exitCode: number;
+
+  constructor(lines: string | readonly string[], exitCode = 1) {
+    const normalized = Array.isArray(lines) ? lines : [lines];
+    super(normalized.join("\n"));
+    this.name = "HostAliasesCommandError";
+    this.lines = normalized;
+    this.exitCode = exitCode;
+  }
+}
+
+function hostAliasesFail(lines: string | readonly string[], exitCode = 1): never {
+  throw new HostAliasesCommandError(lines, exitCode);
+}
+
 function validateHostAliasHostname(hostname: string): boolean {
   if (!hostname || hostname.length > 253) return false;
   return hostname.split(".").every((label) => {
@@ -50,8 +78,7 @@ function runKubectlInClusterRaw(args: string[]): string {
 function throwKubectlError(action: string, error: unknown): never {
   const err = error as { stderr?: unknown; stdout?: unknown; message?: unknown; status?: number };
   const detail = String(err?.stderr || err?.stdout || err?.message || "").trim();
-  console.error(`  Failed to ${action}.${detail ? ` ${detail}` : ""}`);
-  process.exit(err?.status || 1);
+  hostAliasesFail(`  Failed to ${action}.${detail ? ` ${detail}` : ""}`, err?.status || 1);
 }
 
 function runKubectlInCluster(args: string[], action: string): string {
@@ -68,8 +95,7 @@ function getSandboxResource(sandboxName: string): SandboxResource {
     return JSON.parse(raw) as SandboxResource;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    console.error(`  Failed to parse sandbox resource: ${message}`);
-    process.exit(1);
+    hostAliasesFail(`  Failed to parse sandbox resource: ${message}`);
   }
 }
 
@@ -174,30 +200,28 @@ export function listSandboxHostAliases(sandboxName: string): void {
   }
 }
 
-export function addSandboxHostAlias(sandboxName: string, args: string[] = []): void {
-  const dryRun = args.includes("--dry-run");
-  const values = args.filter((arg) => !arg.startsWith("-"));
-  const [rawHostname, ip] = values;
-  if (!rawHostname || !ip || values.length !== 2) {
-    console.error(`  Usage: ${CLI_NAME} <sandbox> hosts-add <hostname> <ip> [--dry-run]`);
-    process.exit(1);
+export function addSandboxHostAlias(
+  sandboxName: string,
+  options: AddSandboxHostAliasOptions = {},
+): void {
+  const dryRun = Boolean(options.dryRun);
+  const { hostname: rawHostname, ip } = options;
+  if (!rawHostname || !ip) {
+    hostAliasesFail(`  Usage: ${CLI_NAME} <sandbox> hosts-add <hostname> <ip> [--dry-run]`);
   }
   const hostname = normalizeHostAliasHostname(rawHostname);
   if (!validateHostAliasHostname(hostname)) {
-    console.error(`  Invalid hostname '${hostname}'.`);
-    process.exit(1);
+    hostAliasesFail(`  Invalid hostname '${hostname}'.`);
   }
   if (isIP(ip) === 0) {
-    console.error(`  Invalid IP address '${ip}'.`);
-    process.exit(1);
+    hostAliasesFail(`  Invalid IP address '${ip}'.`);
   }
 
   const resource = getSandboxResource(sandboxName);
   const buildAliases: BuildHostAliases = (currentResource) => {
     const aliases = normalizeHostAliases(currentResource);
     if (aliases.some((alias) => alias.hostnames.includes(hostname))) {
-      console.error(`  Host alias '${hostname}' already exists.`);
-      process.exit(1);
+      hostAliasesFail(`  Host alias '${hostname}' already exists.`);
     }
 
     const existing = aliases.find((alias) => alias.ip === ip);
@@ -218,18 +242,18 @@ export function addSandboxHostAlias(sandboxName: string, args: string[] = []): v
   console.log(`  Added host alias ${hostname} -> ${ip}`);
 }
 
-export function removeSandboxHostAlias(sandboxName: string, args: string[] = []): void {
-  const dryRun = args.includes("--dry-run");
-  const values = args.filter((arg) => !arg.startsWith("-"));
-  const [rawHostname] = values;
-  if (!rawHostname || values.length !== 1) {
-    console.error(`  Usage: ${CLI_NAME} <sandbox> hosts-remove <hostname> [--dry-run]`);
-    process.exit(1);
+export function removeSandboxHostAlias(
+  sandboxName: string,
+  options: RemoveSandboxHostAliasOptions = {},
+): void {
+  const dryRun = Boolean(options.dryRun);
+  const { hostname: rawHostname } = options;
+  if (!rawHostname) {
+    hostAliasesFail(`  Usage: ${CLI_NAME} <sandbox> hosts-remove <hostname> [--dry-run]`);
   }
   const hostname = normalizeHostAliasHostname(rawHostname);
   if (!validateHostAliasHostname(hostname)) {
-    console.error(`  Invalid hostname '${hostname}'.`);
-    process.exit(1);
+    hostAliasesFail(`  Invalid hostname '${hostname}'.`);
   }
 
   const resource = getSandboxResource(sandboxName);
@@ -246,8 +270,7 @@ export function removeSandboxHostAlias(sandboxName: string, args: string[] = [])
 
     const existed = original.some((alias) => alias.hostnames.includes(hostname));
     if (!existed) {
-      console.error(`  Host alias '${hostname}' is not configured.`);
-      process.exit(1);
+      hostAliasesFail(`  Host alias '${hostname}' is not configured.`);
     }
     return aliases;
   };

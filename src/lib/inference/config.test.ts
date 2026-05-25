@@ -17,6 +17,7 @@ import {
   VLLM_LOCAL_CREDENTIAL_ENV,
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
+  getSandboxInferenceConfig,
   parseGatewayInference,
 } from "../../../dist/lib/inference/config";
 
@@ -218,6 +219,111 @@ describe("inference selection config", () => {
     expect(getOpenClawPrimaryModel("ollama-local")).toBe(
       `${MANAGED_PROVIDER_ID}/${DEFAULT_OLLAMA_MODEL}`,
     );
+  });
+});
+
+describe("getSandboxInferenceConfig", () => {
+  it("maps NVIDIA Endpoints to the routed inference provider", () => {
+    expect(
+      getSandboxInferenceConfig("qwen/qwen3.5-397b-a17b", "nvidia-prod", "openai-completions"),
+    ).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/qwen/qwen3.5-397b-a17b`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: null,
+    });
+  });
+
+  it("maps Model Router sandboxes through managed inference.local", () => {
+    expect(getSandboxInferenceConfig("nvidia-routed", "nvidia-router")).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/nvidia-routed`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: null,
+    });
+  });
+
+  it("leaves Kimi K2.6 compat to the model-specific setup registry", () => {
+    expect(
+      getSandboxInferenceConfig("moonshotai/kimi-k2.6", "nvidia-prod", "openai-completions"),
+    ).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/moonshotai/kimi-k2.6`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: null,
+    });
+  });
+
+  it("maps OpenAI-compatible endpoints to the managed inference provider", () => {
+    expect(getSandboxInferenceConfig("deepseek-ai/DeepSeek-V4-Flash", "compatible-endpoint"))
+      .toEqual({
+        providerKey: MANAGED_PROVIDER_ID,
+        primaryModelRef: `${MANAGED_PROVIDER_ID}/deepseek-ai/DeepSeek-V4-Flash`,
+        inferenceBaseUrl: INFERENCE_ROUTE_URL,
+        inferenceApi: "openai-completions",
+        inferenceCompat: {
+          supportsStore: false,
+        },
+      });
+  });
+
+  it("maps Bedrock Runtime custom Anthropic endpoints through the managed OpenAI-compatible route", () => {
+    expect(
+      getSandboxInferenceConfig(
+        "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        "compatible-anthropic-endpoint",
+        "openai-completions",
+      ),
+    ).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/anthropic.claude-3-5-sonnet-20240620-v1:0`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsStore: false,
+      },
+    });
+  });
+
+  it("keeps true Anthropic-compatible endpoints on Anthropic Messages", () => {
+    expect(
+      getSandboxInferenceConfig(
+        "claude-sonnet-proxy",
+        "compatible-anthropic-endpoint",
+        "anthropic-messages",
+      ),
+    ).toEqual({
+      providerKey: "anthropic",
+      primaryModelRef: "anthropic/claude-sonnet-proxy",
+      inferenceBaseUrl: "https://inference.local",
+      inferenceApi: "anthropic-messages",
+      inferenceCompat: null,
+    });
+  });
+
+  it("maps Gemini to the routed inference provider with supportsStore disabled", () => {
+    expect(getSandboxInferenceConfig("gemini-2.5-flash", "gemini-api")).toEqual({
+      providerKey: MANAGED_PROVIDER_ID,
+      primaryModelRef: `${MANAGED_PROVIDER_ID}/gemini-2.5-flash`,
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-completions",
+      inferenceCompat: {
+        supportsStore: false,
+      },
+    });
+  });
+
+  it("uses a probed Responses API override when one is available", () => {
+    expect(getSandboxInferenceConfig("gpt-5.4", "openai-api", "openai-responses")).toEqual({
+      providerKey: "openai",
+      primaryModelRef: "openai/gpt-5.4",
+      inferenceBaseUrl: INFERENCE_ROUTE_URL,
+      inferenceApi: "openai-responses",
+      inferenceCompat: null,
+    });
   });
 });
 
