@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 
 import { createBuiltInChannelManifestRegistry } from "../channels";
+import { FAKE_TELEGRAM_HOOK_REGISTRATIONS } from "../channels/telegram/hooks/fakes";
 import { FAKE_WECHAT_HOOK_REGISTRATIONS } from "../channels/wechat/hooks/fakes";
 import { MessagingHookRegistry } from "../hooks";
 import { FAKE_COMMON_HOOK_REGISTRATIONS } from "../hooks/common";
@@ -21,6 +22,7 @@ function compiler(): ManifestCompiler {
     createBuiltInChannelManifestRegistry(),
     new MessagingHookRegistry([
       ...FAKE_COMMON_HOOK_REGISTRATIONS,
+      ...FAKE_TELEGRAM_HOOK_REGISTRATIONS,
       ...FAKE_WECHAT_HOOK_REGISTRATIONS,
     ]),
   );
@@ -75,7 +77,7 @@ describe("ManifestCompiler", () => {
     const plan = await compiler().compile({
       sandboxName: "demo",
       agent: "openclaw",
-      workflow: "create",
+      workflow: "onboard",
       isInteractive: true,
       selectedChannels: ["slack", "telegram", "wechat", "discord", "whatsapp"],
       credentialAvailability: {
@@ -182,6 +184,11 @@ describe("ManifestCompiler", () => {
     expect(plan.healthChecks.every((check) => check.requiredBefore === "lifecycle-success")).toBe(
       true,
     );
+    expect(
+      plan.agentRender.find(
+        (render) => render.channelId === "telegram" && render.kind === "json-fragment",
+      )?.templateRefs,
+    ).toEqual(expect.arrayContaining(["proxyUrl", "allowedIds.telegram.values"]));
   });
 
   it("compiles Hermes render and WeChat agent policy alias intent", async () => {
@@ -211,6 +218,7 @@ describe("ManifestCompiler", () => {
     expect(JSON.stringify(plan.agentRender)).toContain(
       "WEIXIN_TOKEN=openshell:resolve:env:WECHAT_BOT_TOKEN",
     );
+    expect(plan.buildSteps).toEqual([]);
     expect(
       plan.channels
         .find((channel) => channel.channelId === "wechat")
@@ -222,7 +230,7 @@ describe("ManifestCompiler", () => {
     const plan = await compiler().compile({
       sandboxName: "demo",
       agent: "openclaw",
-      workflow: "create",
+      workflow: "onboard",
       isInteractive: true,
       selectedChannels: ["wechat", "telegram"],
     });
@@ -263,7 +271,7 @@ describe("ManifestCompiler", () => {
     ).compile({
       sandboxName: "demo",
       agent: "openclaw",
-      workflow: "create",
+      workflow: "onboard",
       isInteractive: false,
       selectedChannels: ["telegram"],
       credentialAvailability: {
@@ -287,7 +295,7 @@ describe("ManifestCompiler", () => {
         const plan = await compiler().compile({
           sandboxName: "demo",
           agent: "openclaw",
-          workflow: "create",
+          workflow: "onboard",
           isInteractive: false,
           selectedChannels: ["telegram"],
         });
@@ -309,7 +317,7 @@ describe("ManifestCompiler", () => {
     const context = {
       sandboxName: "demo",
       agent: "openclaw",
-      workflow: "create",
+      workflow: "onboard",
       isInteractive: false,
       selectedChannels: ["telegram"],
       credentialAvailability: {
@@ -344,7 +352,7 @@ describe("ManifestCompiler", () => {
     const plan = await compiler().compile({
       sandboxName: "demo",
       agent: "openclaw",
-      workflow: "stop",
+      workflow: "stop-channel",
       isInteractive: false,
       selectedChannels: [],
       configuredChannels: ["telegram"],
@@ -367,6 +375,7 @@ describe("ManifestCompiler", () => {
   });
 
   it("compiles a non-built-in channel manifest through the same generic path", async () => {
+    const hookCalls: string[] = [];
     const customManifest = {
       schemaVersion: 1,
       id: "matrix",
@@ -419,23 +428,40 @@ describe("ManifestCompiler", () => {
             },
           ],
         },
+        {
+          id: "matrix-host-probe",
+          phase: "reachability-check",
+          handler: "matrix.probeHost",
+          inputs: ["roomId"],
+          onFailure: "abort",
+        },
       ],
     } as const satisfies ChannelManifest;
     const hooks = new MessagingHookRegistry([
       {
         id: "matrix.enroll",
-        handler: () => ({
-          outputs: {
-            accessToken: {
-              kind: "secret",
-              value: "raw-matrix-token",
+        handler: () => {
+          hookCalls.push("enroll");
+          return {
+            outputs: {
+              accessToken: {
+                kind: "secret",
+                value: "raw-matrix-token",
+              },
+              roomId: {
+                kind: "config",
+                value: "!room:example.com",
+              },
             },
-            roomId: {
-              kind: "config",
-              value: "!room:example.com",
-            },
-          },
-        }),
+          };
+        },
+      },
+      {
+        id: "matrix.probeHost",
+        handler: (context) => {
+          hookCalls.push(`reachability:${String(context.inputs?.roomId)}`);
+          return {};
+        },
       },
     ]);
     const plan = await new ManifestCompiler(
@@ -444,7 +470,7 @@ describe("ManifestCompiler", () => {
     ).compile({
       sandboxName: "demo",
       agent: "openclaw",
-      workflow: "create",
+      workflow: "onboard",
       isInteractive: true,
       selectedChannels: ["matrix"],
     });
@@ -474,6 +500,16 @@ describe("ManifestCompiler", () => {
         policyKeys: ["matrix"],
         source: "manifest",
       },
+    ]);
+    expect(plan.channels[0]?.hooks).toContainEqual(
+      expect.objectContaining({
+        phase: "reachability-check",
+        handler: "matrix.probeHost",
+      }),
+    );
+    expect(hookCalls).toEqual([
+      "enroll",
+      "reachability:!room:example.com",
     ]);
     expect(JSON.stringify(plan)).not.toContain("raw-matrix-token");
   });

@@ -4,12 +4,17 @@
 import type {
   ChannelHookOutputSpec,
   ChannelManifest,
+  MessagingAgentId,
   SandboxMessagingBuildStepPlan,
 } from "../../manifest";
 
-export function planBuildSteps(manifest: ChannelManifest): SandboxMessagingBuildStepPlan[] {
-  return manifest.hooks.flatMap((hook) =>
-    (hook.outputs ?? [])
+export function planBuildSteps(
+  manifest: ChannelManifest,
+  agent: MessagingAgentId,
+): SandboxMessagingBuildStepPlan[] {
+  return manifest.hooks.flatMap((hook) => {
+    if (hook.agents && !hook.agents.includes(agent)) return [];
+    return (hook.outputs ?? [])
       .filter(isBuildStepOutput)
       .map((output) => ({
         channelId: manifest.id,
@@ -18,8 +23,8 @@ export function planBuildSteps(manifest: ChannelManifest): SandboxMessagingBuild
         handler: hook.handler,
         outputId: output.id,
         required: output.required === true,
-      })),
-  );
+      }));
+  });
 }
 
 function isBuildStepOutput(

@@ -189,7 +189,7 @@ const telegramPlan = {
   schemaVersion: 1,
   sandboxName: "demo",
   agent: "openclaw",
-  workflow: "create",
+  workflow: "onboard",
   channels: [
     {
       channelId: "telegram",
@@ -254,6 +254,7 @@ const telegramPlan = {
         botToken: "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
         enabled: true,
       },
+      templateRefs: [],
     },
   ],
   buildSteps: [],
