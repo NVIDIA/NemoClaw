@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type {
+  ChannelHookSpec,
   ChannelInputSpec,
   ChannelManifest,
   ChannelManifestRegistry,
@@ -14,7 +15,11 @@ import type {
   SandboxMessagingPlan,
 } from "../manifest";
 import { MessagingHookRegistry, runMessagingHook } from "../hooks";
-import type { MessagingHookInputMap, MessagingHookOutputMap } from "../hooks";
+import type {
+  MessagingHookInputMap,
+  MessagingHookOutputMap,
+  MessagingHookRunResult,
+} from "../hooks";
 import { planAgentRender } from "./engines/agent-render-engine";
 import { planBuildSteps } from "./engines/build-step-engine";
 import { planCredentialBindings } from "./engines/credential-binding-engine";
@@ -30,7 +35,7 @@ export class ManifestCompiler {
   ) {}
 
   async compile(context: ManifestCompilerContext): Promise<SandboxMessagingPlan> {
-    const manifests = this.resolveRequestedManifests(context);
+    const manifests = this.resolveManifests(requestedChannelIds(context), context);
     const channels = [];
     for (const manifest of manifests) {
       channels.push(await this.compileChannel(manifest, context));
@@ -41,6 +46,18 @@ export class ManifestCompiler {
     const activeManifests = manifests.filter((manifest) =>
       isChannelActive(manifest.id, context),
     );
+    const credentialBindings = activeManifests.flatMap((manifest) =>
+      planCredentialBindings(manifest, context, inputRegistry.get(manifest.id) ?? []),
+    );
+    const networkPolicy = planNetworkPolicy(activeManifests, context);
+    const agentRender = activeManifests.flatMap((manifest) =>
+      planAgentRender(manifest, context),
+    );
+    const buildSteps = activeManifests.flatMap((manifest) =>
+      planBuildSteps(manifest, context.agent),
+    );
+    const stateUpdates = activeManifests.flatMap((manifest) => planStateUpdates(manifest));
+    const healthChecks = activeManifests.flatMap((manifest) => planHealthChecks(manifest));
 
     return {
       schemaVersion: 1,
@@ -48,22 +65,20 @@ export class ManifestCompiler {
       agent: context.agent,
       workflow: context.workflow,
       channels,
-      credentialBindings: activeManifests.flatMap((manifest) =>
-        planCredentialBindings(manifest, context, inputRegistry.get(manifest.id) ?? []),
-      ),
-      networkPolicy: planNetworkPolicy(activeManifests, context),
-      agentRender: activeManifests.flatMap((manifest) => planAgentRender(manifest, context)),
-      buildSteps: activeManifests.flatMap((manifest) => planBuildSteps(manifest)),
-      stateUpdates: activeManifests.flatMap((manifest) => planStateUpdates(manifest)),
-      healthChecks: activeManifests.flatMap((manifest) => planHealthChecks(manifest)),
+      credentialBindings,
+      networkPolicy,
+      agentRender,
+      buildSteps,
+      stateUpdates,
+      healthChecks,
     };
   }
 
-  private resolveRequestedManifests(context: ManifestCompilerContext): ChannelManifest[] {
-    const requestedIds = new Set([
-      ...context.selectedChannels,
-      ...(context.configuredChannels ?? []),
-    ]);
+  private resolveManifests(
+    channelIds: readonly MessagingChannelId[],
+    context: ManifestCompilerContext,
+  ): ChannelManifest[] {
+    const requestedIds = new Set(channelIds);
     const supportedIds =
       context.supportedChannelIds && context.supportedChannelIds.length > 0
         ? new Set(context.supportedChannelIds)
@@ -104,10 +119,25 @@ export class ManifestCompiler {
       inputs: await resolveChannelInputs(manifest, context, this.hooks, {
         runEnrollment:
           selected && active && isEnrollmentWorkflow(context.workflow) && context.isInteractive,
+        runEnrollmentChecks: selected && active && isEnrollmentWorkflow(context.workflow),
       }),
-      hooks: manifest.hooks.map((hook) => cloneHookReference(manifest.id, hook)),
+      hooks: manifest.hooks
+        .filter((hook) => isHookForAgent(hook, context.agent))
+        .map((hook) => cloneHookReference(manifest.id, hook)),
     };
   }
+}
+
+function isHookForAgent(hook: ChannelHookSpec, agent: ManifestCompilerContext["agent"]): boolean {
+  return !hook.agents || hook.agents.includes(agent);
+}
+
+function requestedChannelIds(context: ManifestCompilerContext): MessagingChannelId[] {
+  return uniqueChannels([...context.selectedChannels, ...(context.configuredChannels ?? [])]);
+}
+
+function uniqueChannels(channelIds: readonly MessagingChannelId[]): MessagingChannelId[] {
+  return [...new Set(channelIds)];
 }
 
 function isEnrollmentWorkflow(workflow: ManifestCompilerContext["workflow"]): boolean {
@@ -134,6 +164,7 @@ function cloneHookReference(
     id: hook.id,
     phase: hook.phase,
     handler: hook.handler,
+    agents: hook.agents ? [...hook.agents] : undefined,
     inputs: hook.inputs ? [...hook.inputs] : undefined,
     outputs: hook.outputs?.map((output) => ({ ...output })),
     onFailure: hook.onFailure,
@@ -144,22 +175,21 @@ async function resolveChannelInputs(
   manifest: ChannelManifest,
   context: ManifestCompilerContext,
   hooks: MessagingHookRegistry,
-  options: { readonly runEnrollment: boolean },
+  options: { readonly runEnrollment: boolean; readonly runEnrollmentChecks: boolean },
 ): Promise<SandboxMessagingInputReference[]> {
   let inputs = manifest.inputs.map((input) => resolveChannelInput(manifest, input, context));
+  let hookInputs = buildCompilerHookInputs(manifest, inputs);
+  inputs = applyCredentialAvailability(manifest, inputs, context);
   const enrollmentHooks = options.runEnrollment
-    ? manifest.hooks.filter((hook) => hook.phase === "enroll")
+    ? manifest.hooks
+        .filter((hook) => isHookForAgent(hook, context.agent))
+        .filter((hook) => hook.phase === "enroll")
     : [];
 
-  if (enrollmentHooks.length === 0) {
-    return applyCredentialAvailability(manifest, inputs, context);
-  }
-
   for (const hook of enrollmentHooks) {
-    const result = await runMessagingHook(hook, hooks, {
-      channelId: manifest.id,
-      inputs: toHookInputMap(inputs),
-    });
+    const result = await runCompilerHook(manifest, hook, hooks, hookInputs);
+    if (!result) continue;
+    hookInputs = mergeHookOutputsIntoInputs(manifest, hookInputs, result.outputs);
     inputs = applyCredentialAvailability(
       manifest,
       mergeEnrollmentOutputs(inputs, result.outputs),
@@ -167,7 +197,33 @@ async function resolveChannelInputs(
     );
   }
 
+  if (options.runEnrollmentChecks && hasRequiredInputsAvailable(manifest, inputs)) {
+    for (const hook of manifest.hooks
+      .filter((entry) => isHookForAgent(entry, context.agent))
+      .filter((entry) => entry.phase === "reachability-check")
+      .filter((entry) => hasDeclaredHookInputs(hookInputs, entry))) {
+      await runCompilerHook(manifest, hook, hooks, hookInputs);
+    }
+  }
+
   return inputs;
+}
+
+async function runCompilerHook(
+  manifest: ChannelManifest,
+  hook: ChannelHookSpec,
+  hooks: MessagingHookRegistry,
+  inputs: MessagingHookInputMap,
+): Promise<MessagingHookRunResult | null> {
+  try {
+    return await runMessagingHook(hook, hooks, {
+      channelId: manifest.id,
+      inputs: selectDeclaredHookInputs(hook, inputs),
+    });
+  } catch (error) {
+    if (hook.onFailure === "skip-channel") return null;
+    throw error;
+  }
 }
 
 function resolveChannelInput(
@@ -242,16 +298,70 @@ function applyCredentialAvailability(
   });
 }
 
-function toHookInputMap(
+function hasRequiredInputsAvailable(
+  manifest: ChannelManifest,
   inputs: readonly SandboxMessagingInputReference[],
-): MessagingHookInputMap {
+): boolean {
+  const byId = new Map(inputs.map((input) => [input.inputId, input]));
+  return manifest.inputs.every((input) => {
+    if (!input.required) return true;
+    const resolved = byId.get(input.id);
+    if (!resolved) return false;
+    return resolved.kind === "secret"
+      ? resolved.credentialAvailable === true
+      : resolved.value !== undefined;
+  });
+}
+
+function buildCompilerHookInputs(
+  manifest: ChannelManifest,
+  inputs: readonly SandboxMessagingInputReference[],
+): Record<string, MessagingSerializableValue> {
+  const inputSpecs = new Map(manifest.inputs.map((input) => [input.id, input]));
   const entries: Array<[string, MessagingSerializableValue]> = [];
   for (const input of inputs) {
-    if (input.value === undefined) continue;
-    entries.push([input.inputId, input.value]);
-    if (input.statePath) entries.push([input.statePath, input.value]);
+    const spec = inputSpecs.get(input.inputId);
+    const value = input.value ?? (spec ? readInputEnvValue(spec) : undefined);
+    if (value === undefined) continue;
+    entries.push([input.inputId, value]);
+    if (input.statePath) entries.push([input.statePath, value]);
   }
   return Object.fromEntries(entries);
+}
+
+function mergeHookOutputsIntoInputs(
+  manifest: ChannelManifest,
+  inputs: Record<string, MessagingSerializableValue>,
+  outputs: MessagingHookOutputMap,
+): Record<string, MessagingSerializableValue> {
+  const next = { ...inputs };
+  const inputSpecs = new Map(manifest.inputs.map((input) => [input.id, input]));
+  for (const [outputId, output] of Object.entries(outputs)) {
+    if (output.kind !== "secret" && output.kind !== "config") continue;
+    next[outputId] = output.value;
+    const statePath = inputSpecs.get(outputId)?.statePath;
+    if (statePath) next[statePath] = output.value;
+  }
+  return next;
+}
+
+function hasDeclaredHookInputs(
+  inputs: MessagingHookInputMap,
+  hook: ChannelHookSpec,
+): boolean {
+  return (hook.inputs ?? []).every((inputKey) => Object.hasOwn(inputs, inputKey));
+}
+
+function selectDeclaredHookInputs(
+  hook: ChannelHookSpec,
+  inputs: MessagingHookInputMap,
+): MessagingHookInputMap | undefined {
+  if (!hook.inputs || hook.inputs.length === 0) return undefined;
+  return Object.fromEntries(
+    hook.inputs
+      .filter((inputKey) => Object.hasOwn(inputs, inputKey))
+      .map((inputKey) => [inputKey, inputs[inputKey] as MessagingSerializableValue]),
+  );
 }
 
 function mergeEnrollmentOutputs(

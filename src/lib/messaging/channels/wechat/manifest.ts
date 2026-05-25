@@ -135,6 +135,7 @@ export const wechatManifest = {
       id: "wechat-seed-openclaw-account",
       phase: "post-agent-install",
       handler: "wechat.seedOpenClawAccount",
+      agents: ["openclaw"],
       inputs: [
         "wechatConfig.accountId",
         "wechatConfig.baseUrl",

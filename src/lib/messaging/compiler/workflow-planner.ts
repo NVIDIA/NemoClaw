@@ -85,7 +85,7 @@ export class MessagingWorkflowPlanner {
       onlyConfiguredChannels(context.disabledChannels, configuredChannels),
       [context.channelId],
     );
-    this.assertSupportedChannels(configuredChannels, context);
+    this.assertSupportedChannels([...configuredChannels, context.channelId], context);
 
     return this.compileWorkflow(context, {
       workflow: "remove-channel",
