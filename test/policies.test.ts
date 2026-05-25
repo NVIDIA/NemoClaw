@@ -1511,6 +1511,32 @@ exit 1
       expect(content.includes("method: HEAD")).toBe(true);
     });
 
+    it("pypi preset lets curl verify read-only package index access (#4014)", () => {
+      const content = requirePresetContent(policies.loadPreset("pypi"));
+      const parsed = YAML.parse(content);
+      const pypiPolicy = parsed.network_policies?.pypi as
+        | {
+            binaries?: Array<{ path?: string }>;
+            endpoints?: Array<{
+              host?: string;
+              access?: string;
+              rules?: Array<{ allow?: { method?: string } }>;
+            }>;
+          }
+        | undefined;
+
+      const binaries = (pypiPolicy?.binaries ?? []).map((binary) => binary.path).sort();
+      expect(binaries).toEqual(
+        expect.arrayContaining(["/usr/bin/curl", "/usr/local/bin/curl"]),
+      );
+
+      for (const endpoint of pypiPolicy?.endpoints ?? []) {
+        expect(endpoint.access).toBeUndefined();
+        const methods = (endpoint.rules ?? []).map((rule) => rule.allow?.method).sort();
+        expect(methods).toEqual(["GET", "HEAD"]);
+      }
+    });
+
     it("package-manager presets include binaries section", () => {
       // Without binaries, the proxy can't match pip/npm traffic to the policy
       // and returns 403.
