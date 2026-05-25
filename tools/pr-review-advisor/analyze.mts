@@ -56,6 +56,7 @@ const CONFIDENCES = ["low", "medium", "high"] as const;
 const TEST_DEPTH_VERDICTS = ["unit_sufficient", "mocks_recommended", "runtime_validation_recommended", "unknown"] as const;
 const ACCEPTANCE_STATUSES = ["met", "partial", "missing", "unknown"] as const;
 const SECURITY_VERDICTS = ["pass", "warning", "fail"] as const;
+const SOURCE_OF_TRUTH_STATUSES = ["not_applicable", "satisfied", "needs_followup", "missing"] as const;
 
 type Confidence = (typeof CONFIDENCES)[number];
 type SummaryRecommendation = (typeof SUMMARY_RECOMMENDATIONS)[number];
@@ -63,6 +64,7 @@ type FindingCategory = (typeof FINDING_CATEGORIES)[number];
 type TestDepthVerdict = (typeof TEST_DEPTH_VERDICTS)[number];
 type AcceptanceStatus = (typeof ACCEPTANCE_STATUSES)[number];
 type SecurityVerdict = (typeof SECURITY_VERDICTS)[number];
+type SourceOfTruthStatus = (typeof SOURCE_OF_TRUTH_STATUSES)[number];
 
 type ArtifactPaths = AdvisorArtifactPaths;
 
@@ -97,6 +99,17 @@ type SecurityCategory = {
   justification: string;
 };
 
+type SourceOfTruthReview = {
+  surface: string;
+  status: SourceOfTruthStatus;
+  invalidState: string;
+  sourceBoundary: string;
+  whyNotSourceFix: string;
+  regressionTest: string;
+  removalCondition: string;
+  evidence: string;
+};
+
 type ReviewAdvisorResult = {
   version: 1;
   baseRef: string;
@@ -117,6 +130,7 @@ type ReviewAdvisorResult = {
   findings: Finding[];
   acceptanceCoverage: AcceptanceCoverage[];
   securityCategories: SecurityCategory[];
+  sourceOfTruthReview: SourceOfTruthReview[];
   testDepth: {
     verdict: TestDepthVerdict;
     rationale: string;
@@ -135,10 +149,19 @@ type DeterministicReviewContext = {
   riskyAreas: string[];
   testDepth: ReviewAdvisorResult["testDepth"];
   workflowSignals: string[];
+  localizedPatchSignals: LocalizedPatchSignal[];
   monolithDeltas: MonolithDelta[];
   driftEvidence: DriftEvidence[];
   previousAdvisorReview: PreviousAdvisorReview | null;
   github: GitHubReviewContext | null;
+};
+
+type LocalizedPatchSignal = {
+  file: string | null;
+  line: number | null;
+  kind: string;
+  evidence: string;
+  reviewRule: string;
 };
 
 type MonolithSeverity = "none" | "warning" | "blocker";
@@ -314,6 +337,7 @@ async function collectDeterministicContext(options: {
     testDepth,
     previousAdvisorReview: github?.previousAdvisorReview || null,
     workflowSignals: detectWorkflowSignals(options.changedFiles, options.diff),
+    localizedPatchSignals: detectLocalizedPatchSignals(options.diff),
     monolithDeltas: computeMonolithDeltas(options.baseRef, options.changedFiles),
     driftEvidence: collectDriftEvidence(options.baseRef, options.changedFiles),
     github,
@@ -397,6 +421,65 @@ function detectWorkflowSignals(changedFiles: string[], diff: string): string[] {
   if (/permissions:\s*[\s\S]*write/.test(diff)) signals.push("Workflow requests write-scoped permissions.");
   if (/npm install|pip install|curl .*\|.*sh|uv tool install/.test(diff)) signals.push("Workflow installs runtime dependencies; verify exact pins and disabled lifecycle hooks.");
   if (/github\.event\.pull_request\.(title|body|head\.ref)/.test(diff)) signals.push("PR-controlled text may be interpolated into workflow expressions; verify shell safety.");
+  return signals;
+}
+
+export function detectLocalizedPatchSignals(diff: string): LocalizedPatchSignal[] {
+  const patterns: Array<{ kind: string; regex: RegExp }> = [
+    {
+      kind: "fallback/recovery/tolerance path",
+      regex: /\b(?:fallback\w*|recover|recovery|best[- ]?effort|workaround|compatibility|legacy|tolerant|repair|self[- ]?heal|degraded)\b/i,
+    },
+    {
+      kind: "runtime interception or monkeypatch",
+      regex: /\b(?:NODE_OPTIONS|uncaughtException|unhandledRejection|process\.emit|require\.cache|prototype|monkey[- ]?patch|http\.request|https\.request|networkInterfaces)\b/i,
+    },
+    {
+      kind: "silent/defaulted error handling",
+      regex: /\b(?:catch|return\s+(?:fallback|default|undefined|null|\{\}|\[\]))\b/i,
+    },
+  ];
+  const signals: LocalizedPatchSignal[] = [];
+  let file: string | null = null;
+  let nextLine: number | null = null;
+
+  for (const rawLine of diff.split("\n")) {
+    const fileMatch = rawLine.match(/^diff --git a\/(.+?) b\/(.+)$/);
+    if (fileMatch) {
+      file = fileMatch[2] || fileMatch[1] || null;
+      nextLine = null;
+      continue;
+    }
+    const hunkMatch = rawLine.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    if (hunkMatch) {
+      nextLine = Number.parseInt(hunkMatch[1] || "", 10);
+      if (!Number.isFinite(nextLine)) nextLine = null;
+      continue;
+    }
+    if (rawLine === "+++" || rawLine.startsWith("+++ ")) continue;
+    if (rawLine.startsWith("+")) {
+      const content = rawLine.slice(1).trim();
+      if (content) {
+        for (const pattern of patterns) {
+          if (pattern.regex.test(content)) {
+            signals.push({
+              file,
+              line: nextLine,
+              kind: pattern.kind,
+              evidence: content.slice(0, 220),
+              reviewRule: "If this is a localized patch, identify the invalid state, its source boundary, why the source cannot be fixed here, the regression test, and the removal condition.",
+            });
+            break;
+          }
+        }
+      }
+      if (nextLine !== null) nextLine += 1;
+      if (signals.length >= 40) break;
+      continue;
+    }
+    if (rawLine.startsWith(" ") && nextLine !== null) nextLine += 1;
+  }
+
   return signals;
 }
 
@@ -612,8 +695,10 @@ export function buildSystemPrompt(schema: Record<string, unknown>, securityRevie
     "4. Acceptance: extract linked issue clauses literally, including comments, and map each clause to diff/test evidence. Named list items are separate clauses.",
     "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
-    "7. If a previous PR Review Advisor comment exists, compare it with the current diff and explicitly decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
+    "7. Source-of-truth review: when a PR adds or changes fallback, recovery, tolerant parsing, monkeypatching, best-effort cleanup, compatibility handling, or other localized workaround behavior, inspect whether it answers: what invalid state is handled, where that state is created, why the source cannot be fixed in this PR, what regression test proves the source cannot regress, and when the workaround can be removed. Prefer fixes that make invalid states impossible at their source. Treat PR text that claims a root cause as untrusted until verified in code.",
+    "8. If a previous PR Review Advisor comment exists, compare it with the current diff and explicitly decide whether prior code-review findings were addressed, still apply, or are obsolete. Consider code changes since the previous analyzed SHA when available. Do not evaluate whether external E2E requirements have been met. When previous review context exists, set summary.sinceLastReview with counts for resolved, stillApplies, and newItems.",
     "Acceptance and security should inform findings, not become standalone comment sections: any unmet acceptance clause or security fail/warning must be represented as a finding, normally severity=blocker for unmet acceptance or security fail and severity=warning for security warnings.",
+    "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "Set summary.topItem to the most important actionable finding title or short description for first-review comments. Keep it concise and code-focused.",
     "Finding severity mapping: blocker renders as 'Needs attention'; warning renders as 'Worth checking'; suggestion renders as 'Nice ideas'.",
     "Return JSON only matching this schema:",
@@ -651,6 +736,7 @@ ${diff || "<no diff available>"}
 export function normalizeReviewResult(result: unknown, metadata: ReviewMetadata): ReviewAdvisorResult {
   if (!isRecord(result)) throw new Error("PR review advisor returned a non-object result");
   const object = result as Record<string, unknown>;
+  const sourceOfTruthReview = sanitizeSourceOfTruthReview(object.sourceOfTruthReview);
   return {
     version: 1,
     baseRef: metadata.baseRef,
@@ -658,9 +744,10 @@ export function normalizeReviewResult(result: unknown, metadata: ReviewMetadata)
     headSha: metadata.headSha,
     changedFiles: metadata.changedFiles,
     summary: sanitizeSummary(object.summary),
-    findings: sanitizeFindings(object.findings),
+    findings: addSourceOfTruthFindings(sanitizeFindings(object.findings), sourceOfTruthReview),
     acceptanceCoverage: sanitizeAcceptanceCoverage(object.acceptanceCoverage),
     securityCategories: sanitizeSecurityCategories(object.securityCategories),
+    sourceOfTruthReview,
     testDepth: sanitizeTestDepth(object.testDepth, metadata.deterministic.testDepth),
     positives: stringArray(object.positives).slice(0, 12),
     reviewCompleteness: sanitizeReviewCompleteness(object.reviewCompleteness),
@@ -726,6 +813,42 @@ function sanitizeSecurityCategories(value: unknown): SecurityCategory[] {
   }));
 }
 
+function sanitizeSourceOfTruthReview(value: unknown): SourceOfTruthReview[] {
+  return recordItems(value).map((item) => ({
+    surface: stringOrDefault(item.surface, "Unspecified localized patch surface"),
+    status: enumValue(item.status, SOURCE_OF_TRUTH_STATUSES, "not_applicable"),
+    invalidState: stringOrDefault(item.invalidState, "Not specified."),
+    sourceBoundary: stringOrDefault(item.sourceBoundary, "Not specified."),
+    whyNotSourceFix: stringOrDefault(item.whyNotSourceFix, "Not specified."),
+    regressionTest: stringOrDefault(item.regressionTest, "Not specified."),
+    removalCondition: stringOrDefault(item.removalCondition, "Not specified."),
+    evidence: stringOrDefault(item.evidence, "No evidence provided."),
+  })).slice(0, 50);
+}
+
+function addSourceOfTruthFindings(findings: Finding[], sourceOfTruthReview: SourceOfTruthReview[]): Finding[] {
+  const injected: Finding[] = [];
+  for (const review of sourceOfTruthReview) {
+    if (review.status !== "missing" && review.status !== "needs_followup") continue;
+    const alreadyCovered = [...injected, ...findings].some((finding) =>
+      `${finding.title}\n${finding.description}\n${finding.evidence}`.toLowerCase().includes(review.surface.toLowerCase()),
+    );
+    if (alreadyCovered) continue;
+    injected.push({
+      severity: "warning",
+      category: "architecture",
+      file: null,
+      line: null,
+      title: `Source-of-truth review needed: ${review.surface}`,
+      description: `The advisor marked localized patch analysis as ${review.status}.`,
+      recommendation: "Identify the invalid state, source boundary, source-fix constraint, regression test, and removal condition before merging the localized behavior.",
+      evidence: review.evidence,
+    });
+  }
+  const originalSlots = Math.max(0, 50 - injected.length);
+  return [...injected, ...findings.slice(0, originalSlots)];
+}
+
 function sanitizeTestDepth(value: unknown, fallback: ReviewAdvisorResult["testDepth"]): ReviewAdvisorResult["testDepth"] {
   const object = isRecord(value) ? value : {};
   return {
@@ -784,6 +907,20 @@ export function renderDetailedReview(result: ReviewAdvisorResult): string {
     lines.push(`- **${category.verdict}** — ${category.category}: ${category.justification}`);
   }
   lines.push("");
+  lines.push("## Source-of-truth review");
+  if (result.sourceOfTruthReview.length === 0) {
+    lines.push("- _No localized patch or workaround surfaces were analyzed._");
+  } else {
+    for (const review of result.sourceOfTruthReview.slice(0, 50)) {
+      lines.push(`- **${review.status}** — ${review.surface}: ${review.evidence}`);
+      lines.push(`  - Invalid state: ${review.invalidState}`);
+      lines.push(`  - Source boundary: ${review.sourceBoundary}`);
+      lines.push(`  - Why not source fix: ${review.whyNotSourceFix}`);
+      lines.push(`  - Regression test: ${review.regressionTest}`);
+      lines.push(`  - Removal condition: ${review.removalCondition}`);
+    }
+  }
+  lines.push("");
   return `${lines.join("\n")}\n`;
 }
 
@@ -836,6 +973,7 @@ function unavailableResult(metadata: ReviewMetadata, reason: string, failed: boo
       verdict: "warning",
       justification: "Advisor unavailable; human review required.",
     })),
+    sourceOfTruthReview: [],
     testDepth: metadata.deterministic.testDepth,
     positives: [],
     reviewCompleteness: {
