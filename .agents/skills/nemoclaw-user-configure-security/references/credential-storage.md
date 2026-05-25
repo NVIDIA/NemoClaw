@@ -46,10 +46,12 @@ A typical deploy invocation looks like:
 
 ```console
 $ NVIDIA_API_KEY=nvapi-... \
+    HF_TOKEN=hf_... \
     TELEGRAM_BOT_TOKEN=... \
     nemoclaw deploy my-instance
 ```
 
+For remote vLLM or Hugging Face workflows that need gated model access, `nemoclaw deploy` also forwards `HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN` to the VM when either variable is present.
 If a required credential is missing the deploy aborts before any remote work begins.
 
 ## GitHub Tokens

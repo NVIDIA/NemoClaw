@@ -35,6 +35,11 @@ filesystem_policy:
     - /sandbox/.nemoclaw            # Plugin state and config (state.ts, config.ts).
                                     # Blueprints are root-owned; sticky bit (1755)
                                     # on parent prevents rename/delete (#1607).
+    - /home/linuxbrew               # Homebrew prefix. The brew core is baked into
+                                    # the sandbox base image at /home/linuxbrew/
+                                    # .linuxbrew (#3913); runtime writes here let
+                                    # `brew install <formula>` extract bottles
+                                    # and manage Cellar/opt symlinks.
 
 # TODO: evaluate landlock enforce mode — currently best_effort because
 # enforce can break things in unpredictable ways. Needs thorough testing
@@ -54,50 +59,6 @@ process:
   run_as_group: sandbox
 
 network_policies:
-  claude_code:
-    name: claude_code
-    endpoints:
-      - host: api.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: POST, path: "/v1/messages" }
-          - allow: { method: POST, path: "/v1/messages/batches" }
-          - allow: { method: GET, path: "/v1/messages/batches/**" }
-          - allow: { method: POST, path: "/v1/complete" }
-      - host: statsig.anthropic.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: POST, path: "/**" }
-      # sentry.io is a multi-tenant SaaS — any authenticated client can POST
-      # to ANY Sentry project, not just NemoClaw's. Allowing POST /** turned
-      # the host into a generic exfiltration channel: a compromised agent
-      # could ship stack traces, env vars, file contents, etc. to a Sentry
-      # project controlled by an attacker via the public envelope endpoint
-      # (https://sentry.io/api/<any-project>/envelope/). Path-pattern
-      # restrictions cannot fix this because the project ID is part of the
-      # URL and there is no server-side allowlist of legitimate projects.
-      #
-      # Block POST entirely. GET stays allowed because it has no request
-      # body and is harmless for exfil. Side effect: Claude Code's crash
-      # telemetry to Sentry is silently dropped — that is the right
-      # tradeoff for a sandbox whose stated goal is preventing data egress.
-      # See #1437.
-      - host: sentry.io
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/claude }
-
   nvidia:
     name: nvidia
     endpoints:
@@ -105,7 +66,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
           - allow: { method: POST, path: "/v1/completions" }
@@ -116,7 +76,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: POST, path: "/v1/chat/completions" }
           - allow: { method: POST, path: "/v1/completions" }
@@ -124,7 +83,6 @@ network_policies:
           - allow: { method: GET, path: "/v1/models" }
           - allow: { method: GET, path: "/v1/models/**" }
     binaries:
-      - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/openclaw }
 
   # ── Managed inference route ──────────────────────────────────────────
@@ -145,7 +103,6 @@ network_policies:
           - allow: { method: POST, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
-      - { path: /usr/local/bin/claude }
       - { path: /usr/local/bin/node }
       - { path: /usr/bin/node }
       - { path: /usr/bin/curl }
@@ -171,7 +128,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -186,7 +142,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
           - allow: { method: POST, path: "/**" }
@@ -201,7 +156,6 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
@@ -218,55 +172,15 @@ network_policies:
         port: 443
         protocol: rest
         enforcement: enforce
-        tls: terminate
         rules:
           - allow: { method: GET, path: "/**" }
     binaries:
       - { path: /usr/local/bin/openclaw }
 
-  # ── Messaging — pre-allowed for OpenClaw agent notifications ────
-  # Restricted to node processes to prevent arbitrary data exfiltration
-  # via curl, wget, python, etc. (See: #272)
-  telegram:
-    name: telegram
-    endpoints:
-      - host: api.telegram.org
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/bot*/**" }
-          - allow: { method: POST, path: "/bot*/**" }
-          - allow: { method: GET, path: "/file/bot*/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
-
-  discord:
-    name: discord
-    endpoints:
-      - host: discord.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-          - allow: { method: POST, path: "/**" }
-      # WebSocket gateway — pure L4 CONNECT tunnel. OpenShell v0.0.15+
-      # auto-terminates TLS unconditionally (NVIDIA/OpenShell#544), which
-      # also applies to WSS. tls: skip restores the pre-v0.0.15 pass-
-      # through behaviour needed here. Matches presets/discord.yaml.
-      - host: gateway.discord.gg
-        port: 443
-        access: full
-        tls: skip
-      - host: cdn.discordapp.com
-        port: 443
-        protocol: rest
-        enforcement: enforce
-        tls: terminate
-        rules:
-          - allow: { method: GET, path: "/**" }
-    binaries:
-      - { path: /usr/local/bin/node }
+  # Messaging endpoints (telegram, discord, slack) are intentionally NOT in
+  # the baseline — #1705 removed them so every sandbox does not silently
+  # egress to third-party IM platforms without user opt-in. The messaging
+  # presets (presets/{telegram,discord,slack}.yaml) are the opt-in path:
+  # users enable a channel in step [5/8] of onboard and the matching preset
+  # is applied on top of this baseline. Keep this comment so the entries
+  # are not casually re-added during a merge-conflict resolution. See #2180.

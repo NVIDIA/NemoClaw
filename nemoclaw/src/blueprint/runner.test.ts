@@ -72,7 +72,6 @@ vi.mock("execa", () => ({
 }));
 
 vi.mock("./ssrf.js", () => ({
-  // eslint-disable-next-line @typescript-eslint/require-await
   validateEndpointUrl: vi.fn(async (url: string) => ({ url, pinnedUrl: url })),
 }));
 
@@ -95,6 +94,14 @@ function captureStdout(): void {
 
 function stdoutText(): string {
   return stdoutChunks.join("");
+}
+
+function capturedJsonOutput<T = unknown>(): T {
+  const json = stdoutText()
+    .split("\n")
+    .filter((line) => line && !line.startsWith("RUN_ID:") && !line.startsWith("PROGRESS:"))
+    .join("\n");
+  return JSON.parse(json) as T;
 }
 
 function minimalBlueprint(overrides?: Record<string, unknown>): Record<string, unknown> {
@@ -123,8 +130,66 @@ function minimalBlueprint(overrides?: Record<string, unknown>): Record<string, u
   };
 }
 
+function routedBlueprint(): Record<string, unknown> {
+  return {
+    version: "1.0",
+    components: {
+      inference: {
+        profiles: {
+          routed: {
+            provider_type: "openai",
+            provider_name: "nvidia-router",
+            endpoint: "http://localhost:4000/v1",
+            model: "routed",
+            credential_env: "NVIDIA_API_KEY",
+            credential_default: "router-local",
+            timeout_secs: 180,
+          },
+        },
+      },
+      sandbox: {
+        image: "openclaw",
+        name: "test-sandbox",
+        forward_ports: [18789],
+      },
+      router: {
+        enabled: true,
+        port: 4000,
+        pool_config_path: "router/pool-config.yaml",
+      },
+      policy: { additions: {} },
+    },
+  };
+}
+
 function seedBlueprintFile(bp?: Record<string, unknown>): void {
   addFile("blueprint.yaml", YAML.stringify(bp ?? minimalBlueprint()));
+}
+
+function blueprintWithPolicyAdditions(additions: Record<string, unknown>): Record<string, unknown> {
+  const bp = minimalBlueprint();
+  const components = bp.components as Record<string, unknown>;
+  return {
+    ...bp,
+    components: {
+      ...components,
+      policy: { additions },
+    },
+  };
+}
+
+function mockCurrentPolicy(stdout: string): void {
+  mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+    if (
+      args[0] === "policy" &&
+      args[1] === "get" &&
+      args[2] === "--full" &&
+      args[3] === "test-sandbox"
+    ) {
+      return { exitCode: 0, stdout, stderr: "" };
+    }
+    return { exitCode: 0, stdout: "", stderr: "" };
+  });
 }
 
 // ── Tests ───────────────────────────────────────────────────────
@@ -165,7 +230,7 @@ describe("runner", () => {
       expect(loadBlueprint()).toEqual({ version: "2.0" });
     });
 
-    it("parses nested policy additions with object and array values", () => {
+    it("parses schema-valid policy additions", () => {
       addFile(
         "blueprint.yaml",
         YAML.stringify({
@@ -173,9 +238,15 @@ describe("runner", () => {
           components: {
             policy: {
               additions: {
-                extra: {
-                  enabled: true,
-                  paths: ["/tmp", "/var/tmp"],
+                internal_api: {
+                  name: "internal_api",
+                  endpoints: [
+                    {
+                      host: "api.internal.example.com",
+                      port: 443,
+                      access: "full",
+                    },
+                  ],
                 },
               },
             },
@@ -187,14 +258,114 @@ describe("runner", () => {
         components: {
           policy: {
             additions: {
-              extra: {
-                enabled: true,
-                paths: ["/tmp", "/var/tmp"],
+              internal_api: {
+                name: "internal_api",
+                endpoints: [
+                  {
+                    host: "api.internal.example.com",
+                    port: 443,
+                    access: "full",
+                  },
+                ],
               },
             },
           },
         },
       });
+    });
+
+    it("rejects policy additions that do not match the policy schema", () => {
+      addFile(
+        "blueprint.yaml",
+        YAML.stringify({
+          version: "2.0",
+          components: {
+            policy: {
+              additions: {
+                extra: {
+                  mode: "allow",
+                  endpoints: ["https://api.example.com"],
+                },
+              },
+            },
+          },
+        }),
+      );
+      expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
+    });
+
+    it("parses REST policy additions with explicit allow rules", () => {
+      const bp = blueprintWithPolicyAdditions({
+        internal_api: {
+          name: "internal_api",
+          endpoints: [
+            {
+              host: "api.internal.example.com",
+              port: 443,
+              protocol: "rest",
+              enforcement: "enforce",
+              tls: "terminate",
+              rules: [
+                { allow: { method: "GET", path: "/health" } },
+                { allow: { method: "POST", path: "/v1/chat/completions" } },
+              ],
+            },
+          ],
+        },
+      });
+      addFile("blueprint.yaml", YAML.stringify(bp));
+
+      expect(loadBlueprint()).toEqual(bp);
+    });
+
+    it.each([
+      ["missing host", { port: 443, access: "full" }],
+      ["invalid port", { host: "api.internal.example.com", port: 0, access: "full" }],
+      ["unknown protocol", { host: "api.internal.example.com", port: 443, protocol: "grpc" }],
+      ["REST without rules", { host: "api.internal.example.com", port: 443, protocol: "rest" }],
+      [
+        "empty REST rules",
+        { host: "api.internal.example.com", port: 443, protocol: "rest", rules: [] },
+      ],
+      [
+        "invalid rule method",
+        {
+          host: "api.internal.example.com",
+          port: 443,
+          protocol: "rest",
+          rules: [{ allow: { method: "TRACE", path: "/" } }],
+        },
+      ],
+      [
+        "invalid rule path",
+        {
+          host: "api.internal.example.com",
+          port: 443,
+          protocol: "rest",
+          rules: [{ allow: { method: "GET", path: "relative" } }],
+        },
+      ],
+      [
+        "invalid enforcement",
+        { host: "api.internal.example.com", port: 443, enforcement: "block" },
+      ],
+      ["invalid TLS mode", { host: "api.internal.example.com", port: 443, tls: "off" }],
+      ["invalid access mode", { host: "api.internal.example.com", port: 443, access: "read" }],
+      ["unknown endpoint field", { host: "api.internal.example.com", port: 443, extra: true }],
+    ])("rejects policy additions with %s", (_name, endpoint) => {
+      addFile(
+        "blueprint.yaml",
+        YAML.stringify(
+          blueprintWithPolicyAdditions({
+            internal_api: {
+              name: "internal_api",
+              endpoints: [endpoint],
+            },
+          }),
+        ),
+      );
+
+      expect(() => loadBlueprint()).toThrow(/valid nested component shapes/);
     });
 
     it("respects NEMOCLAW_BLUEPRINT_PATH env var", () => {
@@ -323,6 +494,57 @@ describe("runner", () => {
       expect(plan.dry_run).toBe(false);
     });
 
+    it("does not expose credential field names or secret values in public plan output", async () => {
+      captureStdout();
+      mockExeca.mockResolvedValue({ exitCode: 0 });
+      const bp = {
+        components: {
+          inference: {
+            profiles: {
+              secrets: {
+                provider_type: "openai",
+                provider_name: "secret-provider",
+                endpoint: "https://api.example.com/v1",
+                model: "gpt-4",
+                credential_env: "SECRET_KEY",
+                credential_default: "default-secret-value",
+                token: "future-token-value",
+                authorization: "Bearer future-authorization",
+              },
+            },
+          },
+          sandbox: { image: "openclaw", name: "sb", forward_ports: [18789] },
+        },
+      };
+      process.env.SECRET_KEY = "real-secret-value";
+      try {
+        const plan = await actionPlan("secrets", bp);
+        const rendered = capturedJsonOutput<{ inference: Record<string, unknown> }>();
+        const out = stdoutText();
+
+        expect(plan.inference).not.toHaveProperty("credential_env");
+        expect(rendered.inference).toEqual({
+          provider_type: "openai",
+          provider_name: "secret-provider",
+          endpoint: "https://api.example.com/v1",
+          model: "gpt-4",
+        });
+        for (const leaked of [
+          "credential_env",
+          "credential_default",
+          "SECRET_KEY",
+          "default-secret-value",
+          "real-secret-value",
+          "future-token-value",
+          "future-authorization",
+        ]) {
+          expect(out).not.toContain(leaked);
+        }
+      } finally {
+        delete process.env.SECRET_KEY;
+      }
+    });
+
     it("passes dryRun through to the plan", async () => {
       captureStdout();
       mockExeca.mockResolvedValue({ exitCode: 0 });
@@ -379,6 +601,25 @@ describe("runner", () => {
       expect(out).toContain("PROGRESS:10:Validating blueprint");
       expect(out).toContain("PROGRESS:100:Plan complete");
     });
+
+    it("includes router info when router is enabled", async () => {
+      captureStdout();
+      mockExeca.mockResolvedValue({ exitCode: 0 });
+
+      const plan = await actionPlan("routed", routedBlueprint());
+      expect(plan.router.enabled).toBe(true);
+      expect(plan.router.port).toBe(4000);
+      expect(plan.router.pool_config_path).toBe("router/pool-config.yaml");
+    });
+
+    it("defaults router to disabled when not in blueprint", async () => {
+      captureStdout();
+      mockExeca.mockResolvedValue({ exitCode: 0 });
+
+      const plan = await actionPlan("default", minimalBlueprint());
+      expect(plan.router.enabled).toBe(false);
+      expect(plan.router.port).toBe(4000);
+    });
   });
 
   describe("actionApply", () => {
@@ -396,6 +637,193 @@ describe("runner", () => {
         ["sandbox", "create", "--from", "openclaw", "--name", "test-sandbox", "--forward", "18789"],
         expect.objectContaining({ reject: false }),
       );
+    });
+
+    it("applies blueprint policy additions by merging into the live policy", async () => {
+      const bp = minimalBlueprint({
+        components: {
+          inference: {
+            profiles: {
+              default: {
+                provider_type: "openai",
+                provider_name: "my-provider",
+                endpoint: "https://api.example.com/v1",
+                model: "gpt-4",
+                credential_env: "MY_API_KEY",
+              },
+            },
+          },
+          sandbox: {
+            image: "openclaw",
+            name: "test-sandbox",
+            forward_ports: [18789],
+          },
+          policy: {
+            additions: {
+              nim_service: {
+                name: "nim_service",
+                endpoints: [
+                  {
+                    host: "integrate.api.nvidia.com",
+                    port: 443,
+                    access: "full",
+                  },
+                ],
+              },
+            },
+          },
+        },
+      });
+
+      mockExeca.mockImplementation(async (_cmd: string, args: string[]) => {
+        if (
+          args[0] === "policy" &&
+          args[1] === "get" &&
+          args[2] === "--full" &&
+          args[3] === "test-sandbox"
+        ) {
+          return {
+            exitCode: 0,
+            stdout: [
+              "Version: 1",
+              "Hash: sha256:test",
+              "---",
+              "version: 1",
+              "network_policies:",
+              "  existing_service:",
+              "    mode: allow",
+              "    endpoints:",
+              "      - https://api.example.com",
+              "",
+            ].join("\n"),
+            stderr: "",
+          };
+        }
+        return { exitCode: 0, stdout: "", stderr: "" };
+      });
+
+      await actionApply("default", bp);
+
+      expect(mockExeca).toHaveBeenCalledWith(
+        "openshell",
+        [
+          "policy",
+          "set",
+          "--policy",
+          expect.stringContaining("merged-policy.yaml"),
+          "--wait",
+          "test-sandbox",
+        ],
+        expect.objectContaining({ reject: false }),
+      );
+
+      const mergedPolicyKey = [...store.keys()].find(
+        (k) => k.endsWith("/merged-policy.yaml") || k.endsWith("\\merged-policy.yaml"),
+      );
+      if (!mergedPolicyKey) throw new Error("merged policy file not written");
+      const mergedEntry = store.get(mergedPolicyKey);
+      if (!mergedEntry?.content) throw new Error("merged policy file is empty");
+      const merged = YAML.parse(mergedEntry.content) as {
+        network_policies?: Record<string, unknown>;
+      };
+      expect(merged.network_policies).toHaveProperty("existing_service");
+      expect(merged.network_policies).toHaveProperty("nim_service");
+    });
+
+    it("fails closed when the live policy cannot be parsed", async () => {
+      const bp = blueprintWithPolicyAdditions({
+        nim_service: {
+          name: "nim_service",
+          endpoints: [
+            {
+              host: "integrate.api.nvidia.com",
+              port: 443,
+              access: "full",
+            },
+          ],
+        },
+      });
+
+      mockCurrentPolicy(
+        ["Version: 1", "Hash: sha256:test", "---", "network_policies: ["].join("\n"),
+      );
+
+      await expect(actionApply("default", bp)).rejects.toThrow(/current policy.*not valid YAML/i);
+      const policySetCalls = mockExeca.mock.calls.filter(
+        (c) => Array.isArray(c[1]) && c[1][0] === "policy" && c[1][1] === "set",
+      );
+      expect(policySetCalls).toEqual([]);
+    });
+
+    it("fails closed when live network_policies is not a mapping", async () => {
+      const bp = blueprintWithPolicyAdditions({
+        nim_service: {
+          name: "nim_service",
+          endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
+        },
+      });
+      mockCurrentPolicy(
+        ["Version: 1", "Hash: sha256:test", "---", "network_policies: []"].join("\n"),
+      );
+
+      await expect(actionApply("default", bp)).rejects.toThrow(
+        /network_policies must be a YAML mapping/i,
+      );
+      const policySetCalls = mockExeca.mock.calls.filter(
+        (c) => Array.isArray(c[1]) && c[1][0] === "policy" && c[1][1] === "set",
+      );
+      expect(policySetCalls).toEqual([]);
+    });
+
+    it("fails closed when policy get --full does not include a policy document", async () => {
+      const bp = blueprintWithPolicyAdditions({
+        nim_service: {
+          name: "nim_service",
+          endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
+        },
+      });
+      mockCurrentPolicy(["Version: 1", "Hash: sha256:test"].join("\n"));
+
+      await expect(actionApply("default", bp)).rejects.toThrow(
+        /does not contain a policy YAML document/i,
+      );
+      const policySetCalls = mockExeca.mock.calls.filter(
+        (c) => Array.isArray(c[1]) && c[1][0] === "policy" && c[1][1] === "set",
+      );
+      expect(policySetCalls).toEqual([]);
+    });
+
+    it("can merge policy additions into an empty policy document", async () => {
+      const bp = blueprintWithPolicyAdditions({
+        nim_service: {
+          name: "nim_service",
+          endpoints: [{ host: "integrate.api.nvidia.com", port: 443, access: "full" }],
+        },
+      });
+      mockCurrentPolicy(["Version: 1", "Hash: sha256:test", "---"].join("\n"));
+
+      await actionApply("default", bp);
+
+      const mergedPolicyKey = [...store.keys()].find(
+        (k) => k.endsWith("/merged-policy.yaml") || k.endsWith("\\merged-policy.yaml"),
+      );
+      if (!mergedPolicyKey) throw new Error("merged policy file not written");
+      const mergedEntry = store.get(mergedPolicyKey);
+      if (!mergedEntry?.content) throw new Error("merged policy file is empty");
+      const merged = YAML.parse(mergedEntry.content) as {
+        version?: number;
+        network_policies?: Record<string, unknown>;
+      };
+      expect(merged.version).toBe(1);
+      expect(merged.network_policies).toHaveProperty("nim_service");
+    });
+
+    it("skips policy commands when policy additions are empty", async () => {
+      await actionApply("default", minimalBlueprint());
+      const policyCalls = mockExeca.mock.calls.filter(
+        (c) => Array.isArray(c[1]) && c[1][0] === "policy",
+      );
+      expect(policyCalls).toEqual([]);
     });
 
     it("reuses sandbox when 'already exists' error", async () => {
@@ -426,6 +854,7 @@ describe("runner", () => {
         );
         if (!providerCall) throw new Error("provider create call not found");
         expect(providerCall[2].env.OPENAI_API_KEY).toBe("secret-key-123");
+        expect(providerCall[2].env.MY_API_KEY).toBeUndefined();
         // Args pass the env var NAME, not the value
         expect(providerCall[1]).toContain("--credential");
         expect(providerCall[1]).toContain("OPENAI_API_KEY");
@@ -450,17 +879,20 @@ describe("runner", () => {
       expect(plan.timestamp).toBeDefined();
     });
 
-    it("excludes secret fields from persisted plan.json", async () => {
+    it("persists only the explicit safe plan schema", async () => {
       const bp = {
         components: {
           inference: {
             profiles: {
               secrets: {
                 provider_type: "openai",
+                provider_name: "secret-provider",
                 endpoint: "https://api.example.com",
                 model: "gpt-4",
                 credential_env: "SECRET_KEY",
                 credential_default: "default-secret-value",
+                token: "future-token-value",
+                authorization: "Bearer future-authorization",
               },
             },
           },
@@ -480,11 +912,29 @@ describe("runner", () => {
       if (!entry?.content) throw new Error("plan.json has no content");
       const persisted = JSON.parse(entry.content);
 
-      expect(persisted.inference).not.toHaveProperty("credential_env");
-      expect(persisted.inference).not.toHaveProperty("credential_default");
-      // Ensure non-secret fields are still present
-      expect(persisted.inference.provider_type).toBe("openai");
-      expect(persisted.inference.endpoint).toBe("https://api.example.com");
+      expect(Object.keys(persisted).sort()).toEqual(
+        ["inference", "policy_additions", "profile", "run_id", "sandbox_name", "timestamp"].sort(),
+      );
+      expect(Object.keys(persisted.inference).sort()).toEqual(
+        ["endpoint", "model", "provider_name", "provider_type"].sort(),
+      );
+      expect(persisted.inference).toEqual({
+        provider_type: "openai",
+        provider_name: "secret-provider",
+        endpoint: "https://api.example.com",
+        model: "gpt-4",
+      });
+      for (const leaked of [
+        "credential_env",
+        "credential_default",
+        "SECRET_KEY",
+        "default-secret-value",
+        "real-secret",
+        "future-token-value",
+        "future-authorization",
+      ]) {
+        expect(entry.content).not.toContain(leaked);
+      }
     });
 
     it("emits all progress milestones", async () => {
@@ -679,6 +1129,24 @@ describe("runner", () => {
       if (!inferenceCall) throw new Error("inference set call not found");
       expect(inferenceCall[1]).not.toContain("--timeout");
     });
+
+    it("passes endpoint as-is from blueprint (no rewriting)", async () => {
+      process.env.NVIDIA_API_KEY = "test-key";
+      try {
+        await actionApply("routed", routedBlueprint());
+
+        const providerCall = mockExeca.mock.calls.find(
+          (c) => Array.isArray(c[1]) && c[1].includes("provider"),
+        );
+        if (!providerCall) throw new Error("provider create call not found");
+        const configArg = (providerCall[1] as string[]).find((a: string) =>
+          a.startsWith("OPENAI_BASE_URL="),
+        );
+        expect(configArg).toBe("OPENAI_BASE_URL=http://localhost:4000/v1");
+      } finally {
+        delete process.env.NVIDIA_API_KEY;
+      }
+    });
   });
 
   describe("actionStatus", () => {
@@ -719,6 +1187,90 @@ describe("runner", () => {
       expect(stdoutText()).toContain('"nc-run-1"');
     });
 
+    it("re-renders only safe allowlisted fields from plan.json", () => {
+      const rid = "nc-run-sensitive";
+      addDir(`${RUNS_DIR}/${rid}`);
+      addFile(
+        `${RUNS_DIR}/${rid}/plan.json`,
+        JSON.stringify({
+          run_id: rid,
+          profile: "default",
+          sandbox: {
+            image: "openclaw",
+            name: "sb",
+            forward_ports: [18789],
+            token: "sandbox-token-value",
+          },
+          sandbox_name: "sb",
+          policy_additions: {},
+          inference: {
+            provider_type: "openai",
+            provider_name: "secret-provider",
+            endpoint: "https://api.example.com/v1",
+            model: "gpt-4",
+            credential_env: "SECRET_KEY",
+            credential_default: "default-secret-value",
+            token: "future-token-value",
+            authorization: "Bearer future-authorization",
+          },
+          router: {
+            enabled: true,
+            port: 4000,
+            pool_config_path: "router/pool-config.yaml",
+            authorization: "router-authorization",
+          },
+          timestamp: "2026-05-17T00:00:00.000Z",
+          dry_run: false,
+          token: "top-level-token-value",
+          authorization: "Bearer top-level-authorization",
+          future_sensitive_field: { api_key: "future-api-key" },
+        }),
+      );
+
+      actionStatus(rid);
+
+      expect(capturedJsonOutput()).toEqual({
+        run_id: rid,
+        profile: "default",
+        sandbox: {
+          image: "openclaw",
+          name: "sb",
+          forward_ports: [18789],
+        },
+        sandbox_name: "sb",
+        policy_additions: {},
+        inference: {
+          provider_type: "openai",
+          provider_name: "secret-provider",
+          endpoint: "https://api.example.com/v1",
+          model: "gpt-4",
+        },
+        router: {
+          enabled: true,
+          port: 4000,
+          pool_config_path: "router/pool-config.yaml",
+        },
+        timestamp: "2026-05-17T00:00:00.000Z",
+        dry_run: false,
+      });
+      const out = stdoutText();
+      for (const leaked of [
+        "credential_env",
+        "credential_default",
+        "SECRET_KEY",
+        "default-secret-value",
+        "future-token-value",
+        "future-authorization",
+        "sandbox-token-value",
+        "router-authorization",
+        "top-level-token-value",
+        "top-level-authorization",
+        "future-api-key",
+      ]) {
+        expect(out).not.toContain(leaked);
+      }
+    });
+
     it("prints unknown status when plan.json is missing", () => {
       addDir(`${RUNS_DIR}/nc-run-1`);
 
@@ -726,16 +1278,28 @@ describe("runner", () => {
       expect(stdoutText()).toContain('"status":"unknown"');
     });
 
+    it("prints unknown status when plan.json is corrupt", () => {
+      addDir(`${RUNS_DIR}/nc-run-1`);
+      addFile(`${RUNS_DIR}/nc-run-1/plan.json`, "{not valid json");
+
+      actionStatus("nc-run-1");
+
+      expect(capturedJsonOutput()).toEqual({ run_id: "nc-run-1", status: "unknown" });
+    });
+
     // ── Path traversal rejection ──────────────────────────────────
 
-    it.each(["../../etc", "../tmp", "valid.with.dots", "foo\x00bar", "/absolute/path"])(
-      "rejects malicious run ID: %j",
-      (rid) => {
-        expect(() => {
-          actionStatus(rid);
-        }).toThrow(/Invalid run ID/);
-      },
-    );
+    it.each([
+      "../../etc",
+      "../tmp",
+      "valid.with.dots",
+      "foo\x00bar",
+      "/absolute/path",
+    ])("rejects malicious run ID: %j", (rid) => {
+      expect(() => {
+        actionStatus(rid);
+      }).toThrow(/Invalid run ID/);
+    });
 
     it("accepts a legitimate hyphenated run ID", () => {
       const rid = "nc-20260406-abc12345";
@@ -800,12 +1364,16 @@ describe("runner", () => {
 
     // ── Path traversal rejection ──────────────────────────────────
 
-    it.each(["../../etc", "../tmp", "valid.with.dots", "foo\x00bar", "/absolute/path", ""])(
-      "rejects malicious run ID: %j",
-      async (rid) => {
-        await expect(actionRollback(rid)).rejects.toThrow(/Invalid run ID/);
-      },
-    );
+    it.each([
+      "../../etc",
+      "../tmp",
+      "valid.with.dots",
+      "foo\x00bar",
+      "/absolute/path",
+      "",
+    ])("rejects malicious run ID: %j", async (rid) => {
+      await expect(actionRollback(rid)).rejects.toThrow(/Invalid run ID/);
+    });
 
     it("defaults sandbox_name to 'openclaw' when not in plan", async () => {
       const runDir = `${RUNS_DIR}/nc-run-1`;

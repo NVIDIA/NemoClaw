@@ -10,9 +10,9 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
-const REPO_ROOT = path.join(import.meta.dirname, "..");
+import { pruneDisabledMessagingPolicyPresets } from "../src/lib/onboard/messaging-policy-presets";
 
 type ManifestWithOptionalPresets = {
   version: number;
@@ -27,9 +27,6 @@ type ManifestWithOptionalPresets = {
   blueprintDigest: string | null;
   policyPresets?: string[] | null;
 };
-
-// Import compiled modules from dist/
-const sandboxState = await import(path.join(REPO_ROOT, "dist", "lib", "sandbox-state.js"));
 
 describe("rebuild policy preset restoration (#1952)", () => {
   describe("RebuildManifest policyPresets field", () => {
@@ -170,6 +167,24 @@ describe("rebuild policy preset restoration (#1952)", () => {
       expect(savedPresets.length).toBe(2);
       expect(savedPresets).toContain("telegram");
       expect(savedPresets).toContain("npm");
+    });
+
+    it("disabled messaging channel policy presets are not restored", () => {
+      const manifest = { policyPresets: ["npm", "slack", "pypi"] };
+      const savedPresets = pruneDisabledMessagingPolicyPresets(
+        manifest.policyPresets || [],
+        ["slack"],
+      );
+      expect(savedPresets).toEqual(["npm", "pypi"]);
+    });
+
+    it("preserves non-required channel presets for later start and rebuild", () => {
+      const manifest = { policyPresets: ["telegram", "npm", "pypi"] };
+      const savedPresets = pruneDisabledMessagingPolicyPresets(
+        manifest.policyPresets || [],
+        ["telegram"],
+      );
+      expect(savedPresets).toEqual(["telegram", "npm", "pypi"]);
     });
   });
 });

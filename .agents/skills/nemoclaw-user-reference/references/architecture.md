@@ -1,8 +1,8 @@
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Architecture
+# Architecture Details
 
-NemoClaw has two main components: a TypeScript plugin that integrates with the OpenClaw CLI, and a Python blueprint that orchestrates OpenShell resources.
+NemoClaw combines a host CLI, a TypeScript plugin that runs with OpenClaw inside the sandbox, and a versioned YAML blueprint that defines the sandbox image, policies, and inference profiles applied through OpenShell.
 
 ## System Overview
 
@@ -20,7 +20,7 @@ graph LR
     USER(["👤 User"]):::user
 
     subgraph EXTERNAL["External Services"]
-        INFERENCE["Inference Provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM</small>"]:::external
+        INFERENCE["Inference Provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM · Model Router</small>"]:::external
         MSGAPI["Messaging Platforms<br/><small>Telegram · Discord · Slack</small>"]:::external
         INTERNET["Internet<br/><small>PyPI · npm · GitHub · APIs</small>"]:::external
     end
@@ -69,9 +69,11 @@ graph LR
 
 The logical diagram above shows how components relate.
 This section shows what actually runs where on the host.
-NemoClaw uses a Docker daemon.
-The OpenShell gateway runs as a container that embeds a k3s cluster.
-The sandbox runs as a Kubernetes pod inside that embedded cluster.
+NemoClaw's default Docker-driver topology does not place the sandbox in an embedded k3s cluster.
+On Linux and Apple Silicon macOS, NemoClaw starts the OpenShell Docker-driver gateway and creates the sandbox as a Docker container.
+The gateway normally runs as a host process; Linux hosts that need the gateway compatibility patch may run the same gateway binary inside a small container.
+In both Docker-driver modes, the sandbox is a Docker container, not a Kubernetes pod.
+Legacy non-Docker-driver installs still use the k3s-based gateway path; the diagram below shows the standard Docker-driver topology.
 
 ```mermaid
 graph TB
@@ -79,44 +81,31 @@ graph TB
     classDef cli fill:#76b900,stroke:#5a8f00,color:#fff,stroke-width:2px,font-weight:bold
     classDef docker fill:#2496ed,stroke:#1577c2,color:#fff,stroke-width:2px,font-weight:bold
     classDef gateway fill:#1a1a1a,stroke:#1a1a1a,color:#fff,stroke-width:2px,font-weight:bold
-    classDef k3s fill:#ffc61c,stroke:#c89a00,color:#1a1a1a,stroke-width:2px,font-weight:bold
-    classDef pod fill:#444,stroke:#76b900,color:#fff,stroke-width:2px
+    classDef sandbox fill:#444,stroke:#76b900,color:#fff,stroke-width:2px
     classDef external fill:#f5f5f5,stroke:#e0e0e0,color:#1a1a1a,stroke-width:1px
 
-    subgraph HOST["Host machine · Linux / macOS / WSL2 / DGX Spark"]
+    subgraph HOST["Host machine · Linux / Apple Silicon macOS / DGX Spark / DGX Station"]
         direction TB
         CLI["nemoclaw CLI<br/><small>bin/nemoclaw.js → dist/<br/>onboard · connect · status · logs</small>"]:::cli
+        GW["OpenShell gateway<br/><small>host process by default<br/>credential store · lifecycle · L7 proxy</small>"]:::gateway
 
         subgraph DOCKER["Docker daemon"]
             direction TB
-
-            subgraph GWCON["OpenShell gateway container"]
-                direction TB
-                PROXY["OpenShell L7 proxy<br/><small>rewrites Authorization headers<br/>and URL-path segments at egress<br/>(credential injection)</small>"]:::gateway
-
-                subgraph K3S["Embedded k3s cluster"]
-                    direction TB
-
-                    subgraph POD["Sandbox pod 🔒<br/><small>Landlock + seccomp + netns</small>"]
-                        direction TB
-                        AGENT["OpenClaw agent<br/>+ NemoClaw plugin"]:::pod
-                    end
-                end
-            end
+            SANDBOX["Sandbox container 🔒<br/><small>Landlock + seccomp + netns<br/>OpenClaw agent + NemoClaw plugin</small>"]:::sandbox
         end
     end
 
-    INFER["Inference provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM</small>"]:::external
+    INFER["Inference provider<br/><small>NVIDIA Endpoints · OpenAI<br/>Anthropic · Ollama · vLLM · Model Router</small>"]:::external
 
-    CLI -->|"openshell CLI<br/>(orchestrates)"| GWCON
-    AGENT -->|"inference requests<br/><small>placeholder credentials</small>"| PROXY
-    PROXY -->|"egress with real credentials<br/>injected at the L7 proxy"| INFER
+    CLI -->|"openshell CLI<br/>(orchestrates)"| GW
+    GW -->|"creates/recreates<br/>Docker-driver sandbox"| SANDBOX
+    SANDBOX -->|"inference requests<br/><small>placeholder credentials</small>"| GW
+    GW -->|"egress with real credentials<br/>injected at the L7 proxy"| INFER
 
     class HOST host
     class DOCKER docker
-    class GWCON gateway
-    class K3S k3s
-    class POD pod
+    class GW gateway
+    class SANDBOX sandbox
 ```
 
 Layering from top to bottom:
@@ -124,11 +113,10 @@ Layering from top to bottom:
 | Layer | Runs as | Role |
 |---|---|---|
 | Host CLI | Host process (`nemoclaw` on Node.js) | Orchestrates OpenShell via `openshell` CLI calls. |
-| Docker daemon | Host service | Runs the OpenShell gateway container. |
-| Gateway container | Docker container | Hosts the credential store, the L7 proxy, and the embedded k3s control plane. |
-| k3s | Process tree inside the gateway container | Kubernetes control plane that schedules the sandbox pod. |
-| Sandbox pod | Pod in the embedded k3s cluster | Runs the OpenClaw agent and the NemoClaw plugin under Landlock + seccomp + netns. |
-| OpenShell L7 proxy | Process in the gateway container | Intercepts agent egress and rewrites `Authorization` headers (Bearer/Bot) and URL-path segments to inject the real credential at the network boundary. |
+| OpenShell gateway | Host process by default; optional Linux compatibility container when the gateway binary needs a newer host ABI | Hosts the credential store, owns sandbox lifecycle coordination, and provides the L7 proxy. |
+| Docker daemon | Host service | Runs the Docker-driver sandbox container and, on affected Linux hosts, the optional gateway compatibility container. |
+| Sandbox container | Docker container | Runs the OpenClaw agent and the NemoClaw plugin under Landlock + seccomp + netns. |
+| OpenShell L7 proxy | Gateway process | Intercepts agent egress and rewrites `Authorization` headers (Bearer/Bot) and URL-path segments to inject the real credential at the network boundary. |
 
 NemoClaw never gives the sandbox a raw provider key.
 At onboard time it registers credentials with OpenShell's provider/placeholder system, and the L7 proxy substitutes the real value into outbound requests at egress.
@@ -140,12 +128,16 @@ For the DGX Spark-specific variant of this topology (cgroup v2, aarch64, unified
 
 The plugin is a thin TypeScript package that registers an inference provider and the `/nemoclaw` slash command.
 It runs in-process with the OpenClaw gateway inside the sandbox.
+It also registers runtime hooks that keep the agent aware of its environment.
+Before an agent turn starts, the plugin prepends a short context block with the active sandbox name, sandbox phase, network policy summary, and filesystem policy summary.
+When the policy or phase changes during a session, the plugin sends a smaller update block instead of repeating the full context.
 
 ```text
 nemoclaw/
 ├── src/
 │   ├── index.ts                    Plugin entry: registers all commands
 │   ├── cli.ts                      Commander.js subcommand wiring
+│   ├── runtime-context.ts          Sandbox and policy context injection
 │   ├── commands/
 │   │   ├── launch.ts               Fresh install into OpenShell
 │   │   ├── connect.ts              Interactive shell into sandbox
@@ -164,13 +156,15 @@ nemoclaw/
 
 ## NemoClaw Blueprint
 
-The blueprint is a versioned Python artifact with its own release stream.
-The plugin resolves, verifies, and executes the blueprint as a subprocess.
-The blueprint drives all interactions with the OpenShell CLI.
+The blueprint is a versioned YAML package with its own release stream.
+The runner resolves, verifies, and applies the blueprint through the OpenShell CLI.
+The blueprint defines the sandbox shape, default policies, and inference profiles; the runner performs the OpenShell operations.
 
 ```text
 nemoclaw-blueprint/
 ├── blueprint.yaml                  Manifest: version, profiles, compatibility
+├── model-specific-setup/           Agent-scoped model/provider compatibility manifests
+├── router/                         Model Router config and routing engine
 ├── policies/
 │   └── openclaw-sandbox.yaml       Default network + filesystem policy
 ```
@@ -211,6 +205,9 @@ container image. Inside the sandbox:
 - Inference calls are routed through OpenShell to the configured provider.
 - Network egress is restricted by the baseline policy in `openclaw-sandbox.yaml`.
 - Filesystem access is confined to `/sandbox` and `/tmp` for read-write access, with system paths read-only.
+- The NemoClaw plugin injects sandbox and policy context into agent turns so the agent can report policy blocks accurately.
+- The image exposes a Docker health check that probes the in-sandbox gateway, so container runtimes can report whether the agent service is responding.
+- The image includes common runtime compatibility helpers such as Homebrew and a `python` to `python3` symlink for tools that still invoke `python`.
 
 ## Inference Routing
 
@@ -220,6 +217,12 @@ OpenShell intercepts them and routes to the configured provider:
 ```text
 Agent (sandbox)  ──▶  OpenShell gateway  ──▶  NVIDIA Endpoint (build.nvidia.com)
 ```
+
+When you select the Model Router provider, the OpenShell gateway routes to a host-side router process instead of a single upstream model.
+The router selects from the configured pool, then calls the upstream NVIDIA endpoint with the credential held outside the sandbox.
+
+Some model and provider combinations need agent-specific compatibility setup.
+NemoClaw keeps those declarations under `nemoclaw-blueprint/model-specific-setup/<agent>/` so OpenClaw and Hermes fixes can be tested and reviewed independently.
 
 Refer to Inference Options (use the `nemoclaw-user-configure-inference` skill) for provider configuration details.
 

@@ -13,8 +13,16 @@ import { describe, it, expect } from "vitest";
 import YAML from "yaml";
 
 const BLUEPRINT_PATH = new URL("../nemoclaw-blueprint/blueprint.yaml", import.meta.url);
+const ROUTER_POOL_CONFIG_PATH = new URL(
+  "../nemoclaw-blueprint/router/pool-config.yaml",
+  import.meta.url,
+);
 const BASE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+  import.meta.url,
+);
+const PERMISSIVE_POLICY_PATH = new URL(
+  "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
 );
 const REQUIRED_PROFILE_FIELDS: ReadonlyArray<keyof BlueprintProfile> = [
@@ -38,6 +46,16 @@ type Blueprint = {
   };
 };
 
+type RouterPoolModel = {
+  name?: string;
+  litellm_model?: string;
+  api_base?: string;
+};
+
+type RouterPoolConfig = {
+  models?: RouterPoolModel[];
+};
+
 type Rule = { allow?: { method?: string; path?: string } };
 type Endpoint = {
   host?: string;
@@ -45,6 +63,9 @@ type Endpoint = {
   protocol?: string;
   enforcement?: string;
   access?: string;
+  tls?: string;
+  websocket_credential_rewrite?: boolean;
+  request_body_credential_rewrite?: boolean;
   rules?: Rule[];
   binaries?: Array<{ path: string }>;
 };
@@ -156,6 +177,32 @@ describe("blueprint.yaml", () => {
   }
 });
 
+describe("Model Router pool config", () => {
+  const pool = loadYaml<RouterPoolConfig>(ROUTER_POOL_CONFIG_PATH);
+
+  it("regression #3255: routes NVIDIA API keys to the public NVIDIA Build endpoint", () => {
+    const apiBases = new Set((pool.models ?? []).map((model) => model.api_base));
+    expect(apiBases).toEqual(new Set(["https://integrate.api.nvidia.com/v1"]));
+  });
+
+  it("regression #3255: uses valid LiteLLM NVIDIA model identifiers", () => {
+    const modelsByName = new Map(
+      (pool.models ?? []).map((model) => [model.name, model.litellm_model]),
+    );
+    expect(modelsByName.get("nemotron-3-nano-reasoning")).toBe(
+      "openai/nvidia/nemotron-3-nano-30b-a3b",
+    );
+    expect(modelsByName.get("nemotron-3-super")).toBe(
+      "openai/nvidia/nemotron-3-super-120b-a12b",
+    );
+    for (const litellmModel of modelsByName.values()) {
+      expect(litellmModel).not.toMatch(/nvidia\/nvidia\//);
+      expect(litellmModel).not.toContain("Nemotron-3-Nano-30B-A3B");
+      expect(litellmModel).not.toContain("nemotron-3-super-v3");
+    }
+  });
+});
+
 describe("base sandbox policy", () => {
   const policy = loadYaml<SandboxPolicy>(BASE_POLICY_PATH);
 
@@ -244,35 +291,9 @@ describe("base sandbox policy", () => {
     return out;
   }
 
-  it("regression #1437: sentry.io has no POST allow rule (multi-tenant exfiltration vector)", () => {
+  it("regression #1437: base policy does not expose sentry.io by default", () => {
     const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
-    expect(sentryEndpoints.length).toBeGreaterThan(0); // should still appear
-    for (const ep of sentryEndpoints) {
-      const rules = Array.isArray(ep.rules) ? ep.rules : [];
-      const hasPost = rules.some(
-        (r) =>
-          r &&
-          r.allow &&
-          typeof r.allow.method === "string" &&
-          r.allow.method.toUpperCase() === "POST",
-      );
-      expect(hasPost).toBe(false);
-    }
-  });
-
-  it("regression #1437: sentry.io retains GET (harmless, no body for exfil)", () => {
-    const sentryEndpoints = findEndpoints((h) => h === "sentry.io");
-    for (const ep of sentryEndpoints) {
-      const rules = Array.isArray(ep.rules) ? ep.rules : [];
-      const hasGet = rules.some(
-        (r) =>
-          r &&
-          r.allow &&
-          typeof r.allow.method === "string" &&
-          r.allow.method.toUpperCase() === "GET",
-      );
-      expect(hasGet).toBe(true);
-    }
+    expect(sentryEndpoints).toEqual([]);
   });
 
   it("regression #1583: base policy does not silently grant GitHub access", () => {
@@ -317,17 +338,75 @@ describe("base sandbox policy", () => {
     expect(hasPost).toBe(true);
   });
 
-  it("regression #2663: managed_inference allows openclaw, claude, and tool binaries", () => {
+  it("regression #2663: managed_inference allows openclaw and tool binaries", () => {
     const np = policy.network_policies ?? {};
     const binaries = (np.managed_inference?.binaries ?? []).map((b) => b.path).sort();
     expect(binaries).toEqual([
       "/usr/bin/curl",
       "/usr/bin/node",
       "/usr/bin/python3",
-      "/usr/local/bin/claude",
       "/usr/local/bin/node",
       "/usr/local/bin/openclaw",
     ]);
+  });
+
+  it("does not reference the absent Claude CLI binary", () => {
+    const serialized = JSON.stringify(policy.network_policies ?? {});
+    expect(serialized).not.toContain("/usr/local/bin/claude");
+  });
+
+  it("regression #2180: base policy does not silently grant Telegram access", () => {
+    // Until #1705 (later regressed by #1700 and re-surfaced in #2180),
+    // `api.telegram.org` plus a /usr/local/bin/node binary lived in the
+    // base network_policies, so every sandbox could call the Telegram
+    // Bot API regardless of whether the user selected the telegram
+    // messaging channel or policy preset. The fix keeps Telegram access
+    // inside `presets/telegram.yaml`. This assertion blocks a regression
+    // where someone re-adds a telegram entry to the base policy and
+    // silently re-grants every sandbox unscoped Telegram access.
+    const np = policy.network_policies as Record<string, unknown> | undefined;
+    expect(np && typeof np === "object" && "telegram" in np).toBe(false);
+
+    const telegramHosts = findEndpoints((h) => h === "api.telegram.org");
+    expect(telegramHosts).toEqual([]);
+  });
+
+  it("regression #2180: base policy does not silently grant Discord access", () => {
+    // Parallel to the Telegram regression above. Discord (discord.com,
+    // gateway.discord.gg, cdn.discordapp.com, media.discordapp.net) is
+    // the opt-in preset path, not baseline. Re-adding these endpoints
+    // to the base policy lets any sandbox reach Discord without the
+    // user having selected the discord messaging channel or preset.
+    const np = policy.network_policies as Record<string, unknown> | undefined;
+    expect(np && typeof np === "object" && "discord" in np).toBe(false);
+
+    const discordHosts = findEndpoints(
+      (h) =>
+        h === "discord.com" ||
+        h === "gateway.discord.gg" ||
+        h === "*.discord.gg" ||
+        h === "cdn.discordapp.com" ||
+        h === "media.discordapp.net",
+    );
+    expect(discordHosts).toEqual([]);
+  });
+
+  it("regression #2180: base policy does not silently grant Slack access", () => {
+    // Slack was never in the baseline, but guard against it being added
+    // in the same merge-conflict-resolution pattern that re-added
+    // Telegram and Discord after #1705. Slack access is in
+    // presets/slack.yaml only.
+    const np = policy.network_policies as Record<string, unknown> | undefined;
+    expect(np && typeof np === "object" && "slack" in np).toBe(false);
+
+    const slackHosts = findEndpoints(
+      (h) =>
+        h === "slack.com" ||
+        h.endsWith(".slack.com") ||
+        h === "wss-primary.slack.com" ||
+        h === "wss-backup.slack.com",
+    );
+    expect(slackHosts).toEqual([]);
   });
 
   it("regression #1458: baseline npm_registry must not include npm or node binaries", () => {
@@ -341,6 +420,42 @@ describe("base sandbox policy", () => {
     // npm/node being in this list lets the agent bypass 'none' policy preset.
     // Exact allowlist — adding any binary here requires a deliberate review.
     expect(paths).toEqual(["/usr/local/bin/openclaw"]);
+  });
+});
+
+describe("permissive sandbox policy", () => {
+  // openclaw-sandbox-permissive.yaml is applied by `shields down --policy
+  // permissive`. It must carry forward the gateway-managed inference route
+  // so the mental model stays consistent with the base policy and so we
+  // don't silently depend on OpenShell's implicit allow for
+  // gateway-bound virtual hostnames.
+  // Ref: https://github.com/NVIDIA/NemoClaw/issues/2513, #2663
+  const policy = loadYaml<SandboxPolicy>(PERMISSIVE_POLICY_PATH);
+
+  it("parses and declares network_policies", () => {
+    expect(policy.network_policies).toBeDefined();
+  });
+
+  it("regression #2513: managed_inference block allows inference.local:443", () => {
+    const np = policy.network_policies ?? {};
+    expect(np.managed_inference).toBeDefined();
+    const endpoints = np.managed_inference?.endpoints ?? [];
+    const inferenceEp = endpoints.find((ep) => ep.host === "inference.local");
+    expect(inferenceEp).toBeDefined();
+    expect(inferenceEp?.port).toBe(443);
+    // Permissive policy uses the `access: full` convention (any method, any
+    // path) rather than explicit per-method rules. That is consistent with
+    // every other host in this file.
+    expect(inferenceEp?.access).toBe("full");
+    expect(inferenceEp?.enforcement).toBe("enforce");
+  });
+
+  it("regression #2513: managed_inference uses permissive '/**' binary allowlist", () => {
+    const np = policy.network_policies ?? {};
+    const binaries = (np.managed_inference?.binaries ?? []).map((b) => b.path);
+    // Matches the permissive-file convention used by every other block
+    // (e.g. `nvidia`, `github`, `huggingface`, etc.).
+    expect(binaries).toEqual(["/**"]);
   });
 });
 
@@ -360,6 +475,18 @@ describe("github preset", () => {
     expect(meta?.name).toBe("github");
     const np = parsed.network_policies;
     expect(np && "github" in np).toBe(true);
+  });
+
+  it("regression #2179: github preset only advertises the installed git binary", () => {
+    const parsed = loadYaml<PolicyPreset>(PRESET_PATH);
+    const meta = parsed.preset;
+    expect(meta?.description).toBe("GitHub.com and GitHub API access (git)");
+    expect(meta?.description ?? "").not.toMatch(/\bgh\b/);
+
+    const binaries = (parsed.network_policies?.github?.binaries ?? [])
+      .map((binary) => binary.path)
+      .sort();
+    expect(binaries).toEqual(["/usr/bin/git"]);
   });
 });
 
@@ -416,4 +543,123 @@ describe("huggingface preset", () => {
       expect(hasGet).toBe(true);
     }
   });
+});
+
+describe("messaging WebSocket presets", () => {
+  const DISCORD_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/discord.yaml",
+    import.meta.url,
+  );
+  const SLACK_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    import.meta.url,
+  );
+
+  const presets = [
+    {
+      name: "discord",
+      policyKey: "discord",
+      host: "gateway.discord.gg",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(DISCORD_PRESET_PATH),
+    },
+    {
+      name: "discord",
+      policyKey: "discord",
+      host: "*.discord.gg",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(DISCORD_PRESET_PATH),
+    },
+    {
+      name: "slack",
+      policyKey: "slack",
+      host: "wss-primary.slack.com",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(SLACK_PRESET_PATH),
+    },
+    {
+      name: "slack",
+      policyKey: "slack",
+      host: "wss-backup.slack.com",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(SLACK_PRESET_PATH),
+    },
+  ];
+
+  for (const preset of presets) {
+    it(`${preset.name} ${preset.host} uses native WebSocket inspection`, () => {
+      const endpoints = preset.data.network_policies?.[preset.policyKey]?.endpoints ?? [];
+      const endpoint = endpoints.find((candidate) => candidate.host === preset.host);
+      expect(endpoint).toBeDefined();
+      expect(endpoint).toMatchObject({ protocol: "websocket", enforcement: "enforce" });
+      expect(endpoint).not.toHaveProperty("access");
+      expect(endpoint).not.toHaveProperty("tls");
+      expect(endpoint?.websocket_credential_rewrite === true).toBe(preset.credentialRewrite);
+      expect(endpoint?.rules).toEqual(
+        expect.arrayContaining([
+          { allow: { method: "GET", path: "/**" } },
+          { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+        ]),
+      );
+    });
+  }
+});
+
+describe("Slack REST credential rewrite", () => {
+  const SLACK_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    import.meta.url,
+  );
+  const data = loadYaml<PolicyPreset>(SLACK_PRESET_PATH);
+  const slackRestHosts = ["slack.com", "api.slack.com", "hooks.slack.com"];
+
+  for (const host of slackRestHosts) {
+    it(`${host} enables request-body credential rewrite`, () => {
+      const endpoints = data.network_policies?.slack?.endpoints ?? [];
+      const endpoint = endpoints.find((candidate) => candidate.host === host);
+      expect(endpoint).toBeDefined();
+      expect(endpoint).toMatchObject({
+        protocol: "rest",
+        enforcement: "enforce",
+        request_body_credential_rewrite: true,
+      });
+    });
+  }
+});
+
+describe("npm preset", () => {
+  // Regression #2767: npm/Yarn registry endpoints used `protocol: rest`
+  // with only GET allowed. Node 22 undici issues HTTP CONNECT through
+  // HTTPS_PROXY for TLS tunneling; the L7 proxy rejects parallel CONNECT
+  // tunnels, causing NET:FAIL and ECONNRESET on tarball downloads.
+  // The fix switches to L4 tunnel mode.
+  const NPM_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/npm.yaml",
+    import.meta.url,
+  );
+  const npmPreset = loadYaml<PolicyPreset>(NPM_PRESET_PATH);
+
+  function npmEndpoints(): Endpoint[] {
+    const np = npmPreset.network_policies;
+    if (!np) return [];
+    const entry = np.npm_yarn;
+    return Array.isArray(entry?.endpoints) ? entry.endpoints : [];
+  }
+
+  const REGISTRY_HOSTS = ["registry.npmjs.org", "registry.yarnpkg.com"];
+
+  for (const host of REGISTRY_HOSTS) {
+    it(`regression #2767: ${host} uses L4 tunnel (access: full, tls: skip) for CONNECT compatibility`, () => {
+      const endpoints = npmEndpoints().filter((ep) => ep.host === host);
+      expect(endpoints.length).toBeGreaterThan(0);
+      for (const ep of endpoints) {
+        expect(ep.access).toBe("full");
+        expect(ep).toHaveProperty("tls", "skip");
+        // Must NOT use protocol: rest — that triggers L7 method inspection
+        // which rejects CONNECT tunnels from Node 22 undici.
+        expect(ep).not.toHaveProperty("protocol");
+        expect(ep).not.toHaveProperty("rules");
+      }
+    });
+  }
 });

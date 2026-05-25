@@ -8,12 +8,14 @@
 // OpenClaw). Non-OpenClaw agents get a "restart gateway" hint until a
 // generic refresh contract is defined in the manifest schema.
 
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { spawnSync } from "node:child_process";
 
 // yaml is a production dependency (used by policies.ts, onboard.ts)
 import YAML from "yaml";
+
+import { isRecord } from "./core/json-types";
 
 // ── Skill name validation ────────────────────────────────────────
 
@@ -35,10 +37,6 @@ export function validateSkillName(name: string): boolean {
 type FrontmatterScalar = string | number | boolean | null | undefined;
 type FrontmatterValue = FrontmatterScalar | FrontmatterRecord | FrontmatterValue[];
 type FrontmatterRecord = { [key: string]: FrontmatterValue };
-
-function isRecord(value: FrontmatterValue): value is FrontmatterRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 export interface SkillFrontmatter {
   name: string;
@@ -135,8 +133,8 @@ export function resolveSkillPaths(
 
 // Re-export shellQuote from runner.ts — a repo-wide test enforces
 // a single definition lives in runner.ts.
-// eslint-disable-next-line @typescript-eslint/no-var-requires
 const { shellQuote } = require("./runner");
+
 export { shellQuote };
 
 const SAFE_PATH_RE = /^[A-Za-z0-9._\-/]+$/;
@@ -167,7 +165,7 @@ export interface SshResult {
 
 /**
  * Run a command on the sandbox via SSH with optional stdin content.
- * Uses the same SSH flags as executeSandboxCommand in nemoclaw.ts.
+ * Uses the same SSH flags as executeSandboxCommand in sandbox-process-recovery-action.ts.
  */
 export function sshExec(
   ctx: SshContext,
@@ -371,10 +369,7 @@ export interface RemoveResult {
  *
  * Only the named skill directory is deleted — other skills are untouched.
  */
-export function removeSkill(
-  ctx: SshContext,
-  paths: SkillPaths,
-): RemoveResult {
+export function removeSkill(ctx: SshContext, paths: SkillPaths): RemoveResult {
   const messages: string[] = [];
 
   // 1. Remove the immutable upload directory (/sandbox/.openclaw/skills/<name>/)

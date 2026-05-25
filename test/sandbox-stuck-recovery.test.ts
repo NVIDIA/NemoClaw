@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
 const tmpFixtures: string[] = [];
 
@@ -117,7 +118,7 @@ function runCli(
         NEMOCLAW_NO_CONNECT_HINT: "1",
         ...extraEnv,
       },
-      timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 15_000),
+      timeout: execTimeout(15_000),
     },
   );
 }
@@ -125,7 +126,7 @@ function runCli(
 describe("sandbox stuck in non-Ready phase (#2016)", () => {
   it(
     "connect times out with guidance when sandbox is stuck in Provisioning",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    testTimeoutOptions(20_000),
     () => {
       const { tmpDir, sandboxName } = setupFixture("stuck-sandbox", "Provisioning");
 
@@ -146,7 +147,7 @@ describe("sandbox stuck in non-Ready phase (#2016)", () => {
 
   it(
     "connect exits immediately with recovery hint when sandbox is in a terminal failure state",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    testTimeoutOptions(20_000),
     () => {
       const { tmpDir, sandboxName } = setupFixture("failed-sandbox", "Failed");
 
@@ -162,7 +163,7 @@ describe("sandbox stuck in non-Ready phase (#2016)", () => {
 
   it(
     "status shows recovery hint when sandbox is stuck in Provisioning",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
+    testTimeoutOptions(20_000),
     () => {
       const { tmpDir, sandboxName } = setupFixture("stuck-status", "Provisioning");
 
@@ -173,17 +174,13 @@ describe("sandbox stuck in non-Ready phase (#2016)", () => {
     },
   );
 
-  it(
-    "connect succeeds when sandbox phase is Ready",
-    { timeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 20_000) },
-    () => {
-      const { tmpDir, sandboxName } = setupFixture("ready-sandbox", "Ready");
+  it("connect succeeds when sandbox phase is Ready", testTimeoutOptions(20_000), () => {
+    const { tmpDir, sandboxName } = setupFixture("ready-sandbox", "Ready");
 
-      const result = runCli(tmpDir, sandboxName, "connect");
-      expect(result.status).toBe(0);
+    const result = runCli(tmpDir, sandboxName, "connect");
+    expect(result.status).toBe(0);
 
-      const combined = (result.stdout || "") + (result.stderr || "");
-      expect(combined).not.toContain("stuck in");
-    },
-  );
+    const combined = (result.stdout || "") + (result.stderr || "");
+    expect(combined).not.toContain("stuck in");
+  });
 });

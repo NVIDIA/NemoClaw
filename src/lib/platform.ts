@@ -65,6 +65,27 @@ function inferContainerRuntime(info = ""): ContainerRuntime {
   return "unknown";
 }
 
+function containerCanReachHostLoopback(
+  runtime: ContainerRuntime,
+  opts: WslDetectionOptions = {},
+): boolean {
+  // Whether a sandbox container can reach the host's 127.0.0.1 directly,
+  // without an auth proxy fronting host-side services like Ollama or vLLM.
+  //
+  // Docker Desktop bridges the WSL host's loopback back into containers
+  // (running in the docker-desktop VM) via host.docker.internal — so the
+  // local Ollama daemon bound to 127.0.0.1:11434 is reachable as-is.
+  //
+  // Native dockerd installed inside a WSL distro only sees the Docker
+  // bridge gateway (e.g. 172.17.0.1); 127.0.0.1 on the WSL host is
+  // invisible from any container on that bridge. NemoClaw fronts Ollama
+  // with the auth proxy in this topology (issue #3695).
+  //
+  // Anywhere off WSL (macOS Docker Desktop, regular Linux native Docker),
+  // NemoClaw always runs the auth proxy.
+  return isWsl(opts) && runtime === "docker-desktop";
+}
+
 function shouldPatchCoredns(runtime: ContainerRuntime, opts: WslDetectionOptions = {}): boolean {
   // CoreDNS patching is needed for Colima and Podman (both use custom network bridges).
   // On WSL2, the host DNS is not routable from k3s pods — skip and let setup-dns-proxy.sh handle it.
@@ -77,6 +98,11 @@ function getColimaDockerSocketCandidates(opts: PlatformLookupOptions = {}): stri
   return [
     path.join(home, ".colima/default/docker.sock"),
     path.join(home, ".config/colima/default/docker.sock"),
+    // Some Colima profiles (and older layouts) place the socket at the
+    // top-level ~/.colima/docker.sock rather than under default/. Reported
+    // in #3503 — keep as a candidate so detection succeeds without the
+    // user having to symlink to /var/run/docker.sock.
+    path.join(home, ".colima/docker.sock"),
   ];
 }
 
@@ -154,6 +180,7 @@ function detectDockerHost(opts: DockerHostDetectionOptions = {}): DockerHostDete
 }
 
 export {
+  containerCanReachHostLoopback,
   detectDockerHost,
   findColimaDockerSocket,
   getColimaDockerSocketCandidates,

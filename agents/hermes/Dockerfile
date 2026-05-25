@@ -8,7 +8,19 @@
 
 ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/hermes-sandbox-base:latest
 
+# hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
+
+# Keep the final image contract explicit even when the published base image
+# changes independently of this Dockerfile.
+RUN set -eu; \
+    hermes_path="$(command -v hermes 2>/dev/null || true)"; \
+    if [ "$hermes_path" != "/usr/local/bin/hermes" ]; then \
+        echo "ERROR: expected hermes at /usr/local/bin/hermes, got ${hermes_path:-missing}" >&2; \
+        exit 1; \
+    fi; \
+    test -x /usr/local/bin/hermes; \
+    /usr/local/bin/hermes --version
 
 # Harden: remove unnecessary build tools and network probes
 RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
@@ -16,21 +28,35 @@ RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
     && apt-get autoremove --purge -y \
     && rm -rf /var/lib/apt/lists/*
 
+# Hermes' WeChat adapter (gateway/platforms/weixin.py:_make_ssl_connector)
+# builds aiohttp with ssl.create_default_context(cafile=certifi.where()),
+# bypassing SSL_CERT_FILE. Symlink certifi's bundle at SSL_CERT_FILE so
+# weixin TLS trusts the OpenShell L7 proxy CA. Done at image build (as
+# root, which has write perms on the venv) because at runtime root doesn't
+# see SSL_CERT_FILE and the gateway user can't write the venv.
+# The target doesn't need to exist at build time — OpenShell mounts it at
+# sandbox start; the forward-referencing symlink resolves then.
+ARG SSL_CERT_FILE=/etc/openshell-tls/ca-bundle.pem
+# hadolint ignore=DL3059
+RUN _hermes_certifi=$(/opt/hermes/.venv/bin/python -c 'import certifi; print(certifi.where())') \
+    && ln -sf "$SSL_CERT_FILE" "$_hermes_certifi"
+
 # Hermes v2026.4.13+ auto-detects HTTPS_PROXY and skips fallback-IP
-# transport when a proxy is present. The sandbox proxy chain
-# (decode-proxy → OpenShell L7 proxy) handles credential placeholder
-# rewriting and hostname-based policy enforcement. No monkey patch needed.
+# transport when a proxy is present. OpenShell handles REST credential
+# placeholder rewriting, hostname-based policy enforcement, and native
+# WebSocket credential rewrite at the egress boundary.
 ENV HERMES_TELEGRAM_DISABLE_FALLBACK_IPS=1
 
 # Copy NemoClaw plugin for Hermes (Python-based)
 COPY agents/hermes/plugin/ /opt/nemoclaw-hermes-plugin/
 RUN chmod -R a+rX /opt/nemoclaw-hermes-plugin/
 
-# Copy config generation script and URL-decode proxy
-COPY agents/hermes/generate-config.ts /opt/nemoclaw-generate-config.ts
-RUN chmod 444 /opt/nemoclaw-generate-config.ts
-COPY agents/hermes/decode-proxy.py /usr/local/bin/nemoclaw-decode-proxy
-RUN chmod 755 /usr/local/bin/nemoclaw-decode-proxy
+# Copy config generator
+COPY agents/hermes/generate-config.ts /opt/nemoclaw-hermes-config/generate-config.ts
+COPY agents/hermes/config/ /opt/nemoclaw-hermes-config/config/
+COPY agents/hermes/host/managed-tool-gateway-matrix.json /opt/nemoclaw-hermes-config/managed-tool-gateway-matrix.json
+RUN find /opt/nemoclaw-hermes-config -type d -exec chmod 755 {} + \
+    && find /opt/nemoclaw-hermes-config -type f -exec chmod 444 {} +
 
 # Copy blueprint (shared infrastructure)
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
@@ -54,7 +80,19 @@ ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
 ARG CHAT_UI_URL=http://127.0.0.1:8642
 ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=
 ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=
+ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=
+ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
+# Captured by NemoClaw's host-side iLink QR login during onboard (see
+# src/lib/onboard/wechat-config.ts). Carries {accountId, baseUrl, userId} so
+# the Hermes WeChat adapter starts with WEIXIN_ACCOUNT_ID/WEIXIN_BASE_URL
+# already populated from .env; no in-sandbox QR re-scan. The token itself
+# is never baked here — it flows through the OpenShell L7 proxy via the
+# WECHAT_BOT_TOKEN credential slot.
+ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
+ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
+ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=W10=
 ARG NEMOCLAW_BUILD_ID=default
+ARG NEMOCLAW_DARWIN_VM_COMPAT=0
 
 # Promote build-args to env vars for the config generation script.
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
@@ -62,7 +100,12 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_INFERENCE_BASE_URL=${NEMOCLAW_INFERENCE_BASE_URL} \
     CHAT_UI_URL=${CHAT_UI_URL} \
     NEMOCLAW_MESSAGING_CHANNELS_B64=${NEMOCLAW_MESSAGING_CHANNELS_B64} \
-    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64}
+    NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=${NEMOCLAW_MESSAGING_ALLOWED_IDS_B64} \
+    NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
+    NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
+    NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
+    NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=${NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER} \
+    NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64}
 
 WORKDIR /sandbox
 USER sandbox
@@ -76,7 +119,7 @@ RUN mkdir -p /sandbox/.nemoclaw/blueprints/0.1.0 \
 # via `shields up`. .env holds API key placeholders for OpenShell provider pipeline.
 # SECURITY: Uses a separate script file instead of inline code to avoid
 # code injection via build-arg interpolation (same concern as OpenClaw C-2).
-RUN node --experimental-strip-types /opt/nemoclaw-generate-config.ts
+RUN node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.ts
 
 # Install NemoClaw plugin into Hermes
 RUN mkdir -p /sandbox/.hermes/plugins/nemoclaw \
@@ -175,7 +218,13 @@ RUN set -eu; \
         "$config_dir/workspace" \
         "$config_dir/profiles" \
         "$config_dir/cache" \
-        "$config_dir/pairing"; \
+        "$config_dir/pairing" \
+        "$config_dir/platforms" \
+        "$config_dir/platforms/whatsapp" \
+        "$config_dir/platforms/whatsapp/session" \
+        "$config_dir/weixin" \
+        "$config_dir/weixin/accounts" \
+        "$config_dir/runtime"; \
     if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
         echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
         exit 1; \
@@ -199,9 +248,38 @@ RUN set -eu; \
     done; \
     rm -rf /root/.cache/pip /sandbox/.cache \
     && chown -R sandbox:sandbox /sandbox/.hermes \
+    && chown gateway:sandbox /sandbox/.hermes/runtime \
     && chmod 750 /sandbox/.hermes \
+    && chmod 770 \
+        /sandbox/.hermes/memories \
+        /sandbox/.hermes/sessions \
+        /sandbox/.hermes/skills \
+        /sandbox/.hermes/plugins \
+        /sandbox/.hermes/cron \
+        /sandbox/.hermes/logs \
+        /sandbox/.hermes/skins \
+        /sandbox/.hermes/plans \
+        /sandbox/.hermes/workspace \
+        /sandbox/.hermes/profiles \
+        /sandbox/.hermes/cache \
+        /sandbox/.hermes/pairing \
+        /sandbox/.hermes/platforms \
+        /sandbox/.hermes/platforms/whatsapp \
+        /sandbox/.hermes/platforms/whatsapp/session \
+        /sandbox/.hermes/weixin \
+        /sandbox/.hermes/weixin/accounts \
+        /sandbox/.hermes/runtime \
+    && chmod 2770 \
+        /sandbox/.hermes/platforms \
+        /sandbox/.hermes/platforms/whatsapp \
+        /sandbox/.hermes/platforms/whatsapp/session \
+    && chmod 2770 /sandbox/.hermes/runtime \
     && chmod 640 /sandbox/.hermes/config.yaml \
-    && chmod 640 /sandbox/.hermes/.env
+    && chmod 640 /sandbox/.hermes/.env \
+    && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \
+        rm -f "/sandbox/.hermes/${name}"; \
+        ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
+    done
 
 # Pin config hash at build time for integrity verification at startup.
 RUN mkdir -p /etc/nemoclaw \
@@ -215,6 +293,16 @@ RUN sha256sum /sandbox/.hermes/config.yaml /sandbox/.hermes/.env \
     > /sandbox/.hermes/.config-hash \
     && chmod 600 /sandbox/.hermes/.config-hash \
     && chown sandbox:sandbox /sandbox/.hermes/.config-hash
+
+# OpenShell's macOS VM backend currently remaps extracted rootfs ownership to
+# the host uid/gid before startup. Hermes uses /sandbox as a read_write path, so
+# that repair walks the trusted rc files too; keep this Darwin-only so Linux
+# Docker-driver sandboxes retain the tighter default permissions.
+RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
+        chmod -R a+rwX /sandbox/.hermes; \
+        find /sandbox/.hermes -type d -exec chmod a+rwx {} +; \
+        chmod a+rw /sandbox/.bashrc /sandbox/.profile; \
+    fi
 
 # start.sh handles privilege separation: runs as root initially, then drops
 # to 'gateway' user via gosu for the agent process. See start.sh.

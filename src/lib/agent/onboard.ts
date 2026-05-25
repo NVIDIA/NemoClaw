@@ -1,0 +1,574 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+//
+// Agent-specific onboarding logic — called from onboard.ts when a
+// non-default agent (e.g. Hermes) is selected via --agent flag or
+// NEMOCLAW_AGENT env var. The OpenClaw path never touches this module.
+
+import fs from "fs";
+import os from "os";
+import path from "path";
+
+import { dockerBuild, dockerImageInspect } from "../adapters/docker";
+import { getAgentBranding } from "../cli/branding";
+import { getProviderSelectionConfig } from "../inference/config";
+import type { JsonObject as LooseObject } from "../core/json-types";
+import { runSandboxConfigSync } from "../onboard/config-sync";
+import { ROOT, redact, run, shellQuote } from "../runner";
+import {
+  buildLocalBaseTag,
+  resolveSandboxBaseImage,
+  SANDBOX_BASE_TAG,
+} from "../sandbox-base-image";
+import { sleepSeconds } from "../core/wait";
+import { type AgentDefinition, loadAgent, resolveAgentName } from "./defs";
+
+export interface OnboardContext {
+  step: (current: number, total: number, message: string) => void;
+  runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string | null;
+  openshellShellCommand: (args: string[], options?: { openshellBinary?: string }) => string;
+  openshellBinary: string;
+  startRecordedStep: (stepName: string, updates: LooseObject) => Promise<void>;
+  recordStepComplete: (stepName: string, updates: LooseObject) => Promise<unknown>;
+  recordStepFailed: (stepName: string, message: string | null) => Promise<unknown>;
+  skippedStepMessage: (stepName: string, sandboxName: string) => void;
+}
+
+/**
+ * Resolve the effective agent from CLI flags, env, or session.
+ * Returns null for openclaw (default path), loaded agent object otherwise.
+ */
+export function resolveAgent({
+  agentFlag = null,
+  session = null,
+}: {
+  agentFlag?: string | null;
+  session?: { agent?: string } | null;
+} = {}): AgentDefinition | null {
+  const name = resolveAgentName({ agentFlag, session });
+  if (name === "openclaw") return null;
+  return loadAgent(name);
+}
+
+/**
+ * Ensure the agent-specific sandbox base image exists locally.
+ * Rebuild callers can force this so local Dockerfile.base edits are applied.
+ */
+export function ensureAgentBaseImage(
+  agent: AgentDefinition,
+  opts: { forceBaseImageRebuild?: boolean } = {},
+): {
+  imageTag: string | null;
+  built: boolean;
+} {
+  const baseDockerfile = agent.dockerfileBasePath;
+
+  if (!baseDockerfile) {
+    return { imageTag: null, built: false };
+  }
+
+  const baseImageName = `ghcr.io/nvidia/nemoclaw/${agent.name}-sandbox-base`;
+  const baseImageTag = `${baseImageName}:${SANDBOX_BASE_TAG}`;
+  const forceBaseImageRebuild = opts.forceBaseImageRebuild === true;
+  if (forceBaseImageRebuild) {
+    console.log(`  Rebuilding ${agent.displayName} base image...`);
+    const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
+      ignoreError: true,
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    if (buildResult.error || buildResult.status !== 0) {
+      const detail = buildResult.error
+        ? `: ${buildResult.error.message}`
+        : ` (exit ${buildResult.status ?? "unknown"})`;
+      throw new Error(`Failed to build ${agent.displayName} base image${detail}`);
+    }
+    console.log(`  \u2713 Base image built: ${baseImageTag}`);
+    return { imageTag: baseImageTag, built: true };
+  }
+
+  const resolved = resolveSandboxBaseImage({
+    imageName: baseImageName,
+    dockerfilePath: baseDockerfile,
+    localTag: buildLocalBaseTag(`nemoclaw-${agent.name}-sandbox-base-local`, ROOT),
+    envVar: `NEMOCLAW_${agent.name.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_SANDBOX_BASE_IMAGE_REF`,
+    label: `${agent.displayName} sandbox base image`,
+    requireOpenshellSandboxAbi: process.platform === "linux",
+    rootDir: ROOT,
+  });
+  if (resolved && !forceBaseImageRebuild) {
+    console.log(`  Using ${agent.displayName} base image: ${resolved.ref}`);
+    return { imageTag: resolved.ref, built: false };
+  }
+  if (!resolved && process.platform === "linux" && !forceBaseImageRebuild) {
+    throw new Error(
+      `No compatible ${agent.displayName} sandbox base image found for ${baseImageName}`,
+    );
+  }
+  const inspectResult = dockerImageInspect(baseImageTag, {
+    ignoreError: true,
+    suppressOutput: true,
+  });
+  if (inspectResult?.status !== 0) {
+    console.log(`  Building ${agent.displayName} base image (first time only)...`);
+    const buildResult = dockerBuild(baseDockerfile, baseImageTag, ROOT, {
+      ignoreError: true,
+      stdio: ["ignore", "inherit", "inherit"],
+    });
+    if (buildResult.error || buildResult.status !== 0) {
+      const detail = buildResult.error
+        ? `: ${buildResult.error.message}`
+        : ` (exit ${buildResult.status ?? "unknown"})`;
+      throw new Error(`Failed to build ${agent.displayName} base image${detail}`);
+    }
+    console.log(`  \u2713 Base image built: ${baseImageTag}`);
+    return { imageTag: baseImageTag, built: true };
+  }
+
+  console.log(`  Base image exists: ${baseImageTag}`);
+  return { imageTag: baseImageTag, built: false };
+}
+
+/**
+ * Stage build context for an agent-specific sandbox image.
+ * Builds the base image if the agent defines one and it's not cached locally.
+ */
+export function createAgentSandbox(
+  agent: AgentDefinition,
+  opts: { forceBaseImageRebuild?: boolean } = {},
+): {
+  buildCtx: string;
+  stagedDockerfile: string;
+} {
+  const agentDockerfile = agent.dockerfilePath;
+
+  if (!agentDockerfile) {
+    throw new Error(`${agent.displayName} is missing a sandbox Dockerfile`);
+  }
+
+  const { imageTag: baseImageRef } = ensureAgentBaseImage(agent, opts);
+
+  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-"));
+  fs.cpSync(ROOT, buildCtx, {
+    recursive: true,
+    filter: (src) => {
+      const base = path.basename(src);
+      return !["node_modules", ".git", ".venv", "__pycache__", ".claude"].includes(base);
+    },
+  });
+  const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+  fs.copyFileSync(agentDockerfile, stagedDockerfile);
+  if (baseImageRef) {
+    const dockerfile = fs.readFileSync(stagedDockerfile, "utf8");
+    fs.writeFileSync(
+      stagedDockerfile,
+      dockerfile.replace(/^ARG BASE_IMAGE=.*$/m, `ARG BASE_IMAGE=${baseImageRef}`),
+    );
+  }
+  console.log(`  Using ${agent.displayName} Dockerfile: ${agentDockerfile}`);
+
+  return { buildCtx, stagedDockerfile };
+}
+
+/**
+ * Get the agent-specific network policy path, or null to use the default.
+ */
+export function getAgentPolicyPath(agent: AgentDefinition): string | null {
+  return agent.policyAdditionsPath || null;
+}
+
+/**
+ * Sleep for the requested number of seconds using the shared wait helper.
+ */
+function sleep(seconds: number): void {
+  sleepSeconds(seconds);
+}
+
+/**
+ * Resolve the CLI command name used for agent-specific recovery guidance.
+ */
+function agentCliName(agent: AgentDefinition): string {
+  return getAgentBranding(agent.name).cli;
+}
+
+/**
+ * Resolve the executable name expected inside the agent sandbox.
+ */
+function agentExecutableName(agent: AgentDefinition): string {
+  const configuredPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
+  return path.basename(configuredPath || agent.name);
+}
+
+type AgentBinaryAvailability =
+  | { available: true }
+  | {
+      available: false;
+      reason: "not_found" | "not_executable" | "path_mismatch";
+      binaryPath?: string;
+      resolvedPath?: string;
+    };
+
+const AGENT_BINARY_CHECK_PREFIX = "NEMOCLAW_AGENT_BINARY_CHECK:";
+const HERMES_TIRITH_MARKER_ABSENT = "tirith marker: absent";
+const HERMES_STARTUP_DIAGNOSTICS_SCRIPT = `
+set +e
+marker=/sandbox/.hermes/.tirith-install-failed
+if [ ! -e "$marker" ]; then
+  echo "${HERMES_TIRITH_MARKER_ABSENT}"
+  exit 0
+fi
+if [ -L "$marker" ]; then
+  echo "tirith marker: symlink (not read)"
+else
+  printf "tirith marker: "
+  head -c 200 "$marker" 2>/dev/null || printf "unreadable"
+  printf "\\n"
+fi
+
+tirith=/sandbox/.hermes/bin/tirith
+if [ -x "$tirith" ] && [ ! -L "$tirith" ]; then
+  echo "tirith binary: present executable ($tirith)"
+elif [ -e "$tirith" ]; then
+  echo "tirith binary: present but not executable ($tirith)"
+else
+  echo "tirith binary: missing ($tirith)"
+fi
+
+for log in /tmp/nemoclaw-start.log /tmp/gateway.log; do
+  if [ -f "$log" ] && [ ! -L "$log" ]; then
+    echo "--- tail: $log ---"
+    tail -n 40 "$log" 2>/dev/null || echo "(tail unavailable)"
+  elif [ -L "$log" ]; then
+    echo "--- tail: $log skipped (symlink) ---"
+  else
+    echo "--- tail: $log unavailable ---"
+  fi
+done
+`.trim();
+
+/**
+ * Check whether the selected agent binary is available inside the sandbox.
+ *
+ * Exported so tests can exercise the sandbox-side guard without running the
+ * full onboarding flow.
+ */
+export function verifyAgentBinaryAvailable(
+  sandboxName: string,
+  agent: AgentDefinition,
+  runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
+): AgentBinaryAvailability {
+  const executable = agentExecutableName(agent);
+  const binaryPath = typeof agent.binary_path === "string" ? agent.binary_path.trim() : "";
+  const script = binaryPath
+    ? [
+        `if [ -x ${shellQuote(binaryPath)} ]; then echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)}; exit 0; fi`,
+        `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
+        `[ -n "$resolved" ] || { echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}; exit 0; }`,
+        `[ -x "$resolved" ] || { printf '${AGENT_BINARY_CHECK_PREFIX}not_executable:%s\\n' "$resolved"; exit 0; }`,
+        `printf '${AGENT_BINARY_CHECK_PREFIX}path_mismatch:%s\\n' "$resolved"`,
+      ].join("; ")
+    : [
+        `resolved="$(command -v ${shellQuote(executable)} 2>/dev/null || true)"`,
+        `[ -n "$resolved" ] && [ -x "$resolved" ] && echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}ok`)} || echo ${shellQuote(`${AGENT_BINARY_CHECK_PREFIX}not_found`)}`,
+      ].join("; ");
+  const result = runCaptureOpenshell(
+    ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", script],
+    {
+      ignoreError: true,
+    },
+  );
+  const status = result?.trim() ?? "";
+  const marker = status
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find((line) => line.startsWith(AGENT_BINARY_CHECK_PREFIX));
+  const checkStatus = marker?.slice(AGENT_BINARY_CHECK_PREFIX.length) ?? "";
+  if (checkStatus === "ok") {
+    return { available: true };
+  }
+  if (binaryPath && checkStatus) {
+    const mismatch = checkStatus.match(/^path_mismatch:(.+)$/);
+    if (mismatch) {
+      return {
+        available: false,
+        reason: "path_mismatch",
+        binaryPath,
+        resolvedPath: mismatch[1].trim(),
+      };
+    }
+    if (checkStatus.startsWith("not_executable")) {
+      return { available: false, reason: "not_executable", binaryPath };
+    }
+  }
+  return { available: false, reason: "not_found", binaryPath: binaryPath || undefined };
+}
+
+/**
+ * Format a user-facing explanation for an agent binary availability failure.
+ */
+function describeAgentBinaryFailure(
+  sandboxName: string,
+  agent: AgentDefinition,
+  result: Exclude<AgentBinaryAvailability, { available: true }>,
+): string {
+  const executable = agentExecutableName(agent);
+  if (result.reason === "path_mismatch") {
+    return `${agent.displayName} binary '${executable}' resolves to '${result.resolvedPath}', expected '${result.binaryPath}' inside sandbox '${sandboxName}'`;
+  }
+  if (result.reason === "not_executable") {
+    return `${agent.displayName} configured binary '${result.binaryPath}' is not executable inside sandbox '${sandboxName}'`;
+  }
+  return `${agent.displayName} binary '${executable}' is missing inside sandbox '${sandboxName}'`;
+}
+
+/**
+ * Collect read-only Hermes startup diagnostics for Step 7 health timeouts.
+ * Returns no extra lines when the Tirith marker is absent so non-Tirith
+ * failures keep the existing terse error shape.
+ */
+export function collectHermesStartupDiagnostics(
+  sandboxName: string,
+  runCaptureOpenshell: OnboardContext["runCaptureOpenshell"],
+): string[] {
+  const output = runCaptureOpenshell(
+    ["sandbox", "exec", "-n", sandboxName, "--", "sh", "-lc", HERMES_STARTUP_DIAGNOSTICS_SCRIPT],
+    { ignoreError: true },
+  );
+  const redactedOutput = String(redact(output ?? ""));
+  const lines = redactedOutput
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => line.length > 0);
+
+  const markerLine = lines.find((line) => line.startsWith("tirith marker:"));
+  if (!markerLine || markerLine === HERMES_TIRITH_MARKER_ABSENT) {
+    return [];
+  }
+  return ["Hermes startup diagnostics:", ...lines.slice(0, 140)];
+}
+
+/**
+ * Record and print an agent setup failure before exiting the onboarding flow.
+ */
+async function failAgentSetup(
+  sandboxName: string,
+  agent: AgentDefinition,
+  message: string,
+  recordStepFailed: OnboardContext["recordStepFailed"],
+  details: string[] = [],
+): Promise<never> {
+  await recordStepFailed(
+    "agent_setup",
+    details.length > 0 ? `${message}\n${details.join("\n")}` : message,
+  );
+  console.error(`  \u2717 ${message}`);
+  for (const line of details) {
+    console.error(`    ${line}`);
+  }
+  console.error(`    Check: ${agentCliName(agent)} ${sandboxName} logs --follow`);
+  process.exit(1);
+}
+
+/**
+ * Interpret an agent health-probe response as healthy or unhealthy.
+ */
+export function isHealthProbeOk(result: string | null | undefined): boolean {
+  const body = (result ?? "").trim();
+  if (body === "ok") {
+    return true;
+  }
+  try {
+    const parsed = JSON.parse(body) as { status?: unknown };
+    return parsed.status === "ok";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Handle the full agent setup step (step 7) including resume detection.
+ * For non-OpenClaw agents: writes config into the sandbox and verifies
+ * the agent's health probe.
+ */
+export async function handleAgentSetup(
+  sandboxName: string,
+  model: string,
+  provider: string,
+  agent: AgentDefinition,
+  resume: boolean,
+  _session: object | null,
+  ctx: OnboardContext,
+): Promise<void> {
+  const {
+    step,
+    runCaptureOpenshell,
+    openshellBinary: openshellBin,
+    startRecordedStep,
+    recordStepComplete,
+    recordStepFailed,
+    skippedStepMessage,
+  } = ctx;
+
+  const syncNemoClawConfig = (): void => {
+    runSandboxConfigSync(sandboxName, {
+      getSelectionConfig: () => {
+        const cfg = getProviderSelectionConfig(provider, model);
+        return cfg ? { ...cfg, agent: agent.name } : null;
+      },
+      runConnectScript: (name, scriptContent) => {
+        run([openshellBin, "sandbox", "connect", name], {
+          stdio: ["pipe", "ignore", "inherit"],
+          input: scriptContent,
+        });
+      },
+    });
+  };
+
+  if (resume && sandboxName) {
+    const probe = agent.healthProbe;
+    if (probe?.url) {
+      const result = runCaptureOpenshell(
+        ["sandbox", "exec", "-n", sandboxName, "--", "curl", "-sf", "--max-time", "3", probe.url],
+        { ignoreError: true },
+      );
+      if (isHealthProbeOk(result)) {
+        skippedStepMessage("agent_setup", sandboxName);
+        // Re-sync `~/.nemoclaw/config.json` even on the resume skip path —
+        // a rebuild destroys/recreates the container and the file reverts
+        // to the Dockerfile's zero-byte placeholder. Mirrors the OpenClaw
+        // path in src/lib/onboard.ts. Fixes #3999 for non-OpenClaw agents.
+        syncNemoClawConfig();
+        await recordStepComplete("agent_setup", { sandboxName, provider, model });
+        return;
+      }
+    }
+  }
+
+  await startRecordedStep("agent_setup", { sandboxName, provider, model });
+  step(7, 8, `Setting up ${agent.displayName} inside sandbox`);
+
+  const binaryAvailability = verifyAgentBinaryAvailable(sandboxName, agent, runCaptureOpenshell);
+  if (!binaryAvailability.available) {
+    await failAgentSetup(
+      sandboxName,
+      agent,
+      describeAgentBinaryFailure(sandboxName, agent, binaryAvailability),
+      recordStepFailed,
+    );
+  }
+
+  syncNemoClawConfig();
+
+  const probe = agent.healthProbe;
+  if (probe?.url) {
+    const timeoutSecs = probe.timeout_seconds || 60;
+    const pollInterval = 3;
+    const maxAttempts = Math.ceil(timeoutSecs / pollInterval);
+    console.log(`  Waiting for ${agent.displayName} gateway (up to ${timeoutSecs}s)...`);
+    let healthy = false;
+    for (let i = 0; i < maxAttempts; i++) {
+      const result = runCaptureOpenshell(
+        ["sandbox", "exec", "-n", sandboxName, "--", "curl", "-sf", "--max-time", "3", probe.url],
+        { ignoreError: true },
+      );
+      if (isHealthProbeOk(result)) {
+        healthy = true;
+        break;
+      }
+      sleep(pollInterval);
+    }
+    if (healthy) {
+      console.log(`  \u2713 ${agent.displayName} gateway is healthy`);
+    } else {
+      const diagnostics =
+        agent.name === "hermes"
+          ? collectHermesStartupDiagnostics(sandboxName, runCaptureOpenshell)
+          : [];
+      await failAgentSetup(
+        sandboxName,
+        agent,
+        `${agent.displayName} gateway did not respond within ${timeoutSecs}s`,
+        recordStepFailed,
+        diagnostics,
+      );
+    }
+  } else {
+    console.log(`  \u2713 ${agent.displayName} configured inside sandbox`);
+  }
+
+  await recordStepComplete("agent_setup", { sandboxName, provider, model });
+}
+
+/**
+ * Get dashboard info for a non-OpenClaw agent.
+ */
+export function getAgentDashboardInfo(agent: AgentDefinition): {
+  port: number;
+  displayName: string;
+} {
+  return {
+    port: agent.forwardPort,
+    displayName: agent.displayName,
+  };
+}
+
+/**
+ * Redact browser token fragments before printing dashboard URLs.
+ */
+function dashboardUrlForDisplay(url: string): string {
+  return redact(url.replace(/#token=[^\s'"]*$/i, ""));
+}
+
+/**
+ * Print the dashboard UI section for a non-OpenClaw agent.
+ *
+ * When the agent manifest declares `dashboard.kind: api`, we print the
+ * endpoint as an API (no tokenized URL fragment — the caller authenticates
+ * via a header) and use the manifest-supplied label/path. Otherwise we fall
+ * back to the original UI-style output used by browser dashboards.
+ */
+export function printDashboardUi(
+  sandboxName: string,
+  token: string | null,
+  agent: AgentDefinition,
+  deps: {
+    note: (msg: string) => void;
+    buildControlUiUrls: (token: string | null, port: number) => string[];
+  },
+): void {
+  const info = getAgentDashboardInfo(agent);
+  const { kind, label, path } = agent.dashboard;
+  const cliName = getAgentBranding(agent.name).cli;
+
+  if (kind === "api") {
+    console.log(`  ${info.displayName} ${label}`);
+    console.log(`  Port ${info.port} must be forwarded before connecting.`);
+    const seen = new Set<string>();
+    for (const baseUrl of deps.buildControlUiUrls(null, info.port)) {
+      const withoutHash = baseUrl.split("#")[0].replace(/\/$/, "");
+      const url = path && path !== "/" ? `${withoutHash}${path}` : `${withoutHash}/`;
+      if (seen.has(url)) continue;
+      seen.add(url);
+      console.log(`  ${dashboardUrlForDisplay(url)}`);
+    }
+    return;
+  }
+
+  if (token) {
+    console.log(
+      `  ${info.displayName} ${label} (auth token redacted from displayed URLs)`,
+    );
+    console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
+    for (const url of deps.buildControlUiUrls(token, info.port)) {
+      console.log(`  ${dashboardUrlForDisplay(url)}`);
+    }
+    console.log(`  Token: ${cliName} ${sandboxName} gateway-token --quiet`);
+    console.log(`         append  #token=<token> locally if the browser asks for auth.`);
+  } else {
+    deps.note("  Could not read gateway token from the sandbox (download failed).");
+    console.log(`  ${info.displayName} ${label}`);
+    console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
+    for (const url of deps.buildControlUiUrls(null, info.port)) {
+      console.log(`  ${dashboardUrlForDisplay(url)}`);
+    }
+  }
+}

@@ -5,9 +5,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { EventEmitter } from "node:events";
+import { createRequire } from "node:module";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-type CredentialsModule = typeof import("../dist/lib/credentials.js");
+const require = createRequire(import.meta.url);
+
+type CredentialsModule = typeof import("../dist/lib/credentials/store.js");
 
 function isCredentialsModule(value: object | null): value is CredentialsModule {
   return (
@@ -16,14 +20,15 @@ function isCredentialsModule(value: object | null): value is CredentialsModule {
     typeof Reflect.get(value, "getCredential") === "function" &&
     typeof Reflect.get(value, "saveCredential") === "function" &&
     typeof Reflect.get(value, "stageLegacyCredentialsToEnv") === "function" &&
-    typeof Reflect.get(value, "removeLegacyCredentialsFile") === "function"
+    typeof Reflect.get(value, "removeLegacyCredentialsFile") === "function" &&
+    typeof Reflect.get(value, "removeLegacyCredentialsFileIfEmpty") === "function"
   );
 }
 
 // Pull the credential-env-key allowlist from the production module so
 // future additions only need to be made in one place. Plus a few
 // fixture-only names this suite mutates directly.
-import { KNOWN_CREDENTIAL_ENV_KEYS } from "../dist/lib/credentials.js";
+import { KNOWN_CREDENTIAL_ENV_KEYS } from "../dist/lib/credentials/store.js";
 const TEST_FIXTURE_ENV_KEYS = ["TEST_API_KEY", "OTHER_KEY", "EMPTY_VALUE", "ZETA", "ALPHA"];
 const TRACKED_ENV_KEYS = [...KNOWN_CREDENTIAL_ENV_KEYS, ...TEST_FIXTURE_ENV_KEYS];
 
@@ -39,7 +44,7 @@ async function importCredentialsModule(home: string): Promise<CredentialsModule>
   vi.doUnmock("child_process");
   vi.doUnmock("readline");
   vi.stubEnv("HOME", home);
-  const module = await import("../dist/lib/credentials.js");
+  const module = await import("../dist/lib/credentials/store.js");
   const loaded = "default" in module ? module.default : module;
   const moduleObject = typeof loaded === "object" && loaded !== null ? loaded : null;
   if (!isCredentialsModule(moduleObject)) {
@@ -60,6 +65,26 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.resetModules();
   vi.unstubAllEnvs();
+});
+
+describe("messaging legacy bridge credentials", () => {
+  it("keeps the legacy ALLOWED_CHAT_IDS entry for the deploy-time bridge", () => {
+    // The Telegram bridge runtime injected by deploy.ts still expects the
+    // legacy env name. Channel config values are persisted separately from
+    // provider credentials, but this credential key stays for deploy.ts.
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("ALLOWED_CHAT_IDS");
+  });
+
+  it("registers WECHAT_BOT_TOKEN alongside the other channel bot tokens", () => {
+    // The WeChat host-QR onboarding writes the captured token via
+    // saveCredential("WECHAT_BOT_TOKEN", ...). If this key is missing from
+    // the known list, sanitization and rotation will silently skip it and
+    // the token may leak through diagnostic dumps.
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("WECHAT_BOT_TOKEN");
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("TELEGRAM_BOT_TOKEN");
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("DISCORD_BOT_TOKEN");
+    expect(KNOWN_CREDENTIAL_ENV_KEYS).toContain("SLACK_BOT_TOKEN");
+  });
 });
 
 describe("host-side credential staging", () => {
@@ -286,11 +311,9 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     fs.mkdirSync(credsDir, { recursive: true });
     // Two megabytes of valid JSON, well above the 1 MiB sanity cap.
     const filler = "x".repeat(2 * 1024 * 1024);
-    fs.writeFileSync(
-      legacyFile,
-      JSON.stringify({ NVIDIA_API_KEY: `nvapi-${filler}` }),
-      { mode: 0o600 },
-    );
+    fs.writeFileSync(legacyFile, JSON.stringify({ NVIDIA_API_KEY: `nvapi-${filler}` }), {
+      mode: 0o600,
+    });
 
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const credentials = await importCredentialsModule(home);
@@ -317,10 +340,7 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     // A real credentials file at an unrelated path; the attacker plants a
     // symlink at credentials.json that points at it.
     const realFile = path.join(home, "real-creds.json");
-    fs.writeFileSync(
-      realFile,
-      JSON.stringify({ NVIDIA_API_KEY: "nvapi-attacker-controlled" }),
-    );
+    fs.writeFileSync(realFile, JSON.stringify({ NVIDIA_API_KEY: "nvapi-attacker-controlled" }));
     fs.symlinkSync(realFile, legacyFile);
 
     const credentials = await importCredentialsModule(home);
@@ -339,11 +359,9 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
     const credsDir = path.join(home, ".nemoclaw");
     const legacyFile = path.join(credsDir, "credentials.json");
     fs.mkdirSync(credsDir, { recursive: true });
-    fs.writeFileSync(
-      legacyFile,
-      JSON.stringify({ NVIDIA_API_KEY: "nvapi-survives-crash" }),
-      { mode: 0o600 },
-    );
+    fs.writeFileSync(legacyFile, JSON.stringify({ NVIDIA_API_KEY: "nvapi-survives-crash" }), {
+      mode: 0o600,
+    });
 
     // --- Process A: stage, then "crash" (we just abandon the env). ---
     {
@@ -435,6 +453,182 @@ describe("legacy credentials.json migration (two-phase: stage then remove)", () 
   });
 });
 
+describe("removeLegacyCredentialsFileIfEmpty (post-upgrade cleanup, #3105)", () => {
+  it("removes an empty {} legacy file (regression #3105)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "{}", { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("removes a file containing only unknown keys", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(
+      legacyFile,
+      JSON.stringify({ FOO: "bar", PATH: "/etc/passwd" }),
+      { mode: 0o600 },
+    );
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("removes a file where every allowlisted value is blank/whitespace", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(
+      legacyFile,
+      JSON.stringify({ NVIDIA_API_KEY: "", OPENAI_API_KEY: "   \r\n\t  " }),
+      { mode: 0o600 },
+    );
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("keeps a file with at least one non-empty allowlisted credential", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    const payload = JSON.stringify({ NVIDIA_API_KEY: "nvapi-real-secret", FOO: "bar" });
+    fs.writeFileSync(legacyFile, payload, { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+    expect(fs.existsSync(legacyFile)).toBe(true);
+    expect(fs.readFileSync(legacyFile, "utf-8")).toBe(payload);
+  });
+
+  it("returns false when no legacy file exists", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+  });
+
+  it("refuses to act on a symlinked legacy path (target untouched)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+
+    const victimFile = path.join(home, "victim.json");
+    fs.writeFileSync(victimFile, "{}", { mode: 0o600 });
+    fs.symlinkSync(victimFile, legacyFile);
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+    expect(fs.existsSync(legacyFile)).toBe(true);
+    expect(fs.existsSync(victimFile)).toBe(true);
+  });
+
+  it("leaves a corrupt legacy file in place for inspection", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "{not-json", { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+    expect(fs.existsSync(legacyFile)).toBe(true);
+  });
+
+  it("removes a 0-byte legacy file (CodeRabbit nit: whitespace-only doesn't throw)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "", { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("removes a whitespace-only legacy file", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "   \n\t\r\n  ", { mode: 0o600 });
+
+    const credentials = await importCredentialsModule(home);
+    expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+
+  it("returns false when the secure unlink silently fails (CodeRabbit nit)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    fs.writeFileSync(legacyFile, "{}", { mode: 0o600 });
+
+    // Simulate a swallowed unlink failure: secureUnlink internally calls
+    // fs.unlinkSync with try/catch, so a no-op stub leaves the file intact.
+    // The helper must detect this and return false rather than lying.
+    const spy = vi.spyOn(fs, "unlinkSync").mockImplementation(() => undefined);
+    try {
+      const credentials = await importCredentialsModule(home);
+      expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+
+    expect(fs.existsSync(legacyFile)).toBe(true);
+  });
+
+  it("zero-fills an empty file before unlinking (defence in depth)", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credsDir = path.join(home, ".nemoclaw");
+    const legacyFile = path.join(credsDir, "credentials.json");
+    fs.mkdirSync(credsDir, { recursive: true });
+    const cleartext = "{}";
+    fs.writeFileSync(legacyFile, cleartext, { mode: 0o600 });
+
+    const originalUnlink = fs.unlinkSync;
+    const captured: { bytes: Buffer | null } = { bytes: null };
+    const spy = vi.spyOn(fs, "unlinkSync").mockImplementation((p) => {
+      if (typeof p === "string" && p === legacyFile && captured.bytes === null) {
+        try {
+          captured.bytes = fs.readFileSync(p);
+        } catch {
+          /* file already gone */
+        }
+      }
+      return originalUnlink(p);
+    });
+
+    try {
+      const credentials = await importCredentialsModule(home);
+      expect(credentials.removeLegacyCredentialsFileIfEmpty()).toBe(true);
+    } finally {
+      spy.mockRestore();
+    }
+
+    const bytesAtUnlink = captured.bytes;
+    expect(bytesAtUnlink).not.toBeNull();
+    if (bytesAtUnlink !== null) {
+      expect(bytesAtUnlink.length).toBe(Buffer.byteLength(cleartext));
+      expect(bytesAtUnlink.every((b) => b === 0)).toBe(true);
+    }
+    expect(fs.existsSync(legacyFile)).toBe(false);
+  });
+});
+
 describe("prompt machinery (unchanged)", () => {
   it("exits cleanly when answers are staged through a pipe", () => {
     const script = `
@@ -450,7 +644,7 @@ describe("prompt machinery (unchanged)", () => {
       ${JSON.stringify(process.execPath)} -e 'const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "bin", "lib", "credentials"))}); (async()=>{ await prompt("first: "); await prompt("second: "); })().catch(err=>{ console.error(err); process.exit(1); });' < "$pipe"
     `;
 
-    const result = spawnSync("bash", ["-lc", script], {
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", script], {
       cwd: path.join(import.meta.dirname, ".."),
       encoding: "utf-8",
       timeout: 5000,
@@ -460,123 +654,242 @@ describe("prompt machinery (unchanged)", () => {
   });
 
   it("settles the outer prompt promise on secret prompt errors", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
-      "utf-8",
-    );
-
-    expect(source).toMatch(/return new Promise\(\(resolve, reject\) => \{/);
-    expect(source).toContain("promptSecret(question)");
-    expect(source).toContain('process.kill(process.pid, "SIGINT")');
-    expect(source).toMatch(/reject\((err|error)\);/);
+    const script = `
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
+process.stdin.isTTY = true;
+process.stderr.isTTY = true;
+process.stdin.ref = () => process.stdin;
+process.stdin.pause = () => process.stdin;
+process.stdin.unref = () => process.stdin;
+process.stdin.setRawMode = () => { throw new Error('raw mode unavailable'); };
+prompt('secret: ', { secret: true })
+  .then(() => { console.error('unexpected resolve'); process.exit(1); })
+  .catch((err) => { console.log('REJECTED=' + err.message); });
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("REJECTED=raw mode unavailable");
   });
 
-  it("re-raises SIGINT from standard readline prompts instead of treating it like an empty answer", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
-      "utf-8",
-    );
+  it("classifies secret credential prompts as navigation or credential intent", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-creds-"));
+    const credentials = await importCredentialsModule(home);
 
-    expect(source).toContain('rl.on("SIGINT"');
-    expect(source).toContain('new Error("Prompt interrupted")');
-    expect(source).toContain('process.kill(process.pid, "SIGINT")');
+    await expect(
+      credentials.readCredentialPrompt("secret: ", async () => "  back \r\n"),
+    ).resolves.toEqual({ kind: "back" });
+    await expect(
+      credentials.readCredentialPrompt("secret: ", async () => "QUIT"),
+    ).resolves.toEqual({ kind: "exit" });
+    await expect(
+      credentials.readCredentialPrompt("secret: ", async () => "?"),
+    ).resolves.toEqual({ kind: "help" });
+    await expect(
+      credentials.readCredentialPrompt("secret: ", async () => " help "),
+    ).resolves.toEqual({ kind: "help" });
+    await expect(
+      credentials.readCredentialPrompt("secret: ", async () => " sk-real-key "),
+    ).resolves.toEqual({ kind: "credential", value: "sk-real-key" });
+  });
+
+  it("re-prompts shared credential prompts after help input", () => {
+    const script = `
+const credentials = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
+const { createCredentialPromptHelpers } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "onboard", "credential-navigation.js"))});
+const answers = ["help", "sk-real-key"];
+const logs = [];
+credentials.prompt = async () => answers.shift() || "";
+const originalLog = console.log;
+console.log = (...args) => logs.push(args.join(" "));
+createCredentialPromptHelpers(() => { throw new Error("unexpected exit"); }).readValue("secret: ")
+  .then((value) => {
+    console.log = originalLog;
+    console.log(JSON.stringify({ value, logs, remaining: answers.length }));
+  })
+  .catch((err) => { console.log = originalLog; console.error(err && err.stack ? err.stack : String(err)); process.exit(1); });
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      encoding: "utf-8",
+      timeout: 5000,
+    });
+
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(String(result.stdout).trim());
+    expect(payload).toEqual({
+      value: "sk-real-key",
+      logs: ["  Type back to choose a different provider, or exit to quit."],
+      remaining: 0,
+    });
+  });
+
+  it("re-raises SIGINT from standard readline prompts instead of treating it like an empty answer", async () => {
+    const readline = require("node:readline") as typeof import("node:readline");
+    const rl = new EventEmitter() as EventEmitter & {
+      close: ReturnType<typeof vi.fn>;
+      question: ReturnType<typeof vi.fn>;
+    };
+    rl.close = vi.fn();
+    rl.question = vi.fn();
+
+    const createInterfaceSpy = vi.spyOn(readline, "createInterface").mockReturnValue(rl as any);
+    const killSpy = vi
+      .spyOn(process, "kill")
+      .mockImplementation((() => true) as typeof process.kill);
+    const stdinRef = vi.spyOn(process.stdin, "ref").mockImplementation(() => process.stdin);
+    const stdinPause = vi.spyOn(process.stdin, "pause").mockImplementation(() => process.stdin);
+    const stdinUnref = vi.spyOn(process.stdin, "unref").mockImplementation(() => process.stdin);
+
+    try {
+      const credentials = await import("../dist/lib/credentials/store.js");
+      const pending = credentials.prompt("question: ");
+      rl.emit("SIGINT");
+      await expect(pending).rejects.toMatchObject({
+        message: "Prompt interrupted",
+        code: "SIGINT",
+      });
+      expect(rl.close).toHaveBeenCalled();
+      expect(killSpy).toHaveBeenCalledWith(process.pid, "SIGINT");
+    } finally {
+      createInterfaceSpy.mockRestore();
+      killSpy.mockRestore();
+      stdinRef.mockRestore();
+      stdinPause.mockRestore();
+      stdinUnref.mockRestore();
+    }
   });
 
   it("normalizes credential values and keeps prompting on invalid NVIDIA API key prefixes", async () => {
     const credentials = await importCredentialsModule("/tmp");
     expect(credentials.normalizeCredentialValue("  nvapi-good-key\r\n")).toBe("nvapi-good-key");
 
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
-      "utf-8",
+    const script = `
+const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
+delete process.env.NVIDIA_API_KEY;
+ensureApiKey()
+  .then(() => console.log('STAGED=' + process.env.NVIDIA_API_KEY))
+  .catch((err) => { console.error(err && err.stack ? err.stack : String(err)); process.exit(1); });
+`;
+    const scriptFile = path.join(os.tmpdir(), `nemoclaw-ensure-api-key-${process.pid}.js`);
+    fs.writeFileSync(scriptFile, script, { mode: 0o700 });
+    const bash = `
+set -euo pipefail
+pipe="$(mktemp -u)"
+mkfifo "$pipe"
+trap 'rm -f "$pipe"' EXIT
+{ printf 'not-a-key\\n'; sleep 1; printf 'nvapi-good-key\\n'; } > "$pipe" &
+${JSON.stringify(process.execPath)} ${JSON.stringify(scriptFile)} < "$pipe"
+`;
+    let result: ReturnType<typeof spawnSync>;
+    try {
+      result = spawnSync("bash", ["--noprofile", "--norc", "-c", bash], {
+        encoding: "utf-8",
+        env: { ...process.env, NVIDIA_API_KEY: "" },
+        timeout: 5000,
+      });
+    } finally {
+      try {
+        fs.unlinkSync(scriptFile);
+      } catch {
+        /* ignore */
+      }
+    }
+    expect(result.status).toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain(
+      "Invalid NVIDIA API key. Must start with nvapi-",
     );
-    expect(source).toMatch(/while \(true\) \{/);
-    expect(source).toMatch(/Invalid NVIDIA API key\. Must start with nvapi-/);
-    expect(source).toMatch(/continue;/);
+    expect(result.stdout).toContain("STAGED=nvapi-good-key");
   });
 
-  it("masks secret input with asterisks while preserving the underlying value", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
-      "utf-8",
-    );
+  it("returns navigation from the NVIDIA API key prompt without staging it", () => {
+    const script = `
+const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
+delete process.env.NVIDIA_API_KEY;
+ensureApiKey()
+  .then((result) => console.log(JSON.stringify({ result, key: process.env.NVIDIA_API_KEY || null })))
+  .catch((err) => { console.error(err && err.stack ? err.stack : String(err)); process.exit(1); });
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      encoding: "utf-8",
+      input: "back\n",
+      env: { ...process.env, NVIDIA_API_KEY: "" },
+      timeout: 5000,
+    });
 
-    expect(source).toContain('output.write("*")');
-    expect(source).toContain('output.write("\\b \\b")');
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(String(result.stdout).trim().split("\n").pop() || "{}");
+    expect(payload).toEqual({ result: { kind: "back" }, key: null });
   });
 
-  it("releases stdin after a prompt resolves so the event loop drains on a TTY", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
-      "utf-8",
-    );
+  it("returns exit from the NVIDIA API key prompt without staging it", () => {
+    const script = `
+const { ensureApiKey } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
+delete process.env.NVIDIA_API_KEY;
+ensureApiKey()
+  .then((result) => console.log(JSON.stringify({ result, key: process.env.NVIDIA_API_KEY || null })))
+  .catch((err) => { console.error(err && err.stack ? err.stack : String(err)); process.exit(1); });
+`;
+    const result = spawnSync(process.execPath, ["-e", script], {
+      encoding: "utf-8",
+      input: "exit\n",
+      env: { ...process.env, NVIDIA_API_KEY: "" },
+      timeout: 5000,
+    });
 
-    // The previous TTY-only guard kept the event loop pinned on interactive
-    // runs — the wizard would not exit after its last prompt.
-    expect(source).not.toMatch(/cleanup\s*\(\s*\)\s*\{\s*rl\.close\(\);\s*if\s*\(\s*!process\.stdin\.isTTY\s*\)/);
-    expect(source).toMatch(
-      /function cleanup\(\)\s*\{\s*rl\.close\(\);[\s\S]*?process\.stdin\.pause\(\)[\s\S]*?process\.stdin\.unref\(\)/,
-    );
+    expect(result.status).toBe(0);
+    const payload = JSON.parse(String(result.stdout).trim().split("\n").pop() || "{}");
+    expect(payload).toEqual({ result: { kind: "exit" }, key: null });
   });
 
-  it("re-refs stdin before each prompt so a follow-up prompt is not stranded by a sticky unref()", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
-      "utf-8",
-    );
+  it("normal and secret prompts re-ref, cleanup stdin, and preserve masked input", () => {
+    const script = `
+const { prompt } = require(${JSON.stringify(path.join(import.meta.dirname, "..", "dist", "lib", "credentials", "store.js"))});
+const counts = { ref: 0, resume: 0, pause: 0, unref: 0, raw: [] };
+process.stdin.ref = () => { counts.ref += 1; return process.stdin; };
+process.stdin.resume = () => { counts.resume += 1; return process.stdin; };
+process.stdin.pause = () => { counts.pause += 1; return process.stdin; };
+process.stdin.unref = () => { counts.unref += 1; return process.stdin; };
+process.stdin.setRawMode = (value) => { counts.raw.push(value); return process.stdin; };
+process.stdin.isTTY = true;
+process.stderr.isTTY = true;
+(async () => {
+  const normalPrompt = prompt('normal: ');
+  setImmediate(() => process.stdin.emit('data', 'alpha\\n'));
+  const normal = await normalPrompt;
+  const secretPrompt = prompt('secret: ', { secret: true });
+  setImmediate(() => process.stdin.emit('data', 'bravo\\n'));
+  const secret = await secretPrompt;
+  console.log(JSON.stringify({ normal, secret, counts }));
+})().catch((err) => { console.error(err && err.stack ? err.stack : String(err)); process.exit(1); });
+`;
+    const scriptFile = path.join(os.tmpdir(), `nemoclaw-credential-prompt-${process.pid}.js`);
+    fs.writeFileSync(scriptFile, script, { mode: 0o700 });
+    let result: ReturnType<typeof spawnSync>;
+    try {
+      result = spawnSync(process.execPath, [scriptFile], {
+        encoding: "utf-8",
+        timeout: 5000,
+      });
+    } finally {
+      try {
+        fs.unlinkSync(scriptFile);
+      } catch {
+        /* ignore */
+      }
+    }
 
-    // unref() is sticky — readline.createInterface() will not re-ref by
-    // itself, so a sequential prompt after the first cleanup would see a
-    // detached stdin handle and the process could exit before the user
-    // can answer. The matching ref() at the top of `prompt()` undoes that.
-    expect(source).toMatch(
-      /process\.stdin\.ref\(\)[\s\S]*?readline\.createInterface\(\{\s*input:\s*process\.stdin/,
-    );
+    expect(result.status).toBe(0);
+    const parsed = JSON.parse(String(result.stdout).trim());
+    expect(parsed.normal).toBe("alpha");
+    expect(parsed.secret).toBe("bravo");
+    expect(parsed.counts.ref).toBeGreaterThanOrEqual(2);
+    expect(parsed.counts.pause).toBeGreaterThanOrEqual(2);
+    expect(parsed.counts.unref).toBeGreaterThanOrEqual(2);
+    expect(parsed.counts.raw).toContain(true);
+    expect(parsed.counts.raw.at(-1)).toBe(false);
+    expect(result.stderr).toContain("*****");
+    expect(result.stderr).not.toContain("bravo");
   });
-
-  it("re-refs stdin even on the secret-prompt branch so a follow-up secret read is not stranded", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
-      "utf-8",
-    );
-
-    // The ref() must come before the silent/secret branch so that a
-    // sequence of `prompt()` -> `prompt({ secret: true })` after a normal
-    // prompt's sticky unref() still has a ref'd handle for promptSecret().
-    const refIdx = source.search(/process\.stdin\.ref\(\);/);
-    const silentIdx = source.search(/const silent = opts\.secret === true/);
-    expect(refIdx).toBeGreaterThan(0);
-    expect(silentIdx).toBeGreaterThan(0);
-    expect(refIdx).toBeLessThan(silentIdx);
-  });
-
-  it("releases stdin in promptSecret() cleanup so a wizard ending on a secret prompt exits naturally", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
-      "utf-8",
-    );
-
-    // The secret reader uses raw mode + a `data` listener instead of
-    // readline. Its cleanup must still pause+unref or the wizard hangs the
-    // same way the readline path did.
-    expect(source).toMatch(
-      /promptSecret[\s\S]*?function cleanup\(\)\s*\{[\s\S]*?input\.pause\(\)[\s\S]*?input\.unref\(\)/,
-    );
-  });
-
-  it("re-refs stdin at the top of promptSecret() so a direct caller is self-contained", () => {
-    const source = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "credentials.ts"),
-      "utf-8",
-    );
-
-    // promptSecret() is exported and used directly elsewhere. Because its
-    // own cleanup unref()s stdin, two sequential direct calls (or any call
-    // after a prior unref) would strand the second read without an entry
-    // ref(). Assert ref() is the first effectful call inside the body.
-    expect(source).toMatch(
-      /export function promptSecret[\s\S]*?const input = process\.stdin;[\s\S]{0,400}?input\.ref\(\);[\s\S]*?function cleanup/,
-    );
-  });
-
 });

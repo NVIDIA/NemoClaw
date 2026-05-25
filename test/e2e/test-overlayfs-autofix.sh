@@ -62,6 +62,8 @@
 #   NVIDIA_API_KEY=nvapi-... \
 #     bash test/e2e/test-overlayfs-autofix.sh
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1500
@@ -94,6 +96,15 @@ section() {
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+print_summary() {
+  echo ""
+  printf '\033[1;33m=== Test summary ===\033[0m\n'
+  echo "  PASS:  $PASS"
+  echo "  FAIL:  $FAIL"
+  echo "  SKIP:  $SKIP"
+  echo "  TOTAL: $TOTAL"
+  echo ""
+}
 
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-overlayfs}"
 NEGATIVE_TIMEOUT="${NEMOCLAW_OVERLAYFS_E2E_NEGATIVE_TIMEOUT:-300}"
@@ -119,6 +130,13 @@ register_sandbox_for_teardown "$SANDBOX_NAME"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+if [ "$(uname -s)" = "Linux" ] && grep -q 'return platform === "linux";' "$REPO_ROOT/src/lib/onboard.ts"; then
+  section "Applicability"
+  skip "OpenShell Docker-driver onboarding is active on Linux; k3s overlayfs auto-fix is not in the runtime path"
+  print_summary
+  exit 0
+fi
 
 # ── Daemon revert ───────────────────────────────────────────────────
 # Always restore the original daemon.json on exit so we don't leave the
@@ -523,13 +541,7 @@ fi
 # ══════════════════════════════════════════════════════════════════
 # Test summary
 # ══════════════════════════════════════════════════════════════════
-echo ""
-printf '\033[1;33m=== Test summary ===\033[0m\n'
-echo "  PASS:  $PASS"
-echo "  FAIL:  $FAIL"
-echo "  SKIP:  $SKIP"
-echo "  TOTAL: $TOTAL"
-echo ""
+print_summary
 
 if [ $FAIL -gt 0 ]; then
   exit 1

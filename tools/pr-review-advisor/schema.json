@@ -1,0 +1,187 @@
+{
+  "SPDX-FileCopyrightText": "Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.",
+  "SPDX-License-Identifier": "Apache-2.0",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/tools/pr-review-advisor/schema.json",
+  "title": "NemoClaw PR Review Advisor Result",
+  "type": "object",
+  "required": [
+    "version",
+    "baseRef",
+    "headRef",
+    "headSha",
+    "changedFiles",
+    "summary",
+    "findings",
+    "acceptanceCoverage",
+    "securityCategories",
+    "sourceOfTruthReview",
+    "testDepth",
+    "positives",
+    "reviewCompleteness"
+  ],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "baseRef": { "type": "string" },
+    "headRef": { "type": "string" },
+    "headSha": { "type": "string" },
+    "changedFiles": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "summary": {
+      "type": "object",
+      "required": ["recommendation", "confidence", "oneLine"],
+      "properties": {
+        "recommendation": {
+          "enum": [
+            "merge_as_is",
+            "merge_after_fixes",
+            "needs_rework",
+            "blocked",
+            "superseded",
+            "info_only"
+          ]
+        },
+        "confidence": { "enum": ["low", "medium", "high"] },
+        "oneLine": { "type": "string" },
+        "topItem": { "type": "string" },
+        "sinceLastReview": {
+          "type": "object",
+          "required": ["resolved", "stillApplies", "newItems"],
+          "properties": {
+            "resolved": { "type": "integer", "minimum": 0 },
+            "stillApplies": { "type": "integer", "minimum": 0 },
+            "newItems": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+    "acceptanceCoverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["clause", "status", "evidence"],
+        "properties": {
+          "clause": { "type": "string" },
+          "status": { "enum": ["met", "partial", "missing", "unknown"] },
+          "evidence": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "securityCategories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["category", "verdict", "justification"],
+        "properties": {
+          "category": { "type": "string" },
+          "verdict": { "enum": ["pass", "warning", "fail"] },
+          "justification": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "sourceOfTruthReview": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "surface",
+          "status",
+          "invalidState",
+          "sourceBoundary",
+          "whyNotSourceFix",
+          "regressionTest",
+          "removalCondition",
+          "evidence"
+        ],
+        "properties": {
+          "surface": { "type": "string" },
+          "status": {
+            "enum": [
+              "not_applicable",
+              "satisfied",
+              "needs_followup",
+              "missing"
+            ]
+          },
+          "invalidState": { "type": "string" },
+          "sourceBoundary": { "type": "string" },
+          "whyNotSourceFix": { "type": "string" },
+          "regressionTest": { "type": "string" },
+          "removalCondition": { "type": "string" },
+          "evidence": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "testDepth": {
+      "type": "object",
+      "required": ["verdict", "rationale", "suggestedTests"],
+      "properties": {
+        "verdict": {
+          "enum": ["unit_sufficient", "mocks_recommended", "runtime_validation_recommended", "unknown"]
+        },
+        "rationale": { "type": "string" },
+        "suggestedTests": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "positives": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "reviewCompleteness": {
+      "type": "object",
+      "required": ["limitations", "requiresHumanReview"],
+      "properties": {
+        "limitations": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "requiresHumanReview": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": ["severity", "category", "file", "line", "title", "description", "recommendation", "evidence"],
+      "properties": {
+        "severity": { "enum": ["blocker", "warning", "suggestion"] },
+        "category": {
+          "enum": [
+            "security",
+            "correctness",
+            "tests",
+            "architecture",
+            "workflow",
+            "docs",
+            "scope",
+            "acceptance"
+          ]
+        },
+        "file": { "type": ["string", "null"] },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "recommendation": { "type": "string" },
+        "evidence": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

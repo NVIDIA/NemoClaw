@@ -25,6 +25,7 @@
 #   NEMOCLAW_POLICY_PRESETS=npm,pypi                   — policy presets
 #   RUN_E2E_CLOUD_ONBOARD_INTERACTIVE_INSTALL=0        — set 0 for non-interactive (default), 1 for expect
 #   NEMOCLAW_INSTALL_SCRIPT_URL                        — override public installer URL
+#   NEMOCLAW_INSTALL_REF                               — Git ref cloned by public installer
 #   NEMOCLAW_PUBLIC_INSTALL_CWD                        — override temp cwd for public install
 #   E2E_CLOUD_ONBOARD_INSTALL_LOG                      — install log path
 #
@@ -84,6 +85,8 @@ PUBLIC_INSTALL_CWD="${NEMOCLAW_PUBLIC_INSTALL_CWD:-}"
 # Source shared teardown helper
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "${E2E_DIR}/lib/sandbox-teardown.sh"
+# shellcheck source=test/e2e/lib/install-path-refresh.sh
+. "${E2E_DIR}/lib/install-path-refresh.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
 # ══════════════════════════════════════════════════════════════════════
@@ -201,16 +204,11 @@ else
 fi
 
 # Source shell profile to pick up nvm/PATH changes
-if [ -f "$HOME/.bashrc" ]; then
-  # shellcheck source=/dev/null
-  source "$HOME/.bashrc" 2>/dev/null || true
-fi
+nemoclaw_refresh_install_env
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 # shellcheck source=/dev/null
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-if [ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-  export PATH="$HOME/.local/bin:$PATH"
-fi
+nemoclaw_ensure_local_bin_on_path
 
 if [ "$install_exit" -eq 0 ]; then
   pass "Public install completed (exit 0)"

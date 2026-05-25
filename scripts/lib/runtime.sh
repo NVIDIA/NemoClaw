@@ -243,10 +243,10 @@ _validate_port() {
       return 1
       ;;
   esac
-  [ "$value" -ge 1024 ] && [ "$value" -le 65535 ] || {
+  if ! { [ "$value" -ge 1024 ] && [ "$value" -le 65535 ]; }; then
     printf 'Invalid %s=%s (expected 1024-65535)\n' "$name" "$value" >&2
     return 1
-  }
+  fi
 }
 
 get_local_provider_base_url() {

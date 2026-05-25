@@ -2,33 +2,20 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SECRET_PATTERNS, EXPECTED_SHELL_PREFIXES } from "../src/lib/secret-patterns";
-import { redact as debugRedact } from "../src/lib/debug";
-import { redactSensitiveText } from "../src/lib/onboard-session";
+import { spawnSync } from "node:child_process";
+import { redact as debugRedact } from "../src/lib/diagnostics/debug";
+import { redactSensitiveText } from "../src/lib/state/onboard-session";
 // runner.ts uses CJS exports — import via dist
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const { redact: runnerRedact } = require("../dist/lib/runner");
 
-const DEBUG_SH = readFileSync(join(import.meta.dirname, "..", "scripts", "debug.sh"), "utf-8");
-
-const RUNNER_TS = readFileSync(join(import.meta.dirname, "..", "src", "lib", "runner.ts"), "utf-8");
-
-function requireMatch(match: RegExpMatchArray | null): RegExpMatchArray {
-  expect(match).toBeTruthy();
-  if (!match) {
-    throw new Error("Expected regex match to be present");
-  }
-  return match;
-}
-
-const DEBUG_TS = readFileSync(join(import.meta.dirname, "..", "src", "lib", "debug.ts"), "utf-8");
-
 describe("secret redaction consistency (#1736)", () => {
-  // Tokens whose prefix is a literal string that must appear in debug.sh.
+  // Tokens whose prefix is a literal string that must be redacted by the shared debug redactor.
   const LITERAL_PREFIX_TOKENS = [
     { name: "NVIDIA API key", token: "nvapi-" + "a".repeat(30) },
     { name: "NVIDIA Cloud Functions", token: "nvcf-" + "b".repeat(30) },
@@ -39,10 +26,8 @@ describe("secret redaction consistency (#1736)", () => {
     },
   ];
 
-  // Tokens added for messaging integrations (#2336). debug.sh uses
-  // character-class regexes for these, so the prefix-containment sub-test
-  // does not apply — they are covered by the runner/debug TS blocks and
-  // by the EXPECTED_SHELL_PREFIXES substring check (xox) where applicable.
+  // Tokens added for messaging integrations (#2336). They are covered by
+  // the shared runner/debug TypeScript redactors.
   const MESSAGING_TOKENS = [
     { name: "Slack bot token", token: "xoxb-" + "1".repeat(12) + "-" + "e".repeat(24) },
     { name: "Slack app token", token: "xapp-" + "1".repeat(12) + "-" + "f".repeat(24) },
@@ -73,31 +58,95 @@ describe("secret redaction consistency (#1736)", () => {
     }
   });
 
-  describe("runner.ts imports from the unified redact module (#2381)", () => {
-    it("uses the shared module", () => {
-      expect(RUNNER_TS).toContain("./redact");
-    });
-  });
-
-  describe("debug.ts imports from the unified redact module (#2381)", () => {
-    it("uses the shared module", () => {
-      expect(DEBUG_TS).toContain("./redact");
+  describe("redactor consistency (#2381)", () => {
+    it("runner and debug redactors both mask shared token patterns", () => {
+      const text = "provider failed with NVIDIA_API_KEY=nvapi-" + "a".repeat(30);
+      expect(runnerRedact(text)).not.toContain("nvapi-");
+      expect(debugRedact(text)).not.toContain("nvapi-");
     });
   });
 
   describe("debug.sh delegates to node when available (#2381)", () => {
-    it("references the compiled redact module", () => {
-      expect(DEBUG_SH).toContain("dist/lib/redact.js");
-      expect(DEBUG_SH).toContain("redactFull");
-    });
+    it("redacts diagnostic command output with the compiled redactor", () => {
+      const tmp = mkdtempSync(join(tmpdir(), "nemoclaw-debug-redact-"));
+      const fakeBin = join(tmp, "bin");
+      mkdirSync(fakeBin);
+      writeFileSync(
+        join(fakeBin, "date"),
+        "#!/bin/sh\necho NVIDIA_API_KEY=nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+        { mode: 0o755 },
+      );
+      try {
+        const result = spawnSync("bash", [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"], {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            NEMOCLAW_NODE: process.execPath,
+            TMPDIR: tmp,
+            PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          },
+          timeout: 30_000,
+        });
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain("NVIDIA_API_KEY=<REDACTED>");
+        expect(result.stdout).not.toContain("nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa");
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    }, 40_000);
   });
 
-  describe("debug.sh sed fallback includes essential prefixes", () => {
-    for (const prefix of EXPECTED_SHELL_PREFIXES) {
-      it(`includes ${prefix} pattern`, () => {
-        expect(DEBUG_SH).toContain(prefix);
-      });
-    }
+  describe("debug.sh wrapper locates node from env", () => {
+    it("uses NEMOCLAW_NODE and the compiled redactor when node is absent from PATH", () => {
+      const tmp = mkdtempSync(join(tmpdir(), "nemoclaw-debug-node-env-redact-"));
+      const fakeBin = join(tmp, "bin");
+      mkdirSync(fakeBin);
+      for (const name of [
+        "cat",
+        "dmesg",
+        "free",
+        "head",
+        "ps",
+        "sh",
+        "sort",
+        "tail",
+        "uname",
+        "uptime",
+      ]) {
+        try {
+          const target = spawnSync("bash", ["--noprofile", "--norc", "-c", `command -v ${name}`], {
+            encoding: "utf-8",
+          }).stdout.trim();
+          if (target) symlinkSync(target, join(fakeBin, name));
+        } catch {
+          /* ignore optional command */
+        }
+      }
+      writeFileSync(
+        join(fakeBin, "date"),
+        "#!/bin/sh\necho nvapi-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa ghp_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb sk-cccccccccccccccccccccccc\n",
+        { mode: 0o755 },
+      );
+      try {
+        const result = spawnSync("/bin/bash", [join(import.meta.dirname, "..", "scripts", "debug.sh"), "--quick"], {
+          encoding: "utf-8",
+          env: {
+            ...process.env,
+            NEMOCLAW_NODE: process.execPath,
+            TMPDIR: tmp,
+            PATH: fakeBin,
+          },
+          timeout: 30_000,
+        });
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain("<REDACTED>");
+        expect(result.stdout).not.toContain("nvapi-");
+        expect(result.stdout).not.toContain("ghp_");
+        expect(result.stdout).not.toContain("sk-cccc");
+      } finally {
+        rmSync(tmp, { recursive: true, force: true });
+      }
+    });
   });
 
   describe("onboard-session redactSensitiveText (#2336)", () => {

@@ -9,9 +9,11 @@ This means you can interact with the full NemoClaw documentation as skills insid
 Ask your assistant a question about NemoClaw and it responds with the same guidance found in these docs, adapted to your current situation.
 Skills cover installation, inference configuration, network policy management, monitoring, deployment, security, workspace management, and the CLI reference.
 
-> **Note:** If you are a contributor and have cloned the full NemoClaw repository, the full set of skills including contributor and maintainer skills are already available at the project root.
-> Open the `NemoClaw` directory in your coding assistant and the skills load automatically.
-> This page is for users who installed NemoClaw with the installer and do not have a local clone.
+**Note:**
+
+If you are a contributor and have cloned the full NemoClaw repository, the full set of skills including contributor and maintainer skills are already available at the project root.
+Open the `NemoClaw` directory in your coding assistant and the skills load automatically.
+This page is for users who installed NemoClaw with the installer and do not have a local clone.
 
 ## Get the Skills
 
@@ -48,7 +50,7 @@ The following user skills ship with NemoClaw.
 | `nemoclaw-user-monitor-sandbox` | Check sandbox health, read logs, and trace agent behavior to diagnose problems. |
 | `nemoclaw-user-deploy-remote` | Deploy NemoClaw to a remote GPU instance, set up the Telegram bridge, and review sandbox container hardening. |
 | `nemoclaw-user-configure-security` | Review the risk framework for every configurable security control, understand credential storage, and assess posture trade-offs. |
-| `nemoclaw-user-workspace` | Back up and restore OpenClaw workspace files (soul.md, identity.md, memory.md, agents.md) and understand file persistence across sandbox restarts. |
+| `nemoclaw-user-manage-sandboxes` | Manage day-two sandbox operations, including status, logs, diagnostics, rebuilds, upgrades, messaging channels, workspace files, backup, and restore. |
 | `nemoclaw-user-reference` | CLI command reference, plugin and blueprint architecture, baseline network policies, and troubleshooting guide. |
 
 ## Example Questions and Triggered Skills
@@ -66,7 +68,7 @@ Examples of questions your assistant can answer with these skills:
 | "Show me the sandbox logs." | `nemoclaw-user-monitor-sandbox` |
 | "How do I deploy NemoClaw to a remote GPU?" | `nemoclaw-user-deploy-remote` |
 | "What security controls can I configure?" | `nemoclaw-user-configure-security` |
-| "Back up my agent workspace files." | `nemoclaw-user-workspace` |
+| "Back up my agent workspace files." | `nemoclaw-user-manage-sandboxes` |
 | "What CLI commands are available?" | `nemoclaw-user-reference` |
 
 You can also reference a skill directly by name if you know which one you need.

@@ -14,7 +14,7 @@
 #   2. Install Ollama binary (do NOT start it — onboard handles that)
 #   3. First onboard — install.sh --non-interactive with NEMOCLAW_PROVIDER=ollama
 #   4. Verify sandbox, proxy, token file, inference through sandbox
-#   5. Second onboard (re-onboard) — nemoclaw onboard --non-interactive
+#   5. Second onboard (re-onboard) — nemoclaw onboard --non-interactive --yes
 #   6. Token consistency verification (the core of this test):
 #        - Read ~/.nemoclaw/ollama-proxy-token
 #        - Verify proxy accepts that token (not 401)
@@ -42,6 +42,8 @@
 #   NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 \
 #     bash test/e2e/test-gpu-double-onboard.sh
 
+# ShellCheck cannot see EXIT trap invocations of cleanup helpers in this E2E script.
+# shellcheck disable=SC2317
 set -uo pipefail
 
 export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1800
@@ -200,7 +202,7 @@ else
 fi
 
 # If the Ollama installer started a system service, stop it so onboard
-# can start Ollama with OLLAMA_HOST=0.0.0.0:11434 (required for containers).
+# can restart Ollama on loopback and expose only the authenticated proxy to containers.
 if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
   info "Ollama service is running — attempting to stop for clean onboard..."
   systemctl --user stop ollama 2>/dev/null || true
@@ -293,9 +295,12 @@ else
   fail "Ollama not running — onboard should have started it"
 fi
 
-# 4d: Auth proxy is running
-if curl -sf --connect-timeout 3 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-  pass "Auth proxy running on :${PROXY_PORT}"
+# 4d: Auth proxy is running. After #3338 an alive proxy answers 401 on /api/tags
+# without a Bearer token, so we accept any HTTP response as proof of life.
+PROXY_LIVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+  "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || PROXY_LIVE_STATUS="000"
+if [[ "$PROXY_LIVE_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+  pass "Auth proxy running on :${PROXY_PORT} (HTTP $PROXY_LIVE_STATUS)"
 else
   fail "Auth proxy not running on :${PROXY_PORT}"
 fi
@@ -316,7 +321,7 @@ fi
 # 4f: Record the first-onboard token for later comparison
 TOKEN_AFTER_FIRST=""
 if [ -f "$TOKEN_FILE" ]; then
-  TOKEN_AFTER_FIRST=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+  TOKEN_AFTER_FIRST=$(tr -d '[:space:]' <"$TOKEN_FILE")
   info "Token after first onboard: ${TOKEN_AFTER_FIRST:0:8}..."
 fi
 
@@ -381,12 +386,12 @@ fi
 # ══════════════════════════════════════════════════════════════════
 section "Phase 5: Second onboard (re-onboard via nemoclaw onboard)"
 
-info "Running nemoclaw onboard --non-interactive with NEMOCLAW_RECREATE_SANDBOX=1..."
+info "Running nemoclaw onboard --non-interactive --yes with NEMOCLAW_RECREATE_SANDBOX=1..."
 info "This exercises the exact code path from issue #2553:"
 info "  startOllamaAuthProxy() → killStaleProxy() → token generation → persistProxyToken()"
 
 export NEMOCLAW_RECREATE_SANDBOX=1
-nemoclaw onboard --non-interactive >"$REONBOARD_LOG" 2>&1 &
+nemoclaw onboard --non-interactive --yes >"$REONBOARD_LOG" 2>&1 &
 reonboard_pid=$!
 tail -f "$REONBOARD_LOG" --pid=$reonboard_pid 2>/dev/null &
 tail_pid=$!
@@ -421,7 +426,7 @@ else
 fi
 
 # 6b: Read the post-re-onboard token
-TOKEN_AFTER_SECOND=$(cat "$TOKEN_FILE" | tr -d '[:space:]')
+TOKEN_AFTER_SECOND=$(tr -d '[:space:]' <"$TOKEN_FILE")
 info "Token after re-onboard: ${TOKEN_AFTER_SECOND:0:8}..."
 
 # 6c: Token file permissions preserved
@@ -432,9 +437,12 @@ else
   fail "Token file permissions: expected 600, got $PERMS"
 fi
 
-# 6d: Auth proxy is running after re-onboard
-if curl -sf --connect-timeout 3 "http://127.0.0.1:${PROXY_PORT}/api/tags" >/dev/null 2>&1; then
-  pass "Auth proxy running on :${PROXY_PORT} after re-onboard"
+# 6d: Auth proxy is running after re-onboard. Same "any HTTP response = alive"
+# pattern as 4d — /api/tags now requires auth per #3338.
+PROXY_LIVE_STATUS=$(curl -s -o /dev/null -w "%{http_code}" --connect-timeout 3 \
+  "http://127.0.0.1:${PROXY_PORT}/api/tags" 2>/dev/null) || PROXY_LIVE_STATUS="000"
+if [[ "$PROXY_LIVE_STATUS" =~ ^[1-9][0-9]{2}$ ]]; then
+  pass "Auth proxy running on :${PROXY_PORT} after re-onboard (HTTP $PROXY_LIVE_STATUS)"
 else
   fail "Auth proxy not running after re-onboard"
 fi
@@ -555,7 +563,7 @@ echo "  What this tested (issue #2553 regression):"
 echo "    - GPU detection (nvidia-smi)"
 echo "    - Ollama binary install"
 echo "    - First onboard: install.sh → Ollama + auth proxy + sandbox + inference"
-echo "    - Second onboard (re-onboard): nemoclaw onboard --non-interactive"
+echo "    - Second onboard (re-onboard): nemoclaw onboard --non-interactive --yes"
 echo "    - TOKEN CONSISTENCY: persisted token matches running proxy after re-onboard"
 echo "    - Proxy auth enforcement: accept correct token, reject unauth + wrong token"
 echo "    - End-to-end inference through sandbox after re-onboard"

@@ -3,13 +3,26 @@
 
 import { defineConfig } from "vitest/config";
 
+import { testTimeout } from "./test/helpers/timeouts";
+
+const isGithubActions = process.env.GITHUB_ACTIONS === "true";
+const isCi = isGithubActions || process.env.CI === "true" || process.env.CI === "1";
+
 export default defineConfig({
   test: {
+    env: {
+      NEMOCLAW_DISABLE_GATEWAY_DRIFT_PREFLIGHT: "1",
+    },
+    // CI logs are easiest to scan when test chatter stays quiet and failures
+    // surface as GitHub annotations at the relevant file and line.
+    reporters: isGithubActions ? ["github-actions"] : ["default"],
+    silent: isCi,
+    hideSkippedTests: isCi,
     projects: [
       {
         test: {
           name: "cli",
-          testTimeout: Number(process.env.NEMOCLAW_TEST_TIMEOUT || 15000),
+          testTimeout: testTimeout(),
           include: ["test/**/*.test.{js,ts}", "src/**/*.test.ts"],
           exclude: [
             "**/node_modules/**",
@@ -30,7 +43,9 @@ export default defineConfig({
           // Slow tests that spawn real bash install.sh processes.
           // Run in CI or explicitly: npx vitest run --project installer-integration
           // Excluded from pre-commit/pre-push to avoid flaky timeouts.
-          enabled: process.env.CI === "true" || process.env.CI === "1" ||
+          enabled:
+            process.env.CI === "true" ||
+            process.env.CI === "1" ||
             process.env.NEMOCLAW_RUN_INSTALLER_TESTS === "1",
         },
       },
@@ -42,19 +57,38 @@ export default defineConfig({
       },
       {
         test: {
+          name: "e2e-scenario-framework",
+          testTimeout: testTimeout(),
+          include: ["test/e2e/scenario-framework-tests/**/*.test.ts"],
+        },
+      },
+      {
+        test: {
           name: "e2e-branch-validation",
           include: ["test/e2e/brev-e2e.test.ts"],
-          // Branch validation E2E: installs from source on a Brev instance.
-          // Only run when explicitly targeted: npx vitest run --project e2e-branch-validation
-          enabled: !!process.env.BREV_API_TOKEN,
+          // Branch validation E2E: rsyncs the branch over a Brev instance
+          // provisioned from the published NemoClaw launchable image and
+          // runs the selected test suites. Only run when explicitly
+          // targeted: `npx vitest run --project e2e-branch-validation`.
+          //
+          // Override the project-root `silent: isCi` setting — diagnostic
+          // output from createBrevInstance / waitForSsh / waitForLaunchableReady
+          // is essential for debugging Brev provisioning timing and the
+          // overall suite runs in a single `describe` block, so there's no
+          // test chatter to suppress anyway.
+          silent: false,
+          // Gate on the new long-lived API key secret. Historically this was
+          // BREV_API_TOKEN (short-lived refresh token); renamed in the
+          // nightly-enable PR to match the new `brev login --api-key` flow.
+          enabled: !!process.env.BREV_API_KEY || !!process.env.BREV_API_TOKEN,
         },
       },
     ],
     coverage: {
       provider: "v8",
-      include: ["nemoclaw/src/**/*.ts"],
-      exclude: ["**/*.test.ts"],
-      reporter: ["text", "json-summary"],
+      include: ["src/**/*.ts", "bin/**/*.js", "nemoclaw/src/**/*.ts"],
+      exclude: ["**/*.test.ts", "dist/**"],
+      reporter: ["text-summary", "json-summary"],
     },
   },
 });

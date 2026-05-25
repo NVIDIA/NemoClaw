@@ -127,6 +127,7 @@ const childProcess = require("child_process");
 const runner = require(${runnerPath});
 
 const proxySpawns = [];
+let curlEnv = null;
 childProcess.spawn = (...args) => {
   proxySpawns.push(args);
   return { pid: 5000, unref() {} };
@@ -141,7 +142,10 @@ runner.run = () => ({ status: 0, stdout: "", stderr: "" });
 
 const origSpawnSync = childProcess.spawnSync;
 childProcess.spawnSync = (...args) => {
-  if (args[0] === "curl") return { status: 0, stdout: "200", stderr: "" };
+  if (args[0] === "curl") {
+    curlEnv = args[2] && args[2].env;
+    return { status: 0, stdout: "200", stderr: "" };
+  }
   return origSpawnSync(...args);
 };
 
@@ -152,7 +156,7 @@ fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "4242\n", { mode:
 
 const onboard = require(${onboardPath});
 onboard.ensureOllamaAuthProxy();
-console.log(JSON.stringify({ proxySpawns }));
+console.log(JSON.stringify({ proxySpawns, curlEnv }));
 `;
     fs.writeFileSync(scriptPath, script);
 
@@ -161,13 +165,23 @@ console.log(JSON.stringify({ proxySpawns }));
       encoding: "utf-8",
       env: {
         ...process.env,
+        HTTP_PROXY: "http://proxy.invalid:8888",
         HOME: tmpDir,
+        NVIDIA_API_KEY: "must-not-leak",
+        NO_PROXY: "",
       },
     });
 
     assert.equal(result.status, 0, result.stderr);
-    const payload = parseStdoutJson<{ proxySpawns: object[] }>(result.stdout);
+    const payload = parseStdoutJson<{
+      curlEnv: Record<string, string>;
+      proxySpawns: object[];
+    }>(result.stdout);
     assert.equal(payload.proxySpawns.length, 0);
+    assert.equal(payload.curlEnv.NVIDIA_API_KEY, undefined);
+    assert.equal(payload.curlEnv.HTTP_PROXY, "http://proxy.invalid:8888");
+    assert.match(payload.curlEnv.NO_PROXY, /(^|,)127\.0\.0\.1(,|$)/);
+    assert.match(payload.curlEnv.NO_PROXY, /(^|,)localhost(,|$)/);
   });
 
   it("keeps the existing proxy when the token is accepted but the backend is unavailable", () => {
@@ -225,6 +239,49 @@ console.log(JSON.stringify({ proxySpawns }));
     assert.equal(result.status, 0, result.stderr);
     const payload = parseStdoutJson<{ proxySpawns: object[] }>(result.stdout);
     assert.equal(payload.proxySpawns.length, 0);
+  });
+
+  it("reports reachable non-2xx proxy health responses distinctly", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-ollama-proxy-404-"));
+    const scriptPath = path.join(tmpDir, "proxy-health-404-check.js");
+    const proxyPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"));
+
+    const script = String.raw`
+const fs = require("node:fs");
+const path = require("node:path");
+const childProcess = require("child_process");
+
+const origSpawnSync = childProcess.spawnSync;
+childProcess.spawnSync = (...args) => {
+  if (args[0] === "curl") return { status: 0, stdout: "404", stderr: "" };
+  return origSpawnSync(...args);
+};
+
+const stateDir = path.join(process.env.HOME, ".nemoclaw");
+fs.mkdirSync(stateDir, { recursive: true });
+fs.writeFileSync(path.join(stateDir, "ollama-proxy-token"), "persisted-token\n", { mode: 0o600 });
+
+const proxy = require(${proxyPath});
+console.log(JSON.stringify(proxy.probeOllamaAuthProxyHealth()));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseStdoutJson<{ detail: string; ok: boolean }>(result.stdout);
+    assert.equal(payload.ok, false);
+    assert.match(payload.detail, /reachable/);
+    assert.match(payload.detail, /HTTP 404/);
+    assert.doesNotMatch(payload.detail, /not reachable/);
   });
 
   it("restarts the existing proxy when it rejects the persisted token", () => {

@@ -4,10 +4,11 @@
 import { describe, it, expect } from "vitest";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { execTimeout } from "./helpers/timeouts";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const ONBOARD_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "onboard.js"));
-const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials.js"));
+const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js"));
 
 type Preset = {
   name: string;
@@ -72,7 +73,7 @@ presetsCheckboxSelector(presets, initialSelected)
   return spawnSync(process.execPath, ["-e", script], {
     cwd: REPO_ROOT,
     encoding: "utf-8",
-    timeout: Number(process.env.NEMOCLAW_EXEC_TIMEOUT || 5000),
+    timeout: execTimeout(5_000),
     env: {
       ...process.env,
       NEMOCLAW_TEST_PRESETS: JSON.stringify(presets),

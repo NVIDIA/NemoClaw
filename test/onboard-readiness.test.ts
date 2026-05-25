@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { describe, it, expect } from "vitest";
-import { applyPreset, buildPolicySetCommand, buildPolicyGetCommand } from "../dist/lib/policies";
+import { applyPreset, buildPolicySetCommand, buildPolicyGetCommand } from "../dist/lib/policy";
 
 type OnboardReadinessInternals = {
   hasStaleGateway: (output: string | null | undefined) => boolean;
@@ -85,6 +85,16 @@ describe("sandbox readiness parsing", () => {
   it("handles Ready sandbox with extra status columns", () => {
     expect(
       isSandboxReady("my-assistant   Ready   Running   2m ago   1/1", "my-assistant"),
+    ).toBeTruthy();
+  });
+
+  it("treats Running phase as alive (Brev launchable deployments)", () => {
+    expect(isSandboxReady("my-assistant   Running   2m ago", "my-assistant")).toBeTruthy();
+  });
+
+  it("treats Running phase with ANSI codes as alive", () => {
+    expect(
+      isSandboxReady("\x1b[1mmy-assistant\x1b[0m   \x1b[33mRunning\x1b[0m   2m ago", "my-assistant"),
     ).toBeTruthy();
   });
 

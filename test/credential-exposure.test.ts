@@ -7,168 +7,143 @@
 // there is no reason to pass the secret itself on the command line where it
 // would be visible in `ps aux` output.
 
-import fs from "node:fs";
-import path from "node:path";
+import { createRequire } from "node:module";
 import { describe, it, expect } from "vitest";
+import { buildSubprocessEnv as buildCliSubprocessEnv } from "../src/lib/subprocess-env";
+import {
+  buildSubprocessEnv as buildPluginSubprocessEnv,
+  withLocalNoProxy as withPluginLocalNoProxy,
+} from "../nemoclaw/src/lib/subprocess-env";
+import { withLocalNoProxy as withCliLocalNoProxy } from "../src/lib/subprocess-env";
+import { getCurlTimingArgs } from "../src/lib/adapters/http/probe";
 
-const ONBOARD_JS = path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts");
-const ONBOARD_PROVIDERS_JS = path.join(import.meta.dirname, "..", "src", "lib", "onboard-providers.ts");
-const RUNNER_TS = path.join(import.meta.dirname, "..", "nemoclaw", "src", "blueprint", "runner.ts");
-const SERVICES_TS = path.join(import.meta.dirname, "..", "src", "lib", "services.ts");
-
-// Matches --credential followed by a value containing "=" (i.e. KEY=VALUE).
-// Catches quoted KEY=VALUE patterns in JS and Python f-string interpolation.
-// Assumes credentials are always in quoted strings (which matches our codebase).
-// NOTE: unquoted forms like `--credential KEY=VALUE` would not be detected.
-const JS_EXPOSURE_RE = /--credential\s+[^"]*"[A-Z_]+=/;
-const JS_CREDENTIAL_CONCAT_RE = /--credential.*=.*process\.env\./;
-// TS pattern: --credential with template literal interpolation containing "="
-const TS_EXPOSURE_RE = /--credential.*=.*\$\{/;
+const require = createRequire(import.meta.url);
+const { buildProviderArgs } = require("../dist/lib/onboard/providers.js") as {
+  buildProviderArgs: (
+    action: "create" | "update",
+    name: string,
+    type: string,
+    credentialEnv: string,
+    baseUrl: string | null,
+  ) => string[];
+};
 
 describe("credential exposure in process arguments", () => {
-  it("onboard.js must not pass KEY=VALUE to --credential", () => {
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
-    const lines = src.split("\n");
-
-    const violations = lines.filter(
-      (line) =>
-        (JS_EXPOSURE_RE.test(line) || JS_CREDENTIAL_CONCAT_RE.test(line)) &&
-        // Allow comments that describe the old pattern
-        !line.trimStart().startsWith("//"),
-    );
-
-    expect(violations).toEqual([]);
-  });
-
-  it("runner.ts must not spread full process.env into subprocess", () => {
-    const src = fs.readFileSync(RUNNER_TS, "utf-8");
-
-    // Strip comments so that documented bad patterns don't trigger false positives.
-    // Scan the full source (not line-by-line) to catch multiline spreads.
-    const uncommented = src.replace(/\/\/.*$/gm, "");
-    const spreadRe = /env\s*:\s*\{[\s\S]*?\.\.\.process\.env/;
-    expect(uncommented).not.toMatch(spreadRe);
-  });
-
-  it("runner.ts must not pass KEY=VALUE to --credential", () => {
-    const src = fs.readFileSync(RUNNER_TS, "utf-8");
-    const lines = src.split("\n");
-
-    const violations = lines.filter(
-      (line) =>
-        TS_EXPOSURE_RE.test(line) &&
-        line.includes("--credential") &&
-        !line.trimStart().startsWith("//"),
-    );
-
-    expect(violations).toEqual([]);
-  });
-
   it("onboard.js --credential flags pass env var names only", () => {
-    // buildProviderArgs lives in onboard-providers.ts; scan both files.
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8") +
-      fs.readFileSync(ONBOARD_PROVIDERS_JS, "utf-8");
+    const args = buildProviderArgs(
+      "create",
+      "inference",
+      "openai",
+      "NVIDIA_API_KEY",
+      "https://api.example.test/v1",
+    );
 
-    expect(src).toMatch(/"--credential", credentialEnv/);
-    expect(src).not.toMatch(/"--credential",\s*["'][A-Z_]+=/);
-    expect(src).not.toMatch(/"--credential",\s*process\.env\./);
-  });
-
-  it("onboard.ts uses subprocess allowlist (not blocklist) for sandbox env", () => {
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
-
-    // The sandbox create path must use the shared subprocess-env.ts
-    // allowlist, NOT the old blocklist. The allowlist inverts the
-    // default: only known-safe env vars are forwarded, everything
-    // else (credentials, CI secrets, SSH agent, etc.) is dropped.
-    expect(src).toMatch(/buildSubprocessEnv\(\)/);
-    // The old blocklist pattern must NOT be present
-    expect(src).not.toMatch(/blockedSandboxEnvNames/);
-    // KUBECONFIG and SSH_AUTH_SOCK must be explicitly deleted from
-    // the sandbox env even though the generic allowlist permits them
-    // for host-side processes.
-    expect(src).toMatch(/delete sandboxEnv\.KUBECONFIG/);
-    expect(src).toMatch(/delete sandboxEnv\.SSH_AUTH_SOCK/);
-    // sandboxEnv must still be passed to streamSandboxCreate
-    expect(src).toMatch(/streamSandboxCreate\(createCommand, sandboxEnv(?:, \{)?/);
+    expect(args).toContain("--credential");
+    expect(args).toContain("NVIDIA_API_KEY");
+    expect(args.join(" ")).not.toContain("NVIDIA_API_KEY=");
+    expect(args.join(" ")).not.toContain("nvapi-");
   });
 
   it("subprocess-env TLS allowlist includes git, curl, and python CA vars (#2270)", () => {
-    const cliSrc = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "subprocess-env.ts"),
-      "utf-8",
+    const tlsEnv = {
+      GIT_SSL_CAINFO: "/tmp/git-ca.pem",
+      GIT_SSL_CAPATH: "/tmp/git-ca-dir",
+      CURL_CA_BUNDLE: "/tmp/curl-ca.pem",
+      REQUESTS_CA_BUNDLE: "/tmp/requests-ca.pem",
+    };
+    const previous = Object.fromEntries(
+      Object.keys(tlsEnv).map((key) => [key, process.env[key]] as const),
     );
-    const pluginSrc = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "nemoclaw", "src", "lib", "subprocess-env.ts"),
-      "utf-8",
-    );
-    for (const src of [cliSrc, pluginSrc]) {
-      expect(src).toContain("GIT_SSL_CAINFO");
-      expect(src).toContain("GIT_SSL_CAPATH");
-      expect(src).toContain("CURL_CA_BUNDLE");
-      expect(src).toContain("REQUESTS_CA_BUNDLE");
+    try {
+      Object.assign(process.env, tlsEnv);
+      for (const buildSubprocessEnv of [buildCliSubprocessEnv, buildPluginSubprocessEnv]) {
+        const env = buildSubprocessEnv();
+        expect(Object.fromEntries(Object.keys(tlsEnv).map((key) => [key, env[key]]))).toEqual(
+          tlsEnv,
+        );
+      }
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
     }
   });
 
   it("subprocess-env TLS allowlists in CLI and plugin are in sync (#2270)", () => {
-    const cliSrc = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "subprocess-env.ts"),
-      "utf-8",
-    );
-    const pluginSrc = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "nemoclaw", "src", "lib", "subprocess-env.ts"),
-      "utf-8",
-    );
-    // Extract the TLS array from both files and compare
-    const extractTLS = (src: string) => {
-      const match = src.match(/const TLS = \[([\s\S]*?)\];/);
-      if (!match) return "";
-      const entries = match[1].match(/"[^"]+"/g) ?? [];
-      return entries.join(",");
+    const tlsEnv = {
+      GIT_SSL_CAINFO: "/tmp/git-ca.pem",
+      GIT_SSL_CAPATH: "/tmp/git-ca-dir",
+      CURL_CA_BUNDLE: "/tmp/curl-ca.pem",
+      REQUESTS_CA_BUNDLE: "/tmp/requests-ca.pem",
     };
-    expect(extractTLS(cliSrc)).toBe(extractTLS(pluginSrc));
+    const previous = Object.fromEntries(
+      Object.keys(tlsEnv).map((key) => [key, process.env[key]] as const),
+    );
+    try {
+      Object.assign(process.env, tlsEnv);
+      const tlsKeys = Object.keys(tlsEnv);
+      const cliEnv = buildCliSubprocessEnv();
+      const pluginEnv = buildPluginSubprocessEnv();
+      expect(Object.fromEntries(tlsKeys.map((key) => [key, cliEnv[key]]))).toEqual(
+        Object.fromEntries(tlsKeys.map((key) => [key, pluginEnv[key]])),
+      );
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
   });
 
-  it("services.ts must not spread full process.env into subprocess", () => {
-    const src = fs.readFileSync(SERVICES_TS, "utf-8");
+  it("subprocess-env NO_PROXY local hosts are in sync for CLI and plugin", () => {
+    for (const withLocalNoProxy of [withCliLocalNoProxy, withPluginLocalNoProxy]) {
+      const env: Record<string, string> = {
+        HTTP_PROXY: "http://proxy.example.com:8888",
+        NO_PROXY: "corp.internal,localhost",
+        no_proxy: "corp.internal,localhost",
+      };
 
-    const uncommented = src.replace(/\/\/.*$/gm, "");
-    const spreadRe = /env\s*:\s*\{[\s\S]*?\.\.\.process\.env/;
-    expect(uncommented).not.toMatch(spreadRe);
+      withLocalNoProxy(env);
+
+      expect(env.NO_PROXY).toBe("corp.internal,localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0");
+      expect(env.no_proxy).toBe("corp.internal,localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0");
+    }
+  });
+
+  it("subprocess env builder does not spread full process.env into subprocesses", () => {
+    const previous = {
+      NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+      PATH: process.env.PATH,
+    };
+    try {
+      process.env.NVIDIA_API_KEY = "nvapi-secret-should-not-leak";
+      process.env.PATH = `/tmp/nemoclaw-fake-bin:${process.env.PATH || ""}`;
+      const env = buildCliSubprocessEnv();
+      expect(env.NVIDIA_API_KEY).toBeUndefined();
+      expect(env.PATH).toContain("/tmp/nemoclaw-fake-bin");
+    } finally {
+      if (previous.NVIDIA_API_KEY === undefined) {
+        delete process.env.NVIDIA_API_KEY;
+      } else {
+        process.env.NVIDIA_API_KEY = previous.NVIDIA_API_KEY;
+      }
+      if (previous.PATH === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previous.PATH;
+      }
+    }
   });
 
   it("onboard curl probes use explicit timeouts", () => {
-    const onboardSrc = fs.readFileSync(ONBOARD_JS, "utf-8");
-    const probeSrc = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "http-probe.ts"),
-      "utf-8",
-    );
-
-    expect(onboardSrc).toMatch(/http-probe/);
-    expect(probeSrc).toMatch(/"--connect-timeout", "10"/);
-    expect(probeSrc).toMatch(/"--max-time", "60"/);
+    expect(getCurlTimingArgs()).toEqual(["--connect-timeout", "10", "--max-time", "60"]);
   });
 
-  it("api-key paste-guard uses extensible prefix list and regex fallback", () => {
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
-
-    // Known prefix list must include at least NVIDIA and GitHub prefixes
-    expect(src).toMatch(/API_KEY_PREFIXES/);
-    expect(src).toMatch(/"nvapi-"/);
-    expect(src).toMatch(/"ghp_"/);
-    // Space-aware length check must be present
-    expect(src).toMatch(/!choice\.includes\(" "\).*choice\.length > 40/);
-    // Regex fallback for base64-safe tokens must be present (full shape)
-    expect(src).toMatch(/\/\^\[A-Za-z0-9_\\-\\.\]\{20,\}\$\/\.test\(choice\)/);
-    // Validator must be hoisted (defined exactly once, not inside both branches).
-    // After PR #2389 the validator delegates to validateNvidiaApiKeyValue with
-    // credentialEnv so non-NVIDIA keys aren't rejected on retry, but the
-    // single-definition invariant from the original PR (#1313) still holds.
-    const validatorCount = (
-      src.match(/const validator = .*validateNvidiaApiKeyValue\(key, credentialEnv\)/g) || []
-    ).length;
-    expect(validatorCount).toBe(1);
-    // looksLikeToken variable must exist
-    expect(src).toMatch(/looksLikeToken/);
-  });
 });

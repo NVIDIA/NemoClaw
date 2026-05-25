@@ -88,6 +88,8 @@ CLOUD_MODEL="${NEMOCLAW_CLOUD_EXPERIMENTAL_MODEL:-nvidia/nemotron-3-super-120b-a
 # Source shared teardown helper
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "${E2E_DIR}/lib/sandbox-teardown.sh"
+# shellcheck source=test/e2e/lib/install-path-refresh.sh
+. "${E2E_DIR}/lib/install-path-refresh.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
 # ══════════════════════════════════════════════════════════════════════
@@ -127,14 +129,11 @@ kill "$tail_pid" 2>/dev/null || true
 wait "$tail_pid" 2>/dev/null || true
 
 # Source shell profile
-if [ -f "$HOME/.bashrc" ]; then
-  # shellcheck source=/dev/null
-  source "$HOME/.bashrc" 2>/dev/null || true
-fi
+nemoclaw_refresh_install_env
 export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 # shellcheck source=/dev/null
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-[ -d "$HOME/.local/bin" ] && [[ ":$PATH:" != *":$HOME/.local/bin:"* ]] && export PATH="$HOME/.local/bin:$PATH"
+nemoclaw_ensure_local_bin_on_path
 
 if [ "$install_exit" -ne 0 ]; then
   fail "install.sh failed (exit $install_exit)"
