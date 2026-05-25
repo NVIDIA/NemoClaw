@@ -25,3 +25,11 @@ export type JsonValue = JsonScalar | JsonObject | JsonValue[];
 
 /** A JSON-compatible object with string keys and recursive values. */
 export type JsonObject = { [key: string]: JsonValue };
+
+/** Generic object record used when parsed input has not been domain-validated. */
+export type UnknownRecord = Record<string, unknown>;
+
+/** Return true when a value is a non-array object record. */
+export function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}

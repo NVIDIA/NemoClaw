@@ -13,6 +13,7 @@ import {
   buildDockerGpuMode,
   buildDockerGpuModeCandidates,
   collectDockerGpuPatchDiagnostics,
+  type DockerContainerInspect,
   detectSandboxFallbackDns,
   dockerReportsNvidiaCdiDevices,
   formatDockerInspectNetworkSummary,
@@ -21,7 +22,6 @@ import {
   recreateOpenShellDockerSandboxWithGpu,
   selectDockerGpuPatchMode,
   shouldApplyDockerGpuPatch,
-  type DockerContainerInspect,
 } from "../../../dist/lib/onboard/docker-gpu-patch";
 
 function inspectFixture(): DockerContainerInspect {
@@ -300,6 +300,22 @@ describe("docker-gpu-patch", () => {
     expect(buildDockerGpuMode("gpus", "1,2").args).toEqual(["--gpus", "device=1,2"]);
   });
 
+  it("uses Jetson NVIDIA runtime args without selecting generic --gpus or CDI candidates", () => {
+    expect(buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }).args).toEqual([
+      "--runtime",
+      "nvidia",
+      "--env",
+      "NVIDIA_VISIBLE_DEVICES=all",
+      "--env",
+      "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
+    ]);
+    expect(
+      buildDockerGpuModeCandidates("all", { backend: "jetson", cdiAvailable: true }).map(
+        (m) => m.kind,
+      ),
+    ).toEqual(["nvidia-runtime"]);
+  });
+
   it("uses a Docker-GPU-specific supervisor reconnect wait with an override", () => {
     expect(getDockerGpuSupervisorReconnectTimeoutSecs(180, {})).toBe(900);
     expect(getDockerGpuSupervisorReconnectTimeoutSecs(600, {})).toBe(900);
@@ -374,6 +390,34 @@ describe("docker-gpu-patch", () => {
       "gpus",
       "nvidia-runtime",
     ]);
+  });
+
+  it("probes only NVIDIA runtime for Jetson Docker GPU mode", () => {
+    const dockerCapture = vi.fn(() => "");
+    const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id" }));
+
+    const selected = selectDockerGpuPatchMode(
+      { image: "openshell/sandbox:abc", backend: "jetson" },
+      {
+        dockerCapture,
+        dockerRun,
+        dockerRm: vi.fn(() => ({ status: 0 })),
+      },
+    );
+
+    expect(selected.mode?.kind).toBe("nvidia-runtime");
+    expect(selected.attempts.map((attempt) => attempt.mode.kind)).toEqual(["nvidia-runtime"]);
+    expect(dockerRun).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "create",
+        "--runtime",
+        "nvidia",
+        "--env",
+        "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
+      ]),
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerCapture).not.toHaveBeenCalled();
   });
 
   it("tries CDI only when Docker reports readable NVIDIA CDI specs", () => {

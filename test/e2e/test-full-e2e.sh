@@ -69,43 +69,8 @@ except Exception as e:
 "
 }
 
-parse_openclaw_agent_text() {
-  python3 -c '
-import json
-import sys
-
-try:
-    doc = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-
-parts = []
-
-def collect(value):
-    if isinstance(value, str):
-        if value.strip():
-            parts.append(value)
-        return
-    if isinstance(value, list):
-        for item in value:
-            collect(item)
-        return
-    if not isinstance(value, dict):
-        return
-
-    for key in ("text", "content", "reasoning_content", "message"):
-        found = value.get(key)
-        if isinstance(found, str) and found.strip():
-            parts.append(found)
-
-    for key in ("payloads", "payload", "messages", "choices", "result", "response", "data", "output"):
-        if key in value:
-            collect(value[key])
-
-collect(doc.get("result", doc))
-print("\n".join(parts))
-'
-}
+# shellcheck source=test/e2e/lib/openclaw-json.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/lib/openclaw-json.sh"
 
 # Determine repo root
 if [ -d /workspace ] && [ -f /workspace/install.sh ]; then
@@ -409,8 +374,8 @@ fi
 #     routeLogsToStderr() (openclaw/src/commands/agent-via-gateway.ts:57),
 #     so stdout is a clean JSON envelope; prompt-echo on stderr cannot
 #     pollute the assertion.
-#   * Asserts on the model's reply text inside `result.payloads[].text`,
-#     not on the merged stdout/stderr.
+#   * Asserts on parsed model reply text from the JSON envelope, not on
+#     the merged stdout/stderr or a single brittle envelope shape.
 #   * The expected token (the integer 42) is not a literal substring of the
 #     prompt, so an error path that quoted the prompt back cannot satisfy
 #     the grep.
@@ -437,7 +402,7 @@ agent_reply=$(printf '%s' "$agent_response" | parse_openclaw_agent_text 2>/dev/n
 if grep -qE "(^|[^0-9])42([^0-9]|$)" <<<"$agent_reply"; then
   pass "[LIVE] openclaw agent: model answered 6×7=42 through openclaw → inference.local"
 else
-  fail "[LIVE] openclaw agent: expected '42' in parsed agent reply, got: ${agent_reply:0:200}; raw JSON: ${agent_response:0:500}"
+  fail "[LIVE] openclaw agent: expected '42' in agent reply, got: ${agent_reply:0:200}"
 fi
 
 # ══════════════════════════════════════════════════════════════════

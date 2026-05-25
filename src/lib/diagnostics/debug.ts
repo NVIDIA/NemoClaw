@@ -55,6 +55,7 @@ function section(title: string): void {
 // ---------------------------------------------------------------------------
 
 import { redactFull as redact } from "../security/redact";
+
 export { redact };
 
 // ---------------------------------------------------------------------------
@@ -371,18 +372,14 @@ function collectSandboxInternals(
 ): void {
   if (!commandExists("openshell")) return;
 
-  // Check if sandbox exists
+  // Check if sandbox exists. OpenShell ssh-config may succeed for unknown
+  // names, so verify the live sandbox first.
   try {
-    const output = execFileSync("openshell", ["sandbox", "list"], {
+    execFileSync("openshell", ["sandbox", "get", sandboxName], {
       encoding: "utf-8",
       timeout: 10_000,
       stdio: ["ignore", "pipe", "ignore"],
     });
-    const names = output
-      .split("\n")
-      .map((l) => l.trim().split(/\s+/)[0])
-      .filter((n) => n && n.toLowerCase() !== "name");
-    if (!names.includes(sandboxName)) return;
   } catch {
     return;
   }

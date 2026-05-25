@@ -10,6 +10,9 @@
 #   openclaw-slack-pairing-e2e
 #                            Validates hermetic Slack Socket Mode pairing request approval across
 #                            gateway and connect-shell OpenClaw state roots (#3730/#3737).
+#   openclaw-discord-pairing-e2e
+#                            Validates hermetic Discord pairing request approval across
+#                            gateway and connect-shell OpenClaw state roots (#4061).
 #   messaging-compatible-endpoint-e2e
 #                            Validates Telegram + OpenAI-compatible endpoint inference routing
 #                            through inference.local with a hermetic local mock (#2766).
@@ -79,6 +82,9 @@ on:
           Valid: cloud-e2e, cloud-onboard-e2e, cloud-inference-e2e,
           skill-agent-e2e, docs-validation-e2e, messaging-providers-e2e,
           openclaw-slack-pairing-e2e,
+          openclaw-tui-chat-correlation-e2e,
+          issue-3600-gpu-proof-optional-e2e,
+          openclaw-discord-pairing-e2e,
           messaging-compatible-endpoint-e2e,
           kimi-inference-compat-e2e,
           bedrock-runtime-compatible-anthropic-e2e,
@@ -163,7 +169,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -202,7 +208,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-cloud-onboard
           path: /tmp/nemoclaw-e2e-cloud-onboard-install.log
@@ -236,7 +242,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-cloud-inference
           path: /tmp/nemoclaw-e2e-cloud-inference-install.log
@@ -270,7 +276,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-skill-agent
           path: /tmp/nemoclaw-e2e-skill-agent-install.log
@@ -346,7 +352,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-messaging-providers
           path: |
@@ -385,10 +391,117 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-openclaw-slack-pairing
           path: /tmp/nemoclaw-e2e-openclaw-slack-pairing-install.log
+          if-no-files-found: ignore
+
+  # ── OpenClaw TUI Chat Correlation E2E (#2603/#3145) ───────────
+  # Creates a fresh OpenClaw sandbox, then runs the live gateway/webchat
+  # correlation harness against rapid sequential sends.
+  openclaw-tui-chat-correlation-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openclaw-tui-chat-correlation-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install test dependencies
+        run: npm ci --include=dev
+
+      - name: Run OpenClaw TUI chat correlation E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_RECREATE_SANDBOX: "1"
+          NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-tui-correlation"
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash test/e2e/test-openclaw-tui-chat-correlation.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: install-log-openclaw-tui-chat-correlation
+          path: /tmp/nemoclaw-e2e-openclaw-tui-correlation-install.log
+          if-no-files-found: ignore
+
+  # ── DGX Station GPU optional proof validation (#3600) ──────────
+  # CI cannot emulate GB300, but this guards the release-blocker mitigation:
+  # optional direct GPU proofs must not abort onboard before the fatal throw.
+  issue-3600-gpu-proof-optional-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',issue-3600-gpu-proof-optional-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: "22"
+
+      - name: Install test dependencies
+        run: npm ci --include=dev
+
+      - name: Verify optional GPU proof cannot abort onboard
+        run: npx vitest run src/lib/onboard/sandbox-gpu-preflight.test.ts --pool=forks -t "direct sandbox GPU proof"
+
+  # ── OpenClaw Discord Pairing E2E (#4061) ──────────────────────
+  # Hermetic Discord Gateway placeholder rewrite proof, then connect-shell
+  # `openclaw pairing approve discord <code>` against shared state.
+  openclaw-discord-pairing-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' &&
+      (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',openclaw-discord-pairing-e2e,'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.target_ref || github.ref }}
+
+      - name: Run OpenClaw Discord pairing E2E test
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          NEMOCLAW_NON_INTERACTIVE: "1"
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_POLICY_TIER: "open"
+          NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-discord-pairing"
+          GITHUB_TOKEN: ${{ github.token }}
+          DISCORD_BOT_TOKEN: "test-fake-discord-pairing-e2e"
+        run: bash test/e2e/test-openclaw-discord-pairing.sh
+
+      - name: Upload install log on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: install-log-openclaw-discord-pairing
+          path: /tmp/nemoclaw-e2e-openclaw-discord-pairing-install.log
           if-no-files-found: ignore
 
   # ── Messaging + compatible endpoint regression (#2766) ───────
@@ -421,7 +534,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-messaging-compatible-endpoint
           path: /tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log
@@ -460,7 +573,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-channels-add-remove
           path: |
@@ -516,7 +629,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-channels-stop-start
           path: |
@@ -562,7 +675,7 @@ jobs:
 
       - name: Upload onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-brave-search
           # The script scrubs $BRAVE_API_KEY from this log in place
@@ -598,7 +711,7 @@ jobs:
 
       - name: Upload onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-kimi-inference-compat
           path: /tmp/nemoclaw-e2e-kimi-inference-compat-onboard.log
@@ -606,7 +719,7 @@ jobs:
 
       - name: Upload build/setup log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-log-kimi-inference-compat
           path: /tmp/nemoclaw-e2e-kimi-inference-compat-build.log
@@ -614,7 +727,7 @@ jobs:
 
       - name: Upload agent log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: agent-log-kimi-inference-compat
           path: /tmp/nemoclaw-e2e-kimi-inference-compat-agent.log
@@ -654,7 +767,7 @@ jobs:
 
       - name: Upload onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: onboard-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
           path: /tmp/nemoclaw-e2e-bedrock-runtime-${{ matrix.agent }}-onboard.log
@@ -662,7 +775,7 @@ jobs:
 
       - name: Upload build/setup log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: build-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
           path: /tmp/nemoclaw-e2e-bedrock-runtime-${{ matrix.agent }}-build.log
@@ -670,7 +783,7 @@ jobs:
 
       - name: Upload fake Bedrock Runtime log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: mock-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
           path: /tmp/nemoclaw-e2e-bedrock-runtime-${{ matrix.agent }}-mock.log
@@ -678,7 +791,7 @@ jobs:
 
       - name: Upload Bedrock Runtime adapter log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: adapter-log-bedrock-runtime-compatible-anthropic-${{ matrix.agent }}
           path: ~/.nemoclaw/bedrock-runtime-adapter.log
@@ -723,7 +836,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-token-rotation
           path: /tmp/nemoclaw-e2e-install.log
@@ -755,7 +868,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sandbox-survival-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -790,7 +903,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: issue-2478-crash-loop-recovery-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -827,7 +940,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermes-e2e-install-log
           path: /tmp/nemoclaw-e2e-hermes-install.log
@@ -867,7 +980,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openclaw-onboard-security-posture-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -907,7 +1020,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermes-onboard-security-posture-install-log
           path: /tmp/nemoclaw-e2e-hermes-install.log
@@ -944,7 +1057,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermes-inference-switch-install-log
           path: /tmp/nemoclaw-e2e-hermes-inference-switch-install.log
@@ -986,7 +1099,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermes-discord-e2e-install-log
           path: /tmp/nemoclaw-e2e-hermes-discord-install.log
@@ -1026,7 +1139,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: hermes-slack-e2e-install-log
           path: /tmp/nemoclaw-e2e-hermes-slack-install.log
@@ -1266,7 +1379,7 @@ jobs:
 
       - name: Upload sandbox gateway logs on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sandbox-operations-docker-logs
           path: docker-logs/
@@ -1274,7 +1387,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: sandbox-operations-test-log
           path: test-sandbox-operations-*.log
@@ -1308,7 +1421,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: inference-routing-test-log
           path: test-inference-routing-*.log
@@ -1344,7 +1457,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openclaw-inference-switch-install-log
           path: /tmp/nemoclaw-e2e-openclaw-inference-switch-install.log
@@ -1378,7 +1491,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: network-policy-test-log
           path: test-network-policy-*.log
@@ -1409,7 +1522,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: state-backup-restore-test-log
           path: test-state-backup-restore-*.log
@@ -1440,7 +1553,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: tunnel-lifecycle-test-log
           path: test-tunnel-lifecycle-*.log
@@ -1474,7 +1587,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: diagnostics-test-log
           path: test-diagnostics-*.log
@@ -1512,7 +1625,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: install-log-credential-migration
           path: /tmp/nemoclaw-e2e-install.log
@@ -1546,7 +1659,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: snapshot-commands-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -1580,7 +1693,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: shields-config-install-log
           path: /tmp/nemoclaw-e2e-shields-install.log
@@ -1614,7 +1727,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rebuild-openclaw-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -1649,7 +1762,7 @@ jobs:
 
       - name: Upload install logs on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: upgrade-stale-sandbox-logs
           path: |
@@ -1676,7 +1789,7 @@ jobs:
           ref: ${{ inputs.target_ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
           node-version: "22"
 
@@ -1689,7 +1802,7 @@ jobs:
 
       - name: Upload gateway upgrade logs on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openshell-gateway-upgrade-logs
           path: |
@@ -1730,7 +1843,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rebuild-hermes-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -1766,7 +1879,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rebuild-hermes-stale-base-install-log
           path: /tmp/nemoclaw-e2e-install.log
@@ -1806,7 +1919,7 @@ jobs:
           bash test/e2e/test-double-onboard.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: double-onboard-test-log
           path: test-double-onboard-*.log
@@ -1846,7 +1959,7 @@ jobs:
           bash test/e2e/test-onboard-repair.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: onboard-repair-test-log
           path: test-onboard-repair-*.log
@@ -1886,7 +1999,7 @@ jobs:
           bash test/e2e/test-onboard-resume.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: onboard-resume-test-log
           path: test-onboard-resume-*.log
@@ -1927,7 +2040,7 @@ jobs:
           bash test/e2e/test-onboard-negative-paths.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: onboard-negative-paths-test-log
           path: /tmp/nemoclaw-e2e-onboard-negative-paths.log
@@ -1967,7 +2080,7 @@ jobs:
           bash test/e2e/test-runtime-overrides.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: runtime-overrides-test-log
           path: test-runtime-overrides-*.log
@@ -2010,7 +2123,7 @@ jobs:
           bash test/e2e/test-credential-sanitization.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: credential-sanitization-test-log
           path: test-credential-sanitization-*.log
@@ -2053,7 +2166,7 @@ jobs:
           bash test/e2e/test-telegram-injection.sh
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: telegram-injection-test-log
           path: test-telegram-injection-*.log
@@ -2089,7 +2202,7 @@ jobs:
 
       - name: Upload onboard logs on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: overlayfs-autofix-logs
           path: |
@@ -2130,7 +2243,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: device-auth-health-install-log
           path: /tmp/nemoclaw-e2e-health-install.log
@@ -2169,7 +2282,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: launchable-smoke-install-log
           path: /tmp/nemoclaw-launchable-install.log
@@ -2177,7 +2290,7 @@ jobs:
 
       - name: Upload onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: launchable-smoke-onboard-log
           path: /tmp/nemoclaw-launchable-onboard.log
@@ -2185,7 +2298,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: launchable-smoke-test-log
           path: /tmp/nemoclaw-launchable-test.log
@@ -2231,7 +2344,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gpu-e2e-install-log
           path: /tmp/nemoclaw-gpu-e2e-install.log
@@ -2239,7 +2352,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gpu-e2e-test-log
           path: /tmp/nemoclaw-gpu-e2e-test.log
@@ -2286,7 +2399,7 @@ jobs:
 
       - name: Upload install log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gpu-double-onboard-install-log
           path: /tmp/nemoclaw-gpu-double-onboard-install.log
@@ -2294,7 +2407,7 @@ jobs:
 
       - name: Upload re-onboard log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gpu-double-onboard-reonboard-log
           path: /tmp/nemoclaw-gpu-double-onboard-reonboard.log
@@ -2302,7 +2415,7 @@ jobs:
 
       - name: Upload test log on failure
         if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gpu-double-onboard-test-log
           path: /tmp/nemoclaw-gpu-double-onboard-test.log
@@ -2319,6 +2432,9 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
+        openclaw-tui-chat-correlation-e2e,
+        issue-3600-gpu-proof-optional-e2e,
+        openclaw-discord-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-add-remove-e2e,
         channels-stop-start-e2e,
@@ -2418,6 +2534,9 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
+        openclaw-tui-chat-correlation-e2e,
+        issue-3600-gpu-proof-optional-e2e,
+        openclaw-discord-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-add-remove-e2e,
         channels-stop-start-e2e,
@@ -2574,6 +2693,9 @@ jobs:
         docs-validation-e2e,
         messaging-providers-e2e,
         openclaw-slack-pairing-e2e,
+        openclaw-tui-chat-correlation-e2e,
+        issue-3600-gpu-proof-optional-e2e,
+        openclaw-discord-pairing-e2e,
         messaging-compatible-endpoint-e2e,
         channels-add-remove-e2e,
         channels-stop-start-e2e,

@@ -74,6 +74,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # gosu for privilege separation (gateway vs sandbox user).
 # Install from GitHub release with checksum verification instead of
 # Debian's packaged gosu can lag upstream. Pinned to 1.19 (2025-09).
+# Binary release asset downloads can be slower than hash fetches; keep
+# longer bounded transfer timeouts while preserving checksum verification.
 # hadolint ignore=DL4006
 RUN arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
@@ -81,7 +83,9 @@ RUN arch="$(dpkg --print-architecture)" \
         arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
         *) echo "Unsupported architecture for gosu: $arch" >&2; exit 1 ;; \
     esac \
-    && curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
     && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
     && chmod +x /usr/local/bin/gosu \
     && gosu --version
@@ -127,19 +131,15 @@ RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
     && chmod -R g+w /sandbox/.openclaw \
     && find /sandbox/.openclaw -type d -exec chmod g+s {} +
 
-# Pre-create shell init files for the sandbox user.
-# Runtime proxy config is written by the entrypoint to /tmp/nemoclaw-proxy-env.sh
-# (root-owned, mode 444, sticky-bit protected) and sourced from here on every
-# interactive session.
-# Ref: #2181 — the file must not be writable by the sandbox user.
+# Pre-create shell init files for the sandbox user. Runtime environment hooks
+# are installed system-wide below; user rc files stay clean and locked so
+# per-user startup files are not part of the trust boundary.
 # hadolint ignore=SC2028
 RUN printf '%s\n' \
-        '# Source runtime proxy config' \
-        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        '# NemoClaw sandbox shell init' \
         > /sandbox/.bashrc \
     && printf '%s\n' \
-        '# Source runtime proxy config' \
-        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        '# NemoClaw sandbox login init' \
         > /sandbox/.profile \
     && chown root:root /sandbox/.bashrc /sandbox/.profile \
     && chmod 444 /sandbox/.bashrc /sandbox/.profile
@@ -205,7 +205,7 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
 USER sandbox
 WORKDIR /sandbox
 # hadolint ignore=DL3059,DL4006
-RUN openclaw plugins install '@tencent-weixin/openclaw-weixin@2.4.2' --pin \
+RUN openclaw plugins install '@tencent-weixin/openclaw-weixin@2.4.3' --pin \
     && openclaw config set plugins.entries.openclaw-weixin.enabled true
 # hadolint ignore=DL3002
 USER root

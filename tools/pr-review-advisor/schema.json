@@ -12,12 +12,10 @@
     "headSha",
     "changedFiles",
     "summary",
-    "gateStatus",
     "findings",
     "acceptanceCoverage",
     "securityCategories",
     "testDepth",
-    "e2eAdvisorStatus",
     "positives",
     "reviewCompleteness"
   ],
@@ -45,18 +43,18 @@
           ]
         },
         "confidence": { "enum": ["low", "medium", "high"] },
-        "oneLine": { "type": "string" }
-      },
-      "additionalProperties": false
-    },
-    "gateStatus": {
-      "type": "object",
-      "required": ["ci", "mergeability", "reviewThreads", "riskyCodeTested"],
-      "properties": {
-        "ci": { "$ref": "#/$defs/gate" },
-        "mergeability": { "$ref": "#/$defs/gate" },
-        "reviewThreads": { "$ref": "#/$defs/gate" },
-        "riskyCodeTested": { "$ref": "#/$defs/gate" }
+        "oneLine": { "type": "string" },
+        "topItem": { "type": "string" },
+        "sinceLastReview": {
+          "type": "object",
+          "required": ["resolved", "stillApplies", "newItems"],
+          "properties": {
+            "resolved": { "type": "integer", "minimum": 0 },
+            "stillApplies": { "type": "integer", "minimum": 0 },
+            "newItems": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
@@ -95,34 +93,13 @@
       "required": ["verdict", "rationale", "suggestedTests"],
       "properties": {
         "verdict": {
-          "enum": ["unit_sufficient", "mocks_recommended", "e2e_required", "unknown"]
+          "enum": ["unit_sufficient", "mocks_recommended", "runtime_validation_recommended", "unknown"]
         },
         "rationale": { "type": "string" },
         "suggestedTests": {
           "type": "array",
           "items": { "type": "string" }
         }
-      },
-      "additionalProperties": false
-    },
-    "e2eAdvisorStatus": {
-      "type": "object",
-      "required": ["found", "requiredJobs", "passedForHeadSha", "missingForHeadSha", "verdict"],
-      "properties": {
-        "found": { "type": "boolean" },
-        "requiredJobs": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "passedForHeadSha": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "missingForHeadSha": {
-          "type": "array",
-          "items": { "type": "string" }
-        },
-        "verdict": { "enum": ["ok", "missing", "ambiguous", "not_found"] }
       },
       "additionalProperties": false
     },
@@ -144,15 +121,6 @@
     }
   },
   "$defs": {
-    "gate": {
-      "type": "object",
-      "required": ["status", "evidence"],
-      "properties": {
-        "status": { "enum": ["pass", "fail", "warning", "pending", "unknown"] },
-        "evidence": { "type": "string" }
-      },
-      "additionalProperties": false
-    },
     "finding": {
       "type": "object",
       "required": ["severity", "category", "file", "line", "title", "description", "recommendation", "evidence"],
@@ -167,8 +135,6 @@
             "workflow",
             "docs",
             "scope",
-            "ci",
-            "e2e",
             "acceptance"
           ]
         },

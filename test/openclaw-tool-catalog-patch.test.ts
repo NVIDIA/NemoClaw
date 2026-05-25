@@ -118,6 +118,31 @@ function realToolFixtureSource(allCustomToolsLine: string) {
   ].join("\n");
 }
 
+function nativeToolSearchFixtureSource() {
+  return [
+    "const uncompactedEffectiveTools = [...tools, ...filteredBundledTools];",
+    "let effectiveTools = uncompactedEffectiveTools;",
+    "const toolSearch = applyToolSearchCatalog({",
+    "\ttools: effectiveTools,",
+    "\tconfig: params.config",
+    "});",
+    "effectiveTools = toolSearch.tools;",
+    "const toolSearchRunPlan = buildToolSearchRunPlan({",
+    "\tvisibleTools: effectiveTools,",
+    "\tuncompactedTools: uncompactedEffectiveTools",
+    "});",
+    "const allowedToolNames = toolSearchRunPlan.visibleAllowedToolNames;",
+    "const replayAllowedToolNames = toolSearchRunPlan.replayAllowedToolNames;",
+    "const { customTools } = splitSdkTools({ tools: effectiveTools });",
+    "const clientToolDefs = [];",
+    "\t\t\tconst allCustomTools = [...customTools, ...clientToolDefs];",
+    "void allowedToolNames;",
+    "void replayAllowedToolNames;",
+    "void allCustomTools;",
+    "",
+  ].join("\n");
+}
+
 function makeFixture(opts: { version?: string; allCustomToolsLine?: string } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-tool-catalog-patch-"));
   const dist = path.join(root, "dist");
@@ -186,6 +211,19 @@ describe("OpenClaw compact tool catalog patch", () => {
       expect(result.stderr).toContain("Expected exactly one selection-*.js target, found 0");
     } finally {
       fs.rmSync(changed.root, { recursive: true, force: true });
+    }
+
+    const native = makeFixture();
+    try {
+      fs.writeFileSync(native.selectionPath, nativeToolSearchFixtureSource());
+      const result = runPatch(native.dist);
+      expect(result.status, `${result.stdout}${result.stderr}`).toBe(0);
+      expect(result.stdout).toContain("native-tool-search");
+      const unmodified = fs.readFileSync(native.selectionPath, "utf-8");
+      expect(unmodified).not.toContain(MARKER);
+      expect(unmodified).toContain("buildToolSearchRunPlan");
+    } finally {
+      fs.rmSync(native.root, { recursive: true, force: true });
     }
 
     const builtInCatalog = makeFixture({

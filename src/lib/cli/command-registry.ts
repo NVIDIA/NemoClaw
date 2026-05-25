@@ -50,6 +50,7 @@ export const GROUP_ORDER: readonly CommandGroup[] = [
   "Credentials",
   "Backup",
   "Upgrade",
+  "Resources",
   "Cleanup",
 ] as const;
 

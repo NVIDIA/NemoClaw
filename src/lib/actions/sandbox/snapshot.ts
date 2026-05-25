@@ -5,8 +5,10 @@
 import fs from "node:fs";
 import path from "node:path";
 import { dockerCapture, dockerInspect } from "../../adapters/docker";
-import { captureOpenshell, getOpenshellBinary } from "../../adapters/openshell/runtime";
+import { captureOpenshell, getOpenshellBinary, runOpenshell } from "../../adapters/openshell/runtime";
 import { CLI_NAME } from "../../cli/branding";
+import { prompt as askPrompt } from "../../credentials/store";
+import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
@@ -14,6 +16,7 @@ import { isGatewayHealthy } from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
+import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const trueColor =
@@ -29,7 +32,17 @@ export type SnapshotRequest =
   | { kind: "help" }
   | { kind: "create"; name?: string }
   | { kind: "list" }
-  | { kind: "restore"; selector?: string; to?: string };
+  | {
+      kind: "restore";
+      selector?: string;
+      to?: string;
+      /** #3756: required when `to` names an existing sandbox. Deletes the
+       * destination first, then recreates it from the source's image. */
+      force?: boolean;
+      /** Skip the --force interactive confirmation. Implied by
+       * NEMOCLAW_NON_INTERACTIVE=1. */
+      yes?: boolean;
+    };
 
 export class SnapshotCommandError extends Error {
   readonly lines: readonly string[];
@@ -204,6 +217,68 @@ async function autoCreateSandboxFromSource(
   console.log(`  ${G}\u2713${R} Sandbox '${dstName}' created`);
 }
 
+// Delete an existing destination sandbox so `snapshot restore --to <dst> --force`
+// can recreate it from the source's image. Stops the destination's NIM
+// container, runs `openshell sandbox delete`, performs the destination-only
+// cleanups that `sandboxDestroy` does (PID dir, per-sandbox messaging
+// providers, shields state), then drops the NemoClaw registry entry. Throws
+// SnapshotCommandError on failure so the caller does not proceed into a
+// partially-deleted target.
+//
+// Host-shared cleanups that destroy.ts performs \u2014 Ollama auth proxy
+// (`killStaleProxy`), host services (`cleanupSandboxServices` with
+// `stopHostServices`), Ollama model unload, gateway teardown \u2014 are
+// deliberately skipped here because they can also affect the source sandbox
+// we are about to clone from.
+function deleteSandboxForRestore(name: string): void {
+  const nim = require("../../inference/nim") as {
+    stopNimContainer: (sandboxName: string, opts?: { silent?: boolean }) => void;
+    stopNimContainerByName: (name: string) => void;
+  };
+  const sbMeta = registry.getSandbox(name);
+  if (sbMeta?.nimContainer) {
+    nim.stopNimContainerByName(sbMeta.nimContainer);
+  } else {
+    nim.stopNimContainer(name, { silent: true });
+  }
+  console.log(`  Deleting existing destination '${name}' before restore...`);
+  const deleteResult = runOpenshell(["sandbox", "delete", name], {
+    ignoreError: true,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const { alreadyGone } = getSandboxDeleteOutcome(deleteResult);
+  if (deleteResult.status !== 0 && !alreadyGone) {
+    console.error(`  Failed to delete '${name}' (exit ${deleteResult.status}). Aborting restore.`);
+    snapshotExit(1);
+  }
+  // Destination-only cleanup so the recreated sandbox does not inherit stale
+  // host-side state or hit provider-name conflicts (Codex #3796 P2):
+  // - /tmp/nemoclaw-services-<name>: PID dir for this sandbox's services
+  // - OpenShell providers named <name>-{telegram,discord,slack,wechat}-bridge
+  //   and <name>-slack-app: per-sandbox messaging bridges
+  // - shields-<name>.json + shields timer: per-sandbox shields artifacts
+  try {
+    fs.rmSync(`/tmp/nemoclaw-services-${name}`, { recursive: true, force: true });
+  } catch {
+    // PID dir may not exist \u2014 ignore.
+  }
+  for (const suffix of [
+    "telegram-bridge",
+    "discord-bridge",
+    "slack-bridge",
+    "slack-app",
+    "wechat-bridge",
+  ]) {
+    runOpenshell(["provider", "delete", `${name}-${suffix}`], {
+      ignoreError: true,
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+  }
+  cleanupShieldsDestroyArtifacts(name);
+  removeSandboxRegistryEntry(name);
+  console.log(`  ${G}\u2713${R} '${name}' deleted`);
+}
+
 // Docker/VM-driver sandboxes do not expose the legacy cluster container, so
 // verify gateway health through OpenShell metadata instead.
 function probeGatewayMetadataHealth(): boolean {
@@ -315,29 +390,16 @@ export async function runSandboxSnapshot(
       }
       const isLive = captureOpenshell(["sandbox", "list"], { ignoreError: true });
       const liveNames = parseLiveSandboxNames(isLive.output || "");
-      if (!liveNames.has(targetSandbox)) {
-        // Self-restore: cannot auto-create, there is no source to clone from.
-        if (targetSandbox === sandboxName) {
-          console.error(`  Sandbox '${targetSandbox}' is not running. Cannot restore snapshot.`);
-          snapshotExit(1);
-        }
-        // Cross-sandbox restore into a sandbox that doesn't exist yet:
-        // auto-create it by cloning the source's running pod image. The
-        // source must exist so we can probe its image via kubectl; the
-        // registry entry is used to seed dst's agent/model/provider fields.
-        if (!liveNames.has(sandboxName)) {
-          console.error(
-            `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' not found.`,
-          );
-          console.error(`  Create '${targetSandbox}' manually with '${CLI_NAME} onboard'.`);
-          snapshotExit(1);
-        }
-        const srcEntry = registry.getSandbox(sandboxName) || { name: sandboxName };
-        await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry);
-      }
+      const isCrossSandboxRestore = targetSandbox !== sandboxName;
+      const targetExists = liveNames.has(targetSandbox);
+
+      // #3756 P1 preflight: resolve the snapshot selector AND the source pod
+      // image before any destructive action. A bad selector, missing snapshot,
+      // or unresolvable source image must not be allowed to delete the
+      // destination first and only fail afterwards.
       const selector = request.selector ?? null;
-      let backupPath;
-      let resolvedSnapshot = null;
+      let backupPath: string;
+      let resolvedSnapshot: ReturnType<typeof sandboxState.getLatestBackup>;
       if (selector) {
         const { match } = sandboxState.findBackup(sandboxName, selector);
         if (!match) {
@@ -362,6 +424,77 @@ export async function runSandboxSnapshot(
         const v = formatSnapshotVersion(latest);
         const nameSuffix = latest.name ? ` name=${latest.name}` : "";
         console.log(`  Using latest snapshot ${v}${nameSuffix} (${latest.timestamp})`);
+      }
+
+      if (!isCrossSandboxRestore) {
+        // Self-restore: target is `sandboxName`. Cannot auto-create; the
+        // source pod is the target, so it must already be live.
+        if (!targetExists) {
+          console.error(`  Sandbox '${targetSandbox}' is not running. Cannot restore snapshot.`);
+          snapshotExit(1);
+        }
+      } else {
+        // #3756: cross-sandbox restore into a destination that already exists
+        // used to overlay onto the live filesystem silently. Refuse by default
+        // *before* doing any source-side preflight, so the user sees the
+        // precise "destination exists" error instead of a misleading
+        // "source not found" or "cannot resolve image" message when both are
+        // also broken.
+        if (targetExists && !request.force) {
+          console.error(`  Destination sandbox '${targetSandbox}' already exists.`);
+          console.error(
+            "  Restoring into an existing sandbox is unsupported because it would silently mutate its filesystem.",
+          );
+          console.error(
+            `  Re-run with --force to delete '${targetSandbox}' and recreate it from the snapshot, or pick a different name.`,
+          );
+          snapshotExit(1);
+        }
+        // Cross-sandbox restore — whether dst exists (with --force) or not,
+        // we must be able to clone the source's running pod image. Resolve it
+        // upfront so a missing source / unresolvable image cannot delete the
+        // destination first (#3756 P1).
+        if (!liveNames.has(sandboxName)) {
+          if (targetExists) {
+            console.error(
+              `  Cannot recreate '${targetSandbox}' from snapshot: source '${sandboxName}' not found.`,
+            );
+          } else {
+            console.error(
+              `  Cannot auto-create '${targetSandbox}': source '${sandboxName}' not found.`,
+            );
+            console.error(`  Create '${targetSandbox}' manually with '${CLI_NAME} onboard'.`);
+          }
+          snapshotExit(1);
+        }
+        const srcEntry = registry.getSandbox(sandboxName) || { name: sandboxName };
+        const fromImage = resolveSrcPodImage(sandboxName, srcEntry);
+        if (!fromImage) {
+          console.error(
+            `  Cannot resolve image for source sandbox '${sandboxName}' — aborting before ` +
+              (targetExists ? `deleting '${targetSandbox}'.` : `creating '${targetSandbox}'.`),
+          );
+          snapshotExit(1);
+        }
+        if (targetExists) {
+          // --force confirmed above. Prompt for the destination name (unless
+          // --yes or NEMOCLAW_NON_INTERACTIVE=1), then delete and recreate.
+          const nonInteractive = process.env.NEMOCLAW_NON_INTERACTIVE === "1";
+          if (!request.yes && !nonInteractive) {
+            const answer = (
+              await askPrompt(
+                `  This will DELETE sandbox '${targetSandbox}' and restore the snapshot into a fresh copy.\n` +
+                  `  Type '${targetSandbox}' to confirm: `,
+              )
+            ).trim();
+            if (answer !== targetSandbox) {
+              console.error("  Confirmation did not match — aborting.");
+              snapshotExit(1);
+            }
+          }
+          deleteSandboxForRestore(targetSandbox);
+        }
+        await autoCreateSandboxFromSource(sandboxName, targetSandbox, srcEntry);
       }
       if (targetSandbox !== sandboxName) {
         console.log(`  Restoring snapshot from '${sandboxName}' into '${targetSandbox}'...`);
@@ -443,7 +576,9 @@ export async function runSandboxSnapshot(
       console.log(
         `    ${CLI_NAME} ${sandboxName} snapshot list            List available snapshots`,
       );
-      console.log(`    ${CLI_NAME} ${sandboxName} snapshot restore [selector] [--to <dst>]`);
+      console.log(
+        `    ${CLI_NAME} ${sandboxName} snapshot restore [selector] [--to <dst>] [--force] [--yes|-y]`,
+      );
       console.log(
         `                                             Restore by version (v1), name, or timestamp.`,
       );
@@ -452,6 +587,9 @@ export async function runSandboxSnapshot(
       );
       console.log(
         `                                             Use --to to restore into another sandbox; <dst> is auto-created if missing.`,
+      );
+      console.log(
+        `                                             When <dst> already exists, pass --force to delete it and recreate from the snapshot (prompts unless --yes).`,
       );
       break;
   }

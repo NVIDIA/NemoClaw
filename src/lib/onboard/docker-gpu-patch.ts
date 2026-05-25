@@ -69,6 +69,7 @@ export type DockerGpuPatchDeps = {
 };
 
 export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi";
+export type DockerGpuPatchBackend = "generic" | "jetson";
 
 export type DockerGpuPatchMode = {
   kind: DockerGpuPatchModeKind;
@@ -294,7 +295,11 @@ function normalizeGpuDeviceForCdi(device: string | null | undefined): string {
   return `nvidia.com/gpu=${dockerDevice || "all"}`;
 }
 
-export function buildDockerGpuMode(kind: DockerGpuPatchModeKind, device?: string | null): DockerGpuPatchMode {
+export function buildDockerGpuMode(
+  kind: DockerGpuPatchModeKind,
+  device?: string | null,
+  options: { backend?: DockerGpuPatchBackend } = {},
+): DockerGpuPatchMode {
   const dockerDevice = normalizeGpuDeviceForDocker(device);
   if (kind === "gpus") {
     const gpuValue = dockerDevice === "all" ? "all" : `device=${dockerDevice}`;
@@ -306,11 +311,15 @@ export function buildDockerGpuMode(kind: DockerGpuPatchModeKind, device?: string
     };
   }
   if (kind === "nvidia-runtime") {
+    const args = ["--runtime", "nvidia", "--env", `NVIDIA_VISIBLE_DEVICES=${dockerDevice}`];
+    if (options.backend === "jetson") {
+      args.push("--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility");
+    }
     return {
       kind,
       label: `--runtime nvidia (NVIDIA_VISIBLE_DEVICES=${dockerDevice})`,
       device: dockerDevice,
-      args: ["--runtime", "nvidia", "--env", `NVIDIA_VISIBLE_DEVICES=${dockerDevice}`],
+      args,
     };
   }
   const cdiDevice = normalizeGpuDeviceForCdi(device);
@@ -324,12 +333,12 @@ export function buildDockerGpuMode(kind: DockerGpuPatchModeKind, device?: string
 
 export function buildDockerGpuModeCandidates(
   device?: string | null,
-  options: { cdiAvailable?: boolean } = {},
+  options: { cdiAvailable?: boolean; backend?: DockerGpuPatchBackend } = {},
 ): DockerGpuPatchMode[] {
-  const candidates = [
-    buildDockerGpuMode("gpus", device),
-    buildDockerGpuMode("nvidia-runtime", device),
-  ];
+  if (options.backend === "jetson") {
+    return [buildDockerGpuMode("nvidia-runtime", device, { backend: "jetson" })];
+  }
+  const candidates = [buildDockerGpuMode("gpus", device), buildDockerGpuMode("nvidia-runtime", device)];
   if (options.cdiAvailable) candidates.push(buildDockerGpuMode("cdi", device));
   return candidates;
 }
@@ -685,12 +694,15 @@ function probeDockerGpuMode(
 }
 
 export function selectDockerGpuPatchMode(
-  options: { image: string; device?: string | null },
+  options: { image: string; device?: string | null; backend?: DockerGpuPatchBackend },
   deps: DockerGpuPatchDeps = {},
 ): { mode: DockerGpuPatchMode | null; attempts: DockerGpuPatchModeAttempt[] } {
-  const cdiAvailable = dockerReportsNvidiaCdiDevices(deps);
+  const cdiAvailable = options.backend === "jetson" ? false : dockerReportsNvidiaCdiDevices(deps);
   const attempts: DockerGpuPatchModeAttempt[] = [];
-  for (const mode of buildDockerGpuModeCandidates(options.device, { cdiAvailable })) {
+  for (const mode of buildDockerGpuModeCandidates(options.device, {
+    cdiAvailable,
+    backend: options.backend,
+  })) {
     const result = probeDockerGpuMode(mode, options.image, deps);
     const attempt = { mode, ok: result.ok, error: result.error };
     attempts.push(attempt);
@@ -784,6 +796,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     timeoutSecs?: number;
     waitForSupervisor?: boolean;
     openshellSandboxCommand?: readonly string[] | null;
+    backend?: DockerGpuPatchBackend;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {
@@ -807,13 +820,17 @@ export function recreateOpenShellDockerSandboxWithGpu(
     if (!image) throw new Error("OpenShell sandbox container inspect did not include an image.");
 
     const selection = selectDockerGpuPatchMode(
-      { image, device: options.gpuDevice },
+      { image, device: options.gpuDevice, backend: options.backend },
       deps,
     );
     context.modeAttempts = selection.attempts;
     context.selectedMode = selection.mode;
     if (!selection.mode) {
-      throw new Error("Docker did not accept --gpus, NVIDIA runtime, or CDI GPU modes.");
+      const modeMessage =
+        options.backend === "jetson"
+          ? "Docker did not accept the Jetson NVIDIA runtime GPU mode."
+          : "Docker did not accept --gpus, NVIDIA runtime, or CDI GPU modes.";
+      throw new Error(modeMessage);
     }
 
     const originalName = dockerContainerName(inspect);
