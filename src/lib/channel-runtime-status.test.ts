@@ -197,13 +197,13 @@ describe("buildGatewayLogScanScript end-to-end shell behavior", () => {
   // Real-shell execution to confirm the awk/grep pipeline does what the
   // unit tests assert in structure. This guards against subtle quoting
   // and shell-flag drift between the builder and a sandbox sh.
-  const { execSync, writeFileSync, unlinkSync, mkdtempSync, tmpdir, joinPath } = (() => {
+  const { spawnSync, writeFileSync, unlinkSync, mkdtempSync, tmpdir, joinPath } = (() => {
     const cp = require("node:child_process");
     const fs = require("node:fs");
     const os = require("node:os");
     const path = require("node:path");
     return {
-      execSync: cp.execSync,
+      spawnSync: cp.spawnSync,
       writeFileSync: fs.writeFileSync,
       unlinkSync: fs.unlinkSync,
       mkdtempSync: fs.mkdtempSync,
@@ -218,13 +218,14 @@ describe("buildGatewayLogScanScript end-to-end shell behavior", () => {
     writeFileSync(logPath, logBody);
     const script = buildGatewayLogScanScript(logPath);
     try {
-      // sh -c so we exercise a POSIX shell, not bash-only features. The
-      // pipeline can legitimately exit non-zero when no channel matches
-      // (sed gets empty input); pipe through `cat` to swallow the exit.
-      const stdout = execSync(`sh -c "${script.replace(/"/g, "\\\"").replace(/\$/g, "\\$")}"`, {
-        encoding: "utf-8",
-      });
-      return parseGatewayLogScanOutput(stdout);
+      // spawnSync with `shell: false` (default) and the script passed as
+      // an explicit argv element so the OS receives it verbatim. Avoids
+      // the brittle/CodeQL-flagged double-escape gymnastics that
+      // `execSync(\`sh -c "${...}"\`)` would force. The pipeline can
+      // legitimately exit non-zero when no channel matches, but we only
+      // care about stdout regardless of exit status.
+      const result = spawnSync("sh", ["-c", script], { encoding: "utf-8" });
+      return parseGatewayLogScanOutput(String(result.stdout || ""));
     } finally {
       try {
         unlinkSync(logPath);
