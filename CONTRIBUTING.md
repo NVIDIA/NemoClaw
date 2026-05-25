@@ -15,6 +15,31 @@ Open an issue when you encounter one of the following situations.
 - A feature proposal with a design — not a "please build this" request.
 - Security vulnerabilities must follow [SECURITY.md](SECURITY.md) — **not** GitHub issues.
 
+## Where to Start
+
+New contributors can start with small, focused work that is easy to review.
+
+- Bug reports: include the command, platform, expected behavior, actual
+  behavior, and any relevant logs.
+- Bug fixes: keep the patch scoped to the reported behavior and add or update
+  focused tests when practical.
+- Documentation fixes: update the source documentation and run the documented
+  doc checks.
+- Tests: add coverage for an existing behavior gap or a regression that can be
+  reproduced locally.
+- Examples and integrations: open a discussion first if the change adds a new
+  workflow, provider, or external dependency.
+- Feature proposals: describe the use case, design, and expected maintenance
+  cost before opening a large PR.
+
+For starter tasks, look for issues labeled [`good first issue`](https://github.com/NVIDIA/NemoClaw/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22).
+If a change is large, user-facing, or design-heavy, ask first in
+[GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions) or the
+project Discord linked from the [README](README.md#community).
+
+All contributors are expected to follow the [Code of Conduct](CODE_OF_CONDUCT.md)
+in project spaces and public community channels.
+
 ## Prerequisites
 
 Install the following before you begin.
@@ -189,6 +214,10 @@ Follow these steps to submit a pull request.
 2. Make your changes with tests.
 3. Run the relevant checks. For code changes, run `make check` and `npm test`. For doc-only changes, run `npx prek run --all-files` and `npm run docs`.
 4. Open a PR.
+
+Every PR must include the required DCO sign-off line from the pull request
+template. Use `git commit -s` or add the `Signed-off-by:` trailer manually with
+the same name and email configured for your commits.
 
 ### Commit Messages
 
