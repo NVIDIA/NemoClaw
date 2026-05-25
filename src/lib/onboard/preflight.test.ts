@@ -339,6 +339,112 @@ describe("assessHost", () => {
     expect(result.dockerReachable).toBe(true);
   });
 
+  // Regression: NemoClaw #2348. `docker info --format '{{json .}}'` emits a
+  // zero-value client-side struct (exit 0, non-empty JSON, ServerVersion: "")
+  // when the daemon is unreachable — for example after `colima stop`. Preflight
+  // used to treat any non-empty output as "daemon reachable".
+  it("reports docker unreachable when daemon is stopped (zero-value JSON with ServerErrors)", () => {
+    const colimaStoppedOutput = JSON.stringify({
+      ID: "",
+      Containers: 0,
+      ServerVersion: "",
+      OperatingSystem: "",
+      ServerErrors: [
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+      ],
+    });
+    const result = assessHost({
+      platform: "darwin",
+      env: {},
+      dockerInfoOutput: colimaStoppedOutput,
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+
+    expect(result.dockerInstalled).toBe(true);
+    expect(result.dockerReachable).toBe(false);
+    expect(result.dockerRunning).toBe(false);
+  });
+
+  it("reports docker unreachable for zero-value JSON even without ServerErrors", () => {
+    // Defensive: older/alternate Docker CLI builds that emit the zero-value
+    // struct without populating ServerErrors should still be treated as
+    // unreachable because empty ServerVersion gives no reachable-daemon signal.
+    const zeroValueOutput = JSON.stringify({
+      ID: "",
+      Containers: 0,
+      ServerVersion: "",
+      OperatingSystem: "",
+    });
+    const result = assessHost({
+      platform: "darwin",
+      env: {},
+      dockerInfoOutput: zeroValueOutput,
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+
+    expect(result.dockerReachable).toBe(false);
+    expect(result.dockerRunning).toBe(false);
+  });
+
+  it("reports docker unreachable when formatted output is valid JSON but not an object", () => {
+    const result = assessHost({
+      platform: "darwin",
+      env: {},
+      dockerInfoOutput: "null",
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+
+    expect(result.dockerReachable).toBe(false);
+    expect(result.dockerRunning).toBe(false);
+  });
+
+  it("falls back to non-empty heuristic for non-JSON output (older CLI / test stubs)", () => {
+    // Preserves backward compatibility for callers injecting plain-text
+    // dockerInfoOutput — real CLI paths emit JSON under `--format`.
+    const result = assessHost({
+      platform: "darwin",
+      env: {},
+      dockerInfoOutput: "Server Version: 27.4.0\nOS: Docker Desktop",
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+
+    expect(result.dockerReachable).toBe(true);
+    expect(result.dockerRunning).toBe(true);
+  });
+
+  it("does not treat plain-text Docker daemon connection errors as reachable", () => {
+    const result = assessHost({
+      platform: "darwin",
+      env: {},
+      dockerInfoOutput:
+        "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+
+    expect(result.dockerReachable).toBe(false);
+    expect(result.dockerRunning).toBe(false);
+  });
+
+  it("treats podman-docker alias (native podman JSON) as reachable", () => {
+    // When `docker` is an alias for `podman`, `docker info --format '{{json .}}'`
+    // actually runs `podman info`, whose native schema nests a `version.Version`
+    // instead of a top-level ServerVersion.
+    const podmanNative = JSON.stringify({
+      host: { arch: "arm64", os: "linux" },
+      version: { APIVersion: "5.3.1", Version: "5.3.1" },
+      store: { imageStore: {} },
+    });
+    const result = assessHost({
+      platform: "darwin",
+      env: {},
+      dockerInfoOutput: podmanNative,
+      commandExistsImpl: (name: string) => name === "docker",
+    });
+
+    expect(result.dockerReachable).toBe(true);
+    expect(result.dockerRunning).toBe(true);
+  });
+
   it("detects linux docker on cgroup v2 without requiring host cgroupns fix", () => {
     const result = assessHost({
       platform: "linux",

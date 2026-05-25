@@ -5,6 +5,8 @@
 // Ollama auth-proxy lifecycle: token persistence, PID management,
 // proxy start/stop, model pull and validation.
 
+import type { GpuInfo } from "../local";
+
 const path = require("path");
 const { spawn, spawnSync } = require("child_process");
 const http = require("http");
@@ -21,6 +23,7 @@ const {
   probeOllamaModelCapabilities,
   validateOllamaModel,
 } = require("../local");
+const { anyRegistryModelFits, modelFitsAvailableMemory } = require("../ollama-model-registry");
 const { buildSubprocessEnv } = require("../../subprocess-env");
 const { prompt } = require("../../credentials/store");
 const { promptManualModelId } = require("../model-prompts");
@@ -373,21 +376,40 @@ function probeOllamaAuthProxyHealth(): { ok: boolean; endpoint: string; detail: 
   };
 }
 
-async function promptOllamaModel(gpu = null) {
+async function promptOllamaModel(gpu: GpuInfo | null = null) {
   const installed = getOllamaModelOptions();
-  const options = installed.length > 0 ? installed : getBootstrapOllamaModelOptions(gpu);
+  // Filter installed entries by registry-known memory fit so a host that
+  // currently cannot load the only installed model still gets a usable
+  // default — without the filter, pressing Enter would re-select the
+  // oversized model the runner is about to crash on. Unknown tags (user-
+  // pulled models the registry has never seen) pass the filter so the
+  // user's prior selection is respected.
+  const installedFitting = installed.filter((tag: string) => modelFitsAvailableMemory(tag, gpu));
+  const usingInstalled = installedFitting.length > 0;
+  const options = usingInstalled ? installedFitting : getBootstrapOllamaModelOptions(gpu);
   const defaultModel = getDefaultOllamaModel(gpu);
   const defaultIndex = Math.max(0, options.indexOf(defaultModel));
 
   console.log("");
-  console.log(installed.length > 0 ? "  Ollama models:" : "  Ollama starter models:");
+  console.log(usingInstalled ? "  Ollama models:" : "  Ollama starter models:");
   options.forEach((option, index) => {
     console.log(`    ${index + 1}) ${option}`);
   });
   console.log(`    ${options.length + 1}) Other...`);
-  if (installed.length === 0) {
+  if (!usingInstalled) {
     console.log("");
-    console.log("  No local Ollama models are installed yet. Choose one to pull and load now.");
+    if (installed.length === 0) {
+      console.log("  No local Ollama models are installed yet. Choose one to pull and load now.");
+    } else {
+      console.log(
+        "  No installed Ollama model fits the host's currently available memory; showing starter models instead.",
+      );
+    }
+  }
+  if (!usingInstalled && !anyRegistryModelFits(gpu)) {
+    console.log(
+      "  ! Even the smallest known bootstrap model may not fit currently available GPU memory; free memory or expect the runner to reject the load.",
+    );
   }
   console.log("");
 

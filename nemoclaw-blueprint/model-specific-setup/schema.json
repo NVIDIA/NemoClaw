@@ -66,6 +66,15 @@
           "type": "object",
           "additionalProperties": true
         },
+        "openclawTools": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "toolSearch": {
+              "type": "boolean"
+            }
+          }
+        },
         "openclawPlugins": {
           "type": "array",
           "items": {
@@ -136,6 +145,9 @@
                 },
                 {
                   "required": ["openclawPlugins"]
+                },
+                {
+                  "required": ["openclawTools"]
                 }
               ]
             }

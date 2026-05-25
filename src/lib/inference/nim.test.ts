@@ -196,16 +196,18 @@ describe("nim", () => {
     });
 
     it("populates name and memory from primary nvidia-smi path", () => {
-      // Primary path returns name+memory.total in a single CSV line per GPU.
-      // Regression guard for #2669: the GB300 preflight line was missing the
-      // GPU model because only memory.total was being queried.
+      // Primary path returns name+memory.total+memory.free in a single CSV
+      // line per GPU. Regression guard for #2669: the GB300 preflight line
+      // was missing the GPU model because only memory.total was being
+      // queried. memory.free is also captured so the bootstrap-model
+      // selector can size against currently free memory, not just total.
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
           cmd[0] === "nvidia-smi" &&
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
-          return "NVIDIA GB300, 284208\n";
+          return "NVIDIA GB300, 284208, 280000\n";
         }
         return "";
       });
@@ -217,6 +219,7 @@ describe("nim", () => {
           name: "NVIDIA GB300",
           count: 1,
           totalMemoryMB: 284208,
+          availableMemoryMB: 280000,
           perGpuMB: 284208,
         });
       } finally {
@@ -231,7 +234,7 @@ describe("nim", () => {
           cmd[0] === "nvidia-smi" &&
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
-          return "NVIDIA H100 80GB HBM3, 81920\nNVIDIA H100 80GB HBM3, 81920\n";
+          return "NVIDIA H100 80GB HBM3, 81920, 81000\nNVIDIA H100 80GB HBM3, 81920, 60000\n";
         }
         return "";
       });
@@ -265,7 +268,7 @@ describe("nim", () => {
           cmd[0] === "nvidia-smi" &&
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
-          return "NVIDIA RTX A,B, 81920\n";
+          return "NVIDIA RTX A,B, 81920, 80000\n";
         }
         return "";
       });
@@ -295,7 +298,7 @@ describe("nim", () => {
           cmd[0] === "nvidia-smi" &&
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
-          return "NVIDIA RTX PRO 6000 Blackwell Max-Q, 97887\nNVIDIA GB300, 256703\n";
+          return "NVIDIA RTX PRO 6000 Blackwell Max-Q, 97887, 90000\nNVIDIA GB300, 256703, 250000\n";
         }
         return "";
       });
@@ -318,6 +321,94 @@ describe("nim", () => {
       }
     });
 
+    // Regression #3988: WSL2 d3d12 shims (e.g. Snapdragon X "nvidia-smi.exe")
+    // return a generic name like "JMJWOA-Generic-GPU" for non-NVIDIA hardware.
+    // The primary path used to accept any name from nvidia-smi, which made the
+    // preflight report "NVIDIA GPU detected" on hosts with no NVIDIA hardware.
+    it("rejects WDDM placeholder names on hosts without NVIDIA firmware (#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "JMJWOA-Generic-GPU, 65471, 65000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        // Snapdragon X WSL2 has no DMI / devicetree NVIDIA platform marker, so
+        // the firmware classification falls through to "linux" and the
+        // placeholder name is not vouched for.
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu()).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Even when the WDDM shim returns the placeholder with an `NVIDIA ` prefix
+    // (e.g. "NVIDIA JMJWOA-Generic-GPU"), `\bNVIDIA\b` alone is not enough to
+    // vouch for the device on generic Linux firmware — the placeholder family
+    // must keep requiring a firmware platform vouch. Regression guard for the
+    // CodeRabbit review comment on #4062.
+    it("rejects vendor-prefixed WDDM placeholders on generic firmware (#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA JMJWOA-Generic-GPU, 65471, 65000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu()).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Real DGX Spark legitimately reports "NVIDIA JMJWOA-Generic-GPU" via the
+    // primary nvidia-smi path on some firmware revisions (#3510). The Spark
+    // firmware platform tag must continue to vouch for the device even when
+    // the name itself does not match a known NVIDIA family.
+    it("accepts placeholder names when firmware confirms NVIDIA platform (#3510)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "JMJWOA-Generic-GPU, 131072, 12000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("NVIDIA DGX Spark", () => {
+          expect(nimModule.detectGpu()).toMatchObject({
+            type: "nvidia",
+            name: "JMJWOA-Generic-GPU",
+            count: 1,
+            totalMemoryMB: 131072,
+            platform: "spark",
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
     it("detects GB10 unified-memory GPUs as Spark-capable NVIDIA devices", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
@@ -334,6 +425,10 @@ describe("nim", () => {
           name: "NVIDIA GB10",
           count: 1,
           totalMemoryMB: 131072,
+          // MemAvailable from the stubbed `free -m` row is propagated so the
+          // bootstrap-model selector can size against currently free memory
+          // on unified-memory hosts.
+          availableMemoryMB: 119808,
           perGpuMB: 131072,
           nimCapable: true,
           unifiedMemory: true,
@@ -378,6 +473,7 @@ describe("nim", () => {
             name: "NVIDIA JMJWOA-Generic-GPU",
             count: 1,
             totalMemoryMB: 122543,
+            availableMemoryMB: 111279,
             perGpuMB: 122543,
             unifiedMemory: true,
             spark: true,
@@ -435,6 +531,7 @@ describe("nim", () => {
             name: "NVIDIA Jetson AGX Orin",
             count: 1,
             totalMemoryMB: 32768,
+            availableMemoryMB: 27136,
             perGpuMB: 32768,
             nimCapable: true,
             unifiedMemory: true,
@@ -451,7 +548,7 @@ describe("nim", () => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd[0] === "nvidia-smi") return "";
         if (cmd[0] === "free" && cmd[1] === "-m") {
-          return "              total        used        free\nMem:          65536        4096       50000\nSwap:             0           0           0";
+          return "              total        used        free      shared  buff/cache   available\nMem:          65536        4096       50000         512       10928       60000\nSwap:             0           0           0";
         }
         return "";
       });
@@ -474,6 +571,7 @@ describe("nim", () => {
           name: "NVIDIA Jetson AGX Orin",
           count: 1,
           totalMemoryMB: 65536,
+          availableMemoryMB: 60000,
           perGpuMB: 65536,
           nimCapable: true,
           unifiedMemory: true,
@@ -484,6 +582,35 @@ describe("nim", () => {
       } finally {
         fs.readFileSync = origReadFileSync;
         fs.existsSync = origExistsSync;
+        restore();
+      }
+    });
+
+    it("omits availableMemoryMB when memory.free fails to parse on the primary path", () => {
+      // nvidia-smi sometimes reports `[N/A]` or empty strings for memory.free
+      // (driver / virtualisation quirks). Total still parses, so we keep
+      // surfacing it; available is dropped so callers fall back to total.
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA H100 80GB HBM3, 81920, [N/A]\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        const result = nimModule.detectGpu();
+        expect(result).toMatchObject({
+          type: "nvidia",
+          name: "NVIDIA H100 80GB HBM3",
+          totalMemoryMB: 81920,
+        });
+        expect(result?.availableMemoryMB).toBeUndefined();
+      } finally {
         restore();
       }
     });
@@ -541,6 +668,87 @@ describe("nim", () => {
           });
         });
       } finally {
+        restore();
+      }
+    });
+
+    it("populates availableMemoryMB on macOS Apple Silicon via vm_stat", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "system_profiler" && cmd[1] === "SPDisplaysDataType") {
+          return [
+            "      Chipset Model: Apple M3 Max",
+            "      Total Number of Cores: 40",
+            "      VRAM (Dynamic, Max): 49152 MB",
+          ].join("\n");
+        }
+        if (cmd[0] === "sysctl" && cmd[1] === "-n" && cmd[2] === "hw.memsize") {
+          return String(64 * 1024 * 1024 * 1024);
+        }
+        if (cmd[0] === "vm_stat") {
+          // 16 KiB page size; 32 000 free + 60 000 inactive + 1 000 speculative
+          // pages → (93 000 × 16 384) bytes ≈ 1 488 MiB available.
+          return [
+            "Mach Virtual Memory Statistics: (page size of 16384 bytes)",
+            "Pages free:                              32000.",
+            "Pages active:                            500000.",
+            "Pages inactive:                          60000.",
+            "Pages speculative:                       1000.",
+          ].join("\n");
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+      Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+
+      try {
+        const expectedAvailableMB = Math.floor(((32_000 + 60_000 + 1_000) * 16_384) / 1024 / 1024);
+        expect(nimModule.detectGpu()).toMatchObject({
+          type: "apple",
+          name: "Apple M3 Max",
+          totalMemoryMB: 49152,
+          availableMemoryMB: expectedAvailableMB,
+          cores: 40,
+        });
+      } finally {
+        if (originalPlatform) {
+          Object.defineProperty(process, "platform", originalPlatform);
+        }
+        restore();
+      }
+    });
+
+    it("omits availableMemoryMB on macOS when vm_stat fails to parse", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd[0] === "system_profiler" && cmd[1] === "SPDisplaysDataType") {
+          return [
+            "      Chipset Model: Apple M2",
+            "      Total Number of Cores: 10",
+            "      VRAM (Dynamic, Max): 16384 MB",
+          ].join("\n");
+        }
+        // vm_stat returns nothing → readMacOsAvailableMemoryMB() returns 0,
+        // so availableMemoryMB must be absent from the result.
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const originalPlatform = Object.getOwnPropertyDescriptor(process, "platform");
+      Object.defineProperty(process, "platform", { value: "darwin", configurable: true });
+
+      try {
+        const result = nimModule.detectGpu();
+        expect(result).toMatchObject({
+          type: "apple",
+          name: "Apple M2",
+          totalMemoryMB: 16384,
+        });
+        expect(result?.availableMemoryMB).toBeUndefined();
+      } finally {
+        if (originalPlatform) {
+          Object.defineProperty(process, "platform", originalPlatform);
+        }
         restore();
       }
     });

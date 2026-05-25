@@ -7,6 +7,10 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect } from "vitest";
 
+import { testTimeout } from "./helpers/timeouts";
+
+const BRAVE_VALIDATION_TEST_TIMEOUT_MS = testTimeout(60_000);
+
 type ConfigureWebSearchOutcome = {
   result: { fetchEnabled: boolean } | null;
   exitCalls: number[];
@@ -119,6 +123,137 @@ function restore() {
   };
 }
 
+function runInteractiveConfigureWebSearch(spec: { answers: string[] }): {
+  exitCode: number;
+  payload: {
+    outcome: "completed" | "exit";
+    result?: { fetchEnabled: boolean } | null;
+    exitCode?: number;
+    logs: string[];
+    errors: string[];
+    prompts: Array<{ message: string; secret: boolean }>;
+    saved: Array<{ key: string; value: string }>;
+    braveKey: string | null;
+  };
+  stderr: string;
+} {
+  const repoRoot = path.join(import.meta.dirname, "..");
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-brave-interactive-"));
+  const fakeBin = path.join(tmpDir, "bin");
+  const scriptPath = path.join(tmpDir, "configure-web-search-interactive.js");
+  const outputPath = path.join(tmpDir, "outcome.json");
+  const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const credentialsPath = JSON.stringify(
+    path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+  );
+  const outputPathLiteral = JSON.stringify(outputPath);
+
+  setupBraveCurlShim(fakeBin, { status: "200", body: '{"web":{"results":[]}}' });
+
+  const script = String.raw`
+const fs = require("node:fs");
+
+const clearEnv = [
+  "BRAVE_API_KEY",
+  "NEMOCLAW_NON_INTERACTIVE",
+  "NEMOCLAW_PROVIDER",
+  "NEMOCLAW_MODEL",
+  "NEMOCLAW_YES",
+  "NEMOCLAW_PREFERRED_API",
+  "NEMOCLAW_EXPERIMENTAL",
+];
+for (const key of clearEnv) {
+  delete process.env[key];
+}
+
+const credentials = require(${credentialsPath});
+const answers = ${JSON.stringify(spec.answers)};
+const logs = [];
+const errors = [];
+const prompts = [];
+const saved = [];
+
+credentials.prompt = async (message, opts = {}) => {
+  prompts.push({ message, secret: opts.secret === true });
+  return answers.shift() || "";
+};
+const originalSaveCredential = credentials.saveCredential;
+credentials.saveCredential = (key, value) => {
+  saved.push({ key, value });
+  return originalSaveCredential(key, value);
+};
+
+const { configureWebSearch } = require(${onboardPath});
+const originalExit = process.exit;
+const originalLog = console.log;
+const originalError = console.error;
+process.exit = (code) => {
+  const error = new Error("process.exit:" + code);
+  error.exitCode = code;
+  throw error;
+};
+console.log = (...args) => logs.push(args.join(" "));
+console.error = (...args) => errors.push(args.join(" "));
+
+function writePayload(payload) {
+  fs.writeFileSync(${outputPathLiteral}, JSON.stringify({
+    ...payload,
+    logs,
+    errors,
+    prompts,
+    saved,
+    braveKey: process.env.BRAVE_API_KEY || null,
+  }));
+}
+
+(async () => {
+  try {
+    const result = await configureWebSearch(null);
+    writePayload({ outcome: "completed", result });
+  } catch (error) {
+    if (error && error.exitCode !== undefined) {
+      writePayload({ outcome: "exit", exitCode: error.exitCode });
+      return;
+    }
+    throw error;
+  } finally {
+    process.exit = originalExit;
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})().catch((error) => {
+  process.exit = originalExit;
+  console.log = originalLog;
+  console.error = originalError;
+  console.error("UNEXPECTED:", error && error.stack ? error.stack : String(error));
+  process.exit(2);
+});
+`;
+  fs.writeFileSync(scriptPath, script);
+
+  const result = spawnSync(process.execPath, [scriptPath], {
+    cwd: repoRoot,
+    encoding: "utf-8",
+    env: {
+      ...process.env,
+      HOME: tmpDir,
+      PATH: `${fakeBin}:${process.env.PATH || ""}`,
+    },
+    timeout: BRAVE_VALIDATION_TEST_TIMEOUT_MS,
+  });
+
+  if (!fs.existsSync(outputPath)) {
+    throw new Error(
+      `Outcome file missing. exit=${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+  }
+  return {
+    exitCode: typeof result.status === "number" ? result.status : -1,
+    payload: JSON.parse(fs.readFileSync(outputPath, "utf-8")),
+    stderr: result.stderr ?? "",
+  };
+}
+
 describe("configureWebSearch (non-interactive)", () => {
   it("skips unsupported Hermes without prompting for Brave", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
@@ -179,6 +314,62 @@ const { loadAgent } = require(${agentDefsPath});
     }
   });
 
+  it("uses a saved Brave credential in non-interactive mode", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-brave-saved-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "configure-web-search-saved.js");
+    const outputPath = path.join(tmpDir, "outcome.json");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    setupBraveCurlShim(fakeBin, { status: "200", body: '{"web":{"results":[]}}' });
+    fs.writeFileSync(
+      scriptPath,
+      `
+const fs = require("node:fs");
+const actualCredentials = require(${credentialsPath});
+const mockedCredentials = {
+  ...actualCredentials,
+  getCredential: (key) => (key === "BRAVE_API_KEY" ? "saved-brave-key" : actualCredentials.getCredential(key)),
+};
+require.cache[require.resolve(${credentialsPath})] = {
+  id: require.resolve(${credentialsPath}),
+  filename: require.resolve(${credentialsPath}),
+  loaded: true,
+  exports: mockedCredentials,
+};
+delete process.env.BRAVE_API_KEY;
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+const { configureWebSearch } = require(${onboardPath});
+(async () => {
+  const result = await configureWebSearch(null);
+  fs.writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify({ result, braveKey: process.env.BRAVE_API_KEY || null }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`,
+    );
+
+    try {
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        },
+      });
+      expect(result.status).toBe(0);
+      const payload = JSON.parse(fs.readFileSync(outputPath, "utf-8"));
+      expect(payload.result).toEqual({ fetchEnabled: true });
+      expect(payload.braveKey).toBe("saved-brave-key");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("skips Brave Web Search and returns null when key validation hits HTTP 429", () => {
     const { exitCode, payload } = runConfigureWebSearch({
       status: "429",
@@ -213,5 +404,41 @@ const { loadAgent } = require(${agentDefsPath});
     expect(exitCode).toBe(0);
     expect(payload.exitCalls).toEqual([]);
     expect(payload.result).toEqual({ fetchEnabled: true });
+  });
+});
+
+describe("configureWebSearch (interactive)", () => {
+  it("returns to the Brave Search enable prompt when backing out of the API key prompt", () => {
+    const { exitCode, payload } = runInteractiveConfigureWebSearch({
+      answers: ["y", "back", "n"],
+    });
+
+    expect(exitCode).toBe(0);
+    expect(payload.outcome).toBe("completed");
+    expect(payload.result).toBeNull();
+    expect(payload.braveKey).toBeNull();
+    expect(payload.errors).toEqual([]);
+    expect(payload.saved.every((entry) => entry.value !== "back")).toBe(true);
+    expect(
+      payload.prompts.filter((entry) => /Enable Brave Web Search\?/.test(entry.message)),
+    ).toHaveLength(2);
+    expect(
+      payload.prompts.some(
+        (entry) => /Brave Search API key: /.test(entry.message) && entry.secret,
+      ),
+    ).toBe(true);
+  });
+
+  it("exits from the Brave Search API key prompt", () => {
+    const { exitCode, payload } = runInteractiveConfigureWebSearch({
+      answers: ["y", "exit"],
+    });
+
+    expect(exitCode).toBe(0);
+    expect(payload.outcome).toBe("exit");
+    expect(payload.exitCode).toBe(1);
+    expect(payload.braveKey).toBeNull();
+    expect(payload.saved).toEqual([]);
+    expect(payload.logs.some((line) => line.includes("Exiting onboarding."))).toBe(true);
   });
 });

@@ -3,14 +3,18 @@
 
 import { dockerInfo } from "../adapters/docker/info";
 import {
-  containerCanReachHostLoopback,
   type ContainerRuntime,
+  containerCanReachHostLoopback,
   inferContainerRuntime,
 } from "../platform";
 import { ensureOllamaLoopbackSystemdOverride } from "./ollama-systemd";
 
+const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 1500;
+
 export function getContainerRuntime(): ContainerRuntime {
-  return inferContainerRuntime(dockerInfo({ ignoreError: true }));
+  return inferContainerRuntime(
+    dockerInfo({ ignoreError: true, timeout: DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS }),
+  );
 }
 
 // True when the sandbox container needs the local Ollama auth proxy in front

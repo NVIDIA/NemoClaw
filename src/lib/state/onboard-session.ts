@@ -18,9 +18,17 @@ import {
   sanitizeMessagingChannelConfig,
   type MessagingChannelConfig,
 } from "../messaging-channel-config";
+import {
+  createOnboardMachineEvent,
+  emitOnboardMachineEvent,
+  machineStateFromOnboardSessionStep,
+} from "../onboard/machine/events";
+import { isOnboardMachineState } from "../onboard/machine/transitions";
+import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
 
 export const SESSION_VERSION = 1;
+export const MACHINE_SNAPSHOT_VERSION = 1;
 export const SESSION_DIR = path.join(process.env.HOME || "/tmp", ".nemoclaw");
 export const SESSION_FILE = path.join(SESSION_DIR, "onboard-session.json");
 export const LOCK_FILE = path.join(SESSION_DIR, "onboard.lock");
@@ -58,6 +66,13 @@ export interface SessionFailure {
 export interface SessionMetadata {
   gatewayName: string;
   fromDockerfile: string | null;
+}
+
+export interface OnboardMachineSnapshot {
+  version: typeof MACHINE_SNAPSHOT_VERSION;
+  state: OnboardMachineState;
+  stateEnteredAt: string | null;
+  revision: number;
 }
 
 export interface Session {
@@ -111,6 +126,7 @@ export interface Session {
   telegramConfig: TelegramConfig | null;
   wechatConfig: WechatConfig | null;
   metadata: SessionMetadata;
+  machine: OnboardMachineSnapshot;
   steps: Record<string, StepState>;
 }
 
@@ -194,6 +210,7 @@ export interface DebugSessionSummary {
   lastStepStarted: string | null;
   lastCompletedStep: string | null;
   failure: SessionFailure | null;
+  machine: OnboardMachineSnapshot;
   steps: Record<string, StepState>;
 }
 
@@ -234,6 +251,10 @@ function readHermesAuthMethod(value: SessionJsonValue | undefined): HermesAuthMe
 
 function readPositiveInteger(value: SessionJsonValue | undefined): number | null {
   return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : null;
+}
+
+function readNonNegativeInteger(value: SessionJsonValue | undefined): number | null {
+  return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : null;
 }
 
 function readStringArray(value: SessionJsonValue | undefined): string[] | null {
@@ -304,6 +325,17 @@ function parseStepState(value: SessionJsonValue | undefined): StepState | null {
   };
 }
 
+function parseMachineSnapshot(value: SessionJsonValue | undefined): OnboardMachineSnapshot | null {
+  if (!isObject(value) || value.version !== MACHINE_SNAPSHOT_VERSION) return null;
+  if (!isOnboardMachineState(value.state)) return null;
+  return {
+    version: MACHINE_SNAPSHOT_VERSION,
+    state: value.state,
+    stateEnteredAt: readString(value.stateEnteredAt),
+    revision: readNonNegativeInteger(value.revision) ?? 0,
+  };
+}
+
 function parseLockInfo(value: SessionJsonValue | undefined): LockInfo | null {
   if (!isObject(value) || typeof value.pid !== "number") return null;
   return {
@@ -331,15 +363,104 @@ export function sanitizeFailure(
 
 // ── Session CRUD ─────────────────────────────────────────────────
 
+function createMachineSnapshot(
+  state: OnboardMachineState,
+  stateEnteredAt: string | null,
+  revision = 0,
+): OnboardMachineSnapshot {
+  return {
+    version: MACHINE_SNAPSHOT_VERSION,
+    state,
+    stateEnteredAt,
+    revision: Math.max(0, Math.trunc(revision)),
+  };
+}
+
+function nextMachineStateAfterCompletedStep(
+  stepName: string | null | undefined,
+  session: Pick<Session, "agent">,
+): OnboardMachineState | null {
+  switch (stepName) {
+    case "preflight":
+      return "gateway";
+    case "gateway":
+      return "provider_selection";
+    case "provider_selection":
+      return "inference";
+    case "inference":
+      return "sandbox";
+    case "sandbox":
+      return session.agent ? "agent_setup" : "openclaw";
+    case "openclaw":
+    case "agent_setup":
+      return "policies";
+    case "policies":
+      return "finalizing";
+    default:
+      return null;
+  }
+}
+
+function inferMachineState(session: Session): OnboardMachineState {
+  if (session.status === "complete") return "complete";
+  if (session.status === "failed") return "failed";
+
+  const startedState = machineStateFromOnboardSessionStep(session.lastStepStarted);
+  const startedStep = session.lastStepStarted ? session.steps[session.lastStepStarted] : null;
+  if (startedState && startedStep?.status === "in_progress") return startedState;
+
+  return nextMachineStateAfterCompletedStep(session.lastCompletedStep, session) ?? "init";
+}
+
+function inferMachineStateEnteredAt(session: Session, state: OnboardMachineState): string | null {
+  if (state === "failed") return session.failure?.recordedAt ?? session.updatedAt;
+  if (state === "complete") return session.updatedAt;
+
+  const startedState = machineStateFromOnboardSessionStep(session.lastStepStarted);
+  const startedStep = session.lastStepStarted ? session.steps[session.lastStepStarted] : null;
+  if (state === startedState && startedStep?.status === "in_progress") {
+    return startedStep.startedAt ?? session.updatedAt;
+  }
+
+  if (nextMachineStateAfterCompletedStep(session.lastCompletedStep, session) === state) {
+    const completedStep = session.lastCompletedStep ? session.steps[session.lastCompletedStep] : null;
+    return completedStep?.completedAt ?? session.updatedAt;
+  }
+
+  return session.startedAt;
+}
+
+function inferMachineSnapshot(session: Session): OnboardMachineSnapshot {
+  const state = inferMachineState(session);
+  return createMachineSnapshot(state, inferMachineStateEnteredAt(session, state));
+}
+
+function transitionMachineSnapshot(session: Session, state: OnboardMachineState, now: string): void {
+  const current = session.machine ?? createMachineSnapshot("init", session.startedAt);
+  if (current.state === state) {
+    session.machine = {
+      ...current,
+      stateEnteredAt: current.stateEnteredAt ?? now,
+    };
+    return;
+  }
+  session.machine = createMachineSnapshot(state, now, current.revision + 1);
+}
+
 export function createSession(overrides: Partial<Session> = {}): Session {
   const now = new Date().toISOString();
-  return {
+  const startedAt = overrides.startedAt ?? now;
+  const steps = {
+    ...defaultSteps(),
+    ...(overrides.steps ?? {}),
+  };
+  const session: Session = {
     version: SESSION_VERSION,
     sessionId: overrides.sessionId ?? `${Date.now()}-${randomUUID()}`,
     resumable: true,
     status: "in_progress",
     mode: overrides.mode ?? "interactive",
-    startedAt: overrides.startedAt ?? now,
+    startedAt,
     updatedAt: overrides.updatedAt ?? now,
     lastStepStarted: overrides.lastStepStarted ?? null,
     lastCompletedStep: overrides.lastCompletedStep ?? null,
@@ -372,11 +493,11 @@ export function createSession(overrides: Partial<Session> = {}): Session {
       gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
     },
-    steps: {
-      ...defaultSteps(),
-      ...(overrides.steps ?? {}),
-    },
+    machine: parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??
+      createMachineSnapshot("init", startedAt),
+    steps,
   };
+  return session;
 }
 
 export function normalizeSession(data: Session | SessionJsonValue | undefined): Session | null {
@@ -424,6 +545,8 @@ export function normalizeSession(data: Session | SessionJsonValue | undefined): 
       }
     }
   }
+
+  normalized.machine = parseMachineSnapshot(data.machine) ?? inferMachineSnapshot(normalized);
 
   return normalized;
 }
@@ -883,72 +1006,162 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
 }
 
 export function markStepStarted(stepName: string): Session {
-  return updateSession((session) => {
+  let shouldEmit = false;
+  const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
+    const now = new Date().toISOString();
     step.status = "in_progress";
-    step.startedAt = new Date().toISOString();
+    step.startedAt = now;
     step.completedAt = null;
     step.error = null;
     session.lastStepStarted = stepName;
     session.failure = null;
     session.status = "in_progress";
+    const state = machineStateFromOnboardSessionStep(stepName);
+    if (state) transitionMachineSnapshot(session, state, now);
+    shouldEmit = true;
     return session;
   });
+  if (shouldEmit) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({ type: "state.entered", session: updatedSession, step: stepName }),
+    );
+  }
+  return updatedSession;
 }
 
 export function markStepComplete(stepName: string, updates: SessionUpdates = {}): Session {
-  return updateSession((session) => {
+  const safeUpdates = filterSafeUpdates(updates);
+  let shouldEmit = false;
+  const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
+    const now = new Date().toISOString();
     step.status = "complete";
-    step.completedAt = new Date().toISOString();
+    step.completedAt = now;
     step.error = null;
     session.lastCompletedStep = stepName;
     session.failure = null;
-    Object.assign(session, filterSafeUpdates(updates));
+    Object.assign(session, safeUpdates);
+    const nextState = nextMachineStateAfterCompletedStep(stepName, session);
+    if (nextState) transitionMachineSnapshot(session, nextState, now);
+    shouldEmit = true;
     return session;
   });
+  if (shouldEmit) {
+    if (Object.keys(safeUpdates).length > 0) {
+      emitOnboardMachineEvent(
+        createOnboardMachineEvent({
+          type: "context.updated",
+          session: updatedSession,
+          step: stepName,
+          metadata: { fields: Object.keys(safeUpdates) },
+        }),
+      );
+    }
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({ type: "state.completed", session: updatedSession, step: stepName }),
+    );
+  }
+  return updatedSession;
 }
 
 export function markStepSkipped(stepName: string): Session {
-  return updateSession((session) => {
+  let shouldEmit = false;
+  const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
-    if (step.status === "complete" || step.status === "failed") return session;
+    if (step.status === "complete" || step.status === "failed" || step.status === "skipped") return session;
     step.status = "skipped";
     step.startedAt = null;
     step.completedAt = null;
     step.error = null;
+    shouldEmit = true;
     return session;
   });
+  if (shouldEmit) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({ type: "state.skipped", session: updatedSession, step: stepName }),
+    );
+  }
+  return updatedSession;
 }
 
 export function markStepFailed(stepName: string, message: string | null = null): Session {
-  return updateSession((session) => {
+  let shouldEmit = false;
+  const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
     if (!step) return session;
+    const now = new Date().toISOString();
     step.status = "failed";
     step.completedAt = null;
     step.error = redactSensitiveText(message);
     session.failure = sanitizeFailure({
       step: stepName,
       message,
-      recordedAt: new Date().toISOString(),
+      recordedAt: now,
     });
     session.status = "failed";
+    transitionMachineSnapshot(session, "failed", now);
+    shouldEmit = true;
     return session;
   });
+  if (shouldEmit) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "state.failed",
+        session: updatedSession,
+        step: stepName,
+        error: message,
+      }),
+    );
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "onboard.failed",
+        session: updatedSession,
+        state: "failed",
+        step: stepName,
+        error: message,
+      }),
+    );
+  }
+  return updatedSession;
 }
 
 export function completeSession(updates: SessionUpdates = {}): Session {
-  return updateSession((session) => {
-    Object.assign(session, filterSafeUpdates(updates));
+  const safeUpdates = filterSafeUpdates(updates);
+  let wasComplete = false;
+  const updatedSession = updateSession((session) => {
+    const now = new Date().toISOString();
+    wasComplete = session.status === "complete";
+    Object.assign(session, safeUpdates);
     session.status = "complete";
     session.resumable = false;
     session.failure = null;
+    transitionMachineSnapshot(session, "complete", now);
     return session;
   });
+  if (Object.keys(safeUpdates).length > 0) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "context.updated",
+        session: updatedSession,
+        state: "complete",
+        metadata: { fields: Object.keys(safeUpdates) },
+      }),
+    );
+  }
+  if (!wasComplete) {
+    emitOnboardMachineEvent(
+      createOnboardMachineEvent({
+        type: "onboard.completed",
+        session: updatedSession,
+        state: "complete",
+      }),
+    );
+  }
+  return updatedSession;
 }
 
 export function summarizeForDebug(
@@ -977,6 +1190,7 @@ export function summarizeForDebug(
     lastStepStarted: session.lastStepStarted,
     lastCompletedStep: session.lastCompletedStep,
     failure: sanitizeFailure(session.failure),
+    machine: session.machine,
     steps: Object.fromEntries(
       Object.entries(session.steps).map(([name, step]) => [
         name,

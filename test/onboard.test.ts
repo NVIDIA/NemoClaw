@@ -35,6 +35,10 @@ type OnboardTestInternals = {
     requestedSandboxName: string;
     recordedSandboxName: string;
   } | null>;
+  clearAgentScopedResumeState: <T extends Record<string, unknown>>(
+    session: T,
+    selectedAgentName: string,
+  ) => T;
   pullAndResolveBaseImageDigest: () => { digest: string | null; ref: string } | null;
   SANDBOX_BASE_IMAGE: string;
 };
@@ -80,6 +84,7 @@ const {
   getRequestedSandboxNameHint,
   getResumeConfigConflicts,
   getResumeSandboxConflict,
+  clearAgentScopedResumeState,
   SANDBOX_BASE_IMAGE,
 } = onboardTestInternals;
 
@@ -383,7 +388,7 @@ startGateway(null).catch(() => {});
     }
   });
 
-  it("detects resume conflicts when a different agent is requested", () => {
+  it("does not treat a requested agent change as a hard resume conflict", () => {
     expect(
       getResumeConfigConflicts(
         {
@@ -392,13 +397,7 @@ startGateway(null).catch(() => {});
         },
         { agent: "hermes" },
       ),
-    ).toEqual([
-      {
-        field: "agent",
-        requested: "hermes",
-        recorded: "openclaw",
-      },
-    ]);
+    ).toEqual([]);
   });
 
   it("allows resume when requested agent matches recorded agent", () => {
@@ -411,6 +410,62 @@ startGateway(null).catch(() => {});
         { agent: "hermes" },
       ),
     ).toEqual([]);
+  });
+
+  it("clears agent-scoped provider state when a resume switches from Hermes to OpenClaw", () => {
+    const completeStep = {
+      status: "complete",
+      startedAt: "2026-05-19T00:00:00.000Z",
+      completedAt: "2026-05-19T00:01:00.000Z",
+      error: null,
+    };
+    const session = {
+      agent: "hermes",
+      provider: "hermes-provider",
+      model: "moonshotai/kimi-k2.6",
+      endpointUrl: "https://inference-api.nousresearch.com/v1",
+      credentialEnv: "NOUS_API_KEY",
+      hermesAuthMethod: "oauth",
+      hermesToolGateways: ["nous-web"],
+      preferredInferenceApi: "openai-completions",
+      nimContainer: "nim-hermes",
+      routerPid: 123,
+      routerCredentialHash: "hash",
+      policyPresets: ["nous-web", "brave"],
+      lastCompletedStep: "policies",
+      lastStepStarted: "policies",
+      steps: {
+        preflight: { ...completeStep },
+        gateway: { ...completeStep },
+        provider_selection: { ...completeStep },
+        inference: { ...completeStep },
+        sandbox: { ...completeStep },
+        openclaw: { ...completeStep },
+        agent_setup: { ...completeStep },
+        policies: { ...completeStep },
+      },
+    };
+
+    const cleared = clearAgentScopedResumeState(session, "openclaw") as typeof session;
+
+    expect(cleared.agent).toBeNull();
+    expect(cleared.provider).toBeNull();
+    expect(cleared.model).toBeNull();
+    expect(cleared.endpointUrl).toBeNull();
+    expect(cleared.credentialEnv).toBeNull();
+    expect(cleared.hermesAuthMethod).toBeNull();
+    expect(cleared.hermesToolGateways).toBeNull();
+    expect(cleared.preferredInferenceApi).toBeNull();
+    expect(cleared.nimContainer).toBeNull();
+    expect(cleared.routerPid).toBeNull();
+    expect(cleared.routerCredentialHash).toBeNull();
+    expect(cleared.policyPresets).toBeNull();
+    expect(cleared.steps.gateway.status).toBe("complete");
+    expect(cleared.steps.provider_selection.status).toBe("pending");
+    expect(cleared.steps.sandbox.status).toBe("pending");
+    expect(cleared.steps.policies.status).toBe("pending");
+    expect(cleared.lastCompletedStep).toBe("gateway");
+    expect(cleared.lastStepStarted).toBeNull();
   });
 
   it("returns a future-shell PATH hint for user-local openshell installs", () => {
@@ -2006,7 +2061,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -2086,6 +2143,357 @@ const { createSandbox } = require(${onboardPath});
     },
   );
 
+  it("skips OpenClaw sandbox-base resolution for agent-staged Dockerfiles", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-base-skip-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "agent-base-skip.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const agentOnboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "agent", "onboard.js"));
+    const sandboxBaseImagePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "sandbox-base-image.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const agentOnboard = require(${agentOnboardPath});
+const sandboxBaseImage = require(${sandboxBaseImagePath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const commands = [];
+const logs = [];
+const warnings = [];
+const baseResolutionCalls = [];
+const originalLog = console.log;
+const originalWarn = console.warn;
+console.log = (...args) => {
+  logs.push(args.join(" "));
+  originalLog(...args);
+};
+console.warn = (...args) => {
+  warnings.push(args.join(" "));
+  originalWarn(...args);
+};
+
+sandboxBaseImage.resolveSandboxBaseImage = (options) => {
+  baseResolutionCalls.push(options);
+  return {
+    ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    source: "latest",
+    glibcVersion: "2.39",
+  };
+};
+
+agentOnboard.createAgentSandbox = () => {
+  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-agent-build-"));
+  const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+  fs.writeFileSync(
+    stagedDockerfile,
+    [
+      "ARG BASE_IMAGE=nemoclaw-hermes-sandbox-base-local:test",
+      "FROM \${BASE_IMAGE}",
+      "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+      "ARG NEMOCLAW_PROVIDER_KEY=custom",
+      "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+      "ARG CHAT_UI_URL=http://127.0.0.1:8642",
+      "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+      "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+      "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+      "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+      "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+      "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+      "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
+      "ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=",
+      "ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0",
+      "ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=W10=",
+      "ARG NEMOCLAW_BUILD_ID=default",
+      "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      "CMD [\"/bin/bash\"]",
+    ].join("\\n"),
+  );
+  return { buildCtx, stagedDockerfile };
+};
+
+runner.run = (command, opts = {}) => {
+  commands.push({ command: _n(command), env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ command: _n([file, ...args]), env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (_n(command).includes("sandbox get hermes-sandbox")) return "";
+  if (_n(command).includes("sandbox list")) return "hermes-sandbox Ready";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
+  if (_n(command).includes("forward list")) return "hermes-sandbox 127.0.0.1 8642 12345 running";
+  return "";
+};
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+registry.getSandbox = () => null;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: hermes-sandbox\\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  const agent = {
+    name: "hermes",
+    displayName: "Hermes Agent",
+    forwardPort: 8642,
+    expectedVersion: "2026.4.23",
+    policyAdditionsPath: null,
+  };
+  await createSandbox(
+    null,
+    "gpt-5.4",
+    "nvidia-prod",
+    null,
+    "hermes-sandbox",
+    null,
+    [],
+    null,
+    agent,
+  );
+  console.log(JSON.stringify({ commands, logs, warnings, baseResolutionCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...stripMessagingEnv(process.env),
+        HOME: tmpDir,
+        NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseStdoutJson<{
+      logs: string[];
+      warnings: string[];
+      baseResolutionCalls: unknown[];
+    }>(result.stdout);
+    assert.equal(payload.baseResolutionCalls.length, 0);
+    assert.ok(
+      !payload.logs.some((line) => line.includes("Using sandbox base image")),
+      "Hermes agent Dockerfile path should not log OpenClaw sandbox-base usage",
+    );
+    assert.ok(
+      !payload.warnings.some((line) => line.includes("base image")),
+      "Hermes agent Dockerfile path should not warn about OpenClaw sandbox-base availability",
+    );
+  });
+
+  it("keeps resolving the OpenClaw sandbox base image on the default Dockerfile path", async () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-base-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "openclaw-base-resolve.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const preflightPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const buildContextPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "sandbox", "build-context.js"),
+    );
+    const sandboxBaseImagePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "sandbox-base-image.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const preflight = require(${preflightPath});
+const credentials = require(${credentialsPath});
+const buildContext = require(${buildContextPath});
+const sandboxBaseImage = require(${sandboxBaseImagePath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const commands = [];
+const logs = [];
+const baseResolutionCalls = [];
+const originalLog = console.log;
+console.log = (...args) => {
+  logs.push(args.join(" "));
+  originalLog(...args);
+};
+
+sandboxBaseImage.resolveSandboxBaseImage = (options) => {
+  baseResolutionCalls.push(options);
+  return {
+    ref: "ghcr.io/nvidia/nemoclaw/sandbox-base@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    source: "latest",
+    glibcVersion: "2.39",
+  };
+};
+buildContext.stageOptimizedSandboxBuildContext = () => {
+  const buildCtx = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-build-"));
+  const stagedDockerfile = path.join(buildCtx, "Dockerfile");
+  fs.writeFileSync(
+    stagedDockerfile,
+    [
+      "ARG BASE_IMAGE=ghcr.io/nvidia/nemoclaw/sandbox-base:latest",
+      "FROM \${BASE_IMAGE}",
+      "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
+      "ARG NEMOCLAW_PROVIDER_KEY=nvidia",
+      "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
+      "ARG CHAT_UI_URL=http://127.0.0.1:18789",
+      "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
+      "ARG NEMOCLAW_INFERENCE_API=openai-completions",
+      "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
+      "ARG NEMOCLAW_MESSAGING_CHANNELS_B64=W10=",
+      "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=e30=",
+      "ARG NEMOCLAW_DISCORD_GUILDS_B64=e30=",
+      "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=",
+      "ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=",
+      "ARG NEMOCLAW_BUILD_ID=default",
+      "ARG NEMOCLAW_DARWIN_VM_COMPAT=0",
+      "CMD [\"/bin/bash\"]",
+    ].join("\\n"),
+  );
+  return { buildCtx, stagedDockerfile };
+};
+
+runner.run = (command, opts = {}) => {
+  commands.push({ command: _n(command), env: opts.env || null });
+  return { status: 0 };
+};
+runner.runFile = (file, args = [], opts = {}) => {
+  commands.push({ command: _n([file, ...args]), env: opts.env || null });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  if (_n(command).includes("sandbox get my-assistant")) return "";
+  if (_n(command).includes("sandbox list")) return "my-assistant Ready";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  return "";
+};
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+registry.getSandbox = () => null;
+preflight.checkPortAvailable = async () => ({ ok: true });
+credentials.prompt = async () => "";
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log(JSON.stringify({ commands, logs, baseResolutionCalls }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...stripMessagingEnv(process.env),
+        HOME: tmpDir,
+        NEMOCLAW_HOME: path.join(tmpDir, ".nemoclaw"),
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    const payload = parseStdoutJson<{
+      logs: string[];
+      baseResolutionCalls: Array<{ imageName?: string }>;
+    }>(result.stdout);
+    assert.equal(payload.baseResolutionCalls.length, 1);
+    assert.equal(
+      payload.baseResolutionCalls[0]?.imageName,
+      "ghcr.io/nvidia/nemoclaw/sandbox-base",
+    );
+    assert.ok(
+      payload.logs.some((line) => line.includes("Pinning base image to sha256:bbbbbbbbbbbb")),
+      "default OpenClaw path should still log base-image pinning",
+    );
+  });
+
   it("binds the dashboard forward to 0.0.0.0 when CHAT_UI_URL points to a remote host", async () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-remote-forward-"));
@@ -2137,7 +2545,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -2236,7 +2646,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -2423,7 +2835,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("forward list")) return "";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
       defaultCurlOutput: "ok",
@@ -2445,7 +2857,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -2535,7 +2949,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("forward list")) return "";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
       defaultCurlOutput: "ok",
@@ -2566,7 +2980,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -2686,7 +3102,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: args[1]?.[1] || String(args[0]), env: args[2]?.env || null });
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -2805,7 +3223,7 @@ runner.runFile = (file, args = [], opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "my-assistant";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("forward list")) return "";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
       defaultCurlOutput: "ok",
@@ -2830,7 +3248,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -2935,7 +3355,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) {
     return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
   }
-  if (_n(command).includes("forward list")) return "";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
   {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
       defaultCurlOutput: "ok",
@@ -2960,7 +3380,9 @@ const fakeSpawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -3089,6 +3511,8 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
+  child.unref = () => {};
+  child.pid = 4242;
   child.killCalls = [];
   child.unrefCalls = 0;
   child.stdout.destroyCalls = 0;
@@ -3107,7 +3531,7 @@ childProcess.spawn = (...args) => {
     process.nextTick(() => child.emit("close", signal === "SIGTERM" ? 0 : 1));
     return true;
   };
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null, child });
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null, child });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
   });
@@ -3179,6 +3603,8 @@ const { createSandbox } = require(${onboardPath});
 const runner = require(${runnerPath});
 const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
 const registry = require(${registryPath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
 
 const commands = [];
 runner.run = (command, opts = {}) => {
@@ -3192,6 +3618,17 @@ runner.runCapture = (command) => {
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
+  process.nextTick(() => child.emit("close", 0));
+  return child;
+};
 
 const { createSandbox } = require(${onboardPath});
 

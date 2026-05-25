@@ -72,7 +72,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   if (_n(command).includes("provider get")) return "Provider: discord-bridge";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
       defaultCurlOutput: "ok",
@@ -92,7 +92,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  const command = _n(args[1][1]);
+  child.unref = () => {};
+  child.pid = 4242;
+  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
   const policyMatch = command.match(/--policy ([^ ]+)/);
   if (policyMatch) {
@@ -327,7 +329,7 @@ runner.run = (command, opts = {}) => {
 runner.runCapture = (command) => {
   if (_n(command).includes("sandbox get my-assistant")) return "";
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
       defaultCurlOutput: "ok",
@@ -350,7 +352,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  const command = _n(args[1][1]);
+  child.unref = () => {};
+  child.pid = 4242;
+  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
   const policyMatch = command.match(/--policy ([^ ]+)/);
   if (policyMatch) {
@@ -516,7 +520,7 @@ runner.runCapture = (command) => {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
     if (sandboxExecCurl !== null) return sandboxExecCurl;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.registerSandbox = (entry) => {
@@ -533,7 +537,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  const command = _n(args[1][1]);
+  child.unref = () => {};
+  child.pid = 4242;
+  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
   const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
   if (dockerfileMatch) {
@@ -681,7 +687,7 @@ runner.runCapture = (command) => {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
     if (sandboxExecCurl !== null) return sandboxExecCurl;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.registerSandbox = (entry) => {
@@ -698,7 +704,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  const command = _n(args[1][1]);
+  child.unref = () => {};
+  child.pid = 4242;
+  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
   const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
   if (dockerfileMatch) {
@@ -840,7 +848,7 @@ runner.runCapture = (command) => {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
     if (sandboxExecCurl !== null) return sandboxExecCurl;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.registerSandbox = (entry) => {
@@ -857,7 +865,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  const command = _n(args[1][1]);
+  child.unref = () => {};
+  child.pid = 4242;
+  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
   const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
   if (dockerfileMatch) {
@@ -1005,7 +1015,7 @@ runner.runCapture = (command) => {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
     if (sandboxExecCurl !== null) return sandboxExecCurl;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.registerSandbox = (entry) => {
@@ -1022,7 +1032,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  const command = _n(args[1][1]);
+  child.unref = () => {};
+  child.pid = 4242;
+  const command = _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]);
   const entry = { command, env: args[2]?.env || null };
   const dockerfileMatch = command.match(/--from ([^ ]+Dockerfile)/);
   if (dockerfileMatch) {
@@ -1221,7 +1233,7 @@ runner.runCapture = (command) => {
   if (_n(command).includes("sandbox list")) return "my-assistant Ready";
   // All messaging providers already exist in gateway
   if (_n(command).includes("provider get")) return "Provider: exists";
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
@@ -1335,7 +1347,7 @@ runner.runCapture = (command) => {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
     if (sandboxExecCurl !== null) return sandboxExecCurl;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -1349,7 +1361,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);
@@ -1470,7 +1484,7 @@ runner.runCapture = (command) => {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
     if (sandboxExecCurl !== null) return sandboxExecCurl;
   }
-  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  if (_n(command).includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running\nmy-assistant 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -1484,7 +1498,9 @@ childProcess.spawn = (...args) => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  commands.push({ command: _n(args[1][1]), env: args[2]?.env || null });
+  child.unref = () => {};
+  child.pid = 4242;
+  commands.push({ command: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]), env: args[2]?.env || null });
   process.nextTick(() => {
     child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
     child.emit("close", 0);

@@ -1,14 +1,15 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
 import {
   createTarball,
   getDebugCompletionMessages,
+  isDmesgPermissionDeniedOutput,
   isDmesgRestrictedForCurrentUser,
   redact,
 } from "../../../dist/lib/diagnostics/debug";
@@ -95,7 +96,6 @@ describe("createTarball", () => {
   });
 });
 
-
 describe("dmesg restriction detection", () => {
   let tempDir: string;
 
@@ -131,5 +131,19 @@ describe("getDebugCompletionMessages", () => {
 
   it("omits the redundant --output hint when a tarball was already written", () => {
     expect(getDebugCompletionMessages("/tmp/nemoclaw-debug.tar.gz")).toEqual([]);
+  });
+});
+
+describe("isDmesgPermissionDeniedOutput", () => {
+  it("recognizes restricted dmesg stderr", () => {
+    expect(
+      isDmesgPermissionDeniedOutput(
+        "dmesg: read kernel buffer failed: Operation not permitted",
+      ),
+    ).toBe(true);
+  });
+
+  it("does not treat unrelated permission errors as dmesg restrictions", () => {
+    expect(isDmesgPermissionDeniedOutput("docker: Permission denied")).toBe(false);
   });
 });

@@ -42,6 +42,18 @@ function planOnly(scenarioId: string): { stdout: string; stderr: string; status:
   }
 }
 
+describe("Issue 3812: inference/provider suite families", () => {
+  it("test_should_route_inference_suite_families_to_domain_specific_steps", () => {
+    const { suites } = loadMetadataFromDir(E2E_DIR);
+    for (const family of ["inference-routing", "inference-switch", "kimi-compatibility", "ollama-auth-proxy", "model-router"]) {
+      const scripts = suites.suites[family]?.steps?.map((step) => step.script ?? "") ?? [];
+      expect(scripts.length, family).toBeGreaterThan(0);
+      expect(scripts.every((script) => script.startsWith("inference/")), family).toBe(true);
+      expect(scripts.some((script) => !script.startsWith("inference/cloud/")), family).toBe(true);
+    }
+  });
+});
+
 describe("Phase 9: additional scenario families - metadata", () => {
   it("resolver should resolve all new scenarios", () => {
     const meta = loadMetadataFromDir(E2E_DIR);
