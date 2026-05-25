@@ -76,13 +76,6 @@ export function dockerPullProgressSignature(line: string): string | null {
     return `status:${normalized}`;
   }
 
-  const buildKitPull = normalized.match(
-    /^#\d+\s+(?:sha256:[a-f0-9]+|extracting|copying).*\b([\d.]+\s*[A-Za-z]+)\s*\/\s*([\d.]+\s*[A-Za-z]+)/i,
-  );
-  if (buildKitPull) {
-    return `buildkit:${normalized}`;
-  }
-
   return null;
 }
 
@@ -237,9 +230,8 @@ function normalizeExtraEnv(env: NodeJS.ProcessEnv | undefined): Record<string, s
 }
 
 function positiveMs(value: number | undefined, fallbackMs: number): number {
-  return typeof value === "number" && Number.isFinite(value) && value > 0
-    ? Math.floor(value)
-    : fallbackMs;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return fallbackMs;
+  return value < 1 ? 1 : Math.floor(value);
 }
 
 function formatSeconds(ms: number): string {

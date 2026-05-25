@@ -47,6 +47,19 @@ describe("docker pull progress watchdog", () => {
     expect(dockerPullProgressSignature("abc123def: Pull complete")).toBe(
       "layer:abc123def:Pull complete",
     );
+    expect(
+      dockerPullProgressSignature(
+        "e20d54a357dc: Extracting [=====>                                             ]  10.03MB/84.19MB",
+      ),
+    ).toBe("layer:e20d54a357dc:Extracting:10.03MB/84.19MB");
+    expect(
+      dockerPullProgressSignature(
+        "e5eda78c7490: Downloading [============================>                      ]  17.83MB/30.76MB",
+      ),
+    ).toBe("layer:e5eda78c7490:Downloading:17.83MB/30.76MB");
+    expect(dockerPullProgressSignature("b39b21d4717d: Download complete ")).toBe(
+      "layer:b39b21d4717d:Download complete",
+    );
   });
 
   it("spawns plain docker pull without unsupported progress flags", async () => {
@@ -108,6 +121,27 @@ describe("docker pull progress watchdog", () => {
     await vi.advanceTimersByTimeAsync(500);
     child.stderr.emit("data", Buffer.from("abc123def: Downloading 1MB/10MB\r"));
     await vi.advanceTimersByTimeAsync(600);
+
+    await expect(pull).resolves.toMatchObject({
+      status: 124,
+      timedOut: true,
+      timeoutKind: "stall",
+    });
+    expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("clamps positive sub-millisecond watchdog intervals to 1ms", async () => {
+    vi.useFakeTimers();
+    const child = new FakeChild();
+    const pull = dockerPullWithProgressWatchdog("example/image:latest", {
+      suppressOutput: true,
+      stallTimeoutMs: 0.5,
+      maxTimeoutMs: 10_000,
+      watchdogIntervalMs: 0.5,
+      spawnImpl: () => child,
+    });
+
+    await vi.advanceTimersByTimeAsync(2);
 
     await expect(pull).resolves.toMatchObject({
       status: 124,
