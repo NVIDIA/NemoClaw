@@ -2994,6 +2994,7 @@ describe("installer Docker bootstrap (sourced)", () => {
   function runEnsureDockerWithStubs({
     dockerScript,
     idScript,
+    statScript,
     systemctlScript = `#!/usr/bin/env bash
 if [ "\${1:-}" = "is-active" ]; then exit 0; fi
 if [ "\${1:-}" = "enable" ]; then exit 0; fi
@@ -3008,6 +3009,7 @@ exec "$@"
   }: {
     dockerScript: string;
     idScript: string;
+    statScript?: string;
     systemctlScript?: string;
     sudoScript?: string;
   }) {
@@ -3020,6 +3022,7 @@ exec "$@"
 
     writeExecutable(path.join(fakeBin, "docker"), dockerScript);
     writeExecutable(path.join(fakeBin, "id"), idScript);
+    if (statScript) writeExecutable(path.join(fakeBin, "stat"), statScript);
     writeExecutable(path.join(fakeBin, "sudo"), sudoScript);
     writeExecutable(path.join(fakeBin, "systemctl"), systemctlScript);
     writeExecutable(
@@ -3066,6 +3069,39 @@ ensure_docker
       idLog: fs.existsSync(idLog) ? fs.readFileSync(idLog, "utf-8") : "",
     };
   }
+
+  it("reports when Docker is reachable for a non-docker-group Linux user", () => {
+    const { result, sudoLog } = runEnsureDockerWithStubs({
+      dockerScript: `#!/usr/bin/env bash
+if [ "\${1:-}" = "info" ]; then exit 0; fi
+exit 0
+`,
+      idScript: `#!/usr/bin/env bash
+case "$*" in
+  "-u") printf '1000\\n' ;;
+  "-un") printf 'alice\\n' ;;
+  "-nG alice") printf 'alice sudo\\n' ;;
+  "-nG") printf 'alice sudo\\n' ;;
+  *) printf 'unexpected id %s\\n' "$*" >&2; exit 99 ;;
+esac
+`,
+      statScript: `#!/usr/bin/env bash
+if [ "\${1:-}" = "-Lc" ]; then
+  printf '660 root docker /var/run/docker.sock\\n'
+  exit 0
+fi
+exit 99
+`,
+    });
+
+    const output = `${result.stdout}${result.stderr}`;
+    expect(result.status, output).toBe(0);
+    expect(output).toMatch(/Docker is reachable even though user 'alice' is not in the docker group/);
+    expect(output).toMatch(/DOCKER_HOST/);
+    expect(output).toMatch(/660 root docker \/var\/run\/docker\.sock/);
+    expect(output).not.toMatch(/newgrp docker/);
+    expect(sudoLog).not.toMatch(/usermod/);
+  });
 
   it("prompts for newgrp when persisted docker membership is not active", () => {
     const { result, sudoLog } = runEnsureDockerWithStubs({
