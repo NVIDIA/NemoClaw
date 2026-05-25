@@ -451,6 +451,36 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Unknown command")).toBeTruthy();
   });
 
+  it("points OpenShell-only commands at openshell instead of sandbox connect (#3388)", () => {
+    const term = run("term");
+    expect(term.code).toBe(1);
+    expect(term.out).toContain("Unknown nemoclaw command: term");
+    expect(term.out).toContain("Run: openshell term");
+    expect(term.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
+
+    const policy = run("policy set");
+    expect(policy.code).toBe(1);
+    expect(policy.out).toContain("Unknown nemoclaw command: policy set");
+    expect(policy.out).toContain("Run: openshell policy set --policy <policy-file> <sandbox-name>");
+    expect(policy.out).toContain("nemoclaw <sandbox-name> policy-add <preset>");
+    expect(policy.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
+
+    const gateway = run("gateway stop");
+    expect(gateway.code).toBe(1);
+    expect(gateway.out).toContain("Unknown nemoclaw command: gateway stop");
+    expect(gateway.out).toContain("Run: openshell gateway stop -g nemoclaw");
+    expect(gateway.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
+  });
+
+  it("prints oclif validation failures without stack traces", () => {
+    const r = run("inference set 2>&1");
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("Missing required flag model");
+    expect(r.out).toContain("Missing required flag provider");
+    expect(r.out).not.toContain("FailedFlagValidationError");
+    expect(r.out).not.toContain("node_modules/@oclif/core");
+  });
+
   it("suggests list for a mistyped list command", () => {
     // Isolate from any real openshell gateway on the host so recovery
     // doesn't intercept the typo suggestion.
