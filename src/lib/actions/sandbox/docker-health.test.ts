@@ -97,6 +97,20 @@ describe("getSandboxDockerHealth", () => {
     expect(getSandboxDockerHealth("my", deps).containerName).toBe("openshell-my");
   });
 
+  it("prefers the exact-name container over a docker-runtime-suffixed sibling", () => {
+    // openshell-my-12ab is a same-sandbox alternate container left over
+    // from an earlier OpenShell run; only `my` is registered, so the
+    // longest-known-name heuristic alone would still resolve the
+    // suffixed candidate to `my` and could return it depending on
+    // docker ps ordering. The exact name must always win.
+    const deps = fixture({
+      psNames: "openshell-my-12ab\nopenshell-my\n",
+      healthRaw: "healthy",
+      knownSandboxes: ["my"],
+    });
+    expect(getSandboxDockerHealth("my", deps).containerName).toBe("openshell-my");
+  });
+
   it("does not steal another sandbox's container when names share a hyphenated prefix and the suffix is hyphen-free", () => {
     const deps = fixture({
       psNames: "openshell-my-assistant-prod\n",

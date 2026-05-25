@@ -71,6 +71,13 @@ function resolveDockerDriverSandboxContainer(
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => line === ourExact || line.startsWith(ourPrefix));
+  // Prefer the exact-name container before considering suffixed ones.
+  // Without this short-circuit, a suffixed `openshell-<name>-<id>` whose
+  // <id> is a docker runtime suffix (not a registered sandbox name) would
+  // resolve to our sandbox via the longest-match heuristic and beat the
+  // co-existing exact `openshell-<name>` if it appeared earlier in
+  // `docker ps`.
+  if (candidates.includes(ourExact)) return ourExact;
   for (const candidate of candidates) {
     const stripped = candidate.replace(/^openshell-/, "");
     // Find the longest known sandbox whose container name pattern
