@@ -60,6 +60,7 @@ import {
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
+import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
 
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
@@ -438,6 +439,20 @@ export async function rebuildSandbox(
     }
   }
 
+  const rebuildShieldsWindow = openRebuildShieldsWindow(sandboxName, CLI_NAME);
+  if (!rebuildShieldsWindow) return bail("Failed to auto-unlock shields.");
+
+  const relockShieldsIfNeeded = (sandboxStillExists: boolean): boolean =>
+    relockRebuildShieldsWindow(
+      sandboxName,
+      rebuildShieldsWindow,
+      sandboxStillExists,
+      CLI_NAME,
+    );
+
+  let sandboxStillExists = true;
+
+  try {
   // Step 2: Backup
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
@@ -456,6 +471,7 @@ export async function rebuildSandbox(
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     }
     console.error("  Aborting rebuild to prevent data loss.");
+    relockShieldsIfNeeded(true);
     bail("Failed to back up sandbox state.");
     return;
   }
@@ -463,6 +479,7 @@ export async function rebuildSandbox(
   if (!backupManifest) {
     console.error("  Failed to record backup metadata.");
     console.error("  Aborting rebuild to prevent data loss.");
+    relockShieldsIfNeeded(true);
     bail("Failed to record backup metadata.");
     return;
   }
@@ -515,9 +532,11 @@ export async function rebuildSandbox(
   if (deleteResult.status !== 0 && !alreadyGone) {
     console.error("  Failed to delete sandbox. Aborting rebuild.");
     console.error("  State backup is preserved at: " + backupManifest.backupPath);
+    relockShieldsIfNeeded(true);
     bail("Failed to delete sandbox.", deleteResult.status || 1);
     return;
   }
+  sandboxStillExists = false;
   removeSandboxRegistryEntry(sandboxName);
   log(
     `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,
@@ -683,6 +702,10 @@ export async function rebuildSandbox(
     process.exit = _savedExit;
   }
 
+  if (!onboardFailed) {
+    sandboxStillExists = true;
+  }
+
   if (onboardFailed) {
     // Clean up onboard's internal state that normally runs in
     // process.once("exit") listeners — those never fire because we
@@ -715,7 +738,9 @@ export async function rebuildSandbox(
     console.error(
       `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
     );
+    printRebuildShieldsRecovery(sandboxName, rebuildShieldsWindow, CLI_NAME);
     console.error("");
+    relockShieldsIfNeeded(false);
     bail(
       `Recreate failed (sandbox destroyed). Backup: ${backupManifest.backupPath}`,
       onboardExitCode,
@@ -855,6 +880,8 @@ export async function rebuildSandbox(
   });
   log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
 
+  if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
+
   console.log("");
   if (restore.success) {
     console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
@@ -866,5 +893,10 @@ export async function rebuildSandbox(
       `  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but state restore was incomplete`,
     );
     console.log(`    Backup available at: ${backupManifest.backupPath}`);
+  }
+  } finally {
+    if (!rebuildShieldsWindow.relocked) {
+      relockShieldsIfNeeded(sandboxStillExists);
+    }
   }
 }

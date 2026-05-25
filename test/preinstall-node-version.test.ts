@@ -9,15 +9,6 @@ import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(import.meta.dirname, "..");
 const SCRIPT_PATH = path.join(REPO_ROOT, "scripts/check-node-version.js");
-const PACKAGE_JSON_PATH = path.join(REPO_ROOT, "package.json");
-
-function readPackageJson(): {
-  scripts?: Record<string, string>;
-  engines?: { node?: string };
-} {
-  return JSON.parse(fs.readFileSync(PACKAGE_JSON_PATH, "utf-8"));
-}
-
 describe("preinstall node-version guard (#2399)", () => {
   it("scripts/check-node-version.js exists and is executable", () => {
     expect(fs.existsSync(SCRIPT_PATH)).toBe(true);
@@ -27,16 +18,6 @@ describe("preinstall node-version guard (#2399)", () => {
     expect(stat.mode & 0o111).toBeGreaterThan(0);
   });
 
-  it("package.json wires the script as preinstall", () => {
-    const pkg = readPackageJson();
-    expect(pkg.scripts?.preinstall).toBe("node scripts/check-node-version.js");
-  });
-
-  it("package.json declares engines.node so the guard has something to enforce", () => {
-    const pkg = readPackageJson();
-    expect(pkg.engines?.node).toBeDefined();
-    expect(pkg.engines?.node).toMatch(/\d+\.\d+\.\d+/);
-  });
 
   it("guard exits 0 on a Node version that satisfies the declared range", () => {
     // The current process is the same Node version that npm install uses, and

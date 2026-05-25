@@ -70,3 +70,115 @@ describe("sandbox logs helpers", () => {
     expect(exitCodeFromSignal("SIGINT")).toBe(130);
   });
 });
+
+
+import { mergeTailLogLines, parseLineTimestamp } from "./logs";
+
+describe("parseLineTimestamp", () => {
+  it("parses the bracketed epoch-seconds format from OpenShell OCSF audit", () => {
+    expect(parseLineTimestamp("[1779488798.644] [sandbox] [OCSF ] NET:OPEN DENIED")).toBe(
+      1779488798644,
+    );
+  });
+
+  it("parses the bracketed epoch with no fractional component", () => {
+    expect(parseLineTimestamp("[1779488800] [sandbox] [INFO ] ok")).toBe(1779488800000);
+  });
+
+  it("pads short fractional seconds to milliseconds", () => {
+    expect(parseLineTimestamp("[1779488798.6] [sandbox] x")).toBe(1779488798600);
+    expect(parseLineTimestamp("[1779488798.64] [sandbox] x")).toBe(1779488798640);
+  });
+
+  it("parses the ISO 8601 gateway-log format", () => {
+    expect(
+      parseLineTimestamp("2026-05-22T20:55:38.152+00:00 [gateway] starting HTTP server..."),
+    ).toBe(Date.parse("2026-05-22T20:55:38.152+00:00"));
+  });
+
+  it("parses the ISO 8601 format with Z suffix", () => {
+    expect(parseLineTimestamp("2026-05-22T20:55:38.152Z [gateway] ok")).toBe(
+      Date.parse("2026-05-22T20:55:38.152Z"),
+    );
+  });
+
+  it("returns null when no recognised timestamp prefix is present", () => {
+    expect(parseLineTimestamp("just a free-form line")).toBeNull();
+    expect(parseLineTimestamp("")).toBeNull();
+    expect(parseLineTimestamp("  [not-a-timestamp]")).toBeNull();
+  });
+});
+
+describe("mergeTailLogLines", () => {
+  it("returns the empty string when no sources or no lines requested", () => {
+    expect(mergeTailLogLines([], 5)).toBe("");
+    expect(mergeTailLogLines(["[1] a\n"], 0)).toBe("[1] a\n");
+  });
+
+  it("caps the merged output at maxLines (closes #4100)", () => {
+    const gateway = ["[1] g1", "[3] g2", "[5] g3"].join("\n") + "\n";
+    const openshell = ["[2] o1", "[4] o2", "[6] o3"].join("\n") + "\n";
+    const merged = mergeTailLogLines([gateway, openshell], 3);
+    const lines = merged.split("\n").filter((line) => line.length > 0);
+    expect(lines).toEqual(["[4] o2", "[5] g3", "[6] o3"]);
+  });
+
+  it("interleaves chronologically across sources", () => {
+    const gateway = "[1779488800.100] g first\n[1779488800.300] g third\n";
+    const openshell = "[1779488800.200] o second\n[1779488800.400] o fourth\n";
+    const merged = mergeTailLogLines([gateway, openshell], 10);
+    expect(merged.trimEnd().split("\n")).toEqual([
+      "[1779488800.100] g first",
+      "[1779488800.200] o second",
+      "[1779488800.300] g third",
+      "[1779488800.400] o fourth",
+    ]);
+  });
+
+  it("keeps continuation lines attached to their preceding timestamped line", () => {
+    const gateway = [
+      "[1779488800.100] g header",
+      "  continuation line for g",
+      "[1779488800.400] g next",
+    ].join("\n");
+    const openshell = "[1779488800.200] o middle\n";
+    const merged = mergeTailLogLines([gateway, openshell], 10);
+    expect(merged.trimEnd().split("\n")).toEqual([
+      "[1779488800.100] g header",
+      "  continuation line for g",
+      "[1779488800.200] o middle",
+      "[1779488800.400] g next",
+    ]);
+  });
+
+  it("deterministically interleaves identically-timestamped lines by source order", () => {
+    const gateway = "[1779488800.000] g\n";
+    const openshell = "[1779488800.000] o\n";
+    const merged = mergeTailLogLines([gateway, openshell], 10);
+    expect(merged.trimEnd().split("\n")).toEqual(["[1779488800.000] g", "[1779488800.000] o"]);
+  });
+
+  it("preserves source order for untimestamped lines and places them before timestamped lines", () => {
+    const single = "no timestamp here\n[1779488800.000] later\n";
+    const merged = mergeTailLogLines([single], 10);
+    expect(merged.trimEnd().split("\n")).toEqual(["no timestamp here", "[1779488800.000] later"]);
+  });
+
+  it("returns at most maxLines when both sources individually have >= maxLines", () => {
+    // The original bug: passing --tail 5 to each source yields 10 lines.
+    const gatewayFive = Array.from({ length: 5 }, (_v, i) => `[${i + 1}] g${i + 1}`).join("\n");
+    const openshellFive = Array.from({ length: 5 }, (_v, i) => `[${i + 1}.5] o${i + 1}`).join("\n");
+    const merged = mergeTailLogLines([gatewayFive, openshellFive], 5);
+    const lines = merged.split("\n").filter((line) => line.length > 0);
+    expect(lines.length).toBe(5);
+  });
+
+  it("ignores empty sources without producing extra blank lines", () => {
+    const merged = mergeTailLogLines(["", "[1] a\n", ""], 3);
+    expect(merged).toBe("[1] a\n");
+  });
+
+  it("appends a trailing newline so callers can pipe through process.stdout.write", () => {
+    expect(mergeTailLogLines(["[1] a"], 3).endsWith("\n")).toBe(true);
+  });
+});

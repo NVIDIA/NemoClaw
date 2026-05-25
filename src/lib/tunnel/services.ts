@@ -11,16 +11,16 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
-  writeFileSync,
   unlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
-
-import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
-import { renderBox } from "../cli/banner";
 import { dockerSpawnSync } from "../adapters/docker";
-import { DASHBOARD_PORT } from "../core/ports";
 import { resolveOpenshell } from "../adapters/openshell/resolve";
+import { renderBox } from "../cli/banner";
+import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
+import { isRecord } from "../core/json-types";
+import { DASHBOARD_PORT } from "../core/ports";
 import { buildSubprocessEnv } from "../subprocess-env";
 
 // ---------------------------------------------------------------------------
@@ -36,6 +36,8 @@ export interface ServiceOptions {
   repoDir?: string;
   /** Override PID directory (default: /tmp/nemoclaw-services-{sandbox}). */
   pidDir?: string;
+  /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
+  cloudflareTunnelToken?: string;
 }
 
 export interface ServiceStatus {
@@ -147,6 +149,84 @@ function extractTryCloudflareUrl(log: string): string | null {
     }
   }
   return null;
+}
+
+function formatNamedTunnelUrl(hostname: string): string | null {
+  const normalized = hostname.trim().replace(/\.$/, "").toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(normalized)) {
+    return null;
+  }
+  return `https://${normalized}`;
+}
+
+function serviceTargetsDashboard(service: string, dashboardPort: number): boolean {
+  try {
+    const url = new URL(service);
+    return (
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1") &&
+      url.port === String(dashboardPort)
+    );
+  } catch {
+    return service === `http://localhost:${String(dashboardPort)}`;
+  }
+}
+
+function getConfigIngressEntries(config: unknown): Array<{ hostname: string; service: string }> {
+  if (!isRecord(config) || !Array.isArray(config.ingress)) return [];
+
+  const entries: Array<{ hostname: string; service: string }> = [];
+  for (const entry of config.ingress) {
+    if (!isRecord(entry)) continue;
+    const { hostname, service } = entry;
+    if (typeof hostname === "string" && typeof service === "string") {
+      entries.push({ hostname, service });
+    }
+  }
+  return entries;
+}
+
+function extractNamedCloudflareUrl(log: string, dashboardPort: number): string | null {
+  for (const match of log.matchAll(/config="((?:\\"|[^"])*)"/g)) {
+    const escapedConfig = match[1];
+    if (!escapedConfig) continue;
+    try {
+      const configText = JSON.parse(`"${escapedConfig}"`) as string;
+      const entries = getConfigIngressEntries(JSON.parse(configText) as unknown);
+      for (const entry of entries) {
+        if (!serviceTargetsDashboard(entry.service, dashboardPort)) continue;
+        const url = formatNamedTunnelUrl(entry.hostname);
+        if (url) return url;
+      }
+    } catch {
+      // Fall through to the regex parser below for partial or unusual log lines.
+    }
+  }
+
+  const port = String(dashboardPort).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const servicePattern = new RegExp(`\\\\"service\\\\"\\s*:\\s*\\\\"http://localhost:${port}/?\\\\"`, "g");
+  for (const line of log.split(/\r?\n/)) {
+    for (const serviceMatch of line.matchAll(servicePattern)) {
+      const prefix = line.slice(0, serviceMatch.index ?? 0);
+      let hostname: string | null = null;
+      for (const hostnameMatch of prefix.matchAll(/\\"hostname\\"\s*:\s*\\"([^"\\]+)\\"/g)) {
+        hostname = hostnameMatch[1] ?? null;
+      }
+      if (!hostname) continue;
+      const url = formatNamedTunnelUrl(hostname);
+      if (url) return url;
+    }
+  }
+
+  return null;
+}
+
+/** Extract the active cloudflared public URL from a service log. */
+export function getTunnelUrl(pidDir: string, dashboardPort: number): string {
+  const logFile = join(pidDir, "cloudflared.log");
+  if (!existsSync(logFile)) return "";
+  const log = readFileSync(logFile, "utf-8");
+  return extractNamedCloudflareUrl(log, dashboardPort) ?? extractTryCloudflareUrl(log) ?? "";
 }
 
 export function readCloudflaredState(pidDir: string): CloudflaredState {
@@ -343,8 +423,7 @@ export function showStatus(opts: ServiceOptions = {}): void {
   // Only show tunnel URL if cloudflared is actually running
   const logFile = join(pidDir, "cloudflared.log");
   if (state.kind === "running" && existsSync(logFile)) {
-    const log = readFileSync(logFile, "utf-8");
-    const publicUrl = extractTryCloudflareUrl(log);
+    const publicUrl = getTunnelUrl(pidDir, opts.dashboardPort ?? DASHBOARD_PORT);
     if (publicUrl) {
       info(`Public URL: ${publicUrl}`);
     }
@@ -555,15 +634,22 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   // No host-side bridge processes are needed. See: PR #1081.
 
   // cloudflared tunnel
+  const tunnelToken = (opts.cloudflareTunnelToken ?? process.env.CLOUDFLARE_TUNNEL_TOKEN ?? "").trim();
   try {
     execSync("command -v cloudflared", {
       stdio: ["ignore", "ignore", "ignore"],
     });
-    startService(pidDir, "cloudflared", "cloudflared", [
-      "tunnel",
-      "--url",
-      `http://localhost:${String(dashboardPort)}`,
-    ]);
+    if (tunnelToken) {
+      startService(pidDir, "cloudflared", "cloudflared", ["tunnel", "run"], {
+        TUNNEL_TOKEN: tunnelToken,
+      });
+    } else {
+      startService(pidDir, "cloudflared", "cloudflared", [
+        "tunnel",
+        "--url",
+        `http://localhost:${String(dashboardPort)}`,
+      ]);
+    }
   } catch {
     warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
   }
@@ -571,13 +657,9 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   // Wait for cloudflared URL
   if (isRunning(pidDir, "cloudflared")) {
     info("Waiting for tunnel URL...");
-    const logFile = join(pidDir, "cloudflared.log");
     for (let i = 0; i < 15; i++) {
-      if (existsSync(logFile)) {
-        const log = readFileSync(logFile, "utf-8");
-        if (extractTryCloudflareUrl(log)) {
-          break;
-        }
+      if (getTunnelUrl(pidDir, dashboardPort)) {
+        break;
       }
       await new Promise((resolve) => {
         setTimeout(resolve, 1000);
@@ -586,10 +668,8 @@ export async function startAll(opts: ServiceOptions = {}): Promise<void> {
   }
 
   let tunnelUrl = "";
-  const cfLogFile = join(pidDir, "cloudflared.log");
-  if (isRunning(pidDir, "cloudflared") && existsSync(cfLogFile)) {
-    const log = readFileSync(cfLogFile, "utf-8");
-    tunnelUrl = extractTryCloudflareUrl(log) ?? "";
+  if (isRunning(pidDir, "cloudflared")) {
+    tunnelUrl = getTunnelUrl(pidDir, dashboardPort);
   }
 
   const bannerLines = [
