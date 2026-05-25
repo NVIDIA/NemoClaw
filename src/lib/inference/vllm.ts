@@ -6,7 +6,11 @@
 // right profile per platform and running the install.
 
 const { runCapture, runShell } = require("../runner");
-const { dockerCapture, dockerSpawn } = require("../adapters/docker");
+const {
+  dockerCapture,
+  dockerPullWithProgressWatchdog,
+  dockerSpawn,
+} = require("../adapters/docker");
 const { VLLM_PORT } = require("../core/ports");
 const { getGpuIndicesByName } = require("./nim");
 import {
@@ -39,7 +43,9 @@ interface VllmProfile {
   buildDockerRunFlags?: () => string[];
   // Approximate first-run time shown in the confirmation prompt.
   estimatedMinutes: string;
-  // Image-pull deadline. First run on a slow link can be several minutes.
+  // Maximum wall-clock safety budget for image pulls. The Docker adapter uses
+  // a shorter progress watchdog for stalls, so slow-but-moving pulls can keep
+  // going until this last-ditch cap.
   pullTimeoutSec: number;
   // Marker emitter sees container output line by line. The patterns below
   // map a line to a user-visible "==> ..." progress marker. Order matters:
@@ -118,7 +124,7 @@ const SPARK_PROFILE: VllmProfile = {
     "HF_HOME=/root/.cache/huggingface",
   ],
   estimatedMinutes: "10–30 minutes",
-  pullTimeoutSec: 900,
+  pullTimeoutSec: 12 * 60 * 60,
   loadTimeoutSec: 1800,
   progressMarkers: [
     {
@@ -219,19 +225,22 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
-function pullImage(profile: VllmProfile): { ok: boolean; reason?: string } {
+async function pullImage(profile: VllmProfile): Promise<{ ok: boolean; reason?: string }> {
   emit(`Pulling vLLM image: ${profile.image}`);
-  // GNU `timeout` enforces the pull deadline. macOS BSD coreutils omits it;
-  // fall back to a plain `docker pull` there.
-  const hasTimeout = !!runCapture(["sh", "-c", "command -v timeout"], {
-    ignoreError: true,
-  }).trim();
-  const prefix = hasTimeout ? `timeout ${String(profile.pullTimeoutSec)} ` : "";
-  const result = runShell(`${prefix}docker pull ${profile.image}`, {
-    ignoreError: true,
-    suppressOutput: true,
+  const result = await dockerPullWithProgressWatchdog(profile.image, {
+    maxTimeoutMs: profile.pullTimeoutSec * 1000,
+    logLine: emit,
   });
   if (result.status !== 0) {
+    if (result.timeoutKind === "stall") {
+      return { ok: false, reason: "docker pull stalled with no progress" };
+    }
+    if (result.timeoutKind === "max") {
+      return {
+        ok: false,
+        reason: `docker pull exceeded ${String(profile.pullTimeoutSec)}s safety budget`,
+      };
+    }
     return { ok: false, reason: `docker pull failed (exit ${String(result.status)})` };
   }
   return { ok: true };
@@ -498,7 +507,7 @@ export async function installVllm(
     return { ok: false };
   }
 
-  const pull = pullImage(profile);
+  const pull = await pullImage(profile);
   if (!pull.ok) {
     console.error(`  vLLM install failed: ${String(pull.reason)}`);
     return { ok: false };
