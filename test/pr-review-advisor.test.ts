@@ -5,13 +5,14 @@ import fs from "node:fs";
 import path from "node:path";
 import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import YAML from "yaml";
 
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
 import { buildSystemPrompt, classifyMonolithDelta, classifyTestDepth, normalizeReviewResult, readTrustedSecurityReviewSkill, renderDetailedReview, renderSummary } from "../tools/pr-review-advisor/analyze.mts";
 import { githubGraphql } from "../tools/advisors/github.mts";
+import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
+
 type ReviewMetadata = Parameters<typeof normalizeReviewResult>[1];
 
 function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
@@ -38,6 +39,11 @@ function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
     deterministic,
     ...overrides,
   } as ReviewMetadata;
+}
+
+function loadAdvisorSchema(): Record<string, unknown> {
+  const schemaPath = path.join(ROOT, "tools", "pr-review-advisor", "schema.json");
+  return JSON.parse(fs.readFileSync(schemaPath, "utf-8")) as Record<string, unknown>;
 }
 
 function validResult(overrides = {}) {
@@ -146,7 +152,7 @@ describe("PR review advisor", () => {
   });
 
   it("loads the checked-in security review skill into the advisor prompt", () => {
-    const schema = JSON.parse(fs.readFileSync(path.join(ROOT, "tools/pr-review-advisor/schema.json"), "utf8"));
+    const schema = loadAdvisorSchema();
     const skill = readTrustedSecurityReviewSkill();
     const prompt = buildSystemPrompt(schema, skill);
 
@@ -282,7 +288,7 @@ describe("PR review advisor", () => {
   });
 
   it("normalizes output that validates against the JSON schema", () => {
-    const schema = JSON.parse(fs.readFileSync(path.join(ROOT, "tools/pr-review-advisor/schema.json"), "utf8"));
+    const schema = loadAdvisorSchema();
     const ajv = new Ajv2020({ strict: false });
     const validate = ajv.compile(schema);
     const result = normalizeReviewResult(validResult(), metadata());
@@ -291,35 +297,63 @@ describe("PR review advisor", () => {
     expect(validate(result)).toBe(true);
   });
 
-  it("keeps the workflow inside the same trusted-code boundary as other advisors", () => {
-    const workflow = YAML.parse(
-      fs.readFileSync(path.join(ROOT, ".github/workflows/pr-review-advisor.yaml"), "utf8"),
-    );
-    const steps = workflow.jobs.review.steps;
-    const trustedCheckout = steps.find((step: { name?: string }) =>
-      step.name === "Checkout trusted advisor code (main)"
-    );
-    const prCheckout = steps.find((step: { name?: string }) =>
-      step.name === "Checkout PR workspace (read-only data)"
-    );
-    const installStep = steps.find((step: { name?: string }) => step.name === "Install Pi SDK");
-    const analyzeStep = steps.find((step: { name?: string }) => step.name === "Run PR review advisor");
-
-    expect(workflow.on).toHaveProperty("pull_request");
-    expect(workflow.on).not.toHaveProperty("pull_request_target");
-    expect(trustedCheckout).toMatchObject({
-      with: { repository: "NVIDIA/NemoClaw", ref: "main", path: "advisor", "persist-credentials": false },
-    });
-    expect(prCheckout).toMatchObject({ with: { path: "pr-workdir", "persist-credentials": false } });
-    const commentStep = steps.find((step: { name?: string }) => step.name === "Post PR review advisor comment");
-
-    for (const step of steps.filter((step: { uses?: string }) => step.uses)) {
-      expect(step.uses).toMatch(/@[0-9a-f]{40}(?:\s*#.*)?$/);
-    }
-    expect(installStep.run.includes("--ignore-scripts")).toBe(true);
-    expect(analyzeStep.run.includes("$ADVISOR_DIR/tools/pr-review-advisor/analyze.mts")).toBe(true);
-    expect(analyzeStep.run).toContain("trusted main checkout does not yet contain analyze.mts");
-    expect(analyzeStep.run).toContain("pr-review-advisor-final-result.json");
-    expect(commentStep.run).toContain("trusted main checkout does not yet contain comment.mts");
+  it("keeps the workflow inside the trusted-code boundary", () => {
+    expect(validatePrReviewAdvisorWorkflowBoundary()).toEqual([]);
   });
+
+  it("flags trusted-code boundary workflow regressions", () => {
+    const tmp = fs.mkdtempSync(path.join(ROOT, ".tmp-pr-advisor-workflow-"));
+    const workflowPath = path.join(tmp, "workflow.yaml");
+    fs.writeFileSync(
+      workflowPath,
+      `
+"on":
+  pull_request_target: {}
+permissions:
+  contents: write
+jobs:
+  review:
+    continue-on-error: true
+    steps:
+      - name: Checkout trusted advisor code (main)
+        uses: actions/checkout@v4
+        with:
+          repository: NVIDIA/NemoClaw
+          ref: main
+          path: advisor
+          persist-credentials: true
+      - name: Checkout PR workspace (read-only data)
+        uses: actions/checkout@0123456789abcdef0123456789abcdef01234567
+        with:
+          ref: refs/pull/\${{ github.event.pull_request.head.sha }}/merge
+          path: pr-workdir
+          persist-credentials: false
+`,
+    );
+
+    try {
+      const errors = validatePrReviewAdvisorWorkflowBoundary(workflowPath);
+      expect(errors).toEqual(
+        expect.arrayContaining([
+          "workflow must run on pull_request, not only trusted-target events",
+          "workflow must not run untrusted PR code under pull_request_target",
+          "workflow permissions.contents must be read",
+          "review job must not be globally continue-on-error",
+          "PR checkout must use the pull request head SHA as inert analysis data",
+        ]),
+      );
+      expect(errors.some((error) => error.includes("full commit SHA"))).toBe(true);
+      expect(errors.some((error) => error.includes("persist-credentials=false"))).toBe(true);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("reports workflow parse failures through boundary errors", () => {
+    const missingPath = path.join(ROOT, ".tmp-pr-advisor-missing", "workflow.yaml");
+    expect(validatePrReviewAdvisorWorkflowBoundary(missingPath)).toEqual([
+      `failed to read or parse workflow: ${missingPath}`,
+    ]);
+  });
+
 });
