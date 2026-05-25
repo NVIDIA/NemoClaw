@@ -1,0 +1,146 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { Config as OclifConfig, execute as executeOclif } from "@oclif/core";
+
+import { CLI_NAME } from "./branding";
+
+export interface OclifCommandRunOptions {
+  rootDir: string;
+  error?: (message?: string) => void;
+  exit?: (code: number) => never;
+}
+
+function getOclifExitCode(error: unknown): number | null {
+  if (!error || typeof error !== "object") {
+    return null;
+  }
+
+  const oclif = (error as { oclif?: { exit?: number } }).oclif;
+  return typeof oclif?.exit === "number" ? oclif.exit : null;
+}
+
+function isOclifParseError(error: unknown): boolean {
+  const name =
+    error && typeof error === "object"
+      ? (error as { constructor?: { name?: string } }).constructor?.name
+      : "";
+  const message = error instanceof Error ? error.message : "";
+  return (
+    name === "NonExistentFlagsError" ||
+    name === "RequiredArgsError" ||
+    name === "UnexpectedArgsError" ||
+    name === "FailedFlagValidationError" ||
+    name === "CLIError" ||
+    message.startsWith("Parsing --")
+  );
+}
+
+function isOclifExitError(error: unknown): boolean {
+  const name =
+    error && typeof error === "object"
+      ? (error as { constructor?: { name?: string } }).constructor?.name
+      : "";
+  return name === "ExitError";
+}
+
+function formatOclifError(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message.trim();
+  }
+
+  return String(error).trim();
+}
+
+function applyBrandedBin(config: OclifConfig): void {
+  const pjson = {
+    ...config.pjson,
+    oclif: {
+      ...config.pjson.oclif,
+      bin: CLI_NAME,
+    },
+  };
+  // config.runCommand() calls Command.run(), which reloads from the root
+  // plugin. Patch both config and root plugin metadata so alias launchers keep
+  // branded oclif help output.
+  config.bin = CLI_NAME;
+  config.pjson = pjson;
+  config.options.pjson = pjson;
+  for (const plugin of config.plugins.values()) {
+    if (plugin.root === config.root) {
+      plugin.pjson = pjson;
+      plugin.options.pjson = pjson;
+    }
+  }
+}
+
+// Direct command-id execution for routes that cannot safely go through oclif's
+// flexible-taxonomy argv resolver. Prefer runOclifArgv() for normal execution
+// so oclif owns command lookup, parsing, help, and error handling.
+export async function runOclifCommandById(
+  commandId: string,
+  args: string[],
+  opts: OclifCommandRunOptions,
+): Promise<void> {
+  const config = await OclifConfig.load(opts.rootDir);
+  applyBrandedBin(config);
+  const errorLine = opts.error ?? console.error;
+  const exit = opts.exit ?? ((code: number) => process.exit(code));
+
+  try {
+    await config.runCommand(commandId, args);
+  } catch (error) {
+    const exitCode = getOclifExitCode(error);
+    if (exitCode === 0) {
+      // #2666: only oclif's own ExitError(0) is an intentional graceful
+      // exit (e.g. Command.exit(0) — message is the synthetic "EEXIT: 0").
+      // Any OTHER error that happens to carry oclif.exit === 0 used to be
+      // silently swallowed here, producing exit 0 + completely empty
+      // stdout/stderr. Surface its message — and fall back to a generic
+      // line if formatOclifError() returns empty so we never reintroduce
+      // the silent path for an error whose message happens to be blank.
+      if (!isOclifExitError(error)) {
+        const message = formatOclifError(error) || "Command exited with no output.";
+        errorLine(`  ${message}`);
+      }
+      process.exitCode = 0;
+      return;
+    }
+
+    if (isOclifParseError(error)) {
+      errorLine(`  ${formatOclifError(error)}`);
+      exit(exitCode ?? 1);
+    }
+
+    // NCQ #3180: oclif's Command.exit(code) throws an ExitError carrying
+    // `oclif.exit`. Treat that as a graceful exit with the requested code
+    // so we don't leak a raw `at Object.exit (... /@oclif/core/...)` stack
+    // trace to the user. Other oclif error classes (e.g. RequiredArgsError)
+    // are left to bubble up so oclif's own handler still prints them.
+    if (isOclifExitError(error) && typeof exitCode === "number") {
+      exit(exitCode);
+    }
+
+    throw error;
+  }
+}
+
+export async function runOclifArgv(args: string[], opts: OclifCommandRunOptions): Promise<void> {
+  const config = await OclifConfig.load(opts.rootDir);
+  applyBrandedBin(config);
+  const originalArgv = process.argv;
+  // oclif's parse-error help renderer consults process.argv, not just the
+  // explicit execute({ args }) value, so keep both views on the native route.
+  process.argv = [originalArgv[0] ?? process.execPath, originalArgv[1] ?? CLI_NAME, ...args];
+  try {
+    await executeOclif({
+      args,
+      loadOptions: {
+        root: opts.rootDir,
+        pjson: config.pjson,
+      },
+    });
+  } finally {
+    process.argv = originalArgv;
+  }
+}

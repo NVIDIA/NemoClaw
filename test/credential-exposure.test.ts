@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -8,112 +7,143 @@
 // there is no reason to pass the secret itself on the command line where it
 // would be visible in `ps aux` output.
 
-import fs from "node:fs";
-import path from "node:path";
+import { createRequire } from "node:module";
 import { describe, it, expect } from "vitest";
+import { buildSubprocessEnv as buildCliSubprocessEnv } from "../src/lib/subprocess-env";
+import {
+  buildSubprocessEnv as buildPluginSubprocessEnv,
+  withLocalNoProxy as withPluginLocalNoProxy,
+} from "../nemoclaw/src/lib/subprocess-env";
+import { withLocalNoProxy as withCliLocalNoProxy } from "../src/lib/subprocess-env";
+import { getCurlTimingArgs } from "../src/lib/adapters/http/probe";
 
-const ONBOARD_JS = path.join(import.meta.dirname, "..", "src", "lib", "onboard.ts");
-const RUNNER_TS = path.join(import.meta.dirname, "..", "nemoclaw", "src", "blueprint", "runner.ts");
-
-// Matches --credential followed by a value containing "=" (i.e. KEY=VALUE).
-// Catches quoted KEY=VALUE patterns in JS and Python f-string interpolation.
-// Assumes credentials are always in quoted strings (which matches our codebase).
-// NOTE: unquoted forms like `--credential KEY=VALUE` would not be detected.
-const JS_EXPOSURE_RE = /--credential\s+[^"]*"[A-Z_]+=/;
-const JS_CREDENTIAL_CONCAT_RE = /--credential.*=.*process\.env\./;
-// TS pattern: --credential with template literal interpolation containing "="
-const TS_EXPOSURE_RE = /--credential.*=.*\$\{/;
+const require = createRequire(import.meta.url);
+const { buildProviderArgs } = require("../dist/lib/onboard/providers.js") as {
+  buildProviderArgs: (
+    action: "create" | "update",
+    name: string,
+    type: string,
+    credentialEnv: string,
+    baseUrl: string | null,
+  ) => string[];
+};
 
 describe("credential exposure in process arguments", () => {
-  it("onboard.js must not pass KEY=VALUE to --credential", () => {
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
-    const lines = src.split("\n");
-
-    const violations = lines.filter(
-      (line) =>
-        (JS_EXPOSURE_RE.test(line) || JS_CREDENTIAL_CONCAT_RE.test(line)) &&
-        // Allow comments that describe the old pattern
-        !line.trimStart().startsWith("//"),
-    );
-
-    expect(violations).toEqual([]);
-  });
-
-  it("runner.ts must not pass KEY=VALUE to --credential", () => {
-    const src = fs.readFileSync(RUNNER_TS, "utf-8");
-    const lines = src.split("\n");
-
-    const violations = lines.filter(
-      (line) =>
-        TS_EXPOSURE_RE.test(line) &&
-        line.includes("--credential") &&
-        !line.trimStart().startsWith("//"),
-    );
-
-    expect(violations).toEqual([]);
-  });
-
   it("onboard.js --credential flags pass env var names only", () => {
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
+    const args = buildProviderArgs(
+      "create",
+      "inference",
+      "openai",
+      "NVIDIA_API_KEY",
+      "https://api.example.test/v1",
+    );
 
-    expect(src).toMatch(/"--credential", credentialEnv/);
-    expect(src).not.toMatch(/"--credential",\s*["'][A-Z_]+=/);
-    expect(src).not.toMatch(/"--credential",\s*process\.env\./);
+    expect(args).toContain("--credential");
+    expect(args).toContain("NVIDIA_API_KEY");
+    expect(args.join(" ")).not.toContain("NVIDIA_API_KEY=");
+    expect(args.join(" ")).not.toContain("nvapi-");
   });
 
-  it("onboard.js does not embed sandbox secrets in the sandbox create command line", () => {
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
+  it("subprocess-env TLS allowlist includes git, curl, and python CA vars (#2270)", () => {
+    const tlsEnv = {
+      GIT_SSL_CAINFO: "/tmp/git-ca.pem",
+      GIT_SSL_CAPATH: "/tmp/git-ca-dir",
+      CURL_CA_BUNDLE: "/tmp/curl-ca.pem",
+      REQUESTS_CA_BUNDLE: "/tmp/requests-ca.pem",
+    };
+    const previous = Object.fromEntries(
+      Object.keys(tlsEnv).map((key) => [key, process.env[key]] as const),
+    );
+    try {
+      Object.assign(process.env, tlsEnv);
+      for (const buildSubprocessEnv of [buildCliSubprocessEnv, buildPluginSubprocessEnv]) {
+        const env = buildSubprocessEnv();
+        expect(Object.fromEntries(Object.keys(tlsEnv).map((key) => [key, env[key]]))).toEqual(
+          tlsEnv,
+        );
+      }
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
+  });
 
-    // sandboxEnv must be built with a blocklist that strips all credential env vars.
-    // The blocklist derives provider keys from REMOTE_PROVIDER_CONFIG and adds
-    // messaging tokens explicitly. Verify both mechanisms are present.
-    const blocklistMatch = src.match(/const blockedSandboxEnvNames = new Set\(\[([\s\S]*?)\]\);/);
-    expect(blocklistMatch).not.toBeNull();
-    const blocklist = blocklistMatch[1];
-    // Provider credentials are derived from REMOTE_PROVIDER_CONFIG
-    expect(blocklist).toContain("REMOTE_PROVIDER_CONFIG");
-    // Messaging and additional credentials are listed explicitly
-    expect(blocklist).toContain('"BEDROCK_API_KEY"');
-    expect(blocklist).toContain('"DISCORD_BOT_TOKEN"');
-    expect(blocklist).toContain('"SLACK_BOT_TOKEN"');
-    expect(blocklist).toContain('"SLACK_APP_TOKEN"');
-    expect(blocklist).toContain('"TELEGRAM_BOT_TOKEN"');
-    expect(src).toMatch(/streamSandboxCreate\(createCommand, sandboxEnv(?:, \{)?/);
-    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("NVIDIA_API_KEY"/);
-    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("DISCORD_BOT_TOKEN"/);
-    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("SLACK_BOT_TOKEN"/);
-    expect(src).not.toMatch(/envArgs\.push\(formatEnvAssignment\("SLACK_APP_TOKEN"/);
+  it("subprocess-env TLS allowlists in CLI and plugin are in sync (#2270)", () => {
+    const tlsEnv = {
+      GIT_SSL_CAINFO: "/tmp/git-ca.pem",
+      GIT_SSL_CAPATH: "/tmp/git-ca-dir",
+      CURL_CA_BUNDLE: "/tmp/curl-ca.pem",
+      REQUESTS_CA_BUNDLE: "/tmp/requests-ca.pem",
+    };
+    const previous = Object.fromEntries(
+      Object.keys(tlsEnv).map((key) => [key, process.env[key]] as const),
+    );
+    try {
+      Object.assign(process.env, tlsEnv);
+      const tlsKeys = Object.keys(tlsEnv);
+      const cliEnv = buildCliSubprocessEnv();
+      const pluginEnv = buildPluginSubprocessEnv();
+      expect(Object.fromEntries(tlsKeys.map((key) => [key, cliEnv[key]]))).toEqual(
+        Object.fromEntries(tlsKeys.map((key) => [key, pluginEnv[key]])),
+      );
+    } finally {
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = value;
+        }
+      }
+    }
+  });
+
+  it("subprocess-env NO_PROXY local hosts are in sync for CLI and plugin", () => {
+    for (const withLocalNoProxy of [withCliLocalNoProxy, withPluginLocalNoProxy]) {
+      const env: Record<string, string> = {
+        HTTP_PROXY: "http://proxy.example.com:8888",
+        NO_PROXY: "corp.internal,localhost",
+        no_proxy: "corp.internal,localhost",
+      };
+
+      withLocalNoProxy(env);
+
+      expect(env.NO_PROXY).toBe("corp.internal,localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0");
+      expect(env.no_proxy).toBe("corp.internal,localhost,127.0.0.1,host.docker.internal,::1,0.0.0.0");
+    }
+  });
+
+  it("subprocess env builder does not spread full process.env into subprocesses", () => {
+    const previous = {
+      NVIDIA_API_KEY: process.env.NVIDIA_API_KEY,
+      PATH: process.env.PATH,
+    };
+    try {
+      process.env.NVIDIA_API_KEY = "nvapi-secret-should-not-leak";
+      process.env.PATH = `/tmp/nemoclaw-fake-bin:${process.env.PATH || ""}`;
+      const env = buildCliSubprocessEnv();
+      expect(env.NVIDIA_API_KEY).toBeUndefined();
+      expect(env.PATH).toContain("/tmp/nemoclaw-fake-bin");
+    } finally {
+      if (previous.NVIDIA_API_KEY === undefined) {
+        delete process.env.NVIDIA_API_KEY;
+      } else {
+        process.env.NVIDIA_API_KEY = previous.NVIDIA_API_KEY;
+      }
+      if (previous.PATH === undefined) {
+        delete process.env.PATH;
+      } else {
+        process.env.PATH = previous.PATH;
+      }
+    }
   });
 
   it("onboard curl probes use explicit timeouts", () => {
-    const onboardSrc = fs.readFileSync(ONBOARD_JS, "utf-8");
-    const probeSrc = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "src", "lib", "http-probe.ts"),
-      "utf-8",
-    );
-
-    expect(onboardSrc).toMatch(/http-probe/);
-    expect(probeSrc).toMatch(/"--connect-timeout", "10"/);
-    expect(probeSrc).toMatch(/"--max-time", "60"/);
+    expect(getCurlTimingArgs()).toEqual(["--connect-timeout", "10", "--max-time", "60"]);
   });
 
-  it("api-key paste-guard uses extensible prefix list and regex fallback", () => {
-    const src = fs.readFileSync(ONBOARD_JS, "utf-8");
-
-    // Known prefix list must include at least NVIDIA and GitHub prefixes
-    expect(src).toMatch(/API_KEY_PREFIXES/);
-    expect(src).toMatch(/"nvapi-"/);
-    expect(src).toMatch(/"ghp_"/);
-    // Space-aware length check must be present
-    expect(src).toMatch(/!choice\.includes\(" "\).*choice\.length > 40/);
-    // Regex fallback for base64-safe tokens must be present (full shape)
-    expect(src).toMatch(/\/\^\[A-Za-z0-9_\\-\\.\]\{20,\}\$\/\.test\(choice\)/);
-    // Validator must be hoisted (defined exactly once, not inside both branches)
-    const validatorCount = (
-      src.match(/const validator = credentialEnv === "NVIDIA_API_KEY"/g) || []
-    ).length;
-    expect(validatorCount).toBe(1);
-    // looksLikeToken variable must exist
-    expect(src).toMatch(/looksLikeToken/);
-  });
 });

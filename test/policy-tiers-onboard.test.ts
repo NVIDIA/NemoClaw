@@ -42,23 +42,46 @@ function runScript(scriptBody: string): SpawnSyncReturns<string> {
  * Sets NEMOCLAW_POLICY_TIER, NEMOCLAW_POLICY_MODE, and NEMOCLAW_POLICY_PRESETS
  * before the require so non-interactive paths read the right values.
  */
-function buildPreamble({ tierEnv = "balanced", policyMode = "skip", policyPresets = "" } = {}): string {
-  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+function buildPreamble({
+  tierEnv = "balanced",
+  policyMode = "skip",
+  policyPresets = "",
+  stubOpenshellBin = false,
+  runCaptureReturn = "",
+} = {}): string {
+  const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
   const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-  const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+  const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
   const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const resolveOpenshellPath = JSON.stringify(
+    path.join(repoRoot, "dist", "lib", "adapters", "openshell", "resolve.js"),
+  );
+
+  // Both stubs must run before onboard.js is required — onboard destructures
+  // resolveOpenshell and runCapture at require time, so later overrides are
+  // too late for anything onboard calls internally.
+  const openshellStub = stubOpenshellBin
+    ? `require(${resolveOpenshellPath}).resolveOpenshell = () => "/usr/bin/true";`
+    : "";
 
   return String.raw`
 const credentials = require(${credPath});
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 
+Object.defineProperty(process, "platform", { value: "darwin" });
+
 // Stub heavy I/O
 credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + msg); };
 credentials.ensureApiKey = async () => {};
 credentials.getCredential = () => null;
 runner.run = () => {};
-runner.runCapture = () => "";
+runner.runCapture = (command) => {
+  const text = Array.isArray(command) ? command.join(" ") : String(command);
+  if (text.includes("sandbox list")) return "test-sb Ready";
+  return ${JSON.stringify(runCaptureReturn)};
+};
+${openshellStub}
 
 const updates = [];
 registry.registerSandbox = () => true;
@@ -93,7 +116,7 @@ console.log = () => {};
   });
 
   it("restricted tier produces an empty preset list", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
     const script =
       buildPreamble({ tierEnv: "restricted" }) +
       String.raw`
@@ -113,7 +136,7 @@ console.log = () => {};
   });
 
   it("balanced tier resolves presets all with read-write access", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
     const script =
       buildPreamble({ tierEnv: "balanced" }) +
       String.raw`
@@ -136,7 +159,7 @@ console.log = () => {};
   });
 
   it("open tier resolves presets including at least one social/messaging preset", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
     const script =
       buildPreamble({ tierEnv: "open" }) +
       String.raw`
@@ -153,7 +176,7 @@ console.log = () => {};
     const payload = JSON.parse(result.stdout.trim());
     assert.equal(payload.tier, "open");
     const names: string[] = payload.presets.map((p: { name: string }) => p.name);
-    const social = ["slack", "discord", "telegram"];
+    const social = ["slack", "discord", "telegram", "whatsapp"];
     const hasSocial = social.some((n) => names.includes(n));
     assert.ok(
       hasSocial,
@@ -162,7 +185,7 @@ console.log = () => {};
   });
 
   it("a preset can be deselected via selected option in resolveTierPresets", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
     const script =
       buildPreamble({ tierEnv: "balanced" }) +
       String.raw`
@@ -182,7 +205,7 @@ console.log = () => {};
   });
 
   it("access level can be restricted from read-write to read via override", () => {
-    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
+    const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
     const script =
       buildPreamble({ tierEnv: "balanced" }) +
       String.raw`
@@ -233,12 +256,13 @@ console.log = (...args) => lines.push(args.join(" "));
   });
 
   it("selected tier is persisted to the registry via updateSandbox({ policyTier })", () => {
-    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
     const script =
       buildPreamble({ tierEnv: "open", policyMode: "skip" }) +
       String.raw`
 const policies = require(${policiesPath});
 policies.applyPreset = () => {};
+policies.applyPresets = () => true;
 policies.getAppliedPresets = () => [];
 
 const lines = [];
@@ -270,16 +294,449 @@ console.log = (...args) => lines.push(args.join(" "));
     // With POLICY_MODE=skip, applied presets list is empty
     assert.deepEqual(payload.applied, []);
   });
+
+  it("omits Brave from policy preset selection when web search is unsupported", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "suggested",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+const appliedCalls = [];
+policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
+policies.getAppliedPresets = () => [];
+
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", { webSearchSupported: false });
+    process.stdout.write(JSON.stringify({ applied, appliedCalls }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    assert.ok(
+      !payload.applied.includes("brave"),
+      `Unsupported web-search presets included Brave: ${payload.applied}`,
+    );
+    assert.ok(
+      !payload.appliedCalls.includes("brave"),
+      `Unsupported web-search flow applied Brave: ${payload.appliedCalls}`,
+    );
+    assert.ok(payload.applied.includes("pypi"), "normal dev presets should still be included");
+  });
+
+  it("removes a previously-applied Brave preset when web search is unsupported", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "suggested",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+const appliedCalls = [];
+const removedCalls = [];
+policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
+policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
+policies.getAppliedPresets = () => ["brave", "npm"];
+
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", { webSearchSupported: false });
+    process.stdout.write(JSON.stringify({ applied, appliedCalls, removedCalls }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    assert.ok(
+      !payload.applied.includes("brave"),
+      `Unsupported web-search presets included Brave: ${payload.applied}`,
+    );
+    assert.ok(
+      payload.removedCalls.includes("brave"),
+      `Unsupported web-search flow did not remove Brave: ${payload.removedCalls}`,
+    );
+    assert.ok(
+      !payload.appliedCalls.includes("brave"),
+      `Unsupported web-search flow applied Brave: ${payload.appliedCalls}`,
+    );
+  });
+
+  it("removes a previously-applied built-in Brave preset when Brave search is declined", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "suggested",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+const appliedCalls = [];
+const removedCalls = [];
+policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
+policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
+policies.getAppliedPresets = () => ["brave", "npm"];
+
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", {
+      webSearchConfig: null,
+      webSearchSupported: true,
+    });
+    process.stdout.write(JSON.stringify({ applied, appliedCalls, removedCalls }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    assert.ok(
+      !payload.applied.includes("brave"),
+      `Declined Brave search flow kept built-in Brave: ${payload.applied}`,
+    );
+    assert.ok(
+      payload.removedCalls.includes("brave"),
+      `Declined Brave search flow did not remove built-in Brave: ${payload.removedCalls}`,
+    );
+    assert.ok(
+      !payload.appliedCalls.includes("brave"),
+      `Declined Brave search flow applied built-in Brave: ${payload.appliedCalls}`,
+    );
+  });
+
+  it("keeps explicitly requested built-in Brave when web search is supported", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "custom",
+        policyPresets: "brave,npm",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+const appliedCalls = [];
+policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
+policies.getAppliedPresets = () => [];
+
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", {
+      webSearchConfig: null,
+      webSearchSupported: true,
+    });
+    process.stdout.write(JSON.stringify({ applied, appliedCalls }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    assert.deepEqual(payload.applied, ["brave", "npm"]);
+    assert.deepEqual(payload.appliedCalls, ["brave", "npm"]);
+  });
+
+  it("clamps resumed policy presets to web-search-supported presets", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "suggested",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+const appliedCalls = [];
+const removedCalls = [];
+policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
+policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
+policies.getAppliedPresets = () => ["brave"];
+
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", {
+      webSearchSupported: false,
+      selectedPresets: ["brave", "npm"],
+    });
+    process.stdout.write(JSON.stringify({ applied, appliedCalls, removedCalls }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    assert.deepEqual(payload.applied, ["npm"]);
+    assert.deepEqual(payload.appliedCalls, ["npm"]);
+    assert.deepEqual(payload.removedCalls, ["brave"]);
+  });
+
+  it("clamps an unsupported-only resumed policy preset list to empty", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "suggested",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+const appliedCalls = [];
+const removedCalls = [];
+policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
+policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
+policies.getAppliedPresets = () => ["brave"];
+
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", {
+      webSearchSupported: false,
+      selectedPresets: ["brave"],
+    });
+    process.stdout.write(JSON.stringify({ applied, appliedCalls, removedCalls }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    assert.deepEqual(payload.applied, []);
+    assert.deepEqual(payload.appliedCalls, []);
+    assert.deepEqual(payload.removedCalls, ["brave"]);
+  });
+
+  it("preserves a resumed custom preset whose name matches an unsupported built-in", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "suggested",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+const appliedCalls = [];
+const removedCalls = [];
+policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
+policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
+policies.getAppliedPresets = () => ["brave"];
+policies.listCustomPresets = () => [{ name: "brave", description: "custom preset" }];
+
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", {
+      webSearchSupported: false,
+      selectedPresets: ["brave", "npm"],
+    });
+    process.stdout.write(JSON.stringify({ applied, appliedCalls, removedCalls }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    assert.deepEqual(payload.applied, ["brave", "npm"]);
+    assert.deepEqual(payload.appliedCalls, ["npm"]);
+    assert.deepEqual(payload.removedCalls, []);
+  });
+
+  it("preserves a non-interactive custom preset whose name matches an unsupported built-in", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "suggested",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+const appliedCalls = [];
+const removedCalls = [];
+policies.applyPreset = (_sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (_sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
+policies.removePreset = (_sandbox, name) => { removedCalls.push(name); return true; };
+policies.getAppliedPresets = () => ["brave"];
+policies.listCustomPresets = () => [{ name: "brave", description: "custom preset" }];
+
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", { webSearchSupported: false });
+    process.stdout.write(JSON.stringify({ applied, appliedCalls, removedCalls }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    assert.ok(
+      payload.applied.includes("brave"),
+      `custom Brave was dropped: ${payload.applied}`,
+    );
+    assert.ok(
+      !payload.appliedCalls.includes("brave"),
+      `custom Brave was re-applied: ${payload.appliedCalls}`,
+    );
+    assert.deepEqual(payload.removedCalls, []);
+  });
+
+  // #2429: an unrecognised NEMOCLAW_POLICY_MODE used to hard-exit at step 8/8,
+  // leaving the already-built sandbox with zero presets. We now warn and fall
+  // back to the tier-derived suggestions so the sandbox stays usable, and hint
+  // that the user may have meant NEMOCLAW_POLICY_TIER when the value looks like
+  // a tier name.
+  it("falls back to tier suggestions when NEMOCLAW_POLICY_MODE is unknown (#2429)", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "restricted",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+const appliedCalls = [];
+policies.applyPreset = (sandbox, name) => { appliedCalls.push(name); return true; };
+policies.applyPresets = (sandbox, names) => { for (const name of names) appliedCalls.push(name); return true; };
+policies.getAppliedPresets = () => [];
+
+// Silence onboard's note()/console.log so stdout is pure JSON.
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", {});
+    process.stdout.write(JSON.stringify({ applied, appliedCalls }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    // Warn path, not exit: tier suggestions were applied (non-empty).
+    assert.ok(
+      payload.applied.length > 0,
+      `expected fallback presets to be applied, got: ${JSON.stringify(payload.applied)}`,
+    );
+    // Warnings mention the bad value, the tier-name hint, and the fallback.
+    // They land on stderr via console.warn.
+    assert.match(result.stderr, /Unsupported NEMOCLAW_POLICY_MODE: restricted/);
+    assert.match(result.stderr, /NEMOCLAW_POLICY_TIER=restricted/);
+    assert.match(result.stderr, /Falling back to suggested presets/);
+  });
+
+  it("omits the tier-name hint for a non-tier invalid value (#2429)", () => {
+    const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
+    const script =
+      buildPreamble({
+        tierEnv: "balanced",
+        policyMode: "garbage",
+        stubOpenshellBin: true,
+        runCaptureReturn: "Running",
+      }) +
+      String.raw`
+const policies = require(${policiesPath});
+policies.applyPreset = () => true;
+policies.applyPresets = () => true;
+policies.getAppliedPresets = () => [];
+
+console.log = () => {};
+
+(async () => {
+  try {
+    const applied = await setupPoliciesWithSelection("test-sb", {});
+    process.stdout.write(JSON.stringify({ applied }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+    assert.match(result.stderr, /Unsupported NEMOCLAW_POLICY_MODE: garbage/);
+    assert.ok(
+      !/did you mean NEMOCLAW_POLICY_TIER/.test(result.stderr),
+      `tier-name hint should not appear for non-tier values, stderr: ${result.stderr}`,
+    );
+  });
 });
 
 describe("selectTierPresetsAndAccess", () => {
-  const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "tiers.js"));
-  const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policies.js"));
+  const tiersPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "tiers.js"));
+  const policiesPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "policy", "index.js"));
 
   function buildPresetsScript(body: string): string {
-    const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials.js"));
+    const credPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
-    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "registry.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     return String.raw`
 const credentials = require(${credPath});

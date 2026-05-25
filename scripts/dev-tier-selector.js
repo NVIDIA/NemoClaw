@@ -1,4 +1,3 @@
-// @ts-nocheck
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
@@ -19,11 +18,11 @@
 const readline = require("readline");
 
 // ── Stubs ──────────────────────────────────────────────────────────────────
-const creds = require("../dist/lib/credentials.js");
+const creds = require("../dist/lib/credentials/store.js");
 const runner = require("../dist/lib/runner.js");
-const registry = require("../dist/lib/registry.js");
+const registry = require("../dist/lib/state/registry.js");
 
-creds.ensureApiKey = async () => {};
+creds.ensureApiKey = async () => ({ kind: "credential", value: "dev-tier-selector" });
 creds.getCredential = () => null;
 creds.prompt = (msg) =>
   new Promise((resolve) => {
@@ -34,7 +33,16 @@ creds.prompt = (msg) =>
     });
   });
 
-runner.run = () => {};
+const successfulRunResult = {
+  pid: 0,
+  output: [null, "", ""],
+  stdout: "",
+  stderr: "",
+  status: 0,
+  signal: null,
+};
+
+runner.run = () => successfulRunResult;
 runner.runCapture = () => "";
 
 registry.getSandbox = () => ({ name: "test-sb", model: null, provider: null });
@@ -42,8 +50,12 @@ registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 
 // ── Run ────────────────────────────────────────────────────────────────────
-const { selectPolicyTier, selectTierPresetsAndAccess } = require("../dist/lib/onboard.js");
-const policies = require("../dist/lib/policies.js");
+const onboard = /** @type {{
+ *   selectPolicyTier: () => Promise<string>;
+ *   selectTierPresetsAndAccess: (tierName: string, allPresets: unknown[]) => Promise<unknown>;
+ * }} */ (require("../dist/lib/onboard.js"));
+const { selectPolicyTier, selectTierPresetsAndAccess } = onboard;
+const policies = require("../dist/lib/policy/index.js");
 
 (async () => {
   const tier = await selectPolicyTier();

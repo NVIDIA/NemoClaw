@@ -11,13 +11,53 @@
  * time.
  */
 
+import { readFileSync } from "node:fs";
+import { renderBox } from "./banner.js";
 import { handleSlashCommand } from "./commands/slash.js";
 import {
   describeOnboardEndpoint,
   describeOnboardProvider,
   loadOnboardConfig,
 } from "./onboard/config.js";
+import { registerRuntimeContext } from "./runtime-context.js";
 import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
+
+type PluginScalar = string | number | boolean | null | undefined;
+type PluginValue = PluginScalar | PluginRecord | PluginValue[];
+type PluginRecord = { [key: string]: PluginValue };
+
+function isToolParams(value: unknown): value is ToolParams {
+  return (
+    value !== null && value !== undefined && typeof value === "object" && !Array.isArray(value)
+  );
+}
+
+function readStringProperty(value: unknown, key: string): string | undefined {
+  if (!isToolParams(value)) {
+    return undefined;
+  }
+  const property = value[key];
+  return typeof property === "string" ? property : undefined;
+}
+
+function readObjectProperty(value: unknown, key: string): ToolParams | undefined {
+  if (!isToolParams(value)) {
+    return undefined;
+  }
+  const property = value[key];
+  return isToolParams(property) ? property : undefined;
+}
+
+function readBeforeToolCallEvent(value: unknown): Partial<BeforeToolCallEvent> | undefined {
+  if (!isToolParams(value)) {
+    return undefined;
+  }
+  const params = value["params"];
+  return {
+    toolName: readStringProperty(value, "toolName"),
+    params: isToolParams(params) ? params : undefined,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // OpenClaw Plugin SDK compatible types (mirrors openclaw/plugin-sdk)
@@ -25,7 +65,7 @@ import { scanForSecrets, isMemoryPath } from "./security/secret-scanner.js";
 
 /** Subset of OpenClawConfig that we actually read. */
 export interface OpenClawConfig {
-  [key: string]: unknown;
+  [key: string]: PluginValue;
 }
 
 /** Logger provided by the plugin host. */
@@ -35,6 +75,8 @@ export interface PluginLogger {
   error(message: string): void;
   debug(message: string): void;
 }
+
+type ToolParams = { [key: string]: PluginValue };
 
 /** Context passed to slash-command handlers. */
 export interface PluginCommandContext {
@@ -67,6 +109,7 @@ export interface PluginCommandDefinition {
 
 /** Auth method for a provider plugin. */
 export interface ProviderAuthMethod {
+  id?: string;
   type: string;
   envVar?: string;
   headerName?: string;
@@ -108,17 +151,29 @@ export interface PluginService {
 /** Event payload for before_tool_call hooks. */
 export interface BeforeToolCallEvent {
   toolName: string;
-  params: Record<string, unknown>;
+  params: ToolParams;
   runId?: string;
   toolCallId?: string;
 }
 
 /** Return value from a before_tool_call hook. */
 export interface BeforeToolCallResult {
-  params?: Record<string, unknown>;
+  params?: ToolParams;
   block?: boolean;
   blockReason?: string;
 }
+
+/** Return value from a before_prompt_build hook. */
+export interface BeforePromptBuildResult {
+  systemPrompt?: string;
+  prependContext?: string;
+  appendContext?: string;
+  prependSystemContext?: string;
+  appendSystemContext?: string;
+}
+
+/** Union of all hook result types. */
+export type HookResult = BeforeToolCallResult | BeforePromptBuildResult | undefined;
 
 /**
  * The API object injected into the plugin's register function by the OpenClaw
@@ -129,13 +184,16 @@ export interface OpenClawPluginApi {
   name: string;
   version?: string;
   config: OpenClawConfig;
-  pluginConfig?: Record<string, unknown>;
+  pluginConfig?: OpenClawConfig;
   logger: PluginLogger;
   registerCommand: (command: PluginCommandDefinition) => void;
   registerProvider: (provider: ProviderPlugin) => void;
   registerService: (service: PluginService) => void;
   resolvePath: (input: string) => string;
-  on: (hookName: string, handler: (...args: unknown[]) => BeforeToolCallResult | undefined) => void;
+  on: (
+    hookName: string,
+    handler: (...args: readonly PluginValue[]) => HookResult | Promise<HookResult>,
+  ) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,10 +207,38 @@ export interface NemoClawConfig {
   inferenceProvider: string;
 }
 
-function activeModelEntries(
-  onboardCfg: ReturnType<typeof loadOnboardConfig>,
-): ModelProviderEntry[] {
-  if (!onboardCfg?.model) {
+// Gateway plugins run inside the sandbox, where OpenClaw keeps its active config here.
+const OPENCLAW_CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
+const DEFAULT_INFERENCE_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+
+function normalizeInferenceModel(value: string): string {
+  const trimmed = value.trim();
+  return trimmed.startsWith("inference/") ? trimmed.slice("inference/".length) : trimmed;
+}
+
+function readOpenClawPrimaryModel(
+  logger?: PluginLogger,
+  configPath = OPENCLAW_CONFIG_PATH,
+): string {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(configPath, "utf-8"));
+    const agents = readObjectProperty(parsed, "agents");
+    const defaults = readObjectProperty(agents, "defaults");
+    const model = readObjectProperty(defaults, "model");
+    const primary = readStringProperty(model, "primary");
+    return primary ? normalizeInferenceModel(primary) : "";
+  } catch (err) {
+    logger?.debug(
+      `Could not read OpenClaw primary model from ${configPath}: ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return "";
+  }
+}
+
+function activeModelEntries(activeModel: string): ModelProviderEntry[] {
+  if (!activeModel) {
     return [
       {
         id: "nvidia/nemotron-3-super-120b-a12b",
@@ -183,8 +269,8 @@ function activeModelEntries(
 
   return [
     {
-      id: `inference/${onboardCfg.model}`,
-      label: onboardCfg.model,
+      id: `inference/${activeModel}`,
+      label: activeModel,
       contextWindow: 131072,
       maxOutput: 8192,
     },
@@ -192,7 +278,7 @@ function activeModelEntries(
 }
 
 function registeredProviderForConfig(
-  onboardCfg: ReturnType<typeof loadOnboardConfig>,
+  activeModel: string,
   providerCredentialEnv: string,
 ): ProviderPlugin {
   const authLabel =
@@ -205,9 +291,10 @@ function registeredProviderForConfig(
     label: "Managed Inference Route",
     aliases: ["inference-local", "nemoclaw"],
     envVars: [providerCredentialEnv],
-    models: { chat: activeModelEntries(onboardCfg) },
+    models: { chat: activeModelEntries(activeModel) },
     auth: [
       {
+        id: "bearer",
         type: "bearer",
         envVar: providerCredentialEnv,
         headerName: "Authorization",
@@ -262,14 +349,27 @@ export default function register(api: OpenClawPluginApi): void {
     handler: (ctx) => handleSlashCommand(ctx, api),
   });
 
-  // 2. Register nvidia-nim provider — use onboard config if available
+  // 2. Register nvidia-nim provider from the active OpenClaw config, falling
+  // back to the onboard snapshot and then the NemoClaw default.
   const onboardCfg = loadOnboardConfig();
-  const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
-  api.registerProvider(registeredProviderForConfig(onboardCfg, providerCredentialEnv));
+  const activeModel = readOpenClawPrimaryModel(api.logger) || onboardCfg?.model || "";
+
+  // 4. Register runtime context injection (sandbox-awareness hook)
+  const pluginConfig = getPluginConfig(api);
+  try {
+    registerRuntimeContext(api, pluginConfig);
+  } catch (err) {
+    api.logger.warn(
+      `Could not register runtime context hook: ${err instanceof Error ? err.message : String(err)}`,
+    );
+  }
 
   const bannerEndpoint = onboardCfg ? describeOnboardEndpoint(onboardCfg) : "build.nvidia.com";
   const bannerProvider = onboardCfg ? describeOnboardProvider(onboardCfg) : "NVIDIA Endpoints";
-  const bannerModel = onboardCfg?.model ?? "nvidia/nemotron-3-super-120b-a12b";
+  const bannerModel = activeModel || DEFAULT_INFERENCE_MODEL;
+
+  const providerCredentialEnv = onboardCfg?.credentialEnv ?? "NVIDIA_API_KEY";
+  api.registerProvider(registeredProviderForConfig(activeModel, providerCredentialEnv));
 
   // 3. Register before_tool_call hook to block secrets in memory writes (#1233)
   // NOTE: This relies on OpenClaw's before_tool_call plugin hook contract
@@ -279,52 +379,59 @@ export default function register(api: OpenClawPluginApi): void {
   // a no-op. Verify after OpenClaw upgrades that blocked writes still show
   // the expected error message.
   try {
-    api.on("before_tool_call", (...args: unknown[]): BeforeToolCallResult | undefined => {
-      const event = args[0] as Partial<BeforeToolCallEvent> | undefined;
-      if (!event?.toolName || !event.params) return undefined;
+    api.on(
+      "before_tool_call",
+      (...args: readonly PluginValue[]): BeforeToolCallResult | undefined => {
+        const event = readBeforeToolCallEvent(args[0]);
+        if (!event?.toolName || !event.params) return undefined;
 
-      const toolName = event.toolName.toLowerCase();
-      if (!WRITE_TOOL_NAMES.has(toolName)) return undefined;
+        const toolName = event.toolName.toLowerCase();
+        if (!WRITE_TOOL_NAMES.has(toolName)) return undefined;
 
-      const rawPath = event.params["file_path"] ?? event.params["path"];
-      if (typeof rawPath !== "string" || rawPath.length === 0) return undefined;
-      // Resolve symlinks and traversal before checking — prevents bypasses like
-      // /sandbox/project/../../.openclaw-data/memory/secrets.md
-      const filePath = api.resolvePath(rawPath);
-      if (!isMemoryPath(filePath)) return undefined;
+        const rawPath = event.params["file_path"] ?? event.params["path"];
+        if (typeof rawPath !== "string" || rawPath.length === 0) return undefined;
+        // Resolve symlinks and traversal before checking — prevents bypasses like
+        // /sandbox/project/../../.openclaw/memory/secrets.md
+        const filePath = api.resolvePath(rawPath);
+        if (!isMemoryPath(filePath)) return undefined;
 
-      const content =
-        event.params["content"] ?? event.params["new_string"] ?? event.params["patch"];
-      if (typeof content !== "string" || content.length === 0) return undefined;
+        const content =
+          event.params["content"] ?? event.params["new_string"] ?? event.params["patch"];
+        if (typeof content !== "string" || content.length === 0) return undefined;
 
-      const matches = scanForSecrets(content);
-      if (matches.length === 0) return undefined;
+        const matches = scanForSecrets(content);
+        if (matches.length === 0) return undefined;
 
-      const summary = matches.map((m) => `  - ${m.pattern} (${m.redacted})`).join("\n");
-      api.logger.warn(`[SECURITY] Blocked memory write to ${filePath} — secrets detected`);
+        const summary = matches.map((m) => `  - ${m.pattern} (${m.redacted})`).join("\n");
+        api.logger.warn(`[SECURITY] Blocked memory write to ${filePath} — secrets detected`);
 
-      return {
-        block: true,
-        blockReason:
-          `Memory write blocked: detected ${String(matches.length)} likely secret(s):\n${summary}\n\n` +
-          "Remove secrets before saving to persistent memory. " +
-          "Use environment variables or credential stores instead.",
-      };
-    });
+        return {
+          block: true,
+          blockReason:
+            `Memory write blocked: detected ${String(matches.length)} likely secret(s):\n${summary}\n\n` +
+            "Remove secrets before saving to persistent memory. " +
+            "Use environment variables or credential stores instead.",
+        };
+      },
+    );
   } catch (err) {
     api.logger.warn(
       `[SECURITY] Could not register secret scanner hook: ${err instanceof Error ? err.message : String(err)}`,
     );
   }
 
+  const bannerLines = [
+    "  NemoClaw registered",
+    null,
+    `  Endpoint:  ${bannerEndpoint}`,
+    `  Provider:  ${bannerProvider}`,
+    `  Model:     ${bannerModel}`,
+    "  Slash:     /nemoclaw",
+  ];
+
   api.logger.info("");
-  api.logger.info("  ┌─────────────────────────────────────────────────────┐");
-  api.logger.info("  │  NemoClaw registered                                │");
-  api.logger.info("  │                                                     │");
-  api.logger.info(`  │  Endpoint:  ${bannerEndpoint.padEnd(40)}│`);
-  api.logger.info(`  │  Provider:  ${bannerProvider.padEnd(40)}│`);
-  api.logger.info(`  │  Model:     ${bannerModel.padEnd(40)}│`);
-  api.logger.info("  │  Slash:     /nemoclaw                               │");
-  api.logger.info("  └─────────────────────────────────────────────────────┘");
+  for (const line of renderBox(bannerLines)) {
+    api.logger.info(line);
+  }
   api.logger.info("");
 }
