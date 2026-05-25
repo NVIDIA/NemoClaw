@@ -1103,14 +1103,10 @@ In those cases NemoClaw treats an unavailable sandbox-side probe as non-blocking
 
 ### `host.docker.internal` does not reliably reach the host from the sandbox
 
-Configuring an inference provider with a base URL like
-`http://host.docker.internal:11434/v1` does not reliably reach a host Ollama
-service from inside the OpenShell sandbox.
-OpenShell runs sandboxes inside a k3s network, where `host.docker.internal` is
-not a portable host-service route. Depending on the platform, it may fail DNS
-resolution or resolve to an internal gateway/bridge address where the host's
-port `11434` is not forwarded. The sandbox then sees a DNS failure or
-`connection refused`:
+Configuring an inference provider with a base URL like `http://host.docker.internal:11434/v1` does not reliably reach a host Ollama service from inside the OpenShell sandbox.
+OpenShell runs sandboxes inside a k3s network, where `host.docker.internal` is not a portable host-service route.
+Depending on the platform, it may fail DNS resolution or resolve to an internal gateway/bridge address where the host's port `11434` is not forwarded.
+The sandbox then sees a DNS failure or `connection refused`:
 
 ```console
 $ getent hosts host.docker.internal
@@ -1424,7 +1420,7 @@ After the rebuild completes, return to the Skills page to confirm the skill is r
 ## Hermes
 
 The Hermes agent is experimental.
-The issues below cover the most common surprises operators hit when running Hermes through `nemohermes`.
+The issues below are common problems operators encounter when running Hermes through `nemohermes`.
 For setup, refer to Quickstart with Hermes (use the `nemoclaw-user-get-started` skill).
 
 ### Port 8642 in a browser shows a blank page or `Cannot GET /`
