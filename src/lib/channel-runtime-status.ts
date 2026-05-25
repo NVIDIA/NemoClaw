@@ -62,9 +62,18 @@ export type RuntimeChannelStatus = {
   ok: boolean;
   /**
    * Channels the runtime exposes — config has them AND the gateway log
-   * confirms the runtime acknowledged them. Sorted, deduplicated.
+   * confirms the runtime acknowledged them. Sorted, deduplicated. Empty
+   * when `logProbeOk` is false, since we have no log to corroborate.
    */
   visibleChannels: string[];
+  /**
+   * Channels that the in-sandbox config (the file at `configFilePath`)
+   * has marked as enabled. Always populated when `ok` is true, regardless
+   * of the gateway log layer — gives callers a way to detect stale
+   * rebuilds (registry expects telegram, but `openclaw.json` dropped it)
+   * even when the runtime layer cannot corroborate.
+   */
+  configuredChannels: string[];
   /**
    * Channels present in `openclaw.json` but never mentioned in the
    * gateway log. This is the #4156 failure signature: configured but the
@@ -258,6 +267,7 @@ export function probeChannelRuntimeStatus(deps: ChannelRuntimeStatusDeps): Runti
     return {
       ok: false,
       visibleChannels: [],
+      configuredChannels: [],
       configuredButNotRunning: [],
       logProbeOk: false,
       detail: "sandbox unreachable (could not read runtime channel config)",
@@ -268,6 +278,7 @@ export function probeChannelRuntimeStatus(deps: ChannelRuntimeStatusDeps): Runti
     return {
       ok: false,
       visibleChannels: [],
+      configuredChannels: [],
       configuredButNotRunning: [],
       logProbeOk: false,
       detail: `runtime channel config ${configFilePath} is missing or empty`,
@@ -281,6 +292,7 @@ export function probeChannelRuntimeStatus(deps: ChannelRuntimeStatusDeps): Runti
     return {
       ok: false,
       visibleChannels: [],
+      configuredChannels: [],
       configuredButNotRunning: [],
       logProbeOk: false,
       detail: `runtime channel config ${configFilePath} is not valid JSON: ${message}`,
@@ -307,9 +319,17 @@ export function probeChannelRuntimeStatus(deps: ChannelRuntimeStatusDeps): Runti
   const logStdout = logResult && typeof logResult.stdout === "string" ? logResult.stdout : "";
   const logProbeOk = logStdout.includes(LOG_PROBE_OK_MARKER);
   if (!logProbeOk) {
+    // Keep `visibleChannels` strictly log-corroborated — returning the
+    // configured set there would let any caller diffing against it
+    // treat an inconclusive probe as healthy (CodeRabbit catch on PR
+    // #4182). `configuredChannels` still carries the config-derived
+    // set so the caller can detect stale rebuilds (registry expects
+    // a channel that `openclaw.json` no longer contains) even when the
+    // log layer is unavailable.
     return {
       ok: true,
-      visibleChannels: configuredChannels,
+      visibleChannels: [],
+      configuredChannels,
       configuredButNotRunning: [],
       logProbeOk: false,
       detail: `config ${configFilePath} parsed; gateway log ${gatewayLogPath} unreadable, runtime confirmation skipped`,
@@ -330,6 +350,7 @@ export function probeChannelRuntimeStatus(deps: ChannelRuntimeStatusDeps): Runti
   return {
     ok: true,
     visibleChannels,
+    configuredChannels,
     configuredButNotRunning,
     logProbeOk: true,
     detail: `config ${configFilePath} parsed and gateway log ${gatewayLogPath} corroborated`,

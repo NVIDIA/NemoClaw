@@ -390,22 +390,42 @@ function channelRuntimeDoctorCheck(
         `or rebuild with \`${CLI_NAME} ${sandboxName} rebuild\` if the config file is missing`,
     };
   }
-  // Compare the registry's expected set with what the runtime acknowledged
-  // (visible = config has the channel AND gateway log mentioned it). This
-  // catches both "config dropped the channel" (stale/bad rebuild) and
-  // "config has it but runtime didn't start it" (the reporter's case).
-  const { missing: notRunning } = compareChannelSets(enabledChannels, runtime.visibleChannels);
-  if (notRunning.length > 0) {
-    return {
-      group: "Messaging",
-      label: "Runtime channel registry",
-      status: "warn",
-      detail: `configured but not in OpenClaw runtime: ${notRunning.join(", ")}`,
-      hint:
-        `the OpenClaw dashboard "Channels" panel will show "No channels found" for ` +
-        `${notRunning.join(", ")}; inspect the gateway log with \`${CLI_NAME} ${sandboxName} logs\` ` +
-        `and re-run \`${CLI_NAME} ${sandboxName} rebuild\` if the channels block needs to be regenerated`,
-    };
+  if (runtime.logProbeOk) {
+    // Diff against the log-corroborated runtime view. Catches both the
+    // stale-rebuild path (channel block missing) and the runtime-startup
+    // path (config has it, log doesn't).
+    const { missing: notRunning } = compareChannelSets(enabledChannels, runtime.visibleChannels);
+    if (notRunning.length > 0) {
+      return {
+        group: "Messaging",
+        label: "Runtime channel registry",
+        status: "warn",
+        detail: `not visible to OpenClaw runtime: ${notRunning.join(", ")}`,
+        hint:
+          `the OpenClaw dashboard "Channels" panel will show "No channels found" for ` +
+          `${notRunning.join(", ")}; inspect \`${agent.configPaths.dir}/${agent.configPaths.configFile}\` ` +
+          `and the gateway log with \`${CLI_NAME} ${sandboxName} logs\`, then re-run ` +
+          `\`${CLI_NAME} ${sandboxName} rebuild\` if the channels block needs to be regenerated`,
+      };
+    }
+  } else {
+    // Log unavailable: we can still detect a config-only mismatch
+    // (registry expects telegram but openclaw.json doesn't have it).
+    // Surface that as a warn so a stale rebuild isn't masked by an
+    // unreadable log (CodeRabbit on PR #4182). The log-unavailable
+    // warning below still runs when configMissing is empty.
+    const { missing: configMissing } = compareChannelSets(enabledChannels, runtime.configuredChannels);
+    if (configMissing.length > 0) {
+      return {
+        group: "Messaging",
+        label: "Runtime channel registry",
+        status: "warn",
+        detail: `missing from sandbox config: ${configMissing.join(", ")}`,
+        hint:
+          `\`${agent.configPaths.dir}/${agent.configPaths.configFile}\` is missing the channel block ` +
+          `for ${configMissing.join(", ")}; re-run \`${CLI_NAME} ${sandboxName} rebuild\` so the config is regenerated`,
+      };
+    }
   }
   if (!runtime.logProbeOk) {
     return {

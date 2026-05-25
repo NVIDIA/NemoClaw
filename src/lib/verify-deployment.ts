@@ -33,14 +33,25 @@ export interface DeploymentVerification {
   /**
    * Channels recorded in the registry that the in-sandbox agent config
    * does not expose. Set to null when the runtime probe is disabled
-   * (no agent config to read, e.g. Hermes) or when no channels are
-   * configured. See [[channel-runtime-status]] for the probe internals.
-   * Why: fixes #4156 — empty/null lets onboarding finish quietly; a
-   * non-empty array surfaces "configured but invisible at runtime" so
-   * the dashboard's "No channels found" panel does not catch the user
-   * by surprise.
+   * (no agent config to read, e.g. Hermes), when the gateway log layer
+   * was unavailable so the runtime view could not be corroborated, or
+   * when no channels are configured. See [[channel-runtime-status]] for
+   * the probe internals. Why: fixes #4156 — empty/null lets onboarding
+   * finish quietly; a non-empty array surfaces "configured but invisible
+   * at runtime" so the dashboard's "No channels found" panel does not
+   * catch the user by surprise.
    */
   messagingRuntimeChannelsMissing: string[] | null;
+  /**
+   * Channels expected by the registry that are missing from the
+   * in-sandbox agent config file (`openclaw.json`). Distinct from
+   * `messagingRuntimeChannelsMissing`: this surfaces stale-rebuild
+   * mismatches even when the gateway log isn't readable, while the
+   * runtime field requires log corroboration. Null when no channels
+   * are configured or the probe is disabled; empty array when the
+   * config has every expected channel.
+   */
+  messagingConfigChannelsMissing: string[] | null;
   accessMethod: AccessMethod;
 }
 
@@ -260,14 +271,19 @@ export interface MessagingBridgeStatus {
   /** Channel names that the gateway has no bridge provider for. */
   missingProviders: string[];
   /**
-   * Channel names recorded in the registry but absent from the in-sandbox
-   * agent config (the surface OpenClaw renders into the dashboard's
-   * "Channels — Gateway-wide channel status snapshot" panel). Null when
-   * the runtime probe was not run (no `probeChannelRuntimeStatus` dep, or
-   * no configured channels to compare against). Empty array means the
-   * probe ran and everything matched. See #4156.
+   * Channel names recorded in the registry but not corroborated by the
+   * OpenClaw runtime log. Null when the probe was not run or the log
+   * layer was unavailable. Empty array means the probe ran with log
+   * corroboration and everything matched. See #4156.
    */
   runtimeMissing: string[] | null;
+  /**
+   * Channel names recorded in the registry but absent from the in-sandbox
+   * config file. Surfaced even when the log layer is unavailable so a
+   * stale rebuild can be detected without runtime corroboration. Null
+   * when the probe was not run or no config-only diff was performed.
+   */
+  configMissing: string[] | null;
   /** Detail from the runtime probe when it ran (ok or failure reason). */
   runtimeProbeDetail: string | null;
 }
@@ -290,6 +306,7 @@ function verifyMessagingBridges(
       detail: "no messaging channels configured",
       missingProviders: [],
       runtimeMissing: null,
+      configMissing: null,
       runtimeProbeDetail: null,
     };
   }
@@ -300,6 +317,7 @@ function verifyMessagingBridges(
     }
   }
   let runtimeMissing: string[] | null = null;
+  let configMissing: string[] | null = null;
   let runtimeProbeDetail: string | null = null;
   let runtimeProbeFailed = false;
   let runtimeProbeOnlyConfig = false;
@@ -308,15 +326,22 @@ function verifyMessagingBridges(
     if (runtime) {
       runtimeProbeDetail = runtime.detail;
       if (runtime.ok) {
-        // Compare the registry's expected set (`channels`) with the
-        // runtime-visible set so that channels missing from openclaw.json
-        // entirely — a stale or failed rebuild — are caught alongside
-        // channels that the runtime never started. Relying on
-        // `configuredButNotRunning` alone would miss the
-        // "config has no telegram block at all" case the registry
-        // already knows about.
-        runtimeMissing = compareChannelSets(channels, runtime.visibleChannels).missing;
-        runtimeProbeOnlyConfig = !runtime.logProbeOk;
+        if (runtime.logProbeOk) {
+          // Log corroboration is available — compare the registry's
+          // expected set with what the runtime actually acknowledged.
+          // Catches both "config drops the channel" (stale/bad rebuild)
+          // and "config has it but runtime never started it" (#4156).
+          runtimeMissing = compareChannelSets(channels, runtime.visibleChannels).missing;
+        } else {
+          // No log to corroborate; we cannot honestly claim which channels
+          // are missing at runtime, so do not populate `runtimeMissing`.
+          // We CAN still detect a config-only mismatch — registry expects
+          // telegram but openclaw.json never had the channel block — so
+          // diff against the config-derived set and surface that separately
+          // (CodeRabbit catch on PR #4182).
+          configMissing = compareChannelSets(channels, runtime.configuredChannels).missing;
+          runtimeProbeOnlyConfig = true;
+        }
       } else {
         // ok=false = could not read /sandbox/.openclaw/openclaw.json (missing,
         // empty, invalid JSON, or sandbox unreachable). With provider checks
@@ -335,18 +360,26 @@ function verifyMessagingBridges(
   if (runtimeMissing && runtimeMissing.length > 0) {
     parts.push(`configured but not in OpenClaw runtime: ${runtimeMissing.join(", ")}`);
   }
+  if (configMissing && configMissing.length > 0) {
+    // Specific to the log-unavailable branch: registry expected channels
+    // are absent from the in-sandbox config altogether, so we know they
+    // can't possibly load at runtime regardless of the missing log.
+    parts.push(`missing from sandbox config: ${configMissing.join(", ")}`);
+  }
   if (runtimeProbeFailed && runtimeProbeDetail) {
     parts.push(`runtime channel probe inconclusive: ${runtimeProbeDetail}`);
   }
-  if (runtimeProbeOnlyConfig && (!runtimeMissing || runtimeMissing.length === 0)) {
-    // No missing channels, but the gateway log was unreadable so we can't
-    // actually confirm the runtime started each bridge. Surface that as a
-    // warn — the operator should look at the dashboard to be sure.
+  if (runtimeProbeOnlyConfig) {
+    // The gateway log was unreadable, so we can't actually confirm the
+    // runtime started each bridge. `runtimeMissing` stays null in this
+    // branch (see above) — surface the "checked config only" caveat so
+    // the operator inspects the dashboard.
     parts.push("runtime gateway log not yet available; checked config only");
   }
   const healthy =
     missingProviders.length === 0 &&
     (!runtimeMissing || runtimeMissing.length === 0) &&
+    (!configMissing || configMissing.length === 0) &&
     !runtimeProbeFailed &&
     !runtimeProbeOnlyConfig;
   const detail = healthy
@@ -357,17 +390,33 @@ function verifyMessagingBridges(
     detail,
     missingProviders,
     runtimeMissing,
+    configMissing,
     runtimeProbeDetail,
   };
 }
 
 function buildMessagingHint(messaging: MessagingBridgeStatus): string {
   if (messaging.runtimeMissing && messaging.runtimeMissing.length > 0) {
+    // Either cause — missing from openclaw.json (stale rebuild) or
+    // present in config but never logged by the runtime — produces this
+    // diff. Keep the copy neutral so the operator checks both layers
+    // rather than chasing only the log path (CodeRabbit on PR #4182).
     return (
-      `Configured channel(s) ${messaging.runtimeMissing.join(", ")} were not acknowledged by the OpenClaw ` +
-      `runtime (no startup entries in /tmp/gateway.log). The dashboard "Channels" panel will show ` +
-      `"No channels found" for these. Inspect the gateway log with \`nemoclaw <sandbox> logs\` and ` +
-      `re-run \`nemoclaw <sandbox> rebuild\` if the channel block needs to be regenerated.`
+      `Configured channel(s) ${messaging.runtimeMissing.join(", ")} were not visible to the OpenClaw ` +
+      `runtime. The dashboard "Channels" panel will show "No channels found" for these. Inspect ` +
+      `\`/sandbox/.openclaw/openclaw.json\` and the gateway log with \`nemoclaw <sandbox> logs\`, ` +
+      `then re-run \`nemoclaw <sandbox> rebuild\` if the channel block needs to be regenerated.`
+    );
+  }
+  if (messaging.configMissing && messaging.configMissing.length > 0) {
+    // Config-only branch: we couldn't read the runtime log, but we can
+    // still see that the registry expects channels that openclaw.json
+    // doesn't have. That's a stale rebuild — the runtime cannot possibly
+    // start them.
+    return (
+      `Configured channel(s) ${messaging.configMissing.join(", ")} are missing from ` +
+      `\`/sandbox/.openclaw/openclaw.json\` — the runtime cannot start them. Re-run ` +
+      `\`nemoclaw <sandbox> rebuild\` so the channel block is regenerated.`
     );
   }
   if (messaging.missingProviders.length === 0 && messaging.runtimeProbeDetail) {
@@ -456,6 +505,7 @@ export async function verifyDeployment(
     dashboardReachable: dashboard.reachable,
     messagingBridgesHealthy: messaging.healthy,
     messagingRuntimeChannelsMissing: messaging.runtimeMissing,
+    messagingConfigChannelsMissing: messaging.configMissing,
     accessMethod,
   };
 

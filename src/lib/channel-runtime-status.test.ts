@@ -353,7 +353,7 @@ describe("probeChannelRuntimeStatus", () => {
     expect(result.configuredButNotRunning).toEqual([]);
   });
 
-  it("falls back to config-only when the gateway log is missing", () => {
+  it("keeps visibleChannels empty when the gateway log is missing, so callers do not treat an inconclusive probe as healthy", () => {
     const config = JSON.stringify({
       channels: { telegram: { accounts: { default: { enabled: true } } } },
     });
@@ -364,11 +364,16 @@ describe("probeChannelRuntimeStatus", () => {
     });
     expect(result.ok).toBe(true);
     expect(result.logProbeOk).toBe(false);
-    // Without log corroboration, the config view is reported as visible
-    // but configuredButNotRunning stays empty — the caller decides how
-    // to surface the "could not verify runtime" caveat in its diagnostic.
-    expect(result.visibleChannels).toEqual(["telegram"]);
+    // `visibleChannels` is documented as "config + log corroborated". When
+    // the log layer is unavailable, the runtime view is unknown — keep it
+    // empty so callers must consult `logProbeOk` and decide how to render
+    // the caveat instead of treating config-only as healthy
+    // (CodeRabbit catch on PR #4182).
+    expect(result.visibleChannels).toEqual([]);
     expect(result.configuredButNotRunning).toEqual([]);
+    // But the config-derived set is still exposed so callers can detect
+    // stale-rebuild mismatches without runtime corroboration.
+    expect(result.configuredChannels).toEqual(["telegram"]);
     expect(result.detail).toContain("unreadable");
   });
 

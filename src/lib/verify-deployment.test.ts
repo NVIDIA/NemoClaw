@@ -133,6 +133,7 @@ describe("verifyDeployment", () => {
       probeChannelRuntimeStatus: () => ({
         ok: true,
         visibleChannels: [],
+        configuredChannels: [],
         configuredButNotRunning: [],
         logProbeOk: true,
         detail: "config + log corroborated (empty channels block)",
@@ -152,6 +153,7 @@ describe("verifyDeployment", () => {
       probeChannelRuntimeStatus: () => ({
         ok: true,
         visibleChannels: [],
+        configuredChannels: ["telegram"],
         configuredButNotRunning: ["telegram"],
         logProbeOk: true,
         detail: "config /sandbox/.openclaw/openclaw.json parsed and gateway log /tmp/gateway.log corroborated",
@@ -164,7 +166,12 @@ describe("verifyDeployment", () => {
     expect(msgDiag?.status).toBe("warn");
     expect(msgDiag?.detail).toContain("configured but not in OpenClaw runtime: telegram");
     expect(msgDiag?.hint).toContain("No channels found");
-    expect(msgDiag?.hint).toContain("gateway.log");
+    // Hint should mention both layers neutrally (config file + log) since
+    // the cause could be either a stale rebuild or a runtime failure
+    // (CodeRabbit catch on PR #4182). It must not point at only the log.
+    expect(msgDiag?.hint).toContain("openclaw.json");
+    expect(msgDiag?.hint).toContain("logs");
+    expect(msgDiag?.hint).not.toContain("no startup entries");
   });
 
   it("does not falsely warn when runtime probe corroborates every configured channel", async () => {
@@ -173,6 +180,7 @@ describe("verifyDeployment", () => {
       probeChannelRuntimeStatus: () => ({
         ok: true,
         visibleChannels: ["telegram"],
+        configuredChannels: ["telegram"],
         configuredButNotRunning: [],
         logProbeOk: true,
         detail: "config + log corroborated",
@@ -188,13 +196,17 @@ describe("verifyDeployment", () => {
     // Provider attached, config has the channel, but the gateway log is
     // unreadable (sandbox just rebuilt, log not yet created). The probe
     // can only confirm config — we must surface that as a warn rather
-    // than claim runtime verification.
+    // than claim runtime verification. The probe now returns
+    // `visibleChannels: []` when `logProbeOk` is false so callers cannot
+    // accidentally treat config-only as healthy, and verifyDeployment
+    // must NOT then flag every configured channel as missing.
     const deps = makeDeps({
       getMessagingChannels: () => ["telegram"],
       providerExistsInGateway: () => true,
       probeChannelRuntimeStatus: () => ({
         ok: true,
-        visibleChannels: ["telegram"],
+        visibleChannels: [],
+        configuredChannels: ["telegram"],
         configuredButNotRunning: [],
         logProbeOk: false,
         detail: "config /sandbox/.openclaw/openclaw.json parsed; gateway log /tmp/gateway.log unreadable, runtime confirmation skipped",
@@ -202,9 +214,44 @@ describe("verifyDeployment", () => {
     });
     const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
     expect(result.verification.messagingBridgesHealthy).toBe(false);
+    // No false-positive "configured but not in OpenClaw runtime" — we
+    // simply do not have enough evidence to make that claim.
+    expect(result.verification.messagingRuntimeChannelsMissing).toBeNull();
+    expect(result.verification.messagingConfigChannelsMissing).toEqual([]);
     const msgDiag = result.diagnostics.find((d) => d.link === "messaging");
     expect(msgDiag?.status).toBe("warn");
     expect(msgDiag?.detail).toContain("runtime gateway log not yet available");
+    expect(msgDiag?.detail).not.toContain("configured but not in OpenClaw runtime");
+  });
+
+  it("flags a stale rebuild even when the gateway log is unavailable (config-only diff)", async () => {
+    // Registry expects telegram but openclaw.json never had the channel
+    // block — and the gateway log is unreadable, so the runtime layer
+    // cannot corroborate. Earlier revisions of this fix masked the
+    // mismatch behind the log warning; this test pins the new
+    // configMissing surface that exposes config-only mismatches even
+    // without log corroboration (CodeRabbit on PR #4182).
+    const deps = makeDeps({
+      getMessagingChannels: () => ["telegram"],
+      providerExistsInGateway: () => true,
+      probeChannelRuntimeStatus: () => ({
+        ok: true,
+        visibleChannels: [],
+        configuredChannels: [],
+        configuredButNotRunning: [],
+        logProbeOk: false,
+        detail: "config /sandbox/.openclaw/openclaw.json parsed; gateway log /tmp/gateway.log unreadable, runtime confirmation skipped",
+      }),
+    });
+    const result = await verifyDeployment("my-sandbox", chain, deps, NO_RETRY);
+    expect(result.verification.messagingBridgesHealthy).toBe(false);
+    expect(result.verification.messagingRuntimeChannelsMissing).toBeNull();
+    expect(result.verification.messagingConfigChannelsMissing).toEqual(["telegram"]);
+    const msgDiag = result.diagnostics.find((d) => d.link === "messaging");
+    expect(msgDiag?.status).toBe("warn");
+    expect(msgDiag?.detail).toContain("missing from sandbox config: telegram");
+    expect(msgDiag?.hint).toContain("openclaw.json");
+    expect(msgDiag?.hint).toContain("rebuild");
   });
 
   it("surfaces an inconclusive runtime probe as a messaging warn (catches malformed openclaw.json #4156)", async () => {
@@ -214,6 +261,7 @@ describe("verifyDeployment", () => {
       probeChannelRuntimeStatus: () => ({
         ok: false,
         visibleChannels: [],
+        configuredChannels: [],
         configuredButNotRunning: [],
         logProbeOk: false,
         detail: "runtime channel config /sandbox/.openclaw/openclaw.json is missing or empty",
@@ -240,6 +288,7 @@ describe("verifyDeployment", () => {
         return {
           ok: true,
           visibleChannels: [],
+          configuredChannels: [],
           configuredButNotRunning: [],
           logProbeOk: true,
           detail: "x",
@@ -419,6 +468,7 @@ describe("formatVerificationDiagnostics", () => {
       probeChannelRuntimeStatus: () => ({
         ok: true,
         visibleChannels: [],
+        configuredChannels: ["telegram"],
         configuredButNotRunning: ["telegram"],
         logProbeOk: true,
         detail: "config + log corroborated",
