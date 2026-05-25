@@ -1054,6 +1054,17 @@ print('yes' if 'slack' in d else 'no')
   if [ "$slack_configured" = "yes" ]; then
     pass "M11e: Slack channel configured with placeholder tokens (guard needed)"
 
+    sl_channel_enabled=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print('yes' if d.get('slack', {}).get('enabled') is True else 'no')
+" 2>/dev/null || true)
+    if [ "$sl_channel_enabled" = "yes" ]; then
+      pass "M11e1: Slack channel is enabled at the top level for fresh startup discovery"
+    else
+      fail "M11e1: Slack channel missing top-level enabled=true; fresh startup may report disabled"
+    fi
+
     # M11f/M11g/M11h: SLACK_ALLOWED_USERS should authorize both DMs and
     # channel @mentions from the same users. Config lives on the Slack account
     # because OpenClaw supports multi-account Slack channel policy.
