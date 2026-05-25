@@ -18,6 +18,7 @@
  */
 
 import type { DashboardDeliveryChain } from "./dashboard/contract";
+import { compareChannelSets, type RuntimeChannelStatus } from "./channel-runtime-status";
 
 // ── Types ────────────────────────────────────────────────────────────
 
@@ -29,6 +30,17 @@ export interface DeploymentVerification {
   inferenceRouteWorking: boolean;
   dashboardReachable: boolean;
   messagingBridgesHealthy: boolean;
+  /**
+   * Channels recorded in the registry that the in-sandbox agent config
+   * does not expose. Set to null when the runtime probe is disabled
+   * (no agent config to read, e.g. Hermes) or when no channels are
+   * configured. See [[channel-runtime-status]] for the probe internals.
+   * Why: fixes #4156 — empty/null lets onboarding finish quietly; a
+   * non-empty array surfaces "configured but invisible at runtime" so
+   * the dashboard's "No channels found" panel does not catch the user
+   * by surprise.
+   */
+  messagingRuntimeChannelsMissing: string[] | null;
   accessMethod: AccessMethod;
 }
 
@@ -60,6 +72,20 @@ export interface VerifyDeploymentDeps {
 
   /** Check if a messaging bridge is polling (provider exists in gateway). */
   providerExistsInGateway: (providerName: string) => boolean;
+
+  /**
+   * Probe the in-sandbox agent config to learn which channels the runtime
+   * would actually expose to the dashboard "Channels" snapshot. Optional:
+   * onboarding only wires it when the agent has a JSON config the runtime
+   * parses (today: OpenClaw). Returning `null` means "skip the comparison";
+   * a result object with `ok: false` means "tried to probe and failed",
+   * which downgrades the diagnostic to a warning rather than a fail.
+   *
+   * Fixes #4156: configured/registered channels were never compared with
+   * the runtime view, so a user could land on the dashboard and see
+   * "No channels found" without any NemoClaw warning.
+   */
+  probeChannelRuntimeStatus?: () => RuntimeChannelStatus | null;
 }
 
 export interface VerifyDeploymentOptions {
@@ -228,27 +254,132 @@ function detectAccessMethod(chain: DashboardDeliveryChain): AccessMethod {
   return "ssh-tunnel";
 }
 
+export interface MessagingBridgeStatus {
+  healthy: boolean;
+  detail: string;
+  /** Channel names that the gateway has no bridge provider for. */
+  missingProviders: string[];
+  /**
+   * Channel names recorded in the registry but absent from the in-sandbox
+   * agent config (the surface OpenClaw renders into the dashboard's
+   * "Channels — Gateway-wide channel status snapshot" panel). Null when
+   * the runtime probe was not run (no `probeChannelRuntimeStatus` dep, or
+   * no configured channels to compare against). Empty array means the
+   * probe ran and everything matched. See #4156.
+   */
+  runtimeMissing: string[] | null;
+  /** Detail from the runtime probe when it ran (ok or failure reason). */
+  runtimeProbeDetail: string | null;
+}
+
 /**
- * Verify messaging bridge health for all configured channels.
+ * Verify messaging bridge health for all configured channels. Combines the
+ * provider-attachment check (does OpenShell know about the bridge?) with the
+ * runtime-config probe (does the in-sandbox agent config actually expose
+ * the channel?) so the "No channels found" dashboard symptom from #4156
+ * surfaces here as a warning.
  */
 function verifyMessagingBridges(
   sandboxName: string,
   deps: VerifyDeploymentDeps,
-): { healthy: boolean; detail: string } {
+): MessagingBridgeStatus {
   const channels = deps.getMessagingChannels(sandboxName);
   if (channels.length === 0) {
-    return { healthy: true, detail: "no messaging channels configured" };
+    return {
+      healthy: true,
+      detail: "no messaging channels configured",
+      missingProviders: [],
+      runtimeMissing: null,
+      runtimeProbeDetail: null,
+    };
   }
-  const missing: string[] = [];
+  const missingProviders: string[] = [];
   for (const channel of channels) {
     if (!deps.providerExistsInGateway(channel)) {
-      missing.push(channel);
+      missingProviders.push(channel);
     }
   }
-  if (missing.length > 0) {
-    return { healthy: false, detail: `missing providers: ${missing.join(", ")}` };
+  let runtimeMissing: string[] | null = null;
+  let runtimeProbeDetail: string | null = null;
+  let runtimeProbeFailed = false;
+  let runtimeProbeOnlyConfig = false;
+  if (deps.probeChannelRuntimeStatus) {
+    const runtime = deps.probeChannelRuntimeStatus();
+    if (runtime) {
+      runtimeProbeDetail = runtime.detail;
+      if (runtime.ok) {
+        // Compare the registry's expected set (`channels`) with the
+        // runtime-visible set so that channels missing from openclaw.json
+        // entirely — a stale or failed rebuild — are caught alongside
+        // channels that the runtime never started. Relying on
+        // `configuredButNotRunning` alone would miss the
+        // "config has no telegram block at all" case the registry
+        // already knows about.
+        runtimeMissing = compareChannelSets(channels, runtime.visibleChannels).missing;
+        runtimeProbeOnlyConfig = !runtime.logProbeOk;
+      } else {
+        // ok=false = could not read /sandbox/.openclaw/openclaw.json (missing,
+        // empty, invalid JSON, or sandbox unreachable). With provider checks
+        // alone this case would silently pass — yet it's exactly the
+        // malformed-runtime-config the probe was added to catch (#4156).
+        // Treat it as warn-level so the diagnostic surfaces with the probe's
+        // own detail string instead of being swallowed.
+        runtimeProbeFailed = true;
+      }
+    }
   }
-  return { healthy: true, detail: `${channels.length} channel(s) attached` };
+  const parts: string[] = [];
+  if (missingProviders.length > 0) {
+    parts.push(`missing providers: ${missingProviders.join(", ")}`);
+  }
+  if (runtimeMissing && runtimeMissing.length > 0) {
+    parts.push(`configured but not in OpenClaw runtime: ${runtimeMissing.join(", ")}`);
+  }
+  if (runtimeProbeFailed && runtimeProbeDetail) {
+    parts.push(`runtime channel probe inconclusive: ${runtimeProbeDetail}`);
+  }
+  if (runtimeProbeOnlyConfig && (!runtimeMissing || runtimeMissing.length === 0)) {
+    // No missing channels, but the gateway log was unreadable so we can't
+    // actually confirm the runtime started each bridge. Surface that as a
+    // warn — the operator should look at the dashboard to be sure.
+    parts.push("runtime gateway log not yet available; checked config only");
+  }
+  const healthy =
+    missingProviders.length === 0 &&
+    (!runtimeMissing || runtimeMissing.length === 0) &&
+    !runtimeProbeFailed &&
+    !runtimeProbeOnlyConfig;
+  const detail = healthy
+    ? `${channels.length} channel(s) attached`
+    : parts.join("; ") || "messaging channel verification failed";
+  return {
+    healthy,
+    detail,
+    missingProviders,
+    runtimeMissing,
+    runtimeProbeDetail,
+  };
+}
+
+function buildMessagingHint(messaging: MessagingBridgeStatus): string {
+  if (messaging.runtimeMissing && messaging.runtimeMissing.length > 0) {
+    return (
+      `Configured channel(s) ${messaging.runtimeMissing.join(", ")} were not acknowledged by the OpenClaw ` +
+      `runtime (no startup entries in /tmp/gateway.log). The dashboard "Channels" panel will show ` +
+      `"No channels found" for these. Inspect the gateway log with \`nemoclaw <sandbox> logs\` and ` +
+      `re-run \`nemoclaw <sandbox> rebuild\` if the channel block needs to be regenerated.`
+    );
+  }
+  if (messaging.missingProviders.length === 0 && messaging.runtimeProbeDetail) {
+    // Provider attachment looks fine but the runtime config could not be read.
+    // Tell the operator how to follow up rather than burying the probe detail.
+    return (
+      `Could not verify the OpenClaw runtime channel registry: ${messaging.runtimeProbeDetail}. ` +
+      `Start the sandbox and re-run \`nemoclaw <sandbox> doctor\`, or rebuild with ` +
+      `\`nemoclaw <sandbox> rebuild\` if the config file is missing.`
+    );
+  }
+  return "Some messaging providers are not attached to the gateway. Re-run onboard with the relevant channels enabled.";
 }
 
 // ── Main entry point ─────────────────────────────────────────────────
@@ -304,14 +435,15 @@ export async function verifyDeployment(
       : "The inference proxy may not be ready yet. Try: nemoclaw <sandbox> status (it may take a few seconds after creation).",
   });
 
-  // 5. Messaging bridges
+  // 5. Messaging bridges (providers attached AND runtime config exposes
+  // each configured channel — #4156).
   const messaging = verifyMessagingBridges(sandboxName, deps);
   if (!messaging.healthy) {
     diagnostics.push({
       link: "messaging",
       status: "warn",
       detail: messaging.detail,
-      hint: "Some messaging providers are not attached to the gateway. Re-run onboard with the relevant channels enabled.",
+      hint: buildMessagingHint(messaging),
     });
   }
 
@@ -323,6 +455,7 @@ export async function verifyDeployment(
     inferenceRouteWorking: inference.working,
     dashboardReachable: dashboard.reachable,
     messagingBridgesHealthy: messaging.healthy,
+    messagingRuntimeChannelsMissing: messaging.runtimeMissing,
     accessMethod,
   };
 
@@ -351,6 +484,19 @@ export function formatVerificationDiagnostics(result: VerifyDeploymentResult): s
     lines.push(`  ${G}✓${RESET} Deployment verified — gateway and dashboard are healthy.`);
     if (result.verification.gatewayVersion) {
       lines.push(`    OpenClaw version: ${result.verification.gatewayVersion}`);
+    }
+    // The overall result is healthy when gateway + dashboard are reachable,
+    // but the run can still carry warn-level diagnostics (#4156: configured
+    // channels missing from the runtime registry would otherwise pass
+    // silently and the user would only learn about it from the dashboard's
+    // "No channels found" panel after the fact). Surface those alongside
+    // the success line instead of swallowing them.
+    for (const d of result.diagnostics) {
+      if (d.status !== "warn") continue;
+      lines.push(`  ${Y}!${RESET} ${d.link}: ${d.detail}`);
+      if (d.hint) {
+        lines.push(`    ${D}${d.hint}${RESET}`);
+      }
     }
     return lines;
   }

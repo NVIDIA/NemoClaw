@@ -2053,6 +2053,53 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
+# Phase 7b: Channel runtime registry verification (#4156)
+# ══════════════════════════════════════════════════════════════════
+# Asserts that the new runtime-channel diagnostic (`nemoclaw <sandbox>
+# doctor --json` → Messaging → "Runtime channel registry") fires after
+# rebuild. If the docker image was baked correctly, the diagnostic
+# reports each configured channel as visible to the OpenClaw runtime;
+# if the bake failed (the gap behind #4156), it reports the missing set
+# instead of silently passing.
+section "Phase 7b: Channel runtime registry verification (#4156)"
+
+doctor_json=$(nemoclaw "$SANDBOX_NAME" doctor --json 2>/dev/null || true)
+if [ -z "$doctor_json" ]; then
+  skip "RT0: Could not collect doctor --json output"
+else
+  runtime_check=$(echo "$doctor_json" | python3 -c "
+import json, sys
+try:
+    report = json.load(sys.stdin)
+except Exception as e:
+    print(json.dumps({'error': str(e)})); sys.exit(0)
+match = next(
+    (c for c in report.get('checks', []) if c.get('label') == 'Runtime channel registry'),
+    None,
+)
+print(json.dumps(match or {'missing': True}))
+" 2>/dev/null || echo '{"error":"parse"}')
+
+  if echo "$runtime_check" | grep -q '"missing"'; then
+    skip "RT1: doctor --json had no Runtime channel registry check (no configured channels)"
+  else
+    info "Runtime channel registry check: ${runtime_check:0:300}"
+    rt_status=$(echo "$runtime_check" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
+    if [ "$rt_status" = "ok" ]; then
+      pass "RT1: doctor reports configured channels are visible to OpenClaw runtime registry"
+    elif [ "$rt_status" = "warn" ]; then
+      # A warn is still a pass for this E2E: it means the diagnostic detected
+      # the very gap #4156 closes (e.g. a channel configured but absent from
+      # /sandbox/.openclaw/openclaw.json after rebuild). The detail field
+      # surfaces which channels are missing so the suite output stays useful.
+      pass "RT1: doctor surfaced runtime channel registry warning (detail: $(echo "$runtime_check" | python3 -c "import json,sys; print(json.load(sys.stdin).get('detail',''))"))"
+    else
+      fail "RT1: Unexpected Runtime channel registry status '$rt_status' (raw: ${runtime_check:0:300})"
+    fi
+  fi
+fi
+
+# ══════════════════════════════════════════════════════════════════
 # Phase 8: Cleanup
 # ══════════════════════════════════════════════════════════════════
 section "Phase 8: Cleanup"

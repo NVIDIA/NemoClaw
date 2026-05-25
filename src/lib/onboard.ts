@@ -7431,6 +7431,20 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
             captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
             getMessagingChannels: () => selectedMessagingChannels || [],
             providerExistsInGateway: (providerName: string) => providerExistsInGateway(providerName),
+            probeChannelRuntimeStatus: () => {
+              // Only OpenClaw stores channel config in the JSON the dashboard
+              // "Channels" panel reads from (#4156). Skip for non-JSON agents
+              // (Hermes) — runtimeMissing stays null, no warn line.
+              const configPaths = agent?.configPaths;
+              if (!configPaths || configPaths.format !== "json") return null;
+              const channelRuntimeStatus: typeof import("./channel-runtime-status") =
+                require("./channel-runtime-status");
+              return channelRuntimeStatus.probeChannelRuntimeStatus({
+                configFilePath: `${configPaths.dir}/${configPaths.configFile}`,
+                executeSandboxCommand: (script: string) =>
+                  executeSandboxCommandForVerification(name, script),
+              });
+            },
           });
         },
         formatVerificationDiagnostics: (result) => {
