@@ -577,7 +577,10 @@ def build_config(env: dict | None = None) -> dict:
                         "users": _allowed_ids[ch],
                     }
                 }
-        _ch_cfg[ch] = {"accounts": {"default": account}}
+        _ch_cfg[ch] = {
+            **({"enabled": True} if ch == "slack" else {}),
+            "accounts": {"default": account},
+        }
 
     # WeChat (openclaw-weixin) is NOT added to channels.* here in build
     # contexts where the plugin has not been installed yet — writing it upfront
