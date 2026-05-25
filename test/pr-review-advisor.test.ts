@@ -7,7 +7,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { buildComment } from "../tools/pr-review-advisor/comment.mts";
-import { buildSystemPrompt, classifyMonolithDelta, classifyTestDepth, normalizeReviewResult, readTrustedSecurityReviewSkill, renderDetailedReview, renderSummary } from "../tools/pr-review-advisor/analyze.mts";
+import { buildSystemPrompt, classifyMonolithDelta, classifyTestDepth, detectLocalizedPatchSignals, normalizeReviewResult, readTrustedSecurityReviewSkill, renderDetailedReview, renderSummary } from "../tools/pr-review-advisor/analyze.mts";
 import { githubGraphql } from "../tools/advisors/github.mts";
 import { validatePrReviewAdvisorWorkflowBoundary } from "../tools/pr-review-advisor/workflow-boundary.mts";
 
@@ -27,6 +27,7 @@ function metadata(overrides: Partial<ReviewMetadata> = {}): ReviewMetadata {
     },
     previousAdvisorReview: null,
     workflowSignals: [],
+    localizedPatchSignals: [],
     monolithDeltas: [],
     driftEvidence: [],
     github: null,
@@ -76,6 +77,18 @@ function validResult(overrides = {}) {
     ],
     securityCategories: [
       { category: "Secrets and Credentials", verdict: "pass", justification: "No secrets in diff." },
+    ],
+    sourceOfTruthReview: [
+      {
+        surface: "trusted-code boundary",
+        status: "satisfied",
+        invalidState: "PR-controlled workflow code could execute with secrets.",
+        sourceBoundary: ".github/workflows/pr-review-advisor.yaml",
+        whyNotSourceFix: "The workflow already uses the trusted main checkout.",
+        regressionTest: "workflow trusted-code boundary test",
+        removalCondition: "Not applicable; this is a permanent boundary rule.",
+        evidence: "advisor scripts are invoked from ADVISOR_DIR",
+      },
     ],
     testDepth: {
       verdict: "mocks_recommended",
@@ -163,6 +176,100 @@ describe("PR review advisor", () => {
     expect(prompt).toContain("Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status");
     expect(prompt).toContain("compare it with the current diff and explicitly decide whether prior code-review findings were addressed");
     expect(prompt).toContain("any unmet acceptance clause or security fail/warning must be represented as a finding");
+    expect(prompt).toContain("Source-of-truth review");
+    expect(prompt).toContain("what invalid state is handled");
+    expect(prompt).toContain("Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding");
+  });
+
+  it("detects localized patch signals from added diff lines", () => {
+    const signals = detectLocalizedPatchSignals(`diff --git a/src/lib/example.ts b/src/lib/example.ts
+@@ -1,2 +1,6 @@
+ export function run() {
++  process.on("uncaughtException", () => {});
++  return fallbackConfig;
++  +++fallbackEnabled;
+ }
+`);
+
+    expect(signals).toEqual([
+      expect.objectContaining({
+        file: "src/lib/example.ts",
+        line: 2,
+        kind: "runtime interception or monkeypatch",
+      }),
+      expect.objectContaining({
+        file: "src/lib/example.ts",
+        line: 3,
+        kind: "fallback/recovery/tolerance path",
+      }),
+      expect.objectContaining({
+        file: "src/lib/example.ts",
+        line: 4,
+        kind: "fallback/recovery/tolerance path",
+        evidence: "+++fallbackEnabled;",
+      }),
+    ]);
+    expect(signals[0]?.reviewRule).toContain("invalid state");
+  });
+
+  it("adds a finding when source-of-truth review is missing follow-up", () => {
+    const result = normalizeReviewResult(validResult({
+      findings: [],
+      sourceOfTruthReview: [
+        {
+          surface: "Ollama proxy fallback",
+          status: "missing",
+          invalidState: "Provider tools support is unknown.",
+          sourceBoundary: "provider capability registry",
+          whyNotSourceFix: "Not explained.",
+          regressionTest: "Not specified.",
+          removalCondition: "Not specified.",
+          evidence: "Diff adds a fallback branch without explaining the source fix.",
+        },
+      ],
+    }), metadata());
+
+    expect(result.findings).toContainEqual(expect.objectContaining({
+      severity: "warning",
+      category: "architecture",
+      title: "Source-of-truth review needed: Ollama proxy fallback",
+    }));
+  });
+
+  it("preserves generated source-of-truth findings when model findings hit the cap", () => {
+    const findings = Array.from({ length: 50 }, (_, index) => ({
+      severity: "suggestion",
+      category: "correctness",
+      file: "src/lib/example.ts",
+      line: index + 1,
+      title: `Existing finding ${index + 1}`,
+      description: "Existing model finding.",
+      recommendation: "Review manually.",
+      evidence: `existing evidence ${index + 1}`,
+    }));
+    const result = normalizeReviewResult(validResult({
+      findings,
+      sourceOfTruthReview: [
+        {
+          surface: "Ollama proxy fallback",
+          status: "missing",
+          invalidState: "Provider tools support is unknown.",
+          sourceBoundary: "provider capability registry",
+          whyNotSourceFix: "Not explained.",
+          regressionTest: "Not specified.",
+          removalCondition: "Not specified.",
+          evidence: "Diff adds a fallback branch without explaining the source fix.",
+        },
+      ],
+    }), metadata());
+
+    expect(result.findings).toHaveLength(50);
+    expect(result.findings[0]).toMatchObject({
+      severity: "warning",
+      category: "architecture",
+      title: "Source-of-truth review needed: Ollama proxy fallback",
+    });
+    expect(result.findings.some((finding) => finding.title === "Existing finding 50")).toBe(false);
   });
 
   it("loads the security review skill from the trusted module checkout, not cwd", () => {
@@ -214,6 +321,8 @@ describe("PR review advisor", () => {
     expect(summary).not.toContain("## Security review");
     expect(detailed).toContain("## Acceptance coverage");
     expect(detailed).toContain("## Security review");
+    expect(detailed).toContain("## Source-of-truth review");
+    expect(detailed).toContain("trusted-code boundary");
     expect(comment).toContain("<details>");
     expect(comment).toContain("<summary>Review findings</summary>");
     expect(comment).toContain("### 🛠️ Needs attention");

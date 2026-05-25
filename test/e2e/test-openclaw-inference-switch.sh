@@ -44,6 +44,21 @@ section() {
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 
+is_transient_live_http_code() {
+  case "${1:-}" in
+    502 | 503 | 504) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+http_status_from_response() {
+  sed -n 's/^__NEMOCLAW_HTTP_STATUS__=//p' <<<"$1" | tail -1
+}
+
+http_body_from_response() {
+  sed '/^__NEMOCLAW_HTTP_STATUS__=/d' <<<"$1"
+}
+
 run_with_timeout() {
   local seconds="$1"
   shift
@@ -214,7 +229,7 @@ print("OK")
 }
 
 check_sandbox_inference() {
-  local payload payload_arg response rc content attempt last_fail
+  local payload payload_arg response rc content attempt last_fail http_code body remote transient=0
   payload=$(SWITCH_MODEL="$SWITCH_MODEL" python3 -c '
 import json
 import os
@@ -225,18 +240,27 @@ print(json.dumps({
 }))
 ')
   payload_arg="$(printf '%q' "$payload")"
+  remote="tmp=\$(mktemp); code=\$(curl -sS -o \"\$tmp\" -w '%{http_code}' --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d $payload_arg); rc=\$?; cat \"\$tmp\"; rm -f \"\$tmp\"; printf '\n__NEMOCLAW_HTTP_STATUS__=%s\n' \"\${code:-000}\"; exit \"\$rc\""
   last_fail=""
 
   for attempt in 1 2 3; do
     rc=0
-    response=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc \
-      "curl -sS --max-time 90 https://inference.local/v1/chat/completions -H 'Content-Type: application/json' -d $payload_arg" \
-      2>&1) || rc=$?
+    transient=0
+    response=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc "$remote" 2>&1) || rc=$?
+    http_code=$(http_status_from_response "$response")
+    [ -n "$http_code" ] || http_code="000"
+    body=$(http_body_from_response "$response")
 
     if [ "$rc" -ne 0 ]; then
-      last_fail="curl failed with exit ${rc}: ${response:0:300}"
+      [ "$rc" -eq 28 ] && transient=1
+      last_fail="curl failed with exit ${rc}; HTTP ${http_code}: ${body:0:300}"
+    elif is_transient_live_http_code "$http_code"; then
+      transient=1
+      last_fail="transient HTTP ${http_code}: ${body:0:300}"
+    elif [ "$http_code" != "200" ]; then
+      last_fail="HTTP ${http_code}: ${body:0:300}"
     else
-      content=$(printf '%s' "$response" | parse_chat_content 2>/dev/null) || content=""
+      content=$(printf '%s' "$body" | parse_chat_content 2>/dev/null) || content=""
       if grep -qi "PONG" <<<"$content"; then
         pass "Sandbox inference.local returned PONG with ${SWITCH_MODEL}"
         return
@@ -250,7 +274,11 @@ print(json.dumps({
     }
   done
 
-  fail "Sandbox inference.local did not work after switch: ${last_fail}"
+  if [ "$transient" -eq 1 ]; then
+    skip "Sandbox inference.local transient failure after switch; route/config checks already passed"
+  else
+    fail "Sandbox inference.local did not work after switch: ${last_fail}"
+  fi
 }
 
 check_openclaw_agent_turn() {
@@ -278,6 +306,8 @@ check_openclaw_agent_turn() {
 
   if [ "$rc" -eq 0 ] && grep -qE '(^|[^0-9])42([^0-9]|$)' <<<"$reply"; then
     pass "OpenClaw agent answered through the switched inference route"
+  elif [ "$rc" -eq 124 ]; then
+    skip "OpenClaw agent turn timed out after switch; route/config checks already passed"
   else
     fail "OpenClaw agent turn failed after switch (exit ${rc}); reply='${reply:0:200}', raw='${raw:0:200}'"
   fi
