@@ -1,0 +1,706 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { execFileSync, execSync, spawn, spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  closeSync,
+  constants,
+  existsSync,
+  fchmodSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, join } from "node:path";
+import { dockerSpawnSync } from "../adapters/docker";
+import { resolveOpenshell } from "../adapters/openshell/resolve";
+import { renderBox } from "../cli/banner";
+import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
+import { isRecord } from "../core/json-types";
+import { DASHBOARD_PORT } from "../core/ports";
+import { buildSubprocessEnv } from "../subprocess-env";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+export interface ServiceOptions {
+  /** Sandbox name — must match the name used by start/stop/status. */
+  sandboxName?: string;
+  /** Dashboard port for cloudflared (default: 18789). */
+  dashboardPort?: number;
+  /** Repo root directory — used to locate scripts/. */
+  repoDir?: string;
+  /** Override PID directory (default: /tmp/nemoclaw-services-{sandbox}). */
+  pidDir?: string;
+  /** Cloudflare named tunnel token. Falls back to CLOUDFLARE_TUNNEL_TOKEN. */
+  cloudflareTunnelToken?: string;
+}
+
+export interface ServiceStatus {
+  name: string;
+  running: boolean;
+  pid: number | null;
+}
+
+// ---------------------------------------------------------------------------
+// Colour helpers — respect NO_COLOR
+// ---------------------------------------------------------------------------
+
+const useColor = !process.env.NO_COLOR && process.stdout.isTTY;
+const GREEN = useColor ? "\x1b[0;32m" : "";
+const RED = useColor ? "\x1b[0;31m" : "";
+const YELLOW = useColor ? "\x1b[1;33m" : "";
+const NC = useColor ? "\x1b[0m" : "";
+
+function info(msg: string): void {
+  console.log(`${GREEN}[services]${NC} ${msg}`);
+}
+
+function warn(msg: string): void {
+  console.log(`${YELLOW}[services]${NC} ${msg}`);
+}
+
+// ---------------------------------------------------------------------------
+// PID helpers
+// ---------------------------------------------------------------------------
+
+function ensurePidDir(pidDir: string): void {
+  if (!existsSync(pidDir)) {
+    mkdirSync(pidDir, { recursive: true, mode: 0o700 });
+  }
+  chmodSync(pidDir, 0o700);
+}
+
+function readPid(pidDir: string, name: string): number | null {
+  const pidFile = join(pidDir, `${name}.pid`);
+  if (!existsSync(pidFile)) return null;
+  const raw = readFileSync(pidFile, "utf-8").trim();
+  const pid = Number(raw);
+  return Number.isFinite(pid) && pid > 0 ? pid : null;
+}
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isRunning(pidDir: string, name: string): boolean {
+  const pid = readPid(pidDir, name);
+  if (pid === null) return false;
+  return isAlive(pid);
+}
+
+// ---------------------------------------------------------------------------
+// Cloudflared state — finer-grained than isRunning() so callers (status,
+// doctor) can distinguish stopped / stale-pid-file / stale-pid-process and
+// emit a targeted remediation. Issue #2604.
+// ---------------------------------------------------------------------------
+
+export type CloudflaredState =
+  | { kind: "running"; pid: number }
+  | { kind: "stopped" }
+  | { kind: "stale-pid-file" }
+  | { kind: "stale-pid-process"; pid: number };
+
+function readProcessCommandLine(pid: number): string | null {
+  if (process.platform === "win32") return null;
+  try {
+    return readFileSync(`/proc/${pid}/cmdline`, "utf-8");
+  } catch {
+    try {
+      return execFileSync("ps", ["-p", String(pid), "-o", "comm=", "-o", "args="], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+        timeout: 1000,
+      });
+    } catch {
+      return null;
+    }
+  }
+}
+
+function commandLineNamesCloudflared(commandLine: string): boolean {
+  return commandLine
+    .split(/\0|\s+/)
+    .filter(Boolean)
+    .some((token) => basename(token) === "cloudflared");
+}
+
+function extractTryCloudflareUrl(log: string): string | null {
+  for (const rawToken of log.split(/\s+/)) {
+    const candidate = rawToken.replace(/^[<("']+|[>),."']+$/g, "");
+    try {
+      const url = new URL(candidate);
+      if (url.protocol !== "https:") continue;
+      if (url.hostname === "trycloudflare.com" || url.hostname.endsWith(".trycloudflare.com")) {
+        url.hash = "";
+        return url.toString();
+      }
+    } catch {
+      // Not a URL token.
+    }
+  }
+  return null;
+}
+
+function formatNamedTunnelUrl(hostname: string): string | null {
+  const normalized = hostname.trim().replace(/\.$/, "").toLowerCase();
+  if (!/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/.test(normalized)) {
+    return null;
+  }
+  return `https://${normalized}`;
+}
+
+function serviceTargetsDashboard(service: string, dashboardPort: number): boolean {
+  try {
+    const url = new URL(service);
+    return (
+      url.protocol === "http:" &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1") &&
+      url.port === String(dashboardPort)
+    );
+  } catch {
+    return service === `http://localhost:${String(dashboardPort)}`;
+  }
+}
+
+function getConfigIngressEntries(config: unknown): Array<{ hostname: string; service: string }> {
+  if (!isRecord(config) || !Array.isArray(config.ingress)) return [];
+
+  const entries: Array<{ hostname: string; service: string }> = [];
+  for (const entry of config.ingress) {
+    if (!isRecord(entry)) continue;
+    const { hostname, service } = entry;
+    if (typeof hostname === "string" && typeof service === "string") {
+      entries.push({ hostname, service });
+    }
+  }
+  return entries;
+}
+
+function extractNamedCloudflareUrl(log: string, dashboardPort: number): string | null {
+  for (const match of log.matchAll(/config="((?:\\"|[^"])*)"/g)) {
+    const escapedConfig = match[1];
+    if (!escapedConfig) continue;
+    try {
+      const configText = JSON.parse(`"${escapedConfig}"`) as string;
+      const entries = getConfigIngressEntries(JSON.parse(configText) as unknown);
+      for (const entry of entries) {
+        if (!serviceTargetsDashboard(entry.service, dashboardPort)) continue;
+        const url = formatNamedTunnelUrl(entry.hostname);
+        if (url) return url;
+      }
+    } catch {
+      // Fall through to the regex parser below for partial or unusual log lines.
+    }
+  }
+
+  const port = String(dashboardPort).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const servicePattern = new RegExp(`\\\\"service\\\\"\\s*:\\s*\\\\"http://localhost:${port}/?\\\\"`, "g");
+  for (const line of log.split(/\r?\n/)) {
+    for (const serviceMatch of line.matchAll(servicePattern)) {
+      const prefix = line.slice(0, serviceMatch.index ?? 0);
+      let hostname: string | null = null;
+      for (const hostnameMatch of prefix.matchAll(/\\"hostname\\"\s*:\s*\\"([^"\\]+)\\"/g)) {
+        hostname = hostnameMatch[1] ?? null;
+      }
+      if (!hostname) continue;
+      const url = formatNamedTunnelUrl(hostname);
+      if (url) return url;
+    }
+  }
+
+  return null;
+}
+
+/** Extract the active cloudflared public URL from a service log. */
+export function getTunnelUrl(pidDir: string, dashboardPort: number): string {
+  const logFile = join(pidDir, "cloudflared.log");
+  if (!existsSync(logFile)) return "";
+  const log = readFileSync(logFile, "utf-8");
+  return extractNamedCloudflareUrl(log, dashboardPort) ?? extractTryCloudflareUrl(log) ?? "";
+}
+
+export function readCloudflaredState(pidDir: string): CloudflaredState {
+  const pidFile = join(pidDir, "cloudflared.pid");
+  if (!existsSync(pidFile)) return { kind: "stopped" };
+  let raw: string;
+  try {
+    raw = readFileSync(pidFile, "utf-8").trim();
+  } catch {
+    return { kind: "stopped" };
+  }
+  if (raw.length === 0) return { kind: "stopped" };
+  const pid = Number(raw);
+  if (!Number.isFinite(pid) || pid <= 0) return { kind: "stale-pid-file" };
+  try {
+    process.kill(pid, 0);
+  } catch {
+    return { kind: "stale-pid-process", pid };
+  }
+  const cmdline = readProcessCommandLine(pid);
+  if (cmdline !== null && !commandLineNamesCloudflared(cmdline)) {
+    return { kind: "stale-pid-process", pid };
+  }
+  return { kind: "running", pid };
+}
+
+function writePid(pidDir: string, name: string, pid: number): void {
+  const pidFile = join(pidDir, `${name}.pid`);
+  const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | (constants.O_NOFOLLOW ?? 0);
+  const fd = openSync(pidFile, flags, 0o600);
+  try {
+    fchmodSync(fd, 0o600);
+    writeFileSync(fd, String(pid));
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function removePid(pidDir: string, name: string): void {
+  const pidFile = join(pidDir, `${name}.pid`);
+  if (existsSync(pidFile)) {
+    unlinkSync(pidFile);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Service lifecycle
+// ---------------------------------------------------------------------------
+
+type ServiceName = "cloudflared";
+const SERVICE_NAMES: readonly ServiceName[] = ["cloudflared"];
+
+function startService(
+  pidDir: string,
+  name: ServiceName,
+  command: string,
+  args: string[],
+  env?: Record<string, string>,
+): void {
+  if (isRunning(pidDir, name)) {
+    const pid = readPid(pidDir, name);
+    info(`${name} already running (PID ${String(pid)})`);
+    return;
+  }
+
+  // Open a single fd for the log file — mirrors bash `>log 2>&1`.
+  // Uses child_process.spawn directly because execa's typed API
+  // does not accept raw file descriptors for stdio.
+  const logFile = join(pidDir, `${name}.log`);
+  const logFd = openSync(logFile, "w", 0o600);
+  fchmodSync(logFd, 0o600);
+  const subprocess = spawn(command, args, {
+    detached: true,
+    stdio: ["ignore", logFd, logFd],
+    env: buildSubprocessEnv(env),
+  });
+  closeSync(logFd);
+
+  // Swallow errors on the detached child (e.g. ENOENT if the command
+  // doesn't exist) so Node doesn't crash with an unhandled 'error' event.
+  subprocess.on("error", () => {});
+
+  const pid = subprocess.pid;
+  if (pid === undefined) {
+    warn(`${name} failed to start`);
+    return;
+  }
+
+  subprocess.unref();
+  writePid(pidDir, name, pid);
+  info(`${name} started (PID ${String(pid)})`);
+}
+
+/** Poll for process exit after SIGTERM, escalate to SIGKILL if needed. */
+function stopService(pidDir: string, name: ServiceName): void {
+  const pid = readPid(pidDir, name);
+  if (pid === null) {
+    info(`${name} was not running`);
+    return;
+  }
+
+  if (!isAlive(pid)) {
+    info(`${name} was not running`);
+    removePid(pidDir, name);
+    return;
+  }
+
+  // Send SIGTERM
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch {
+    // Already dead between the check and the signal
+    removePid(pidDir, name);
+    info(`${name} stopped (PID ${String(pid)})`);
+    return;
+  }
+
+  // Poll for exit (up to 3 seconds)
+  const deadline = Date.now() + 3000;
+  while (Date.now() < deadline && isAlive(pid)) {
+    // Busy-wait in 100ms increments (synchronous — matches stop being sync)
+    const start = Date.now();
+    while (Date.now() - start < 100) {
+      /* spin */
+    }
+  }
+
+  // Escalate to SIGKILL if still alive
+  if (isAlive(pid)) {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      /* already dead */
+    }
+  }
+
+  removePid(pidDir, name);
+  info(`${name} stopped (PID ${String(pid)})`);
+}
+
+// ---------------------------------------------------------------------------
+// Actions
+// ---------------------------------------------------------------------------
+
+/** Reject sandbox names that could escape the PID directory via path traversal. */
+const SAFE_NAME_RE = /^[a-zA-Z0-9][a-zA-Z0-9._-]*$/;
+
+function validateSandboxName(name: string): string {
+  if (!SAFE_NAME_RE.test(name) || name.includes("..")) {
+    throw new Error(`Invalid sandbox name: ${JSON.stringify(name)}`);
+  }
+  return name;
+}
+
+function resolvePidDir(opts: ServiceOptions): string {
+  const sandbox = validateSandboxName(
+    opts.sandboxName ?? process.env.NEMOCLAW_SANDBOX ?? process.env.SANDBOX_NAME ?? "default",
+  );
+  return opts.pidDir ?? `/tmp/nemoclaw-services-${sandbox}`;
+}
+
+export function showStatus(opts: ServiceOptions = {}): void {
+  const pidDir = resolvePidDir(opts);
+  ensurePidDir(pidDir);
+
+  console.log("");
+  const state = readCloudflaredState(pidDir);
+  // #2604: distinguish stopped / stale-pid-file / stale-pid-process and
+  // surface the matching remediation. The previous "(stopped)" line was
+  // emitted in all three failure modes with no recovery hint.
+  switch (state.kind) {
+    case "running":
+      console.log(`  ${GREEN}●${NC} cloudflared  (PID ${String(state.pid)})`);
+      break;
+    case "stopped":
+      console.log(`  ${RED}●${NC} cloudflared  (stopped)`);
+      console.log(`      no cloudflared process; run \`${CLI_NAME} tunnel start\` to start it`);
+      break;
+    case "stale-pid-file":
+      console.log(`  ${YELLOW}●${NC} cloudflared  (stale PID file)`);
+      console.log(
+        `      no cloudflared process (stored PID is invalid); run \`${CLI_NAME} tunnel start\` to restart it`,
+      );
+      break;
+    case "stale-pid-process":
+      console.log(`  ${YELLOW}●${NC} cloudflared  (stale PID ${String(state.pid)})`);
+      console.log(
+        `      no cloudflared process (PID ${String(state.pid)} is dead or not cloudflared); run \`${CLI_NAME} tunnel start\` to restart it`,
+      );
+      break;
+  }
+  console.log("");
+
+  // Only show tunnel URL if cloudflared is actually running
+  const logFile = join(pidDir, "cloudflared.log");
+  if (state.kind === "running" && existsSync(logFile)) {
+    const publicUrl = getTunnelUrl(pidDir, opts.dashboardPort ?? DASHBOARD_PORT);
+    if (publicUrl) {
+      info(`Public URL: ${publicUrl}`);
+    }
+  }
+}
+
+/**
+ * Stop the OpenClaw gateway (and its messaging channels) inside the sandbox.
+ *
+ * Uses the OpenShell gateway container's kubectl as the privileged path so it
+ * can signal the gateway process even when the sandbox SSH/exec user is
+ * `sandbox` and the gateway process runs as the separate `gateway` user.  The
+ * fallback `openshell sandbox exec` path uses the same verified script for
+ * older/non-root deployments where the exec user can signal the gateway.
+ *
+ * The in-sandbox script intentionally does not rely on a bare `pkill -f`
+ * result: `pkill -f openclaw[- ]gateway` can match the transient shell/pkill
+ * command line and report success while the real `openclaw-gateway` process
+ * survives.  Instead, it gathers concrete PIDs from `ps`, excludes its own
+ * process tree, sends TERM/KILL as needed, and only reports success after a
+ * post-stop process scan is empty.
+ */
+export function stopSandboxChannels(sandboxName: string): void {
+  info(`Stopping in-sandbox OpenClaw gateway (sandbox: ${sandboxName})...`);
+
+  const privilegedResult = stopSandboxChannelsViaKubectl(sandboxName);
+  if (reportStopResult(privilegedResult)) return;
+
+  const openshell = resolveOpenshell();
+  if (!openshell) {
+    warn("openshell not found — cannot stop in-sandbox messaging channels.");
+    return;
+  }
+
+  const fallbackResult = spawnSync(
+    openshell,
+    ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-lc", GATEWAY_STOP_SCRIPT],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000 },
+  );
+  reportStopResult(fallbackResult);
+}
+
+const GATEWAY_CLUSTER_CONTAINER = "openshell-cluster-nemoclaw";
+
+const GATEWAY_STOP_SCRIPT = String.raw`
+set -eu
+self="$$"
+parent="$PPID"
+find_gateway_pids() {
+  ps -eo pid=,args= 2>/dev/null | awk -v self="$self" -v parent="$parent" '
+    $1 ~ /^[0-9]+$/ && $1 != self && $1 != parent {
+      cmd = $0
+      sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "", cmd)
+      if (cmd ~ /(^|[[:space:]\/])openclaw-gateway([[:space:]]|$)/ || cmd ~ /(^|[[:space:]\/])openclaw[[:space:]]+gateway([[:space:]]|$)/) {
+        seen[$1] = 1
+      }
+    }
+    END { for (pid in seen) print pid }
+  '
+}
+
+pids="$(find_gateway_pids)"
+if [ -z "$pids" ]; then
+  exit 1
+fi
+
+# Ask the gateway to shut down cleanly so its signal handler can stop channel
+# pollers and other children.
+kill -TERM $pids 2>/dev/null || true
+
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  remaining="$(find_gateway_pids)"
+  [ -z "$remaining" ] && exit 0
+  sleep 0.2
+done
+
+# If the process ignored SIGTERM, stop it anyway.  The caller must not report
+# success until the verification below observes that the gateway is gone.
+kill -KILL $remaining 2>/dev/null || true
+for _ in 1 2 3 4 5; do
+  remaining="$(find_gateway_pids)"
+  [ -z "$remaining" ] && exit 0
+  sleep 0.2
+done
+
+printf '%s\n' "$remaining" >&2
+exit 2
+`;
+
+type StopAttemptResult = ReturnType<typeof spawnSync>;
+
+function stopSandboxChannelsViaKubectl(sandboxName: string): StopAttemptResult | null {
+  const podsResult = dockerSpawnSync(
+    [
+      "exec",
+      GATEWAY_CLUSTER_CONTAINER,
+      "kubectl",
+      "get",
+      "pods",
+      "-n",
+      "openshell",
+      "-o",
+      "name",
+    ],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 10000 },
+  );
+  if (podsResult.status !== 0 || !podsResult.stdout) return null;
+
+  const podOutput = typeof podsResult.stdout === "string" ? podsResult.stdout : podsResult.stdout.toString();
+  const pod = podOutput
+    .split(/\r?\n/)
+    .map((line: string) => line.trim())
+    .find((line: string) => line.startsWith("pod/") && line.includes(sandboxName));
+  if (!pod) return null;
+
+  return dockerSpawnSync(
+    [
+      "exec",
+      GATEWAY_CLUSTER_CONTAINER,
+      "kubectl",
+      "exec",
+      "-n",
+      "openshell",
+      "-c",
+      "agent",
+      pod,
+      "--",
+      "sh",
+      "-lc",
+      GATEWAY_STOP_SCRIPT,
+    ],
+    { encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], timeout: 20000 },
+  );
+}
+
+function reportStopResult(result: StopAttemptResult | null): boolean {
+  if (!result) return false;
+
+  if (result.status === 0) {
+    info("OpenClaw gateway stopped inside sandbox.");
+    return true;
+  }
+  if (result.status === 1) {
+    info("OpenClaw gateway was not running inside sandbox.");
+    return true;
+  }
+
+  const details = [result.stderr, result.stdout]
+    .map((text) => (typeof text === "string" ? text : text?.toString()))
+    .filter((text): text is string => Boolean(text?.trim()))
+    .map((text) => text.trim())
+    .join(" ");
+  warn(
+    `Could not stop in-sandbox gateway (exit ${String(result.status ?? "unknown")}).` +
+      " The sandbox may be unreachable or the gateway may still be running." +
+      (details ? ` Details: ${details}` : ""),
+  );
+  return true;
+}
+
+export function stopAll(opts: ServiceOptions = {}): void {
+  // Stop the in-sandbox OpenClaw gateway (and its messaging channels).
+  const rawSandboxName =
+    opts.sandboxName ??
+    process.env.NEMOCLAW_SANDBOX_NAME ??
+    process.env.NEMOCLAW_SANDBOX ??
+    process.env.SANDBOX_NAME;
+  const sandboxName =
+    rawSandboxName && SAFE_NAME_RE.test(rawSandboxName) && !rawSandboxName.includes("..")
+      ? rawSandboxName
+      : undefined;
+
+  // Resolve host-side service state from the same effective sandbox selected
+  // for in-sandbox shutdown, so pid cleanup cannot drift to a lower-priority
+  // env var or the default sandbox.
+  const pidDir = resolvePidDir(sandboxName ? { ...opts, sandboxName } : opts);
+  ensurePidDir(pidDir);
+
+  if (sandboxName) {
+    stopSandboxChannels(sandboxName);
+  } else if (rawSandboxName) {
+    warn(`Invalid sandbox name: ${JSON.stringify(rawSandboxName)} — skipping in-sandbox stop.`);
+  } else {
+    warn("No sandbox name available — cannot stop in-sandbox messaging channels.");
+    warn("Hint: run 'nemoclaw stop' with a registered sandbox or set NEMOCLAW_SANDBOX_NAME.");
+  }
+
+  try {
+    const { unloadOllamaModels } = require("../inference/ollama/proxy");
+    unloadOllamaModels();
+  } catch {
+    /* best-effort */
+  }
+
+  // Stop host-side services.
+  stopService(pidDir, "cloudflared");
+  info("All services stopped.");
+}
+
+export async function startAll(opts: ServiceOptions = {}): Promise<void> {
+  const pidDir = resolvePidDir(opts);
+  const dashboardPort = opts.dashboardPort ?? DASHBOARD_PORT;
+
+  ensurePidDir(pidDir);
+
+  // Messaging (Telegram, Discord, Slack) is now handled natively by OpenClaw
+  // inside the sandbox via the OpenShell provider/placeholder/L7-proxy pipeline.
+  // No host-side bridge processes are needed. See: PR #1081.
+
+  // cloudflared tunnel
+  const tunnelToken = (opts.cloudflareTunnelToken ?? process.env.CLOUDFLARE_TUNNEL_TOKEN ?? "").trim();
+  try {
+    execSync("command -v cloudflared", {
+      stdio: ["ignore", "ignore", "ignore"],
+    });
+    if (tunnelToken) {
+      startService(pidDir, "cloudflared", "cloudflared", ["tunnel", "run"], {
+        TUNNEL_TOKEN: tunnelToken,
+      });
+    } else {
+      startService(pidDir, "cloudflared", "cloudflared", [
+        "tunnel",
+        "--url",
+        `http://localhost:${String(dashboardPort)}`,
+      ]);
+    }
+  } catch {
+    warn("cloudflared not found — no public URL. Install cloudflared manually if you need one.");
+  }
+
+  // Wait for cloudflared URL
+  if (isRunning(pidDir, "cloudflared")) {
+    info("Waiting for tunnel URL...");
+    for (let i = 0; i < 15; i++) {
+      if (getTunnelUrl(pidDir, dashboardPort)) {
+        break;
+      }
+      await new Promise((resolve) => {
+        setTimeout(resolve, 1000);
+      });
+    }
+  }
+
+  let tunnelUrl = "";
+  if (isRunning(pidDir, "cloudflared")) {
+    tunnelUrl = getTunnelUrl(pidDir, dashboardPort);
+  }
+
+  const bannerLines = [
+    `  ${CLI_DISPLAY_NAME} Services`,
+    null,
+    ...(tunnelUrl ? [`  Public URL:  ${tunnelUrl}`] : []),
+    `  Messaging:   via ${AGENT_PRODUCT_NAME} native channels (if configured)`,
+    null,
+    "  Run 'openshell term' to monitor egress approvals",
+  ];
+
+  console.log("");
+  for (const line of renderBox(bannerLines)) {
+    console.log(line);
+  }
+  console.log("");
+}
+
+// ---------------------------------------------------------------------------
+// Exported status helper (useful for programmatic access)
+// ---------------------------------------------------------------------------
+
+export function getServiceStatuses(opts: ServiceOptions = {}): ServiceStatus[] {
+  const pidDir = resolvePidDir(opts);
+  ensurePidDir(pidDir);
+  return SERVICE_NAMES.map((name) => {
+    const running = isRunning(pidDir, name);
+    return {
+      name,
+      running,
+      pid: running ? readPid(pidDir, name) : null,
+    };
+  });
+}

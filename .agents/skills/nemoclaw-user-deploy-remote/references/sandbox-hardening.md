@@ -31,8 +31,17 @@ Adjust the value via the `--ulimit nproc=512:512` flag if launching with
 
 ## Dropping Linux Capabilities
 
-When running the sandbox container, drop all Linux capabilities and re-add only
-what is strictly required:
+The NemoClaw entrypoint drops dangerous capabilities from the process bounding
+set before it starts agent services.
+It removes `CAP_SYS_ADMIN`, `CAP_SYS_PTRACE`, `CAP_NET_RAW`,
+`CAP_DAC_OVERRIDE`, `CAP_SYS_CHROOT`, `CAP_FSETID`, `CAP_SETFCAP`,
+`CAP_MKNOD`, `CAP_AUDIT_WRITE`, and `CAP_NET_BIND_SERVICE`.
+When `setpriv` is available, the entrypoint also removes the remaining
+privilege-separation capabilities during the switch from root to the
+`sandbox` and `gateway` users.
+
+For defense-in-depth, also drop all Linux capabilities at the container runtime
+when you launch the image directly:
 
 ```console
 $ docker run --rm \
@@ -78,6 +87,10 @@ The agent's home directory (`/sandbox`) is writable by default:
 | `/sandbox/.openclaw` | read-write | Agent config, state, workspace, plugins |
 | `/sandbox/.nemoclaw` | read-write | Plugin state and config; blueprints within are DAC-protected (root-owned) |
 | `/tmp` | read-write | Temporary files and logs |
+
+This writable default is intentional.
+Seeing the sandbox user create files under `/sandbox` or `/sandbox/.openclaw` in a fresh sandbox does not mean Landlock failed.
+Landlock still enforces the fixed read-only system paths below.
 
 System paths remain read-only to prevent agents from:
 

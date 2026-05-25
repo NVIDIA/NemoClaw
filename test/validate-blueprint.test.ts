@@ -13,6 +13,10 @@ import { describe, it, expect } from "vitest";
 import YAML from "yaml";
 
 const BLUEPRINT_PATH = new URL("../nemoclaw-blueprint/blueprint.yaml", import.meta.url);
+const ROUTER_POOL_CONFIG_PATH = new URL(
+  "../nemoclaw-blueprint/router/pool-config.yaml",
+  import.meta.url,
+);
 const BASE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
   import.meta.url,
@@ -42,6 +46,16 @@ type Blueprint = {
   };
 };
 
+type RouterPoolModel = {
+  name?: string;
+  litellm_model?: string;
+  api_base?: string;
+};
+
+type RouterPoolConfig = {
+  models?: RouterPoolModel[];
+};
+
 type Rule = { allow?: { method?: string; path?: string } };
 type Endpoint = {
   host?: string;
@@ -50,6 +64,8 @@ type Endpoint = {
   enforcement?: string;
   access?: string;
   tls?: string;
+  websocket_credential_rewrite?: boolean;
+  request_body_credential_rewrite?: boolean;
   rules?: Rule[];
   binaries?: Array<{ path: string }>;
 };
@@ -159,6 +175,32 @@ describe("blueprint.yaml", () => {
       expect(declared).toContain(name);
     });
   }
+});
+
+describe("Model Router pool config", () => {
+  const pool = loadYaml<RouterPoolConfig>(ROUTER_POOL_CONFIG_PATH);
+
+  it("regression #3255: routes NVIDIA API keys to the public NVIDIA Build endpoint", () => {
+    const apiBases = new Set((pool.models ?? []).map((model) => model.api_base));
+    expect(apiBases).toEqual(new Set(["https://integrate.api.nvidia.com/v1"]));
+  });
+
+  it("regression #3255: uses valid LiteLLM NVIDIA model identifiers", () => {
+    const modelsByName = new Map(
+      (pool.models ?? []).map((model) => [model.name, model.litellm_model]),
+    );
+    expect(modelsByName.get("nemotron-3-nano-reasoning")).toBe(
+      "openai/nvidia/nemotron-3-nano-30b-a3b",
+    );
+    expect(modelsByName.get("nemotron-3-super")).toBe(
+      "openai/nvidia/nemotron-3-super-120b-a12b",
+    );
+    for (const litellmModel of modelsByName.values()) {
+      expect(litellmModel).not.toMatch(/nvidia\/nvidia\//);
+      expect(litellmModel).not.toContain("Nemotron-3-Nano-30B-A3B");
+      expect(litellmModel).not.toContain("nemotron-3-super-v3");
+    }
+  });
 });
 
 describe("base sandbox policy", () => {
@@ -342,6 +384,7 @@ describe("base sandbox policy", () => {
       (h) =>
         h === "discord.com" ||
         h === "gateway.discord.gg" ||
+        h === "*.discord.gg" ||
         h === "cdn.discordapp.com" ||
         h === "media.discordapp.net",
     );
@@ -433,6 +476,18 @@ describe("github preset", () => {
     const np = parsed.network_policies;
     expect(np && "github" in np).toBe(true);
   });
+
+  it("regression #2179: github preset only advertises the installed git binary", () => {
+    const parsed = loadYaml<PolicyPreset>(PRESET_PATH);
+    const meta = parsed.preset;
+    expect(meta?.description).toBe("GitHub.com and GitHub API access (git)");
+    expect(meta?.description ?? "").not.toMatch(/\bgh\b/);
+
+    const binaries = (parsed.network_policies?.github?.binaries ?? [])
+      .map((binary) => binary.path)
+      .sort();
+    expect(binaries).toEqual(["/usr/bin/git"]);
+  });
 });
 
 describe("huggingface preset", () => {
@@ -488,6 +543,88 @@ describe("huggingface preset", () => {
       expect(hasGet).toBe(true);
     }
   });
+});
+
+describe("messaging WebSocket presets", () => {
+  const DISCORD_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/discord.yaml",
+    import.meta.url,
+  );
+  const SLACK_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    import.meta.url,
+  );
+
+  const presets = [
+    {
+      name: "discord",
+      policyKey: "discord",
+      host: "gateway.discord.gg",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(DISCORD_PRESET_PATH),
+    },
+    {
+      name: "discord",
+      policyKey: "discord",
+      host: "*.discord.gg",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(DISCORD_PRESET_PATH),
+    },
+    {
+      name: "slack",
+      policyKey: "slack",
+      host: "wss-primary.slack.com",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(SLACK_PRESET_PATH),
+    },
+    {
+      name: "slack",
+      policyKey: "slack",
+      host: "wss-backup.slack.com",
+      credentialRewrite: true,
+      data: loadYaml<PolicyPreset>(SLACK_PRESET_PATH),
+    },
+  ];
+
+  for (const preset of presets) {
+    it(`${preset.name} ${preset.host} uses native WebSocket inspection`, () => {
+      const endpoints = preset.data.network_policies?.[preset.policyKey]?.endpoints ?? [];
+      const endpoint = endpoints.find((candidate) => candidate.host === preset.host);
+      expect(endpoint).toBeDefined();
+      expect(endpoint).toMatchObject({ protocol: "websocket", enforcement: "enforce" });
+      expect(endpoint).not.toHaveProperty("access");
+      expect(endpoint).not.toHaveProperty("tls");
+      expect(endpoint?.websocket_credential_rewrite === true).toBe(preset.credentialRewrite);
+      expect(endpoint?.rules).toEqual(
+        expect.arrayContaining([
+          { allow: { method: "GET", path: "/**" } },
+          { allow: { method: "WEBSOCKET_TEXT", path: "/**" } },
+        ]),
+      );
+    });
+  }
+});
+
+describe("Slack REST credential rewrite", () => {
+  const SLACK_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/slack.yaml",
+    import.meta.url,
+  );
+  const data = loadYaml<PolicyPreset>(SLACK_PRESET_PATH);
+  const slackRestHosts = ["slack.com", "api.slack.com", "hooks.slack.com"];
+
+  for (const host of slackRestHosts) {
+    it(`${host} enables request-body credential rewrite`, () => {
+      const endpoints = data.network_policies?.slack?.endpoints ?? [];
+      const endpoint = endpoints.find((candidate) => candidate.host === host);
+      expect(endpoint).toBeDefined();
+      expect(endpoint).toMatchObject({
+        protocol: "rest",
+        enforcement: "enforce",
+        request_body_credential_rewrite: true,
+      });
+    });
+  }
 });
 
 describe("npm preset", () => {

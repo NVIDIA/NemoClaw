@@ -1,0 +1,185 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "NVIDIA NemoClaw"
+sidebar-title: "NVIDIA NemoClaw Developer Guide"
+description: "NemoClaw is an open-source reference stack that simplifies running OpenClaw always-on assistants more safely, with a single command."
+keywords: "NemoClaw, OpenClaw, OpenShell, AI agents, sandboxing, inference routing"
+position: 1
+---
+
+import { BadgeLinks } from "./_components/BadgeLinks";
+import { CommandTerminal } from "./_components/CommandTerminal";
+
+<BadgeLinks
+  badges={[
+    {
+      href: "https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE",
+      src: "https://img.shields.io/badge/License-Apache_2.0-blue",
+      alt: "License",
+    },
+    {
+      href: "https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md",
+      src: "https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red",
+      alt: "Security Policy",
+    },
+    {
+      href: "https://github.com/NVIDIA/NemoClaw/blob/main/docs/about/release-notes.mdx",
+      src: "https://img.shields.io/badge/status-alpha-orange",
+      alt: "Project Status",
+    },
+    {
+      href: "https://discord.gg/XFpfPv9Uvx",
+      src: "https://img.shields.io/badge/Discord-Join-7289da",
+      alt: "Discord",
+    },
+  ]}
+/>
+
+NVIDIA NemoClaw is an open-source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
+NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.
+It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, setting up an environment designed for executing agents with additional security and inference routing capabilities.
+
+## Get Started
+
+Install NemoClaw and run your first sandboxed agent.
+
+<llms-ignore>
+
+<CommandTerminal command="curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash" />
+
+</llms-ignore>
+
+<llms-only>
+
+```shell
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+</llms-only>
+
+For more detailed guidance on getting started, refer to [Quickstart](/get-started/quickstart).
+
+---
+
+## Explore
+
+<div className="explore-cards">
+<Cards>
+
+<Card title="Overview" href="/about/overview">
+
+Learn what NemoClaw is, what capabilities it provides, and when to use it.
+
+<Badge intent="tip" minimal outlined>Concept</Badge>
+</Card>
+
+<Card title="Architecture Overview" href="/about/how-it-works">
+
+Understand the host CLI, plugin, blueprint, sandbox lifecycle, and protection layers.
+
+<Badge intent="tip" minimal outlined>Concept</Badge>
+</Card>
+
+<Card title="Ecosystem" href="/about/ecosystem">
+
+Learn how OpenClaw, OpenShell, and NemoClaw fit together.
+
+<Badge intent="tip" minimal outlined>Concept</Badge>
+</Card>
+
+<Card title="Release Notes" href="/about/release-notes">
+
+Track NemoClaw release changes and component version policy.
+
+<Badge intent="tip" minimal outlined>Reference</Badge>
+</Card>
+
+<Card title="Get Started" href="/get-started/prerequisites">
+
+Install NemoClaw, verify prerequisites, and run your first sandboxed agent.
+
+<Badge intent="tip" minimal outlined>Guide</Badge>
+</Card>
+
+<Card title="Inference" href="/inference/inference-options">
+
+Choose how NemoClaw routes model requests and configures inference providers.
+
+<Badge intent="tip" minimal outlined>Guide</Badge>
+</Card>
+
+<Card title="Manage Sandboxes" href="/manage-sandboxes/lifecycle">
+
+Create, inspect, update, and clean up NemoClaw sandboxes.
+
+<Badge intent="tip" minimal outlined>Guide</Badge>
+</Card>
+
+<Card title="Network Policy" href="/network-policy/approve-network-requests">
+
+Approve, deny, and customize sandbox network access.
+
+<Badge intent="tip" minimal outlined>Guide</Badge>
+</Card>
+
+<Card title="Deployment" href="/deployment/deploy-to-remote-gpu">
+
+Deploy NemoClaw to remote GPU instances and manage deployment-specific setup.
+
+<Badge intent="tip" minimal outlined>Guide</Badge>
+</Card>
+
+<Card title="Monitoring" href="/monitoring/monitor-sandbox-activity">
+
+Inspect sandbox health, logs, and agent behavior during runtime.
+
+<Badge intent="tip" minimal outlined>Guide</Badge>
+</Card>
+
+<Card title="Security" href="/security/best-practices">
+
+Review sandbox controls, credential handling, and security trade-offs.
+
+<Badge intent="tip" minimal outlined>Guide</Badge>
+</Card>
+
+<Card title="Reference" href="/reference/architecture">
+
+Look up architecture details, CLI commands, policies, and troubleshooting guidance.
+
+<Badge intent="tip" minimal outlined>Reference</Badge>
+</Card>
+
+<Card title="Architecture Details" href="/reference/architecture">
+
+Learn about the NemoClaw architecture, plugin structure, and blueprint design in detail.
+
+<Badge intent="tip" minimal outlined>Reference</Badge>
+</Card>
+
+<Card title="Agent Skills" href="/resources/agent-skills">
+
+Use NemoClaw's packaged agent skills to guide coding assistants through common workflows.
+
+<Badge intent="tip" minimal outlined>Resource</Badge>
+</Card>
+
+</Cards>
+</div>
+
+---
+
+<Warning title="Notice and Disclaimer">
+  This software automatically retrieves, accesses or interacts with external
+  materials. Those retrieved materials are not distributed with this software
+  and are governed solely by separate terms, conditions and licenses. You are
+  solely responsible for finding, reviewing and complying with all applicable
+  terms, conditions, and licenses, and for verifying the security, integrity and
+  suitability of any retrieved materials for your specific use case. This
+  software is provided "AS IS", without warranty of any kind. The author makes
+  no representations or warranties regarding any retrieved materials, and
+  assumes no liability for any losses, damages, liabilities or legal
+  consequences from your use or inability to use this software or any retrieved
+  materials. Use this software and the retrieved materials at your own risk.
+</Warning>

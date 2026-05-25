@@ -24,14 +24,14 @@ export type UninstallPlanAction =
   | { kind: "delete-ollama-model"; name: string }
   | { kind: "delete-related-docker-containers" }
   | { kind: "delete-related-docker-images" }
-  | { kind: "delete-openshell-binary"; path: string }
+  | { kind: "delete-openshell-install-path"; path: string }
   | { kind: "delete-openshell-provider"; name: string }
   | { kind: "delete-path"; path: string }
   | { kind: "delete-runtime-glob"; pattern: string }
   | { kind: "delete-shim"; reason: string }
   | { kind: "destroy-openshell-gateway"; name: string }
   | { kind: "preserve-ollama-models"; names: string[] }
-  | { kind: "preserve-openshell-binary"; paths: string[] }
+  | { kind: "preserve-openshell-install-paths"; paths: string[] }
   | { kind: "preserve-shim"; reason: string }
   | { kind: "stop-helper-services" }
   | { kind: "stop-ollama-auth-proxy" }
@@ -102,8 +102,8 @@ export function buildUninstallPlan(paths: UninstallPaths, options: UninstallPlan
           { kind: "delete-managed-swap" },
           ...paths.runtimeTempGlobs.map((pattern) => ({ kind: "delete-runtime-glob" as const, pattern })),
           ...(options.keepOpenShell
-            ? [{ kind: "preserve-openshell-binary" as const, paths: paths.openshellInstallPaths }]
-            : paths.openshellInstallPaths.map((path) => ({ kind: "delete-openshell-binary" as const, path }))),
+            ? [{ kind: "preserve-openshell-install-paths" as const, paths: paths.openshellInstallPaths }]
+            : paths.openshellInstallPaths.map((path) => ({ kind: "delete-openshell-install-path" as const, path }))),
           ...uninstallStatePaths(paths).map((path) => ({ kind: "delete-path" as const, path })),
         ],
       },

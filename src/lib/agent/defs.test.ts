@@ -47,7 +47,14 @@ describe("agent definitions", () => {
       envFile: null,
       format: "json",
     });
-    expect(openclaw.messagingPlatforms).toEqual(["telegram", "discord", "slack"]);
+    expect(openclaw.messagingPlatforms).toEqual([
+      "telegram",
+      "discord",
+      "slack",
+      "wechat",
+      "whatsapp",
+    ]);
+    expect(openclaw.inferenceProviderOptions).toEqual([]);
     expect(openclaw.legacyPaths?.startScript).toContain("scripts/nemoclaw-start.sh");
   });
 
@@ -63,8 +70,15 @@ describe("agent definitions", () => {
       envFile: ".env",
       format: "yaml",
     });
+    expect(hermes.inferenceProviderOptions).toEqual(["hermesProvider"]);
     expect(hermes.healthProbe.url).toBe("http://localhost:8642/health");
-    expect(hermes.messagingPlatforms).toEqual(["telegram", "discord", "slack"]);
+    expect(hermes.messagingPlatforms).toEqual([
+      "telegram",
+      "discord",
+      "slack",
+      "wechat",
+      "whatsapp",
+    ]);
   });
 
   it("orders OpenClaw first in interactive choices", () => {
@@ -80,6 +94,12 @@ describe("agent definitions", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("session references unknown agent 'missing-agent'"),
     );
+  });
+
+  it("treats an explicit agent flag as overriding NEMOCLAW_AGENT", () => {
+    process.env.NEMOCLAW_AGENT = "hermes";
+
+    expect(resolveAgentName({ agentFlag: "openclaw" })).toBe("openclaw");
   });
 
   it("rejects non-object manifest payloads", () => {
@@ -116,5 +136,37 @@ describe("agent definitions", () => {
     );
 
     expect(() => loadAgent(agentName)).toThrow(/health_probe\.port/);
+  });
+
+  it("rejects invalid inference provider options in manifests", () => {
+    const agentName = `invalid-inference-options-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Inference",
+        "inference:",
+        "  provider_options:",
+        "    - hermesProvider",
+        "    - 42",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/inference\.provider_options/);
+  });
+
+  it("rejects invalid inference provider type in manifests", () => {
+    const agentName = `invalid-inference-provider-type-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Inference Type",
+        "inference:",
+        "  provider_type: 42",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/inference\.provider_type/);
   });
 });

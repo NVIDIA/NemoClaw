@@ -1,0 +1,58 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: brev-nightly-e2e
+
+# Runs Brev launchable validation as a standalone nightly workflow while the
+# main nightly-e2e workflow remains isolated from Brev platform flakiness.
+#
+# Suites:
+#   all                 credential-sanitization + telegram-injection
+#   messaging-providers Telegram + Discord provider/L7 proxy validation
+#   full                install/onboard/inference/CLI path
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: "Branch to test (default: ref used for this dispatch; schedule always tests main)"
+        required: false
+        default: ""
+      launchable_id:
+        description: "Published launchable ID override (empty = workflow/test default)"
+        required: false
+        default: ""
+      keep_alive:
+        description: "Keep Brev instances alive after tests (for SSH debugging)"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: brev-nightly-e2e-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.ref || 'schedule' }}
+  cancel-in-progress: true
+
+jobs:
+  brev-nightly-e2e:
+    if: github.repository == 'NVIDIA/NemoClaw'
+    strategy:
+      fail-fast: false
+      matrix:
+        test_suite: [all, messaging-providers, full]
+    uses: ./.github/workflows/e2e-branch-validation.yaml
+    with:
+      branch: ${{ github.event_name == 'schedule' && 'main' || inputs.branch || github.ref_name }}
+      test_suite: ${{ matrix.test_suite }}
+      use_launchable: true
+      use_published_launchable: true
+      launchable_id: ${{ github.event_name == 'workflow_dispatch' && inputs.launchable_id || '' }}
+      keep_alive: ${{ github.event_name == 'workflow_dispatch' && inputs.keep_alive || false }}
+    secrets:
+      BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
+      BREV_ORG_ID: ${{ secrets.BREV_ORG_ID }}
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}

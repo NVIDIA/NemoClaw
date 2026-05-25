@@ -9,11 +9,15 @@ import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
 const distPath = require.resolve("../../../dist/lib/state/onboard-session");
+const eventsDistPath = require.resolve("../../../dist/lib/onboard/machine/events");
 const originalHome = process.env.HOME;
 type OnboardSessionModule = typeof import("../../../dist/lib/state/onboard-session");
+type OnboardMachineEventsModule = typeof import("../../../dist/lib/onboard/machine/events");
+type OnboardMachineEvent = import("../../../dist/lib/onboard/machine/events").OnboardMachineEvent;
 type LoadedSession = NonNullable<ReturnType<OnboardSessionModule["loadSession"]>>;
 type DebugSummary = NonNullable<ReturnType<OnboardSessionModule["summarizeForDebug"]>>;
 let session: OnboardSessionModule;
+let machineEvents: OnboardMachineEventsModule;
 let tmpDir: string;
 
 function requireLoadedSession(
@@ -36,6 +40,14 @@ function requireDebugSummary(
   return summary;
 }
 
+function normalizeLegacySession(
+  legacy: unknown,
+): ReturnType<OnboardSessionModule["normalizeSession"]> {
+  return session.normalizeSession(
+    legacy as Parameters<OnboardSessionModule["normalizeSession"]>[0],
+  );
+}
+
 beforeEach(() => {
   // Recreate tmpDir per test so lock artifacts (and any other on-disk state)
   // from a previous test cannot leak into this one. Without this, malformed
@@ -44,13 +56,18 @@ beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-session-"));
   process.env.HOME = tmpDir;
   delete require.cache[distPath];
+  delete require.cache[eventsDistPath];
   session = require("../../../dist/lib/state/onboard-session");
+  machineEvents = require("../../../dist/lib/onboard/machine/events");
+  machineEvents.clearOnboardMachineEventListeners();
   session.clearSession();
   session.releaseOnboardLock();
 });
 
 afterEach(() => {
+  machineEvents.clearOnboardMachineEventListeners();
   delete require.cache[distPath];
+  delete require.cache[eventsDistPath];
   fs.rmSync(tmpDir, { recursive: true, force: true });
   if (originalHome === undefined) {
     delete process.env.HOME;
@@ -65,12 +82,21 @@ describe("onboard session", () => {
   });
 
   it("creates and persists a session with restrictive permissions", () => {
-    const created = session.createSession({ mode: "non-interactive" });
+    const created = session.createSession({
+      mode: "non-interactive",
+      startedAt: "2026-01-01T00:00:00.000Z",
+    });
     const saved = session.saveSession(created);
     const stat = fs.statSync(session.SESSION_FILE);
     const dirStat = fs.statSync(path.dirname(session.SESSION_FILE));
 
     expect(saved.mode).toBe("non-interactive");
+    expect(saved.machine).toMatchObject({
+      version: 1,
+      state: "init",
+      revision: 0,
+    });
+    expect(saved.machine.stateEnteredAt).toBe("2026-01-01T00:00:00.000Z");
     expect(fs.existsSync(session.SESSION_FILE)).toBe(true);
     expect(stat.mode & 0o777).toBe(0o600);
     expect(dirStat.mode & 0o777).toBe(0o700);
@@ -115,6 +141,203 @@ describe("onboard session", () => {
     }
     expect(loaded.failure.step).toBe("sandbox");
     expect(loaded.failure.message).toMatch(/Sandbox creation failed/);
+    expect(loaded.machine.state).toBe("failed");
+  });
+
+  it("persists a compact machine snapshot across step boundaries", () => {
+    session.saveSession(session.createSession());
+    let loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.machine).toMatchObject({ state: "init", revision: 0 });
+
+    session.markStepStarted("preflight");
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.machine).toMatchObject({ state: "preflight", revision: 1 });
+    expect(loaded.machine.stateEnteredAt).toBe(loaded.steps.preflight.startedAt);
+
+    session.markStepComplete("preflight");
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.machine).toMatchObject({ state: "gateway", revision: 2 });
+    expect(loaded.machine.stateEnteredAt).toBe(loaded.steps.preflight.completedAt);
+
+    session.markStepComplete("gateway");
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.machine).toMatchObject({ state: "provider_selection", revision: 3 });
+
+    session.completeSession();
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.machine).toMatchObject({ state: "complete", revision: 4 });
+    expect(requireDebugSummary(session.summarizeForDebug()).machine).toEqual(loaded.machine);
+  });
+
+  it("normalizes old sessions without machine snapshots", () => {
+    type LegacySession = Omit<ReturnType<OnboardSessionModule["createSession"]>, "machine"> & {
+      machine?: unknown;
+    };
+    const legacy = session.createSession({
+      sessionId: "legacy-session",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:05:00.000Z",
+    }) as unknown as LegacySession;
+    delete legacy.machine;
+    legacy.steps.gateway.status = "in_progress";
+    legacy.steps.gateway.startedAt = "2026-01-01T00:02:00.000Z";
+    legacy.lastStepStarted = "gateway";
+
+    let normalized = requireLoadedSession(normalizeLegacySession(legacy));
+    expect(normalized.machine).toEqual({
+      version: 1,
+      state: "gateway",
+      stateEnteredAt: "2026-01-01T00:02:00.000Z",
+      revision: 0,
+    });
+
+    legacy.steps.gateway.status = "complete";
+    legacy.steps.gateway.completedAt = "2026-01-01T00:03:00.000Z";
+    legacy.lastCompletedStep = "gateway";
+    normalized = requireLoadedSession(normalizeLegacySession(legacy));
+    expect(normalized.machine).toEqual({
+      version: 1,
+      state: "provider_selection",
+      stateEnteredAt: "2026-01-01T00:03:00.000Z",
+      revision: 0,
+    });
+
+    legacy.status = "failed";
+    legacy.failure = {
+      step: "gateway",
+      message: "boom",
+      recordedAt: "2026-01-01T00:04:00.000Z",
+    };
+    normalized = requireLoadedSession(normalizeLegacySession(legacy));
+    expect(normalized.machine).toEqual({
+      version: 1,
+      state: "failed",
+      stateEnteredAt: "2026-01-01T00:04:00.000Z",
+      revision: 0,
+    });
+
+    legacy.status = "complete";
+    normalized = requireLoadedSession(normalizeLegacySession(legacy));
+    expect(normalized.machine.state).toBe("complete");
+  });
+
+  it("normalizes invalid machine snapshots from old sessions", () => {
+    type LegacySession = Omit<ReturnType<OnboardSessionModule["createSession"]>, "machine"> & {
+      machine?: unknown;
+    };
+    const legacy = session.createSession({ lastCompletedStep: "policies" }) as unknown as LegacySession;
+    legacy.steps.policies.status = "complete";
+    legacy.steps.policies.completedAt = "2026-01-01T00:08:00.000Z";
+    legacy.machine = {
+      version: 1,
+      state: "not-a-state",
+      stateEnteredAt: "2026-01-01T00:09:00.000Z",
+      revision: -1,
+    };
+
+    const normalized = requireLoadedSession(normalizeLegacySession(legacy));
+    expect(normalized.machine).toEqual({
+      version: 1,
+      state: "finalizing",
+      stateEnteredAt: "2026-01-01T00:08:00.000Z",
+      revision: 0,
+    });
+  });
+
+  it("emits redacted structured machine events for session step mutations", () => {
+    const emitted: OnboardMachineEvent[] = [];
+    machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
+
+    session.saveSession(session.createSession({ sessionId: "session-1" }));
+    session.markStepStarted("gateway");
+    session.markStepComplete("gateway", {
+      sandboxName: "my-assistant",
+      endpointUrl:
+        "https://alice:super-secret-token@example.com/v1?token=super-secret-token&keep=yes#token=super-secret-token",
+      credentialEnv: "NVIDIA_API_KEY",
+    });
+    session.markStepSkipped("openclaw");
+    session.markStepFailed("sandbox", "NVIDIA_API_KEY=super-secret-token");
+    session.completeSession({ provider: "ollama-local", credentialEnv: null });
+
+    expect(emitted.map((event) => event.type)).toEqual([
+      "state.entered",
+      "context.updated",
+      "state.completed",
+      "state.skipped",
+      "state.failed",
+      "onboard.failed",
+      "context.updated",
+      "onboard.completed",
+    ]);
+    expect(emitted[0]).toMatchObject({
+      version: 1,
+      sessionId: "session-1",
+      state: "gateway",
+      step: "gateway",
+      error: null,
+    });
+    expect(emitted[1].context).toMatchObject({
+      sandboxName: "my-assistant",
+      credentialEnv: "NVIDIA_API_KEY",
+    });
+    expect(emitted[1].context.endpointOrigin).toBe("https://example.com");
+    expect(emitted[1].metadata.fields).toEqual([
+      "sandboxName",
+      "endpointUrl",
+      "credentialEnv",
+    ]);
+    expect(emitted[4]).toMatchObject({
+      type: "state.failed",
+      state: "sandbox",
+      step: "sandbox",
+      error: "NVIDIA_API_KEY=<REDACTED>",
+    });
+    expect(emitted[5]).toMatchObject({ type: "onboard.failed", state: "failed" });
+    expect(emitted.at(-1)).toMatchObject({ type: "onboard.completed", state: "complete" });
+    expect(JSON.stringify(emitted)).not.toContain("super-secret-token");
+
+    const persisted = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf8"));
+    expect(persisted.events).toBeUndefined();
+  });
+
+  it("keeps event observer failures from changing session mutation behavior", () => {
+    machineEvents.addOnboardMachineEventListener(() => {
+      throw new Error("observer failed");
+    });
+
+    session.saveSession(session.createSession());
+    expect(() => session.markStepStarted("preflight")).not.toThrow();
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.steps.preflight.status).toBe("in_progress");
+  });
+
+  it("does not emit machine events for unknown session step names", () => {
+    const emitted: OnboardMachineEvent[] = [];
+    machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
+
+    session.saveSession(session.createSession());
+    session.markStepStarted("not_a_real_step");
+
+    expect(emitted).toEqual([]);
+  });
+
+  it("does not emit duplicate events for no-op skipped and completed transitions", () => {
+    const emitted: OnboardMachineEvent[] = [];
+    machineEvents.addOnboardMachineEventListener((event) => emitted.push(event));
+
+    session.saveSession(session.createSession({ sessionId: "session-1" }));
+    session.markStepSkipped("openclaw");
+    session.markStepSkipped("openclaw");
+    session.completeSession();
+    session.completeSession();
+
+    expect(emitted.map((event) => event.type)).toEqual([
+      "state.skipped",
+      "onboard.completed",
+    ]);
+    expect(emitted).toHaveLength(2);
   });
 
   it("persists safe provider metadata without persisting secrets", () => {
@@ -153,6 +376,144 @@ describe("onboard session", () => {
     expect("token" in loaded.metadata).toBe(false);
   });
 
+  // ── GH #2625: provider switch from remote→local must clear stale fields ──
+  //
+  // Before the fix, filterSafeUpdates only accepted `typeof === "string"` for
+  // nullable session fields, so passing `null` (as the wizard does when a
+  // local provider is selected) silently dropped the clear. A prior
+  // remote-provider session's `credentialEnv: "OPENAI_API_KEY"` survived to
+  // disk and the next rebuild preflight demanded a credential the current
+  // sandbox did not need.
+
+  it("clears credentialEnv when provider-selection update passes null (GH #2625)", () => {
+    // Seed with a prior remote-provider onboard state.
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      provider: "openai",
+      model: "gpt-4o",
+      endpointUrl: "https://api.openai.com/v1",
+      credentialEnv: "OPENAI_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      nimContainer: null,
+    });
+    let loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.credentialEnv).toBe("OPENAI_API_KEY");
+
+    // User re-runs onboard and picks local Ollama. The wizard emits
+    // credentialEnv=null and nimContainer=null alongside the new provider.
+    session.markStepComplete("provider_selection", {
+      provider: "ollama-local",
+      model: "qwen3:14b",
+      endpointUrl: "http://host.docker.internal:11434/v1",
+      credentialEnv: null,
+      preferredInferenceApi: "openai-completions",
+      nimContainer: null,
+    });
+
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.provider).toBe("ollama-local");
+    expect(loaded.model).toBe("qwen3:14b");
+    expect(loaded.credentialEnv).toBeNull();
+    expect(loaded.nimContainer).toBeNull();
+  });
+
+  it("leaves credentialEnv unchanged when the update does not supply it", () => {
+    // Regression guard: undefined must mean "leave unchanged", distinct from
+    // null ("clear"). Partial updates must not accidentally wipe fields.
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      provider: "openai",
+      model: "gpt-4o",
+      credentialEnv: "OPENAI_API_KEY",
+    });
+    session.markStepComplete("provider_selection", { model: "gpt-4o-mini" });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.model).toBe("gpt-4o-mini");
+    expect(loaded.credentialEnv).toBe("OPENAI_API_KEY");
+    expect(loaded.provider).toBe("openai");
+  });
+
+  it("only persists known Hermes auth methods", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      provider: "hermes-provider",
+      hermesAuthMethod: "oauth",
+    });
+    let loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.hermesAuthMethod).toBe("oauth");
+
+    session.markStepComplete("provider_selection", {
+      hermesAuthMethod: "not-a-real-method" as never,
+    });
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.hermesAuthMethod).toBe("oauth");
+
+    session.markStepComplete("provider_selection", {
+      hermesAuthMethod: null,
+    });
+    loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.hermesAuthMethod).toBeNull();
+  });
+
+  it("accepts null as an explicit clear for every nullable string field", () => {
+    // All six nullable fields that travel through filterSafeUpdates must
+    // support the null-clear contract. If any regresses to the old
+    // string-only guard, the test below catches it.
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      sandboxName: "stale-sandbox",
+      provider: "openai",
+      model: "gpt-4o",
+      endpointUrl: "https://api.openai.com/v1",
+      credentialEnv: "OPENAI_API_KEY",
+      preferredInferenceApi: "openai-completions",
+      nimContainer: "nim-abc",
+    });
+
+    session.markStepComplete("provider_selection", {
+      sandboxName: null,
+      provider: null,
+      model: null,
+      endpointUrl: null,
+      credentialEnv: null,
+      preferredInferenceApi: null,
+      nimContainer: null,
+    });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.sandboxName).toBeNull();
+    expect(loaded.provider).toBeNull();
+    expect(loaded.model).toBeNull();
+    expect(loaded.endpointUrl).toBeNull();
+    expect(loaded.credentialEnv).toBeNull();
+    expect(loaded.preferredInferenceApi).toBeNull();
+    expect(loaded.nimContainer).toBeNull();
+  });
+
+  it("clears credentialEnv via completeSession when the wizard finishes on a local provider", () => {
+    // Matches the terminal path at end of onboard(): completeSession is what
+    // finalizes the session for a successful run. A local-provider onboard
+    // must not leave a stale credentialEnv on the "complete" record either.
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      provider: "openai",
+      credentialEnv: "OPENAI_API_KEY",
+    });
+    session.completeSession({
+      provider: "ollama-local",
+      model: "qwen3:14b",
+      credentialEnv: null,
+      nimContainer: null,
+    });
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.status).toBe("complete");
+    expect(loaded.provider).toBe("ollama-local");
+    expect(loaded.credentialEnv).toBeNull();
+    expect(loaded.nimContainer).toBeNull();
+  });
+
   it("persists messagingChannels across save/load roundtrips", () => {
     const created = session.createSession();
     created.messagingChannels = ["telegram", "slack"];
@@ -175,6 +536,48 @@ describe("onboard session", () => {
 
     const loaded = requireLoadedSession(session.loadSession());
     expect(loaded.messagingChannels).toEqual(["telegram", "discord"]);
+  });
+
+  it("persists disabledChannels across save/load roundtrips", () => {
+    // Regression: `channels stop X` followed by rebuild must carry the paused
+    // set through the destroy/recreate window. The Session mirror is the only
+    // place this can survive, because rebuild destroys the registry entry
+    // before `onboard --resume` reads it back.
+    const created = session.createSession();
+    created.disabledChannels = ["telegram"];
+    session.saveSession(created);
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.disabledChannels).toEqual(["telegram"]);
+  });
+
+  it("filters non-string entries out of persisted disabledChannels", () => {
+    const created = session.createSession();
+    fs.mkdirSync(path.dirname(session.SESSION_FILE), { recursive: true });
+    fs.writeFileSync(
+      session.SESSION_FILE,
+      JSON.stringify({
+        ...created,
+        disabledChannels: ["telegram", 42, null, "discord"],
+      }),
+    );
+
+    const loaded = requireLoadedSession(session.loadSession());
+    expect(loaded.disabledChannels).toEqual(["telegram", "discord"]);
+  });
+
+  it("defaults disabledChannels to null for fresh sessions", () => {
+    const fresh = session.createSession();
+    expect(fresh.disabledChannels).toBeNull();
+  });
+
+  it("filterSafeUpdates passes through disabledChannels and accepts explicit null clear", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", { disabledChannels: ["discord"] });
+    expect(requireLoadedSession(session.loadSession()).disabledChannels).toEqual(["discord"]);
+
+    session.markStepComplete("provider_selection", { disabledChannels: null });
+    expect(requireLoadedSession(session.loadSession()).disabledChannels).toBeNull();
   });
 
   it("defaults messagingChannels to null for fresh sessions", () => {
@@ -256,6 +659,54 @@ describe("onboard session", () => {
   it("#1737: defaults telegramConfig to null for fresh sessions", () => {
     const fresh = session.createSession();
     expect(fresh.telegramConfig).toBeNull();
+  });
+
+  it("persists wechatConfig across save/load roundtrips", () => {
+    // wechatConfig captures the host-side QR handshake result. Persisting it
+    // is what lets a later `nemoclaw onboard` resume detect IDC-baseUrl
+    // drift and force a sandbox recreate (see onboard.ts wechatConfigChanged).
+    const created = session.createSession();
+    created.wechatConfig = {
+      accountId: "ilink-bot-42",
+      baseUrl: "https://ilinkai.wechat.com",
+      userId: "user-42",
+    };
+    session.saveSession(created);
+
+    const loaded = session.loadSession()!;
+    expect(loaded.wechatConfig).toEqual({
+      accountId: "ilink-bot-42",
+      baseUrl: "https://ilinkai.wechat.com",
+      userId: "user-42",
+    });
+  });
+
+  it("rejects malformed wechatConfig on load and falls back to null", () => {
+    // Hand-edited session — non-string fields should be discarded rather than
+    // round-tripped through to consumers that expect strings.
+    const seed = session.createSession();
+    session.saveSession(seed);
+    const onDisk = JSON.parse(fs.readFileSync(session.SESSION_FILE, "utf-8"));
+    onDisk.wechatConfig = { accountId: 7, baseUrl: { nested: true }, userId: null };
+    fs.writeFileSync(session.SESSION_FILE, JSON.stringify(onDisk));
+
+    const loaded = session.loadSession()!;
+    expect(loaded.wechatConfig).toBeNull();
+  });
+
+  it("keeps wechatConfig partial when only some fields are present", () => {
+    // The QR handshake currently always produces all three fields, but the
+    // type allows partial — e.g. a future flow where userId is opted-out.
+    const created = session.createSession();
+    created.wechatConfig = { accountId: "primary" };
+    session.saveSession(created);
+    const loaded = session.loadSession()!;
+    expect(loaded.wechatConfig).toEqual({ accountId: "primary" });
+  });
+
+  it("defaults wechatConfig to null for fresh sessions", () => {
+    const fresh = session.createSession();
+    expect(fresh.wechatConfig).toBeNull();
   });
 
   it("persists and clears web search config through safe session updates", () => {
@@ -625,6 +1076,36 @@ describe("onboard session", () => {
 
     const loaded = session.loadSession()!;
     expect(loaded.telegramConfig).toBeNull();
+  });
+
+  it("filterSafeUpdates routes wechatConfig through markStepComplete", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      wechatConfig: { accountId: "primary", baseUrl: "https://x", userId: "u" },
+    });
+
+    const loaded = session.loadSession()!;
+    expect(loaded.wechatConfig).toEqual({
+      accountId: "primary",
+      baseUrl: "https://x",
+      userId: "u",
+    });
+
+    // Explicit null clears the field (used when WeChat is removed from the
+    // enabled channels on a subsequent onboard).
+    session.markStepComplete("provider_selection", { wechatConfig: null });
+    const cleared = session.loadSession()!;
+    expect(cleared.wechatConfig).toBeNull();
+  });
+
+  it("filterSafeUpdates drops malformed wechatConfig values", () => {
+    session.saveSession(session.createSession());
+    session.markStepComplete("provider_selection", {
+      wechatConfig: { accountId: 9000 } as unknown as { accountId: string },
+    });
+
+    const loaded = session.loadSession()!;
+    expect(loaded.wechatConfig).toBeNull();
   });
 
   it("createSession with messagingChannels override", () => {

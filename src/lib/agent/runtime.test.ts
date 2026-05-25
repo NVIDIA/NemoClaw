@@ -25,6 +25,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
       envFile: null,
       format: "yaml",
     },
+    inferenceProviderOptions: [],
     stateDirs: [],
     stateFiles: [],
     versionCommand: "test-agent --version",
@@ -96,11 +97,42 @@ describe("buildRecoveryScript", () => {
     const script = buildRecoveryScript(hermesAgent, 8642);
     expect(script).toContain("export HERMES_HOME=/sandbox/.hermes");
     expect(script).toContain("HERMES_HOME=/sandbox/.hermes");
-    expect(script).toContain("HTTPS_PROXY=http://127.0.0.1:3129");
-    expect(script).toContain("nemoclaw-decode-proxy");
+    expect(script).not.toContain("DISCORD_PROXY=");
+    expect(script).not.toContain("PYTHONPATH=/opt/nemoclaw-hermes-discord-preload");
+    expect(script).not.toContain("HTTPS_PROXY=http://127.0.0.1:3129");
+    expect(script).not.toContain("nemoclaw-decode-proxy");
+    expect(script).not.toContain("nemoclaw-discord-facade");
+    expect(script).not.toContain("NEMOCLAW_DISCORD_FACADE_URL");
     expect(script).toContain('"$AGENT_BIN" gateway run');
     expect(script).not.toContain('"$AGENT_BIN" gateway run --port 8642');
     expect(script).not.toContain("hermes gateway run --port 8642");
+  });
+
+  it("does not launch a Hermes decode proxy during recovery", () => {
+    const script = buildRecoveryScript(hermesAgent, 8642);
+    expect(script).not.toContain("/usr/local/bin/nemoclaw-decode-proxy");
+    expect(script).not.toContain("/opt/hermes/.venv/bin/python");
+    expect(script).not.toContain("nemoclaw-discord-facade");
+  });
+
+  it("does not wait for removed Hermes bridge ports during recovery", () => {
+    const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
+    expect(recoveryScript).not.toBeNull();
+    for (const script of [recoveryScript!, buildManualRecoveryCommand(hermesAgent, 8642)]) {
+      expect(script).not.toContain("127\\.0\\.0\\.1:3129");
+      expect(script).not.toContain('grep -q "127.0.0.1:3129"');
+      expect(script).not.toContain('grep -q "127.0.0.1:3130"');
+      expect(script).not.toContain("do ! command -v ss >/dev/null 2>&1 || ss -tln");
+    }
+  });
+
+  it("does not relaunch the removed Hermes Discord facade during recovery", () => {
+    const recoveryScript = buildRecoveryScript(hermesAgent, 8642);
+    expect(recoveryScript).not.toBeNull();
+    for (const script of [recoveryScript!, buildManualRecoveryCommand(hermesAgent, 8642)]) {
+      expect(script).not.toContain("discord-facade");
+      expect(script).not.toContain("DISCORD_FACADE_LOG");
+    }
   });
 
   it("falls back to openclaw gateway run when gateway_command is absent", () => {
@@ -316,8 +348,12 @@ describe("buildManualRecoveryCommand (#2426)", () => {
   it("omits --port for Hermes and uses the current Hermes home", () => {
     const cmd = buildManualRecoveryCommand(hermesAgent, 8642);
     expect(cmd).toContain("HERMES_HOME=/sandbox/.hermes");
-    expect(cmd).toContain("HTTPS_PROXY=http://127.0.0.1:3129");
-    expect(cmd).toContain("nemoclaw-decode-proxy");
+    expect(cmd).not.toContain("DISCORD_PROXY=");
+    expect(cmd).not.toContain("PYTHONPATH=/opt/nemoclaw-hermes-discord-preload");
+    expect(cmd).not.toContain("HTTPS_PROXY=http://127.0.0.1:3129");
+    expect(cmd).not.toContain("nemoclaw-decode-proxy");
+    expect(cmd).not.toContain("nemoclaw-discord-facade");
+    expect(cmd).not.toContain("NEMOCLAW_DISCORD_FACADE_URL");
     expect(cmd).toContain("nohup hermes gateway run");
     expect(cmd).not.toContain("--port 8642");
     expect(cmd).not.toContain("/sandbox/.hermes-data");

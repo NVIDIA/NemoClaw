@@ -6,7 +6,7 @@ description: "Inspects sandbox health, traces agent behavior, and diagnoses prob
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 
-# Monitor NemoClaw Sandbox Activity and Debug Issues
+# Monitor Sandbox Activity and Debug Issues
 
 ## Prerequisites
 
@@ -15,7 +15,7 @@ description: "Inspects sandbox health, traces agent behavior, and diagnoses prob
 
 Use the NemoClaw status, logs, and TUI tools together to inspect sandbox health, trace agent behavior, and diagnose problems.
 
-## Step 1: Check Sandbox Health
+## Check Sandbox Health
 
 Run the status command to view the sandbox state, gateway health, and active inference configuration:
 
@@ -36,7 +36,7 @@ Key fields in the output include the following:
 Run `nemoclaw <name> status` on the host to check sandbox state.
 Use `openshell sandbox list` for the underlying sandbox details.
 
-## Step 2: View Blueprint and Sandbox Logs
+## View Blueprint and Sandbox Logs
 
 Stream the most recent log output from the blueprint runner and sandbox:
 
@@ -50,7 +50,7 @@ To follow the log output in real time:
 $ nemoclaw <name> logs --follow
 ```
 
-## Step 3: Monitor Network Activity in the TUI
+## Monitor Network Activity in the TUI
 
 Open the OpenShell terminal UI for a live view of sandbox network activity and egress requests:
 
@@ -68,7 +68,7 @@ The TUI shows the following information:
 
 Refer to Approve or Deny Agent Network Requests (use the `nemoclaw-user-manage-policy` skill) for details on handling blocked requests.
 
-## Step 4: Test Inference
+## Test Inference
 
 Run a test inference request to verify that the provider is responding:
 

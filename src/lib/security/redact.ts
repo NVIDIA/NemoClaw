@@ -107,7 +107,7 @@ export function redactSensitiveText(value: unknown): string | null {
   if (typeof value !== "string") return null;
   let result = value
     .replace(
-      /(NVIDIA_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY|BRAVE_API_KEY|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN)=\S+/gi,
+      /(NVIDIA_API_KEY|NOUS_API_KEY|OPENAI_API_KEY|ANTHROPIC_API_KEY|GEMINI_API_KEY|COMPATIBLE_API_KEY|COMPATIBLE_ANTHROPIC_API_KEY|BRAVE_API_KEY|SLACK_BOT_TOKEN|SLACK_APP_TOKEN|DISCORD_BOT_TOKEN|TELEGRAM_BOT_TOKEN)=\S+/gi,
       "$1=<REDACTED>",
     )
     .replace(/Bearer\s+\S+/gi, "Bearer <REDACTED>");
@@ -136,4 +136,23 @@ export function redactUrl(value: unknown): string | null {
   } catch {
     return redactSensitiveText(value);
   }
+}
+
+function isSensitiveKey(key: string): boolean {
+  return /(?:api[_-]?key|token|secret|password|credential|authorization|bearer)/i.test(key);
+}
+
+export function redactForLog(value: unknown, seen: WeakSet<object> = new WeakSet()): unknown {
+  if (typeof value === "string") return redactFull(value);
+  if (value === null || typeof value !== "object") return value;
+  if (seen.has(value)) return "[Circular]";
+  seen.add(value);
+
+  if (Array.isArray(value)) return value.map((entry) => redactForLog(entry, seen));
+
+  const redacted: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    redacted[key] = isSensitiveKey(key) ? "<REDACTED>" : redactForLog(entry, seen);
+  }
+  return redacted;
 }

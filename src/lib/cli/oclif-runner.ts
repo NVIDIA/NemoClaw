@@ -25,7 +25,14 @@ function isOclifParseError(error: unknown): boolean {
     error && typeof error === "object"
       ? (error as { constructor?: { name?: string } }).constructor?.name
       : "";
-  return name === "NonExistentFlagsError" || name === "UnexpectedArgsError" || name === "CLIError";
+  const message = error instanceof Error ? error.message : "";
+  return (
+    name === "NonExistentFlagsError" ||
+    name === "RequiredArgsError" ||
+    name === "UnexpectedArgsError" ||
+    name === "CLIError" ||
+    message.startsWith("Parsing --")
+  );
 }
 
 function isOclifExitError(error: unknown): boolean {
@@ -66,7 +73,10 @@ function applyBrandedBin(config: OclifConfig): void {
   }
 }
 
-export async function runRegisteredOclifCommand(
+// Direct command-id execution for routes that cannot safely go through oclif's
+// flexible-taxonomy argv resolver. Prefer runOclifArgv() for normal execution
+// so oclif owns command lookup, parsing, help, and error handling.
+export async function runOclifCommandById(
   commandId: string,
   args: string[],
   opts: OclifCommandRunOptions,
@@ -81,6 +91,17 @@ export async function runRegisteredOclifCommand(
   } catch (error) {
     const exitCode = getOclifExitCode(error);
     if (exitCode === 0) {
+      // #2666: only oclif's own ExitError(0) is an intentional graceful
+      // exit (e.g. Command.exit(0) — message is the synthetic "EEXIT: 0").
+      // Any OTHER error that happens to carry oclif.exit === 0 used to be
+      // silently swallowed here, producing exit 0 + completely empty
+      // stdout/stderr. Surface its message — and fall back to a generic
+      // line if formatOclifError() returns empty so we never reintroduce
+      // the silent path for an error whose message happens to be blank.
+      if (!isOclifExitError(error)) {
+        const message = formatOclifError(error) || "Command exited with no output.";
+        errorLine(`  ${message}`);
+      }
       process.exitCode = 0;
       return;
     }
@@ -104,5 +125,21 @@ export async function runRegisteredOclifCommand(
 }
 
 export async function runOclifArgv(args: string[], opts: OclifCommandRunOptions): Promise<void> {
-  await executeOclif({ args, dir: opts.rootDir });
+  const config = await OclifConfig.load(opts.rootDir);
+  applyBrandedBin(config);
+  const originalArgv = process.argv;
+  // oclif's parse-error help renderer consults process.argv, not just the
+  // explicit execute({ args }) value, so keep both views on the native route.
+  process.argv = [originalArgv[0] ?? process.execPath, originalArgv[1] ?? CLI_NAME, ...args];
+  try {
+    await executeOclif({
+      args,
+      loadOptions: {
+        root: opts.rootDir,
+        pjson: config.pjson,
+      },
+    });
+  } finally {
+    process.argv = originalArgv;
+  }
 }

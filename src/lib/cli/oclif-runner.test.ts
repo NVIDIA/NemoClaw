@@ -3,7 +3,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { loadMock, runCommandMock } = vi.hoisted(() => ({
+const { executeMock, loadMock, runCommandMock } = vi.hoisted(() => ({
+  executeMock: vi.fn(),
   loadMock: vi.fn(),
   runCommandMock: vi.fn(),
 }));
@@ -12,9 +13,10 @@ vi.mock("@oclif/core", () => ({
   Config: {
     load: loadMock,
   },
+  execute: executeMock,
 }));
 
-import { runRegisteredOclifCommand } from "./oclif-runner";
+import { runOclifArgv, runOclifCommandById } from "./oclif-runner";
 
 function makeConfig() {
   const rootPlugin = {
@@ -40,8 +42,88 @@ class UnexpectedArgsError extends Error {
   oclif = { exit: 2 };
 }
 
-describe("runRegisteredOclifCommand", () => {
+describe("runOclifArgv", () => {
+  let originalArgv: string[];
+
   beforeEach(() => {
+    executeMock.mockReset();
+    loadMock.mockReset();
+    runCommandMock.mockReset();
+    loadMock.mockResolvedValue(makeConfig());
+    originalArgv = process.argv;
+    process.argv = ["/usr/bin/node", "/repo/bin/nemoclaw.js", "alpha", "status"];
+  });
+
+  afterEach(() => {
+    process.argv = originalArgv;
+  });
+
+  it("executes native oclif argv with branded package metadata", async () => {
+    const config = makeConfig();
+    loadMock.mockResolvedValue(config);
+    executeMock.mockImplementation(async () => {
+      expect(process.argv).toEqual([
+        "/usr/bin/node",
+        "/repo/bin/nemoclaw.js",
+        "sandbox",
+        "channels",
+        "start",
+        "--help",
+      ]);
+    });
+
+    await runOclifArgv(["sandbox", "channels", "start", "--help"], { rootDir: "/repo" });
+
+    expect(process.argv).toEqual([
+      "/usr/bin/node",
+      "/repo/bin/nemoclaw.js",
+      "alpha",
+      "status",
+    ]);
+
+    expect(loadMock).toHaveBeenCalledWith("/repo");
+    expect(executeMock).toHaveBeenCalledWith({
+      args: ["sandbox", "channels", "start", "--help"],
+      loadOptions: {
+        root: "/repo",
+        pjson: config.pjson,
+      },
+    });
+    expect(config.pjson.oclif.bin).toBe("nemoclaw");
+    expect(config.options.pjson.oclif.bin).toBe("nemoclaw");
+    expect(config.plugins.get("root")?.pjson.oclif.bin).toBe("nemoclaw");
+  });
+
+  it("restores process argv when native oclif execution throws", async () => {
+    const error = new Error("Missing 1 required arg: channel");
+    executeMock.mockImplementation(async () => {
+      expect(process.argv).toEqual([
+        "/usr/bin/node",
+        "/repo/bin/nemoclaw.js",
+        "sandbox",
+        "channels",
+        "add",
+        "alpha",
+      ]);
+      throw error;
+    });
+
+    await expect(
+      runOclifArgv(["sandbox", "channels", "add", "alpha"], { rootDir: "/repo" }),
+    ).rejects.toBe(error);
+
+    expect(process.argv).toEqual([
+      "/usr/bin/node",
+      "/repo/bin/nemoclaw.js",
+      "alpha",
+      "status",
+    ]);
+  });
+});
+
+describe("runOclifCommandById", () => {
+  beforeEach(() => {
+    executeMock.mockReset();
     runCommandMock.mockReset();
     loadMock.mockReset();
     loadMock.mockResolvedValue(makeConfig());
@@ -58,7 +140,7 @@ describe("runRegisteredOclifCommand", () => {
     loadMock.mockResolvedValue(config);
     runCommandMock.mockResolvedValue(undefined);
 
-    await runRegisteredOclifCommand("list", ["--json"], { rootDir: "/repo" });
+    await runOclifCommandById("list", ["--json"], { rootDir: "/repo" });
 
     expect(loadMock).toHaveBeenCalledWith("/repo");
     expect(runCommandMock).toHaveBeenCalledWith("list", ["--json"]);
@@ -77,7 +159,7 @@ describe("runRegisteredOclifCommand", () => {
     });
 
     await expect(
-      runRegisteredOclifCommand("list", ["--bogus"], { rootDir: "/repo", error: errorLine, exit }),
+      runOclifCommandById("list", ["--bogus"], { rootDir: "/repo", error: errorLine, exit }),
     ).rejects.toThrow("exit:2");
 
     expect(errorLine).toHaveBeenCalledWith("  Nonexistent flag: --bogus\nSee more help");
@@ -92,26 +174,71 @@ describe("runRegisteredOclifCommand", () => {
     });
 
     await expect(
-      runRegisteredOclifCommand("status", ["extra"], { rootDir: "/repo", error: errorLine, exit }),
+      runOclifCommandById("status", ["extra"], { rootDir: "/repo", error: errorLine, exit }),
     ).rejects.toThrow("exit:2");
 
     expect(errorLine).toHaveBeenCalledWith("  Unexpected argument: extra");
     expect(exit).toHaveBeenCalledWith(2);
   });
 
-  it("treats oclif help exits as success", async () => {
-    runCommandMock.mockRejectedValue({ oclif: { exit: 0 } });
+  it("treats oclif graceful ExitError(0) as silent success", async () => {
+    // Mirrors what `Command.exit(0)` and `--help` actually throw in oclif: an
+    // ExitError instance whose synthetic `EEXIT: 0` message must NOT leak to
+    // the user.
+    class ExitError extends Error {
+      oclif = { exit: 0 };
+    }
+    runCommandMock.mockRejectedValue(new ExitError("EEXIT: 0"));
+    const errorLine = vi.fn();
 
-    await runRegisteredOclifCommand("list", ["--help"], { rootDir: "/repo" });
+    await runOclifCommandById("list", ["--help"], { rootDir: "/repo", error: errorLine });
 
     expect(process.exitCode).toBe(0);
+    expect(errorLine).not.toHaveBeenCalled();
+  });
+
+  it("#2666: surfaces errors that happen to carry oclif.exit === 0 instead of swallowing them", async () => {
+    // Before #2666 this branch silently set exit 0 and produced no output.
+    // The bug was an arbitrary error riding the same `oclif.exit === 0`
+    // channel, e.g. propagated from inside a command's run(). Surface the
+    // message so the user gets signal.
+    class WeirdError extends Error {
+      oclif = { exit: 0 };
+    }
+    runCommandMock.mockRejectedValue(new WeirdError("Could not verify sandbox 'my-assist' against the live OpenShell gateway"));
+    const errorLine = vi.fn();
+
+    await runOclifCommandById("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
+
+    expect(process.exitCode).toBe(0);
+    expect(errorLine).toHaveBeenCalledWith(
+      "  Could not verify sandbox 'my-assist' against the live OpenShell gateway",
+    );
+  });
+
+  it("#2666: falls back to a generic line when the error message is empty", async () => {
+    // Closes the residual silent path: if a non-ExitError(0) carries an
+    // empty message (or one that trims to empty), still emit *something*
+    // so the user is never left looking at exit 0 + blank stdout/stderr.
+    class BlankError extends Error {
+      oclif = { exit: 0 };
+    }
+    runCommandMock.mockRejectedValue(new BlankError(""));
+    const errorLine = vi.fn();
+
+    await runOclifCommandById("status", ["my-assist"], { rootDir: "/repo", error: errorLine });
+
+    expect(process.exitCode).toBe(0);
+    expect(errorLine).toHaveBeenCalledOnce();
+    const [line] = errorLine.mock.calls[0];
+    expect(String(line).trim().length).toBeGreaterThan(0);
   });
 
   it("rethrows non-parse command failures", async () => {
     const error = new Error("boom");
     runCommandMock.mockRejectedValue(error);
 
-    await expect(runRegisteredOclifCommand("list", [], { rootDir: "/repo" })).rejects.toBe(error);
+    await expect(runOclifCommandById("list", [], { rootDir: "/repo" })).rejects.toBe(error);
   });
 
   it("exits cleanly without rethrowing when oclif Command.exit(code) bubbles up", async () => {
@@ -128,7 +255,7 @@ describe("runRegisteredOclifCommand", () => {
     });
 
     await expect(
-      runRegisteredOclifCommand("sandbox:gateway:token", ["hermes"], {
+      runOclifCommandById("sandbox:gateway:token", ["hermes"], {
         rootDir: "/repo",
         error: errorLine,
         exit,
@@ -139,18 +266,22 @@ describe("runRegisteredOclifCommand", () => {
     expect(exit).toHaveBeenCalledWith(1);
   });
 
-  it("rethrows other oclif error classes that carry oclif.exit", async () => {
-    // RequiredArgsError and friends ride the same `oclif.exit` channel as
-    // ExitError but carry a user-visible message that oclif's own handler
-    // is responsible for printing. Don't swallow those.
+  it("formats required-argument parse errors and exits with the oclif exit code", async () => {
     class RequiredArgsError extends Error {
       oclif = { exit: 2 };
     }
     const error = new RequiredArgsError("Missing 1 required arg: path");
     runCommandMock.mockRejectedValue(error);
+    const errorLine = vi.fn();
+    const exit = vi.fn((code: number): never => {
+      throw new Error(`exit:${code}`);
+    });
 
-    await expect(runRegisteredOclifCommand("skill:install", [], { rootDir: "/repo" })).rejects.toBe(
-      error,
-    );
+    await expect(
+      runOclifCommandById("skill:install", [], { rootDir: "/repo", error: errorLine, exit }),
+    ).rejects.toThrow("exit:2");
+
+    expect(errorLine).toHaveBeenCalledWith("  Missing 1 required arg: path");
+    expect(exit).toHaveBeenCalledWith(2);
   });
 });

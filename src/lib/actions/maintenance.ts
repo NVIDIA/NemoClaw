@@ -2,16 +2,25 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
+import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
+import {
+  detectOpenShellStateRpcPreflightIssue,
+  detectOpenShellStateRpcResultIssue,
+  printOpenShellStateRpcIssue,
+} from "../adapters/openshell/gateway-drift";
+import { CLI_NAME } from "../cli/branding";
 import { prompt as askPrompt } from "../credentials/store";
 import {
   type GarbageCollectImagesOptions,
   normalizeGarbageCollectImagesOptions,
 } from "../domain/lifecycle/options";
-import { dockerListImagesFormat, dockerRmi } from "../adapters/docker";
 import { findOrphanedSandboxImages, parseSandboxImageRows } from "../domain/maintenance/images";
-import { captureOpenshell } from "../adapters/openshell/runtime";
-import * as registry from "../state/registry";
+import {
+  captureSandboxListWithGatewayRecovery,
+  printSandboxListFailureWithRecoveryContext,
+} from "../openshell-sandbox-list";
 import { parseLiveSandboxNames } from "../runtime-recovery";
+import * as registry from "../state/registry";
 import * as sandboxState from "../state/sandbox";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -23,14 +32,36 @@ const R = useColor ? "\x1b[0m" : "";
 const RD = useColor ? "\x1b[1;31m" : "";
 const YW = useColor ? "\x1b[1;33m" : "";
 
-export function backupAll(): void {
+export async function backupAll(): Promise<void> {
   const { sandboxes } = registry.listSandboxes();
   if (sandboxes.length === 0) {
     console.log("  No sandboxes registered. Nothing to back up.");
     return;
   }
 
-  const liveList = captureOpenshell(["sandbox", "list"], { ignoreError: true });
+  const preflightIssue = detectOpenShellStateRpcPreflightIssue();
+  if (preflightIssue) {
+    printOpenShellStateRpcIssue(preflightIssue, {
+      action: "backing up registered sandboxes",
+      command: `${CLI_NAME} backup-all`,
+    });
+    process.exit(1);
+  }
+
+  const liveListRecovery = await captureSandboxListWithGatewayRecovery();
+  const liveList = liveListRecovery.result;
+  const resultIssue = detectOpenShellStateRpcResultIssue(liveList);
+  if (resultIssue) {
+    printOpenShellStateRpcIssue(resultIssue, {
+      action: "backing up registered sandboxes",
+      command: `${CLI_NAME} backup-all`,
+    });
+    process.exit(1);
+  }
+  if (liveList.status !== 0) {
+    printSandboxListFailureWithRecoveryContext(liveListRecovery);
+    process.exit(liveList.status || 1);
+  }
   const liveNames = parseLiveSandboxNames(liveList.output || "");
 
   let backed = 0;

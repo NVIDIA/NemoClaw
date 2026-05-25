@@ -8,7 +8,6 @@
 // can be passed through to `openshell provider create/update --credential KEY`
 // during onboarding. Nothing is written to disk.
 
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -20,6 +19,11 @@ import { rejectSymlinksOnPath } from "../state/config-io";
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
 
 type CredentialInput = string | null | undefined;
+export type CredentialPromptIntent =
+  | { kind: "credential"; value: string }
+  | { kind: "back" }
+  | { kind: "exit" }
+  | { kind: "help" };
 
 // Credential env keys NemoClaw knows how to round-trip. listCredentialKeys()
 // projects the in-process env through this set; entries not in the set are
@@ -42,6 +46,7 @@ export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "DISCORD_BOT_TOKEN",
   "SLACK_BOT_TOKEN",
   "SLACK_APP_TOKEN",
+  "WECHAT_BOT_TOKEN",
 ];
 
 // Hard upper bound on the legacy credentials.json size we are willing to
@@ -124,6 +129,15 @@ export function getCredsFile(): string {
 export function normalizeCredentialValue(value: CredentialInput): string {
   if (typeof value !== "string") return "";
   return value.replace(/\r/g, "").trim();
+}
+
+export function getCredentialPromptIntent(value: CredentialInput): CredentialPromptIntent {
+  const normalized = normalizeCredentialValue(value);
+  const navigation = normalized.toLowerCase();
+  if (navigation === "back") return { kind: "back" };
+  if (navigation === "exit" || navigation === "quit") return { kind: "exit" };
+  if (navigation === "?" || navigation === "help") return { kind: "help" };
+  return { kind: "credential", value: normalized };
 }
 
 /**
@@ -643,17 +657,24 @@ export function prompt(question: string, opts: { secret?: boolean } = {}): Promi
   });
 }
 
+export async function readCredentialPrompt(
+  question: string,
+  promptImpl: typeof prompt = prompt,
+): Promise<CredentialPromptIntent> {
+  return getCredentialPromptIntent(await promptImpl(question, { secret: true }));
+}
+
 /**
  * Ensure `NVIDIA_API_KEY` is staged for this process. Returns immediately
  * if it is already in env, otherwise prompts interactively (validating
  * the `nvapi-` prefix) and stages the result. Onboarding registers the
  * value with the OpenShell gateway later in the flow.
  */
-export async function ensureApiKey(): Promise<void> {
+export async function ensureApiKey(): Promise<CredentialPromptIntent> {
   let key = getCredential("NVIDIA_API_KEY");
   if (key) {
     process.env.NVIDIA_API_KEY = key;
-    return;
+    return { kind: "credential", value: key };
   }
 
   console.log("");
@@ -668,7 +689,13 @@ export async function ensureApiKey(): Promise<void> {
   console.log("");
 
   while (true) {
-    key = normalizeCredentialValue(await prompt("  NVIDIA API Key: ", { secret: true }));
+    const input = getCredentialPromptIntent(await prompt("  NVIDIA API Key: ", { secret: true }));
+    if (input.kind === "help") {
+      console.log("  Type back to choose a different provider, or exit to quit.");
+      continue;
+    }
+    if (input.kind !== "credential") return input;
+    key = input.value;
 
     if (!key) {
       console.error("  NVIDIA API Key is required.");
@@ -689,78 +716,5 @@ export async function ensureApiKey(): Promise<void> {
   console.log("  Key staged for the OpenShell gateway. It is held in process memory only;");
   console.log("  onboarding registers it with the gateway and nothing is written to disk.");
   console.log("");
-}
-
-/**
- * Return true if `<owner>/<name>` is a private GitHub repository, using
- * `gh api`. Returns false on any failure (no `gh`, not authenticated,
- * network error) — callers must treat the result as a hint, not a proof.
- */
-export function isRepoPrivate(repo: string): boolean {
-  try {
-    const json = execFileSync("gh", ["api", `repos/${repo}`, "--jq", ".private"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return json === "true";
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Ensure `GITHUB_TOKEN` is staged for this process when a private repo
- * needs it. Tries `gh auth token` first (which returns whatever the
- * GitHub CLI has stored — system keychain when reachable, otherwise a
- * gh-managed file); falls back to a session-only PAT prompt if `gh` is
- * unavailable or not logged in. The token is never persisted to host
- * disk by NemoClaw itself.
- */
-export async function ensureGithubToken(): Promise<void> {
-  let token = getCredential("GITHUB_TOKEN");
-  if (token) {
-    process.env.GITHUB_TOKEN = token;
-    return;
-  }
-
-  // Preferred path: gh CLI keeps tokens in the OS keychain.
-  try {
-    token = execFileSync("gh", ["auth", "token"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    if (token) {
-      process.env.GITHUB_TOKEN = token;
-      return;
-    }
-  } catch {
-    /* gh not available or not logged in */
-  }
-
-  console.log("");
-  console.log("  ┌────────────────────────────────────────────────────────────────┐");
-  console.log("  │  GitHub token required (private repo detected)                 │");
-  console.log("  │                                                                │");
-  console.log("  │  Recommended: run 'gh auth login'. NemoClaw picks up whatever  │");
-  console.log("  │  the GitHub CLI stores (system keychain when reachable; a      │");
-  console.log("  │  gh-managed file otherwise).                                   │");
-  console.log("  │                                                                │");
-  console.log("  │  Otherwise, paste a PAT below for this run only.               │");
-  console.log("  └────────────────────────────────────────────────────────────────┘");
-  console.log("");
-
-  token = await prompt("  GitHub Token: ", { secret: true });
-
-  if (!token) {
-    console.error("  Token required for deploy (repo is private).");
-    process.exit(1);
-  }
-
-  saveCredential("GITHUB_TOKEN", token);
-  process.env.GITHUB_TOKEN = token;
-  console.log("");
-  console.log("  Token loaded for this session only. Run 'gh auth login' to let");
-  console.log("  the GitHub CLI persist it (system keychain when reachable;");
-  console.log("  gh-managed file otherwise) so future runs do not prompt.");
-  console.log("");
+  return { kind: "credential", value: key };
 }

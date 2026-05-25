@@ -41,8 +41,58 @@ describe("CLI layer import boundaries", () => {
     }
   });
 
+  it("keeps messaging manifests isolated from side-effect layers", () => {
+    const fixture = path.join(
+      REPO_ROOT,
+      "src",
+      "lib",
+      "messaging",
+      "manifest",
+      `__boundary-fs-${process.pid}.ts`,
+    );
+    try {
+      fs.writeFileSync(fixture, 'import { readFileSync } from "node:fs";\nexport const value = readFileSync;\n');
+      const result = spawnSync(TSX, [BOUNDARY_SCRIPT], {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+      });
+
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        "messaging manifest modules must not import node:fs",
+      );
+    } finally {
+      fs.rmSync(fixture, { force: true });
+    }
+  });
+
+  it("blocks bare fs imports in messaging manifests", () => {
+    const fixture = path.join(
+      REPO_ROOT,
+      "src",
+      "lib",
+      "messaging",
+      "manifest",
+      `__boundary-bare-fs-${process.pid}.ts`,
+    );
+    try {
+      fs.writeFileSync(fixture, 'import { readFile } from "fs/promises";\nexport const value = readFile;\n');
+      const result = spawnSync(TSX, [BOUNDARY_SCRIPT], {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+      });
+
+      expect(result.status).toBe(1);
+      expect(`${result.stdout}${result.stderr}`).toContain(
+        "messaging manifest modules must not import fs",
+      );
+    } finally {
+      fs.rmSync(fixture, { force: true });
+    }
+  });
+
   it("counts only classes that extend Command as oclif command classes", () => {
-    const fixture = path.join(REPO_ROOT, "src", "lib", "commands", `__boundary-implements-${process.pid}.ts`);
+    const fixture = path.join(REPO_ROOT, "src", "commands", `__boundary-implements-${process.pid}.ts`);
     try {
       fs.writeFileSync(
         fixture,

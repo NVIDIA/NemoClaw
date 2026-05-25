@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NVIDIA/NemoClaw/tools/e2e-advisor/schema.json",
+  "title": "NemoClaw E2E Advisor Result",
+  "type": "object",
+  "required": [
+    "version",
+    "baseRef",
+    "headRef",
+    "changedFiles",
+    "classifiedDomains",
+    "requiredTests",
+    "optionalTests",
+    "newE2eRecommendations",
+    "noE2eReason",
+    "confidence"
+  ],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "baseRef": { "type": "string" },
+    "headRef": { "type": "string" },
+    "changedFiles": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "classifiedDomains": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["domain", "reason", "confidence"],
+        "properties": {
+          "domain": { "type": "string" },
+          "reason": { "type": "string" },
+          "confidence": { "enum": ["low", "medium", "high"] },
+          "matchedFiles": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "requiredTests": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/testRecommendation" }
+    },
+    "optionalTests": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/testRecommendation" }
+    },
+    "newE2eRecommendations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["domain", "reason", "suggestedTest"],
+        "properties": {
+          "domain": { "type": "string" },
+          "reason": { "type": "string" },
+          "suggestedTest": { "type": "string" },
+          "priority": { "enum": ["low", "medium", "high"] }
+        },
+        "additionalProperties": false
+      }
+    },
+    "noE2eReason": { "type": ["string", "null"] },
+    "confidence": { "enum": ["low", "medium", "high"] },
+    "dispatchHint": {
+      "type": "object",
+      "required": ["workflow", "jobsInput"],
+      "properties": {
+        "workflow": { "type": "string" },
+        "jobsInput": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "testRecommendation": {
+      "type": "object",
+      "required": ["id", "reason"],
+      "properties": {
+        "id": { "type": "string" },
+        "reason": { "type": "string" },
+        "workflow": { "type": "string" },
+        "job": { "type": "string" },
+        "script": { "type": "string" },
+        "cost": { "type": "string" },
+        "runner": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

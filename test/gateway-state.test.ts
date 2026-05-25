@@ -10,6 +10,7 @@ import {
   isGatewayConnected,
   isGatewayHealthy,
   getGatewayReuseState,
+  getSandboxStateFromOutputs,
   hasStaleGateway,
   hasActiveGatewayInfo,
   getReportedGatewayName,
@@ -32,6 +33,21 @@ Server Status
 
 Gateway: nemoclaw
 Server: https://127.0.0.1:8080/
+`;
+
+const STATUS_SERVER_STATUS_REFUSED = `
+Server Status
+
+Gateway: nemoclaw
+Server: https://127.0.0.1:8080/
+Error: Connection refused (os error 61)
+`;
+
+const STATUS_SERVER_STATUS_REFUSED_ANSI = `\x1b[1mServer Status\x1b[0m
+
+\x1b[2mGateway:\x1b[0m nemoclaw
+\x1b[2mServer:\x1b[0m https://127.0.0.1:8080/
+\x1b[31mError: Connection refused (os error 61)\x1b[0m
 `;
 
 const GW_INFO_BASE = `
@@ -139,6 +155,14 @@ describe("isGatewayConnected", () => {
     expect(isGatewayConnected(STATUS_SERVER_STATUS_ONLY)).toBe(true);
   });
 
+  it("does not treat Server Status with connection errors as connected", () => {
+    expect(isGatewayConnected(STATUS_SERVER_STATUS_REFUSED)).toBe(false);
+  });
+
+  it("does not treat ANSI-wrapped Server Status refusals as connected", () => {
+    expect(isGatewayConnected(STATUS_SERVER_STATUS_REFUSED_ANSI)).toBe(false);
+  });
+
   it("returns false for empty string", () => {
     expect(isGatewayConnected("")).toBe(false);
   });
@@ -155,6 +179,12 @@ describe("isGatewayHealthy", () => {
 
   it("returns true when status shows Server Status and gateway name matches", () => {
     expect(isGatewayHealthy(STATUS_SERVER_STATUS_ONLY, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(true);
+  });
+
+  it("returns false when status shows Server Status with connection refused", () => {
+    expect(isGatewayHealthy(STATUS_SERVER_STATUS_REFUSED, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(
+      false,
+    );
   });
 
   it("returns true via fallback when status is empty but gateway info confirms health (#1711)", () => {
@@ -236,6 +266,12 @@ describe("getGatewayReuseState", () => {
     expect(getGatewayReuseState("", GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe("healthy");
   });
 
+  it("returns 'stale' when named gateway exists but status reports connection refused", () => {
+    expect(getGatewayReuseState(STATUS_SERVER_STATUS_REFUSED, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(
+      "stale",
+    );
+  });
+
   it("returns 'foreign-active' when connected to a different gateway", () => {
     expect(getGatewayReuseState(STATUS_FOREIGN, "", "")).toBe("foreign-active");
   });
@@ -258,6 +294,33 @@ describe("getGatewayReuseState", () => {
 
   it("returns 'missing' when all outputs are empty", () => {
     expect(getGatewayReuseState("", "", "")).toBe("missing");
+  });
+});
+
+describe("getSandboxStateFromOutputs", () => {
+  it("classifies sandbox reuse states from openshell outputs", () => {
+    expect(
+      getSandboxStateFromOutputs(
+        "my-assistant",
+        "Name: my-assistant",
+        "my-assistant   Ready   2m ago",
+      ),
+    ).toBe("ready");
+    expect(
+      getSandboxStateFromOutputs(
+        "my-assistant",
+        "Name: my-assistant",
+        "my-assistant   NotReady   init failed",
+      ),
+    ).toBe("not_ready");
+    expect(
+      getSandboxStateFromOutputs(
+        "my-assistant",
+        "Error: NotFound: sandbox not found",
+        "other-sandbox   Ready   2m ago",
+      ),
+    ).toBe("missing");
+    expect(getSandboxStateFromOutputs("my-assistant", "", "")).toBe("missing");
   });
 });
 

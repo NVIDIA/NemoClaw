@@ -22,6 +22,12 @@ export interface SandboxEntry {
   nimContainer?: string | null;
   provider?: string | null;
   gpuEnabled?: boolean;
+  hostGpuDetected?: boolean;
+  sandboxGpuEnabled?: boolean;
+  sandboxGpuMode?: "auto" | "1" | "0" | string | null;
+  sandboxGpuDevice?: string | null;
+  openshellDriver?: string | null;
+  openshellVersion?: string | null;
   policies?: string[];
   customPolicies?: CustomPolicyEntry[];
   policyTier?: string | null;
@@ -31,6 +37,7 @@ export interface SandboxEntry {
   providerCredentialHashes?: Record<string, string>;
   messagingChannels?: string[];
   messagingChannelConfig?: MessagingChannelConfig;
+  hermesToolGateways?: string[];
   disabledChannels?: string[];
   dashboardPort?: number | null;
 }
@@ -191,6 +198,12 @@ export function registerSandbox(entry: SandboxEntry): void {
       nimContainer: entry.nimContainer || null,
       provider: entry.provider || null,
       gpuEnabled: entry.gpuEnabled || false,
+      hostGpuDetected: entry.hostGpuDetected === true,
+      sandboxGpuEnabled: entry.sandboxGpuEnabled === true,
+      sandboxGpuMode: entry.sandboxGpuMode || null,
+      sandboxGpuDevice: entry.sandboxGpuDevice || null,
+      openshellDriver: entry.openshellDriver || null,
+      openshellVersion: entry.openshellVersion || null,
       policies: entry.policies || [],
       policyTier: entry.policyTier || null,
       agent: entry.agent || null,
@@ -201,6 +214,10 @@ export function registerSandbox(entry: SandboxEntry): void {
       messagingChannelConfig:
         entry.messagingChannelConfig && Object.keys(entry.messagingChannelConfig).length > 0
           ? { ...entry.messagingChannelConfig }
+          : undefined,
+      hermesToolGateways:
+        Array.isArray(entry.hermesToolGateways) && entry.hermesToolGateways.length > 0
+          ? [...entry.hermesToolGateways]
           : undefined,
       disabledChannels:
         Array.isArray(entry.disabledChannels) && entry.disabledChannels.length > 0
