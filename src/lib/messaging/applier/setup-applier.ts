@@ -4,6 +4,7 @@
 import { Buffer } from "node:buffer";
 import YAML from "yaml";
 
+import { redact } from "../../security/redact";
 import type {
   ChannelHookPhase,
   MessagingAgentId,
@@ -731,7 +732,7 @@ function toMissingEntry(binding: MessagingCredentialBindingLike): MessagingMissi
 }
 
 function compactOutput(result: { readonly stdout?: unknown; readonly stderr?: unknown }): string {
-  const output = `${String(result.stderr ?? "")}${String(result.stdout ?? "")}`
+  const output = redact(`${String(result.stderr ?? "")}${String(result.stdout ?? "")}`)
     .replace(/\r/g, "")
     .trim();
   return output || "OpenShell command failed.";

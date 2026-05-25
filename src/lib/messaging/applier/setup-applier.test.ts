@@ -200,6 +200,34 @@ describe("MessagingSetupApplier", () => {
     expect(JSON.stringify(result)).not.toContain("slack-token");
   });
 
+  it("redacts OpenShell provider failure output", async () => {
+    const plan = await planOnboard({ TELEGRAM_BOT_TOKEN: "tokensecretvalue" }, [
+      "telegram",
+    ]);
+    const runOpenshell: MessagingOpenShellRunner = (args) => {
+      if (args[0] === "provider" && args[1] === "get") {
+        return { status: 1 };
+      }
+      return {
+        status: 1,
+        stderr: "provider rejected TELEGRAM_BOT_TOKEN=tokensecretvalue",
+      };
+    };
+
+    let message = "";
+    try {
+      MessagingSetupApplier.applyCredentialsAtOpenShell(plan, {
+        env: { TELEGRAM_BOT_TOKEN: "tokensecretvalue" },
+        runOpenshell,
+      });
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+
+    expect(message).toContain("TELEGRAM_BOT_TOKEN=toke");
+    expect(message).not.toContain("tokensecretvalue");
+  });
+
   it("applies agent config render plans into sandbox files through OpenShell", async () => {
     const plan = await planOnboard({ TELEGRAM_BOT_TOKEN: "123456:telegram-token" }, [
       "telegram",
