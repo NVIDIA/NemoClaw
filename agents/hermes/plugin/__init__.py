@@ -25,6 +25,7 @@ import atexit
 import ipaddress
 import json
 import os
+import re
 import subprocess
 import sys
 from dataclasses import replace as dataclass_replace
@@ -41,6 +42,7 @@ _FIRECRAWL_PATH_PATCH_ATTR = "_nemoclaw_firecrawl_path_patch_installed"
 _URL_SAFETY_PATCH_ATTR = "_nemoclaw_broker_url_safety_patch_installed"
 _BROWSER_CDP_TUNNEL_PATCH_ATTR = "_nemoclaw_browser_use_cdp_tunnel_patch_installed"
 _BROWSER_SESSION_STATE_PATCH_ATTR = "_nemoclaw_browser_use_session_state_patch_installed"
+_MESSAGING_RESPONSE_PATCH_ATTR = "_nemoclaw_messaging_response_patch_installed"
 _BROWSER_USE_CDP_TUNNELS = {}
 
 _TOOL_GATEWAY_URL_ENV = {
@@ -71,6 +73,36 @@ _NEMOCLAW_CONTEXT_KEYWORDS = (
     "tool",
     "where am i",
     "whoami",
+)
+
+_MESSAGING_PLATFORMS = (
+    "telegram",
+    "discord",
+    "slack",
+    "whatsapp",
+    "signal",
+    "sms",
+    "email",
+    "matrix",
+    "mattermost",
+    "dingtalk",
+    "feishu",
+    "wecom",
+    "wecom_callback",
+    "weixin",
+    "qqbot",
+    "yuanbao",
+    "webhook",
+)
+_RAW_MESSAGING_TOOL_RE = re.compile(
+    r"^\s*send_message\s*:\s*(?P<body>.+?)\s*$",
+    flags=re.IGNORECASE | re.DOTALL,
+)
+_RAW_MESSAGING_TARGET_RE = re.compile(
+    r"^(?:to\s+)?(?P<platform>"
+    + "|".join(re.escape(platform) for platform in _MESSAGING_PLATFORMS)
+    + r")\s*:\s*(?P<message>.+)$",
+    flags=re.IGNORECASE | re.DOTALL,
 )
 
 _BROKER_ALWAYS_BLOCKED_HOSTNAMES = {
@@ -1040,6 +1072,60 @@ def _active_managed_gateway_services():
     return services
 
 
+def _strip_wrapping_quotes(text):
+    value = str(text or "").strip()
+    while len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+        value = value[1:-1].strip()
+    return value
+
+
+def _normalize_raw_messaging_tool_response(response):
+    """Convert a raw send_message pseudo-call into the message body.
+
+    Some first-turn messaging models emit text like
+    ``send_message: "to telegram: Hello"`` as the whole final answer instead
+    of using the structured tool-calling channel. In a gateway chat, returning
+    the body is the correct delivery path because Hermes will send the final
+    response back to the origin chat.
+    """
+    if not isinstance(response, str):
+        return response
+    match = _RAW_MESSAGING_TOOL_RE.match(response)
+    if not match:
+        return response
+
+    body = _strip_wrapping_quotes(match.group("body"))
+    target_match = _RAW_MESSAGING_TARGET_RE.match(body)
+    if not target_match:
+        return response
+
+    message = _strip_wrapping_quotes(target_match.group("message"))
+    return message if message else response
+
+
+def _install_messaging_response_patch():
+    """Prevent raw messaging pseudo-tool calls from leaking as final text."""
+    try:
+        module = __import__("run_agent", fromlist=["AIAgent"])
+    except Exception:
+        return False
+
+    agent_cls = getattr(module, "AIAgent", None)
+    if agent_cls is None or getattr(agent_cls, _MESSAGING_RESPONSE_PATCH_ATTR, False):
+        return False
+
+    original = getattr(agent_cls, "_strip_think_blocks", None)
+    if not callable(original):
+        return False
+
+    def _strip_think_blocks(content):
+        return _normalize_raw_messaging_tool_response(original(content))
+
+    agent_cls._strip_think_blocks = staticmethod(_strip_think_blocks)
+    setattr(agent_cls, _MESSAGING_RESPONSE_PATCH_ATTR, True)
+    return True
+
+
 def _should_inject_nemoclaw_context(user_message=None, is_first_turn=False):
     """Return whether this turn needs NemoClaw runtime grounding."""
     if is_first_turn:
@@ -1068,6 +1154,14 @@ def _build_nemoclaw_agent_context(platform=None):
         else "- Messaging adapters run in the parent Hermes gateway sandbox; child "
         + "tool-execution containers will not show their host/gateway config."
     )
+    reply_line = None
+    if platform_text.lower() in _MESSAGING_PLATFORMS:
+        reply_line = (
+            f"- Reply to the current {platform_text} chat by returning normal assistant text. "
+            + "Use send_message only when the user explicitly asks you to send a separate "
+            + "cross-platform message; never write raw text such as `send_message: ...` "
+            + "or `to telegram: ...` as the final answer."
+        )
     agent_identity_line = (
         "- You are Hermes Agent running in a NemoClaw-managed OpenShell sandbox, "
         + "not a host-only assistant."
@@ -1089,22 +1183,23 @@ def _build_nemoclaw_agent_context(platform=None):
         + "nemoclaw_reload_skills, transcribe_audio."
     )
 
-    return "\n".join(
-        [
-            "NemoClaw runtime context:",
-            agent_identity_line,
-            child_tool_line,
-            config_line,
-            f"- NemoClaw provider state: model={info['model']}, "
-            f"provider={info['provider']}, endpoint={info['base_url']}, "
-            f"gateway={info['gateway']}.",
-            tools_line,
-            f"- Managed Nous tool broker: {broker_state}; configured services: "
-            f"{service_text}. Raw Nous OAuth tokens are host-managed by NemoClaw "
-            "and should not be expected inside the sandbox.",
-            platform_line,
-        ],
-    )
+    lines = [
+        "NemoClaw runtime context:",
+        agent_identity_line,
+        child_tool_line,
+        config_line,
+        f"- NemoClaw provider state: model={info['model']}, "
+        f"provider={info['provider']}, endpoint={info['base_url']}, "
+        f"gateway={info['gateway']}.",
+        tools_line,
+        f"- Managed Nous tool broker: {broker_state}; configured services: "
+        f"{service_text}. Raw Nous OAuth tokens are host-managed by NemoClaw "
+        "and should not be expected inside the sandbox.",
+        platform_line,
+    ]
+    if reply_line:
+        lines.append(reply_line)
+    return "\n".join(lines)
 
 
 def _pre_llm_call(**kwargs):
@@ -1115,6 +1210,7 @@ def _pre_llm_call(**kwargs):
     ):
         return None
     _install_nous_tool_broker_patch()
+    _install_messaging_response_patch()
     return {"context": _build_nemoclaw_agent_context(platform=kwargs.get("platform"))}
 
 
@@ -1215,6 +1311,7 @@ def _handle_reload_skills(tool_input=None, context=None, **_kwargs):
 def register(ctx):
     """Register NemoClaw tools and hooks with Hermes."""
     _install_nous_tool_broker_patch()
+    _install_messaging_response_patch()
 
     # Register status tool
     ctx.register_tool(
@@ -1313,6 +1410,7 @@ def register(ctx):
     # interrupt queue. Keep startup native and expose status through tools.
     def _on_session_start(**kwargs):
         _install_nous_tool_broker_patch()
+        _install_messaging_response_patch()
         _reload_skills()
 
     ctx.register_hook("on_session_start", _on_session_start)

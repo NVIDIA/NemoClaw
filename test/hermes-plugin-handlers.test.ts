@@ -219,4 +219,99 @@ print(json.dumps(result))
       "http://host.openshell.internal:11436/firecrawl/v2/search",
     );
   });
+
+  it("normalizes raw messaging pseudo-tool responses before delivery", () => {
+    const output = runPython(`
+import importlib.util
+import json
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+
+run_agent = types.ModuleType("run_agent")
+class AIAgent:
+    @staticmethod
+    def _strip_think_blocks(content):
+        return content
+run_agent.AIAgent = AIAgent
+sys.modules["run_agent"] = run_agent
+
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+plugin = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(plugin)
+
+result = {
+    "patched": plugin._install_messaging_response_patch(),
+    "targeted": plugin._normalize_raw_messaging_tool_response(
+        'send_message: "to telegram: Hello! I am Hermes."'
+    ),
+    "untargeted": plugin._normalize_raw_messaging_tool_response(
+        "send_message: this is documentation, not a delivery target"
+    ),
+    "class_patch": run_agent.AIAgent._strip_think_blocks(
+        'send_message: "to telegram: Hello from the first message."'
+    ),
+}
+print(json.dumps(result))
+`);
+
+    const result = JSON.parse(output) as {
+      patched: boolean;
+      targeted: string;
+      untargeted: string;
+      class_patch: string;
+    };
+
+    expect(result.patched).toBe(true);
+    expect(result.targeted).toBe("Hello! I am Hermes.");
+    expect(result.untargeted).toBe(
+      "send_message: this is documentation, not a delivery target",
+    );
+    expect(result.class_patch).toBe("Hello from the first message.");
+  });
+
+  it("grounds first Telegram turns to reply directly instead of spelling tool calls", () => {
+    const output = runPython(`
+import importlib.util
+import json
+import pathlib
+import sys
+import types
+
+plugin_path = pathlib.Path(sys.argv[1])
+yaml_stub = types.ModuleType("yaml")
+yaml_stub.safe_load = lambda *_args, **_kwargs: {}
+sys.modules.setdefault("yaml", yaml_stub)
+spec = importlib.util.spec_from_file_location("hermes_plugin", plugin_path)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+module._get_sandbox_info = lambda: {
+    "agent": "hermes",
+    "model": "nemotron",
+    "provider": "nvidia",
+    "base_url": "http://localhost:8642/v1",
+    "gateway": "running",
+    "port": 8642,
+}
+
+context = module._pre_llm_call(
+    user_message="hello",
+    is_first_turn=True,
+    platform="telegram",
+)["context"]
+print(json.dumps({"context": context}))
+`);
+
+    const { context } = JSON.parse(output) as { context: string };
+
+    expect(context).toContain("Current Hermes messaging platform: telegram");
+    expect(context).toContain("Reply to the current telegram chat by returning normal assistant text");
+    expect(context).toContain("never write raw text such as `send_message:");
+  });
 });
