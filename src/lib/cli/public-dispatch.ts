@@ -329,6 +329,16 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
     return;
   }
 
+  // #3447 — when the typed command matches an OpenShell-owned operation
+  // (term / policy set / gateway stop) and there is no sandbox by that name,
+  // point users at the correct tool. Must run before recovery so bare
+  // `nemoclaw term` (which normalizes to sandboxName=term, action=connect)
+  // doesn't get swallowed by the recovery's "Sandbox does not exist" exit.
+  const openshellHint = getOpenShellCommandHint(argv);
+  if (openshellHint && !registry().getSandbox(cmd)) {
+    printOpenShellCommandHint(openshellHint);
+  }
+
   // If the registry doesn't know this name but the action is a sandbox-scoped
   // command, attempt recovery — the sandbox may still be live with a stale registry.
   await recoverRequestedSandboxIfNeeded(cmd, requestedSandboxAction, rawArgsAfterCmd);
@@ -352,14 +362,6 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
       sandboxName: cmd,
     });
     return;
-  }
-
-  // #3447 — when the typed command matches an OpenShell-owned operation
-  // (term / policy set / gateway stop), point users at the correct tool
-  // instead of the generic "Unknown command" suggestion list.
-  const openshellHint = getOpenShellCommandHint(argv);
-  if (openshellHint) {
-    printOpenShellCommandHint(openshellHint);
   }
 
   // Unknown command — suggest
