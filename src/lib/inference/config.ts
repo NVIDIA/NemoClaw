@@ -222,6 +222,13 @@ export function getSandboxInferenceConfig(
         supportsStore: false,
       };
       break;
+    case "ollama-local":
+      providerKey = MANAGED_PROVIDER_ID;
+      primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
+      inferenceCompat = {
+        supportsUsageInStreaming: true,
+      };
+      break;
     case "nvidia-router":
       providerKey = MANAGED_PROVIDER_ID;
       primaryModelRef = `${MANAGED_PROVIDER_ID}/${model}`;
