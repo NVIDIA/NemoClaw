@@ -139,7 +139,7 @@ openclaw tui
 Alternatively, send a single message and print the response:
 
 ```bash
-openclaw agent --agent main --local -m "hello" --session-id test
+openclaw agent --agent main -m "hello" --session-id test
 ```
 
 ### Model Router (Experimental)

@@ -571,6 +571,42 @@ run_install_check() {
     done <<<"$_payload_values"
   fi
 
+  local COMMANDS_REF="$REPO_ROOT/docs/reference/commands.mdx"
+  if [[ ! -f "$COMMANDS_REF" ]]; then
+    echo "check-docs: [install] missing $COMMANDS_REF" >&2
+    return 1
+  fi
+
+  local _doc_provider_row _doc_provider_values
+  _doc_provider_row="$(grep -F "| \`NEMOCLAW_PROVIDER\` |" "$COMMANDS_REF" || true)"
+  if [[ -z "$_doc_provider_row" ]]; then
+    echo "check-docs: [install] no NEMOCLAW_PROVIDER row found in ${COMMANDS_REF#"$REPO_ROOT"/}" >&2
+    _drift=1
+  else
+    _doc_provider_values="$(
+      printf '%s\n' "$_doc_provider_row" \
+        | awk -F '|' '{ print $3 }' \
+        | grep -oE "\`[a-zA-Z][a-zA-Z0-9-]*\`" \
+        | tr -d '`' \
+        | grep -vxE 'install-.*|start-windows-ollama' \
+        | LC_ALL=C sort -u
+    )"
+    while IFS= read -r v; do
+      [[ -z "$v" ]] && continue
+      if ! grep -qxF -- "$v" <<<"$_doc_provider_values"; then
+        echo "check-docs: [install] provider \"$v\" canonical but absent from ${COMMANDS_REF#"$REPO_ROOT"/} NEMOCLAW_PROVIDER row" >&2
+        _drift=1
+      fi
+    done <<<"$_canonical_values"
+    while IFS= read -r v; do
+      [[ -z "$v" ]] && continue
+      if ! grep -qxF -- "$v" <<<"$_canonical_values"; then
+        echo "check-docs: [install] provider \"$v\" appears in ${COMMANDS_REF#"$REPO_ROOT"/} NEMOCLAW_PROVIDER row but is not canonical" >&2
+        _drift=1
+      fi
+    done <<<"$_doc_provider_values"
+  fi
+
   if [[ "$_drift" -ne 0 ]]; then
     return 1
   fi

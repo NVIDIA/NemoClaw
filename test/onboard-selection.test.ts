@@ -1281,6 +1281,16 @@ printf '%s' "$status"
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
+const child_process = require("child_process");
+
+child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  if (cmd === "nc" && args?.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
+  return originalSpawnSync(cmd, args, opts);
+};
 
 const answers = ["7", "1"];
 const messages = [];
@@ -1379,6 +1389,7 @@ const { setupNim } = require(${onboardPath});
     const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -1407,6 +1418,7 @@ fi
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
+const wait = require(${waitPath});
 const child_process = require("child_process");
 
 child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
@@ -1452,6 +1464,7 @@ runner.runShell = (command) => {
 
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
+wait.sleepSeconds = () => {};
 
 const { setupNim } = require(${onboardPath});
 
@@ -1479,6 +1492,11 @@ const { setupNim } = require(${onboardPath});
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        // Force the historical system-install path so this test still
+        // exercises the install.sh + systemd loopback flow.  Vitest spawns
+        // child processes without a TTY, which would otherwise route the
+        // install through the sudo-free user-local fallback added for #4114.
+        NEMOCLAW_OLLAMA_INSTALL_MODE: "system",
       },
     });
 
@@ -2071,10 +2089,12 @@ const { setupNim } = require(${onboardPath});
     const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     const script = String.raw`
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
+const wait = require(${waitPath});
 
 let tagsProbeCount = 0;
 
@@ -2096,6 +2116,7 @@ runner.runShell = (command) => {
 
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
+wait.sleepSeconds = () => {};
 
 const { setupNim } = require(${onboardPath});
 
@@ -5170,6 +5191,7 @@ const { setupNim } = require(${onboardPath});
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     // Fake curl binary that returns a successful response — needed because
     // runCurlProbe and validateOllamaModel spawn real curl via child_process.
@@ -5205,6 +5227,7 @@ const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const platform = require(${platformPath});
+const wait = require(${waitPath});
 
 // Mock child_process.spawn so startOllamaAuthProxy doesn't try to spawn a real process.
 const child_process = require("child_process");
@@ -5278,6 +5301,7 @@ registry.updateSandbox = (_name, update) => updates.push(update);
 // Force platform to linux for this test
 Object.defineProperty(process, 'platform', { value: 'linux' });
 platform.isWsl = () => false;
+wait.sleepSeconds = () => {};
 
 const { setupNim } = require(${onboardPath});
 
@@ -5309,6 +5333,10 @@ const { setupNim } = require(${onboardPath});
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        // See #4114: Vitest spawns child processes without a TTY, which
+        // would otherwise route the install through the sudo-free
+        // user-local fallback.  This case asserts the system-install path.
+        NEMOCLAW_OLLAMA_INSTALL_MODE: "system",
       },
     });
 
@@ -5408,11 +5436,13 @@ const { setupNim } = require(${onboardPath});
     const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     const script = String.raw`
 const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const platform = require(${platformPath});
+const wait = require(${waitPath});
 
 const menuLines = [];
 const originalLog = console.log;
@@ -5450,6 +5480,7 @@ runner.runShell = (command) => {
 
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
+wait.sleepSeconds = () => {};
 
 const { setupNim } = require(${onboardPath});
 
@@ -5468,6 +5499,9 @@ const { setupNim } = require(${onboardPath});
       env: {
         ...process.env,
         HOME: tmpDir,
+        // See #4114: this scenario exercises the systemd override failure
+        // path, which only runs under the system install mode.
+        NEMOCLAW_OLLAMA_INSTALL_MODE: "system",
       },
     });
 
@@ -5491,6 +5525,7 @@ const { setupNim } = require(${onboardPath});
     const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
     const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
     const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
 
     fs.mkdirSync(fakeBin, { recursive: true });
     fs.writeFileSync(
@@ -5520,6 +5555,7 @@ const credentials = require(${credentialsPath});
 const runner = require(${runnerPath});
 const registry = require(${registryPath});
 const platform = require(${platformPath});
+const wait = require(${waitPath});
 const child_process = require("child_process");
 
 child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
@@ -5570,6 +5606,7 @@ registry.updateSandbox = (_name, update) => updates.push(update);
 
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
+wait.sleepSeconds = () => {};
 
 const { setupNim } = require(${onboardPath});
 
@@ -5600,6 +5637,10 @@ const { setupNim } = require(${onboardPath});
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_PROVIDER: "ollama",
         NEMOCLAW_YES: "1",
+        // See #4114: assert the historical system-install path explicitly.
+        // The non-interactive default without this override now routes to
+        // the sudo-free user-local fallback (covered by the test below).
+        NEMOCLAW_OLLAMA_INSTALL_MODE: "system",
       },
     });
 
@@ -5644,6 +5685,193 @@ const { setupNim } = require(${onboardPath});
     assert.ok(
       !payload.runCommands.some((cmd: string) => cmd.includes("OLLAMA_HOST=0.0.0.0:11434")),
       "non-interactive install path must not expose raw Ollama on all interfaces",
+    );
+  });
+
+  it("falls back to a user-local Ollama install when non-interactive lacks passwordless sudo (#4114)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-userlocal-install-ollama-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "userlocal-install-ollama-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    // Fake curl + zstd binaries on PATH. The install module uses curl to
+    // probe the release tarball (HEAD) and zstd to decompress; both must
+    // exist on PATH for the user-local path to choose the .tar.zst asset.
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(path.join(fakeBin, "zstd"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const platform = require(${platformPath});
+const child_process = require("child_process");
+
+child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  const command = [cmd, ...(args || [])].join(" ");
+  if (cmd === "nc" && args?.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
+  if (command.includes("ollama pull")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
+  if (cmd === "ps") {
+    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
+  }
+  return originalSpawnSync(cmd, args, opts);
+};
+
+let promptCalls = 0;
+const updates = [];
+const runCommands = [];
+const runShellCalls = [];
+
+credentials.prompt = async () => {
+  promptCalls += 1;
+  return "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  // hostCommandExists() shells out as ["sh", "-c", 'command -v "$1"', "--", name],
+  // so match on the trailing target rather than a "command -v <name>" substring.
+  if (cmd.endsWith(" -- ollama")) return "";
+  if (cmd.endsWith(" -- zstd")) return "/usr/bin/zstd";
+  if (cmd.endsWith(" -- sudo")) return "/usr/bin/sudo";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
+  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  return "";
+};
+const originalRunCaptureEx = runner.runCaptureEx;
+runner.runCaptureEx = (command, opts) => {
+  // Refuse passwordless sudo so the install path takes the #4114 fallback.
+  if (Array.isArray(command) && command[0] === "sudo" && command[1] === "-n") {
+    return { stdout: "", exitCode: 1, timedOut: false };
+  }
+  // Pretend the .tar.zst asset exists so the user-local install picks the
+  // zstd path (instead of falling back to .tgz).
+  if (Array.isArray(command) && command.includes("--head")) {
+    return { stdout: "", exitCode: 0, timedOut: false };
+  }
+  // Hand every other capture (curl probes, etc.) back to the real implementation
+  // so the fake-curl shim on PATH can answer the local-model probe.
+  return originalRunCaptureEx(command, opts);
+};
+runner.run = (command) => {
+  runCommands.push(typeof command === "string" ? command : command.join(" "));
+};
+runner.runShell = (command, opts = {}) => {
+  runCommands.push(command);
+  runShellCalls.push({ command, stdio: opts.stdio || null });
+};
+registry.updateSandbox = (_name, update) => updates.push(update);
+
+Object.defineProperty(process, "platform", { value: "linux" });
+Object.defineProperty(process, "getuid", { value: () => 1000 });
+platform.isWsl = () => false;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("userlocal-install-test", null);
+    originalLog(JSON.stringify({ result, promptCalls, updates, lines, runCommands, runShellCalls }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "ollama",
+        NEMOCLAW_YES: "1",
+        // No NEMOCLAW_OLLAMA_INSTALL_MODE — auto-detect routes through
+        // user-local because the stubbed `sudo -n true` returns exit 1.
+      },
+    });
+
+    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
+    assert.notEqual(result.stdout.trim(), "", result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.ok(
+      !payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
+      "User-local install must NOT run the official curl|sh installer",
+    );
+    assert.ok(
+      payload.runCommands.some((cmd: string) =>
+        cmd.includes("ollama-linux-") && cmd.includes(".tar.zst"),
+      ),
+      "User-local install should download the release tarball directly",
+    );
+    assert.ok(
+      payload.runCommands.some(
+        (cmd: string) => cmd.includes("zstd -d") && cmd.includes("/.local"),
+      ),
+      "User-local install should extract under ${HOME}/.local without sudo",
+    );
+    assert.ok(
+      !payload.runCommands.some((cmd: string) => cmd.includes("sudo")),
+      "User-local install must not invoke sudo on any extraction or start command",
+    );
+    assert.ok(
+      payload.runCommands.some(
+        (cmd: string) => cmd.includes("nohup") && cmd.includes("/.local/bin/ollama"),
+      ),
+      "User-local install should launch the daemon from ${HOME}/.local/bin/ollama",
+    );
+    assert.ok(
+      !payload.runCommands.some((cmd: string) => cmd.includes("OLLAMA_HOST=0.0.0.0:11434")),
+      "User-local install path must not expose raw Ollama on all interfaces",
     );
   });
 

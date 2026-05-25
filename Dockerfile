@@ -76,7 +76,9 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 RUN npm ci --omit=dev
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
-RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
+COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
+RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
+        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
 
 # Upgrade OpenClaw if the base image is stale.
 #
@@ -289,6 +291,22 @@ RUN set -eu; \
     printf '%s\n' "$hto_files" | xargs sed -i -E 's#DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)#DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4#g'; \
     if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)' "$OC_DIST"; then echo "ERROR: Patch 5 left a short handshake-timeout constant" >&2; exit 1; fi; \
     if ! grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4' "$OC_DIST"; then echo "ERROR: Patch 5 did not find patched 6e4 constant" >&2; exit 1; fi
+
+# Patch OpenClaw chat.send gateway behavior for OpenClaw 2026.5.x.
+#
+# OpenClaw can accept rapid TUI/WebChat chat.send requests and then emit a
+# terminal chat event with state="final" but no assistant message for the later
+# submitted run. That makes clients treat the turn as complete even though no
+# visible reply was delivered. The shim also correlates real agent run IDs back
+# to the submitted chat.send run ID when OpenClaw starts an internal run with a
+# different ID, carries that submitted ID through queued follow-up turns, and
+# adds the submitted run ID as the transcript idempotency key.
+#
+# Removal criteria: drop when upstream OpenClaw fixes openclaw/openclaw#70164
+# and openclaw/openclaw#50298, or when NemoClaw no longer ships OpenClaw 2026.5.x.
+# hadolint ignore=DL3059
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
+    /usr/local/lib/node_modules/openclaw/dist
 
 # Patch OpenClaw's pinned 2026.5.18 compiled selection runtime to expose a
 # compact searchable tool catalog to the model while preserving the full

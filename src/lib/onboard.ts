@@ -22,7 +22,6 @@ const {
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const {
-  ensureManagedOllamaLoopbackSystemdOverride,
   ensureOllamaLoopbackSystemdOverride,
 }: typeof import("./onboard/ollama-systemd") = require("./onboard/ollama-systemd");
 const { bestEffortForwardStop } = require("./onboard/forward-cleanup");
@@ -103,11 +102,14 @@ const { buildVllmMenuEntries }: typeof import("./onboard/vllm-menu") = require("
 const {
   detectWindowsHostOllama,
 }: typeof import("./onboard/windows-host-ollama") = require("./onboard/windows-host-ollama");
+const {
+  installOllamaOnLinux,
+}: typeof import("./onboard/install-ollama-linux") = require("./onboard/install-ollama-linux");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
-const { spawn, spawnSync } = require("child_process");
+const { spawnSync } = require("child_process");
 const pRetry = require("p-retry");
 
 /** Strip ANSI escape sequences before printing process output to the terminal.
@@ -343,6 +345,7 @@ const {
   getBlueprintMinOpenshellVersion,
   getInstalledOpenshellVersion,
   isOpenshellDevVersion,
+  SUPPORTED_OPENSHELL_FALLBACK_VERSION,
   shouldAllowOpenshellAboveBlueprintMax,
   shouldUseOpenshellDevChannel,
   versionGte,
@@ -1314,20 +1317,6 @@ function hostCommandExists(commandName: string): boolean {
   });
 }
 
-function ensureOllamaLinuxExtractionDependencies(): void {
-  if (hostCommandExists("zstd")) return;
-  console.log(
-    "  The Ollama Linux installer requires zstd for archive extraction. " +
-      "The next step uses sudo to install zstd; you may be prompted for your password.",
-  );
-  runShell(`if ! command -v apt-get >/dev/null 2>&1; then
-  echo "ERROR: Ollama requires zstd for extraction, and only apt-based Linux is supported here." >&2
-  echo "Install zstd manually (for example, sudo dnf install zstd or sudo pacman -S zstd), then rerun ${cliName()} onboard." >&2
-  exit 1
-fi
-sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends zstd`);
-}
-
 function captureProcessArgs(pid: number): string {
   return runCapture(["ps", "-p", String(pid), "-o", "args="], {
     ignoreError: true,
@@ -1407,7 +1396,7 @@ function getOpenShellDockerSupervisorImage(versionOutput: string | null = null):
   if (shouldUseOpenshellDevChannel() || isOpenshellDevVersion(versionOutput)) {
     return "ghcr.io/nvidia/openshell/supervisor:dev";
   }
-  const supportedVersion = installedVersion ?? getBlueprintMaxOpenshellVersion() ?? "0.0.39";
+  const supportedVersion = installedVersion ?? getBlueprintMaxOpenshellVersion() ?? SUPPORTED_OPENSHELL_FALLBACK_VERSION;
   return `ghcr.io/nvidia/openshell/supervisor:${supportedVersion}`;
 }
 
@@ -2644,7 +2633,9 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
   }
   if (!gatewayBin) {
     console.error("  OpenShell Docker-driver gateway binary not found.");
-    console.error("  Install OpenShell v0.0.39, or set NEMOCLAW_OPENSHELL_GATEWAY_BIN.");
+    console.error(
+      `  Install OpenShell v${SUPPORTED_OPENSHELL_FALLBACK_VERSION}, or set NEMOCLAW_OPENSHELL_GATEWAY_BIN.`,
+    );
     if (exitOnFailure) process.exit(1);
     throw new Error("OpenShell gateway binary not found");
   }
@@ -2666,10 +2657,7 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
 
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   const logPath = path.join(stateDir, "openshell-gateway.log");
-  // The gateway state directory is NemoClaw-owned; creating it before opening
-  // the append-only log is intentional and safe for this local runtime file.
-  const outFd = fs.openSync(logPath, "a", 0o600); // codeql[js/file-system-race]
-  const errFd = fs.openSync(logPath, "a", 0o600); // codeql[js/file-system-race]
+  const logFd = dockerDriverGatewayLaunch.openDockerDriverGatewayLog(logPath, { exitOnFailure });
   console.log("  Starting OpenShell Docker-driver gateway...");
   console.log(`  Gateway log: ${logPath}`);
   const launch = gatewayLaunch ?? {
@@ -2680,11 +2668,7 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
     processGatewayBin: gatewayBin,
   };
   dockerDriverGatewayLaunch.prepareAndLogDockerDriverGatewayLaunch(launch);
-  const child = spawn(launch.command, launch.args, {
-    detached: true,
-    stdio: ["ignore", outFd, errFd],
-    env: launch.env,
-  });
+  const child = dockerDriverGatewayLaunch.spawnDockerDriverGateway(launch, logFd);
   const childExit = trackChildExit(child); // #3111 zombie-safe liveness
   child.unref();
   const childPid = child.pid ?? 0;
@@ -2974,7 +2958,7 @@ async function createSandbox(
     }
   }
   const preferredPort =
-    controlUiPort ?? envPort ?? persistedPort ?? (agent ? agent.forwardPort : CONTROL_UI_PORT);
+    controlUiPort ?? envPort ?? persistedPort ?? (agent ? agent.forwardPort : DASHBOARD_PORT);
   const earlyForwards = runCaptureOpenshell(["forward", "list"], { ignoreError: true });
   const effectivePort = findAvailableDashboardPort(sandboxName, preferredPort, earlyForwards);
   if (effectivePort !== preferredPort) {
@@ -4169,7 +4153,7 @@ async function selectAndValidateOllamaModel(
     const installedModels = getOllamaModelOptions();
     let model: string | typeof BACK_TO_SELECTION;
     if (isNonInteractive()) {
-      model = requestedModel || recoveredModel || getDefaultOllamaModel(gpu);
+      model = localInference.resolveNonInteractiveOllamaModel(requestedModel, recoveredModel, gpu);
     } else {
       model = await promptOllamaModel(gpu);
     }
@@ -5296,38 +5280,10 @@ async function setupNim(
             continue selectionLoop;
           }
         } else {
-          ensureOllamaLinuxExtractionDependencies();
-          console.log(
-            "  The Ollama installer creates a system user, a systemd service, and writes to /usr/local. " +
-              "It uses sudo, may ask for your password, and can take a few minutes; installer output will stream below.",
-          );
-          runShell("set -o pipefail; curl -fsSL https://ollama.com/install.sh | sh", { stdio: "inherit" });
-          // Give the just-started ollama.service a moment to bind port
-          // 11434 before we probe or apply the systemd drop-in override.
-          sleepSeconds(2);
-          // Linux native + systemd: force a loopback-only OLLAMA_HOST drop-in
-          // and let systemd own the daemon (avoids racing the installer's
-          // daemon with our own `ollama serve`). This also repairs older
-          // NemoClaw-created overrides that exposed raw Ollama on all interfaces.
-          // WSL and non-systemd Linux fall back to a manual loopback launch.
-          const overrideState = ensureManagedOllamaLoopbackSystemdOverride({ isNonInteractive });
-          if (overrideState === "failed") {
-            console.error(
-              "  Ollama systemd restart did not recover after applying the loopback override.",
-            );
-            process.exit(1);
-          }
-          // Fall back to manual start only when systemd is unavailable.
-          if (overrideState === "not-applicable" && !findReachableOllamaHost()) {
-            console.log("  Starting Ollama...");
-            runShell(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
-              ignoreError: true,
-            });
-            if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
-              console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
-              if (isNonInteractive()) process.exit(1);
-              continue selectionLoop;
-            }
+          const installResult = installOllamaOnLinux({ isNonInteractive });
+          if (!installResult.ok) {
+            if (isNonInteractive()) process.exit(1);
+            continue selectionLoop;
           }
         }
         if (shouldFrontOllamaWithProxy()) {
@@ -6694,8 +6650,6 @@ async function setupPoliciesWithSelection(
 
 // ── Dashboard ────────────────────────────────────────────────────
 
-const CONTROL_UI_PORT = DASHBOARD_PORT;
-
 const {
   buildChain,
   buildControlUiUrls,
@@ -6710,6 +6664,7 @@ const {
 } = onboardDashboard.createOnboardDashboardHelpers({
   runOpenshell,
   runCaptureOpenshell,
+  openshellArgv,
   runCapture,
   cliName,
   agentProductName,
@@ -6733,6 +6688,7 @@ const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardR
 const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
 const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboardRuntimeBoundary);
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
+const recordPostVerifyStarted = onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 const recordSessionComplete = onboardRuntimeBoundary.recordSessionComplete.bind(onboardRuntimeBoundary);
 
 const ONBOARD_STEP_INDEX: Record<string, { number: number; title: string }> = {
@@ -7447,6 +7403,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       migratedLegacyKeys,
       deps: {
         ensureAgentDashboardForward,
+        recordPostVerifyStarted,
         recordSessionComplete,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
         removeLegacyCredentialsFile,

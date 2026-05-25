@@ -1,13 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
-
 import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
 import {
   collectHermesStartupDiagnostics,
+  handleAgentSetup,
   printDashboardUi,
   verifyAgentBinaryAvailable,
 } from "../../../dist/lib/agent/onboard";
@@ -133,11 +131,56 @@ describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)
 });
 
 describe("agent setup session boundaries", () => {
-  it("does not write onboard session state directly", () => {
-    const source = fs.readFileSync(path.join(__dirname, "onboard.ts"), "utf8");
+  function createAgentSetupContext(runCaptureOpenshell = vi.fn(() => "")) {
+    return {
+      context: {
+        step: vi.fn(),
+        runCaptureOpenshell,
+        openshellShellCommand: vi.fn(() => "openshell sandbox connect sandbox-x"),
+        openshellBinary: "/usr/bin/openshell",
+        startRecordedStep: vi.fn(async () => undefined),
+        recordStepComplete: vi.fn(async () => undefined),
+        recordStepFailed: vi.fn(async () => undefined),
+        skippedStepMessage: vi.fn(),
+      },
+    };
+  }
 
-    expect(source).not.toContain("../state/onboard-session");
-    expect(source).not.toMatch(/onboardSession\.markStep/);
+  it("records resume success through the supplied completion boundary", async () => {
+    const runCaptureOpenshell = vi.fn(() => "ok");
+    const { context } = createAgentSetupContext(runCaptureOpenshell);
+    const agent = makeAgent();
+
+    await handleAgentSetup("sandbox-x", "model-x", "provider-x", agent, true, null, context);
+
+    expect(context.skippedStepMessage).toHaveBeenCalledWith("agent_setup", "sandbox-x");
+    expect(context.recordStepComplete).toHaveBeenCalledWith("agent_setup", {
+      sandboxName: "sandbox-x",
+      provider: "provider-x",
+      model: "model-x",
+    });
+    expect(context.startRecordedStep).not.toHaveBeenCalled();
+    expect(context.recordStepFailed).not.toHaveBeenCalled();
+  });
+
+  it("records fresh setup success through the supplied completion boundary", async () => {
+    const runCaptureOpenshell = vi.fn(() => "NEMOCLAW_AGENT_BINARY_CHECK:ok");
+    const { context } = createAgentSetupContext(runCaptureOpenshell);
+    const agent = makeAgent({ healthProbe: { url: "", port: 0, timeout_seconds: 0 } });
+
+    await handleAgentSetup("sandbox-x", "model-x", "provider-x", agent, false, null, context);
+
+    expect(context.startRecordedStep).toHaveBeenCalledWith("agent_setup", {
+      sandboxName: "sandbox-x",
+      provider: "provider-x",
+      model: "model-x",
+    });
+    expect(context.recordStepComplete).toHaveBeenCalledWith("agent_setup", {
+      sandboxName: "sandbox-x",
+      provider: "provider-x",
+      model: "model-x",
+    });
+    expect(context.recordStepFailed).not.toHaveBeenCalled();
   });
 });
 

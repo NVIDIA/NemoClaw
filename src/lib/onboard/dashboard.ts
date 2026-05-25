@@ -16,11 +16,14 @@ import {
   getOccupiedPorts,
   isLiveForwardStatus,
 } from "./dashboard-port";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import {
+  buildDetachedForwardStartSpawn,
+  buildForwardStartProgressLogger,
   looksLikeForwardPortConflict,
-  runBackgroundForwardStartWithPortReleaseRetries,
+  runDetachedForwardStartWithPortReleaseRetries,
 } from "./forward-start";
-import { bestEffortForwardStop } from "./forward-cleanup";
+import { bestEffortForwardStop, bestEffortForwardStopForSandbox } from "./forward-cleanup";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -30,6 +33,7 @@ type CommandResult = { status: number | null };
 export interface OnboardDashboardDeps {
   runOpenshell(args: string[], opts?: Record<string, unknown>): CommandResult;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
+  openshellArgv(args: string[]): string[];
   runCapture?: typeof defaultRunCapture;
   cliName(): string;
   agentProductName(): string;
@@ -215,13 +219,20 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   ): number {
     const { rollbackSandboxOnFailure = false } = options;
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
+    const stopForwardForSandbox = (port: string | number) =>
+      bestEffortForwardStopForSandbox(
+        deps.runOpenshell,
+        (args, opts) => (deps.runCaptureOpenshell(args, opts) ?? "") as string,
+        port,
+        sandboxName,
+      );
     let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
     if (
       preferredEntry &&
       (preferredEntry.sandboxName === sandboxName || !isLiveForwardStatus(preferredEntry.status))
     ) {
-      bestEffortForwardStop(deps.runOpenshell, preferredPort);
+      stopForwardForSandbox(preferredPort);
       existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     }
     let actualPort: number;
@@ -248,26 +259,28 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const occupied = getOccupiedPorts(existingForwards);
     for (const [port, owner] of occupied.entries()) {
       if (owner === sandboxName && Number(port) !== actualPort) {
-        bestEffortForwardStop(deps.runOpenshell, port);
+        stopForwardForSandbox(port);
       }
     }
 
     const parsedUrl = new URL(chatUiUrl.includes("://") ? chatUiUrl : `http://${chatUiUrl}`);
     parsedUrl.port = String(actualPort);
     const actualTarget = getDashboardForwardTarget(parsedUrl.toString());
-    bestEffortForwardStop(deps.runOpenshell, actualPort);
-    const { result: fwdResult, diagnostic: fwdDiagnostic } = runBackgroundForwardStartWithPortReleaseRetries(
-      (stdio, timeout) =>
-        deps.runOpenshell(
-          ["forward", "start", "--background", actualTarget, sandboxName],
-          { ignoreError: true, suppressOutput: true, stdio, timeout },
-        ),
+    stopForwardForSandbox(actualPort);
+    const { ok: fwdOk, diagnostic: fwdDiagnostic } = runDetachedForwardStartWithPortReleaseRetries(
+      buildDetachedForwardStartSpawn(
+        deps.openshellArgv(["forward", "start", "--background", actualTarget, sandboxName]),
+      ),
+      () =>
+        (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ?? "") as string,
+      { port: actualPort, sandboxName },
       () => {
         deps.sleep(1);
-        bestEffortForwardStop(deps.runOpenshell, actualPort);
+        stopForwardForSandbox(actualPort);
       },
+      { onProgress: buildForwardStartProgressLogger(actualPort) },
     );
-    if (fwdResult && fwdResult.status !== 0) {
+    if (!fwdOk) {
       const looksLikePortConflict = looksLikeForwardPortConflict(fwdDiagnostic);
       if (rollbackSandboxOnFailure) {
         const err = new Error(
