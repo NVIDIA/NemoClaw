@@ -15,7 +15,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import yaml from "js-yaml";
 import { loadMetadataFromDir } from "../runtime/resolver/load.ts";
 import { resolveScenario } from "../runtime/resolver/plan.ts";
 
@@ -45,9 +44,7 @@ function planOnly(scenarioId: string): { stdout: string; stderr: string; status:
 
 describe("Issue 3812: inference/provider suite families", () => {
   it("test_should_route_inference_suite_families_to_domain_specific_steps", () => {
-    const suites = yaml.load(fs.readFileSync(path.join(E2E_DIR, "validation_suites/suites.yaml"), "utf8")) as {
-      suites: Record<string, { steps?: { script?: string }[] }>;
-    };
+    const { suites } = loadMetadataFromDir(E2E_DIR);
     for (const family of ["inference-routing", "inference-switch", "kimi-compatibility", "ollama-auth-proxy", "model-router"]) {
       const scripts = suites.suites[family]?.steps?.map((step) => step.script ?? "") ?? [];
       expect(scripts.length, family).toBeGreaterThan(0);

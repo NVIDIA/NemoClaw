@@ -30,6 +30,7 @@ import { resolveOpenshell } from "../adapters/openshell/resolve.js";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts.js";
 import type { AgentStateFile } from "../agent/defs.js";
 import { loadAgent } from "../agent/defs.js";
+import { isRecord, type UnknownRecord } from "../core/json-types.js";
 import { shellQuote } from "../runner.js";
 import { isSensitiveFile, sanitizeConfigFile } from "../security/credential-filter.js";
 import * as registry from "./registry.js";
@@ -123,12 +124,6 @@ export interface TarValidationResult {
 export interface SafeExtractResult {
   success: boolean;
   error?: string;
-}
-
-type UnknownRecord = { [key: string]: unknown };
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isStringArray(value: unknown): value is string[] {

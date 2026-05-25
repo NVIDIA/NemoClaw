@@ -529,10 +529,9 @@ exit 98
   });
 
   it("piped --help does not show the placeholder installer version", () => {
-    const result = spawnSync("bash", ["-s", "--", "--help"], {
+    const result = spawnSync("bash", ["-lc", `cat ${JSON.stringify(INSTALLER)} | bash -s -- --help`], {
       cwd: os.tmpdir(),
       encoding: "utf-8",
-      input: fs.readFileSync(INSTALLER, "utf-8"),
     });
 
     expect(result.status).toBe(0);
@@ -542,10 +541,9 @@ exit 98
   });
 
   it("piped --version omits the placeholder installer version", () => {
-    const result = spawnSync("bash", ["-s", "--", "--version"], {
+    const result = spawnSync("bash", ["-lc", `cat ${JSON.stringify(INSTALLER)} | bash -s -- --version`], {
       cwd: os.tmpdir(),
       encoding: "utf-8",
-      input: fs.readFileSync(INSTALLER, "utf-8"),
     });
 
     expect(result.status).toBe(0);
@@ -3646,9 +3644,8 @@ main() {
 }`,
     );
 
-    const result = spawnSync("bash", ["-s", "--", "--version"], {
+    const result = spawnSync("bash", ["-lc", `cat ${JSON.stringify(rootInstaller)} | bash -s -- --version`], {
       cwd: repoLike,
-      input: fs.readFileSync(rootInstaller, "utf-8"),
       encoding: "utf-8",
       env: {
         ...process.env,

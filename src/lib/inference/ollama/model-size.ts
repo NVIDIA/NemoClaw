@@ -2,17 +2,18 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runCapture } from "../../runner";
+import { OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES } from "../ollama-model-registry";
 
 const MANIFEST_HOST = "https://registry.ollama.ai";
 const PROBE_TIMEOUT_SECONDS = 3;
 const MANIFEST_ACCEPT_HEADER =
   "Accept: application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json";
 
-const FALLBACK_SIZE_BYTES: Readonly<Record<string, number>> = {
-  "qwen2.5:7b": 4_683_073_184,
-  "nemotron-3-nano:30b": 19_000_000_000,
-  "qwen3.6:35b": 24_000_000_000,
-};
+// Single source of truth lives in `ollama-model-registry.ts`. The fallback
+// table is aliased locally so existing call sites in this module still
+// read from a `FALLBACK_SIZE_BYTES` reference; nothing outside this file
+// reaches in for it.
+const FALLBACK_SIZE_BYTES = OLLAMA_DOWNLOAD_SIZE_FALLBACK_BYTES;
 
 export type CaptureFn = (cmd: readonly string[], opts?: { ignoreError?: boolean }) => string;
 
