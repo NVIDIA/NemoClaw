@@ -540,6 +540,15 @@ function looksLikeEventCaptureFailure(repro: LiveIssue2603Trace): boolean {
   );
 }
 
+// The zero-chat-events failure is an observability race at the live repro boundary:
+// OpenClaw accepts the chat.send requests, but this websocket client captures no
+// chat stream events before assertions. The source boundary is the pinned
+// OpenClaw 2026.5.x gateway/websocket runtime inside the sandbox, so this
+// NemoClaw-side E2E can only keep the #2603/#3145 correlation assertions stable
+// while preserving signal for real empty-final, duplicate-turn, and
+// uncorrelated-reply regressions. Remove this retry when OpenClaw exposes a
+// deterministic chat subscription/readiness acknowledgement or the 10x nightly
+// sweep no longer shows the zero-event capture signature without this guard.
 function runLiveIssue2603ReproWithEventCaptureRetry(sandboxName: string): LiveIssue2603Run {
   const attempts: LiveIssue2603Trace[] = [];
   let repro = runLiveIssue2603Repro(sandboxName);
