@@ -9,6 +9,7 @@
 # rediscover setup state.
 
 if [[ -n "${_E2E_HERMES_SH_LOADED:-}" ]]; then
+  # shellcheck disable=SC2317 # sourced-file guard intentionally exits early when loaded twice
   return 0 2>/dev/null || true
 fi
 _E2E_HERMES_SH_LOADED=1
@@ -113,6 +114,7 @@ e2e_hermes_assert_agent_home_permissions() {
   fi
   local sandbox
   sandbox="$(_e2e_hermes_sandbox_name)"
+  # shellcheck disable=SC2016 # script is evaluated inside the sandbox, not by this shell
   if ! e2e_sandbox_exec "${sandbox}" -- sh -lc 'test -d /sandbox/.hermes && perms=$(stat -c %a /sandbox/.hermes 2>/dev/null || stat -f %Lp /sandbox/.hermes); case "$perms" in *2|*3|*6|*7) exit 1;; *) exit 0;; esac'; then
     echo "e2e_hermes: /sandbox/.hermes missing or world-writable" >&2
     return 1

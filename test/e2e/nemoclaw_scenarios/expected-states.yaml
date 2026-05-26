@@ -404,4 +404,3 @@ hermes_expectations:
     fix_pr: 2473
     scope: suite
     reason: Hermes TUI history writability and clean exit remain expected failing until fixed.
-
