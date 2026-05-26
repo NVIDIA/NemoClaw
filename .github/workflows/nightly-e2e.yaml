@@ -145,152 +145,73 @@ concurrency:
 jobs:
   cloud-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',cloud-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run cloud E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-nightly"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-full-e2e.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: install-log
-          path: /tmp/nemoclaw-e2e-install.log
-          if-no-files-found: ignore
-
-  # ── Cloud Onboard E2E ──────────────────────────────────────────
-  # Public installer (curl nvidia.com/nemoclaw.sh), Landlock read-only
-  # enforcement, API key leak detection, inference.local HTTPS probe.
-  # Split from cloud-experimental-e2e monolith (#2644).
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-full-e2e.sh
+      artifact_name: "install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-nightly"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   cloud-onboard-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',cloud-onboard-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Resolve public install ref
-        id: public_install_ref
-        shell: bash
-        run: |
-          printf 'ref=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Run cloud onboard E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          GITHUB_TOKEN: ${{ github.token }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          NEMOCLAW_POLICY_MODE: "custom"
-          NEMOCLAW_POLICY_PRESETS: "npm,pypi"
-          NEMOCLAW_SANDBOX_NAME: "e2e-cloud-onboard"
-          NEMOCLAW_PUBLIC_INSTALL_REF: ${{ steps.public_install_ref.outputs.ref }}
-        run: bash test/e2e/test-cloud-onboard-e2e.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: install-log-cloud-onboard
-          path: /tmp/nemoclaw-e2e-cloud-onboard-install.log
-          if-no-files-found: ignore
-
-  # ── Cloud Inference E2E ──────────────────────────────────────
-  # Live chat via inference.local + skill filesystem validation.
-  # Split from cloud-experimental-e2e monolith (#2644).
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-cloud-onboard-e2e.sh
+      artifact_name: "install-log-cloud-onboard"
+      artifact_path: "/tmp/nemoclaw-e2e-cloud-onboard-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_MODE":"custom","NEMOCLAW_POLICY_PRESETS":"npm,pypi","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-onboard"}'
+      checked_out_ref_env: "NEMOCLAW_PUBLIC_INSTALL_REF"
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   cloud-inference-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',cloud-inference-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run cloud inference E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-cloud-inference"
-        run: bash test/e2e/test-cloud-inference-e2e.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: install-log-cloud-inference
-          path: /tmp/nemoclaw-e2e-cloud-inference-install.log
-          if-no-files-found: ignore
-
-  # ── Skill Agent E2E ──────────────────────────────────────────
-  # Skill injection + agent verification with retry + fuzzy matching.
-  # Split from cloud-experimental-e2e monolith (#2644).
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-cloud-inference-e2e.sh
+      timeout_minutes: 30
+      artifact_name: "install-log-cloud-inference"
+      artifact_path: "/tmp/nemoclaw-e2e-cloud-inference-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cloud-inference"}'
+      nvidia_api_key: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   skill-agent-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',skill-agent-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run skill agent E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-skill-agent"
-        run: bash test/e2e/test-skill-agent-e2e.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: install-log-skill-agent
-          path: /tmp/nemoclaw-e2e-skill-agent-install.log
-          if-no-files-found: ignore
-
-  # ── Docs Validation E2E ──────────────────────────────────────
-  # CLI/docs parity (nemoclaw --help vs commands.mdx) + markdown link validation.
-  # Split from cloud-experimental-e2e monolith (#2644).
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-skill-agent-e2e.sh
+      timeout_minutes: 30
+      artifact_name: "install-log-skill-agent"
+      artifact_path: "/tmp/nemoclaw-e2e-skill-agent-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-skill-agent"}'
+      nvidia_api_key: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   docs-validation-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -330,82 +251,41 @@ jobs:
   # the real API returns 401, proving the chain works. See: PR #1081
   messaging-providers-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',messaging-providers-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run messaging providers E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_POLICY_TIER: "open"
-          NEMOCLAW_SANDBOX_NAME: "e2e-msg-provider"
-          GITHUB_TOKEN: ${{ github.token }}
-          TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-e2e"
-          DISCORD_BOT_TOKEN: "test-fake-discord-token-e2e"
-          SLACK_BOT_TOKEN: "xoxb-fake-slack-token-e2e"
-          SLACK_APP_TOKEN: "xapp-fake-slack-app-token-e2e"
-        run: bash test/e2e/test-messaging-providers.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: install-log-messaging-providers
-          path: |
-            /tmp/nemoclaw-e2e-install.log
-            /tmp/nemoclaw-e2e-whatsapp-*.log
-          if-no-files-found: ignore
-
-  # ── OpenClaw Slack Pairing E2E (#3730/#3737) ──────────────────
-  # Hermetic Socket Mode inbound event + chat.postMessage reply path, then
-  # connect-shell `openclaw pairing approve slack <code>` against shared state.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-messaging-providers.sh
+      timeout_minutes: 75
+      artifact_name: "install-log-messaging-providers"
+      artifact_path: |
+        /tmp/nemoclaw-e2e-install.log
+        /tmp/nemoclaw-e2e-whatsapp-*.log
+      env_json: '{"DISCORD_BOT_TOKEN":"test-fake-discord-token-e2e","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-msg-provider","SLACK_APP_TOKEN":"xapp-fake-slack-app-token-e2e","SLACK_BOT_TOKEN":"xoxb-fake-slack-token-e2e","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-e2e"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   openclaw-slack-pairing-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',openclaw-slack-pairing-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run OpenClaw Slack pairing E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_POLICY_TIER: "open"
-          NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-slack-pairing"
-          GITHUB_TOKEN: ${{ github.token }}
-          SLACK_BOT_TOKEN: "xoxb-fake-slack-pairing-e2e"
-          SLACK_APP_TOKEN: "xapp-fake-slack-pairing-e2e"
-        run: bash test/e2e/test-openclaw-slack-pairing.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: install-log-openclaw-slack-pairing
-          path: /tmp/nemoclaw-e2e-openclaw-slack-pairing-install.log
-          if-no-files-found: ignore
-
-  # ── OpenClaw TUI Chat Correlation E2E (#2603/#3145) ───────────
-  # Creates a fresh OpenClaw sandbox, then runs the live gateway/webchat
-  # correlation harness against rapid sequential sends.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-openclaw-slack-pairing.sh
+      artifact_name: "install-log-openclaw-slack-pairing"
+      artifact_path: "/tmp/nemoclaw-e2e-openclaw-slack-pairing-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-slack-pairing","SLACK_APP_TOKEN":"xapp-fake-slack-pairing-e2e","SLACK_BOT_TOKEN":"xoxb-fake-slack-pairing-e2e"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   openclaw-tui-chat-correlation-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -486,220 +366,99 @@ jobs:
   # `openclaw pairing approve discord <code>` against shared state.
   openclaw-discord-pairing-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',openclaw-discord-pairing-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run OpenClaw Discord pairing E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_POLICY_TIER: "open"
-          NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-discord-pairing"
-          GITHUB_TOKEN: ${{ github.token }}
-          DISCORD_BOT_TOKEN: "test-fake-discord-pairing-e2e"
-        run: bash test/e2e/test-openclaw-discord-pairing.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: install-log-openclaw-discord-pairing
-          path: /tmp/nemoclaw-e2e-openclaw-discord-pairing-install.log
-          if-no-files-found: ignore
-
-  # ── Messaging + compatible endpoint regression (#2766) ───────
-  # Hermetic Telegram + OpenAI-compatible endpoint path. Uses a local mock
-  # endpoint and fake Telegram token, then asserts sandbox inference.local
-  # reaches the mock through the gateway provider route.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-openclaw-discord-pairing.sh
+      artifact_name: "install-log-openclaw-discord-pairing"
+      artifact_path: "/tmp/nemoclaw-e2e-openclaw-discord-pairing-install.log"
+      env_json: '{"DISCORD_BOT_TOKEN":"test-fake-discord-pairing-e2e","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-discord-pairing"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   messaging-compatible-endpoint-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',messaging-compatible-endpoint-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run messaging compatible endpoint E2E test
-        env:
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-msg-compat"
-          GITHUB_TOKEN: ${{ github.token }}
-          TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-e2e"
-          TELEGRAM_ALLOWED_IDS: "123456789"
-        run: bash test/e2e/test-messaging-compatible-endpoint.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: install-log-messaging-compatible-endpoint
-          path: /tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log
-          if-no-files-found: ignore
-
-  # ── Channels add/remove lifecycle E2E (#3462 Test 2) ────────────────
-  # Regression coverage for #3437 (channels add must auto-apply the matching
-  # network policy preset so the bridge boots with egress to its upstream API)
-  # and #3671 (channels remove must detach providers, un-apply the preset,
-  # and survive a follow-up rebuild without being silently re-added from
-  # shell env). Telegram-only — the other paste-token channels walk the same
-  # KNOWN_CHANNELS + preset lookup code path.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-messaging-compatible-endpoint.sh
+      artifact_name: "install-log-messaging-compatible-endpoint"
+      artifact_path: "/tmp/nemoclaw-e2e-messaging-compatible-endpoint-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-msg-compat","TELEGRAM_ALLOWED_IDS":"123456789","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-e2e"}'
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   channels-add-remove-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',channels-add-remove-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 75
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run channels add/remove lifecycle E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-channels-add-remove"
-          GITHUB_TOKEN: ${{ github.token }}
-          TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-add-remove-e2e"
-        run: bash test/e2e/test-channels-add-remove.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: install-log-channels-add-remove
-          path: |
-            /tmp/nemoclaw-e2e-install.log
-            /tmp/nc-add.log
-            /tmp/nc-remove.log
-            /tmp/nc-rebuild-add.log
-            /tmp/nc-rebuild-remove.log
-          if-no-files-found: ignore
-
-  # ── Channels stop/start/remove lifecycle E2E (#3462, #3671) ─────────
-  # Regression coverage for #3453 (stop must disable across rebuild), #3381
-  # (start must re-attach from cached credentials), and #3671 (remove must
-  # detach/delete providers and survive rebuild with token env still present).
-  # Exercises OpenClaw and Hermes across telegram, discord, wechat, slack, and whatsapp.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-channels-add-remove.sh
+      timeout_minutes: 75
+      artifact_name: "install-log-channels-add-remove"
+      artifact_path: |
+        /tmp/nemoclaw-e2e-install.log
+        /tmp/nc-add.log
+        /tmp/nc-remove.log
+        /tmp/nc-rebuild-add.log
+        /tmp/nc-rebuild-remove.log
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-channels-add-remove","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-add-remove-e2e"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   channels-stop-start-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',channels-stop-start-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 120
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run channels stop/start/remove lifecycle E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_POLICY_TIER: "open"
-          NEMOCLAW_SANDBOX_NAME: "e2e-channels-stop-start"
-          GITHUB_TOKEN: ${{ github.token }}
-          TELEGRAM_BOT_TOKEN: "test-fake-telegram-token-stop-start-e2e"
-          TELEGRAM_ALLOWED_IDS: "123456789"
-          DISCORD_BOT_TOKEN: "test-fake-discord-token-stop-start-e2e"
-          DISCORD_SERVER_ID: "1491590992753590594"
-          DISCORD_ALLOWED_IDS: "1005536447329222676"
-          DISCORD_REQUIRE_MENTION: "0"
-          SLACK_BOT_TOKEN: "xoxb-fake-slack-token-stop-start-e2e"
-          SLACK_APP_TOKEN: "xapp-fake-slack-app-token-stop-start-e2e"
-          SLACK_ALLOWED_USERS: "U0123456789,U09ABCDEFGH"
-          WECHAT_BOT_TOKEN: "test-fake-wechat-token-stop-start-e2e"
-          WECHAT_ACCOUNT_ID: "e2e-fake-account-stop-start"
-          WECHAT_BASE_URL: "https://ilinkai-fake-stop-start.wechat.com"
-          WECHAT_USER_ID: "wxid_stopstart_operator"
-          WECHAT_ALLOWED_IDS: "wxid_stopstart_operator"
-        run: bash test/e2e/test-channels-stop-start.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: install-log-channels-stop-start
-          path: |
-            /tmp/nemoclaw-e2e-install.log
-            /tmp/nemoclaw-e2e-channels-*-install.log
-            /tmp/nc-channels-*.log
-          if-no-files-found: ignore
-
-  # ── Brave Search E2E (#2687) ─────────────────────────────────
-  # Validates the full Brave Search path with a real BRAVE_API_KEY:
-  # non-interactive onboard auto-enables web search, the brave network
-  # policy preset is applied, the real key never lands on disk in the
-  # sandbox-readable openclaw.json (placeholder only), and the openclaw
-  # agent + a placeholder-header curl each return real Brave results.
-  # ~3 Brave queries per run (1 onboard validation + 1 agent + 1 curl).
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-channels-stop-start.sh
+      timeout_minutes: 120
+      artifact_name: "install-log-channels-stop-start"
+      artifact_path: |
+        /tmp/nemoclaw-e2e-install.log
+        /tmp/nemoclaw-e2e-channels-*-install.log
+        /tmp/nc-channels-*.log
+      env_json: '{"DISCORD_ALLOWED_IDS":"1005536447329222676","DISCORD_BOT_TOKEN":"test-fake-discord-token-stop-start-e2e","DISCORD_REQUIRE_MENTION":"0","DISCORD_SERVER_ID":"1491590992753590594","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_SANDBOX_NAME":"e2e-channels-stop-start","SLACK_ALLOWED_USERS":"U0123456789,U09ABCDEFGH","SLACK_APP_TOKEN":"xapp-fake-slack-app-token-stop-start-e2e","SLACK_BOT_TOKEN":"xoxb-fake-slack-token-stop-start-e2e","TELEGRAM_ALLOWED_IDS":"123456789","TELEGRAM_BOT_TOKEN":"test-fake-telegram-token-stop-start-e2e","WECHAT_ACCOUNT_ID":"e2e-fake-account-stop-start","WECHAT_ALLOWED_IDS":"wxid_stopstart_operator","WECHAT_BASE_URL":"https://ilinkai-fake-stop-start.wechat.com","WECHAT_BOT_TOKEN":"test-fake-wechat-token-stop-start-e2e","WECHAT_USER_ID":"wxid_stopstart_operator"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   brave-search-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',brave-search-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run Brave Search E2E test
-        env:
-          # secrets.BRAVE_API_KEY is the only place the real key appears
-          # in this file. GitHub auto-masks any string matching it in
-          # workflow logs; the script also pipes diagnostic output
-          # through redact_stream "$BRAVE_API_KEY" as defence in depth.
-          BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-brave-search"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-brave-search-e2e.sh
-
-      - name: Upload onboard log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: install-log-brave-search
-          # The script scrubs $BRAVE_API_KEY from this log in place
-          # before the artifact is uploaded.
-          path: /tmp/nemoclaw-e2e-brave-search-onboard.log
-          if-no-files-found: ignore
-
-  # ── Kimi inference compatibility regression (#2620) ───────────
-  # Hermetic OpenAI-compatible endpoint path. The mock emits one combined
-  # Kimi exec tool call (`hostname; date; uptime`) and the test asserts the
-  # sandbox trajectory records three split exec calls with clean completion.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-brave-search-e2e.sh
+      artifact_name: "install-log-brave-search"
+      artifact_path: "/tmp/nemoclaw-e2e-brave-search-onboard.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-brave-search"}'
+      brave_api_key: true
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   kimi-inference-compat-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -858,310 +617,149 @@ jobs:
   # ── Sandbox survival (gateway restart recovery) ──────────────
   sandbox-survival-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',sandbox-survival-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run sandbox survival E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-survival"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-sandbox-survival.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: sandbox-survival-install-log
-          path: /tmp/nemoclaw-e2e-install.log
-          if-no-files-found: ignore
-
-  # ── #2478 crash-loop recovery (STAYS_IN_PR_UNTIL_SHIP) ───────
-  # Soak test for the gateway recovery preload chain hardening.
-  # Removed in the same commit that deletes
-  # test/e2e/test-issue-2478-crash-loop-recovery.sh before merge.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-sandbox-survival.sh
+      timeout_minutes: 30
+      artifact_name: "sandbox-survival-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-survival"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   issue-2478-crash-loop-recovery-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',issue-2478-crash-loop-recovery-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run #2478 crash-loop recovery E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-2478"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-issue-2478-crash-loop-recovery.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: issue-2478-crash-loop-recovery-install-log
-          path: /tmp/nemoclaw-e2e-install.log
-          if-no-files-found: ignore
-
-  # ── Hermes Agent E2E ─────────────────────────────────────────
-  # Validates the multi-agent architecture by onboarding with --agent hermes,
-  # verifying the Hermes health probe, and running live inference through the
-  # Hermes sandbox. See: PR #1618
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-issue-2478-crash-loop-recovery.sh
+      timeout_minutes: 30
+      artifact_name: "issue-2478-crash-loop-recovery-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-2478"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   hermes-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',hermes-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run Hermes Agent E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-hermes"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          NEMOCLAW_AGENT: "hermes"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-hermes-e2e.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hermes-e2e-install-log
-          path: /tmp/nemoclaw-e2e-hermes-install.log
-          if-no-files-found: ignore
-
-  # ── OpenClaw onboard security posture E2E ───────────────────────
-  # Full OpenClaw install/onboard/inference path, then asserts the Linux
-  # Docker-driver security posture that #3891 needed: non-root host user,
-  # static root-owned rc shims, and dynamic configure guards only in
-  # /tmp/nemoclaw-proxy-env.sh.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-hermes-e2e.sh
+      timeout_minutes: 60
+      artifact_name: "hermes-e2e-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-hermes-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   openclaw-onboard-security-posture-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',openclaw-onboard-security-posture-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-          persist-credentials: false
-
-      - name: Run OpenClaw onboard security posture E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-security-posture"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          NEMOCLAW_E2E_SECURITY_POSTURE: "1"
-          NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-full-e2e.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: openclaw-onboard-security-posture-install-log
-          path: /tmp/nemoclaw-e2e-install.log
-          if-no-files-found: ignore
-
-  # ── Hermes onboard security posture E2E ─────────────────────────
-  # Full Hermes install/onboard/health/inference path with the same posture
-  # assertions as OpenClaw. This specifically catches the #3891 class where
-  # startup rewrites /sandbox rc files under a non-root-host OpenShell posture.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-full-e2e.sh
+      timeout_minutes: 60
+      artifact_name: "openclaw-onboard-security-posture-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST":"1","NEMOCLAW_E2E_SECURITY_POSTURE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-security-posture"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   hermes-onboard-security-posture-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',hermes-onboard-security-posture-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-          persist-credentials: false
-
-      - name: Run Hermes onboard security posture E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-hermes-security-posture"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          NEMOCLAW_AGENT: "hermes"
-          NEMOCLAW_E2E_SECURITY_POSTURE: "1"
-          NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST: "1"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-hermes-e2e.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hermes-onboard-security-posture-install-log
-          path: /tmp/nemoclaw-e2e-hermes-install.log
-          if-no-files-found: ignore
-
-  # ── Hermes inference switch E2E ─────────────────────────────────
-  # Validates `nemohermes inference set` against a running Hermes sandbox:
-  # OpenShell route, config.yaml patch, config hashes, no automatic restart,
-  # and live requests after the switch.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-hermes-e2e.sh
+      timeout_minutes: 60
+      artifact_name: "hermes-onboard-security-posture-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-hermes-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST":"1","NEMOCLAW_E2E_SECURITY_POSTURE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-security-posture"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   hermes-inference-switch-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',hermes-inference-switch-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run Hermes inference switch E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-hermes-inference-switch"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          NEMOCLAW_AGENT: "hermes"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-hermes-inference-switch.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hermes-inference-switch-install-log
-          path: /tmp/nemoclaw-e2e-hermes-inference-switch-install.log
-          if-no-files-found: ignore
-
-  # ── Hermes Discord E2E ───────────────────────────────────────
-  # Validates Hermes onboarding with Discord enabled. Proves the Hermes
-  # sandbox gets top-level discord: config, never platforms.discord, and only
-  # OpenShell resolver placeholders in /sandbox/.hermes/.env.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-hermes-inference-switch.sh
+      timeout_minutes: 60
+      artifact_name: "hermes-inference-switch-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-hermes-inference-switch-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-inference-switch"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   hermes-discord-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',hermes-discord-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run Hermes Discord E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_POLICY_TIER: "open"
-          NEMOCLAW_SANDBOX_NAME: "e2e-hermes-discord"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          NEMOCLAW_AGENT: "hermes"
-          GITHUB_TOKEN: ${{ github.token }}
-          DISCORD_BOT_TOKEN: "test-fake-discord-token-hermes-e2e"
-          DISCORD_SERVER_IDS: "1491590992753590594"
-          DISCORD_ALLOWED_IDS: "1005536447329222676"
-          DISCORD_REQUIRE_MENTION: "0"
-        run: bash test/e2e/test-hermes-discord-e2e.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hermes-discord-e2e-install-log
-          path: /tmp/nemoclaw-e2e-hermes-discord-install.log
-          if-no-files-found: ignore
-
-  # ── Hermes Slack E2E ─────────────────────────────────────────
-  # Validates Hermes onboarding with Slack enabled. Proves the Hermes sandbox
-  # keeps the Hermes-specific Slack policy and that Python Slack API requests
-  # reach Slack through OpenShell placeholder substitution.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-hermes-discord-e2e.sh
+      timeout_minutes: 60
+      artifact_name: "hermes-discord-e2e-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-hermes-discord-install.log"
+      env_json: '{"DISCORD_ALLOWED_IDS":"1005536447329222676","DISCORD_BOT_TOKEN":"test-fake-discord-token-hermes-e2e","DISCORD_REQUIRE_MENTION":"0","DISCORD_SERVER_IDS":"1491590992753590594","NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-discord"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   hermes-slack-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',hermes-slack-e2e,'))
-    runs-on: linux-amd64-cpu4
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run Hermes Slack E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_POLICY_TIER: "open"
-          NEMOCLAW_SANDBOX_NAME: "e2e-hermes-slack"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          NEMOCLAW_AGENT: "hermes"
-          GITHUB_TOKEN: ${{ github.token }}
-          SLACK_BOT_TOKEN: "xoxb-test-hermes-slack-token"
-          SLACK_APP_TOKEN: "xapp-test-hermes-slack-app-token"
-        run: bash test/e2e/test-hermes-slack-e2e.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: hermes-slack-e2e-install-log
-          path: /tmp/nemoclaw-e2e-hermes-slack-install.log
-          if-no-files-found: ignore
-
-  # ── Sandbox operations (recovery + multi-sandbox isolation) ──
-  # Validates sandbox list, connect, status, logs, destroy, gateway
-  # auto-recovery after docker kill, registry rebuild, process recovery,
-  # multi-sandbox metadata, and cross-sandbox network isolation.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-hermes-slack-e2e.sh
+      runner: linux-amd64-cpu4
+      timeout_minutes: 60
+      artifact_name: "hermes-slack-e2e-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-hermes-slack-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-slack","SLACK_APP_TOKEN":"xapp-test-hermes-slack-app-token","SLACK_BOT_TOKEN":"xoxb-test-hermes-slack-token"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   sandbox-operations-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -1412,381 +1010,196 @@ jobs:
   # TC-INF-07: unreachable endpoint → classified transport error (PR-safe)
   inference-routing-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',inference-routing-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run inference error classification E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_POLICY_TIER: "open"
-        run: bash test/e2e/test-inference-routing.sh
-
-      - name: Upload test log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: inference-routing-test-log
-          path: test-inference-routing-*.log
-          if-no-files-found: ignore
-
-  # ── OpenClaw inference switch E2E ───────────────────────────────
-  # Validates `nemoclaw inference set` against a running OpenClaw sandbox:
-  # OpenShell route, openclaw.json patch, config hash, no automatic restart,
-  # and live requests after the switch.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-inference-routing.sh
+      timeout_minutes: 30
+      artifact_name: "inference-routing-test-log"
+      artifact_path: "test-inference-routing-*.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"open"}'
+      nvidia_api_key: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   openclaw-inference-switch-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',openclaw-inference-switch-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run OpenClaw inference switch E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-inference-switch"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-openclaw-inference-switch.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: openclaw-inference-switch-install-log
-          path: /tmp/nemoclaw-e2e-openclaw-inference-switch-install.log
-          if-no-files-found: ignore
-
-  # ── Network policy E2E ───────────────────────────────────────
-  # TC-NET-01..07, TC-NET-09: deny-by-default, whitelist, live policy-add,
-  # dry-run, hot-reload, inference exemption, permissive mode, SSRF validation.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-openclaw-inference-switch.sh
+      artifact_name: "openclaw-inference-switch-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-openclaw-inference-switch-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-inference-switch"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   network-policy-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',network-policy-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run network policy E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_POLICY_TIER: "restricted"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-        run: bash test/e2e/test-network-policy.sh
-
-      - name: Upload test log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: network-policy-test-log
-          path: test-network-policy-*.log
-          if-no-files-found: ignore
-
-  # ── Workspace Backup & Restore E2E ───────────────────────────
-  # TC-STATE-01: backup-workspace.sh lifecycle (backup → destroy → restore)
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-network-policy.sh
+      artifact_name: "network-policy-test-log"
+      artifact_path: "test-network-policy-*.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_POLICY_TIER":"restricted","NEMOCLAW_RECREATE_SANDBOX":"1"}'
+      nvidia_api_key: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   state-backup-restore-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',state-backup-restore-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run state backup/restore E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-        run: bash test/e2e/test-state-backup-restore.sh
-
-      - name: Upload test log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: state-backup-restore-test-log
-          path: test-state-backup-restore-*.log
-          if-no-files-found: ignore
-
-  # ── Tunnel Lifecycle E2E ─────────────────────────────────────
-  # TC-DEPLOY-01a/b/c: nemoclaw tunnel start / probe / stop (cloudflared tunnel)
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-state-backup-restore.sh
+      timeout_minutes: 60
+      artifact_name: "state-backup-restore-test-log"
+      artifact_path: "test-state-backup-restore-*.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1"}'
+      nvidia_api_key: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   tunnel-lifecycle-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',tunnel-lifecycle-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run tunnel lifecycle E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-        run: bash test/e2e/test-tunnel-lifecycle.sh
-
-      - name: Upload test log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: tunnel-lifecycle-test-log
-          path: test-tunnel-lifecycle-*.log
-          if-no-files-found: ignore
-
-  # ── Diagnostics E2E ─────────────────────────────────────────
-  # TC-DIAG-04: nemoclaw --version, TC-DIAG-02: debug --quick,
-  # TC-DIAG-01: debug tarball + credential sanitization,
-  # TC-DIAG-05: sandbox config, TC-DIAG-03: credentials list
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-tunnel-lifecycle.sh
+      timeout_minutes: 60
+      artifact_name: "tunnel-lifecycle-test-log"
+      artifact_path: "test-tunnel-lifecycle-*.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1"}'
+      nvidia_api_key: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   diagnostics-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',diagnostics-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run diagnostics E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-        run: bash test/e2e/test-diagnostics.sh
-
-      - name: Upload test log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: diagnostics-test-log
-          path: test-diagnostics-*.log
-          if-no-files-found: ignore
-
-  # ── Credential migration E2E ────────────────────────────────
-  # Validates the host-side credential storage hardening: pre-fix plaintext
-  # credentials.json is migrated into the OpenShell gateway during onboard,
-  # securely zero-filled and unlinked, non-allowlisted keys from a tampered
-  # file are not honored, and a planted symlink at the credentials path is
-  # link-only-unlinked without touching its target.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-diagnostics.sh
+      artifact_name: "diagnostics-test-log"
+      artifact_path: "test-diagnostics-*.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1"}'
+      nvidia_api_key: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   credential-migration-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',credential-migration-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run credential migration E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-cred-migration"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-credential-migration.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: install-log-credential-migration
-          path: /tmp/nemoclaw-e2e-install.log
-          if-no-files-found: ignore
-
-  # ── Snapshot commands E2E ────────────────────────────────────
-  # Validates snapshot create/list/restore lifecycle: create a snapshot,
-  # list it, delete state, restore from snapshot, verify state recovered.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-credential-migration.sh
+      timeout_minutes: 30
+      artifact_name: "install-log-credential-migration"
+      artifact_path: "/tmp/nemoclaw-e2e-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-cred-migration"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   snapshot-commands-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',snapshot-commands-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run snapshot commands E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-snapshot"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-snapshot-commands.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: snapshot-commands-install-log
-          path: /tmp/nemoclaw-e2e-install.log
-          if-no-files-found: ignore
-
-  # ── Shields & config lifecycle E2E ───────────────────────────
-  # Validates shields down/up controls config mutability, config get/set/
-  # rotate-token, audit trail, and auto-restore timer.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-snapshot-commands.sh
+      timeout_minutes: 30
+      artifact_name: "snapshot-commands-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-snapshot"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   shields-config-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',shields-config-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run shields & config E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-shields"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-shields-config.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: shields-config-install-log
-          path: /tmp/nemoclaw-e2e-shields-install.log
-          if-no-files-found: ignore
-
-  # ── OpenClaw rebuild upgrade E2E ─────────────────────────────
-  # Reproduces NVBug 6076156: onboard with an older OpenClaw version,
-  # then rebuild to verify workspace state survives the upgrade.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-shields-config.sh
+      timeout_minutes: 30
+      artifact_name: "shields-config-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-shields-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-shields"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   rebuild-openclaw-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',rebuild-openclaw-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run OpenClaw rebuild upgrade E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-rebuild-oc"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-rebuild-openclaw.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rebuild-openclaw-install-log
-          path: /tmp/nemoclaw-e2e-install.log
-          if-no-files-found: ignore
-
-  # ── Issue #1904: stale sandbox after NemoClaw upgrade ────────
-  # Exact reproduction of the reporter's scenario: install an older
-  # NemoClaw, create a sandbox, upgrade to current, verify the old
-  # sandbox is detected as stale and rebuilt with the new image.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-rebuild-openclaw.sh
+      timeout_minutes: 60
+      artifact_name: "rebuild-openclaw-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-rebuild-oc"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   upgrade-stale-sandbox-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',upgrade-stale-sandbox-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run upgrade stale sandbox E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-upgrade-stale"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-upgrade-stale-sandbox.sh
-
-      - name: Upload install logs on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: upgrade-stale-sandbox-logs
-          path: |
-            /tmp/nemoclaw-e2e-old-install.log
-            /tmp/nemoclaw-e2e-upgrade-install.log
-          if-no-files-found: ignore
-
-  # ── OpenShell gateway upgrade E2E ────────────────────────────
-  # Reproduces the old-install upgrade edge case: a working claw on the previous
-  # NemoClaw/OpenShell release must run through current curl-style install/onboard
-  # and keep the same in-sandbox agent process alive under the upgraded gateway.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-upgrade-stale-sandbox.sh
+      timeout_minutes: 60
+      artifact_name: "upgrade-stale-sandbox-logs"
+      artifact_path: |
+        /tmp/nemoclaw-e2e-old-install.log
+        /tmp/nemoclaw-e2e-upgrade-install.log
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-upgrade-stale"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   openshell-gateway-upgrade-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -1832,73 +1245,40 @@ jobs:
   # Same upgrade scenario as OpenClaw but for Hermes Agent.
   rebuild-hermes-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',rebuild-hermes-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run Hermes rebuild upgrade E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-rebuild-hm"
-          NEMOCLAW_AGENT: "hermes"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-rebuild-hermes.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rebuild-hermes-install-log
-          path: /tmp/nemoclaw-e2e-install.log
-          if-no-files-found: ignore
-
-  # ── Hermes stale base-image rebuild E2E ─────────────────────────
-  # Regression coverage for issue #3025: rebuild must refresh a stale cached
-  # Hermes base image before recreating the sandbox.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-rebuild-hermes.sh
+      timeout_minutes: 60
+      artifact_name: "rebuild-hermes-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-rebuild-hm"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   rebuild-hermes-stale-base-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',rebuild-hermes-stale-base-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run Hermes stale base-image rebuild E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-rebuild-hm-base"
-          NEMOCLAW_AGENT: "hermes"
-          NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E: "1"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-rebuild-hermes.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: rebuild-hermes-stale-base-install-log
-          path: /tmp/nemoclaw-e2e-install.log
-          if-no-files-found: ignore
-
-  # ── Double Onboard / Lifecycle Recovery E2E ──────────────────
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-rebuild-hermes.sh
+      timeout_minutes: 60
+      artifact_name: "rebuild-hermes-stale-base-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_HERMES_STALE_BASE_REBUILD_E2E":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-rebuild-hm-base"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   double-onboard-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
@@ -2192,82 +1572,42 @@ jobs:
   # TEMPORARY: validates the auto-fix in src/lib/cluster-image-patch.ts.
   overlayfs-autofix-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',overlayfs-autofix-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run overlayfs auto-fix E2E test
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-overlayfs"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-overlayfs-autofix.sh
-
-      - name: Upload onboard logs on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: overlayfs-autofix-logs
-          path: |
-            /tmp/nemoclaw-e2e-install.log
-            /tmp/nemoclaw-e2e-onboard-positive.log
-            /tmp/nemoclaw-e2e-onboard-negative.log
-          if-no-files-found: ignore
-
-  # ── Device Auth Health Probe (#2342) ────────────────────────────
-  # Regression test for #2342: verifies health probes work correctly when
-  # device auth is enabled (the default). Previously `curl -sf` treated
-  # HTTP 401 as failure, causing false "Health Offline" readings.
-  # Validates: /health returns 200, / returns 401, status != Offline,
-  # gateway recovery with device auth, port forward liveness.
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-overlayfs-autofix.sh
+      artifact_name: "overlayfs-autofix-logs"
+      artifact_path: |
+        /tmp/nemoclaw-e2e-install.log
+        /tmp/nemoclaw-e2e-onboard-positive.log
+        /tmp/nemoclaw-e2e-onboard-negative.log
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-overlayfs"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   device-auth-health-e2e:
     if: >-
-      github.repository == 'NVIDIA/NemoClaw' &&
-      (github.event_name != 'workflow_dispatch' ||
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
        inputs.jobs == '' ||
        contains(format(',{0},', inputs.jobs), ',device-auth-health-e2e,'))
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          ref: ${{ inputs.target_ref || github.ref }}
-
-      - name: Run device auth health E2E
-        env:
-          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-          NEMOCLAW_NON_INTERACTIVE: "1"
-          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
-          NEMOCLAW_SANDBOX_NAME: "e2e-health-auth"
-          NEMOCLAW_RECREATE_SANDBOX: "1"
-          GITHUB_TOKEN: ${{ github.token }}
-        run: bash test/e2e/test-device-auth-health.sh
-
-      - name: Upload install log on failure
-        if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: device-auth-health-install-log
-          path: /tmp/nemoclaw-e2e-health-install.log
-          if-no-files-found: ignore
-
-  # ── Launchable Install-Flow Smoke Test ─────────────────────────
-  # Validates the community install path (brev-launchable-ci-cpu.sh) end-to-end.
-  # The launchable script has ZERO Brev dependencies — it's a generic Ubuntu
-  # bootstrap script that runs on ubuntu-latest. Catches regressions like the
-  # Apr 20-25 Brev outage (#2472, #2482) and container reachability fallback (#2425).
-  # See: issue #2599
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-device-auth-health.sh
+      timeout_minutes: 30
+      artifact_name: "device-auth-health-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-health-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-health-auth"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   launchable-smoke-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' &&
