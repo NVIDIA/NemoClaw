@@ -37,6 +37,11 @@ on:
         required: false
         type: string
         default: "{}"
+      checked_out_ref_env:
+        description: Optional environment variable name to set to the checked-out commit SHA.
+        required: false
+        type: string
+        default: ""
       nvidia_api_key:
         description: Pass the NVIDIA_API_KEY secret to the script.
         required: false
@@ -72,6 +77,28 @@ jobs:
           ref: ${{ inputs.ref }}
           path: repo
           persist-credentials: false
+
+      - name: Export checked-out ref environment
+        if: ${{ inputs.checked_out_ref_env != '' }}
+        env:
+          E2E_CHECKED_OUT_REF_ENV: ${{ inputs.checked_out_ref_env }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$E2E_CHECKED_OUT_REF_ENV" =~ ^[A-Z_][A-Z0-9_]*$ ]]; then
+            echo "::error::Invalid checked_out_ref_env variable name: $E2E_CHECKED_OUT_REF_ENV" >&2
+            exit 1
+          fi
+
+          case "$E2E_CHECKED_OUT_REF_ENV" in
+            ACTIONS_*|GITHUB_*|INPUT_*|RUNNER_*|CI|HOME|PATH|PWD|SHELL)
+              echo "::error::Reserved checked_out_ref_env variable name: $E2E_CHECKED_OUT_REF_ENV" >&2
+              exit 1
+              ;;
+          esac
+
+          printf '%s=%s\n' "$E2E_CHECKED_OUT_REF_ENV" "$(git -C repo rev-parse HEAD)" >> "$GITHUB_ENV"
 
       - name: Checkout workflow action
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2

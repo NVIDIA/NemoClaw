@@ -210,7 +210,22 @@ const MESSAGING_PRESET_LABELS: Record<string, string> = {
   whatsapp: "WhatsApp",
 };
 
-function getMessagingPresetWarning(presetName: string): string | null {
+function getPresetValidationWarning(presetName: string): string | null {
+  if (presetName === "jira") {
+    return [
+      "Jira preset validation uses per-binary policy signals.",
+      "Node HTTPS is allowed for Atlassian API traffic:",
+      'node -e "require(\'https\').get(\'https://api.atlassian.com\', r => console.log(r.statusCode))"',
+      "curl is intentionally not in the preset binary allowlist. Avoid plain",
+      "curl -s probes for auth.atlassian.com: Atlassian can return an empty",
+      "redirect body, which looks the same as a blocked request. Use an",
+      "observable status probe instead:",
+      "curl -sS -o /dev/null -w '%{http_code}' --max-time 10 https://auth.atlassian.com",
+      "Before approval, expect 000 or a local policy denial; after approval,",
+      "expect an HTTP status such as 301 or 200.",
+    ].join("\n  ");
+  }
+
   const label = MESSAGING_PRESET_LABELS[presetName];
   if (!label) return null;
   const lines = [
@@ -1199,7 +1214,7 @@ export {
   listPresets,
   loadPreset,
   getPresetEndpoints,
-  getMessagingPresetWarning,
+  getPresetValidationWarning,
   setupPolicyPresetSupported,
   filterSetupPolicyPresets,
   listSetupPolicyPresets,

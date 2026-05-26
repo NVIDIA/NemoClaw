@@ -68,12 +68,23 @@ describe("E2E reusable workflow contract", () => {
       if (parsed.NEMOCLAW_INSTALL_REF !== undefined) {
         expect(parsed.NEMOCLAW_INSTALL_REF, name).toBe("${{ inputs.target_ref || github.ref }}");
       }
-      if (parsed.NEMOCLAW_PUBLIC_INSTALL_REF !== undefined) {
-        expect(parsed.NEMOCLAW_PUBLIC_INSTALL_REF, name).toBe(
-          "${{ inputs.target_ref || github.ref }}",
-        );
-      }
+      expect(parsed.NEMOCLAW_PUBLIC_INSTALL_REF, name).toBeUndefined();
     }
+  });
+
+  it("exports checked-out commit SHAs for reusable public-installer jobs", () => {
+    const publicInstallerJob = nightlyWorkflow.jobs["cloud-onboard-e2e"];
+    const exportStep = runnerWorkflow.jobs.run.steps.find(
+      (step) => step.name === "Export checked-out ref environment",
+    );
+
+    expect(publicInstallerJob.with?.checked_out_ref_env).toBe("NEMOCLAW_PUBLIC_INSTALL_REF");
+    expect(exportStep?.env?.E2E_CHECKED_OUT_REF_ENV).toBe(
+      "${{ inputs.checked_out_ref_env }}",
+    );
+    expect(exportStep?.run).toContain('[[ ! "$E2E_CHECKED_OUT_REF_ENV" =~ ^[A-Z_][A-Z0-9_]*$ ]]');
+    expect(exportStep?.run).toContain('git -C repo rev-parse HEAD');
+    expect(exportStep?.run).toContain('>> "$GITHUB_ENV"');
   });
 
   it("keeps converted jobs dispatchable through the reusable workflow", () => {

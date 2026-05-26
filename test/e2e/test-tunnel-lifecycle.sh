@@ -116,7 +116,7 @@ preflight() {
   if ! command -v cloudflared >/dev/null 2>&1; then
     # Install via Cloudflare's GPG-signed APT repo — trust anchor for secret-bearing
     # CI; APT verifies GPG-signed Release → package SHA256 (no per-version SHA pin).
-    local cf_version="${CLOUDFLARED_VERSION:-2026.5.0}"
+    local cf_version="${CLOUDFLARED_VERSION:-2026.5.1}"
     log "Installing cloudflared ${cf_version} via Cloudflare APT repo..."
     sudo mkdir -p --mode=0755 /usr/share/keyrings
     curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \

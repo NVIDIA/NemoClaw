@@ -178,6 +178,20 @@ $ nemoclaw my-assistant policy-add github --yes
 $ nemoclaw my-assistant policy-add jira --yes
 ```
 
+The `jira` preset intentionally allows Node.js access to Atlassian Cloud and does not allow `curl`.
+When validating it manually, avoid plain `curl -s` against `auth.atlassian.com`.
+Atlassian can return an empty redirect body even when the request succeeds.
+Use an explicit status probe instead:
+
+```console
+$ node -e "require('https').get('https://api.atlassian.com', r => console.log(r.statusCode))"
+$ curl -sS -o /dev/null -w '%{http_code}' --max-time 10 https://auth.atlassian.com
+```
+
+Before approval, the curl probe should report `000` or a local policy denial.
+After approving the blocked request in OpenShell, it should report an HTTP
+status such as `301` or `200`.
+
 Remove access when the task is done:
 
 ```console

@@ -78,6 +78,13 @@ export const QWEN3_6_OLLAMA_MODEL = assertRegistryTag("qwen3.6:35b");
 
 export type RunCaptureFn = (cmd: string | string[], opts?: { ignoreError?: boolean }) => string;
 
+export {
+  getInstalledOllamaVersion,
+  getRunningOllamaDaemonVersion,
+  isOllamaVersionAtLeast,
+  MIN_OLLAMA_VERSION,
+} from "./ollama-version";
+
 export type RunCaptureExFn = (cmd: string[]) => CaptureResult;
 
 // Hosts that the WSL-side onboard CLI tries when probing Ollama. Native Linux

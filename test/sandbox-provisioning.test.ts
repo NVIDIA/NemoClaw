@@ -285,6 +285,95 @@ describe("sandbox provisioning: image health checks (#1430)", () => {
     }
   });
 
+  // #3975: on runtime shapes where the dashboard port lives in a different
+  // network namespace (DGX Spark / OpenShell-managed forwarding), the
+  // in-container curl probe sees "connection refused" while the actual
+  // delivery chain is fine. The healthcheck must not contradict that by
+  // failing the container outright — it falls back to verifying that the
+  // OpenClaw gateway process is still alive in this container.
+  describe("falls back to local liveness when the in-container dashboard port has no listener (#3975)", () => {
+    function runProductionHealthProbe({
+      curlExit,
+      pgrepExit,
+      gatewayLog = "gateway log line\n",
+    }: {
+      curlExit: number;
+      pgrepExit: number;
+      gatewayLog?: string;
+    }) {
+      const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-fallback-"));
+      const logPath = path.join(tmp, "gateway.log");
+      const rawCommand = dockerHealthCommandBetween(
+        dockerfile,
+        "# Health check: poll the gateway's /health endpoint",
+        "# Entrypoint runs as root",
+      );
+      const command = rawCommand.replaceAll("/tmp/gateway.log", logPath);
+
+      if (gatewayLog !== "") {
+        fs.writeFileSync(logPath, gatewayLog);
+      }
+
+      try {
+        const probe = runLoggedDockerShell(command, tmp, [
+          `curl() { printf "curl %s\\n" "$*" >> "$call_log"; return ${curlExit}; }`,
+          `pgrep() { printf "pgrep %s\\n" "$*" >> "$call_log"; return ${pgrepExit}; }`,
+        ]);
+        return probe;
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+
+    it("reports healthy when in-container curl works (Docker-driver / standalone)", () => {
+      const probe = runProductionHealthProbe({ curlExit: 0, pgrepExit: 1, gatewayLog: "" });
+      expect(probe.result.status).toBe(0);
+      expect(probe.calls).toContain("curl");
+      // Fast path: should not consult pgrep at all.
+      expect(probe.calls).not.toContain("pgrep");
+    });
+
+    it("reports healthy when curl gets connection refused but openclaw is alive and started (DGX Spark / OpenShell-managed)", () => {
+      const probe = runProductionHealthProbe({ curlExit: 7, pgrepExit: 0 });
+      expect(probe.result.status).toBe(0);
+      expect(probe.calls).toContain("curl");
+      // --ignore-ancestors prevents pgrep from self-matching the
+      // healthcheck shell whose argv contains the gateway pattern.
+      // The [ -] class matches both `openclaw gateway` (launcher) and
+      // `openclaw-gateway` (re-execed binary).
+      expect(probe.calls).toContain("pgrep --ignore-ancestors -f openclaw[ -]gateway");
+    });
+
+    it("reports unhealthy when curl times out (wedged HTTP server, not namespace mismatch)", () => {
+      // A connect timeout means a listener exists but is not responding,
+      // e.g. a wedged HTTP server. We deliberately do not fall back to the
+      // process check there — Docker should restart the container.
+      const probe = runProductionHealthProbe({ curlExit: 28, pgrepExit: 0 });
+      expect(probe.result.status).toBe(1);
+      expect(probe.calls).not.toContain("pgrep");
+    });
+
+    it("reports unhealthy when curl gets connection refused and openclaw is not running", () => {
+      const probe = runProductionHealthProbe({ curlExit: 7, pgrepExit: 1 });
+      expect(probe.result.status).toBe(1);
+    });
+
+    it("reports unhealthy when curl gets connection refused and the gateway log was never written (openclaw never started)", () => {
+      const probe = runProductionHealthProbe({ curlExit: 7, pgrepExit: 0, gatewayLog: "" });
+      expect(probe.result.status).toBe(1);
+    });
+
+    it("does not fall back when curl reports an HTTP error (gateway answered with failure)", () => {
+      const probe = runProductionHealthProbe({ curlExit: 22, pgrepExit: 0 });
+      expect(probe.result.status).toBe(1);
+      // HTTP errors from the in-container probe should bypass the fallback;
+      // a 4xx/5xx means the gateway is reachable and unhappy, not a
+      // namespace mismatch — so pgrep should not run.
+      expect(probe.calls).not.toContain("pgrep");
+    });
+  });
+
   it.each([
     [
       "base image",
@@ -583,8 +672,10 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-mode-"));
     const blueprintRoot = path.join(tmp, "opt", "nemoclaw-blueprint");
+    const nemoclawRoot = path.join(tmp, "opt", "nemoclaw");
     const manifestDir = path.join(blueprintRoot, "model-specific-setup", "openclaw");
     const manifestPath = path.join(manifestDir, "kimi-k2.6-managed-inference.json");
+    const pluginPackageJson = path.join(nemoclawRoot, "package.json");
 
     try {
       fs.mkdirSync(manifestDir, { recursive: true });
@@ -592,17 +683,26 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       fs.chmodSync(path.join(blueprintRoot, "model-specific-setup"), 0o700);
       fs.chmodSync(manifestDir, 0o700);
       fs.chmodSync(manifestPath, 0o600);
+      fs.mkdirSync(nemoclawRoot, { recursive: true });
+      fs.writeFileSync(pluginPackageJson, "{}\n", { mode: 0o400 });
+      fs.chmodSync(nemoclawRoot, 0o700);
+      fs.chmodSync(pluginPackageJson, 0o400);
 
       const command = dockerRunCommandBetween(
         dockerfile,
         "# Copy built plugin and blueprint",
         "# Install runtime dependencies only",
-      ).replaceAll("/opt/nemoclaw-blueprint", blueprintRoot);
+      )
+        .replaceAll("/opt/nemoclaw-blueprint", "__BLUEPRINT__")
+        .replaceAll("/opt/nemoclaw", nemoclawRoot)
+        .replaceAll("__BLUEPRINT__", blueprintRoot);
       const { result } = runLoggedDockerShell(command, tmp);
 
       expect(result.status, result.stderr).toBe(0);
       expect((fs.statSync(manifestDir).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(manifestPath).mode & 0o777).toString(8)).toBe("644");
+      expect((fs.statSync(nemoclawRoot).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(pluginPackageJson).mode & 0o777).toString(8)).toBe("444");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

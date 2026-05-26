@@ -105,6 +105,9 @@ const {
 const {
   installOllamaOnLinux,
 }: typeof import("./onboard/install-ollama-linux") = require("./onboard/install-ollama-linux");
+const {
+  installOllamaOnMacOS,
+}: typeof import("./onboard/install-ollama-macos") = require("./onboard/install-ollama-macos");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -183,6 +186,9 @@ const {
   validateOllamaModel,
   validateLocalProvider,
 } = localInference;
+const { resolveOllamaInstallMenuEntry, assertOllamaUpgradeApplied } = require(
+  "./onboard/ollama-install-menu",
+);
 const {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
@@ -412,7 +418,7 @@ const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
-  findDashboardForwardOwner,
+  preflightDashboardPortRangeAvailability,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
 const { verifyGatewayContainerRunning } =
@@ -2359,7 +2365,7 @@ async function preflight(
     }
   }
 
-  return gpu;
+  if (_preflightDashboardPort === null) preflightDashboardPortRangeAvailability(); return gpu; // #3953 — fail-fast before next step
 }
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
@@ -4219,7 +4225,10 @@ async function selectAndValidateOllamaModel(
       },
     );
     if (validation.retry === "selection") return { outcome: "back-to-selection" };
-    if (!validation.ok) continue;
+    if (!validation.ok) {
+      if (isNonInteractive()) process.exit(1);
+      continue;
+    }
     // Ollama's /v1/responses endpoint does not produce correctly formatted
     // tool calls — force chat completions like vLLM/NIM.
     if (validation.api !== "openai-completions") {
@@ -4261,7 +4270,6 @@ async function setupNim(
   // (#2674).
   const localProbeCurlArgs = ["--connect-timeout", "2", "--max-time", "5"] as const;
   const hasOllama = hostCommandExists("ollama");
-  // run and consumed by the Ollama lifecycle helpers in inference/local.ts.
   const ollamaHost = findReachableOllamaHost();
   const ollamaRunning = ollamaHost !== null;
   const vllmRunning = !!runCapture(
@@ -4350,6 +4358,7 @@ async function setupNim(
       vllmRunning,
       vllmProfile,
       experimental: EXPERIMENTAL,
+      platform: gpu?.platform,
       hasVllmImage,
     }),
   );
@@ -4375,19 +4384,15 @@ async function setupNim(
       label: "Install Ollama on Windows host (recommended)",
     });
   }
-  // Without any Ollama, offer to install one locally as a fallback (e.g. when
-  // the NVIDIA API server is down and cloud keys are unavailable).
-  if (!hasOllama && !ollamaRunning && !hasWindowsOllama) {
-    if (process.platform === "darwin") {
-      options.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
-    } else if (process.platform === "linux") {
-      if (isWsl()) {
-        options.push({ key: "install-ollama", label: "Install Ollama (WSL Linux)" });
-      } else {
-        options.push({ key: "install-ollama", label: "Install Ollama (Linux)" });
-      }
-    }
-  }
+  const ollamaInstallMenu = resolveOllamaInstallMenuEntry({
+    hasOllama,
+    ollamaRunning,
+    hasWindowsOllama,
+    ollamaHost,
+    platform: process.platform,
+    isWsl: isWsl(),
+  });
+  if (ollamaInstallMenu.entry) options.push(ollamaInstallMenu.entry);
 
   // Model Router: complexity-based routing via blueprint config.
   const blueprintRouterCfg = loadBlueprintProfile("routed");
@@ -5265,26 +5270,19 @@ async function setupNim(
         break;
       } else if (selected.key === "install-ollama") {
         if (!checkOllamaPortsOrWarn()) continue selectionLoop;
-        if (process.platform === "darwin") {
-          console.log("  Installing Ollama via Homebrew...");
-          run(["brew", "install", "ollama"], { ignoreError: true });
-          // brew install doesn't auto-start a service; launch directly.
-          // Shell required: backgrounding (&), env var prefix, output redirection.
-          console.log("  Starting Ollama...");
-          runShell(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
-            ignoreError: true,
-          });
-          if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
-            console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
-        } else {
-          const installResult = installOllamaOnLinux({ isNonInteractive });
-          if (!installResult.ok) {
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
+        const isUpgrade = ollamaInstallMenu.hasUpgradableOllama;
+        const installResult = process.platform === "darwin"
+          ? installOllamaOnMacOS({ isNonInteractive, isUpgrade })
+          : installOllamaOnLinux({ isNonInteractive, isUpgrade });
+        if (!installResult.ok) {
+          if (isNonInteractive()) process.exit(1);
+          continue selectionLoop;
+        }
+        const upgradeCheck = assertOllamaUpgradeApplied(ollamaInstallMenu);
+        if (!upgradeCheck.ok) {
+          console.error(`  ${upgradeCheck.message}`);
+          if (isNonInteractive()) process.exit(1);
+          continue selectionLoop;
         }
         if (shouldFrontOllamaWithProxy()) {
           if (!startOllamaAuthProxy()) process.exit(1);
@@ -6725,7 +6723,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
-  _preflightDashboardPort = opts.controlUiPort || null;
+  _preflightDashboardPort = opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
@@ -7083,6 +7081,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         updateSession: onboardSession.updateSession,
       },
     });
+    if (resume && _preflightDashboardPort === null) preflightDashboardPortRangeAvailability(); // #3953 — resume must mirror preflight()'s fail-fast
     session = preflightResult.session;
     const {
       sandboxGpuConfig,
@@ -7530,7 +7529,6 @@ module.exports = {
 
   startGateway,
   findAvailableDashboardPort,
-  findDashboardForwardOwner,
   startGatewayForRecovery,
   openshellArgv,
   runCaptureOpenshell,
