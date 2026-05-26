@@ -279,7 +279,7 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   return false;
 }
 
-const PROTECTED_USER_DATA_DIRS: readonly string[] = ["rebuild-backups"];
+const PROTECTED_USER_DATA_DIRS: readonly string[] = ["rebuild-backups", "backups"];
 
 interface ProtectedDirEntry {
   name: string;

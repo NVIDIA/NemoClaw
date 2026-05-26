@@ -320,6 +320,31 @@ describe("uninstall run plan", () => {
     expect(logs).toContain("Claws retracted. Until next time.");
   });
 
+  it("aborts with exit 1 when ~/.nemoclaw/backups exists (manual backup-workspace.sh target)", () => {
+    const logs: string[] = [];
+    const run = vi.fn();
+    const backupsDir = path.join("/home/test", ".nemoclaw", "backups");
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        existsSync: (target) => target === backupsDir,
+        readdirSync: (target) => (target === backupsDir ? ["20260320-120000"] : []),
+        listRegisteredSandboxes: () => [],
+        listSandboxDockerContainers: () => [],
+        log: (line) => logs.push(line),
+        run,
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(logs.some((line) => line.includes(backupsDir))).toBe(true);
+    expect(logs.some((line) => line.includes("20260320-120000"))).toBe(true);
+    expect(logs).toContain("  Aborted.");
+    expect(run).not.toHaveBeenCalled();
+  });
+
   it("aborts with exit 1 when registered sandboxes exist and NEMOCLAW_UNINSTALL_DESTROY_USER_DATA is unset", () => {
     const logs: string[] = [];
     const run = vi.fn();
