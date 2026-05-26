@@ -382,7 +382,7 @@ Acceptance criteria:
 - Live-secret requirements are explicit.
 - No raw Slack/Discord/Telegram credentials appear in logs, config artifacts, or failure output.
 
-## Phase 5: Migrate Hermes Rebuild and Durable State
+## Phase 5: Migrate Hermes Rebuild and Durable State [COMPLETED: 79bbe2f]
 
 Goal: Move Hermes-specific rebuild assertions into scenario suites without duplicating generic rebuild coverage owned elsewhere.
 
