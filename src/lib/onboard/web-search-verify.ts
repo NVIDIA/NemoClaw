@@ -117,6 +117,16 @@ export function verifyWebSearchInsideSandbox(
           warn("  ⚠ Brave Search is enabled but openclaw.json has no API key placeholder.");
           return;
         }
+        // Refuse to interpolate raw secrets into the curl argv. The probe
+        // only proves the L7 proxy rewrites a placeholder, so a literal key
+        // would expose itself in host/sandbox process listings without
+        // testing the thing we care about.
+        if (!/^openshell:resolve:env:[A-Za-z0-9_]+$/.test(search.apiKey.trim())) {
+          warn(
+            "  ⚠ Brave Search apiKey in openclaw.json is not an OpenShell placeholder; skipping egress probe.",
+          );
+          return;
+        }
         const probe = deps.runCaptureOpenshell(
           [
             "sandbox",

@@ -96,6 +96,30 @@ describe("verifyWebSearchInsideSandbox", () => {
     );
   });
 
+  it("refuses to probe when the apiKey is a literal secret rather than a placeholder", () => {
+    const d = deps([
+      JSON.stringify({
+        tools: {
+          web: {
+            search: {
+              enabled: true,
+              provider: "brave",
+              apiKey: "BSA-real-looking-secret-do-not-interpolate",
+            },
+          },
+        },
+      }),
+    ]);
+
+    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
+
+    // Only the openclaw.json read happens — no curl probe with the raw key.
+    expect(d.runCaptureOpenshell).toHaveBeenCalledTimes(1);
+    expect(d.warn).toHaveBeenCalledWith(
+      "  ⚠ Brave Search apiKey in openclaw.json is not an OpenShell placeholder; skipping egress probe.",
+    );
+  });
+
   it("warns when OpenClaw config is malformed or disabled", () => {
     const malformed = deps("not-json");
     verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, malformed);
