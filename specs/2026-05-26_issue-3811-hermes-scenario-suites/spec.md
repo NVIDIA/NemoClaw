@@ -516,7 +516,7 @@ Acceptance criteria:
 - Validation evidence exists for the highest-risk current-bug scenarios.
 - Expected metadata is updated if reality differs from the issue inventory.
 
-## Phase 9: Clean the House
+## Phase 9: Clean the House [COMPLETED: 52f5dfd]
 
 Goal: Remove migration debris and leave the scenario framework easier to maintain.
 
