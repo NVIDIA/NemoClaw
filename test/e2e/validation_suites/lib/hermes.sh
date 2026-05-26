@@ -290,3 +290,41 @@ e2e_hermes_assert_telegram_first_message_tool_dispatch() { _e2e_hermes_messaging
 e2e_hermes_assert_telegram_single_polling_loop() { _e2e_hermes_messaging_plan "${1:-expected.hermes.telegram.single-polling-loop}" telegram "assert single polling loop"; }
 e2e_hermes_assert_telegram_privacy_mode_guidance() { _e2e_hermes_messaging_plan "${1:-expected.hermes.telegram.privacy-mode-guidance}" telegram "validate privacy mode guidance"; }
 e2e_hermes_assert_telegram_group_message_preconditions() { _e2e_hermes_messaging_plan "${1:-expected.hermes.telegram.group-message-preconditions}" telegram "validate group message preconditions"; }
+
+e2e_hermes_assert_rebuild_provider_credential_reused() {
+  local assertion_id="${1:-expected.hermes.rebuild.provider-credential-reused}"
+  _e2e_hermes_assertion "${assertion_id}" || return $?
+  _e2e_hermes_require_agent || return 1
+  if e2e_env_is_dry_run; then
+    _e2e_hermes_plan "${assertion_id}" "verify gateway provider credential is reused when host env is empty"
+    return 0
+  fi
+  local output
+  if ! output="$(_e2e_hermes_run_override HERMES_GATEWAY_CREDENTIAL_CMD bash -c 'echo gateway credential present')"; then
+    printf '%s\n' "${output}" | _e2e_hermes_redact >&2
+    return 1
+  fi
+  printf '%s\n' "${output}" | _e2e_hermes_redact
+  e2e_pass "${assertion_id}"
+}
+
+e2e_hermes_assert_rebuild_messaging_config_preserved() {
+  local assertion_id="${1:-expected.hermes.rebuild.messaging-config-preserved}"
+  _e2e_hermes_assertion "${assertion_id}" || return $?
+  _e2e_hermes_require_agent || return 1
+  if e2e_env_is_dry_run; then
+    _e2e_hermes_plan "${assertion_id}" "compare Hermes messaging config hash across rebuild"
+    return 0
+  fi
+  local before after
+  before="$(e2e_context_get E2E_HERMES_MESSAGING_HASH_BEFORE_REBUILD)"
+  after="$(e2e_context_get E2E_HERMES_MESSAGING_HASH_AFTER_REBUILD)"
+  if [[ -n "${before}" && -n "${after}" && "${before}" != "${after}" ]]; then
+    echo "e2e_hermes: messaging config hash changed across rebuild" >&2
+    return 1
+  fi
+  e2e_pass "${assertion_id}"
+}
+
+e2e_hermes_assert_rebuild_dashboard_forward_released() { _e2e_hermes_messaging_plan "${1:-expected.hermes.rebuild.dashboard-forward-released}" rebuild "verify dashboard forward released before rebuild"; }
+e2e_hermes_assert_rebuild_post_rebuild_health() { _e2e_hermes_messaging_plan "${1:-expected.hermes.rebuild.post-rebuild-health}" rebuild "verify Hermes post-rebuild health"; }

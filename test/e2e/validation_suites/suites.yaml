@@ -168,6 +168,17 @@ suites:
       script: hermes/telegram/02-privacy-mode-guidance.sh
     - id: telegram-group-message-preconditions
       script: hermes/telegram/03-group-message-preconditions.sh
+  hermes-rebuild:
+    requires_state: *id009
+    steps:
+    - id: rebuild-provider-credential-reused
+      script: hermes/rebuild/00-provider-credential-reused.sh
+    - id: rebuild-messaging-config-preserved
+      script: hermes/rebuild/01-messaging-config-preserved.sh
+    - id: rebuild-dashboard-forward-released
+      script: hermes/rebuild/02-dashboard-forward-released.sh
+    - id: rebuild-post-rebuild-health
+      script: hermes/rebuild/03-post-rebuild-health.sh
   gateway-health:
     requires_state: *id001
     steps: *id002
