@@ -304,7 +304,7 @@ Acceptance criteria:
 - The coverage report surfaces Hermes covered/pass, expected-fail, deferred/gated, out-of-scope, and retired classifications.
 - No stale workflow-level parity map is recreated.
 
-## Phase 3: Migrate Hermes Inference Switching and Provider Routing
+## Phase 3: Migrate Hermes Inference Switching and Provider Routing [COMPLETED: b491fc4]
 
 Goal: Move Hermes inference switching behavior from `test-hermes-inference-switch.sh` into scenario suites with route/config checks separated from external provider availability.
 
