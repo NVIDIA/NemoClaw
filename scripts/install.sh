@@ -1666,7 +1666,8 @@ print_openshell_upgrade_manual_commands() {
   cat <<EOF
   Manual upgrade path:
     ${_CLI_BIN} backup-all
-    openshell gateway destroy -g nemoclaw || openshell gateway destroy
+    openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy
+    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
     ${_CLI_BIN} upgrade-sandboxes --check
 

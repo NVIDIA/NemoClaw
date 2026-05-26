@@ -66,6 +66,15 @@ describe("final gateway startup failure cleanup", () => {
     expect(errors).toContain("  Cleanup attempted.");
     expect(errors).toContain("    openshell gateway remove nemoclaw");
     expect(errors).toContain("    openshell gateway destroy -g nemoclaw");
+    if (process.platform === "linux") {
+      expect(errors).toContain(
+        "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
+      );
+    } else {
+      expect(errors).not.toContain(
+        "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
+      );
+    }
     expect(errors).toContain(
       '    docker volume ls -q --filter "name=openshell-cluster-nemoclaw" | xargs -r docker volume rm',
     );

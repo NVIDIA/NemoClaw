@@ -2699,7 +2699,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(bashLog, "utf8")).not.toContain("volume ls -q --filter");
   });
 
-  it("tears down the gateway runtime when --cleanup-gateway is passed (#2166)", () => {
+  it("tears down the gateway runtime when --cleanup-gateway is passed (#2166)", testTimeoutOptions(30_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-cleanup-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -2747,13 +2747,19 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
-    const r = runWithEnv("alpha destroy -y --cleanup-gateway", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-    });
+    const r = runWithEnv(
+      "alpha destroy -y --cleanup-gateway",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      },
+      30_000,
+    );
 
-    expect(r.code).toBe(0);
+    expect(r.code, r.out).toBe(0);
     const openshellOutput = fs.readFileSync(openshellLog, "utf8");
     expect(openshellOutput).toContain("sandbox delete alpha");
     expect(openshellOutput).toContain("forward stop 18789");
@@ -2763,7 +2769,7 @@ describe("CLI dispatch", () => {
     expect(fs.readFileSync(bashLog, "utf8")).toContain("volume ls -q --filter");
   });
 
-  it("honours NEMOCLAW_CLEANUP_GATEWAY=1 as the env-driven opt-in (#2166)", () => {
+  it("honours NEMOCLAW_CLEANUP_GATEWAY=1 as the env-driven opt-in (#2166)", testTimeoutOptions(30_000), () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-last-env-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -2811,14 +2817,20 @@ describe("CLI dispatch", () => {
       ].join("\n"),
       { mode: 0o755 },
     );
+    fs.writeFileSync(path.join(localBin, "pgrep"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    fs.writeFileSync(path.join(localBin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
 
-    const r = runWithEnv("alpha destroy -y", {
-      HOME: home,
-      PATH: `${localBin}:${process.env.PATH || ""}`,
-      NEMOCLAW_CLEANUP_GATEWAY: "1",
-    });
+    const r = runWithEnv(
+      "alpha destroy -y",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_CLEANUP_GATEWAY: "1",
+      },
+      30_000,
+    );
 
-    expect(r.code).toBe(0);
+    expect(r.code, r.out).toBe(0);
     const openshellOutput = fs.readFileSync(openshellLog, "utf8");
     expect(openshellOutput).toContain("forward stop 18789");
     expect(openshellOutput).toContain(

@@ -28,9 +28,12 @@ describe("gpuPassthroughRecoveryLines", () => {
     expect(joined).toContain("attempted safe gateway replacement automatically");
     expect(joined).toContain("openshell gateway remove nemoclaw");
     expect(joined).toContain("openshell gateway destroy -g nemoclaw");
+    expect(joined).toContain("sudo pkill -f openshell-gateway");
     expect(joined).toContain("nemoclaw onboard --gpu");
     expect(joined).not.toContain("nemoclaw uninstall");
-    // Must NOT suggest the destroy form — there is nothing to destroy.
+    // Must NOT suggest the per-sandbox `nemoclaw <name> destroy` form — there
+    // is nothing to destroy. (`openshell gateway destroy -g` is fine; it's
+    // the legacy gateway-lifecycle verb, not a sandbox destroy.)
     expect(joined).not.toMatch(/nemoclaw [a-z-]+ destroy/);
   });
 
