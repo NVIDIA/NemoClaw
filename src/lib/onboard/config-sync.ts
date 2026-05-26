@@ -35,14 +35,30 @@ export function buildSandboxConfigSyncScript(selectionConfig: ProviderSelectionC
   // the sandbox. We write the NemoClaw selection config and normalize the
   // mutable-default OpenClaw config permissions after the gateway has had a
   // chance to perform its own startup initialization.
+  // Guard chmod with an ownership check: on the host, ~/.nemoclaw is
+  // user-owned and the chmod hardens it. Inside OpenClaw sandbox containers
+  // the directory is root-owned (Dockerfile line 733 sets root:root 1755 for
+  // DAC protection of blueprints/) and the sandbox user cannot chmod it.
+  // Hermes containers are unaffected (their Dockerfile.base chowns to
+  // sandbox:sandbox). Without the guard, `set -euo pipefail` turns the
+  // EPERM into exit 1, crashing every OpenClaw E2E job at step 7/8.
+  // See: NemoClaw#4054 (added the chmod), NemoClaw#4009 (original hardening
+  // request).
   return `
 set -euo pipefail
 mkdir -p -m 700 ~/.nemoclaw
-chmod 700 ~/.nemoclaw
+# Only chmod if the current user owns the directory (host installs).
+# Inside the sandbox the dir may be root-owned; prepare_filesystem handles it.
+if [ "$(stat -c '%u' ~/.nemoclaw 2>/dev/null)" = "$(id -u)" ]; then
+  chmod 700 ~/.nemoclaw
+fi
 cat > ~/.nemoclaw/config.json <<'EOF_NEMOCLAW_CFG'
 ${JSON.stringify(selectionConfig, null, 2)}
 EOF_NEMOCLAW_CFG
-chmod 600 ~/.nemoclaw/config.json
+# Only chmod config.json if the current user owns it.
+if [ "$(stat -c '%u' ~/.nemoclaw/config.json 2>/dev/null)" = "$(id -u)" ]; then
+  chmod 600 ~/.nemoclaw/config.json
+fi
 config_dir=/sandbox/.openclaw
 if [ -d "$config_dir" ]; then
   config_dir_owner="$(stat -c '%U' "$config_dir" 2>/dev/null || echo unknown)"
