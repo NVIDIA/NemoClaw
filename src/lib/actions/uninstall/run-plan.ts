@@ -342,21 +342,42 @@ function confirmDestroyUserData(
   runtime.log("  removed with the Docker container and cannot be preserved automatically.");
   runtime.log("");
   runtime.log("  To preserve workspace state, run before re-attempting uninstall:");
+  if (data.protectedDirs.length > 0) {
+    runtime.log(
+      "    # `nemoclaw backup-all` only copies *fresh* backups it just produced; the",
+    );
+    runtime.log(
+      "    # already-on-disk backup directories shown above must be copied out separately:",
+    );
+    for (const dir of data.protectedDirs) {
+      runtime.log(
+        `    cp -a ${dir.path} <safe-path-outside-nemoclaw>/`,
+      );
+    }
+  }
   if (data.registeredSandboxes.length > 0) {
+    runtime.log(
+      "    # Capture a fresh backup of every registered+running sandbox to a host path:",
+    );
     runtime.log("    nemoclaw backup-all --save-host <safe-path-outside-nemoclaw>");
-  } else if (data.dockerContainers.length > 0) {
-    runtime.log("    # Registry is empty, so `backup-all` would say 'No sandboxes registered'.");
-    runtime.log("    # Pull the workspace directly from each matching container instead, e.g.:");
+  }
+  if (data.dockerContainers.length > 0) {
+    runtime.log(
+      "    # `docker ps -a` can include stopped or unregistered containers that",
+    );
+    runtime.log(
+      "    # `backup-all` would skip; copy the workspace directly from each one to be safe:",
+    );
     for (const container of data.dockerContainers) {
       runtime.log(
         `    docker cp ${container}:/sandbox/.openclaw/workspace <safe-path-outside-nemoclaw>/${container}-workspace`,
       );
     }
-    runtime.log(
-      "    # Once the registry is rebuilt, `nemoclaw <name> download` is the higher-level equivalent.",
-    );
-  } else {
-    runtime.log("    nemoclaw backup-all --save-host <safe-path-outside-nemoclaw>");
+    if (data.registeredSandboxes.length > 0) {
+      runtime.log(
+        "    # Once the sandbox is registered, `nemoclaw <name> download` is the higher-level equivalent.",
+      );
+    }
   }
   runtime.log("");
   if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {

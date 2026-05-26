@@ -249,7 +249,46 @@ describe("uninstall run plan", () => {
     expect(logs.some((line) => line.includes("workspace state on disk"))).toBe(true);
     expect(logs.some((line) => line.includes("my-assistant, scratch-box"))).toBe(true);
     expect(logs.some((line) => line.includes("NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1"))).toBe(true);
+    expect(
+      logs.some((line) =>
+        line.includes(`cp -a ${path.join("/home/test", ".nemoclaw", "rebuild-backups")}`),
+      ),
+    ).toBe(true);
+    expect(
+      logs.some((line) => line.includes("backup-all --save-host")),
+    ).toBe(false);
     expect(logs).toContain("  Aborted.");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("emits docker cp guidance even when registered sandboxes are present (mixed signal)", () => {
+    const logs: string[] = [];
+    const run = vi.fn();
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        readdirSync: () => [],
+        listRegisteredSandboxes: () => ["alpha"],
+        listSandboxDockerContainers: () => ["openclaw-sandbox-orphan"],
+        log: (line) => logs.push(line),
+        run,
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(
+      logs.some((line) =>
+        line.includes("nemoclaw backup-all --save-host <safe-path-outside-nemoclaw>"),
+      ),
+    ).toBe(true);
+    expect(
+      logs.some((line) =>
+        line.includes("docker cp openclaw-sandbox-orphan:/sandbox/.openclaw/workspace"),
+      ),
+    ).toBe(true);
     expect(run).not.toHaveBeenCalled();
   });
 
