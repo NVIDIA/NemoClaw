@@ -196,6 +196,23 @@ describe("run-suites.sh", () => {
     }
   });
 
+  it("test_should_emit_hermes_rebuild_assertion_ids_in_dry_run", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-rebuild-"));
+    try {
+      seedContext(tmp, hermesContext());
+      const r = runSuites(["hermes-rebuild"], { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" });
+      expect(r.status, `stderr:${r.stderr}\nstdout:${r.stdout}`).toBe(0);
+      for (const id of [
+        "expected.hermes.rebuild.provider-credential-reused",
+        "expected.hermes.rebuild.messaging-config-preserved",
+        "expected.hermes.rebuild.dashboard-forward-released",
+        "expected.hermes.rebuild.post-rebuild-health",
+      ]) expect(r.stdout).toContain(id);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("security_credentials_suite_should_emit_stable_assertion_ids", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-security-credentials-"));
     try {

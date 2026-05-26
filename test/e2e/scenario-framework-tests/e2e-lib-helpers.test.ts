@@ -157,6 +157,28 @@ describe("E2E shell helpers", () => {
     }
   });
 
+  it("test_should_detect_gateway_credential_reuse_when_host_env_empty", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-cred-reuse-"));
+    try {
+      fs.writeFileSync(path.join(tmp, "context.env"), "E2E_SCENARIO=hermes-test\nE2E_AGENT=hermes\nE2E_SANDBOX_NAME=hermes-sandbox\n");
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/hermes.sh"
+        HERMES_GATEWAY_CREDENTIAL_CMD='echo "credential=nvapi-supersecret123456"; exit 0'
+        export HERMES_GATEWAY_CREDENTIAL_CMD
+        e2e_hermes_assert_rebuild_provider_credential_reused
+      `,
+        { E2E_CONTEXT_DIR: tmp },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout + r.stderr).toContain("expected.hermes.rebuild.provider-credential-reused");
+      expect(r.stdout + r.stderr).not.toContain("nvapi-supersecret123456");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("test_should_source_inference_routing_helpers_under_strict_shell_mode", () => {
     const r = runBash(`
       set -euo pipefail
