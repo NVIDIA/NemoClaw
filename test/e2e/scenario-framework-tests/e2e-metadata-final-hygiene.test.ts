@@ -20,6 +20,8 @@ import { loadMetadataFromDir } from "../runtime/resolver/load.ts";
 const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const E2E_DIR = path.join(REPO_ROOT, "test/e2e");
 const VALIDATION_SUITES_DIR = path.join(E2E_DIR, "validation_suites");
+const HERMES_ASSERTION_RE = /expected\.hermes\.[A-Za-z0-9_.-]+/g;
+
 describe("Phase 11 final hygiene", () => {
   it("all_suite_scripts_should_exist", () => {
     const meta = loadMetadataFromDir(E2E_DIR);
@@ -39,6 +41,56 @@ describe("Phase 11 final hygiene", () => {
       }
     }
     expect(missing, `missing/non-executable suite scripts:\n${missing.join("\n")}`).toEqual([]);
+  });
+
+  it("test_should_require_metadata_for_all_expected_hermes_assertions", () => {
+    const meta = loadMetadataFromDir(E2E_DIR);
+    const documented = new Set(Object.keys(meta.expectedStates.hermes_expectations ?? {}));
+    const referenced = new Set<string>();
+    for (const suite of Object.values(meta.suites.suites)) {
+      for (const step of suite.steps) {
+        const p = path.join(VALIDATION_SUITES_DIR, step.script);
+        if (!fs.existsSync(p)) continue;
+        const raw = fs.readFileSync(p, "utf8");
+        for (const match of raw.matchAll(HERMES_ASSERTION_RE)) {
+          referenced.add(match[0]);
+        }
+      }
+    }
+    const helperPath = path.join(VALIDATION_SUITES_DIR, "lib", "hermes.sh");
+    const helper = fs.readFileSync(helperPath, "utf8");
+    for (const match of helper.matchAll(HERMES_ASSERTION_RE)) {
+      referenced.add(match[0]);
+    }
+    const missing = [...referenced].filter((id) => !documented.has(id)).sort();
+    expect(missing, `missing Hermes expectation metadata:\n${missing.join("\n")}`).toEqual([]);
+  });
+
+  it("test_should_represent_all_issue_inventory_items", () => {
+    const meta = loadMetadataFromDir(E2E_DIR);
+    const expectations = Object.values(meta.expectedStates.hermes_expectations ?? {});
+    const issues = new Set(expectations.map((entry) => String(entry.issue ?? "")));
+    for (const issue of [
+      "3891",
+      "3981",
+      "4067",
+      "4068",
+      "4111",
+      "4145",
+      "3893",
+      "3895",
+      "4070",
+      "4189",
+      "4230",
+      "4232",
+      "4245",
+      "4246",
+      "3582",
+      "3225",
+      "2432",
+    ]) {
+      expect(issues, `Hermes expectation metadata missing issue #${issue}`).toContain(issue);
+    }
   });
 
   it("all_scenarios_should_have_expected_state_and_suites", () => {

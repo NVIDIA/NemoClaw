@@ -75,6 +75,24 @@ describe("E2E scenario metadata schema", () => {
     }
   });
 
+  it("test_should_reject_unknown_hermes_expectation_status", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-schema-hermes-status-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "scenarios.yaml"),
+        `platforms:\n  p: {}\ninstalls:\n  i: {}\nruntimes:\n  r: {}\nonboarding:\n  o:\n    agent: hermes\nsetup_scenarios:\n  s:\n    dimensions: { platform: p, install: i, runtime: r, onboarding: o }\n    expected_state: ready\n    suites: [hermes-runtime]\n`,
+      );
+      fs.writeFileSync(
+        path.join(tmp, "expected-states.yaml"),
+        `expected_states:\n  ready: {}\nhermes_expectations:\n  expected.hermes.runtime.gateway-health:\n    status: maybe_later\n    issue: 3891\n    scope: suite\n    reason: invalid status fixture\n`,
+      );
+      fs.writeFileSync(tmp + "/suites.yaml", "suites:\n  hermes-runtime:\n    steps: []\n");
+      expect(() => loadMetadataFromDir(tmp)).toThrow(/expected_pass|expected_fail_current_bug|deferred_platform_or_secret|out_of_scope|retired|maybe_later/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("should_define_initial_expected_states", () => {
     const states = loadYaml(STATES_PATH);
     const es = states.expected_states as AnyRecord;

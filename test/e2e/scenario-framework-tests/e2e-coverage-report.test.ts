@@ -11,6 +11,17 @@ const REPO_ROOT = path.resolve(import.meta.dirname, "../../..");
 const E2E_DIR = path.join(REPO_ROOT, "test/e2e");
 
 describe("coverage report", () => {
+  it("test_should_render_hermes_current_bug_expectations_in_coverage_report", () => {
+    const meta = loadMetadataFromDir(E2E_DIR);
+    const md = renderCoverageReport(meta);
+    expect(md).toContain("## Hermes Expectations");
+    expect(md).toContain("expected.hermes.discord.empty-user-allowlist-open-dm-policy");
+    expect(md).toContain("expected_fail_current_bug");
+    expect(md).toContain("#4070");
+    expect(md).toContain("expected.hermes.runtime.gateway-health");
+    expect(md).toContain("expected_pass");
+  });
+
   it("should_render_single_coverage_table", () => {
     const meta = loadMetadataFromDir(E2E_DIR);
     const md = renderCoverageReport(meta);
