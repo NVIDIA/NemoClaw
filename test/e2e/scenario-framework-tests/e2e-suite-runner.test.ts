@@ -156,6 +156,46 @@ describe("run-suites.sh", () => {
     }
   });
 
+  it("test_should_emit_hermes_messaging_assertion_ids_in_dry_run", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-msg-"));
+    try {
+      const cases: Array<[string, string[]]> = [
+        ["hermes-discord", [
+          "expected.hermes.discord.config-schema",
+          "expected.hermes.discord.policy-egress",
+          "expected.hermes.discord.gateway-connects",
+          "expected.hermes.discord.empty-user-allowlist-open-dm-policy",
+          "expected.hermes.discord.no-openclaw-pairing-copy",
+          "expected.hermes.discord.plugin-entry-registered",
+        ]],
+        ["hermes-slack", [
+          "expected.hermes.slack.config-enabled",
+          "expected.hermes.slack.provider-state",
+          "expected.hermes.slack.socket-mode-starts",
+          "expected.hermes.slack.no-secret-leak",
+          "expected.hermes.slack.idle-reconnect-delivers-first-mention",
+        ]],
+        ["hermes-telegram", [
+          "expected.hermes.telegram.first-message-tool-dispatch",
+          "expected.hermes.telegram.single-polling-loop",
+          "expected.hermes.telegram.privacy-mode-guidance",
+          "expected.hermes.telegram.group-message-preconditions",
+        ]],
+      ];
+      for (const [suite, ids] of cases) {
+        seedContext(tmp, { ...hermesContext(), E2E_MESSAGING_PROVIDER: suite.replace("hermes-", ""), SLACK_BOT_TOKEN: "xoxb-secret-token", DISCORD_BOT_TOKEN: "discord-secret-token", TELEGRAM_BOT_TOKEN: "telegram-secret-token" });
+        const r = runSuites([suite], { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" });
+        expect(r.status, `suite:${suite}\nstderr:${r.stderr}\nstdout:${r.stdout}`).toBe(0);
+        for (const id of ids) expect(r.stdout).toContain(id);
+        expect(r.stdout + r.stderr).not.toContain("xoxb-secret-token");
+        expect(r.stdout + r.stderr).not.toContain("discord-secret-token");
+        expect(r.stdout + r.stderr).not.toContain("telegram-secret-token");
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("security_credentials_suite_should_emit_stable_assertion_ids", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-security-credentials-"));
     try {
