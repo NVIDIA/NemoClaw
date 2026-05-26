@@ -483,7 +483,7 @@ Acceptance criteria:
 - No suite performs setup rediscovery or onboarding.
 - Plan-only behavior is backward compatible.
 
-## Phase 8: Validate Against Main and In-Flight Fix PRs
+## Phase 8: Validate Against Main and In-Flight Fix PRs [COMPLETED: 6386527]
 
 Goal: Prove current expected-failure scenarios reproduce on main and flip to PASS on fix branches where practical.
 
