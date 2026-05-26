@@ -373,6 +373,150 @@ describe("uninstall run plan", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("aborts with exit 1 on a malformed sandboxes.json without throwing past the runtime", () => {
+    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-malformed-registry-"));
+    const nemoclawDir = path.join(tmpHome, ".nemoclaw");
+    fs.mkdirSync(nemoclawDir, { recursive: true });
+    const registryFile = path.join(nemoclawDir, "sandboxes.json");
+    fs.writeFileSync(registryFile, "{this is not json");
+
+    try {
+      const logs: string[] = [];
+      const errors: string[] = [];
+      const run = vi.fn();
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+          error: (line) => errors.push(line),
+          existsSync: () => false,
+          readdirSync: () => [],
+          log: (line) => logs.push(line),
+          run,
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(
+        errors.some((line) =>
+          line.includes(`Unable to parse sandbox registry at ${registryFile}`),
+        ),
+      ).toBe(true);
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("aborts with exit 1 on an unreadable sandboxes.json without throwing past the runtime", () => {
+    const tmpHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-uninstall-unreadable-registry-"),
+    );
+    const nemoclawDir = path.join(tmpHome, ".nemoclaw");
+    fs.mkdirSync(nemoclawDir, { recursive: true });
+    const registryFile = path.join(nemoclawDir, "sandboxes.json");
+    fs.mkdirSync(registryFile);
+
+    try {
+      const logs: string[] = [];
+      const errors: string[] = [];
+      const run = vi.fn();
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+          error: (line) => errors.push(line),
+          existsSync: () => false,
+          readdirSync: () => [],
+          log: (line) => logs.push(line),
+          run,
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(
+        errors.some((line) =>
+          line.includes(`Unable to read sandbox registry at ${registryFile}`),
+        ),
+      ).toBe(true);
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
+  it("aborts with exit 1 when listRegisteredSandboxes throws and ack env var is unset", () => {
+    const logs: string[] = [];
+    const errors: string[] = [];
+    const run = vi.fn();
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        error: (line) => errors.push(line),
+        existsSync: () => false,
+        readdirSync: () => [],
+        listRegisteredSandboxes: () => {
+          throw new Error(
+            "Unable to parse sandbox registry at /home/test/.nemoclaw/sandboxes.json: Unexpected token",
+          );
+        },
+        log: (line) => logs.push(line),
+        run,
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(
+      errors.some((line) =>
+        line.includes("Unable to parse sandbox registry at /home/test/.nemoclaw/sandboxes.json"),
+      ),
+    ).toBe(true);
+    expect(
+      errors.some((line) => line.includes("Refusing to proceed")),
+    ).toBe(true);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("proceeds past an unreadable registry only when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1", () => {
+    const logs: string[] = [];
+    const errors: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: {
+          HOME: "/home/test",
+          NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "1",
+        } as NodeJS.ProcessEnv,
+        commandExists: () => false,
+        error: (line) => errors.push(line),
+        existsSync: () => false,
+        readdirSync: () => [],
+        listRegisteredSandboxes: () => {
+          throw new Error(
+            "Unable to read sandbox registry at /home/test/.nemoclaw/sandboxes.json: EACCES: permission denied",
+          );
+        },
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: vi.fn(() => ok("")),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      errors.some((line) => line.includes("EACCES: permission denied")),
+    ).toBe(true);
+    expect(logs).toContain(
+      "  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite unreadable registry.",
+    );
+    expect(logs).toContain("Claws retracted. Until next time.");
+  });
+
   it("proceeds after y in interactive mode when snapshots exist", () => {
     const logs: string[] = [];
     const result = runUninstallPlan(
