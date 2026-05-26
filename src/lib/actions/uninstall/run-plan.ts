@@ -342,7 +342,22 @@ function confirmDestroyUserData(
   runtime.log("  removed with the Docker container and cannot be preserved automatically.");
   runtime.log("");
   runtime.log("  To preserve workspace state, run before re-attempting uninstall:");
-  runtime.log("    nemoclaw backup-all --save-host <safe-path-outside-nemoclaw>");
+  if (data.registeredSandboxes.length > 0) {
+    runtime.log("    nemoclaw backup-all --save-host <safe-path-outside-nemoclaw>");
+  } else if (data.dockerContainers.length > 0) {
+    runtime.log("    # Registry is empty, so `backup-all` would say 'No sandboxes registered'.");
+    runtime.log("    # Pull the workspace directly from each matching container instead, e.g.:");
+    for (const container of data.dockerContainers) {
+      runtime.log(
+        `    docker cp ${container}:/sandbox/.openclaw/workspace <safe-path-outside-nemoclaw>/${container}-workspace`,
+      );
+    }
+    runtime.log(
+      "    # Once the registry is rebuilt, `nemoclaw <name> download` is the higher-level equivalent.",
+    );
+  } else {
+    runtime.log("    nemoclaw backup-all --save-host <safe-path-outside-nemoclaw>");
+  }
   runtime.log("");
   if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
     runtime.log("  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding with destructive uninstall.");

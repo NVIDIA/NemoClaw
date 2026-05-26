@@ -283,6 +283,19 @@ describe("uninstall run plan", () => {
         line.includes("openshell-cluster-nemoclaw, openclaw-sandbox-my-assistant"),
       ),
     ).toBe(true);
+    expect(
+      logs.some((line) =>
+        line.includes("docker cp openshell-cluster-nemoclaw:/sandbox/.openclaw/workspace"),
+      ),
+    ).toBe(true);
+    expect(
+      logs.some((line) =>
+        line.includes("docker cp openclaw-sandbox-my-assistant:/sandbox/.openclaw/workspace"),
+      ),
+    ).toBe(true);
+    expect(
+      logs.some((line) => line.includes("nemoclaw backup-all --save-host")),
+    ).toBe(false);
     expect(logs).toContain("  Aborted.");
     expect(run).not.toHaveBeenCalled();
   });

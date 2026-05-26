@@ -1218,7 +1218,7 @@ On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-dri
 $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--gateway <name>]
 ```
 
-When uninstall detects snapshots or rebuild backups under any of the protected paths inside `~/.nemoclaw/` (currently `~/.nemoclaw/rebuild-backups/`), it prints the affected sandboxes, names the destructive surface, and refuses to proceed.
+When uninstall detects snapshots or rebuild backups under any of the protected paths inside `~/.nemoclaw/` (currently `~/.nemoclaw/rebuild-backups/` and `~/.nemoclaw/backups/`), live registered sandboxes in `~/.nemoclaw/sandboxes.json`, or running Docker containers matching the sandbox/gateway pattern, it prints the affected sandboxes, names the destructive surface, and refuses to proceed.
 In non-interactive runs (including `--yes`) the gate exits with status 1.
 In interactive runs the gate prompts for `y/N` confirmation and aborts on the default.
 The list of protected directories lives in `PROTECTED_USER_DATA_DIRS` in `src/lib/actions/uninstall/run-plan.ts`; additions to this list automatically extend the gate.

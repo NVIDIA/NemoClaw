@@ -75,10 +75,11 @@ For full details, see the [Commands reference](/reference/commands).
 ## Manual Backup
 
 Use `openshell sandbox download` to copy files from the sandbox to your host.
+Pick a backup directory **outside `~/.nemoclaw/`** so the data survives `nemoclaw uninstall` — anything inside `~/.nemoclaw/` (including `~/.nemoclaw/backups/`, which is gate-protected but still wiped once the uninstall gate is acknowledged) is removed by the uninstaller.
 
 ```console
 $ SANDBOX=my-assistant
-$ BACKUP_DIR=~/.nemoclaw/backups/$(date +%Y%m%d-%H%M%S)
+$ BACKUP_DIR=~/nemoclaw-backups/$(date +%Y%m%d-%H%M%S)
 $ mkdir -p "$BACKUP_DIR"
 
 $ openshell sandbox download "$SANDBOX" /sandbox/.openclaw/workspace/SOUL.md "$BACKUP_DIR/"
@@ -95,7 +96,7 @@ Use `openshell sandbox upload` to push files back into a sandbox.
 
 ```console
 $ SANDBOX=my-assistant
-$ BACKUP_DIR=~/.nemoclaw/backups/20260320-120000  # pick a timestamp
+$ BACKUP_DIR=~/nemoclaw-backups/20260320-120000  # pick a timestamp
 
 $ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/SOUL.md" /sandbox/.openclaw/workspace/
 $ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/USER.md" /sandbox/.openclaw/workspace/
@@ -108,13 +109,15 @@ $ openshell sandbox upload "$SANDBOX" "$BACKUP_DIR/memory/" /sandbox/.openclaw/w
 ## Using the Backup Script
 
 The repository includes a convenience script at `scripts/backup-workspace.sh`.
+The script defaults to `~/nemoclaw-backups/` so backups survive `nemoclaw uninstall`.
+Set `NEMOCLAW_BACKUP_BASE` to override the location (e.g. point it at an external mount).
 
 ### Backup
 
 ```console
 $ ./scripts/backup-workspace.sh backup my-assistant
 Backing up workspace from sandbox 'my-assistant'...
-Backup saved to /home/user/.nemoclaw/backups/20260320-120000/ (6 items)
+Backup saved to /home/user/nemoclaw-backups/20260320-120000/ (6 items)
 ```
 
 ### Restore
@@ -136,7 +139,7 @@ $ ./scripts/backup-workspace.sh restore my-assistant 20260320-120000
 List backed-up files to confirm completeness:
 
 ```console
-$ ls -la ~/.nemoclaw/backups/20260320-120000/
+$ ls -la ~/nemoclaw-backups/20260320-120000/
 AGENTS.md
 IDENTITY.md
 MEMORY.md
