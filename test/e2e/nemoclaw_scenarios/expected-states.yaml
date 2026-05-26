@@ -184,3 +184,224 @@ expected_states:
       exit_code: 1
       message_contains: Port 18080 is not available
       no_stack_trace: true
+
+hermes_expectations:
+  expected.hermes.runtime.gateway-health:
+    status: expected_pass
+    issue: 3891
+    fix_pr: 3914
+    scope: suite
+    reason: Hermes gateway health should pass after the runtime baseline fix.
+  expected.hermes.runtime.agent-home:
+    status: expected_pass
+    issue: 3891
+    fix_pr: 3914
+    scope: suite
+    reason: Hermes agent home exists with safe permissions in completed Hermes sandboxes.
+  expected.hermes.runtime.env-integrity:
+    status: expected_pass
+    issue: 3891
+    fix_pr: 3914
+    scope: suite
+    reason: Hermes runtime environment should be present and secret-redacted.
+  expected.hermes.runtime.security-posture:
+    status: expected_pass
+    issue: 3891
+    fix_pr: 3914
+    scope: suite
+    reason: Hermes baseline runtime security posture should pass on supported runners.
+  expected.hermes.inference.switch-route-state:
+    status: expected_pass
+    issue: 4111
+    scope: suite
+    reason: Route/config classification should pass for landed Hermes inference-switch behavior.
+  expected.hermes.inference.env-immutable-on-switch:
+    status: expected_pass
+    issue: 4145
+    scope: suite
+    reason: Switching inference should not mutate unrelated Hermes environment state.
+  expected.hermes.inference.gateway-pid-stable:
+    status: expected_pass
+    issue: 4145
+    scope: suite
+    reason: Gateway PID should remain stable for route/config-only inference switching.
+  expected.hermes.inference.inference-local-chat:
+    status: expected_pass
+    issue: 4111
+    scope: suite
+    reason: In-sandbox inference.local chat validates route health after switch.
+  expected.hermes.inference.hermes-api-chat:
+    status: expected_pass
+    issue: 4111
+    scope: suite
+    reason: Hermes API chat should pass when route/config checks are healthy.
+  expected.hermes.inference.external-timeout-classification:
+    status: expected_pass
+    issue: 4145
+    scope: suite
+    reason: External provider timeouts should classify as external/gated, not route regressions.
+  expected.hermes.discord.config-schema:
+    status: deferred_platform_or_secret
+    issue: 4070
+    fix_pr: 4126
+    scope: suite
+    reason: Live Discord config validation requires provider secrets or fake gateway coverage.
+  expected.hermes.discord.policy-egress:
+    status: deferred_platform_or_secret
+    issue: 4070
+    fix_pr: 4126
+    scope: suite
+    reason: Live Discord egress validation is secret-gated until fake path is wired.
+  expected.hermes.discord.gateway-connects:
+    status: deferred_platform_or_secret
+    issue: 4070
+    fix_pr: 4126
+    scope: suite
+    reason: Discord gateway connectivity requires live/fake gateway execution.
+  expected.hermes.discord.empty-user-allowlist-open-dm-policy:
+    status: expected_fail_current_bug
+    issue: 4070
+    fix_pr: 4126
+    scope: suite
+    reason: Current main pairs first DM when guild configured and allowlist empty.
+  expected.hermes.discord.no-openclaw-pairing-copy:
+    status: expected_fail_current_bug
+    issue: 4246
+    scope: suite
+    reason: Plugin-entry/pairing-copy applicability to Hermes remains represented until proven out-of-scope.
+  expected.hermes.discord.plugin-entry-registered:
+    status: expected_fail_current_bug
+    issue: 4246
+    scope: suite
+    reason: Discord plugin entry generation may be shared with Hermes and must remain visible.
+  expected.hermes.slack.config-enabled:
+    status: deferred_platform_or_secret
+    issue: 4189
+    fix_pr: 4222
+    scope: suite
+    reason: Slack config enablement requires live or fake Slack provider state.
+  expected.hermes.slack.provider-state:
+    status: deferred_platform_or_secret
+    issue: 4189
+    fix_pr: 4222
+    scope: suite
+    reason: Slack provider state is gated by provider credentials or fixtures.
+  expected.hermes.slack.socket-mode-starts:
+    status: expected_fail_current_bug
+    issue: 4189
+    fix_pr: 4222
+    scope: suite
+    reason: Slack socket-mode startup remains a known Hermes product bug until fixed.
+  expected.hermes.slack.no-secret-leak:
+    status: deferred_platform_or_secret
+    issue: 3582
+    scope: suite
+    reason: Live Slack secret leak assertions require secret-gated runtime evidence.
+  expected.hermes.slack.idle-reconnect-delivers-first-mention:
+    status: expected_fail_current_bug
+    issue: 3582
+    scope: suite
+    reason: Slack idle reconnect first mention delivery remains expected failing or gated.
+  expected.hermes.telegram.first-message-tool-dispatch:
+    status: expected_fail_current_bug
+    issue: 3893
+    fix_pr: 4175
+    scope: suite
+    reason: Telegram first message tool dispatch remains a known current bug until fixed.
+  expected.hermes.telegram.single-polling-loop:
+    status: expected_pass
+    issue: 4067
+    fix_pr: 3925
+    scope: suite
+    reason: Landed Telegram polling-loop fix should pass or be explicitly gated in live validation.
+  expected.hermes.telegram.privacy-mode-guidance:
+    status: expected_pass
+    issue: 4068
+    fix_pr: 4107
+    scope: suite
+    reason: Telegram privacy-mode guidance fix should pass in config/guidance assertions.
+  expected.hermes.telegram.group-message-preconditions:
+    status: expected_pass
+    issue: 4068
+    fix_pr: 4107
+    scope: suite
+    reason: Telegram group-message preconditions should be classified clearly after landed fix.
+  expected.hermes.rebuild.provider-credential-reused:
+    status: expected_fail_current_bug
+    issue: 3895
+    fix_pr: 3918
+    scope: suite
+    reason: Gateway credential reuse when host env is empty is expected failing until the fix lands.
+  expected.hermes.rebuild.messaging-config-preserved:
+    status: expected_pass
+    issue: 4146
+    fix_pr: 4144
+    scope: suite
+    reason: Messaging config preservation should pass once the rebuild race fix is present.
+  expected.hermes.rebuild.dashboard-forward-released:
+    status: expected_fail_current_bug
+    issue: 4146
+    fix_pr: 4144
+    scope: suite
+    reason: Dashboard forward release remains tracked as a rebuild race expectation.
+  expected.hermes.rebuild.post-rebuild-health:
+    status: expected_pass
+    issue: 4146
+    fix_pr: 4144
+    scope: suite
+    reason: Post-rebuild health should pass after rebuild preservation fixes.
+  expected.hermes.policy.inactive-messaging-not-preenabled:
+    status: expected_pass
+    issue: 3981
+    fix_pr: 3984
+    scope: suite
+    reason: Inactive messaging policies should not be preenabled after landed fix.
+  expected.hermes.policy.managed-inference-anthropic-messages-path:
+    status: expected_fail_current_bug
+    issue: 4230
+    scope: suite
+    reason: Anthropic-compatible /v1/messages policy path remains a current Hermes bug.
+  expected.hermes.policy.venv-python-egress:
+    status: expected_fail_current_bug
+    issue: 3225
+    fix_pr: 3228
+    scope: suite
+    reason: Hermes venv Python egress remains tracked as expected failing until validated fixed.
+  expected.hermes.policy.no-phantom-allowlist:
+    status: expected_pass
+    issue: 3981
+    fix_pr: 3984
+    scope: suite
+    reason: Policy allowlists should not contain phantom unrelated entries after landed fix.
+  expected.hermes.provider.anthropic-compatible-chat:
+    status: expected_fail_current_bug
+    issue: 4230
+    scope: suite
+    reason: Anthropic-compatible chat remains a known provider compatibility bug.
+  expected.hermes.provider.gemini-tool-schema-compatible:
+    status: expected_fail_current_bug
+    issue: 4232
+    scope: suite
+    reason: Gemini tool schema compatibility remains a known provider bug.
+  expected.hermes.provider.onboard-smoke-not-sufficient:
+    status: expected_fail_current_bug
+    issue: 4230
+    scope: suite
+    reason: Onboard smoke is not sufficient to prove provider runtime chat compatibility.
+  expected.hermes.security.shields-up-down-macos-vm-driver:
+    status: expected_fail_current_bug
+    issue: 4245
+    scope: suite
+    reason: macOS Docker Desktop VM-driver shields behavior remains expected failing until fixed.
+  expected.hermes.security.shields-config-locked:
+    status: deferred_platform_or_secret
+    issue: 4245
+    scope: suite
+    reason: Shields config lock/status consistency requires platform-specific runner evidence.
+  expected.hermes.tui.history-writable:
+    status: expected_fail_current_bug
+    issue: 2432
+    fix_pr: 2473
+    scope: suite
+    reason: Hermes TUI history writability and clean exit remain expected failing until fixed.
+

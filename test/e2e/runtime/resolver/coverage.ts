@@ -70,6 +70,23 @@ export function renderCoverageReport(
   lines.push("");
   lines.push(`Total suites: ${Object.keys(meta.suites.suites).length}`);
   lines.push("");
+  const hermesExpectations = expectedStates.hermes_expectations ?? {};
+  if (Object.keys(hermesExpectations).length > 0) {
+    lines.push("## Hermes Expectations");
+    lines.push("");
+    lines.push("| Assertion | Status | Issue | Fix PR | Scope | Reason |");
+    lines.push("|---|---|---|---|---|---|");
+    for (const [id, expectation] of Object.entries(hermesExpectations).sort(([a], [b]) =>
+      a.localeCompare(b),
+    )) {
+      const issue = expectation.issue === undefined ? "" : `#${expectation.issue}`;
+      const fix = expectation.fix_pr === undefined ? "" : `PR #${expectation.fix_pr}`;
+      lines.push(
+        `| ${id} | ${expectation.status} | ${issue} | ${fix} | ${expectation.scope ?? ""} | ${expectation.reason} |`,
+      );
+    }
+    lines.push("");
+  }
   lines.push("## Scenarios");
   lines.push("");
   const hasStatus =

@@ -145,8 +145,26 @@ export interface ScenariosFile {
 
 export type ExpectedStateConfig = AnyRecord;
 
+export const HERMES_EXPECTATION_STATUSES = [
+  "expected_pass",
+  "expected_fail_current_bug",
+  "deferred_platform_or_secret",
+  "out_of_scope",
+  "retired",
+] as const;
+export type HermesExpectationStatus = (typeof HERMES_EXPECTATION_STATUSES)[number];
+
+export interface HermesExpectation extends AnyRecord {
+  status: HermesExpectationStatus;
+  issue?: string | number;
+  fix_pr?: string | number;
+  scope?: "suite" | "scenario" | "assertion";
+  reason: string;
+}
+
 export interface ExpectedStatesFile {
   expected_states: Record<string, ExpectedStateConfig>;
+  hermes_expectations?: Record<string, HermesExpectation>;
 }
 
 export interface SuiteStep {

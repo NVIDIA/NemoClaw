@@ -17,6 +17,7 @@ import {
   EXPECTED_FAILURE_ERROR_CLASSES,
   EXPECTED_FAILURE_PHASES,
   EXPECTED_FAILURE_SIDE_EFFECTS,
+  HERMES_EXPECTATION_STATUSES,
 } from "./schema.ts";
 import type {
   ScenariosFile,
@@ -256,6 +257,44 @@ function validateExpectedStates(
     const e = entry as Record<string, unknown>;
     if ("expected_failure" in e) {
       validateExpectedFailureBlock(e.expected_failure, `expected_state ${id}`, { partial: false });
+    }
+  }
+  if ("hermes_expectations" in doc) {
+    const rawExpectations = doc.hermes_expectations;
+    if (!rawExpectations || typeof rawExpectations !== "object" || Array.isArray(rawExpectations)) {
+      throw new Error(`metadata file ${file} section 'hermes_expectations' must be a mapping`);
+    }
+    for (const [id, entry] of Object.entries(rawExpectations as Record<string, unknown>)) {
+      if (!id.startsWith("expected.hermes.")) {
+        throw new Error(`hermes_expectations key ${id} must start with expected.hermes.`);
+      }
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+        throw new Error(`hermes_expectations.${id} must be a mapping`);
+      }
+      const e = entry as Record<string, unknown>;
+      if (
+        typeof e.status !== "string" ||
+        !HERMES_EXPECTATION_STATUSES.includes(e.status as (typeof HERMES_EXPECTATION_STATUSES)[number])
+      ) {
+        throw new Error(
+          `hermes_expectations.${id}.status must be one of: ${HERMES_EXPECTATION_STATUSES.join(", ")}`,
+        );
+      }
+      if (typeof e.reason !== "string" || e.reason.length === 0) {
+        throw new Error(`hermes_expectations.${id}.reason must be a non-empty string`);
+      }
+      if (e.issue !== undefined && typeof e.issue !== "string" && typeof e.issue !== "number") {
+        throw new Error(`hermes_expectations.${id}.issue must be a string or number`);
+      }
+      if (e.fix_pr !== undefined && typeof e.fix_pr !== "string" && typeof e.fix_pr !== "number") {
+        throw new Error(`hermes_expectations.${id}.fix_pr must be a string or number`);
+      }
+      if (
+        e.scope !== undefined &&
+        (typeof e.scope !== "string" || !["suite", "scenario", "assertion"].includes(e.scope))
+      ) {
+        throw new Error(`hermes_expectations.${id}.scope must be one of: suite, scenario, assertion`);
+      }
     }
   }
   return doc as unknown as ExpectedStatesFile;
