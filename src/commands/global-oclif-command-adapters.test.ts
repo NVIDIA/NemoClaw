@@ -151,7 +151,7 @@ describe("global oclif command adapters", () => {
     await UpgradeSandboxesCommand.run(["--check", "--yes"], rootDir);
     await GarbageCollectImagesCommand.run(["--dry-run", "--force"], rootDir);
 
-    expect(mocks.runBackupAllAction).toHaveBeenCalledWith();
+    expect(mocks.runBackupAllAction).toHaveBeenCalledWith({ saveHost: undefined });
     expect(mocks.runUpgradeSandboxesAction).toHaveBeenCalledWith({
       auto: false,
       check: true,

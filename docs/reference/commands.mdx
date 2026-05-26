@@ -870,7 +870,7 @@ The installer calls `backup-all` automatically before onboarding to protect agai
 
 | Flag | Description |
 |------|-------------|
-| `--save-host <path>` | Copy each successful backup into `<path>/<timestamp>/` after the snapshot is written. The destination is created if it does not exist. Use this before `nemoclaw uninstall` so the backups survive the `~/.nemoclaw/` wipe |
+| `--save-host <path>` | Copy each successful backup directory into `<path>/<sandbox>/<timestamp>/` after the snapshot is written. The destination is created if it does not exist. Use this before `nemoclaw uninstall` so the backups survive the `~/.nemoclaw/` wipe |
 
 ```console
 $ nemoclaw backup-all --save-host ~/nemoclaw-backups
@@ -888,7 +888,7 @@ $ nemoclaw my-assistant snapshot create
 | Flag | Description |
 |------|-------------|
 | `--name <label>` | Attach a human-readable label to the snapshot so you can restore by name later |
-| `--save-host <path>` | Copy the snapshot directory into `<path>/<timestamp>/` after creation. The destination is created if it does not exist |
+| `--save-host <path>` | Copy the snapshot directory into `<path>/<sandbox>/<timestamp>/` after creation. The destination is created if it does not exist |
 
 Names must be 1 to 63 characters from `[A-Za-z0-9._-]`, start with an alphanumeric character, and cannot look like a version selector (`v1`, `v2`, ...). Duplicate names per sandbox are rejected; pick a different name or delete the existing snapshot first.
 
@@ -1223,19 +1223,13 @@ In non-interactive runs (including `--yes`) the gate exits with status 1.
 In interactive runs the gate prompts for `y/N` confirmation and aborts on the default.
 The list of protected directories lives in `PROTECTED_USER_DATA_DIRS` in `src/lib/actions/uninstall/run-plan.ts`; additions to this list automatically extend the gate.
 
-Two ways to keep your workspace state across uninstall:
-
-```console
-$ nemoclaw backup-all --save-host ~/nemoclaw-backups
-```
-
-The flag is also available on `nemoclaw <name> snapshot create`.
-Both commands copy each fresh tarball into the host path you supply, so the data survives the `~/.nemoclaw/` wipe.
+To keep your workspace state across uninstall, copy fresh backups into a path outside `~/.nemoclaw/` before re-attempting uninstall.
+Both `nemoclaw backup-all` and `nemoclaw <name> snapshot create` expose a host-copy option that places each backup directory into a destination you supply, so the data survives the `~/.nemoclaw/` wipe; see those command sections for the exact invocation.
 
 Or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge the loss and proceed without preservation.
 
 Workspace files inside the sandbox container (`/sandbox/.openclaw/workspace/`) live in the container's writable layer.
-OpenShell's `sandbox create` does not currently expose a `--mount` or `--volume` flag, so NemoClaw cannot mount workspace state on a persistent host volume; the host-side `--save-host` flow above is the workaround for that constraint.
+OpenShell's `sandbox create` does not currently expose host mount or volume options, so NemoClaw cannot mount workspace state on a persistent host volume; the host-copy flow referenced above is the workaround for that constraint.
 `docker rm -f` destroys the writable layer with the container, regardless of this gate.
 Run `nemoclaw <name> snapshot create` (which extracts workspace files via `docker exec` + tar) or `nemoclaw <name> download` (a thin wrapper around `openshell sandbox download`) before destroying the sandbox if you want to keep specific workspace files.
 

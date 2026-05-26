@@ -32,7 +32,7 @@ describe("resolveSaveHostPath", () => {
 });
 
 describe("saveBackupToHost", () => {
-  it("copies the backup directory into the resolved destination and reports ok", () => {
+  it("copies the backup directory into the resolved destination under <sandbox>/<timestamp> and reports ok", () => {
     const cp = vi.fn();
     const mkdir = vi.fn();
     const result = saveBackupToHost(
@@ -44,12 +44,12 @@ describe("saveBackupToHost", () => {
     );
     expect(result.ok).toBe(true);
     expect(result.destination).toBe(
-      "/var/backups/nemoclaw/2026-05-26T00-00-00Z",
+      "/var/backups/nemoclaw/my-assistant/2026-05-26T00-00-00Z",
     );
-    expect(mkdir).toHaveBeenCalledWith("/var/backups/nemoclaw", { recursive: true });
+    expect(mkdir).toHaveBeenCalledWith("/var/backups/nemoclaw/my-assistant", { recursive: true });
     expect(cp).toHaveBeenCalledWith(
       "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-05-26T00-00-00Z",
-      "/var/backups/nemoclaw/2026-05-26T00-00-00Z",
+      "/var/backups/nemoclaw/my-assistant/2026-05-26T00-00-00Z",
       { recursive: true },
     );
   });
@@ -58,14 +58,16 @@ describe("saveBackupToHost", () => {
     const cp = vi.fn();
     const mkdir = vi.fn();
     const result = saveBackupToHost(
-      "/state/backup/2026-05-26",
+      "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-05-26",
       "~/nemoclaw-backups",
       cp,
       mkdir,
       "/home/user",
     );
     expect(result.ok).toBe(true);
-    expect(result.destination).toBe("/home/user/nemoclaw-backups/2026-05-26");
+    expect(result.destination).toBe(
+      "/home/user/nemoclaw-backups/my-assistant/2026-05-26",
+    );
   });
 
   it("returns ok:false with the underlying error message when copy fails", () => {

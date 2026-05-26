@@ -10,14 +10,6 @@ export interface SaveHostResult {
   message?: string;
 }
 
-// Copy a single backup directory (the path returned by `backupSandboxState`)
-// into a user-supplied host destination. The destination is created if it
-// does not exist; the backup is laid down at `<destination>/<basename>` so
-// repeated calls with the same destination accumulate per-snapshot
-// subdirectories instead of overwriting. Resolves `~` and relative paths.
-// See #4226 (`--save-host` flow, host-side workaround for the missing
-// OpenShell `--mount`/`--volume` support that would otherwise let the
-// sandbox workspace live on a persistent host volume).
 export function saveBackupToHost(
   backupPath: string,
   destinationDir: string,
@@ -26,9 +18,12 @@ export function saveBackupToHost(
   homeDir: string = process.env.HOME || "",
 ): SaveHostResult {
   const resolved = resolveSaveHostPath(destinationDir, homeDir);
-  const target = path.join(resolved, path.basename(backupPath));
+  const timestamp = path.basename(backupPath);
+  const sandboxName = path.basename(path.dirname(backupPath));
+  const targetParent = path.join(resolved, sandboxName);
+  const target = path.join(targetParent, timestamp);
   try {
-    mkdirImpl(resolved, { recursive: true });
+    mkdirImpl(targetParent, { recursive: true });
     cpImpl(backupPath, target, { recursive: true });
     return { ok: true, destination: target };
   } catch (err) {

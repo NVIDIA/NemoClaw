@@ -225,7 +225,7 @@ describe("uninstall run plan", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("aborts with exit 1 when snapshots exist and NEMOCLAW_UNINSTALL_DESTROY_USER_DATA is unset (#4226)", () => {
+  it("aborts with exit 1 when snapshots exist and NEMOCLAW_UNINSTALL_DESTROY_USER_DATA is unset", () => {
     const logs: string[] = [];
     const run = vi.fn();
     const result = runUninstallPlan(
@@ -237,6 +237,7 @@ describe("uninstall run plan", () => {
           target === path.join("/home/test", ".nemoclaw", "rebuild-backups")
             ? ["my-assistant", "scratch-box"]
             : [],
+        listRegisteredSandboxes: () => [],
         log: (line) => logs.push(line),
         run,
         runDocker: () => ok(""),
@@ -244,14 +245,37 @@ describe("uninstall run plan", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(logs.some((line) => line.includes("workspace snapshots and rebuild backups"))).toBe(true);
+    expect(logs.some((line) => line.includes("workspace state on disk"))).toBe(true);
     expect(logs.some((line) => line.includes("my-assistant, scratch-box"))).toBe(true);
     expect(logs.some((line) => line.includes("NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1"))).toBe(true);
     expect(logs).toContain("  Aborted.");
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("proceeds past the user-data gate when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 (#4226)", () => {
+  it("aborts with exit 1 when registered sandboxes exist and NEMOCLAW_UNINSTALL_DESTROY_USER_DATA is unset", () => {
+    const logs: string[] = [];
+    const run = vi.fn();
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        readdirSync: () => [],
+        listRegisteredSandboxes: () => ["alpha", "beta"],
+        log: (line) => logs.push(line),
+        run,
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(logs.some((line) => line.includes("workspace state on disk"))).toBe(true);
+    expect(logs.some((line) => line.includes("2 registered sandboxes: alpha, beta"))).toBe(true);
+    expect(logs).toContain("  Aborted.");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("proceeds past the user-data gate when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1", () => {
     const logs: string[] = [];
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
@@ -266,6 +290,7 @@ describe("uninstall run plan", () => {
           target === path.join("/home/test", ".nemoclaw", "rebuild-backups")
             ? ["my-assistant"]
             : [],
+        listRegisteredSandboxes: () => [],
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: vi.fn(() => ok("")),
@@ -274,14 +299,14 @@ describe("uninstall run plan", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(logs.some((line) => line.includes("workspace snapshots and rebuild backups"))).toBe(true);
+    expect(logs.some((line) => line.includes("workspace state on disk"))).toBe(true);
     expect(logs).toContain(
       "  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding with destructive uninstall.",
     );
     expect(logs).toContain("Claws retracted. Until next time.");
   });
 
-  it("skips the user-data gate when rebuild-backups directory does not exist", () => {
+  it("skips the user-data gate when no backups exist and no sandboxes are registered", () => {
     const logs: string[] = [];
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
@@ -290,6 +315,7 @@ describe("uninstall run plan", () => {
         commandExists: () => false,
         existsSync: () => false,
         readdirSync: () => [],
+        listRegisteredSandboxes: () => [],
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: vi.fn(() => ok("")),
@@ -298,11 +324,11 @@ describe("uninstall run plan", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(logs.some((line) => line.includes("workspace snapshots and rebuild backups"))).toBe(false);
+    expect(logs.some((line) => line.includes("workspace state on disk"))).toBe(false);
     expect(logs).toContain("Claws retracted. Until next time.");
   });
 
-  it("skips the user-data gate when rebuild-backups directory is empty", () => {
+  it("skips the user-data gate when rebuild-backups directory is empty and no sandboxes are registered", () => {
     const logs: string[] = [];
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
@@ -311,6 +337,7 @@ describe("uninstall run plan", () => {
         commandExists: () => false,
         existsSync: (target) => target === path.join("/home/test", ".nemoclaw", "rebuild-backups"),
         readdirSync: () => [],
+        listRegisteredSandboxes: () => [],
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: vi.fn(() => ok("")),
@@ -319,10 +346,10 @@ describe("uninstall run plan", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(logs.some((line) => line.includes("workspace snapshots and rebuild backups"))).toBe(false);
+    expect(logs.some((line) => line.includes("workspace state on disk"))).toBe(false);
   });
 
-  it("prompts for y/N in interactive mode when snapshots exist; declining aborts (#4226)", () => {
+  it("prompts for y/N in interactive mode when snapshots exist; declining aborts", () => {
     const logs: string[] = [];
     const run = vi.fn();
     const result = runUninstallPlan(
@@ -331,6 +358,7 @@ describe("uninstall run plan", () => {
         env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
         existsSync: (target) => target === path.join("/home/test", ".nemoclaw", "rebuild-backups"),
         readdirSync: () => ["my-assistant"],
+        listRegisteredSandboxes: () => [],
         isTty: true,
         log: (line) => logs.push(line),
         readLine: () => "n",
@@ -340,12 +368,12 @@ describe("uninstall run plan", () => {
     );
 
     expect(result.exitCode).toBe(1);
-    expect(logs).toContain("  Destroy these snapshots and rebuild backups now? [y/N]");
+    expect(logs).toContain("  Destroy this workspace state now? [y/N]");
     expect(logs).toContain("  Aborted.");
     expect(run).not.toHaveBeenCalled();
   });
 
-  it("proceeds after y in interactive mode when snapshots exist (#4226)", () => {
+  it("proceeds after y in interactive mode when snapshots exist", () => {
     const logs: string[] = [];
     const result = runUninstallPlan(
       { assumeYes: false, deleteModels: false, keepOpenShell: true },
@@ -354,6 +382,7 @@ describe("uninstall run plan", () => {
         commandExists: () => false,
         existsSync: (target) => target === path.join("/home/test", ".nemoclaw", "rebuild-backups"),
         readdirSync: () => ["my-assistant"],
+        listRegisteredSandboxes: () => [],
         isTty: true,
         log: (line) => logs.push(line),
         readLine: (() => {

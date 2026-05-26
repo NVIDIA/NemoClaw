@@ -17,10 +17,10 @@ import { getRegisteredOclifCommandsMetadata } from "./oclif-metadata";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 62 commands", () => {
+    it("should contain exactly 64 commands", () => {
       // 28 global (22 visible + 6 hidden help/version aliases)
-      // 34 sandbox (28 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(62);
+      // 36 sandbox (30 visible + 6 hidden shields/config)
+      expect(COMMANDS).toHaveLength(64);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -52,9 +52,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 34 entries", () => {
-      // 28 visible + 6 hidden (shields×3 + config get/set/rotate-token)
-      expect(sandboxCommands()).toHaveLength(34);
+    it("should return exactly 36 entries", () => {
+      // 30 visible + 6 hidden (shields×3 + config get/set/rotate-token)
+      expect(sandboxCommands()).toHaveLength(36);
     });
 
     it("every entry has scope sandbox", () => {
@@ -65,10 +65,10 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 12 hidden commands (50 visible)", () => {
+    it("should exclude 12 hidden commands (52 visible)", () => {
       // 6 hidden global (help, --help, -h, version, --version, -v) +
       // 6 hidden sandbox (shields×3, config get/set/rotate-token)
-      expect(visibleCommands()).toHaveLength(50);
+      expect(visibleCommands()).toHaveLength(52);
     });
 
     it("no visible command has hidden=true", () => {
@@ -204,13 +204,14 @@ describe("command-registry", () => {
   });
 
   describe("sandboxActionTokens()", () => {
-    it("returns exactly 23 unique action tokens including empty string", () => {
+    it("returns exactly 25 unique action tokens including empty string", () => {
       const tokens = sandboxActionTokens();
-      expect(tokens).toHaveLength(23);
+      expect(tokens).toHaveLength(25);
       // Must contain every first-level sandbox action plus the empty default action.
       const expected = new Set([
         "connect",
         "dashboard-url",
+        "download",
         "exec",
         "status",
         "doctor",
@@ -231,6 +232,7 @@ describe("command-registry", () => {
         "config",
         "channels",
         "gateway-token",
+        "upload",
         "",
       ]);
       expect(new Set(tokens)).toEqual(expected);

@@ -35,6 +35,7 @@ export interface UninstallRunDeps {
   fs?: FileSystemDeps;
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
+  listRegisteredSandboxes?: () => string[];
   log?: (message: string) => void;
   readdirSync?: (target: string) => string[];
   readLine?: () => string | null;
@@ -137,6 +138,7 @@ interface UninstallRuntime {
   existsSync: (target: string) => boolean;
   isTty: boolean;
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
+  listRegisteredSandboxes: () => string[];
   log: (message: string) => void;
   readdirSync: (target: string) => string[];
   readLine: () => string | null;
@@ -164,14 +166,31 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
           return false;
         }
       }),
+    listRegisteredSandboxes:
+      deps.listRegisteredSandboxes ??
+      (() => {
+        try {
+          const home = env.HOME;
+          if (!home) return [];
+          const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
+          if (!fs.existsSync(registryFile)) return [];
+          const data = JSON.parse(fs.readFileSync(registryFile, "utf-8")) as {
+            sandboxes?: Record<string, unknown>;
+          };
+          return Object.keys(data.sandboxes ?? {});
+        } catch {
+          return [];
+        }
+      }),
     log: deps.log ?? ((message) => console.log(message)),
     readdirSync:
       deps.readdirSync ??
       ((target) => {
         try {
           return fs.readdirSync(target);
-        } catch {
-          return [];
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return [];
+          throw err;
         }
       }),
     readLine: deps.readLine ?? (() => defaultReadLine(env)),
@@ -219,10 +238,6 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   return false;
 }
 
-// Host-side directories under `~/.nemoclaw/` that hold user-authored data
-// destroyed by the unconditional `rm -rf` of the state dir. Keep this as a
-// constant so a future addition (separate snapshots dir, exported audit
-// logs, etc.) only needs an entry here. See #4226.
 const PROTECTED_USER_DATA_DIRS: readonly string[] = ["rebuild-backups"];
 
 interface ProtectedDirEntry {
@@ -233,6 +248,7 @@ interface ProtectedDirEntry {
 
 interface UserDataInventory {
   protectedDirs: ProtectedDirEntry[];
+  registeredSandboxes: string[];
   hasUserData: boolean;
 }
 
@@ -244,21 +260,14 @@ function detectUserData(paths: UninstallPaths, runtime: UninstallRuntime): UserD
       : [];
     return { name, path: dirPath, entries };
   }).filter((entry) => entry.entries.length > 0);
-  return { protectedDirs, hasUserData: protectedDirs.length > 0 };
+  const registeredSandboxes = runtime.listRegisteredSandboxes();
+  return {
+    protectedDirs,
+    registeredSandboxes,
+    hasUserData: protectedDirs.length > 0 || registeredSandboxes.length > 0,
+  };
 }
 
-// Gate the destructive uninstall when host-side snapshots or rebuild backups
-// exist. Behaviour matrix:
-//   non-interactive + env var unset  -> abort (exit 1).
-//   non-interactive + env var set    -> proceed.
-//   interactive     + env var set    -> proceed.
-//   interactive     + env var unset  -> prompt y/N; default = abort.
-// Container-side workspace files (`/sandbox/.openclaw/workspace/`) live in
-// the container's writable layer and are destroyed with `docker rm -f`
-// regardless of this gate, because OpenShell's `sandbox create` does not
-// expose a `--mount`/`--volume` flag (no host bind mount or named volume
-// support) — the gate is the host-side workaround for that constraint.
-// See #4226 and the OpenShell mount-support gap referenced in the PR body.
 function confirmDestroyUserData(
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
@@ -267,13 +276,19 @@ function confirmDestroyUserData(
   if (!data.hasUserData) return true;
   const branding = runtimeBranding(runtime);
   runtime.log("");
-  runtime.log(`  ${branding.display} detected workspace snapshots and rebuild backups on disk:`);
+  runtime.log(`  ${branding.display} detected workspace state on disk:`);
+  if (data.registeredSandboxes.length > 0) {
+    const sandboxLabel = data.registeredSandboxes.length === 1 ? "sandbox" : "sandboxes";
+    runtime.log(
+      `    ${data.registeredSandboxes.length} registered ${sandboxLabel}: ${data.registeredSandboxes.join(", ")}`,
+    );
+  }
   for (const dir of data.protectedDirs) {
     const sandboxLabel = dir.entries.length === 1 ? "sandbox" : "sandboxes";
     runtime.log(`    ${dir.path}`);
     runtime.log(`      (${dir.entries.length} ${sandboxLabel}: ${dir.entries.join(", ")})`);
   }
-  runtime.log("  Uninstall removes these directories along with the rest of ~/.nemoclaw/.");
+  runtime.log("  Uninstall removes these along with the rest of ~/.nemoclaw/.");
   runtime.log("  Sandbox container workspace files (`/sandbox/.openclaw/workspace/`) are");
   runtime.log("  removed with the Docker container and cannot be preserved automatically.");
   runtime.log("");
@@ -294,7 +309,7 @@ function confirmDestroyUserData(
   runtime.log(
     "  Set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to skip this prompt in non-interactive runs.",
   );
-  runtime.log("  Destroy these snapshots and rebuild backups now? [y/N]");
+  runtime.log("  Destroy this workspace state now? [y/N]");
   const reply = runtime.readLine();
   if (reply && /^(y|yes)$/i.test(reply.trim())) {
     runtime.log("  Confirmed; proceeding with destructive uninstall.");

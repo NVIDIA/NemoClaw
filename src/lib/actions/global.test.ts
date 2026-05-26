@@ -67,7 +67,7 @@ describe("global cli action facade", () => {
     expect(mocks.runSetupAction).toHaveBeenCalledWith(["--fresh"]);
     expect(mocks.runSetupSparkAction).toHaveBeenCalledWith(["--name", "alpha"]);
     expect(mocks.runDeployAction).toHaveBeenCalledWith("gpu-alpha");
-    expect(mocks.backupAll).toHaveBeenCalledWith();
+    expect(mocks.backupAll).toHaveBeenCalledWith({});
     expect(mocks.garbageCollectImages).toHaveBeenCalledWith({ dryRun: true });
     expect(mocks.help).toHaveBeenCalledWith();
     expect(mocks.version).toHaveBeenCalledWith();
