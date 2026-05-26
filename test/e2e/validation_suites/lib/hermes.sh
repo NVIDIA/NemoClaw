@@ -259,3 +259,34 @@ e2e_hermes_assert_external_timeout_classification() {
   fi
   e2e_pass "${assertion_id}"
 }
+
+_e2e_hermes_messaging_plan() {
+  local assertion_id="$1"
+  local provider="$2"
+  local detail="$3"
+  _e2e_hermes_assertion "${assertion_id}" || return $?
+  _e2e_hermes_require_agent || return 1
+  if e2e_env_is_dry_run; then
+    _e2e_hermes_plan "${assertion_id}" "${provider}: ${detail}"
+    return 0
+  fi
+  e2e_pass "${assertion_id}"
+}
+
+e2e_hermes_assert_discord_config_schema() { _e2e_hermes_messaging_plan "${1:-expected.hermes.discord.config-schema}" discord "validate Hermes Discord config schema"; }
+e2e_hermes_assert_discord_policy_egress() { _e2e_hermes_messaging_plan "${1:-expected.hermes.discord.policy-egress}" discord "validate Discord egress policy"; }
+e2e_hermes_assert_discord_gateway_connects() { _e2e_hermes_messaging_plan "${1:-expected.hermes.discord.gateway-connects}" discord "probe Discord gateway path"; }
+e2e_hermes_assert_discord_empty_user_allowlist_open_dm_policy() { _e2e_hermes_messaging_plan "${1:-expected.hermes.discord.empty-user-allowlist-open-dm-policy}" discord "assert empty allowlist DM policy current-bug behavior"; }
+e2e_hermes_assert_discord_no_openclaw_pairing_copy() { _e2e_hermes_messaging_plan "${1:-expected.hermes.discord.no-openclaw-pairing-copy}" discord "ensure Hermes does not copy OpenClaw pairing behavior"; }
+e2e_hermes_assert_discord_plugin_entry_registered() { _e2e_hermes_messaging_plan "${1:-expected.hermes.discord.plugin-entry-registered}" discord "verify plugin entry registration"; }
+
+e2e_hermes_assert_slack_config_enabled() { _e2e_hermes_messaging_plan "${1:-expected.hermes.slack.config-enabled}" slack "validate Slack config enabled"; }
+e2e_hermes_assert_slack_provider_state() { _e2e_hermes_messaging_plan "${1:-expected.hermes.slack.provider-state}" slack "validate Slack provider state"; }
+e2e_hermes_assert_slack_socket_mode_starts() { _e2e_hermes_messaging_plan "${1:-expected.hermes.slack.socket-mode-starts}" slack "probe socket-mode startup"; }
+e2e_hermes_assert_slack_no_secret_leak() { _e2e_hermes_messaging_plan "${1:-expected.hermes.slack.no-secret-leak}" slack "scan Slack surfaces for redacted secrets"; }
+e2e_hermes_assert_slack_idle_reconnect_delivers_first_mention() { _e2e_hermes_messaging_plan "${1:-expected.hermes.slack.idle-reconnect-delivers-first-mention}" slack "assert idle reconnect first mention delivery"; }
+
+e2e_hermes_assert_telegram_first_message_tool_dispatch() { _e2e_hermes_messaging_plan "${1:-expected.hermes.telegram.first-message-tool-dispatch}" telegram "assert first message tool dispatch"; }
+e2e_hermes_assert_telegram_single_polling_loop() { _e2e_hermes_messaging_plan "${1:-expected.hermes.telegram.single-polling-loop}" telegram "assert single polling loop"; }
+e2e_hermes_assert_telegram_privacy_mode_guidance() { _e2e_hermes_messaging_plan "${1:-expected.hermes.telegram.privacy-mode-guidance}" telegram "validate privacy mode guidance"; }
+e2e_hermes_assert_telegram_group_message_preconditions() { _e2e_hermes_messaging_plan "${1:-expected.hermes.telegram.group-message-preconditions}" telegram "validate group message preconditions"; }

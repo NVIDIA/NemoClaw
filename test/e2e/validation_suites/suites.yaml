@@ -123,6 +123,51 @@ suites:
       script: hermes/inference/04-hermes-api-chat.sh
     - id: external-timeout-classification
       script: hermes/inference/05-external-timeout-classification.sh
+  hermes-discord:
+    requires_state: *id009
+    required_secrets:
+    - DISCORD_BOT_TOKEN
+    steps:
+    - id: discord-config-schema
+      script: hermes/discord/00-config-schema.sh
+    - id: discord-policy-egress
+      script: hermes/discord/01-policy-egress.sh
+    - id: discord-gateway-connects
+      script: hermes/discord/02-gateway-connects.sh
+    - id: discord-empty-user-allowlist-open-dm-policy
+      script: hermes/discord/03-empty-user-allowlist-open-dm-policy.sh
+    - id: discord-no-openclaw-pairing-copy
+      script: hermes/discord/04-no-openclaw-pairing-copy.sh
+    - id: discord-plugin-entry-registered
+      script: hermes/discord/05-plugin-entry-registered.sh
+  hermes-slack:
+    requires_state: *id009
+    required_secrets:
+    - SLACK_BOT_TOKEN
+    steps:
+    - id: slack-config-enabled
+      script: hermes/slack/00-config-enabled.sh
+    - id: slack-provider-state
+      script: hermes/slack/01-provider-state.sh
+    - id: slack-socket-mode-starts
+      script: hermes/slack/02-socket-mode-starts.sh
+    - id: slack-no-secret-leak
+      script: hermes/slack/03-no-secret-leak.sh
+    - id: slack-idle-reconnect-delivers-first-mention
+      script: hermes/slack/04-idle-reconnect-delivers-first-mention.sh
+  hermes-telegram:
+    requires_state: *id009
+    required_secrets:
+    - TELEGRAM_BOT_TOKEN
+    steps:
+    - id: telegram-first-message-tool-dispatch
+      script: hermes/telegram/00-first-message-tool-dispatch.sh
+    - id: telegram-single-polling-loop
+      script: hermes/telegram/01-single-polling-loop.sh
+    - id: telegram-privacy-mode-guidance
+      script: hermes/telegram/02-privacy-mode-guidance.sh
+    - id: telegram-group-message-preconditions
+      script: hermes/telegram/03-group-message-preconditions.sh
   gateway-health:
     requires_state: *id001
     steps: *id002
