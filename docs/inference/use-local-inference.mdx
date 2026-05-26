@@ -31,6 +31,15 @@ The onboard wizard detects Ollama automatically when it is installed or running 
 
 If Ollama is installed but not running, NemoClaw starts it for you.
 On macOS and Linux, the wizard can also offer to install Ollama when it is not present.
+When the host Ollama is below the minimum version NemoClaw expects for its starter models (currently `0.7.0`), the wizard surfaces an explicit **Upgrade Ollama** entry in the provider menu instead of silently reusing the older daemon, and the express setup path resolves to that entry.
+The wizard inspects both the CLI binary (`ollama --version`) and the locally running daemon (`/api/version` on `:11434`) so the upgrade entry still appears when only one side is stale, for example a fresh user-local binary paired with the original system daemon.
+The gate skips Windows-host Ollama reached from WSL via `host.docker.internal`; the separate **Use / Start / Install Ollama on Windows host** entries handle that case and run their own actions on the Windows side.
+On macOS, the wizard runs the platform install or upgrade path with `brew upgrade ollama`.
+On Linux, the wizard runs the official `https://ollama.com/install.sh` path.
+Upgrades on Linux always take the sudo-driven system path because the sudo-free user-local fallback would leave the existing system daemon on `:11434` serving the stale binary.
+If sudo is not available in a non-interactive run, NemoClaw refuses to silently downgrade the path and asks you to rerun interactively or upgrade Ollama manually.
+After an upgrade finishes, NemoClaw re-probes the running daemon's `/api/version` and fails the run if the daemon still reports below the minimum.
+Fresh installs skip this re-probe because the bundled installers ship a daemon at or above the minimum.
 On WSL, the wizard can use, start, restart, or install Ollama on the Windows host through PowerShell interop.
 
 #### Linux Install Modes
