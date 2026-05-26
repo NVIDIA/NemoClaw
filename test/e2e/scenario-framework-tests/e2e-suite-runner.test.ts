@@ -213,6 +213,38 @@ describe("run-suites.sh", () => {
     }
   });
 
+  it("test_should_emit_hermes_policy_provider_security_tui_ids_in_dry_run", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-remaining-"));
+    try {
+      const cases: Array<[string, string[]]> = [
+        ["hermes-policy", [
+          "expected.hermes.policy.inactive-messaging-not-preenabled",
+          "expected.hermes.policy.managed-inference-anthropic-messages-path",
+          "expected.hermes.policy.venv-python-egress",
+          "expected.hermes.policy.no-phantom-allowlist",
+        ]],
+        ["hermes-provider-compatibility", [
+          "expected.hermes.provider.anthropic-compatible-chat",
+          "expected.hermes.provider.gemini-tool-schema-compatible",
+          "expected.hermes.provider.onboard-smoke-not-sufficient",
+        ]],
+        ["hermes-security-tui", [
+          "expected.hermes.security.shields-up-down-macos-vm-driver",
+          "expected.hermes.security.shields-config-locked",
+          "expected.hermes.tui.history-writable",
+        ]],
+      ];
+      for (const [suite, ids] of cases) {
+        seedContext(tmp, hermesContext());
+        const r = runSuites([suite], { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" });
+        expect(r.status, `suite:${suite}\nstderr:${r.stderr}\nstdout:${r.stdout}`).toBe(0);
+        for (const id of ids) expect(r.stdout).toContain(id);
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("security_credentials_suite_should_emit_stable_assertion_ids", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-security-credentials-"));
     try {
