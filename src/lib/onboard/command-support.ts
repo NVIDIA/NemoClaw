@@ -8,7 +8,7 @@ import { NOTICE_ACCEPT_FLAG } from "./usage-notice";
 const acceptFlagName = NOTICE_ACCEPT_FLAG.replace(/^--/, "");
 
 export const onboardUsage = [
-  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${NOTICE_ACCEPT_FLAG}]`,
+  `onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${NOTICE_ACCEPT_FLAG}]`,
 ];
 
 export const onboardExamples = [
@@ -36,6 +36,7 @@ export type OnboardFlags = {
   agent?: string;
   "control-ui-port"?: number;
   yes?: boolean;
+  "no-ollama-autostart"?: boolean;
   [acceptFlagName]?: boolean;
 };
 
@@ -80,6 +81,10 @@ export function buildOnboardFlags(): Record<string, any> {
       char: "y",
       description: "Auto-confirm prompts that are safe for unattended onboarding",
     }),
+    "no-ollama-autostart": Flags.boolean({
+      description:
+        "Disable wizard auto-start of a local Ollama daemon; if Ollama is not running, the wizard prints a warning and selects the default fallback model",
+    }),
     [acceptFlagName]: Flags.boolean({ description: "Accept the third-party software notice" }),
   } as Record<string, any>;
 }
@@ -104,6 +109,7 @@ export function toLegacyOnboardArgs(flags: OnboardFlags): string[] {
     args.push("--control-ui-port", String(flags["control-ui-port"]));
   }
   if (flags.yes) args.push("--yes");
+  if (flags["no-ollama-autostart"]) args.push("--no-ollama-autostart");
   if (flags[acceptFlagName]) args.push(NOTICE_ACCEPT_FLAG);
   return args;
 }
