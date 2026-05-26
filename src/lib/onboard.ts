@@ -4270,7 +4270,6 @@ async function setupNim(
   // (#2674).
   const localProbeCurlArgs = ["--connect-timeout", "2", "--max-time", "5"] as const;
   const hasOllama = hostCommandExists("ollama");
-  // run and consumed by the Ollama lifecycle helpers in inference/local.ts.
   const ollamaHost = findReachableOllamaHost();
   const ollamaRunning = ollamaHost !== null;
   const vllmRunning = !!runCapture(
@@ -4359,6 +4358,7 @@ async function setupNim(
       vllmRunning,
       vllmProfile,
       experimental: EXPERIMENTAL,
+      platform: gpu?.platform,
       hasVllmImage,
     }),
   );
