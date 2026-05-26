@@ -66,6 +66,20 @@ describe("E2E scenario resolver", () => {
     });
   });
 
+  it("test_should_resolve_all_hermes_scenario_plans", () => {
+    const meta = realMetadata();
+    const hermesScenarioIds = Object.entries(meta.scenarios.setup_scenarios)
+      .filter(([, sc]) => sc.dimensions?.onboarding.includes("hermes"))
+      .map(([id]) => id);
+    expect(hermesScenarioIds.length).toBeGreaterThan(0);
+    for (const id of hermesScenarioIds) {
+      const plan = resolveScenario(id, meta);
+      const suiteIds = plan.suites.map((suite) => suite.id);
+      expect(suiteIds, `${id} missing hermes-runtime`).toContain("hermes-runtime");
+      expect(suiteIds, `${id} missing hermes-inference-switch`).toContain("hermes-inference-switch");
+    }
+  });
+
   it("should_fail_for_unknown_scenario", () => {
     const meta = realMetadata();
     expect(() => resolveScenario("does-not-exist", meta)).toThrow(/does-not-exist/);
@@ -229,6 +243,32 @@ describe("run-scenario.sh --plan-only", () => {
       expect(doc.expected_state.id).toBe("cloud-openclaw-ready");
       expect(Array.isArray(doc.suites)).toBe(true);
       expect(doc.suites.map((s: { id: string }) => s.id)).toContain("smoke");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("test_should_include_hermes_suites_in_plan_only_output", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-plan-"));
+    try {
+      const result = spawnSync(
+        "bash",
+        [path.join(E2E_DIR, "runtime", "run-scenario.sh"), "ubuntu-repo-cloud-hermes", "--plan-only"],
+        {
+          env: { ...process.env, E2E_CONTEXT_DIR: tmp },
+          encoding: "utf8",
+          timeout: Number(process.env.E2E_SPAWN_TIMEOUT_MS ?? 60_000),
+          cwd: REPO_ROOT,
+        },
+      );
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("hermes-runtime");
+      expect(result.stdout).toContain("hermes-inference-switch");
+      const planJsonPath = path.join(tmp, "plan.json");
+      const doc = JSON.parse(fs.readFileSync(planJsonPath, "utf8"));
+      const suites = doc.suites.map((s: { id: string }) => s.id);
+      expect(suites).toContain("hermes-runtime");
+      expect(suites).toContain("hermes-inference-switch");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
