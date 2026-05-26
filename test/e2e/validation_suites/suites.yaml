@@ -86,13 +86,24 @@ suites:
     - id: wsl-smoke
       script: platform/wsl/00-wsl-smoke.sh
   hermes-specific:
-    requires_state:
+    requires_state: &id009
       gateway.health: healthy
       sandbox.status: running
       sandbox.agent: hermes
     steps:
     - id: hermes-health
       script: hermes/00-hermes-health.sh
+  hermes-runtime:
+    requires_state: *id009
+    steps:
+    - id: runtime-gateway-health
+      script: hermes/00-runtime-gateway-health.sh
+    - id: runtime-agent-home
+      script: hermes/01-runtime-agent-home.sh
+    - id: runtime-env-integrity
+      script: hermes/02-runtime-env-integrity.sh
+    - id: runtime-security-posture
+      script: hermes/03-runtime-security-posture.sh
   gateway-health:
     requires_state: *id001
     steps: *id002

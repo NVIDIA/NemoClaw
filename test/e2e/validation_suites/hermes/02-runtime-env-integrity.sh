@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-#
-# hermes-specific step: hermes-health
 
 set -euo pipefail
 
@@ -10,4 +8,4 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib/hermes.sh
 . "${SCRIPT_DIR}/../lib/hermes.sh"
 
-e2e_hermes_assert_gateway_health
+e2e_hermes_assert_env_integrity
