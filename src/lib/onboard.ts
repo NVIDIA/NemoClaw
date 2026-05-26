@@ -6101,7 +6101,7 @@ function syncNemoClawConfigInSandbox(sandboxName: string, provider: string, mode
   runSandboxConfigSync(sandboxName, {
     getSelectionConfig: () => getProviderSelectionConfig(provider, model),
     runConnectScript: (name, scriptContent) => {
-      run(openshellArgv(["sandbox", "connect", name]), {
+      run(openshellArgv(["sandbox", "connect", name, "--", "bash", "-s"]), {
         stdio: ["pipe", "ignore", "inherit"],
         input: scriptContent,
       });

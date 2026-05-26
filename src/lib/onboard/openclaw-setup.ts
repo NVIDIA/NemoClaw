@@ -32,7 +32,7 @@ export function createOpenclawSetup(deps: OpenclawSetupDeps) {
       const scriptFile = deps.writeSandboxConfigSyncFile(script);
       try {
         const scriptContent = fs.readFileSync(scriptFile, "utf-8");
-        deps.run(deps.openshellArgv(["sandbox", "connect", sandboxName]), {
+        deps.run(deps.openshellArgv(["sandbox", "connect", sandboxName, "--", "bash", "-s"]), {
           stdio: ["pipe", "ignore", "inherit"],
           input: scriptContent,
         });
