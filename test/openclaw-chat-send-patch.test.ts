@@ -93,6 +93,36 @@ function writeFollowupRunnerFixture(dist: string): string {
   return fixture;
 }
 
+function writeFollowupRunner20260522Fixture(dist: string): string {
+  const fixture = path.join(dist, "agent-runner.fixture.js");
+  fs.writeFileSync(
+    fixture,
+    [
+      "function createFollowupRunner(params) {",
+      "  const { opts } = params;",
+      "  return async (queued) => {",
+      "    let replyOperation;",
+      "    let run = queued.run;",
+      "    replyOperation = createReplyOperation({",
+      "      sessionId: run.sessionId,",
+      '      sessionKey: replySessionKey ?? "",',
+      "      resetTriggered: false,",
+      "      upstreamAbortSignal: queued.abortSignal",
+      "    });",
+      "    const runId = crypto.randomUUID();",
+      "    if (run.sessionKey) registerAgentRunContext(runId, {",
+      "      sessionKey: run.sessionKey,",
+      "      verboseLevel: run.verboseLevel",
+      "    });",
+      "    return runId;",
+      "  }",
+      "}",
+      "",
+    ].join("\n"),
+  );
+  return fixture;
+}
+
 function writeGetReplyFixture(dist: string): string {
   const fixture = path.join(dist, "get-reply.fixture.js");
   fs.writeFileSync(
@@ -188,6 +218,26 @@ describe("OpenClaw chat.send compatibility patch", () => {
         1,
       );
       expect(rerunPatchedGetReply.match(/force webchat chat\.send queued turns/g)).toHaveLength(1);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("recognizes the 2026.5.22 followup runner abort-signal shape", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-chat-send-522-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist);
+    writeChatSendFixture(dist);
+    const followupFixture = writeFollowupRunner20260522Fixture(dist);
+    writeGetReplyFixture(dist);
+
+    try {
+      const patch = runPatch(dist);
+      expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
+      const patchedFollowup = fs.readFileSync(followupFixture, "utf-8");
+      expect(patchedFollowup).toContain(
+        "const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); // nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)",
+      );
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

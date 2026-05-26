@@ -10,8 +10,12 @@ import { describe, expect, it } from "vitest";
 const DOCKERFILE = path.join(import.meta.dirname, "..", "Dockerfile");
 const DOCKERFILE_BASE = path.join(import.meta.dirname, "..", "Dockerfile.base");
 const BLUEPRINT = path.join(import.meta.dirname, "..", "nemoclaw-blueprint", "blueprint.yaml");
-const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = ["2026.4.24", "2026.5.18"] as const;
-const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.5.18";
+const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = [
+  "2026.4.24",
+  "2026.5.18",
+  "2026.5.22",
+] as const;
+const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.5.22";
 
 function readRequiredMatch(file: string, pattern: RegExp, description: string): string {
   const match = fs.readFileSync(file, "utf-8").match(pattern);
@@ -130,7 +134,7 @@ function runDockerfilePatchBlock(
   dist: string,
   tmp: string,
   endMarker: string,
-  version = "2026.5.18",
+  version = "2026.5.22",
 ) {
   const command = dockerRunCommandBetween(
     "# Patch OpenClaw media fetch for proxy-only sandbox",
@@ -154,7 +158,7 @@ function runDockerfilePatchBlock(
   });
 }
 
-function runFetchGuardPatchBlock(dist: string, tmp: string, version = "2026.5.18") {
+function runFetchGuardPatchBlock(dist: string, tmp: string, version = "2026.5.22") {
   return runDockerfilePatchBlock(
     dist,
     tmp,
@@ -387,7 +391,7 @@ if (globalThis.proxyChecks.length !== 0) throw new Error('sandbox proxy validati
     );
 
     try {
-      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.5.18");
+      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.5.22");
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 1 applied");
       expect(patch.stdout).toContain("Patch 2 applied");
@@ -633,7 +637,7 @@ if (globalThis.proxyChecks.length !== 0) throw new Error('sandbox proxy validati
     );
 
     try {
-      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.5.18");
+      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.5.22");
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 2 applied");
       const patched = fs.readFileSync(modulePath, "utf-8");
@@ -667,7 +671,7 @@ if (globalThis.proxyChecks.length !== 0) throw new Error('sandbox proxy validati
     );
 
     try {
-      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.5.18");
+      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.5.22");
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 2 applied");
       const patched = fs.readFileSync(modulePath, "utf-8");
@@ -710,7 +714,7 @@ if (globalThis.proxyChecks.length !== 0) throw new Error('sandbox proxy validati
     );
 
     try {
-      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.5.18");
+      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.5.22");
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 2 applied");
       const patched = fs.readFileSync(modulePath, "utf-8");

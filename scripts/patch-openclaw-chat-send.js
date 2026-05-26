@@ -104,7 +104,7 @@ function patchFollowupRunnerFile(file) {
 
   if (!source.includes("preserve chat.send run ids in followup queue")) {
     const next = source.replace(
-      /(replyOperation = createReplyOperation\(\{\n\s*sessionId: run\.sessionId,\n\s*sessionKey: replySessionKey \?\? "",\n\s*resetTriggered: false,\n\s*upstreamAbortSignal: queued\.abortSignal \?\? opts\?\.abortSignal\n\s*\}\);\n\s*)const runId = crypto\.randomUUID\(\);/,
+      /(replyOperation = createReplyOperation\(\{\n\s*sessionId: run\.sessionId,\n\s*sessionKey: replySessionKey \?\? "",\n\s*resetTriggered: false,\n\s*upstreamAbortSignal: queued\.abortSignal(?: \?\? opts\?\.abortSignal)?\n\s*\}\);\n\s*)const runId = crypto\.randomUUID\(\);/,
       (_match, prefix) =>
         `${prefix}const runId = queued.runId ?? opts?.runId ?? crypto.randomUUID(); ` +
         `// nemoclaw: preserve chat.send run ids in followup queue (#2603, #3145)`,
