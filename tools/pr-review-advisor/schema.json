@@ -15,6 +15,7 @@
     "findings",
     "acceptanceCoverage",
     "securityCategories",
+    "sourceOfTruthReview",
     "testDepth",
     "positives",
     "reviewCompleteness"
@@ -84,6 +85,40 @@
           "category": { "type": "string" },
           "verdict": { "enum": ["pass", "warning", "fail"] },
           "justification": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "sourceOfTruthReview": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "surface",
+          "status",
+          "invalidState",
+          "sourceBoundary",
+          "whyNotSourceFix",
+          "regressionTest",
+          "removalCondition",
+          "evidence"
+        ],
+        "properties": {
+          "surface": { "type": "string" },
+          "status": {
+            "enum": [
+              "not_applicable",
+              "satisfied",
+              "needs_followup",
+              "missing"
+            ]
+          },
+          "invalidState": { "type": "string" },
+          "sourceBoundary": { "type": "string" },
+          "whyNotSourceFix": { "type": "string" },
+          "regressionTest": { "type": "string" },
+          "removalCondition": { "type": "string" },
+          "evidence": { "type": "string" }
         },
         "additionalProperties": false
       }
