@@ -36,6 +36,7 @@ export interface UninstallRunDeps {
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log?: (message: string) => void;
+  readdirSync?: (target: string) => string[];
   readLine?: () => string | null;
   rmSync?: typeof fs.rmSync;
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -137,6 +138,7 @@ interface UninstallRuntime {
   isTty: boolean;
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   log: (message: string) => void;
+  readdirSync: (target: string) => string[];
   readLine: () => string | null;
   rmSync: typeof fs.rmSync;
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -163,6 +165,15 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
         }
       }),
     log: deps.log ?? ((message) => console.log(message)),
+    readdirSync:
+      deps.readdirSync ??
+      ((target) => {
+        try {
+          return fs.readdirSync(target);
+        } catch {
+          return [];
+        }
+      }),
     readLine: deps.readLine ?? (() => defaultReadLine(env)),
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
@@ -198,12 +209,76 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   runtime.log(`  · All OpenShell sandboxes, gateway, and ${branding.display} providers`);
   runtime.log("  · Related Docker containers, images, and volumes");
   runtime.log("  · ~/.nemoclaw  ~/.config/openshell  ~/.config/nemoclaw");
+  runtime.log("    (includes snapshots and rebuild backups under ~/.nemoclaw/rebuild-backups)");
   runtime.log(`  · Global ${branding.display} CLI (npm package: nemoclaw)`);
   runtime.log(options.deleteModels ? `  · Ollama models: ${NEMOCLAW_OLLAMA_MODELS.join(" ")}` : "  · Ollama models: kept");
   runtime.log("Proceed? [y/N]");
   const reply = runtime.readLine();
   if (reply && /^(y|yes)$/i.test(reply.trim())) return true;
   runtime.log("Aborted.");
+  return false;
+}
+
+interface UserDataInventory {
+  rebuildBackupsDir: string;
+  rebuildBackupEntries: string[];
+  hasUserData: boolean;
+}
+
+// Detect on-host directories that hold user-authored data (snapshots, rebuild
+// backups) inside `~/.nemoclaw/`. The full `~/.nemoclaw/` tree is wiped during
+// uninstall, so anything found here is destroyed unless the user has copied
+// it elsewhere first. See #4226.
+function detectUserData(paths: UninstallPaths, runtime: UninstallRuntime): UserDataInventory {
+  const rebuildBackupsDir = path.join(paths.nemoclawStateDir, "rebuild-backups");
+  const rebuildBackupEntries = runtime.existsSync(rebuildBackupsDir)
+    ? runtime.readdirSync(rebuildBackupsDir).filter((entry) => !entry.startsWith("."))
+    : [];
+  return {
+    rebuildBackupsDir,
+    rebuildBackupEntries,
+    hasUserData: rebuildBackupEntries.length > 0,
+  };
+}
+
+// Gate the destructive uninstall behind an explicit acknowledgement when
+// snapshots or rebuild backups exist on disk. The container-side workspace
+// (`/sandbox/.openclaw/workspace/`) lives in the writable container layer
+// and is destroyed by `docker rm -f` regardless of any host-side preservation
+// flag, so the warning also points users at `backup-all` + a manual copy to
+// a safe path before they re-run. The env opt-out keeps automation and CI
+// flows working without a TTY confirmation. See #4226.
+function confirmDestroyUserData(
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  data: UserDataInventory,
+): boolean {
+  if (!data.hasUserData) return true;
+  const branding = runtimeBranding(runtime);
+  const sandboxLabel = data.rebuildBackupEntries.length === 1 ? "sandbox" : "sandboxes";
+  runtime.log("");
+  runtime.log(`  ${branding.display} detected workspace snapshots and rebuild backups on disk:`);
+  runtime.log(`    ${data.rebuildBackupsDir}`);
+  runtime.log(
+    `    (${data.rebuildBackupEntries.length} ${sandboxLabel}: ${data.rebuildBackupEntries.join(", ")})`,
+  );
+  runtime.log("  Uninstall removes this directory along with the rest of ~/.nemoclaw/.");
+  runtime.log("  Sandbox container workspace files (`/sandbox/.openclaw/workspace/`) are");
+  runtime.log("  removed with the Docker container and cannot be preserved automatically.");
+  runtime.log("");
+  runtime.log("  To preserve workspace state, run before re-attempting uninstall:");
+  runtime.log("    nemoclaw backup-all");
+  runtime.log("    cp -r ~/.nemoclaw/rebuild-backups <safe-path-outside-nemoclaw>");
+  runtime.log("");
+  runtime.log(
+    "  Set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge and proceed with the destructive uninstall.",
+  );
+  if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
+    runtime.log("");
+    runtime.log("  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding with destructive uninstall.");
+    return true;
+  }
+  runtime.log("  Aborted.");
   return false;
 }
 
@@ -631,6 +706,8 @@ export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRu
   const runtime = buildRuntime(deps);
   const { paths, plan } = buildRunPlan(options, { ...deps, env: runtime.env });
   printBanner(runtime);
+  const userData = detectUserData(paths, runtime);
+  if (!confirmDestroyUserData(options, runtime, userData)) return { exitCode: 1, plan };
   if (!confirm(options, runtime)) return { exitCode: 0, plan };
   executePlan(plan, paths, options, runtime);
   printBye(runtime);

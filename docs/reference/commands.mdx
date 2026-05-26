@@ -1178,6 +1178,12 @@ On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-dri
 $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--gateway <name>]
 ```
 
+When uninstall detects snapshots or rebuild backups under `~/.nemoclaw/rebuild-backups/`, it prints the affected sandboxes, names the destructive surface, and exits without removing anything.
+The gate fires even with `--yes` so non-interactive automation cannot silently drop user data.
+Run `nemoclaw backup-all` and copy `~/.nemoclaw/rebuild-backups/` to a safe path outside `~/.nemoclaw/` before re-running uninstall, or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge the loss and proceed.
+Workspace files inside the sandbox container (`/sandbox/.openclaw/workspace/`) live in the container's writable layer and are destroyed with the container regardless of this gate.
+Use `nemoclaw backup-all` first to capture container workspace contents into the host-side snapshot directory before copying it out.
+
 #### `nemoclaw uninstall` vs. the hosted `uninstall.sh`
 
 Both forms execute the same `uninstall.sh` with the same flags, but differ in where the script comes from and how much they trust the network.

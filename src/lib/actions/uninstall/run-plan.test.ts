@@ -225,6 +225,103 @@ describe("uninstall run plan", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("aborts with exit 1 when snapshots exist and NEMOCLAW_UNINSTALL_DESTROY_USER_DATA is unset (#4226)", () => {
+    const logs: string[] = [];
+    const run = vi.fn();
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        existsSync: (target) => target === path.join("/home/test", ".nemoclaw", "rebuild-backups"),
+        readdirSync: (target) =>
+          target === path.join("/home/test", ".nemoclaw", "rebuild-backups")
+            ? ["my-assistant", "scratch-box"]
+            : [],
+        log: (line) => logs.push(line),
+        run,
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(logs.some((line) => line.includes("workspace snapshots and rebuild backups"))).toBe(true);
+    expect(logs.some((line) => line.includes("my-assistant, scratch-box"))).toBe(true);
+    expect(logs.some((line) => line.includes("NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1"))).toBe(true);
+    expect(logs).toContain("  Aborted.");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("proceeds past the user-data gate when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 (#4226)", () => {
+    const logs: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: {
+          HOME: "/home/test",
+          NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "1",
+        } as NodeJS.ProcessEnv,
+        commandExists: () => false,
+        existsSync: (target) => target === path.join("/home/test", ".nemoclaw", "rebuild-backups"),
+        readdirSync: (target) =>
+          target === path.join("/home/test", ".nemoclaw", "rebuild-backups")
+            ? ["my-assistant"]
+            : [],
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: vi.fn(() => ok("")),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(logs.some((line) => line.includes("workspace snapshots and rebuild backups"))).toBe(true);
+    expect(logs).toContain(
+      "  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding with destructive uninstall.",
+    );
+    expect(logs).toContain("Claws retracted. Until next time.");
+  });
+
+  it("skips the user-data gate when rebuild-backups directory does not exist", () => {
+    const logs: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        commandExists: () => false,
+        existsSync: () => false,
+        readdirSync: () => [],
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: vi.fn(() => ok("")),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(logs.some((line) => line.includes("workspace snapshots and rebuild backups"))).toBe(false);
+    expect(logs).toContain("Claws retracted. Until next time.");
+  });
+
+  it("skips the user-data gate when rebuild-backups directory is empty", () => {
+    const logs: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        commandExists: () => false,
+        existsSync: (target) => target === path.join("/home/test", ".nemoclaw", "rebuild-backups"),
+        readdirSync: () => [],
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: vi.fn(() => ok("")),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(logs.some((line) => line.includes("workspace snapshots and rebuild backups"))).toBe(false);
+  });
+
   it("kills the Ollama auth proxy via the persisted PID file (#2759)", () => {
     const logs: string[] = [];
     const killed: number[] = [];
