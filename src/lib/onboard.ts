@@ -2046,7 +2046,7 @@ async function preflight(
       "    Set NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1 to silence this check.",
     );
     if (!isNonInteractive()) {
-      const proceed = await promptYesNoOrDefault("  Continue with onboarding?", null, true);
+      const proceed = await promptYesNoOrDefault("  Continue with onboarding?", null, false);
       if (!proceed) {
         console.error("  Aborted by user. Resize your container runtime and rerun `nemoclaw onboard`.");
         process.exit(1);
