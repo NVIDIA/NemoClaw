@@ -69,8 +69,8 @@ describe("stopHostGatewayProcesses", () => {
   it("uses pgrep fallback when the Docker-driver gateway PID file is missing", () => {
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
-      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("99887\n")],
-      ...psResponses(99887, { exited }),
+      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("9999887\n")],
+      ...psResponses(9999887, { exited }),
     ]);
     const { run } = makeRun(responses);
     const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
@@ -84,19 +84,19 @@ describe("stopHostGatewayProcesses", () => {
       { stateDir: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-")) },
     );
 
-    expect(result.stopped).toEqual([99887]);
-    expect(kill).toHaveBeenCalledWith(99887, "SIGTERM");
-    expect(log).toHaveBeenCalledWith("Stopped host openshell-gateway process 99887");
+    expect(result.stopped).toEqual([9999887]);
+    expect(kill).toHaveBeenCalledWith(9999887, "SIGTERM");
+    expect(log).toHaveBeenCalledWith("Stopped host openshell-gateway process 9999887");
   });
 
   it("accepts the docker-compat parent PID whose argv0 is docker", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-"));
     const pidFile = path.join(stateDir, "openshell-gateway.pid");
-    fs.writeFileSync(pidFile, "5151\n");
+    fs.writeFileSync(pidFile, "9999551\n");
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
       ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", notFound()],
-      ...psResponses(5151, {
+      ...psResponses(9999551, {
         cmdline:
           "/usr/bin/docker run --rm --name nemoclaw-openshell-gateway --network host /opt/nemoclaw/openshell-gateway\n",
         exited,
@@ -113,18 +113,18 @@ describe("stopHostGatewayProcesses", () => {
       { stateDir },
     );
 
-    expect(result.stopped).toEqual([5151]);
-    expect(kill).toHaveBeenCalledWith(5151, "SIGTERM");
+    expect(result.stopped).toEqual([9999551]);
+    expect(kill).toHaveBeenCalledWith(9999551, "SIGTERM");
     expect(fs.existsSync(pidFile)).toBe(false);
   });
 
   it("rejects a PID whose argv0 is not docker even if it touches the mount path", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-"));
     const pidFile = path.join(stateDir, "openshell-gateway.pid");
-    fs.writeFileSync(pidFile, "6262\n");
+    fs.writeFileSync(pidFile, "9999662\n");
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
       ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", notFound()],
-      ...psResponses(6262, {
+      ...psResponses(9999662, {
         cmdline: "/usr/bin/vim /opt/nemoclaw/openshell-gateway\n",
         exited: new Set(),
       }),
@@ -137,7 +137,7 @@ describe("stopHostGatewayProcesses", () => {
       { stateDir },
     );
 
-    expect(result.skippedNonMatchingPids).toEqual([6262]);
+    expect(result.skippedNonMatchingPids).toEqual([9999662]);
     expect(kill).not.toHaveBeenCalled();
   });
 
@@ -170,16 +170,16 @@ describe("stopHostGatewayProcesses", () => {
   it("ignores unrelated command lines that merely mention openshell-gateway", () => {
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
-      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("111\n222\n")],
-      ...psResponses(111, { exited }),
-      ...psResponses(222, {
+      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("9999111\n9999222\n")],
+      ...psResponses(9999111, { exited }),
+      ...psResponses(9999222, {
         cmdline: "node /home/test/.npm-global/bin/codex issue text mentions openshell-gateway\n",
         exited,
       }),
     ]);
     const { run } = makeRun(responses);
     const kill = vi.fn<HostGatewayProcessDeps["kill"]>((pid, signal) => {
-      if (pid === 111 && signal === "SIGTERM") exited.add(pid);
+      if (pid === 9999111 && signal === "SIGTERM") exited.add(pid);
       return true;
     });
 
@@ -188,15 +188,15 @@ describe("stopHostGatewayProcesses", () => {
       { stateDir: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-")) },
     );
 
-    expect(result.stopped).toEqual([111]);
-    expect(result.skippedNonMatchingPids).toEqual([222]);
-    expect(kill).not.toHaveBeenCalledWith(222, expect.anything());
+    expect(result.stopped).toEqual([9999111]);
+    expect(result.skippedNonMatchingPids).toEqual([9999222]);
+    expect(kill).not.toHaveBeenCalledWith(9999222, expect.anything());
   });
 
   it("prints sudo remediation when a privileged host gateway cannot be killed", () => {
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
-      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("42\n")],
-      ...psResponses(42, { exited: new Set(), owner: "root" }),
+      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("9999042\n")],
+      ...psResponses(9999042, { exited: new Set(), owner: "root" }),
     ]);
     const { run } = makeRun(responses);
     const warn = vi.fn();
@@ -216,18 +216,24 @@ describe("stopHostGatewayProcesses", () => {
       },
     );
 
-    expect(result.failed).toEqual([42]);
-    expect(result.sudoRemediationPids).toEqual([42]);
+    expect(result.failed).toEqual([9999042]);
+    expect(result.sudoRemediationPids).toEqual([9999042]);
     expect(warn).toHaveBeenCalledWith(
-      "Cannot stop root-owned host openshell-gateway process 42. Run: sudo pkill -f openshell-gateway",
+      "Cannot stop root-owned host openshell-gateway process 9999042. Run: sudo pkill -f openshell-gateway",
     );
   });
 
   it("skips pgrep sweep when explicit PIDs are passed (drift restart)", () => {
+    // Use a PID above the Linux kernel pid_max default (4194304) so that the
+    // production code's `/proc/<pid>/cmdline` probe always misses and the
+    // mocked `ps -o args=` response wins. Without this guard a real process
+    // happening to hold the chosen PID on a busy CI runner makes the
+    // cmdline-matcher reject the candidate and the test flakes.
+    const driftPid = 9999777;
     const exited = new Set<number>();
     const pgrepCalls: string[][] = [];
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
-      ...psResponses(7777, { exited }),
+      ...psResponses(driftPid, { exited }),
     ]);
     const { run } = makeRun(responses);
     // Wrap run so we can detect any pgrep invocation: pgrep MUST NOT run when
@@ -244,30 +250,30 @@ describe("stopHostGatewayProcesses", () => {
     const result = stopHostGatewayProcesses(
       { run: tracedRun, kill, env: { USER: "tester" }, commandExists: () => true, log: vi.fn() },
       {
-        pids: [7777],
+        pids: [driftPid],
         stateDir: fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-")),
       },
     );
 
-    expect(result.stopped).toEqual([7777]);
+    expect(result.stopped).toEqual([driftPid]);
     expect(pgrepCalls).toEqual([]);
   });
 
   it("clears stale PID files and still scans for orphaned host gateways", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-host-gateway-"));
     const pidFile = path.join(stateDir, "openshell-gateway.pid");
-    fs.writeFileSync(pidFile, "123\n");
+    fs.writeFileSync(pidFile, "9999123\n");
     const exited = new Set<number>();
     const responses = new Map<string, RunResult | ((args: string[]) => RunResult)>([
-      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("456\n")],
-      ...psResponses(123, { exited: new Set() }).map(([key, value]) =>
-        key === "ps -p 123 -o pid=" ? [key, notFound()] : [key, value],
+      ["pgrep -f ^(/[^ ]*/)?openshell-gateway( |$)", ok("9999456\n")],
+      ...psResponses(9999123, { exited: new Set() }).map(([key, value]) =>
+        key === "ps -p 9999123 -o pid=" ? [key, notFound()] : [key, value],
       ) as [string, RunResult | ((args: string[]) => RunResult)][],
-      ...psResponses(456, { exited }),
+      ...psResponses(9999456, { exited }),
     ]);
     const { run } = makeRun(responses);
     const kill: HostGatewayProcessDeps["kill"] = (pid, signal) => {
-      if (pid === 456 && signal === "SIGTERM") exited.add(pid);
+      if (pid === 9999456 && signal === "SIGTERM") exited.add(pid);
       return true;
     };
 
@@ -276,8 +282,8 @@ describe("stopHostGatewayProcesses", () => {
       { stateDir },
     );
 
-    expect(result.skippedDeadPids).toEqual([123]);
-    expect(result.stopped).toEqual([456]);
+    expect(result.skippedDeadPids).toEqual([9999123]);
+    expect(result.stopped).toEqual([9999456]);
     expect(fs.existsSync(pidFile)).toBe(false);
   });
 });
