@@ -173,7 +173,6 @@ const {
 } = require("./core/ports");
 const localInference: typeof import("./inference/local") = require("./inference/local");
 const {
-  DEFAULT_OLLAMA_MODEL,
   findReachableOllamaHost,
   resetOllamaHostCache,
   getDefaultOllamaModel,
@@ -488,6 +487,7 @@ import {
   readMessagingChannelConfigFromEnv,
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
+import { runOllamaStartupOrGate, setOllamaAutostartDisabled } from "./onboard/ollama-startup";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
   normalizeHermesToolGatewaySelections,
@@ -572,7 +572,6 @@ type OnboardOptions = {
 let NON_INTERACTIVE = false;
 let RECREATE_SANDBOX = false;
 let AUTO_YES = false;
-let NO_OLLAMA_AUTOSTART = false;
 // Set by onboard() before preflight() when --control-ui-port is specified.
 // null means "use auto-allocation" (skip dashboard port check in preflight).
 let _preflightDashboardPort: number | null = null;
@@ -587,10 +586,6 @@ function isRecreateSandbox(): boolean {
 
 function isAutoYes(): boolean {
   return AUTO_YES || process.env.NEMOCLAW_YES === "1";
-}
-
-function isOllamaAutostartDisabled(): boolean {
-  return NO_OLLAMA_AUTOSTART || process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART === "1";
 }
 
 function note(message: string): void {
@@ -5146,35 +5141,17 @@ async function setupNim(
           );
           process.exit(1);
         }
-        if (!ollamaReady) {
-          if (isOllamaAutostartDisabled()) {
-            console.log(
-              "  ⚠ Ollama is not running on localhost:" +
-                `${OLLAMA_PORT} and --no-ollama-autostart is set; ` +
-                "skipping auto-start and falling back to the default model.",
-            );
-            provider = "ollama-local";
-            credentialEnv = null;
-            endpointUrl = getLocalProviderBaseUrl(provider);
-            if (!endpointUrl) {
-              console.error("  Local Ollama base URL could not be determined.");
-              process.exit(1);
-            }
-            model = DEFAULT_OLLAMA_MODEL;
-            preferredInferenceApi = "openai-completions";
-            break;
-          }
-          console.log("  Starting Ollama...");
-          // Keep raw Ollama loopback-only; the auth proxy (or Docker Desktop
-          // on WSL via host.docker.internal) fronts container access.
-          runShell(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
-            ignoreError: true,
-          });
-          if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
-            console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
+        const ollamaStartup = runOllamaStartupOrGate({
+          ollamaReady,
+          ollamaPort: OLLAMA_PORT,
+          getLocalProviderBaseUrl,
+          isNonInteractive,
+        });
+        if (ollamaStartup.kind === "continue") continue selectionLoop;
+        if (ollamaStartup.kind === "fallback") {
+          ({ provider, credentialEnv, endpointUrl, model, preferredInferenceApi } =
+            ollamaStartup.result);
+          break;
         }
         if (shouldFrontOllamaWithProxy()) {
           if (!startOllamaAuthProxy()) process.exit(1);
@@ -6747,7 +6724,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
-  NO_OLLAMA_AUTOSTART = !!opts.noOllamaAutostart;
+  setOllamaAutostartDisabled(opts.noOllamaAutostart);
   _preflightDashboardPort = opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   delete process.env.OPENSHELL_GATEWAY;
