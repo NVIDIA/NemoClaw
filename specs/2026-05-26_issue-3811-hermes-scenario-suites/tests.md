@@ -92,7 +92,7 @@ Primary existing test locations:
 
 **Test Implementation Notes:**
 
-- Use resolver-owned metadata if implemented there; otherwise use the selected E2E docs metadata file.
+- Use the top-level `hermes_expectations` section in `test/e2e/nemoclaw_scenarios/expected-states.yaml` as resolver-owned metadata.
 - Keep tests metadata-focused and runnable without secrets.
 
 ## Phase 3: Migrate Hermes Inference Switching and Provider Routing - Test Guide
