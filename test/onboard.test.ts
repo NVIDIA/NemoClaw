@@ -3829,4 +3829,98 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
+  it("aborts createSandbox for missing BRAVE_API_KEY before any sandbox delete (#3626)", () => {
+    // Regression: the Brave credential guard previously sat *after* the
+    // recreate/sandbox-delete branch ran. A user with Brave enabled and no
+    // BRAVE_API_KEY would lose their existing sandbox before seeing the abort.
+    // Move it next to the credential lookup and assert no `sandbox delete`
+    // command escapes before exit.
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-brave-abort-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "brave-abort-check.js");
+    const outputPath = path.join(tmpDir, "outcome.json");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const outputPathLiteral = JSON.stringify(outputPath);
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const fs = require("node:fs");
+const runner = require(${runnerPath});
+
+const openshellCalls = [];
+runner.runOpenshell = (command) => {
+  openshellCalls.push(Array.isArray(command) ? command.join(" ") : String(command));
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCaptureOpenshell = () => "";
+runner.run = (command) => {
+  openshellCalls.push("run: " + (Array.isArray(command) ? command.join(" ") : String(command)));
+  return { status: 0 };
+};
+
+const errors = [];
+const originalError = console.error;
+console.error = (...args) => errors.push(args.join(" "));
+const originalExit = process.exit;
+process.exit = (code) => {
+  fs.writeFileSync(${outputPathLiteral}, JSON.stringify({ exitCode: code, errors, openshellCalls }));
+  originalExit(code);
+};
+
+// Reproduce the bug scenario: Brave enabled, no key anywhere.
+delete process.env.BRAVE_API_KEY;
+
+const { createSandbox } = require(${onboardPath});
+(async () => {
+  await createSandbox(
+    null,           // gpu
+    "gpt-5.4",      // model
+    "nvidia-prod",  // provider
+    null,           // preferredInferenceApi
+    "my-assistant", // sandboxNameOverride
+    { fetchEnabled: true }, // webSearchConfig
+  );
+})().catch(() => {});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_RECREATE_SANDBOX: "1",
+        BRAVE_API_KEY: "",
+      },
+    });
+
+    assert.ok(
+      fs.existsSync(outputPath),
+      `outcome file missing; exit=${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+    const payload = JSON.parse(fs.readFileSync(outputPath, "utf-8")) as {
+      exitCode: number;
+      errors: string[];
+      openshellCalls: string[];
+    };
+    expect(payload.exitCode).toBe(1);
+    expect(payload.errors.join("\n")).toMatch(/BRAVE_API_KEY is not available/);
+    // The abort must run before *any* destructive openshell command —
+    // most importantly `sandbox delete`. `forward list` is read-only and
+    // happens earlier; only flag mutating commands here.
+    const destructive = payload.openshellCalls.filter((c) =>
+      /\bsandbox\s+(?:delete|create|rebuild)\b|\bprovider\s+(?:delete|create|update)\b/.test(c),
+    );
+    expect(destructive).toEqual([]);
+  });
+
 });
