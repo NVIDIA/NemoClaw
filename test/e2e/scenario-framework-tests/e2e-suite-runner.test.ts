@@ -43,6 +43,15 @@ function fullContext(): Record<string, string> {
   };
 }
 
+function hermesContext(): Record<string, string> {
+  return {
+    ...fullContext(),
+    E2E_SCENARIO: "ubuntu-repo-cloud-hermes",
+    E2E_AGENT: "hermes",
+    E2E_SANDBOX_NAME: "e2e-ubuntu-repo-cloud-hermes",
+  };
+}
+
 describe("Issue #3810 messaging suite wiring", () => {
   it("should_define_real_steps_for_messaging_provider_suites", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-messaging-suites-"));
@@ -101,6 +110,31 @@ describe("Issue #3810 messaging suite wiring", () => {
 });
 
 describe("run-suites.sh", () => {
+  it("test_should_emit_hermes_runtime_assertion_ids_in_dry_run", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-runtime-"));
+    try {
+      seedContext(tmp, {
+        ...hermesContext(),
+        E2E_PROVIDER_API_KEY: "super-secret-hermes-token",
+        SLACK_BOT_TOKEN: "xoxb-secret-token",
+      });
+      const r = runSuites(["hermes-runtime"], { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" });
+      expect(r.status, `stderr:${r.stderr}\nstdout:${r.stdout}`).toBe(0);
+      for (const id of [
+        "expected.hermes.runtime.gateway-health",
+        "expected.hermes.runtime.agent-home",
+        "expected.hermes.runtime.env-integrity",
+        "expected.hermes.runtime.security-posture",
+      ]) {
+        expect(r.stdout).toContain(id);
+      }
+      expect(r.stdout + r.stderr).not.toContain("super-secret-hermes-token");
+      expect(r.stdout + r.stderr).not.toContain("xoxb-secret-token");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("security_credentials_suite_should_emit_stable_assertion_ids", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-security-credentials-"));
     try {

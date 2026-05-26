@@ -32,6 +32,70 @@ function runBash(script: string, env: Record<string, string> = {}): SpawnSyncRet
 // ──────────────────────────────────────────────────────────────────────────
 
 describe("E2E shell helpers", () => {
+  it("test_should_source_hermes_helpers_under_strict_shell_mode", () => {
+    const r = runBash(`
+      set -euo pipefail
+      . "${VALIDATION_SUITES}/lib/hermes.sh"
+      declare -F e2e_hermes_load_context
+      declare -F e2e_hermes_assert_gateway_health
+      declare -F e2e_hermes_assert_agent_home_permissions
+      declare -F e2e_hermes_assert_env_integrity
+      declare -F e2e_hermes_assert_security_posture
+    `);
+    expect(r.status, r.stderr).toBe(0);
+  });
+
+  it("test_should_fail_clearly_when_hermes_context_is_missing", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-missing-"));
+    try {
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/hermes.sh"
+        e2e_hermes_assert_gateway_health
+      `,
+        { E2E_CONTEXT_DIR: tmp },
+      );
+      expect(r.status).not.toBe(0);
+      expect(r.stderr).toMatch(/E2E_AGENT|E2E_SANDBOX_NAME|context/i);
+      expect(r.stderr).not.toContain("super-secret-hermes-token");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("test_should_not_emit_secret_values_from_hermes_runtime_helpers", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-secret-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        [
+          "E2E_SCENARIO=hermes-test",
+          "E2E_AGENT=hermes",
+          "E2E_SANDBOX_NAME=hermes-sandbox",
+          "E2E_GATEWAY_URL=http://127.0.0.1:18789",
+          "E2E_PROVIDER_API_KEY=super-secret-hermes-token",
+          "DISCORD_BOT_TOKEN=discord-secret-token",
+        ].join("\n") + "\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/hermes.sh"
+        e2e_hermes_assert_env_integrity
+      `,
+        { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout + r.stderr).toContain("expected.hermes.runtime.env-integrity");
+      expect(r.stdout + r.stderr).not.toContain("super-secret-hermes-token");
+      expect(r.stdout + r.stderr).not.toContain("discord-secret-token");
+      expect(r.stdout + r.stderr).toMatch(/REDACTED|dry-run/i);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("test_should_source_inference_routing_helpers_under_strict_shell_mode", () => {
     const r = runBash(`
       set -euo pipefail
