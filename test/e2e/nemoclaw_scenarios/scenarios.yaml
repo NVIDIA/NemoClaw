@@ -122,6 +122,11 @@ setup_scenarios:
     - smoke
     - inference
     - hermes-specific
+    - hermes-runtime
+    - hermes-inference-switch
+    - hermes-policy
+    - hermes-provider-compatibility
+    - hermes-security-tui
     - baseline-onboarding
   gpu-repo-local-ollama-openclaw:
     alias_for_plan: gpu-repo-docker-cdi__local-ollama-openclaw
@@ -376,6 +381,11 @@ test_plans:
     - smoke
     - inference
     - hermes-specific
+    - hermes-runtime
+    - hermes-inference-switch
+    - hermes-policy
+    - hermes-provider-compatibility
+    - hermes-security-tui
   gpu-repo-docker-cdi__local-ollama-openclaw:
     base: gpu-repo-docker-cdi
     onboarding: local-ollama-openclaw
@@ -492,6 +502,9 @@ test_plans:
     suites:
     - smoke
     - messaging-discord
+    - hermes-runtime
+    - hermes-inference-switch
+    - hermes-discord
   ubuntu-repo-docker__cloud-nvidia-hermes-slack:
     base: ubuntu-repo-docker
     onboarding: cloud-nvidia-hermes-slack
@@ -502,6 +515,9 @@ test_plans:
     suites:
     - smoke
     - messaging-slack
+    - hermes-runtime
+    - hermes-inference-switch
+    - hermes-slack
   ubuntu-repo-docker__cloud-nvidia-openclaw-resume-after-interrupt:
     base: ubuntu-repo-docker
     onboarding: cloud-nvidia-openclaw-resume-after-interrupt
