@@ -161,9 +161,8 @@ Skip this step when the user only asked for ordinary doc catch-up and no release
 
 If the user invoked this skill for release prep, finish the release-specific doc work before verification:
 
-1. Make any requested doc version bumps in `versions1.json` and `project.json` in the `docs/` directory.
-2. Determine the release label from the release version. Release labels use `vX.Y.Z` format. For example, if `docs/project.json` has `"version": "0.0.37"`, the release label is `v0.0.37`. Use the version requested by the user if one was provided; otherwise use the version in `docs/project.json` after the bump.
-3. Refresh the NemoClaw user skills:
+1. Determine the release label from the release version requested by the user. Release labels use `vX.Y.Z` format. For example, release `0.0.37` uses label `v0.0.37`. If the user did not provide a release version, ask for it before opening the release-prep PR.
+2. Refresh the NemoClaw user skills:
 
    ```bash
    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
@@ -174,7 +173,7 @@ If the user invoked this skill for release prep, finish the release-specific doc
 After making changes, build the docs locally:
 
 ```bash
-make docs
+npm run docs
 ```
 
 Check for:
@@ -213,10 +212,10 @@ User says: "Catch up the docs for everything merged since v0.1.0."
 3. Map each to a doc page.
 4. Read the commit diffs and current doc pages.
 5. Draft doc updates reflecting the source code changes in the commits following the style guide.
-6. **Release prep only:** Apply release-prep version bumps if the user requested release prep.
+6. **Release prep only:** Determine the release label from the user-requested release version.
 7. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
 8. Present the summary.
-9. Build with `make docs` to verify.
+9. Build with `npm run docs` to verify.
 10. **Release prep only:** Commit changes and open a pull request with the `documentation` label and the corresponding `vX.Y.Z` release label. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
 
    ```markdown

@@ -30,6 +30,8 @@ For details, refer to Commands (use the `nemoclaw-user-reference` skill).
 
 Telegram uses a bot token from [BotFather](https://t.me/BotFather).
 Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token.
+For Telegram group chats, disable privacy mode before testing group replies: in @BotFather, run `/setprivacy`, choose the bot, then choose **Disable**.
+After changing privacy mode, remove the bot from each Telegram group and add it back so Telegram applies the new delivery setting to that group.
 `TELEGRAM_ALLOWED_IDS` is a comma-separated list of Telegram user IDs for DM access.
 Group chats stay open by default so rebuilt sandboxes do not silently drop Telegram group messages because of an empty group allowlist.
 Set `TELEGRAM_REQUIRE_MENTION=1` to make the bot reply in Telegram groups only when users mention it.
@@ -190,6 +192,7 @@ Use the matching policy preset (`telegram`, `discord`, `slack`, or `whatsapp`) o
 ## Tunnel Command
 
 When the host has `cloudflared`, `nemoclaw tunnel start` starts a cloudflared tunnel that can expose the dashboard with a public URL.
+Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
 `nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
 The older `nemoclaw start` still works as a deprecated alias.
 
