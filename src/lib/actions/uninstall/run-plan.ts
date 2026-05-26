@@ -182,16 +182,28 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
             `Unable to read sandbox registry at ${registryFile}: ${message}`,
           );
         }
-        let data: { sandboxes?: Record<string, unknown> };
+        let parsed: unknown;
         try {
-          data = JSON.parse(raw) as { sandboxes?: Record<string, unknown> };
+          parsed = JSON.parse(raw);
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
           throw new Error(
             `Unable to parse sandbox registry at ${registryFile}: ${message}`,
           );
         }
-        return Object.keys(data.sandboxes ?? {});
+        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+          throw new Error(
+            `Unable to parse sandbox registry at ${registryFile}: expected a JSON object at the top level`,
+          );
+        }
+        const sandboxes = (parsed as { sandboxes?: unknown }).sandboxes;
+        if (sandboxes === undefined || sandboxes === null) return [];
+        if (typeof sandboxes !== "object" || Array.isArray(sandboxes)) {
+          throw new Error(
+            `Unable to parse sandbox registry at ${registryFile}: expected the "sandboxes" field to be a JSON object`,
+          );
+        }
+        return Object.keys(sandboxes as Record<string, unknown>);
       }),
     log: deps.log ?? ((message) => console.log(message)),
     readdirSync:
@@ -263,14 +275,25 @@ interface UserDataInventory {
   hasUserData: boolean;
 }
 
-function detectUserData(paths: UninstallPaths, runtime: UninstallRuntime): UserDataInventory {
-  const protectedDirs: ProtectedDirEntry[] = PROTECTED_USER_DATA_DIRS.map((name) => {
+function detectProtectedDirs(paths: UninstallPaths, runtime: UninstallRuntime): ProtectedDirEntry[] {
+  return PROTECTED_USER_DATA_DIRS.map((name) => {
     const dirPath = path.join(paths.nemoclawStateDir, name);
-    const entries = runtime.existsSync(dirPath)
-      ? runtime.readdirSync(dirPath).filter((entry) => !entry.startsWith("."))
-      : [];
-    return { name, path: dirPath, entries };
+    if (!runtime.existsSync(dirPath)) return { name, path: dirPath, entries: [] };
+    let raw: string[];
+    try {
+      raw = runtime.readdirSync(dirPath);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      throw new Error(
+        `Unable to enumerate protected directory ${dirPath}: ${message}`,
+      );
+    }
+    return { name, path: dirPath, entries: raw.filter((entry) => !entry.startsWith(".")) };
   }).filter((entry) => entry.entries.length > 0);
+}
+
+function detectUserData(paths: UninstallPaths, runtime: UninstallRuntime): UserDataInventory {
+  const protectedDirs = detectProtectedDirs(paths, runtime);
   const registeredSandboxes = runtime.listRegisteredSandboxes();
   return {
     protectedDirs,
@@ -750,30 +773,61 @@ export function buildRunPlan(options: UninstallRunOptions, deps: UninstallRunDep
   return { paths, plan };
 }
 
+function failedSourceAck(
+  runtime: UninstallRuntime,
+  err: unknown,
+  remediation: string,
+  ackBypassNote: string,
+): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  runtime.error(`  ${message}`);
+  runtime.error("  Refusing to proceed: cannot confirm whether workspace state would be destroyed.");
+  runtime.error(`  ${remediation}`);
+  if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA !== "1") {
+    return false;
+  }
+  runtime.log(`  ${ackBypassNote}`);
+  return true;
+}
+
 export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps = {}): UninstallRunOutcome {
   const runtime = buildRuntime(deps);
   const { paths, plan } = buildRunPlan(options, { ...deps, env: runtime.env });
   printBanner(runtime);
-  let userData: UserDataInventory;
+
+  let protectedDirs: ProtectedDirEntry[];
   try {
-    userData = detectUserData(paths, runtime);
+    protectedDirs = detectProtectedDirs(paths, runtime);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    runtime.error(`  ${message}`);
-    runtime.error(
-      "  Refusing to proceed: cannot confirm whether sandbox workspace state would be destroyed.",
+    const proceed = failedSourceAck(
+      runtime,
+      err,
+      "Repair or remove the protected directory, or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge the loss and proceed.",
+      "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite unreadable protected directory.",
     );
-    runtime.error(
-      "  Repair or remove the registry file, or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge the loss and proceed.",
-    );
-    if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA !== "1") {
-      return { exitCode: 1, plan };
-    }
-    runtime.log(
-      "  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite unreadable registry.",
-    );
-    userData = { protectedDirs: [], registeredSandboxes: [], hasUserData: false };
+    if (!proceed) return { exitCode: 1, plan };
+    protectedDirs = [];
   }
+
+  let registeredSandboxes: string[];
+  try {
+    registeredSandboxes = runtime.listRegisteredSandboxes();
+  } catch (err) {
+    const proceed = failedSourceAck(
+      runtime,
+      err,
+      "Repair or remove the registry file, or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge the loss and proceed.",
+      "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite unreadable registry.",
+    );
+    if (!proceed) return { exitCode: 1, plan };
+    registeredSandboxes = [];
+  }
+
+  const userData: UserDataInventory = {
+    protectedDirs,
+    registeredSandboxes,
+    hasUserData: protectedDirs.length > 0 || registeredSandboxes.length > 0,
+  };
   if (!confirmDestroyUserData(options, runtime, userData)) return { exitCode: 1, plan };
   if (!confirm(options, runtime)) return { exitCode: 0, plan };
   executePlan(plan, paths, options, runtime);

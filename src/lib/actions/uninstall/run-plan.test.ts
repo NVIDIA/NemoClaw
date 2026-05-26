@@ -481,6 +481,118 @@ describe("uninstall run plan", () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it("aborts with exit 1 when readdirSync throws for a protected directory and ack env var is unset", () => {
+    const logs: string[] = [];
+    const errors: string[] = [];
+    const run = vi.fn();
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        error: (line) => errors.push(line),
+        existsSync: (target) =>
+          target === path.join("/home/test", ".nemoclaw", "rebuild-backups"),
+        readdirSync: () => {
+          const err = new Error("EACCES: permission denied") as NodeJS.ErrnoException;
+          err.code = "EACCES";
+          throw err;
+        },
+        listRegisteredSandboxes: () => [],
+        log: (line) => logs.push(line),
+        run,
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(
+      errors.some((line) =>
+        line.includes(
+          `Unable to enumerate protected directory ${path.join("/home/test", ".nemoclaw", "rebuild-backups")}: EACCES`,
+        ),
+      ),
+    ).toBe(true);
+    expect(
+      errors.some((line) => line.includes("Refusing to proceed")),
+    ).toBe(true);
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("proceeds past an unreadable protected directory only when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1", () => {
+    const logs: string[] = [];
+    const errors: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: {
+          HOME: "/home/test",
+          NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "1",
+        } as NodeJS.ProcessEnv,
+        commandExists: () => false,
+        error: (line) => errors.push(line),
+        existsSync: (target) =>
+          target === path.join("/home/test", ".nemoclaw", "rebuild-backups"),
+        readdirSync: () => {
+          const err = new Error("EACCES: permission denied") as NodeJS.ErrnoException;
+          err.code = "EACCES";
+          throw err;
+        },
+        listRegisteredSandboxes: () => [],
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: vi.fn(() => ok("")),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      errors.some((line) => line.includes("EACCES: permission denied")),
+    ).toBe(true);
+    expect(logs).toContain(
+      "  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite unreadable protected directory.",
+    );
+    expect(logs).toContain("Claws retracted. Until next time.");
+  });
+
+  it("rejects a sandbox registry whose top-level JSON is null/array/primitive", () => {
+    const tmpHome = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-uninstall-registry-non-object-"),
+    );
+    const nemoclawDir = path.join(tmpHome, ".nemoclaw");
+    fs.mkdirSync(nemoclawDir, { recursive: true });
+    const registryFile = path.join(nemoclawDir, "sandboxes.json");
+    fs.writeFileSync(registryFile, "null");
+
+    try {
+      const logs: string[] = [];
+      const errors: string[] = [];
+      const run = vi.fn();
+      const result = runUninstallPlan(
+        { assumeYes: true, deleteModels: false, keepOpenShell: true },
+        {
+          env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+          error: (line) => errors.push(line),
+          existsSync: () => false,
+          readdirSync: () => [],
+          log: (line) => logs.push(line),
+          run,
+          runDocker: () => ok(""),
+        },
+      );
+
+      expect(result.exitCode).toBe(1);
+      expect(
+        errors.some((line) =>
+          line.includes(`Unable to parse sandbox registry at ${registryFile}: expected a JSON object`),
+        ),
+      ).toBe(true);
+      expect(run).not.toHaveBeenCalled();
+    } finally {
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    }
+  });
+
   it("proceeds past an unreadable registry only when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1", () => {
     const logs: string[] = [];
     const errors: string[] = [];
