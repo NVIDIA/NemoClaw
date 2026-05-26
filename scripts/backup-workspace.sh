@@ -5,12 +5,7 @@
 set -euo pipefail
 
 WORKSPACE_PATH="/sandbox/.openclaw/workspace"
-# Default to a path *outside* ~/.nemoclaw so backups survive `nemoclaw uninstall`,
-# which wipes the entire ~/.nemoclaw tree (including ~/.nemoclaw/backups even
-# though the uninstall gate refuses to remove it without explicit ack). Users
-# who prefer the legacy location can still override via:
-#   NEMOCLAW_BACKUP_BASE=~/.nemoclaw/backups ./scripts/backup-workspace.sh ...
-BACKUP_BASE="${NEMOCLAW_BACKUP_BASE:-${HOME}/nemoclaw-backups}"
+BACKUP_BASE="${HOME}/.nemoclaw/backups"
 FILES=(SOUL.md USER.md IDENTITY.md AGENTS.md MEMORY.md)
 DIRS=(memory)
 

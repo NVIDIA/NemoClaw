@@ -253,16 +253,9 @@ nemoclaw uninstall
 
 | Flag               | Effect                                               |
 |--------------------|------------------------------------------------------|
-| `--yes`            | Skip the generic confirmation prompt. Does not bypass the user-data gate. |
+| `--yes`            | Skip the confirmation prompt.                        |
 | `--keep-openshell` | Leave OpenShell binaries installed.                  |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
-
-<Note>
-Before destroying anything, uninstall now scans for workspace state — host snapshots under `~/.nemoclaw/rebuild-backups/` and `~/.nemoclaw/backups/`, registered sandboxes in `~/.nemoclaw/sandboxes.json`, and running Docker containers matching the sandbox/gateway pattern. If any of those signals fire, the gate refuses to proceed even when `--yes` is set and exits with status 1.
-To preserve workspace state, follow the host-copy hints the gate prints (use `nemoclaw backup-all --save-host <safe-path-outside-nemoclaw>`, `cp -a` for the already-on-disk backup directories, or `docker cp` for orphaned containers).
-Set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge the loss and proceed without preservation.
-For the full behaviour matrix, see [`nemoclaw uninstall`](/reference/commands#nemoclaw-uninstall).
-</Note>
 
 `nemoclaw uninstall` runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
 

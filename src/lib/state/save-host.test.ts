@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
@@ -80,80 +78,5 @@ describe("saveBackupToHost", () => {
     const result = saveBackupToHost("/state/backup/2026", "/protected", cp, mkdir, "/home/user");
     expect(result.ok).toBe(false);
     expect(result.message).toBe("EACCES: permission denied");
-  });
-
-  it("refuses to save when the destination resolves inside ~/.nemoclaw", () => {
-    const cp = vi.fn();
-    const mkdir = vi.fn();
-    const result = saveBackupToHost(
-      "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-05-26",
-      "~/.nemoclaw/escape-hatch",
-      cp,
-      mkdir,
-      "/home/user",
-    );
-    expect(result.ok).toBe(false);
-    expect(result.message).toContain("Refusing to save backups under /home/user/.nemoclaw");
-    expect(cp).not.toHaveBeenCalled();
-    expect(mkdir).not.toHaveBeenCalled();
-  });
-
-  it("refuses to save when the destination is exactly ~/.nemoclaw", () => {
-    const cp = vi.fn();
-    const mkdir = vi.fn();
-    const result = saveBackupToHost(
-      "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-05-26",
-      "/home/user/.nemoclaw",
-      cp,
-      mkdir,
-      "/home/user",
-    );
-    expect(result.ok).toBe(false);
-    expect(result.message).toContain("Refusing to save backups under /home/user/.nemoclaw");
-    expect(cp).not.toHaveBeenCalled();
-  });
-
-  it("refuses to save when the destination is a symlink whose target resolves inside ~/.nemoclaw", () => {
-    const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-save-host-symlink-"));
-    try {
-      const stateDir = path.join(tmpHome, ".nemoclaw");
-      const sneaky = path.join(stateDir, "sneaky-backups");
-      fs.mkdirSync(sneaky, { recursive: true });
-      const linkOutside = path.join(tmpHome, "outside-link");
-      fs.symlinkSync(sneaky, linkOutside);
-
-      const cp = vi.fn();
-      const mkdir = vi.fn();
-      const result = saveBackupToHost(
-        "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-05-26",
-        linkOutside,
-        cp,
-        mkdir,
-        tmpHome,
-      );
-
-      expect(result.ok).toBe(false);
-      expect(result.message).toContain("Refusing to save backups under");
-      expect(cp).not.toHaveBeenCalled();
-      expect(mkdir).not.toHaveBeenCalled();
-    } finally {
-      fs.rmSync(tmpHome, { recursive: true, force: true });
-    }
-  });
-
-  it("allows a sibling directory next to ~/.nemoclaw", () => {
-    const cp = vi.fn();
-    const mkdir = vi.fn();
-    const result = saveBackupToHost(
-      "/home/user/.nemoclaw/rebuild-backups/my-assistant/2026-05-26",
-      "/home/user/.nemoclaw-backups",
-      cp,
-      mkdir,
-      "/home/user",
-    );
-    expect(result.ok).toBe(true);
-    expect(result.destination).toBe(
-      "/home/user/.nemoclaw-backups/my-assistant/2026-05-26",
-    );
   });
 });

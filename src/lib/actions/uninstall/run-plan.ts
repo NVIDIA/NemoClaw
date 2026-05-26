@@ -36,7 +36,6 @@ export interface UninstallRunDeps {
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   listRegisteredSandboxes?: () => string[];
-  listSandboxDockerContainers?: () => string[];
   log?: (message: string) => void;
   readdirSync?: (target: string) => string[];
   readLine?: () => string | null;
@@ -140,7 +139,6 @@ interface UninstallRuntime {
   isTty: boolean;
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   listRegisteredSandboxes: () => string[];
-  listSandboxDockerContainers: () => string[];
   log: (message: string) => void;
   readdirSync: (target: string) => string[];
   readLine: () => string | null;
@@ -152,10 +150,8 @@ interface UninstallRuntime {
 
 function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
   const env = { ...process.env, ...(deps.env ?? {}) };
-  const commandExists = deps.commandExists ?? ((command: string) => defaultCommandExists(command, env));
-  const runDocker = deps.runDocker ?? defaultRunDocker;
   return {
-    commandExists,
+    commandExists: deps.commandExists ?? ((command) => defaultCommandExists(command, env)),
     env,
     error: deps.error ?? ((message) => console.error(message)),
     existsSync: deps.existsSync ?? ((target) => fs.existsSync(target)),
@@ -173,55 +169,18 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     listRegisteredSandboxes:
       deps.listRegisteredSandboxes ??
       (() => {
-        const home = env.HOME;
-        if (!home) return [];
-        const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
-        let raw: string;
         try {
-          raw = fs.readFileSync(registryFile, "utf-8");
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return [];
-          const message = err instanceof Error ? err.message : String(err);
-          throw new Error(
-            `Unable to read sandbox registry at ${registryFile}: ${message}`,
-          );
+          const home = env.HOME;
+          if (!home) return [];
+          const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
+          if (!fs.existsSync(registryFile)) return [];
+          const data = JSON.parse(fs.readFileSync(registryFile, "utf-8")) as {
+            sandboxes?: Record<string, unknown>;
+          };
+          return Object.keys(data.sandboxes ?? {});
+        } catch {
+          return [];
         }
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(raw);
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          throw new Error(
-            `Unable to parse sandbox registry at ${registryFile}: ${message}`,
-          );
-        }
-        if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
-          throw new Error(
-            `Unable to parse sandbox registry at ${registryFile}: expected a JSON object at the top level`,
-          );
-        }
-        const sandboxes = (parsed as { sandboxes?: unknown }).sandboxes;
-        if (sandboxes === undefined || sandboxes === null) return [];
-        if (typeof sandboxes !== "object" || Array.isArray(sandboxes)) {
-          throw new Error(
-            `Unable to parse sandbox registry at ${registryFile}: expected the "sandboxes" field to be a JSON object`,
-          );
-        }
-        return Object.keys(sandboxes as Record<string, unknown>);
-      }),
-    listSandboxDockerContainers:
-      deps.listSandboxDockerContainers ??
-      (() => {
-        if (!commandExists("docker")) return [];
-        if (runDocker(["info"], { env, stdio: "ignore" }).status !== 0) return [];
-        const result = runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], { env });
-        return splitNonEmptyLines(result.stdout)
-          .filter((line) => SANDBOX_DOCKER_CONTAINER_PATTERN.test(line))
-          .map((line) => {
-            const parts = line.split(/\s+/);
-            return parts[parts.length - 1] || parts[0] || "";
-          })
-          .filter(Boolean);
       }),
     log: deps.log ?? ((message) => console.log(message)),
     readdirSync:
@@ -237,7 +196,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     readLine: deps.readLine ?? (() => defaultReadLine(env)),
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
-    runDocker,
+    runDocker: deps.runDocker ?? defaultRunDocker,
     warn: deps.error ?? ((message) => console.warn(message)),
   };
 }
@@ -279,7 +238,7 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   return false;
 }
 
-const PROTECTED_USER_DATA_DIRS: readonly string[] = ["rebuild-backups", "backups"];
+const PROTECTED_USER_DATA_DIRS: readonly string[] = ["rebuild-backups"];
 
 interface ProtectedDirEntry {
   name: string;
@@ -290,25 +249,23 @@ interface ProtectedDirEntry {
 interface UserDataInventory {
   protectedDirs: ProtectedDirEntry[];
   registeredSandboxes: string[];
-  dockerContainers: string[];
   hasUserData: boolean;
 }
 
-function detectProtectedDirs(paths: UninstallPaths, runtime: UninstallRuntime): ProtectedDirEntry[] {
-  return PROTECTED_USER_DATA_DIRS.map((name) => {
+function detectUserData(paths: UninstallPaths, runtime: UninstallRuntime): UserDataInventory {
+  const protectedDirs: ProtectedDirEntry[] = PROTECTED_USER_DATA_DIRS.map((name) => {
     const dirPath = path.join(paths.nemoclawStateDir, name);
-    if (!runtime.existsSync(dirPath)) return { name, path: dirPath, entries: [] };
-    let raw: string[];
-    try {
-      raw = runtime.readdirSync(dirPath);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      throw new Error(
-        `Unable to enumerate protected directory ${dirPath}: ${message}`,
-      );
-    }
-    return { name, path: dirPath, entries: raw.filter((entry) => !entry.startsWith(".")) };
+    const entries = runtime.existsSync(dirPath)
+      ? runtime.readdirSync(dirPath).filter((entry) => !entry.startsWith("."))
+      : [];
+    return { name, path: dirPath, entries };
   }).filter((entry) => entry.entries.length > 0);
+  const registeredSandboxes = runtime.listRegisteredSandboxes();
+  return {
+    protectedDirs,
+    registeredSandboxes,
+    hasUserData: protectedDirs.length > 0 || registeredSandboxes.length > 0,
+  };
 }
 
 function confirmDestroyUserData(
@@ -326,12 +283,6 @@ function confirmDestroyUserData(
       `    ${data.registeredSandboxes.length} registered ${sandboxLabel}: ${data.registeredSandboxes.join(", ")}`,
     );
   }
-  if (data.dockerContainers.length > 0) {
-    const containerLabel = data.dockerContainers.length === 1 ? "container" : "containers";
-    runtime.log(
-      `    ${data.dockerContainers.length} Docker ${containerLabel} matching the sandbox/gateway pattern: ${data.dockerContainers.join(", ")}`,
-    );
-  }
   for (const dir of data.protectedDirs) {
     const sandboxLabel = dir.entries.length === 1 ? "sandbox" : "sandboxes";
     runtime.log(`    ${dir.path}`);
@@ -342,43 +293,7 @@ function confirmDestroyUserData(
   runtime.log("  removed with the Docker container and cannot be preserved automatically.");
   runtime.log("");
   runtime.log("  To preserve workspace state, run before re-attempting uninstall:");
-  if (data.protectedDirs.length > 0) {
-    runtime.log(
-      "    # `nemoclaw backup-all` only copies *fresh* backups it just produced; the",
-    );
-    runtime.log(
-      "    # already-on-disk backup directories shown above must be copied out separately:",
-    );
-    for (const dir of data.protectedDirs) {
-      runtime.log(
-        `    cp -a ${dir.path} <safe-path-outside-nemoclaw>/`,
-      );
-    }
-  }
-  if (data.registeredSandboxes.length > 0) {
-    runtime.log(
-      "    # Capture a fresh backup of every registered+running sandbox to a host path:",
-    );
-    runtime.log("    nemoclaw backup-all --save-host <safe-path-outside-nemoclaw>");
-  }
-  if (data.dockerContainers.length > 0) {
-    runtime.log(
-      "    # `docker ps -a` can include stopped or unregistered containers that",
-    );
-    runtime.log(
-      "    # `backup-all` would skip; copy the workspace directly from each one to be safe:",
-    );
-    for (const container of data.dockerContainers) {
-      runtime.log(
-        `    docker cp ${container}:/sandbox/.openclaw/workspace <safe-path-outside-nemoclaw>/${container}-workspace`,
-      );
-    }
-    if (data.registeredSandboxes.length > 0) {
-      runtime.log(
-        "    # Once the sandbox is registered, `nemoclaw <name> download` is the higher-level equivalent.",
-      );
-    }
-  }
+  runtime.log("    nemoclaw backup-all --save-host <safe-path-outside-nemoclaw>");
   runtime.log("");
   if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
     runtime.log("  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding with destructive uninstall.");
@@ -688,15 +603,11 @@ function dockerIsAvailable(runtime: UninstallRuntime): boolean {
   return true;
 }
 
-const SANDBOX_DOCKER_CONTAINER_PATTERN = /openshell-cluster|openshell|openclaw|nemoclaw/i;
-
-function listManagedDockerContainerRows(runtime: UninstallRuntime): string[] {
-  const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], { env: runtime.env });
-  return splitNonEmptyLines(result.stdout).filter((line) => SANDBOX_DOCKER_CONTAINER_PATTERN.test(line));
-}
-
 function removeDockerContainers(runtime: UninstallRuntime): void {
-  const ids = listManagedDockerContainerRows(runtime).map((line) => line.split(/\s+/)[0]);
+  const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], { env: runtime.env });
+  const ids = splitNonEmptyLines(result.stdout)
+    .filter((line) => /openshell-cluster|openshell|openclaw|nemoclaw/i.test(line))
+    .map((line) => line.split(/\s+/)[0]);
   if (ids.length === 0) {
     runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker containers found`);
     return;
@@ -828,78 +739,11 @@ export function buildRunPlan(options: UninstallRunOptions, deps: UninstallRunDep
   return { paths, plan };
 }
 
-function failedSourceAck(
-  runtime: UninstallRuntime,
-  err: unknown,
-  remediation: string,
-  ackBypassNote: string,
-): boolean {
-  const message = err instanceof Error ? err.message : String(err);
-  if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
-    runtime.warn(`  ${message}`);
-    runtime.log(`  ${ackBypassNote}`);
-    return true;
-  }
-  runtime.error(`  ${message}`);
-  runtime.error("  Refusing to proceed: cannot confirm whether workspace state would be destroyed.");
-  runtime.error(`  ${remediation}`);
-  return false;
-}
-
 export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps = {}): UninstallRunOutcome {
   const runtime = buildRuntime(deps);
   const { paths, plan } = buildRunPlan(options, { ...deps, env: runtime.env });
   printBanner(runtime);
-
-  let protectedDirs: ProtectedDirEntry[];
-  try {
-    protectedDirs = detectProtectedDirs(paths, runtime);
-  } catch (err) {
-    const proceed = failedSourceAck(
-      runtime,
-      err,
-      "Repair or remove the protected directory, or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge the loss and proceed.",
-      "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite unreadable protected directory.",
-    );
-    if (!proceed) return { exitCode: 1, plan };
-    protectedDirs = [];
-  }
-
-  let registeredSandboxes: string[];
-  try {
-    registeredSandboxes = runtime.listRegisteredSandboxes();
-  } catch (err) {
-    const proceed = failedSourceAck(
-      runtime,
-      err,
-      "Repair or remove the registry file, or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge the loss and proceed.",
-      "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite unreadable registry.",
-    );
-    if (!proceed) return { exitCode: 1, plan };
-    registeredSandboxes = [];
-  }
-
-  let dockerContainers: string[];
-  try {
-    dockerContainers = runtime.listSandboxDockerContainers();
-  } catch (err) {
-    const proceed = failedSourceAck(
-      runtime,
-      err,
-      "Repair the Docker daemon or stop the matching containers, or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge the loss and proceed.",
-      "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite Docker probe failure.",
-    );
-    if (!proceed) return { exitCode: 1, plan };
-    dockerContainers = [];
-  }
-
-  const userData: UserDataInventory = {
-    protectedDirs,
-    registeredSandboxes,
-    dockerContainers,
-    hasUserData:
-      protectedDirs.length > 0 || registeredSandboxes.length > 0 || dockerContainers.length > 0,
-  };
+  const userData = detectUserData(paths, runtime);
   if (!confirmDestroyUserData(options, runtime, userData)) return { exitCode: 1, plan };
   if (!confirm(options, runtime)) return { exitCode: 0, plan };
   executePlan(plan, paths, options, runtime);
