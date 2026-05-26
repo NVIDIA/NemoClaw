@@ -11,9 +11,22 @@ Test Spec: `specs/2026-05-26_issue-3811-hermes-scenario-suites/tests.md`
 
 ## Coverage Summary
 
-- Happy Paths: 8 scenarios
+- Happy Paths: 9 scenarios
 - Sad Paths: 7 scenarios
-- Total: 15 scenarios
+- Total: 16 scenarios
+
+## Validation Plan Approved
+
+**Spec Directory**: `specs/2026-05-26_issue-3811-hermes-scenario-suites`
+**Validation Plan**: `specs/2026-05-26_issue-3811-hermes-scenario-suites/validation.md`
+**Status**: APPROVED - Ready for implementation
+**Approval Note**: User approved the validation plan after adding Scenario 8.2 for PR creation and remote GitHub Actions evidence.
+
+**Next Steps**:
+1. Implementation phase will proceed after design and implementation spec reviews complete.
+2. After implementation, validation execution should run these scenarios.
+3. Failed scenarios trigger fixes or expectation metadata updates.
+4. Passed scenarios get validation evidence markers where supported by the workflow.
 
 ---
 
@@ -313,6 +326,20 @@ Test Spec: `specs/2026-05-26_issue-3811-hermes-scenario-suites/tests.md`
 
 **Tools Required**: Bash, git, optional `gh`, scenario runner, live/fake provider fixtures
 
+### Scenario 8.2: PR remote GitHub Actions show expected test outcomes [STATUS: pending]
+**Type**: Happy Path
+
+**Given**: The implementation branch has been pushed and a pull request exists for issue #3811 / epic #3588
+**When**: The PR's required GitHub Actions workflows run remotely
+**Then**: Expected passing checks are green, expected current-failure/gated Hermes scenarios are reported with their configured expected-outcome metadata, and no unexpected workflow failures remain
+
+**Validation Steps**:
+1. **Setup**: GitHub/gh: push the branch, create or locate the PR, and capture the PR URL/number.
+2. **Execute**: GitHub Actions/gh: wait for required checks to complete using `gh pr checks --watch` or equivalent workflow status commands.
+3. **Verify**: GitHub Actions/gh/manual evidence: record workflow run URLs, check conclusions, expected pass/fail/gated classifications, and confirm unexpected failures are fixed or explicitly deferred with metadata.
+
+**Tools Required**: git, `gh`, GitHub Actions, workflow logs/artifacts
+
 ---
 
 ## Phase 9: Migration Cleanup and Documentation - Validation Scenarios
@@ -344,6 +371,6 @@ Test Spec: `specs/2026-05-26_issue-3811-hermes-scenario-suites/tests.md`
 | Phase 5 | 1 | 1 | 2 | 0 | 0 | 2 |
 | Phase 6 | 1 | 2 | 3 | 0 | 0 | 3 |
 | Phase 7 | 1 | 1 | 2 | 0 | 0 | 2 |
-| Phase 8 | 1 | 0 | 1 | 0 | 0 | 1 |
+| Phase 8 | 2 | 0 | 2 | 0 | 0 | 2 |
 | Phase 9 | 1 | 0 | 1 | 0 | 0 | 1 |
-| **Total** | **8** | **7** | **15** | **0** | **0** | **15** |
+| **Total** | **9** | **7** | **16** | **0** | **0** | **16** |
