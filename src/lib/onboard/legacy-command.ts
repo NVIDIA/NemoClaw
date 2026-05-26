@@ -21,6 +21,7 @@ export interface OnboardCommandOptions {
   gpu: boolean;
   noGpu: boolean;
   autoYes: boolean;
+  noOllamaAutostart: boolean;
 }
 
 export interface RunOnboardCommandDeps {
@@ -48,14 +49,16 @@ const ONBOARD_BASE_ARGS = [
   "--no-gpu",
   "--yes",
   "-y",
+  "--no-ollama-autostart",
 ];
 
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
   const name = CLI_NAME;
   return [
-    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${noticeAcceptFlag}]`,
+    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${noticeAcceptFlag}]`,
     "",
     "  --from <Dockerfile> uses the Dockerfile's parent directory as the Docker build context.",
+    "  --no-ollama-autostart disables wizard auto-start of a local Ollama daemon; if Ollama is not running, the wizard prints a warning and selects the default fallback model.",
     "  --gpu enables direct NVIDIA GPU access inside the sandbox; --no-gpu forces CPU sandbox behavior.",
     "  --sandbox-gpu enables direct NVIDIA GPU access inside the sandbox; --no-sandbox-gpu forces CPU sandbox behavior.",
     "  --sandbox-gpu-device passes a specific OpenShell GPU device selector to sandbox create; requires --sandbox-gpu.",
@@ -241,6 +244,7 @@ export function parseOnboardArgs(
     gpu,
     noGpu,
     autoYes: parsedArgs.includes("--yes") || parsedArgs.includes("-y"),
+    noOllamaAutostart: parsedArgs.includes("--no-ollama-autostart"),
   };
 }
 
