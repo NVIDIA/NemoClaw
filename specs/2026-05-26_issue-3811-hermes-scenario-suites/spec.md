@@ -272,7 +272,7 @@ Acceptance criteria:
 - `run-suites.sh hermes-runtime` works in dry-run with stable IDs.
 - No secret values are emitted in dry-run or live paths.
 
-## Phase 2: Encode Hermes Coverage and Expected-Outcome Metadata
+## Phase 2: Encode Hermes Coverage and Expected-Outcome Metadata [COMPLETED: 7d36609]
 
 Goal: Make Hermes assertion coverage visible and distinguish pass, current bug, deferred/gated, out-of-scope, and retired behavior.
 
