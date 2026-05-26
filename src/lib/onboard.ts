@@ -2082,6 +2082,7 @@ async function preflight(
   // Docker container, so the live CLI health check is the source of truth.
   if (gatewayReuseState === "healthy" && gatewayCliSupportsLifecycleCommands(runCaptureOpenshell)) {
     const containerState = verifyGatewayContainerRunning(GATEWAY_NAME);
+    let checkImageDrift = false;
     if (containerState === "missing") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
       runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
@@ -2090,6 +2091,33 @@ async function preflight(
         "  ✓ Stale gateway metadata cleaned up",
         "  ! Stale gateway metadata cleanup failed; leaving registry state intact.",
       );
+    } else if (containerState === "stopped") {
+      // #4187: a stopped legacy `openshell-cluster-*` container after a host
+      // VM stop/start still holds the k3s local-path PVC volume. Attempt
+      // non-destructive recovery (openshell gateway start) before any
+      // destructive cleanup path so we never delete the PVC backing data
+      // and silently provision a fresh, empty workspace.
+      console.log(
+        "  Gateway container is stopped (likely host or Docker restart). Attempting non-destructive recovery...",
+      );
+      const recovered = await recoverGatewayRuntime();
+      if (recovered) {
+        console.log(
+          "  ✓ Gateway recovered without removing volumes; existing sandbox PVC preserved.",
+        );
+        checkImageDrift = true;
+      } else {
+        console.error(
+          `  Could not start the stopped NemoClaw gateway and ${getGatewayLocalEndpoint()}/ is not responding.`,
+        );
+        console.error(
+          "  Refusing to delete openshell-cluster-* volumes — they may hold the existing PVC/workspace data.",
+        );
+        console.error(
+          "  Restart Docker, free the gateway port if held by another process, and re-run `nemoclaw onboard`. See #4187.",
+        );
+        process.exit(1);
+      }
     } else if (containerState === "unknown") {
       // Docker probe failed but cached metadata says healthy. Try the host-level
       // HTTP probe — it doesn't depend on Docker, so it can confirm the gateway
@@ -2125,6 +2153,10 @@ async function preflight(
         "  ! Stale gateway cleanup failed; leaving registry state intact.",
       );
     } else {
+      checkImageDrift = true;
+    }
+
+    if (checkImageDrift) {
       const imageDrift = getGatewayClusterImageDrift();
       if (imageDrift) {
         console.log(
@@ -7134,6 +7166,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         gatewayCliSupportsLifecycleCommands: () => gatewayCliSupportsLifecycleCommands(runCaptureOpenshell),
         verifyGatewayContainerRunning,
         waitForGatewayHttpReady,
+        recoverGatewayRuntime,
         getGatewayLocalEndpoint,
         stopDashboardForward: () => bestEffortForwardStop(runOpenshell, DASHBOARD_PORT),
         destroyGateway,
