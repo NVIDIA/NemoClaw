@@ -414,7 +414,7 @@ Acceptance criteria:
 - Hermes rebuild checks do not duplicate generic rebuild suite responsibilities.
 - Current-bug expectations include linked issue/PR evidence.
 
-## Phase 6: Migrate Hermes Policy, Provider Compatibility, Security, and TUI Coverage
+## Phase 6: Migrate Hermes Policy, Provider Compatibility, Security, and TUI Coverage [COMPLETED: 3202d41]
 
 Goal: Cover remaining Hermes policy/network, provider compatibility, shields, and TUI usability gaps.
 
