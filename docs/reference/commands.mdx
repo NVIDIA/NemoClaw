@@ -407,7 +407,8 @@ $ nemoclaw my-assistant status
 #### Checking the OpenClaw version
 
 NemoClaw pins the OpenClaw version inside the sandbox at build time, not at runtime.
-The minimum version comes from `min_openclaw_version` in `nemoclaw-blueprint/blueprint.yaml`, and the sandbox image upgrades OpenClaw to that version during `docker build` if the cached base image is older.
+The NemoClaw runtime build target is declared by `OPENCLAW_VERSION` in the NemoClaw Dockerfiles.
+The `min_openclaw_version` field in `nemoclaw-blueprint/blueprint.yaml` remains the compatibility floor for direct blueprint consumers, so it can be lower than the Dockerfile target.
 Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a newer pin — you upgrade by rebuilding the sandbox.
 
 `nemoclaw <name> status` prints the running OpenClaw version on the `Agent` line:
@@ -415,7 +416,7 @@ Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a new
 ```console
 $ nemoclaw my-assistant status
 ...
-    Agent:    OpenClaw v2026.5.18
+    Agent:    OpenClaw v2026.5.22
 ...
 ```
 
