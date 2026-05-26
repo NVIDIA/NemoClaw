@@ -120,9 +120,8 @@ NemoClaw filters tier suggestions and resume selections by active agent support,
 | `custom` | Apply exactly `NEMOCLAW_POLICY_PRESETS`. Previously-applied presets not in the list are removed. Alias: `list`. |
 | `skip` | Skip the policy step entirely. Aliases: `none`, `no`. |
 
-If you enable Brave Search during onboarding, NemoClaw currently stores the Brave API key in the sandbox's OpenClaw configuration.
-That means the OpenClaw agent can read the key.
-NemoClaw explores an OpenShell-hosted credential path first, but the current OpenClaw Brave runtime does not consume that path end to end yet.
+If you enable Brave Search during onboarding, NemoClaw registers a Brave Search OpenShell provider and keeps `openclaw.json` on an OpenShell credential placeholder.
+At egress, OpenShell rewrites Brave's `X-Subscription-Token` header with the real `BRAVE_API_KEY`.
 Treat Brave Search as an explicit opt-in and use a dedicated low-privilege Brave key.
 
 For non-interactive onboarding, you must explicitly accept the third-party software notice:
