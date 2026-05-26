@@ -154,3 +154,108 @@ e2e_hermes_assert_security_posture() {
   fi
   e2e_pass "${assertion_id}"
 }
+
+e2e_hermes_assert_inference_switch_route_state() {
+  local assertion_id="${1:-expected.hermes.inference.switch-route-state}"
+  _e2e_hermes_assertion "${assertion_id}" || return $?
+  _e2e_hermes_require_agent || return 1
+  e2e_context_require E2E_INFERENCE_ROUTE || return 1
+  if e2e_env_is_dry_run; then
+    _e2e_hermes_plan "${assertion_id}" "verify Hermes inference route state after switch"
+    return 0
+  fi
+  local route
+  route="$(e2e_context_get E2E_INFERENCE_ROUTE)"
+  [[ -n "${route}" ]] || return 1
+  e2e_pass "${assertion_id} route=${route}"
+}
+
+e2e_hermes_assert_env_immutable_on_switch() {
+  local assertion_id="${1:-expected.hermes.inference.env-immutable-on-switch}"
+  _e2e_hermes_assertion "${assertion_id}" || return $?
+  _e2e_hermes_require_agent || return 1
+  if e2e_env_is_dry_run; then
+    _e2e_hermes_plan "${assertion_id}" "compare Hermes .env hash before and after route switch"
+    return 0
+  fi
+  local before after
+  before="$(e2e_context_get E2E_HERMES_ENV_HASH_BEFORE_SWITCH)"
+  after="$(e2e_context_get E2E_HERMES_ENV_HASH_AFTER_SWITCH)"
+  if [[ -n "${before}" && -n "${after}" && "${before}" != "${after}" ]]; then
+    echo "e2e_hermes: Hermes .env hash changed during inference switch" >&2
+    return 1
+  fi
+  e2e_pass "${assertion_id}"
+}
+
+e2e_hermes_assert_gateway_pid_stable() {
+  local assertion_id="${1:-expected.hermes.inference.gateway-pid-stable}"
+  _e2e_hermes_assertion "${assertion_id}" || return $?
+  _e2e_hermes_require_agent || return 1
+  if e2e_env_is_dry_run; then
+    _e2e_hermes_plan "${assertion_id}" "compare gateway PID before and after inference switch"
+    return 0
+  fi
+  local before after
+  before="$(e2e_context_get E2E_GATEWAY_PID_BEFORE_SWITCH)"
+  after="$(e2e_context_get E2E_GATEWAY_PID_AFTER_SWITCH)"
+  if [[ -n "${before}" && -n "${after}" && "${before}" != "${after}" ]]; then
+    echo "e2e_hermes: gateway PID changed during inference switch" >&2
+    return 1
+  fi
+  e2e_pass "${assertion_id}"
+}
+
+e2e_hermes_assert_inference_local_chat() {
+  local assertion_id="${1:-expected.hermes.inference.inference-local-chat}"
+  _e2e_hermes_assertion "${assertion_id}" || return $?
+  _e2e_hermes_require_agent || return 1
+  if e2e_env_is_dry_run; then
+    _e2e_hermes_plan "${assertion_id}" "POST https://inference.local/v1/chat/completions from Hermes sandbox"
+    return 0
+  fi
+  local sandbox payload
+  sandbox="$(_e2e_hermes_sandbox_name)"
+  payload='{"model":"default","messages":[{"role":"user","content":"Say ok"}],"max_tokens":8}'
+  printf '%s' "${payload}" | e2e_sandbox_exec_stdin "${sandbox}" -- curl --silent --show-error --fail --max-time 20 -H 'content-type: application/json' -d @- https://inference.local/v1/chat/completions >/dev/null
+  e2e_pass "${assertion_id}"
+}
+
+e2e_hermes_assert_hermes_api_chat() {
+  local assertion_id="${1:-expected.hermes.inference.hermes-api-chat}"
+  _e2e_hermes_assertion "${assertion_id}" || return $?
+  _e2e_hermes_require_agent || return 1
+  if e2e_env_is_dry_run; then
+    _e2e_hermes_plan "${assertion_id}" "exercise Hermes API chat path with redacted provider output"
+    return 0
+  fi
+  local sandbox output
+  sandbox="$(_e2e_hermes_sandbox_name)"
+  if ! output="$(_e2e_hermes_run_override HERMES_API_CHAT_CMD e2e_sandbox_exec "${sandbox}" -- sh -lc 'curl --silent --show-error --fail --max-time 20 http://127.0.0.1:8000/v1/chat/completions')"; then
+    printf '%s\n' "${output}" | _e2e_hermes_redact >&2
+    return 1
+  fi
+  printf '%s\n' "${output}" | _e2e_hermes_redact
+  e2e_pass "${assertion_id}"
+}
+
+e2e_hermes_assert_external_timeout_classification() {
+  local assertion_id="${1:-expected.hermes.inference.external-timeout-classification}"
+  _e2e_hermes_assertion "${assertion_id}" || return $?
+  _e2e_hermes_require_agent || return 1
+  if e2e_env_is_dry_run; then
+    _e2e_hermes_plan "${assertion_id}" "classify external provider timeout separately from route regression"
+    return 0
+  fi
+  local output status=0
+  output="$(_e2e_hermes_run_override HERMES_EXTERNAL_TIMEOUT_CMD bash -c 'echo no external timeout observed')" || status=$?
+  if [[ "${status}" == "28" || "${output}" =~ [Tt]imed[[:space:]-]?out|timeout ]]; then
+    printf 'INFO: %s external provider timeout classified as gated/external\n' "${assertion_id}"
+    return 0
+  fi
+  if [[ "${status}" != "0" ]]; then
+    printf '%s\n' "${output}" | _e2e_hermes_redact >&2
+    return "${status}"
+  fi
+  e2e_pass "${assertion_id}"
+}

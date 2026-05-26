@@ -104,6 +104,25 @@ suites:
       script: hermes/02-runtime-env-integrity.sh
     - id: runtime-security-posture
       script: hermes/03-runtime-security-posture.sh
+  hermes-inference-switch:
+    requires_state:
+      gateway.health: healthy
+      sandbox.status: running
+      sandbox.agent: hermes
+      inference.expected: available
+    steps:
+    - id: switch-route-state
+      script: hermes/inference/00-switch-route-state.sh
+    - id: env-immutable-on-switch
+      script: hermes/inference/01-env-immutable-on-switch.sh
+    - id: gateway-pid-stable
+      script: hermes/inference/02-gateway-pid-stable.sh
+    - id: inference-local-chat
+      script: hermes/inference/03-inference-local-chat.sh
+    - id: hermes-api-chat
+      script: hermes/inference/04-hermes-api-chat.sh
+    - id: external-timeout-classification
+      script: hermes/inference/05-external-timeout-classification.sh
   gateway-health:
     requires_state: *id001
     steps: *id002
