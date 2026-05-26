@@ -16,6 +16,8 @@ const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = [
   "2026.5.22",
 ] as const;
 const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.5.22";
+const EXPECTED_OPENCLAW_INTEGRITY =
+  "sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==";
 
 function readRequiredMatch(file: string, pattern: RegExp, description: string): string {
   const match = fs.readFileSync(file, "utf-8").match(pattern);
@@ -35,6 +37,37 @@ function readDockerfileBaseOpenClawVersion(): string {
     /^ARG OPENCLAW_VERSION=([^\s]+)/m,
     "OpenClaw base image version",
   );
+}
+
+function readDockerfileOpenClawVersion(): string {
+  return readRequiredMatch(DOCKERFILE, /^ARG OPENCLAW_VERSION=([^\s]+)/m, "OpenClaw runtime version");
+}
+
+function readDockerfileBaseOpenClawIntegrity(): string {
+  return readRequiredMatch(
+    DOCKERFILE_BASE,
+    /^ARG OPENCLAW_2026_5_22_INTEGRITY=([^\s]+)/m,
+    "OpenClaw base image integrity",
+  );
+}
+
+function readDockerfileOpenClawIntegrity(): string {
+  return readRequiredMatch(
+    DOCKERFILE,
+    /^ARG OPENCLAW_2026_5_22_INTEGRITY=([^\s]+)/m,
+    "OpenClaw runtime integrity",
+  );
+}
+
+function compareDottedVersions(a: string, b: string): number {
+  const left = a.split(".").map((part) => Number(part));
+  const right = b.split(".").map((part) => Number(part));
+  const width = Math.max(left.length, right.length);
+  for (let i = 0; i < width; i += 1) {
+    const delta = (left[i] ?? 0) - (right[i] ?? 0);
+    if (delta !== 0) return delta;
+  }
+  return 0;
 }
 
 function dockerRunCommandBetween(startMarker: string, endMarker: string): string {
@@ -66,11 +99,13 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
   const log = path.join(tmp, "calls.log");
   const openclawInstall = path.join(tmp, "openclaw-global");
   const openclawShim = path.join(tmp, "openclaw-bin");
-  fs.writeFileSync(blueprint, 'min_openclaw_version: "2026.4.2"\n');
+  const openclawVersion = readDockerfileOpenClawVersion();
+  const openclawIntegrity = readDockerfileOpenClawIntegrity();
+  fs.writeFileSync(blueprint, 'min_openclaw_version: "2026.5.18"\n');
   fs.mkdirSync(openclawInstall, { recursive: true });
   fs.writeFileSync(openclawShim, "");
   const command = dockerRunCommandBetween(
-    "# The minimum required version comes from nemoclaw-blueprint/blueprint.yaml",
+    "# OPENCLAW_VERSION is the runtime build target",
     "# Patch OpenClaw media fetch",
   )
     .replaceAll("/opt/nemoclaw-blueprint/blueprint.yaml", blueprint)
@@ -80,14 +115,21 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
     "#!/usr/bin/env bash",
     "set -euo pipefail",
     `call_log=${JSON.stringify(log)}`,
+    `OPENCLAW_VERSION=${JSON.stringify(openclawVersion)}`,
+    `OPENCLAW_2026_5_22_INTEGRITY=${JSON.stringify(openclawIntegrity)}`,
     `openclaw() { if [ "\${1:-}" = "--version" ]; then printf 'openclaw ${currentVersion}\\n'; else return 127; fi; }`,
-    'npm() { printf "npm %s\\n" "$*" >> "$call_log"; }',
+    "npm() {",
+    '  printf "npm %s\\n" "$*" >> "$call_log";',
+    '  if [ "${1:-}" = "view" ] && [ "${2:-}" = "openclaw@${OPENCLAW_VERSION}" ] && [ "${3:-}" = "dist.integrity" ]; then',
+    '    printf "%s\\n" "$OPENCLAW_2026_5_22_INTEGRITY";',
+    "  fi",
+    "}",
     'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "codex-acp" ]; then return 0; fi; builtin command "$@"; }',
     command,
   ].join("\n");
   const scriptPath = path.join(tmp, "run.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 10000 });
   const calls = fs.existsSync(log) ? fs.readFileSync(log, "utf-8") : "";
   fs.rmSync(tmp, { recursive: true, force: true });
   return { result, calls };
@@ -154,7 +196,7 @@ function runDockerfilePatchBlock(
   return spawnSync("bash", [scriptPath], {
     encoding: "utf-8",
     env: { ...process.env, PATH: `${fakeBin}:${process.env.PATH || ""}` },
-    timeout: 5000,
+    timeout: 10000,
   });
 }
 
@@ -184,32 +226,48 @@ describe("fetch-guard patch regression guard", () => {
     expect(result.status).toBe(42);
   });
 
-  it("upgrades stale OpenClaw from the blueprint minimum and leaves current installs alone", () => {
+  it("upgrades stale OpenClaw to the runtime build target and leaves current installs alone", () => {
     const stale = runOpenClawUpgradeBlock("2026.3.11");
     expect(stale.result.status).toBe(0);
-    expect(stale.result.stdout).toContain("upgrading to 2026.4.2");
+    expect(stale.result.stdout).toContain(
+      `upgrading to ${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}`,
+    );
     expect(stale.calls).toContain(
-      "npm install -g --no-audit --no-fund --no-progress openclaw@2026.4.2",
+      `npm install -g --no-audit --no-fund --no-progress openclaw@${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}`,
     );
 
-    const current = runOpenClawUpgradeBlock("2026.4.2");
+    const current = runOpenClawUpgradeBlock(CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION);
     expect(current.result.status).toBe(0);
-    expect(current.result.stdout).toContain("is current (>= 2026.4.2)");
-    expect(current.calls).not.toContain("openclaw@2026.4.2");
+    expect(current.result.stdout).toContain(
+      `is current (>= ${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION})`,
+    );
+    expect(current.calls).not.toContain(
+      `npm install -g --no-audit --no-fund --no-progress openclaw@${CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION}`,
+    );
   });
 
-  it("requires classifier review when the pinned OpenClaw build version changes", () => {
+  it("requires classifier review and integrity evidence when the OpenClaw build pin changes", () => {
     const reviewMessage =
       "Update fetch-guard classifier expectations before changing the OpenClaw build version.";
 
     const blueprintMinVersion = readBlueprintMinOpenClawVersion();
     const baseImageVersion = readDockerfileBaseOpenClawVersion();
+    const runtimeVersion = readDockerfileOpenClawVersion();
 
-    expect(baseImageVersion, "Dockerfile.base and blueprint must pin the same OpenClaw version.").toBe(
-      blueprintMinVersion,
+    expect(
+      compareDottedVersions(baseImageVersion, blueprintMinVersion),
+      "Dockerfile.base must not build below the pinned blueprint artifact floor.",
+    ).toBeGreaterThanOrEqual(0);
+    expect(runtimeVersion, "Dockerfile and Dockerfile.base must build the same OpenClaw target.").toBe(
+      baseImageVersion,
+    );
+    expect(readDockerfileBaseOpenClawIntegrity()).toBe(EXPECTED_OPENCLAW_INTEGRITY);
+    expect(readDockerfileOpenClawIntegrity()).toBe(EXPECTED_OPENCLAW_INTEGRITY);
+    expect([...REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS], reviewMessage).toContain(
+      runtimeVersion,
     );
     expect([...REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS], reviewMessage).toContain(
-      blueprintMinVersion,
+      baseImageVersion,
     );
   });
 
