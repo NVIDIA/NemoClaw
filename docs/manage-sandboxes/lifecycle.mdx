@@ -253,9 +253,12 @@ nemoclaw uninstall
 
 | Flag               | Effect                                               |
 |--------------------|------------------------------------------------------|
-| `--yes`            | Skip the confirmation prompt.                        |
+| `--yes`            | Skip the generic confirmation prompt. Does **not** bypass the workspace-data gate; if the gate detects host snapshots or registered sandboxes, uninstall still exits with status 1. |
 | `--keep-openshell` | Leave OpenShell binaries installed.                  |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
+
+To acknowledge the data-loss gate in non-interactive runs, set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1`.
+Refer to [`nemoclaw uninstall`](/reference/commands#nemoclaw-uninstall) for the full behaviour matrix.
 
 `nemoclaw uninstall` runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
 

@@ -169,17 +169,27 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     listRegisteredSandboxes:
       deps.listRegisteredSandboxes ??
       (() => {
+        const home = env.HOME;
+        if (!home) return [];
+        const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
+        let raw: string;
         try {
-          const home = env.HOME;
-          if (!home) return [];
-          const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
-          if (!fs.existsSync(registryFile)) return [];
-          const data = JSON.parse(fs.readFileSync(registryFile, "utf-8")) as {
-            sandboxes?: Record<string, unknown>;
-          };
+          raw = fs.readFileSync(registryFile, "utf-8");
+        } catch (err) {
+          if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return [];
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            `Unable to read sandbox registry at ${registryFile}: ${message}`,
+          );
+        }
+        try {
+          const data = JSON.parse(raw) as { sandboxes?: Record<string, unknown> };
           return Object.keys(data.sandboxes ?? {});
-        } catch {
-          return [];
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          throw new Error(
+            `Unable to parse sandbox registry at ${registryFile}: ${message}`,
+          );
         }
       }),
     log: deps.log ?? ((message) => console.log(message)),
@@ -743,7 +753,28 @@ export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRu
   const runtime = buildRuntime(deps);
   const { paths, plan } = buildRunPlan(options, { ...deps, env: runtime.env });
   printBanner(runtime);
-  const userData = detectUserData(paths, runtime);
+  let userData: UserDataInventory;
+  try {
+    userData = detectUserData(paths, runtime);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
+      runtime.warn(`  ${message}`);
+      runtime.log(
+        "  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite unreadable registry.",
+      );
+      userData = { protectedDirs: [], registeredSandboxes: [], hasUserData: false };
+    } else {
+      runtime.error(`  ${message}`);
+      runtime.error(
+        "  Refusing to proceed: cannot confirm whether registered sandboxes exist.",
+      );
+      runtime.error(
+        "  Repair or remove the registry file, or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge the loss and proceed.",
+      );
+      return { exitCode: 1, plan };
+    }
+  }
   if (!confirmDestroyUserData(options, runtime, userData)) return { exitCode: 1, plan };
   if (!confirm(options, runtime)) return { exitCode: 0, plan };
   executePlan(plan, paths, options, runtime);
