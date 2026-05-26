@@ -145,10 +145,10 @@ export async function addSandboxPolicy(
     console.log(`  Endpoints that would be opened: ${endpoints.join(", ")}`);
   }
 
-  const messagingWarning = policies.getMessagingPresetWarning(answer);
-  if (messagingWarning) {
+  const presetWarning = policies.getPresetValidationWarning(answer);
+  if (presetWarning) {
     console.log("");
-    console.log(`  ${messagingWarning}`);
+    console.log(`  ${presetWarning}`);
     console.log("");
   }
 

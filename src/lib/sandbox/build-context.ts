@@ -50,6 +50,7 @@ function stageLegacySandboxBuildContext(
   normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw-blueprint"));
   fs.cpSync(path.join(rootDir, "scripts"), path.join(buildCtx, "scripts"), { recursive: true });
   fs.rmSync(path.join(buildCtx, "nemoclaw", "node_modules"), { recursive: true, force: true });
+  normalizeReadModesForDockerCopy(path.join(buildCtx, "nemoclaw"));
 
   return {
     buildCtx,
@@ -83,6 +84,7 @@ function stageOptimizedSandboxBuildContext(
   fs.cpSync(path.join(sourceNemoclawDir, "src"), path.join(stagedNemoclawDir, "src"), {
     recursive: true,
   });
+  normalizeReadModesForDockerCopy(stagedNemoclawDir);
 
   fs.mkdirSync(stagedBlueprintDir, { recursive: true });
   fs.copyFileSync(

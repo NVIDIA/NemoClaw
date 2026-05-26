@@ -36,9 +36,11 @@ describe("sandbox build context staging", () => {
       "tsconfig.json",
       "openclaw.plugin.json",
     ]) {
-      writeFixture(path.join("nemoclaw", fileName), "{}\n");
+      writeFixture(path.join("nemoclaw", fileName), "{}\n", 0o600);
     }
-    writeFixture(path.join("nemoclaw", "src", "index.ts"));
+    writeFixture(path.join("nemoclaw", "src", "index.ts"), "fixture\n", 0o600);
+    fs.chmodSync(path.join(sourceRoot, "nemoclaw"), 0o700);
+    fs.chmodSync(path.join(sourceRoot, "nemoclaw", "src"), 0o700);
     writeFixture(path.join("nemoclaw-blueprint", "blueprint.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"));
     writeFixture(path.join("nemoclaw-blueprint", "scripts", "http-proxy-fix.js"));
@@ -75,6 +77,22 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "seed-wechat-accounts.py"));
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.js"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.js"));
+  }
+
+  function expectStagedNemoclawModes(buildCtx: string) {
+    const stagedNemoclaw = path.join(buildCtx, "nemoclaw");
+    const stagedSrc = path.join(stagedNemoclaw, "src");
+    const stagedPackageJson = path.join(stagedNemoclaw, "package.json");
+    const stagedIndexTs = path.join(stagedSrc, "index.ts");
+
+    const stagedNemoclawMode = fs.statSync(stagedNemoclaw).mode & 0o777;
+    expect(stagedNemoclawMode & 0o555).toBe(0o555);
+    expect(stagedNemoclawMode & 0o002).toBe(0);
+    const stagedSrcMode = fs.statSync(stagedSrc).mode & 0o777;
+    expect(stagedSrcMode & 0o555).toBe(0o555);
+    expect(stagedSrcMode & 0o002).toBe(0);
+    expect((fs.statSync(stagedPackageJson).mode & 0o777).toString(8)).toBe("644");
+    expect((fs.statSync(stagedIndexTs).mode & 0o777).toString(8)).toBe("644");
   }
 
   function expectStagedBlueprintModes(buildCtx: string) {
@@ -141,6 +159,20 @@ describe("sandbox build context staging", () => {
     }
   });
 
+  it("optimized staging makes copied nemoclaw plugin sources world-readable", () => {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-nemoclaw-mode-"));
+
+    try {
+      writeBuildContextFixture(sourceRoot);
+      const { buildCtx } = stageOptimizedSandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedNemoclawModes(buildCtx);
+    } finally {
+      fs.rmSync(sourceRoot, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("legacy staging makes copied blueprint manifests world-readable", () => {
     const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-legacy-mode-"));
@@ -149,6 +181,22 @@ describe("sandbox build context staging", () => {
       writeBuildContextFixture(sourceRoot);
       const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
       expectStagedBlueprintModes(buildCtx);
+    } finally {
+      fs.rmSync(sourceRoot, { recursive: true, force: true });
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("legacy staging makes copied nemoclaw plugin sources world-readable", () => {
+    const sourceRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-build-context-source-"));
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-build-context-legacy-nemoclaw-mode-"),
+    );
+
+    try {
+      writeBuildContextFixture(sourceRoot);
+      const { buildCtx } = stageLegacySandboxBuildContext(sourceRoot, tmpDir);
+      expectStagedNemoclawModes(buildCtx);
     } finally {
       fs.rmSync(sourceRoot, { recursive: true, force: true });
       fs.rmSync(tmpDir, { recursive: true, force: true });

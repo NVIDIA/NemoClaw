@@ -1256,7 +1256,7 @@ Set them before running `nemoclaw onboard`.
 | `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
 | `NEMOCLAW_OLLAMA_REQUIRE_TOOLS` | `0` to disable, anything else to keep the default | When set to `0`, skips the Ollama tool-calling capability check during local-inference onboarding. |
-| `NEMOCLAW_OLLAMA_INSTALL_MODE` | `system`, `user`, or empty/unset | Pins the Linux Ollama install location. `system` runs the official `https://ollama.com/install.sh` (sudo, writes to `/usr/local`, configures systemd). `user` extracts the release tarball to `${HOME}/.local` without sudo and launches the daemon manually (no systemd; manual restart after reboot). Empty/unset auto-detects: root or passwordless `sudo` selects `system`; a non-interactive run without passwordless `sudo` selects `user`; an interactive shell falls back to `system` so the official installer can prompt for the password. Any other value is rejected. |
+| `NEMOCLAW_OLLAMA_INSTALL_MODE` | `system`, `user`, or empty/unset | Pins the Linux Ollama install location; see the Linux Ollama install mode details below. |
 | `NEMOCLAW_PROXY_HOST` | hostname or IP | Overrides the sandbox-side outbound HTTP proxy host. Defaults to `10.200.0.1`. |
 | `NEMOCLAW_PROXY_PORT` | integer port | Overrides the sandbox-side outbound HTTP proxy port. Defaults to `3128`. |
 | `NEMOCLAW_OPENSHELL_BIN` | path | Overrides the `openshell` binary the CLI invokes. Defaults to `openshell` (resolved via `PATH`). |
@@ -1265,6 +1265,19 @@ Set them before running `nemoclaw onboard`.
 | `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install. Overridden by the `--install-tag` flag. |
 | `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `qwen3.6-27b`, `nemotron-3-nano-4b`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
 | `NEMOCLAW_MODEL_ROUTER_PYTHON` | absolute path | Pins the host Python interpreter used to create the Model Router virtual environment. Strict. NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to another python. Relative command names such as `python3.12` are rejected. When unset, NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, retains every interpreter whose version is in `[3.10, 3.14)` and whose `ensurepip`, `pyexpat`, `ssl`, and `venv` stdlib modules import cleanly, and tries `python -m venv` on each in priority order until one succeeds. Set the pin when the auto-discovered interpreter is broken (for example, Homebrew `python@3.14` with a `pyexpat` dlopen mismatch on macOS). |
+
+#### Linux Ollama install mode details
+
+Set `NEMOCLAW_OLLAMA_INSTALL_MODE=system` to run the official `https://ollama.com/install.sh` installer, which uses sudo, writes to `/usr/local`, and configures systemd.
+Set `NEMOCLAW_OLLAMA_INSTALL_MODE=user` to extract the release tarball to `${HOME}/.local` without sudo and launch the daemon manually without systemd persistence.
+Leave `NEMOCLAW_OLLAMA_INSTALL_MODE` empty or unset to let NemoClaw auto-detect the mode.
+Auto-detection selects `system` when the current user is root or passwordless `sudo` works.
+Auto-detection selects `user` in non-interactive runs without passwordless `sudo`.
+An interactive shell falls back to `system` so the official installer can prompt for the password.
+NemoClaw rejects any other value.
+On upgrades, NemoClaw rejects `user` because a user-local install cannot replace the system daemon on `:11434`.
+On upgrades, NemoClaw also rejects `system` under `NEMOCLAW_NON_INTERACTIVE=1` when passwordless `sudo` is unavailable because the installer would hang on a hidden sudo prompt.
+The run exits with an actionable diagnostic instead.
 
 ### Onboarding Behavior Flags
 
