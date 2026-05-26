@@ -96,6 +96,67 @@ describe("E2E shell helpers", () => {
     }
   });
 
+  it("test_should_classify_external_timeout_separately_from_route_regression", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-timeout-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        [
+          "E2E_SCENARIO=hermes-test",
+          "E2E_AGENT=hermes",
+          "E2E_SANDBOX_NAME=hermes-sandbox",
+          "E2E_GATEWAY_URL=http://127.0.0.1:18789",
+          "E2E_INFERENCE_ROUTE=inference-local",
+        ].join("\n") + "\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/hermes.sh"
+        HERMES_EXTERNAL_TIMEOUT_CMD='echo "curl: operation timed out" >&2; exit 28'
+        export HERMES_EXTERNAL_TIMEOUT_CMD
+        e2e_hermes_assert_external_timeout_classification
+      `,
+        { E2E_CONTEXT_DIR: tmp },
+      );
+      expect(r.status, r.stderr).toBe(0);
+      expect(r.stdout + r.stderr).toContain("expected.hermes.inference.external-timeout-classification");
+      expect(r.stdout + r.stderr).toMatch(/external|gated|timeout/i);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("test_should_redact_provider_errors_from_hermes_inference_output", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-redact-"));
+    try {
+      fs.writeFileSync(
+        path.join(tmp, "context.env"),
+        [
+          "E2E_SCENARIO=hermes-test",
+          "E2E_AGENT=hermes",
+          "E2E_SANDBOX_NAME=hermes-sandbox",
+          "E2E_GATEWAY_URL=http://127.0.0.1:18789",
+        ].join("\n") + "\n",
+      );
+      const r = runBash(
+        `
+        set -euo pipefail
+        . "${VALIDATION_SUITES}/lib/hermes.sh"
+        HERMES_API_CHAT_CMD='echo "provider failed token=sk-supersecret123456789" >&2; exit 1'
+        export HERMES_API_CHAT_CMD
+        e2e_hermes_assert_hermes_api_chat || true
+      `,
+        { E2E_CONTEXT_DIR: tmp },
+      );
+      expect(r.stdout + r.stderr).toContain("expected.hermes.inference.hermes-api-chat");
+      expect(r.stdout + r.stderr).not.toContain("sk-supersecret123456789");
+      expect(r.stdout + r.stderr).toContain("REDACTED");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("test_should_source_inference_routing_helpers_under_strict_shell_mode", () => {
     const r = runBash(`
       set -euo pipefail

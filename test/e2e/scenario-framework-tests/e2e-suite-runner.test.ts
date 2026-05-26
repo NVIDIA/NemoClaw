@@ -135,6 +135,27 @@ describe("run-suites.sh", () => {
     }
   });
 
+  it("test_should_emit_hermes_inference_switch_ids_in_dry_run", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-hermes-inference-"));
+    try {
+      seedContext(tmp, hermesContext());
+      const r = runSuites(["hermes-inference-switch"], { E2E_CONTEXT_DIR: tmp, E2E_DRY_RUN: "1" });
+      expect(r.status, `stderr:${r.stderr}\nstdout:${r.stdout}`).toBe(0);
+      for (const id of [
+        "expected.hermes.inference.switch-route-state",
+        "expected.hermes.inference.env-immutable-on-switch",
+        "expected.hermes.inference.gateway-pid-stable",
+        "expected.hermes.inference.inference-local-chat",
+        "expected.hermes.inference.hermes-api-chat",
+        "expected.hermes.inference.external-timeout-classification",
+      ]) {
+        expect(r.stdout).toContain(id);
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("security_credentials_suite_should_emit_stable_assertion_ids", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "e2e-security-credentials-"));
     try {
