@@ -77,6 +77,7 @@ describe("uninstall run plan", () => {
         existsSync: () => false,
         isTty: false,
         kill: () => true,
+        listSandboxDockerContainers: () => [],
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run,
@@ -250,6 +251,73 @@ describe("uninstall run plan", () => {
     expect(logs.some((line) => line.includes("NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1"))).toBe(true);
     expect(logs).toContain("  Aborted.");
     expect(run).not.toHaveBeenCalled();
+  });
+
+  it("aborts with exit 1 when Docker sandbox containers exist but registry and backups are empty", () => {
+    const logs: string[] = [];
+    const run = vi.fn();
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        existsSync: () => false,
+        readdirSync: () => [],
+        listRegisteredSandboxes: () => [],
+        listSandboxDockerContainers: () => [
+          "openshell-cluster-nemoclaw",
+          "openclaw-sandbox-my-assistant",
+        ],
+        log: (line) => logs.push(line),
+        run,
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(logs.some((line) => line.includes("workspace state on disk"))).toBe(true);
+    expect(
+      logs.some((line) => line.includes("Docker containers matching the sandbox/gateway pattern")),
+    ).toBe(true);
+    expect(
+      logs.some((line) =>
+        line.includes("openshell-cluster-nemoclaw, openclaw-sandbox-my-assistant"),
+      ),
+    ).toBe(true);
+    expect(logs).toContain("  Aborted.");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("proceeds past Docker-only signal when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1", () => {
+    const logs: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: true, deleteModels: false, keepOpenShell: true },
+      {
+        env: {
+          HOME: "/home/test",
+          NEMOCLAW_UNINSTALL_DESTROY_USER_DATA: "1",
+        } as NodeJS.ProcessEnv,
+        commandExists: () => false,
+        existsSync: () => false,
+        readdirSync: () => [],
+        listRegisteredSandboxes: () => [],
+        listSandboxDockerContainers: () => ["openshell-cluster-nemoclaw"],
+        log: (line) => logs.push(line),
+        rmSync: vi.fn(),
+        run: vi.fn(() => ok("")),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(
+      logs.some((line) =>
+        line.includes("Docker container matching the sandbox/gateway pattern"),
+      ),
+    ).toBe(true);
+    expect(logs).toContain(
+      "  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding with destructive uninstall.",
+    );
+    expect(logs).toContain("Claws retracted. Until next time.");
   });
 
   it("aborts with exit 1 when registered sandboxes exist and NEMOCLAW_UNINSTALL_DESTROY_USER_DATA is unset", () => {

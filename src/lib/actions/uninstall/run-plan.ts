@@ -36,6 +36,7 @@ export interface UninstallRunDeps {
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   listRegisteredSandboxes?: () => string[];
+  listSandboxDockerContainers?: () => string[];
   log?: (message: string) => void;
   readdirSync?: (target: string) => string[];
   readLine?: () => string | null;
@@ -139,6 +140,7 @@ interface UninstallRuntime {
   isTty: boolean;
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
   listRegisteredSandboxes: () => string[];
+  listSandboxDockerContainers: () => string[];
   log: (message: string) => void;
   readdirSync: (target: string) => string[];
   readLine: () => string | null;
@@ -150,8 +152,10 @@ interface UninstallRuntime {
 
 function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
   const env = { ...process.env, ...(deps.env ?? {}) };
+  const commandExists = deps.commandExists ?? ((command: string) => defaultCommandExists(command, env));
+  const runDocker = deps.runDocker ?? defaultRunDocker;
   return {
-    commandExists: deps.commandExists ?? ((command) => defaultCommandExists(command, env)),
+    commandExists,
     env,
     error: deps.error ?? ((message) => console.error(message)),
     existsSync: deps.existsSync ?? ((target) => fs.existsSync(target)),
@@ -205,6 +209,20 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
         }
         return Object.keys(sandboxes as Record<string, unknown>);
       }),
+    listSandboxDockerContainers:
+      deps.listSandboxDockerContainers ??
+      (() => {
+        if (!commandExists("docker")) return [];
+        if (runDocker(["info"], { env, stdio: "ignore" }).status !== 0) return [];
+        const result = runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], { env });
+        return splitNonEmptyLines(result.stdout)
+          .filter((line) => SANDBOX_DOCKER_CONTAINER_PATTERN.test(line))
+          .map((line) => {
+            const parts = line.split(/\s+/);
+            return parts[parts.length - 1] || parts[0] || "";
+          })
+          .filter(Boolean);
+      }),
     log: deps.log ?? ((message) => console.log(message)),
     readdirSync:
       deps.readdirSync ??
@@ -219,7 +237,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
     readLine: deps.readLine ?? (() => defaultReadLine(env)),
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
-    runDocker: deps.runDocker ?? defaultRunDocker,
+    runDocker,
     warn: deps.error ?? ((message) => console.warn(message)),
   };
 }
@@ -272,6 +290,7 @@ interface ProtectedDirEntry {
 interface UserDataInventory {
   protectedDirs: ProtectedDirEntry[];
   registeredSandboxes: string[];
+  dockerContainers: string[];
   hasUserData: boolean;
 }
 
@@ -305,6 +324,12 @@ function confirmDestroyUserData(
     const sandboxLabel = data.registeredSandboxes.length === 1 ? "sandbox" : "sandboxes";
     runtime.log(
       `    ${data.registeredSandboxes.length} registered ${sandboxLabel}: ${data.registeredSandboxes.join(", ")}`,
+    );
+  }
+  if (data.dockerContainers.length > 0) {
+    const containerLabel = data.dockerContainers.length === 1 ? "container" : "containers";
+    runtime.log(
+      `    ${data.dockerContainers.length} Docker ${containerLabel} matching the sandbox/gateway pattern: ${data.dockerContainers.join(", ")}`,
     );
   }
   for (const dir of data.protectedDirs) {
@@ -627,11 +652,15 @@ function dockerIsAvailable(runtime: UninstallRuntime): boolean {
   return true;
 }
 
-function removeDockerContainers(runtime: UninstallRuntime): void {
+const SANDBOX_DOCKER_CONTAINER_PATTERN = /openshell-cluster|openshell|openclaw|nemoclaw/i;
+
+function listManagedDockerContainerRows(runtime: UninstallRuntime): string[] {
   const result = runtime.runDocker(["ps", "-a", "--format", "{{.ID}} {{.Image}} {{.Names}}"], { env: runtime.env });
-  const ids = splitNonEmptyLines(result.stdout)
-    .filter((line) => /openshell-cluster|openshell|openclaw|nemoclaw/i.test(line))
-    .map((line) => line.split(/\s+/)[0]);
+  return splitNonEmptyLines(result.stdout).filter((line) => SANDBOX_DOCKER_CONTAINER_PATTERN.test(line));
+}
+
+function removeDockerContainers(runtime: UninstallRuntime): void {
+  const ids = listManagedDockerContainerRows(runtime).map((line) => line.split(/\s+/)[0]);
   if (ids.length === 0) {
     runtime.log(`No ${runtimeBranding(runtime).display}/OpenShell Docker containers found`);
     return;
@@ -814,10 +843,26 @@ export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRu
     registeredSandboxes = [];
   }
 
+  let dockerContainers: string[];
+  try {
+    dockerContainers = runtime.listSandboxDockerContainers();
+  } catch (err) {
+    const proceed = failedSourceAck(
+      runtime,
+      err,
+      "Repair the Docker daemon or stop the matching containers, or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge the loss and proceed.",
+      "NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite Docker probe failure.",
+    );
+    if (!proceed) return { exitCode: 1, plan };
+    dockerContainers = [];
+  }
+
   const userData: UserDataInventory = {
     protectedDirs,
     registeredSandboxes,
-    hasUserData: protectedDirs.length > 0 || registeredSandboxes.length > 0,
+    dockerContainers,
+    hasUserData:
+      protectedDirs.length > 0 || registeredSandboxes.length > 0 || dockerContainers.length > 0,
   };
   if (!confirmDestroyUserData(options, runtime, userData)) return { exitCode: 1, plan };
   if (!confirm(options, runtime)) return { exitCode: 0, plan };
