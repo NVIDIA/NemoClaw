@@ -487,7 +487,7 @@ import {
   readMessagingChannelConfigFromEnv,
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
-import { runOllamaStartupOrGate, setOllamaAutostartDisabled } from "./onboard/ollama-startup";
+import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
   normalizeHermesToolGatewaySelections,
@@ -565,7 +565,6 @@ type OnboardOptions = {
   gpu?: boolean;
   noGpu?: boolean;
   autoYes?: boolean;
-  noOllamaAutostart?: boolean;
 };
 // Non-interactive mode: set by --non-interactive flag or env var.
 // When active, all prompts use env var overrides or sensible defaults.
@@ -4272,7 +4271,6 @@ async function setupNim(
   // (#2674).
   const localProbeCurlArgs = ["--connect-timeout", "2", "--max-time", "5"] as const;
   const hasOllama = hostCommandExists("ollama");
-  // run and consumed by the Ollama lifecycle helpers in inference/local.ts.
   const ollamaHost = findReachableOllamaHost();
   const ollamaRunning = ollamaHost !== null;
   const vllmRunning = !!runCapture(
@@ -4361,6 +4359,7 @@ async function setupNim(
       vllmRunning,
       vllmProfile,
       experimental: EXPERIMENTAL,
+      platform: gpu?.platform,
       hasVllmImage,
     }),
   );
@@ -5149,8 +5148,7 @@ async function setupNim(
         });
         if (ollamaStartup.kind === "continue") continue selectionLoop;
         if (ollamaStartup.kind === "fallback") {
-          ({ provider, credentialEnv, endpointUrl, model, preferredInferenceApi } =
-            ollamaStartup.result);
+          ({ provider, credentialEnv, endpointUrl, model, preferredInferenceApi } = ollamaStartup.result);
           break;
         }
         if (shouldFrontOllamaWithProxy()) {
@@ -6724,7 +6722,6 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
-  setOllamaAutostartDisabled(opts.noOllamaAutostart);
   _preflightDashboardPort = opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   delete process.env.OPENSHELL_GATEWAY;

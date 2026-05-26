@@ -256,6 +256,7 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
   }
 
   const options = parseOnboardArgs(deps.args, deps.noticeAcceptFlag, deps.noticeAcceptEnv, deps);
+  if (options.noOllamaAutostart) process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
   await deps.runOnboard(options);
 }
 
