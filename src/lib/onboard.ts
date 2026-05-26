@@ -121,13 +121,8 @@ const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runShell, runCapture, runFile, shellQuote, validateName } =
   runner;
-const BRAVE_PROVIDER_PROFILE_ID = "brave";
-const BRAVE_PROVIDER_PROFILE_PATH = path.join(
-  ROOT,
-  "nemoclaw-blueprint",
-  "provider-profiles",
-  "brave.yaml",
-);
+const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
+const { ensureBraveProviderProfile: ensureBraveProviderProfileImpl } = braveProviderProfile;
 const nameValidation: typeof import("./name-validation") = require("./name-validation");
 const { NAME_ALLOWED_FORMAT, getNameValidationGuidance } = nameValidation;
 const docker: typeof import("./adapters/docker") = require("./adapters/docker");
@@ -860,38 +855,11 @@ const verifyDirectSandboxGpu = sandboxGpuPreflight.createDirectSandboxGpuVerifie
 });
 
 
-function ensureBraveProviderProfile(tokenDefs: MessagingTokenDef[]): void {
-  if (
-    !tokenDefs.some(
-      ({ providerType, token }) => providerType === BRAVE_PROVIDER_PROFILE_ID && Boolean(token),
-    )
-  ) {
-    return;
-  }
-
-  const result = runOpenshell(["provider", "profile", "import", "--file", BRAVE_PROVIDER_PROFILE_PATH], {
-    ignoreError: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  if (result.status === 0) return;
-
-  // Tolerate "already exists" diagnostics so re-onboard/recreate with a Brave
-  // profile already registered on the gateway keeps working.
-  const rawDiagnostic = `${result.stderr || ""} ${result.stdout || ""}`;
-  if (/already exists/i.test(rawDiagnostic)) return;
-
-  const diagnostic = compactText(redact(rawDiagnostic));
-  console.error("\n  ✗ Failed to register the Brave Search provider profile with OpenShell.");
-  if (diagnostic) console.error(`    ${diagnostic.slice(0, 500)}`);
-  console.error("    Update OpenShell with scripts/install-openshell.sh and re-run onboarding.");
-  process.exit(result.status || 1);
-}
-
 function upsertMessagingProviders(
   tokenDefs: MessagingTokenDef[],
   options: { replaceExisting?: boolean } = {},
 ) {
-  ensureBraveProviderProfile(tokenDefs);
+  ensureBraveProviderProfileImpl(tokenDefs, { root: ROOT, runOpenshell, redact });
   const upserted = onboardProviders.upsertMessagingProviders(
     tokenDefs,
     runOpenshell,
@@ -3151,7 +3119,7 @@ async function createSandbox(
       name: `${sandboxName}-brave-search`,
       envKey: webSearch.BRAVE_API_KEY_ENV,
       token: getCredential(webSearch.BRAVE_API_KEY_ENV),
-      providerType: BRAVE_PROVIDER_PROFILE_ID,
+      providerType: braveProviderProfile.BRAVE_PROVIDER_PROFILE_ID,
     });
   }
   const previousProviderCredentialHashes =
