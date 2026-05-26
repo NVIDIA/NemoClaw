@@ -292,16 +292,6 @@ function detectProtectedDirs(paths: UninstallPaths, runtime: UninstallRuntime): 
   }).filter((entry) => entry.entries.length > 0);
 }
 
-function detectUserData(paths: UninstallPaths, runtime: UninstallRuntime): UserDataInventory {
-  const protectedDirs = detectProtectedDirs(paths, runtime);
-  const registeredSandboxes = runtime.listRegisteredSandboxes();
-  return {
-    protectedDirs,
-    registeredSandboxes,
-    hasUserData: protectedDirs.length > 0 || registeredSandboxes.length > 0,
-  };
-}
-
 function confirmDestroyUserData(
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
@@ -780,14 +770,15 @@ function failedSourceAck(
   ackBypassNote: string,
 ): boolean {
   const message = err instanceof Error ? err.message : String(err);
+  if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
+    runtime.warn(`  ${message}`);
+    runtime.log(`  ${ackBypassNote}`);
+    return true;
+  }
   runtime.error(`  ${message}`);
   runtime.error("  Refusing to proceed: cannot confirm whether workspace state would be destroyed.");
   runtime.error(`  ${remediation}`);
-  if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA !== "1") {
-    return false;
-  }
-  runtime.log(`  ${ackBypassNote}`);
-  return true;
+  return false;
 }
 
 export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRunDeps = {}): UninstallRunOutcome {

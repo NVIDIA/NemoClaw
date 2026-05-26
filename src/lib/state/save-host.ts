@@ -22,6 +22,13 @@ export function saveBackupToHost(
   const sandboxName = path.basename(path.dirname(backupPath));
   const targetParent = path.join(resolved, sandboxName);
   const target = path.join(targetParent, timestamp);
+  if (homeDir && isInsideNemoclawStateDir(resolved, homeDir)) {
+    return {
+      ok: false,
+      destination: target,
+      message: `Refusing to save backups under ${path.join(homeDir, ".nemoclaw")}: 'nemoclaw uninstall' wipes that tree, defeating the purpose of --save-host. Pick a path outside ~/.nemoclaw.`,
+    };
+  }
   try {
     mkdirImpl(targetParent, { recursive: true });
     cpImpl(backupPath, target, { recursive: true });
@@ -40,4 +47,12 @@ export function resolveSaveHostPath(raw: string, homeDir: string): string {
     return path.resolve(homeDir);
   }
   return path.resolve(raw);
+}
+
+function isInsideNemoclawStateDir(candidate: string, homeDir: string): boolean {
+  const stateDir = path.resolve(homeDir, ".nemoclaw");
+  const candidateResolved = path.resolve(candidate);
+  if (candidateResolved === stateDir) return true;
+  const relative = path.relative(stateDir, candidateResolved);
+  return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
 }

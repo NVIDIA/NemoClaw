@@ -482,7 +482,6 @@ describe("uninstall run plan", () => {
   });
 
   it("aborts with exit 1 when readdirSync throws for a protected directory and ack env var is unset", () => {
-    const logs: string[] = [];
     const errors: string[] = [];
     const run = vi.fn();
     const result = runUninstallPlan(
@@ -498,7 +497,6 @@ describe("uninstall run plan", () => {
           throw err;
         },
         listRegisteredSandboxes: () => [],
-        log: (line) => logs.push(line),
         run,
         runDocker: () => ok(""),
       },
@@ -549,6 +547,7 @@ describe("uninstall run plan", () => {
     expect(
       errors.some((line) => line.includes("EACCES: permission denied")),
     ).toBe(true);
+    expect(errors.some((line) => line.includes("Refusing to proceed"))).toBe(false);
     expect(logs).toContain(
       "  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite unreadable protected directory.",
     );
@@ -565,7 +564,6 @@ describe("uninstall run plan", () => {
     fs.writeFileSync(registryFile, "null");
 
     try {
-      const logs: string[] = [];
       const errors: string[] = [];
       const run = vi.fn();
       const result = runUninstallPlan(
@@ -575,7 +573,6 @@ describe("uninstall run plan", () => {
           error: (line) => errors.push(line),
           existsSync: () => false,
           readdirSync: () => [],
-          log: (line) => logs.push(line),
           run,
           runDocker: () => ok(""),
         },
@@ -623,6 +620,7 @@ describe("uninstall run plan", () => {
     expect(
       errors.some((line) => line.includes("EACCES: permission denied")),
     ).toBe(true);
+    expect(errors.some((line) => line.includes("Refusing to proceed"))).toBe(false);
     expect(logs).toContain(
       "  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite unreadable registry.",
     );
