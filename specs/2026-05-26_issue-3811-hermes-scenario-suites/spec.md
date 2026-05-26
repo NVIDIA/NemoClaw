@@ -338,7 +338,7 @@ Acceptance criteria:
 - External model availability cannot mask route/config regression results.
 - Legacy inference-switch assertions in metadata are mapped or explicitly retired/deferred.
 
-## Phase 4: Migrate Hermes Messaging Suites
+## Phase 4: Migrate Hermes Messaging Suites [COMPLETED: c3ca44f]
 
 Goal: Add Discord, Slack, and Telegram Hermes messaging suites with fake/gated live paths and explicit current-bug expectations.
 
