@@ -328,3 +328,14 @@ e2e_hermes_assert_rebuild_messaging_config_preserved() {
 
 e2e_hermes_assert_rebuild_dashboard_forward_released() { _e2e_hermes_messaging_plan "${1:-expected.hermes.rebuild.dashboard-forward-released}" rebuild "verify dashboard forward released before rebuild"; }
 e2e_hermes_assert_rebuild_post_rebuild_health() { _e2e_hermes_messaging_plan "${1:-expected.hermes.rebuild.post-rebuild-health}" rebuild "verify Hermes post-rebuild health"; }
+
+e2e_hermes_assert_policy_inactive_messaging_not_preenabled() { _e2e_hermes_messaging_plan "${1:-expected.hermes.policy.inactive-messaging-not-preenabled}" policy "assert inactive messaging policies are not preenabled"; }
+e2e_hermes_assert_policy_managed_inference_anthropic_messages_path() { _e2e_hermes_messaging_plan "${1:-expected.hermes.policy.managed-inference-anthropic-messages-path}" policy "assert Anthropic /v1/messages egress path"; }
+e2e_hermes_assert_policy_venv_python_egress() { _e2e_hermes_messaging_plan "${1:-expected.hermes.policy.venv-python-egress}" policy "assert Hermes venv Python egress policy"; }
+e2e_hermes_assert_policy_no_phantom_allowlist() { _e2e_hermes_messaging_plan "${1:-expected.hermes.policy.no-phantom-allowlist}" policy "assert no phantom allowlist entries"; }
+e2e_hermes_assert_provider_anthropic_compatible_chat() { _e2e_hermes_messaging_plan "${1:-expected.hermes.provider.anthropic-compatible-chat}" provider "assert Anthropic-compatible in-sandbox chat"; }
+e2e_hermes_assert_provider_gemini_tool_schema_compatible() { _e2e_hermes_messaging_plan "${1:-expected.hermes.provider.gemini-tool-schema-compatible}" provider "assert Gemini tool schema compatibility"; }
+e2e_hermes_assert_provider_onboard_smoke_not_sufficient() { _e2e_hermes_messaging_plan "${1:-expected.hermes.provider.onboard-smoke-not-sufficient}" provider "assert onboard smoke does not mask runtime chat gaps"; }
+e2e_hermes_assert_security_shields_up_down_macos_vm_driver() { _e2e_hermes_messaging_plan "${1:-expected.hermes.security.shields-up-down-macos-vm-driver}" security "assert macOS Docker Desktop VM-driver shields up/down behavior"; }
+e2e_hermes_assert_security_shields_config_locked() { _e2e_hermes_messaging_plan "${1:-expected.hermes.security.shields-config-locked}" security "assert shields config locked/status consistency"; }
+e2e_hermes_assert_tui_history_writable() { _e2e_hermes_messaging_plan "${1:-expected.hermes.tui.history-writable}" tui "assert Hermes TUI history writable and clean exit"; }

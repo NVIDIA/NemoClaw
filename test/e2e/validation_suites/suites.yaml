@@ -179,6 +179,38 @@ suites:
       script: hermes/rebuild/02-dashboard-forward-released.sh
     - id: rebuild-post-rebuild-health
       script: hermes/rebuild/03-post-rebuild-health.sh
+  hermes-policy:
+    requires_state: *id009
+    steps:
+    - id: policy-inactive-messaging-not-preenabled
+      script: hermes/policy/00-inactive-messaging-not-preenabled.sh
+    - id: policy-managed-inference-anthropic-messages-path
+      script: hermes/policy/01-managed-inference-anthropic-messages-path.sh
+    - id: policy-venv-python-egress
+      script: hermes/policy/02-venv-python-egress.sh
+    - id: policy-no-phantom-allowlist
+      script: hermes/policy/03-no-phantom-allowlist.sh
+  hermes-provider-compatibility:
+    requires_state: *id009
+    steps:
+    - id: provider-anthropic-compatible-chat
+      script: hermes/provider/00-anthropic-compatible-chat.sh
+    - id: provider-gemini-tool-schema-compatible
+      script: hermes/provider/01-gemini-tool-schema-compatible.sh
+    - id: provider-onboard-smoke-not-sufficient
+      script: hermes/provider/02-onboard-smoke-not-sufficient.sh
+  hermes-security-tui:
+    requires_state: *id009
+    runner_requirements:
+    - macos-latest
+    - docker-desktop-vm-driver
+    steps:
+    - id: security-shields-up-down-macos-vm-driver
+      script: hermes/security-tui/00-shields-up-down-macos-vm-driver.sh
+    - id: security-shields-config-locked
+      script: hermes/security-tui/01-shields-config-locked.sh
+    - id: tui-history-writable
+      script: hermes/security-tui/02-tui-history-writable.sh
   gateway-health:
     requires_state: *id001
     steps: *id002
