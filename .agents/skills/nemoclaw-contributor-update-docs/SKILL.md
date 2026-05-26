@@ -50,7 +50,7 @@ git log -50 --oneline --no-merges
 
 Filter to commits that are likely to affect docs. Apply every rule below before proceeding. A commit excluded by any rule must not produce doc changes.
 
-1. **Commit type**: `feat`, `fix`, `refactor`, `perf` commits often change behavior. `docs` commits are already doc changes. `chore`, `ci`, `test` commits rarely need doc updates.
+1. **Commit type**: `feat`, `fix`, `refactor`, `perf` commits often change behavior. `docs` commits are already doc changes, but still need a review pass when they fall in the scanned range.
 2. **Files changed**: Changes to `nemoclaw/src/`, `nemoclaw-blueprint/`, `bin/`, `scripts/`, or policy-related code are high-signal.
 3. **Ignore**: Changes limited to `test/`, `.github/`, or internal-only modules.
 4. **Skip list**: Exclude any commit whose short hash appears in `skip-commits`, or whose commit message or changed file paths contain a `skip-features` substring. Report skipped commits in the final summary under a "Skipped (docs-skip)" heading.
@@ -79,6 +79,8 @@ For each relevant commit, determine which doc page(s) it affects. Use this mappi
 | Inference-related changes | `docs/inference/inference-options.mdx` |
 
 If a commit does not map to any existing page but introduces a user-visible concept, flag it as needing a new page.
+If a commit already changes files under `docs/`, include those pages in the target page list and run a docs review or edit pass against them using the style guidance in Step 5.
+Do not assume an existing doc change is complete, correctly placed, or style-compliant just because it landed with the source commit.
 
 ## Step 3: Read the Commit Details
 
@@ -98,6 +100,7 @@ Extract:
 ## Step 4: Read the Current Doc Page
 
 Before editing, read the full target doc page to understand its current content and structure.
+For target pages that were already changed by a scanned commit, compare the committed doc diff against the source behavior and the style guidance before deciding whether to edit further.
 
 Identify where the new content should go. Follow the page's existing structure.
 
