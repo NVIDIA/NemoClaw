@@ -193,6 +193,12 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      - name: Resolve public install ref
+        id: public_install_ref
+        shell: bash
+        run: |
+          printf 'ref=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Run cloud onboard E2E test
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
@@ -203,7 +209,7 @@ jobs:
           NEMOCLAW_POLICY_MODE: "custom"
           NEMOCLAW_POLICY_PRESETS: "npm,pypi"
           NEMOCLAW_SANDBOX_NAME: "e2e-cloud-onboard"
-          NEMOCLAW_INSTALL_REF: ${{ github.ref_name }}
+          NEMOCLAW_PUBLIC_INSTALL_REF: ${{ steps.public_install_ref.outputs.ref }}
         run: bash test/e2e/test-cloud-onboard-e2e.sh
 
       - name: Upload install log on failure
@@ -414,6 +420,12 @@ jobs:
         with:
           ref: ${{ inputs.target_ref || github.ref }}
 
+      - name: Resolve public install ref
+        id: public_install_ref
+        shell: bash
+        run: |
+          printf 'ref=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
         with:
@@ -429,6 +441,7 @@ jobs:
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
           NEMOCLAW_RECREATE_SANDBOX: "1"
           NEMOCLAW_SANDBOX_NAME: "e2e-openclaw-tui-correlation"
+          NEMOCLAW_PUBLIC_INSTALL_REF: ${{ steps.public_install_ref.outputs.ref }}
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-openclaw-tui-chat-correlation.sh
 
