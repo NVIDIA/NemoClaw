@@ -7,6 +7,7 @@ import {
   BRAVE_PROVIDER_PROFILE_ID,
   braveProviderProfilePath,
   ensureBraveProviderProfile,
+  shouldEnableBraveWebSearch,
 } from "./brave-provider-profile";
 
 function makeDeps(
@@ -86,5 +87,26 @@ describe("ensureBraveProviderProfile", () => {
       ),
     ).toThrow(/exit:2/);
     expect(deps.exit).toHaveBeenCalledWith(2);
+  });
+});
+
+describe("shouldEnableBraveWebSearch", () => {
+  it("returns false for null/undefined web search config", () => {
+    expect(shouldEnableBraveWebSearch(null)).toBe(false);
+    expect(shouldEnableBraveWebSearch(undefined)).toBe(false);
+  });
+
+  it("returns false when fetchEnabled is missing or falsy", () => {
+    // Regression for #3626: a `{ fetchEnabled: false }` config previously
+    // tripped `if (webSearchConfig)` in createSandbox and pushed a Brave
+    // provider/token plus the BRAVE_API_KEY abort even though the runtime
+    // gate downstream is `fetchEnabled`.
+    expect(shouldEnableBraveWebSearch({})).toBe(false);
+    expect(shouldEnableBraveWebSearch({ fetchEnabled: false })).toBe(false);
+    expect(shouldEnableBraveWebSearch({ fetchEnabled: null })).toBe(false);
+  });
+
+  it("returns true only when fetchEnabled is explicitly true", () => {
+    expect(shouldEnableBraveWebSearch({ fetchEnabled: true })).toBe(true);
   });
 });

@@ -7,6 +7,20 @@ import { compactText } from "../core/url-utils";
 
 export const BRAVE_PROVIDER_PROFILE_ID = "brave";
 
+/**
+ * Single source of truth for "the user opted in to Brave Search at runtime."
+ * Returning true on a config whose `fetchEnabled` is false would cause
+ * `createSandbox` to push a Brave provider/token and trip the BRAVE_API_KEY-
+ * required abort even when the feature is off, while the downstream
+ * finalization/verifier paths already gate on `fetchEnabled`. Keep every gate
+ * routed through this helper so they stay aligned.
+ */
+export function shouldEnableBraveWebSearch(
+  webSearchConfig: { fetchEnabled?: boolean | null } | null | undefined,
+): boolean {
+  return Boolean(webSearchConfig?.fetchEnabled);
+}
+
 export type BraveProviderProfileDeps = {
   root: string;
   runOpenshell: (
