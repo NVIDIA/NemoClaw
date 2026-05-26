@@ -12,22 +12,30 @@ export default class SnapshotCreateCommand extends NemoClawCommand {
   static strict = true;
   static summary = "Create a snapshot of sandbox state";
   static description = "Create an auto-versioned snapshot of sandbox workspace state.";
-  static usage = ["<name> [--name <label>]"];
+  static usage = ["<name> [--name <label>] [--save-host <path>]"];
   static examples = [
     "<%= config.bin %> sandbox snapshot create alpha",
     "<%= config.bin %> sandbox snapshot create alpha --name before-upgrade",
+    "<%= config.bin %> sandbox snapshot create alpha --save-host ~/nemoclaw-backups",
   ];
   static args = {
     sandboxName: sandboxNameArg,
   };
   static flags = {
     name: Flags.string({ description: "Optional snapshot label" }),
+    "save-host": Flags.string({
+      description: "Copy the snapshot to this host path after creation",
+    }),
   };
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(SnapshotCreateCommand);
     try {
-      await runSandboxSnapshot(args.sandboxName, { kind: "create", name: flags.name });
+      await runSandboxSnapshot(args.sandboxName, {
+        kind: "create",
+        name: flags.name,
+        saveHost: flags["save-host"],
+      });
     } catch (error) {
       const snapshotError = snapshotCommandError(error);
       if (snapshotError) {

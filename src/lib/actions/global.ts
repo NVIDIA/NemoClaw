@@ -51,8 +51,8 @@ export async function runDeployAction(instanceName?: string): Promise<void> {
   await executeDeployAction(instanceName);
 }
 
-export async function runBackupAllAction(): Promise<void> {
-  await executeBackupAllAction();
+export async function runBackupAllAction(options: { saveHost?: string | null } = {}): Promise<void> {
+  await executeBackupAllAction(options);
 }
 
 export async function runUpgradeSandboxesAction(

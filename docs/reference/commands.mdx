@@ -450,6 +450,36 @@ $ nemoclaw my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] 
 | `--tty`, `--no-tty` | Allocate or disable a pseudo-terminal; defaults to auto-detection |
 | `--timeout <s>` | Timeout in seconds. Use `0` for no timeout |
 
+### `nemoclaw <name> download`
+
+Download a file or directory from inside a running sandbox to the host.
+The command is a thin wrapper around `openshell sandbox download` so you can pull workspace files out without remembering the raw OpenShell command surface.
+Sandbox workspace files (`/sandbox/.openclaw/workspace/`) live in the container's writable layer, so manual downloads are also the only way to preserve them outside of `nemoclaw <name> snapshot create` and `nemoclaw backup-all`.
+
+```console
+$ nemoclaw my-assistant download <sandbox-path> [<dest>]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `<sandbox-path>` | Path inside the sandbox to download |
+| `<dest>` | Local destination (defaults to the current directory) |
+
+### `nemoclaw <name> upload`
+
+Upload a local file or directory into a running sandbox.
+Thin wrapper around `openshell sandbox upload`.
+
+```console
+$ nemoclaw my-assistant upload <local-path> [<dest>] [--no-git-ignore]
+```
+
+| Argument or flag | Description |
+|------------------|-------------|
+| `<local-path>` | Local path to upload |
+| `<dest>` | Destination path inside the sandbox (defaults to the working directory) |
+| `--no-git-ignore` | Disable `.gitignore` filtering so the upload includes everything |
+
 ### `nemoclaw <name> logs`
 
 View sandbox logs.
@@ -838,6 +868,14 @@ $ nemoclaw backup-all
 
 The installer calls `backup-all` automatically before onboarding to protect against data loss during OpenShell upgrades.
 
+| Flag | Description |
+|------|-------------|
+| `--save-host <path>` | Copy each successful backup into `<path>/<timestamp>/` after the snapshot is written. The destination is created if it does not exist. Use this before `nemoclaw uninstall` so the backups survive the `~/.nemoclaw/` wipe |
+
+```console
+$ nemoclaw backup-all --save-host ~/nemoclaw-backups
+```
+
 ### `nemoclaw <name> snapshot create`
 
 Create a timestamped snapshot of sandbox state.
@@ -850,11 +888,13 @@ $ nemoclaw my-assistant snapshot create
 | Flag | Description |
 |------|-------------|
 | `--name <label>` | Attach a human-readable label to the snapshot so you can restore by name later |
+| `--save-host <path>` | Copy the snapshot directory into `<path>/<timestamp>/` after creation. The destination is created if it does not exist |
 
 Names must be 1 to 63 characters from `[A-Za-z0-9._-]`, start with an alphanumeric character, and cannot look like a version selector (`v1`, `v2`, ...). Duplicate names per sandbox are rejected; pick a different name or delete the existing snapshot first.
 
 ```console
 $ nemoclaw my-assistant snapshot create --name before-upgrade
+$ nemoclaw my-assistant snapshot create --save-host ~/nemoclaw-backups
 ```
 
 ### `nemoclaw <name> snapshot list`
@@ -1178,11 +1218,26 @@ On Linux, uninstall removes `~/.local/state/nemoclaw`, which contains Docker-dri
 $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--gateway <name>]
 ```
 
-When uninstall detects snapshots or rebuild backups under `~/.nemoclaw/rebuild-backups/`, it prints the affected sandboxes, names the destructive surface, and exits without removing anything.
-The gate fires even with `--yes` so non-interactive automation cannot silently drop user data.
-Run `nemoclaw backup-all` and copy `~/.nemoclaw/rebuild-backups/` to a safe path outside `~/.nemoclaw/` before re-running uninstall, or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge the loss and proceed.
-Workspace files inside the sandbox container (`/sandbox/.openclaw/workspace/`) live in the container's writable layer and are destroyed with the container regardless of this gate.
-Use `nemoclaw backup-all` first to capture container workspace contents into the host-side snapshot directory before copying it out.
+When uninstall detects snapshots or rebuild backups under any of the protected paths inside `~/.nemoclaw/` (currently `~/.nemoclaw/rebuild-backups/`), it prints the affected sandboxes, names the destructive surface, and refuses to proceed.
+In non-interactive runs (including `--yes`) the gate exits with status 1.
+In interactive runs the gate prompts for `y/N` confirmation and aborts on the default.
+The list of protected directories lives in `PROTECTED_USER_DATA_DIRS` in `src/lib/actions/uninstall/run-plan.ts`; additions to this list automatically extend the gate.
+
+Two ways to keep your workspace state across uninstall:
+
+```console
+$ nemoclaw backup-all --save-host ~/nemoclaw-backups
+```
+
+The flag is also available on `nemoclaw <name> snapshot create`.
+Both commands copy each fresh tarball into the host path you supply, so the data survives the `~/.nemoclaw/` wipe.
+
+Or set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge the loss and proceed without preservation.
+
+Workspace files inside the sandbox container (`/sandbox/.openclaw/workspace/`) live in the container's writable layer.
+OpenShell's `sandbox create` does not currently expose a `--mount` or `--volume` flag, so NemoClaw cannot mount workspace state on a persistent host volume; the host-side `--save-host` flow above is the workaround for that constraint.
+`docker rm -f` destroys the writable layer with the container, regardless of this gate.
+Run `nemoclaw <name> snapshot create` (which extracts workspace files via `docker exec` + tar) or `nemoclaw <name> download` (a thin wrapper around `openshell sandbox download`) before destroying the sandbox if you want to keep specific workspace files.
 
 #### `nemoclaw uninstall` vs. the hosted `uninstall.sh`
 

@@ -219,35 +219,46 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   return false;
 }
 
+// Host-side directories under `~/.nemoclaw/` that hold user-authored data
+// destroyed by the unconditional `rm -rf` of the state dir. Keep this as a
+// constant so a future addition (separate snapshots dir, exported audit
+// logs, etc.) only needs an entry here. See #4226.
+const PROTECTED_USER_DATA_DIRS: readonly string[] = ["rebuild-backups"];
+
+interface ProtectedDirEntry {
+  name: string;
+  path: string;
+  entries: string[];
+}
+
 interface UserDataInventory {
-  rebuildBackupsDir: string;
-  rebuildBackupEntries: string[];
+  protectedDirs: ProtectedDirEntry[];
   hasUserData: boolean;
 }
 
-// Detect on-host directories that hold user-authored data (snapshots, rebuild
-// backups) inside `~/.nemoclaw/`. The full `~/.nemoclaw/` tree is wiped during
-// uninstall, so anything found here is destroyed unless the user has copied
-// it elsewhere first. See #4226.
 function detectUserData(paths: UninstallPaths, runtime: UninstallRuntime): UserDataInventory {
-  const rebuildBackupsDir = path.join(paths.nemoclawStateDir, "rebuild-backups");
-  const rebuildBackupEntries = runtime.existsSync(rebuildBackupsDir)
-    ? runtime.readdirSync(rebuildBackupsDir).filter((entry) => !entry.startsWith("."))
-    : [];
-  return {
-    rebuildBackupsDir,
-    rebuildBackupEntries,
-    hasUserData: rebuildBackupEntries.length > 0,
-  };
+  const protectedDirs: ProtectedDirEntry[] = PROTECTED_USER_DATA_DIRS.map((name) => {
+    const dirPath = path.join(paths.nemoclawStateDir, name);
+    const entries = runtime.existsSync(dirPath)
+      ? runtime.readdirSync(dirPath).filter((entry) => !entry.startsWith("."))
+      : [];
+    return { name, path: dirPath, entries };
+  }).filter((entry) => entry.entries.length > 0);
+  return { protectedDirs, hasUserData: protectedDirs.length > 0 };
 }
 
-// Gate the destructive uninstall behind an explicit acknowledgement when
-// snapshots or rebuild backups exist on disk. The container-side workspace
-// (`/sandbox/.openclaw/workspace/`) lives in the writable container layer
-// and is destroyed by `docker rm -f` regardless of any host-side preservation
-// flag, so the warning also points users at `backup-all` + a manual copy to
-// a safe path before they re-run. The env opt-out keeps automation and CI
-// flows working without a TTY confirmation. See #4226.
+// Gate the destructive uninstall when host-side snapshots or rebuild backups
+// exist. Behaviour matrix:
+//   non-interactive + env var unset  -> abort (exit 1).
+//   non-interactive + env var set    -> proceed.
+//   interactive     + env var set    -> proceed.
+//   interactive     + env var unset  -> prompt y/N; default = abort.
+// Container-side workspace files (`/sandbox/.openclaw/workspace/`) live in
+// the container's writable layer and are destroyed with `docker rm -f`
+// regardless of this gate, because OpenShell's `sandbox create` does not
+// expose a `--mount`/`--volume` flag (no host bind mount or named volume
+// support) — the gate is the host-side workaround for that constraint.
+// See #4226 and the OpenShell mount-support gap referenced in the PR body.
 function confirmDestroyUserData(
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
@@ -255,27 +266,38 @@ function confirmDestroyUserData(
 ): boolean {
   if (!data.hasUserData) return true;
   const branding = runtimeBranding(runtime);
-  const sandboxLabel = data.rebuildBackupEntries.length === 1 ? "sandbox" : "sandboxes";
   runtime.log("");
   runtime.log(`  ${branding.display} detected workspace snapshots and rebuild backups on disk:`);
-  runtime.log(`    ${data.rebuildBackupsDir}`);
-  runtime.log(
-    `    (${data.rebuildBackupEntries.length} ${sandboxLabel}: ${data.rebuildBackupEntries.join(", ")})`,
-  );
-  runtime.log("  Uninstall removes this directory along with the rest of ~/.nemoclaw/.");
+  for (const dir of data.protectedDirs) {
+    const sandboxLabel = dir.entries.length === 1 ? "sandbox" : "sandboxes";
+    runtime.log(`    ${dir.path}`);
+    runtime.log(`      (${dir.entries.length} ${sandboxLabel}: ${dir.entries.join(", ")})`);
+  }
+  runtime.log("  Uninstall removes these directories along with the rest of ~/.nemoclaw/.");
   runtime.log("  Sandbox container workspace files (`/sandbox/.openclaw/workspace/`) are");
   runtime.log("  removed with the Docker container and cannot be preserved automatically.");
   runtime.log("");
   runtime.log("  To preserve workspace state, run before re-attempting uninstall:");
-  runtime.log("    nemoclaw backup-all");
-  runtime.log("    cp -r ~/.nemoclaw/rebuild-backups <safe-path-outside-nemoclaw>");
+  runtime.log("    nemoclaw backup-all --save-host <safe-path-outside-nemoclaw>");
   runtime.log("");
-  runtime.log(
-    "  Set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge and proceed with the destructive uninstall.",
-  );
   if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
-    runtime.log("");
     runtime.log("  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding with destructive uninstall.");
+    return true;
+  }
+  if (options.assumeYes || !runtime.isTty) {
+    runtime.log(
+      "  Set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge and proceed with the destructive uninstall.",
+    );
+    runtime.log("  Aborted.");
+    return false;
+  }
+  runtime.log(
+    "  Set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to skip this prompt in non-interactive runs.",
+  );
+  runtime.log("  Destroy these snapshots and rebuild backups now? [y/N]");
+  const reply = runtime.readLine();
+  if (reply && /^(y|yes)$/i.test(reply.trim())) {
+    runtime.log("  Confirmed; proceeding with destructive uninstall.");
     return true;
   }
   runtime.log("  Aborted.");

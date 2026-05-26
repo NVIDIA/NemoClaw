@@ -21,6 +21,7 @@ import {
 } from "../openshell-sandbox-list";
 import { parseLiveSandboxNames } from "../runtime-recovery";
 import * as registry from "../state/registry";
+import { saveBackupToHost } from "../state/save-host";
 import * as sandboxState from "../state/sandbox";
 
 const useColor = !process.env.NO_COLOR && !!process.stdout.isTTY;
@@ -32,7 +33,11 @@ const R = useColor ? "\x1b[0m" : "";
 const RD = useColor ? "\x1b[1;31m" : "";
 const YW = useColor ? "\x1b[1;33m" : "";
 
-export async function backupAll(): Promise<void> {
+export interface BackupAllOptions {
+  saveHost?: string | null;
+}
+
+export async function backupAll(options: BackupAllOptions = {}): Promise<void> {
   const { sandboxes } = registry.listSandboxes();
   if (sandboxes.length === 0) {
     console.log("  No sandboxes registered. Nothing to back up.");
@@ -80,6 +85,17 @@ export async function backupAll(): Promise<void> {
         `  ${G}✓${R} ${sb.name}: ${result.backedUpDirs.length} dirs, ${result.backedUpFiles.length} files → ${result.manifest?.backupPath || "unknown"}`,
       );
       backed++;
+      if (options.saveHost && result.manifest?.backupPath) {
+        const save = saveBackupToHost(result.manifest.backupPath, options.saveHost);
+        if (save.ok) {
+          console.log(`    Saved to host: ${save.destination}`);
+        } else {
+          console.error(
+            `  ${RD}✗${R} ${sb.name}: failed to copy snapshot to ${options.saveHost}: ${save.message ?? ""}`,
+          );
+          failed++;
+        }
+      }
     } else {
       const failedItems = [...result.failedDirs, ...result.failedFiles];
       console.error(`  ${RD}✗${R} ${sb.name}: backup failed (${failedItems.join(", ")})`);

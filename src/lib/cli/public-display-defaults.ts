@@ -231,11 +231,25 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "flags": "[--json]"
     }
   ],
+  "sandbox:download": [
+    {
+      "group": "Sandbox Management",
+      "order": 4.6,
+      "flags": "<sandbox-path> [<dest>]"
+    }
+  ],
   "sandbox:exec": [
     {
       "group": "Sandbox Management",
       "order": 4.5,
       "flags": "[--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]"
+    }
+  ],
+  "sandbox:upload": [
+    {
+      "group": "Sandbox Management",
+      "order": 4.7,
+      "flags": "<local-path> [<dest>] [--no-git-ignore]"
     }
   ],
   "sandbox:gateway:token": [

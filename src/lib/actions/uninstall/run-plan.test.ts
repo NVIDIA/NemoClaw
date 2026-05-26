@@ -322,6 +322,55 @@ describe("uninstall run plan", () => {
     expect(logs.some((line) => line.includes("workspace snapshots and rebuild backups"))).toBe(false);
   });
 
+  it("prompts for y/N in interactive mode when snapshots exist; declining aborts (#4226)", () => {
+    const logs: string[] = [];
+    const run = vi.fn();
+    const result = runUninstallPlan(
+      { assumeYes: false, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        existsSync: (target) => target === path.join("/home/test", ".nemoclaw", "rebuild-backups"),
+        readdirSync: () => ["my-assistant"],
+        isTty: true,
+        log: (line) => logs.push(line),
+        readLine: () => "n",
+        run,
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(1);
+    expect(logs).toContain("  Destroy these snapshots and rebuild backups now? [y/N]");
+    expect(logs).toContain("  Aborted.");
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("proceeds after y in interactive mode when snapshots exist (#4226)", () => {
+    const logs: string[] = [];
+    const result = runUninstallPlan(
+      { assumeYes: false, deleteModels: false, keepOpenShell: true },
+      {
+        env: { HOME: "/home/test" } as NodeJS.ProcessEnv,
+        commandExists: () => false,
+        existsSync: (target) => target === path.join("/home/test", ".nemoclaw", "rebuild-backups"),
+        readdirSync: () => ["my-assistant"],
+        isTty: true,
+        log: (line) => logs.push(line),
+        readLine: (() => {
+          const replies = ["y", "yes"];
+          return () => replies.shift() ?? "";
+        })(),
+        rmSync: vi.fn(),
+        run: vi.fn(() => ok("")),
+        runDocker: () => ok(""),
+      },
+    );
+
+    expect(result.exitCode).toBe(0);
+    expect(logs).toContain("  Confirmed; proceeding with destructive uninstall.");
+    expect(logs).toContain("Claws retracted. Until next time.");
+  });
+
   it("kills the Ollama auth proxy via the persisted PID file (#2759)", () => {
     const logs: string[] = [];
     const killed: number[] = [];
