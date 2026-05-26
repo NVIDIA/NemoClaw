@@ -159,4 +159,22 @@ describe("reconcilePreflightGatewayReuseState", () => {
     expect(destroyForReuse).not.toHaveBeenCalled();
     expect(deps.exitProcess).not.toHaveBeenCalled();
   });
+
+  // #2020 safety case: a transient docker inspect failure plus an HTTP warm-up
+  // miss must NOT downgrade reuse state into destructive cleanup. Locks the
+  // behavior described in the implementation comment so it can't regress.
+  it("does not destroy on unknown container state when HTTP is not responding", async () => {
+    const destroyForReuse = vi.fn(() => "missing" as GatewayReuseState);
+    const deps = makeDeps({
+      verifyGatewayContainerRunning: vi.fn(() => "unknown" as GatewayContainerState),
+      waitForGatewayHttpReady: vi.fn(async () => false),
+      destroyGatewayForReuse: destroyForReuse,
+    });
+
+    const result = await reconcilePreflightGatewayReuseState(deps);
+
+    expect(result).toBe("healthy");
+    expect(destroyForReuse).not.toHaveBeenCalled();
+    expect(deps.exitProcess).not.toHaveBeenCalled();
+  });
 });
