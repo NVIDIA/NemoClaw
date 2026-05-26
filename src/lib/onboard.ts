@@ -4350,6 +4350,7 @@ async function setupNim(
       vllmRunning,
       vllmProfile,
       experimental: EXPERIMENTAL,
+      platform: gpu?.platform,
       hasVllmImage,
     }),
   );
