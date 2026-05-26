@@ -289,7 +289,7 @@ test_net_02_whitelist_access() {
   files_code=$(sandbox_exec "curl -sS -o /dev/null -w '%{http_code}' --max-time 20 https://files.pythonhosted.org/rg/ 2>&1" 2>&1) || true
   log "  files.pythonhosted.org GET status: $files_code"
 
-  if echo "$files_code" | grep -qE "^[1-5][0-9][0-9]$" && [ "$files_code" != "000" ]; then
+  if echo "$files_code" | grep -qE "^[23][0-9][0-9]$"; then
     pass "TC-NET-02: files.pythonhosted.org returns a real HTTP status via curl GET"
   else
     fail "TC-NET-02: Whitelist" "curl GET to files.pythonhosted.org did not return a real HTTP status: ${files_code:0:200}"
