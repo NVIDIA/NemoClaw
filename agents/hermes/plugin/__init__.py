@@ -1107,7 +1107,7 @@ def _install_messaging_response_patch():
     """Prevent raw messaging pseudo-tool calls from leaking as final text."""
     try:
         module = __import__("run_agent", fromlist=["AIAgent"])
-    except Exception:
+    except (ImportError, ModuleNotFoundError):
         return False
 
     agent_cls = getattr(module, "AIAgent", None)
