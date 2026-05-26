@@ -455,7 +455,7 @@ Acceptance criteria:
 - Remaining issue inventory items are represented by runnable assertions or explicit gated/out-of-scope metadata.
 - Platform-specific scenarios declare runner requirements.
 
-## Phase 7: Integrate Scenario Plans and Verify Plan-Only Compatibility
+## Phase 7: Integrate Scenario Plans and Verify Plan-Only Compatibility [COMPLETED: 9eef6b0]
 
 Goal: Wire all Hermes suites into the scenario matrix while preserving plan-only and expected-state validation behavior.
 
