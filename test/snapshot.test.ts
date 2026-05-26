@@ -1044,6 +1044,134 @@ process.exit(0);
       fs.rmSync(fixture, { recursive: true, force: true });
     }
   });
+
+  it("treats audit-find exit 1 with empty stdout as a successful audit", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-perm-denied-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["agents", "extensions", "workspace"];
+      fs.mkdirSync(binDir, { recursive: true });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  // Simulate a permission-denied subdir: when the audit cmd lacks the
+  // \`|| true\` tolerance wrapper (pre-fix shape), exit non-zero so the
+  // caller treats it as audit failure. The post-fix shape wraps each
+  // \`find\` with \`|| true\` and joins with \`;\`, so the audit cmd as a
+  // whole exits 0 even though a remote \`find\` would have exited 1.
+  if (!cmd.includes("|| true")) {
+    process.stderr.write("find: '/sandbox/.openclaw/extensions/nemoclaw': Permission denied\\n");
+    process.exit(1);
+  }
+  process.exit(0);
+}
+if (cmd.includes("tar -cf -")) {
+  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  process.exit(r.status || 0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(true);
+      expect(backup.error).toBeUndefined();
+      expect(backup.backedUpDirs).toEqual(existingDirs);
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("still rejects violations from readable dirs even if a sibling find exits non-zero", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-mixed-perm-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["agents", "workspace"];
+      fs.mkdirSync(binDir, { recursive: true });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
+
+      // `agents` simulates perm-denied (no rows emitted); `workspace` emits
+      // a symlink that is not in the audit allow-list, which must still be
+      // caught even when a sibling find exits non-zero.
+      const auditLines = [
+        "l\t/sandbox/.openclaw/workspace/leak\t../openclaw.json",
+      ].join("\n");
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  // Match real-shell behaviour: without the \`|| true\` tolerance wrapper
+  // the perm-denied sibling \`find\` would have aborted the chain. The
+  // post-fix audit cmd still emits the violation stdout because \`;\`
+  // joins each per-dir block so the readable sibling's output is
+  // preserved.
+  if (!cmd.includes("|| true")) {
+    process.stderr.write("find: '/sandbox/.openclaw/agents/main': Permission denied\\n");
+    process.exit(1);
+  }
+  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(false);
+      expect(backup.error).toMatch(/workspace\/leak/);
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("Hermes durable state files", () => {

@@ -545,6 +545,24 @@ describe("huggingface preset", () => {
   });
 });
 
+describe("jira preset", () => {
+  const JIRA_PRESET_PATH = new URL(
+    "../nemoclaw-blueprint/policies/presets/jira.yaml",
+    import.meta.url,
+  );
+  const jiraPreset = loadYaml<PolicyPreset>(JIRA_PRESET_PATH);
+
+  it("regression #3758: Jira allows Node but not curl", () => {
+    const binaries = (jiraPreset.network_policies?.atlassian?.binaries ?? [])
+      .map((binary) => binary.path)
+      .sort();
+
+    expect(binaries).toEqual(["/usr/bin/node", "/usr/local/bin/node"]);
+    expect(binaries).not.toContain("/usr/bin/curl");
+    expect(binaries).not.toContain("/usr/local/bin/curl");
+  });
+});
+
 describe("messaging WebSocket presets", () => {
   const DISCORD_PRESET_PATH = new URL(
     "../nemoclaw-blueprint/policies/presets/discord.yaml",

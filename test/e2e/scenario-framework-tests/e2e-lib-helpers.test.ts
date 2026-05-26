@@ -991,20 +991,6 @@ describe("Phase 1.E install dispatcher splits", () => {
     expect(r.stdout + r.stderr).not.toMatch(/install-curl|install-ollama|install-launchable/);
   });
 
-  it("repo_current_install_should_use_full_cli_build_script", () => {
-    const script = fs.readFileSync(path.join(INSTALL_DIR, "repo-current.sh"), "utf8");
-    expect(script).toContain("npm run build:cli");
-    expect(script).not.toContain("./node_modules/.bin/tsc -p tsconfig.src.json");
-    expect(script).not.toContain("./node_modules/.bin/tsc -p nemoclaw-blueprint/tsconfig.json");
-  });
-
-  it("repo_current_install_should_verify_generated_oclif_metadata", () => {
-    const script = fs.readFileSync(path.join(INSTALL_DIR, "repo-current.sh"), "utf8");
-    const buildScript = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")).scripts?.["build:cli"] ?? "";
-    expect(buildScript).toContain("generate-oclif-metadata-manifest.js");
-    expect(script).toContain("dist/lib/cli/oclif-command-metadata.generated.json");
-  });
-
   it("install_should_dispatch_to_install_curl_helper_for_public_installer_profile", () => {
     const r = dispatchDryRun("public-installer");
     expect(r.status, r.stderr).toBe(0);

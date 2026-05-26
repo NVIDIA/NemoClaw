@@ -63,7 +63,7 @@ COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
 COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
-RUN chmod -R a+rX /opt/nemoclaw-blueprint/
+RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/
 
 # Install runtime dependencies only (no devDependencies, no build step)
 WORKDIR /opt/nemoclaw
@@ -757,12 +757,63 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 # Health check: poll the gateway's /health endpoint so Docker (and Compose)
 # can detect and restart unhealthy containers in standalone deployments.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/1430
+#
+# Two-stage probe so Docker health does not contradict the NemoClaw delivery
+# chain on runtimes where the dashboard port lives in a different network
+# namespace (e.g. DGX Spark / aarch64 with OpenShell-managed forwarding).
+# The reporter saw `nemoclaw status` Ready + the host forward succeed while
+# Docker marked the container unhealthy because the in-container curl could
+# not see the dashboard listener. See #3975.
+#
+#   1. Direct in-container probe (HTTP 200) — definitive when it works,
+#      preserves the original Compose/standalone health signal.
+#   2. ONLY on curl exit 7 ("Couldn't connect"), fall back to verifying
+#      ALL of:
+#        - the OpenClaw gateway process started by nemoclaw-start is
+#          still alive (via pgrep --ignore-ancestors), AND
+#        - the gateway log file exists and is non-empty (proves the
+#          process started and emitted its banner; rules out cases
+#          where the gateway never came up).
+#      Exit 7 means the in-container TCP connect was refused by the
+#      kernel because nothing is bound to the dashboard port inside
+#      this network namespace — the namespace-mismatch shape reported
+#      in #3975. A connect timeout (curl exit 28) is treated as a real
+#      failure: a listener exists but is not responding (wedged HTTP
+#      server), and we want Docker to restart in that case.
+#
+# Tradeoff: this fallback also fires in a standalone deployment where the
+# gateway process is alive but the configured dashboard port is wrong or
+# the listener never came up. We accept that residual risk because it
+# requires a misconfiguration the start-period (45s) already gives the
+# wizard a chance to fix, and the existing host-side delivery chain
+# probes (verify-deployment.ts, host port forward, sandbox status) still
+# catch it from outside.
+#
+# The process pattern matches both `openclaw gateway run` (the launcher
+# command nemoclaw-start runs) and `openclaw-gateway` (the re-execed
+# binary form OpenClaw switches into after startup). This is the same
+# variant set the host-side gateway-stop script in services.ts matches.
+#
+# pgrep uses --ignore-ancestors so it cannot self-match the healthcheck
+# shell that Docker spawns to run this CMD — that shell's argv contains
+# the literal 'openclaw gateway' string we're searching for, and
+# without --ignore-ancestors `pgrep -f` would happily report it as the
+# live gateway even after the real process exited (procps 4.0+ supports
+# this flag; the base image pins procps to 2:4.0.4-9).
+#
+# We deliberately do not fall back on HTTP 4xx/5xx — those mean the gateway
+# answered with a failure inside this container, which is a real bad signal.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD port="${NEMOCLAW_DASHBOARD_PORT:-${OPENCLAW_GATEWAY_PORT:-}}"; \
         if [ -z "$port" ]; then \
             port="$(python3 -c 'import os; from urllib.parse import urlparse; raw = os.environ.get("CHAT_UI_URL") or "http://127.0.0.1:18789"; raw = raw if "://" in raw else "http://" + raw; u = urlparse(raw); print(u.port or 18789)' 2>/dev/null || printf '18789')"; \
         fi; \
-        curl -sf "http://127.0.0.1:${port}/health"
+        rc=0; \
+        curl -sf --max-time 3 "http://127.0.0.1:${port}/health" > /dev/null 2>&1 || rc=$?; \
+        if [ "$rc" = 0 ]; then exit 0; fi; \
+        if [ "$rc" != 7 ]; then exit 1; fi; \
+        pgrep --ignore-ancestors -f 'openclaw[ -]gateway' > /dev/null 2>&1 || exit 1; \
+        [ -s /tmp/gateway.log ]
 
 # Entrypoint runs as root to start the gateway as the gateway user,
 # then drops to sandbox for agent commands. See nemoclaw-start.sh.

@@ -44,6 +44,17 @@ function requirePresetContent(content: string | null): string {
   return content;
 }
 
+function parsePresetYaml(presetName: string): Record<string, any> {
+  return YAML.parse(requirePresetContent(policies.loadPreset(presetName))) as Record<string, any>;
+}
+
+function parseRepoYaml(relativePath: string): Record<string, any> {
+  return YAML.parse(fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf-8")) as Record<
+    string,
+    any
+  >;
+}
+
 function runPolicyAdd(
   confirmAnswer: string,
   extraArgs: string[] = [],
@@ -205,15 +216,7 @@ describe("policies", () => {
       // Apex and *.web.whatsapp.com (fallback nodes w1.web.whatsapp.com,
       // w2.web.whatsapp.com, ...) share the same shape so reconnects do
       // not surprise the operator.
-      const presetPath = path.join(
-        import.meta.dirname,
-        "..",
-        "nemoclaw-blueprint",
-        "policies",
-        "presets",
-        "whatsapp.yaml",
-      );
-      const parsed = YAML.parse(fs.readFileSync(presetPath, "utf-8"));
+      const parsed = parsePresetYaml("whatsapp");
       const endpoints: Array<Record<string, unknown>> =
         parsed?.network_policies?.whatsapp?.endpoints ?? [];
 
@@ -238,15 +241,7 @@ describe("policies", () => {
       // wildcard keeps the preset future-proof without expanding trust
       // beyond Meta-controlled infrastructure. Mirrors the jira preset's
       // *.atlassian.net wildcard.
-      const presetPath = path.join(
-        import.meta.dirname,
-        "..",
-        "nemoclaw-blueprint",
-        "policies",
-        "presets",
-        "whatsapp.yaml",
-      );
-      const parsed = YAML.parse(fs.readFileSync(presetPath, "utf-8"));
+      const parsed = parsePresetYaml("whatsapp");
       const endpoints: Array<Record<string, unknown>> =
         parsed?.network_policies?.whatsapp?.endpoints ?? [];
 
@@ -275,15 +270,7 @@ describe("policies", () => {
       // which Meta now rejects on pair. Scope is pinned to that single
       // file path with GET only so the rule does not turn into a general
       // raw.githubusercontent.com escape hatch.
-      const presetPath = path.join(
-        import.meta.dirname,
-        "..",
-        "nemoclaw-blueprint",
-        "policies",
-        "presets",
-        "whatsapp.yaml",
-      );
-      const parsed = YAML.parse(fs.readFileSync(presetPath, "utf-8"));
+      const parsed = parsePresetYaml("whatsapp");
       const endpoints: Array<Record<string, unknown>> =
         parsed?.network_policies?.whatsapp?.endpoints ?? [];
 
@@ -434,9 +421,9 @@ describe("policies", () => {
     });
   });
 
-  describe("getMessagingPresetWarning", () => {
+  describe("getPresetValidationWarning", () => {
     it("returns a warning for the telegram preset that mentions re-running onboard", () => {
-      const warning = policies.getMessagingPresetWarning("telegram");
+      const warning = policies.getPresetValidationWarning("telegram");
       expect(warning).toBeTruthy();
       expect(warning).toContain("telegram");
       expect(warning).toContain("Telegram");
@@ -444,13 +431,13 @@ describe("policies", () => {
     });
 
     it("returns a warning for discord, slack, and wechat", () => {
-      expect(policies.getMessagingPresetWarning("discord")).toContain("Discord");
-      expect(policies.getMessagingPresetWarning("slack")).toContain("Slack");
-      expect(policies.getMessagingPresetWarning("wechat")).toContain("WeChat");
+      expect(policies.getPresetValidationWarning("discord")).toContain("Discord");
+      expect(policies.getPresetValidationWarning("slack")).toContain("Slack");
+      expect(policies.getPresetValidationWarning("wechat")).toContain("WeChat");
     });
 
     it("adds Discord validation guidance for Node probes instead of curl or DNS-only checks", () => {
-      const warning = policies.getMessagingPresetWarning("discord");
+      const warning = policies.getPresetValidationWarning("discord");
 
       expect(warning).toContain("curl");
       expect(warning).toContain("preset binary allowlist");
@@ -459,16 +446,26 @@ describe("policies", () => {
       expect(warning).toContain('dns.resolve("gateway.discord.gg")');
     });
 
-    it("returns null for non-messaging presets", () => {
-      expect(policies.getMessagingPresetWarning("npm")).toBeNull();
-      expect(policies.getMessagingPresetWarning("pypi")).toBeNull();
-      expect(policies.getMessagingPresetWarning("github")).toBeNull();
-      expect(policies.getMessagingPresetWarning("brew")).toBeNull();
+    it("adds Jira validation guidance that makes blocked versus redirected curl observable", () => {
+      const warning = policies.getPresetValidationWarning("jira");
+
+      expect(warning).toContain("curl -s");
+      expect(warning).toContain("curl -sS -o /dev/null -w '%{http_code}'");
+      expect(warning).toContain("000");
+      expect(warning).toContain("Node HTTPS");
+      expect(warning).toContain("https://api.atlassian.com");
+    });
+
+    it("returns null for presets without extra validation guidance", () => {
+      expect(policies.getPresetValidationWarning("npm")).toBeNull();
+      expect(policies.getPresetValidationWarning("pypi")).toBeNull();
+      expect(policies.getPresetValidationWarning("github")).toBeNull();
+      expect(policies.getPresetValidationWarning("brew")).toBeNull();
     });
 
     it("returns null for unknown preset names", () => {
-      expect(policies.getMessagingPresetWarning("")).toBeNull();
-      expect(policies.getMessagingPresetWarning("nonexistent")).toBeNull();
+      expect(policies.getPresetValidationWarning("")).toBeNull();
+      expect(policies.getPresetValidationWarning("nonexistent")).toBeNull();
     });
   });
 
@@ -1324,11 +1321,7 @@ exit 1
     });
 
     it("Hermes Discord REST mutations are scoped to discord.com", () => {
-      const content = fs.readFileSync(
-        path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"),
-        "utf8",
-      );
-      const parsed = YAML.parse(content);
+      const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
       const networkPolicies = parsed.network_policies as Record<
         string,
         {
@@ -1381,11 +1374,7 @@ exit 1
     });
 
     it("Hermes GitHub policy does not whitelist the absent gh CLI (#2179)", () => {
-      const content = fs.readFileSync(
-        path.join(REPO_ROOT, "agents/hermes/policy-additions.yaml"),
-        "utf8",
-      );
-      const parsed = YAML.parse(content);
+      const parsed = parseRepoYaml("agents/hermes/policy-additions.yaml");
       const githubPolicy = parsed.network_policies?.github as
         | { binaries?: Array<{ path?: string }> }
         | undefined;
@@ -1423,22 +1412,14 @@ exit 1
       // `brew install <formula>` cannot extract bottles or manage the
       // Cellar/opt symlinks at runtime, and the brew preset's binary
       // whitelist becomes dead code.
-      const parsed = YAML.parse(
-        fs.readFileSync(
-          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox.yaml"),
-          "utf-8",
-        ),
-      );
+      const parsed = parseRepoYaml("nemoclaw-blueprint/policies/openclaw-sandbox.yaml");
       expect(parsed.filesystem_policy.read_write).toContain("/home/linuxbrew");
     });
 
     it("OpenClaw permissive policies preserve baseline read_write paths (#3916)", () => {
-      const baseline = YAML.parse(
-        fs.readFileSync(
-          path.join(REPO_ROOT, "nemoclaw-blueprint/policies/openclaw-sandbox.yaml"),
-          "utf-8",
-        ),
-      ) as { filesystem_policy?: { read_write?: string[] } };
+      const baseline = parseRepoYaml("nemoclaw-blueprint/policies/openclaw-sandbox.yaml") as {
+        filesystem_policy?: { read_write?: string[] };
+      };
       const baselineReadWrite = baseline.filesystem_policy?.read_write ?? [];
       const permissivePolicyPaths = [
         "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
@@ -1446,9 +1427,9 @@ exit 1
       ];
 
       for (const relativePath of permissivePolicyPaths) {
-        const parsed = YAML.parse(
-          fs.readFileSync(path.join(REPO_ROOT, relativePath), "utf-8"),
-        ) as { filesystem_policy?: { read_write?: string[] } };
+        const parsed = parseRepoYaml(relativePath) as {
+          filesystem_policy?: { read_write?: string[] };
+        };
         expect(parsed.filesystem_policy?.read_write, relativePath).toEqual(
           expect.arrayContaining(baselineReadWrite),
         );

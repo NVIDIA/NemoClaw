@@ -1465,6 +1465,11 @@ runner.runShell = (command) => {
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
 wait.sleepSeconds = () => {};
+// installOllamaSystem probes loopback at tries=1 before launching, then
+// waits at tries=10 after launch. The fake curl in these tests answers 200
+// to any URL, so real waitForHttp would short-circuit the manual launch.
+// Differentiate by tries count.
+wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
 
 const { setupNim } = require(${onboardPath});
 
@@ -2117,6 +2122,11 @@ runner.runShell = (command) => {
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
 wait.sleepSeconds = () => {};
+// installOllamaSystem probes loopback at tries=1 before launching, then
+// waits at tries=10 after launch. The fake curl in these tests answers 200
+// to any URL, so real waitForHttp would short-circuit the manual launch.
+// Differentiate by tries count.
+wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
 
 const { setupNim } = require(${onboardPath});
 
@@ -5302,6 +5312,11 @@ registry.updateSandbox = (_name, update) => updates.push(update);
 Object.defineProperty(process, 'platform', { value: 'linux' });
 platform.isWsl = () => false;
 wait.sleepSeconds = () => {};
+// installOllamaSystem probes loopback at tries=1 before launching, then
+// waits at tries=10 after launch. The fake curl in these tests answers 200
+// to any URL, so real waitForHttp would short-circuit the manual launch.
+// Differentiate by tries count.
+wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
 
 const { setupNim } = require(${onboardPath});
 
@@ -5481,6 +5496,11 @@ runner.runShell = (command) => {
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
 wait.sleepSeconds = () => {};
+// installOllamaSystem probes loopback at tries=1 before launching, then
+// waits at tries=10 after launch. The fake curl in these tests answers 200
+// to any URL, so real waitForHttp would short-circuit the manual launch.
+// Differentiate by tries count.
+wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
 
 const { setupNim } = require(${onboardPath});
 
@@ -5607,6 +5627,11 @@ registry.updateSandbox = (_name, update) => updates.push(update);
 Object.defineProperty(process, "platform", { value: "linux" });
 platform.isWsl = () => false;
 wait.sleepSeconds = () => {};
+// installOllamaSystem probes loopback at tries=1 before launching, then
+// waits at tries=10 after launch. The fake curl in these tests answers 200
+// to any URL, so real waitForHttp would short-circuit the manual launch.
+// Differentiate by tries count.
+wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
 
 const { setupNim } = require(${onboardPath});
 
@@ -5872,6 +5897,182 @@ const { setupNim } = require(${onboardPath});
     assert.ok(
       !payload.runCommands.some((cmd: string) => cmd.includes("OLLAMA_HOST=0.0.0.0:11434")),
       "User-local install path must not expose raw Ollama on all interfaces",
+    );
+  });
+
+  it("upgrades an outdated host Ollama instead of reusing it under NEMOCLAW_PROVIDER=install-ollama", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-onboard-upgrade-old-ollama-"),
+    );
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "upgrade-old-ollama-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const waitPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "core", "wait.js"));
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='${OLLAMA_CHAT_COMPLETIONS_TOOL_CALL_RESPONSE}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ -n "$outfile" ]; then
+  printf '%s' "$body" > "$outfile"
+  printf '%s' "$status"
+else
+  printf '%s' "$body"
+fi
+`,
+      { mode: 0o755 },
+    );
+    // Fake passwordless sudo so the upgrade gate doesn't short-circuit
+    // before the official installer runs in this non-interactive scenario.
+    fs.writeFileSync(path.join(fakeBin, "sudo"), "#!/usr/bin/env bash\nexit 0\n", { mode: 0o755 });
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const platform = require(${platformPath});
+const wait = require(${waitPath});
+const child_process = require("child_process");
+
+child_process.spawn = () => ({ pid: 99999, unref() {}, on() {} });
+
+const originalSpawnSync = child_process.spawnSync;
+child_process.spawnSync = (cmd, args, opts) => {
+  const command = [cmd, ...(args || [])].join(" ");
+  if (cmd === "nc" && args?.includes("11435")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
+  if (command.includes("ollama pull")) {
+    return { status: 0, stdout: "", stderr: "", signal: null };
+  }
+  if (cmd === "ps") {
+    return { status: 0, stdout: "node ollama-auth-proxy.js", stderr: "", signal: null };
+  }
+  return originalSpawnSync(cmd, args, opts);
+};
+
+let promptCalls = 0;
+let installerRan = false;
+const updates = [];
+const runCommands = [];
+
+credentials.prompt = async () => {
+  promptCalls += 1;
+  return "";
+};
+credentials.ensureApiKey = async () => {};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  // hostCommandExists shells out as ["sh","-c",'command -v "$1"',"--",name].
+  // Match the trailing argv form rather than the original "command -v ollama" string.
+  if (cmd.startsWith("sh -c command -v") && cmd.endsWith(" ollama")) {
+    return "/usr/local/bin/ollama";
+  }
+  // canRunSudoNonInteractive looks up sudo the same way; report it as
+  // available so the upgrade gate doesn't short-circuit before the
+  // installer runs.
+  if (cmd.startsWith("sh -c command -v") && cmd.endsWith(" sudo")) {
+    return "/usr/bin/sudo";
+  }
+  // Pre-upgrade host reports 0.6.2; once install.sh runs we flip both the
+  // CLI and the /api/version daemon probe to a fresh version.
+  if (cmd.includes("ollama --version")) {
+    return installerRan ? "ollama version is 0.24.0" : "ollama version is 0.6.2";
+  }
+  if (cmd.includes("/api/version")) {
+    return installerRan ? '{"version":"0.24.0"}' : '{"version":"0.6.2"}';
+  }
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("ollama list")) return "qwen3:8b  abc  5 GB  now";
+  if (cmd.includes("ps")) return "node ollama-auth-proxy.js";
+  if (cmd.includes("api/generate")) return '{"response":"hello"}';
+  return "";
+};
+runner.run = (command) => {
+  const rendered = typeof command === "string" ? command : command.join(" ");
+  if (rendered.includes("ollama.com/install.sh")) installerRan = true;
+  runCommands.push(rendered);
+};
+runner.runShell = (command) => {
+  if (command.includes("ollama.com/install.sh")) installerRan = true;
+  runCommands.push(command);
+};
+registry.updateSandbox = (_name, update) => updates.push(update);
+
+Object.defineProperty(process, "platform", { value: "linux" });
+platform.isWsl = () => false;
+wait.sleepSeconds = () => {};
+// installOllamaSystem probes loopback at tries=1 before launching, then
+// waits at tries=10 after launch. The fake curl in these tests answers 200
+// to any URL, so real waitForHttp would short-circuit the manual launch.
+// Differentiate by tries count.
+wait.waitForHttp = (_url, tries) => (tries ?? 0) > 1;
+
+const { setupNim } = require(${onboardPath});
+
+(async () => {
+  const originalLog = console.log;
+  const lines = [];
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim("upgrade-old-ollama-test", null);
+    originalLog(JSON.stringify({ result, promptCalls, updates, lines, runCommands }));
+  } finally {
+    console.log = originalLog;
+  }
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_PROVIDER: "install-ollama",
+        NEMOCLAW_YES: "1",
+        NEMOCLAW_OLLAMA_INSTALL_MODE: "system",
+      },
+    });
+
+    assert.equal(result.status, 0, `Process failed: ${result.stderr}`);
+    assert.notEqual(result.stdout.trim(), "", result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+
+    assert.equal(payload.promptCalls, 0);
+    assert.equal(payload.result.provider, "ollama-local");
+    assert.ok(
+      payload.lines.some((line: string) =>
+        line.includes("[non-interactive] Provider: install-ollama"),
+      ),
+      "install-ollama should be resolved directly, not collapsed to plain ollama via the fallback",
+    );
+    assert.ok(
+      payload.runCommands.some((cmd: string) => cmd.includes("ollama.com/install.sh")),
+      "install-ollama with outdated host Ollama should run the official installer for the upgrade",
     );
   });
 
