@@ -27,6 +27,22 @@ function readRequiredMatch(file: string, pattern: RegExp, description: string): 
   return match[1];
 }
 
+function compareDotVersions(left: string, right: string): number {
+  const lhs = left.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const rhs = right.split(".").map((part) => Number.parseInt(part, 10) || 0);
+  const length = Math.max(lhs.length, rhs.length);
+  for (let index = 0; index < length; index += 1) {
+    const a = lhs[index] ?? 0;
+    const b = rhs[index] ?? 0;
+    if (a !== b) return a - b;
+  }
+  return 0;
+}
+
+function expectVersionAtLeast(actual: string, minimum: string, message: string) {
+  expect(compareDotVersions(actual, minimum), message).toBeGreaterThanOrEqual(0);
+}
+
 function readBlueprintMinOpenClawVersion(): string {
   return readRequiredMatch(BLUEPRINT, /min_openclaw_version:\s*"([^"]+)"/, "OpenClaw minimum");
 }
@@ -90,11 +106,11 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
   const openclawShim = path.join(tmp, "openclaw-bin");
   const openclawVersion = readDockerfileOpenClawVersion();
   const openclawIntegrity = readDockerfileOpenClawIntegrity();
-  fs.writeFileSync(blueprint, `min_openclaw_version: "${openclawVersion}"\n`);
+  fs.writeFileSync(blueprint, `min_openclaw_version: "${readBlueprintMinOpenClawVersion()}"\n`);
   fs.mkdirSync(openclawInstall, { recursive: true });
   fs.writeFileSync(openclawShim, "");
   const command = dockerRunCommandBetween(
-    "# OPENCLAW_VERSION is the runtime build target",
+    "# OPENCLAW_VERSION is the NemoClaw runtime build target",
     "# Patch OpenClaw media fetch",
   )
     .replaceAll("/opt/nemoclaw-blueprint/blueprint.yaml", blueprint)
@@ -243,8 +259,10 @@ describe("fetch-guard patch regression guard", () => {
     const baseImageVersion = readDockerfileBaseOpenClawVersion();
     const runtimeVersion = readDockerfileOpenClawVersion();
 
-    expect(baseImageVersion, "Dockerfile.base and blueprint must pin the same OpenClaw version.").toBe(
+    expectVersionAtLeast(
+      baseImageVersion,
       blueprintMinVersion,
+      "Dockerfile.base OpenClaw target must satisfy the blueprint minimum.",
     );
     expect(runtimeVersion, "Dockerfile and Dockerfile.base must build the same OpenClaw target.").toBe(
       baseImageVersion,

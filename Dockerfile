@@ -90,8 +90,8 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
 # silently skipping patches (leaving the sandbox unpatched), upgrade OpenClaw
 # in-place so every build gets the version the patches expect.
 #
-# OPENCLAW_VERSION is the runtime build target and intentionally matches the
-# blueprint minimum for this upgrade PR.
+# OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
+# blueprint minimum, which also supports the legacy direct-blueprint image path.
 # hadolint ignore=DL3059,DL4006
 RUN set -eu; \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
@@ -187,7 +187,7 @@ RUN set -eu; \
 # build time. They apply the legacy patch when the old target exists, skip
 # only when the dist shape proves OpenClaw no longer needs that patch, and
 # fail with the OpenClaw version plus dist path for mixed or unknown shapes.
-# When bumping OPENCLAW_VERSION or min_openclaw_version, verify the new dist
+# When bumping OPENCLAW_VERSION, verify the new dist
 # takes the expected branch and update the regex / sed replacement if needed.
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
