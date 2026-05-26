@@ -90,9 +90,8 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
 # silently skipping patches (leaving the sandbox unpatched), upgrade OpenClaw
 # in-place so every build gets the version the patches expect.
 #
-# OPENCLAW_VERSION is the runtime build target. min_openclaw_version in the
-# blueprint remains a lower bound tied to the immutable sandbox image digest
-# until release tooling publishes and re-pins a matching blueprint artifact.
+# OPENCLAW_VERSION is the runtime build target and intentionally matches the
+# blueprint minimum for this upgrade PR.
 # hadolint ignore=DL3059,DL4006
 RUN set -eu; \
     echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \

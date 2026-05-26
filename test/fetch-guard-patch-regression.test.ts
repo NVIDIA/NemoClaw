@@ -59,17 +59,6 @@ function readDockerfileOpenClawIntegrity(): string {
   );
 }
 
-function compareDottedVersions(a: string, b: string): number {
-  const left = a.split(".").map((part) => Number(part));
-  const right = b.split(".").map((part) => Number(part));
-  const width = Math.max(left.length, right.length);
-  for (let i = 0; i < width; i += 1) {
-    const delta = (left[i] ?? 0) - (right[i] ?? 0);
-    if (delta !== 0) return delta;
-  }
-  return 0;
-}
-
 function dockerRunCommandBetween(startMarker: string, endMarker: string): string {
   const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
   const start = dockerfile.indexOf(startMarker);
@@ -101,7 +90,7 @@ function runOpenClawUpgradeBlock(currentVersion: string) {
   const openclawShim = path.join(tmp, "openclaw-bin");
   const openclawVersion = readDockerfileOpenClawVersion();
   const openclawIntegrity = readDockerfileOpenClawIntegrity();
-  fs.writeFileSync(blueprint, 'min_openclaw_version: "2026.5.18"\n');
+  fs.writeFileSync(blueprint, `min_openclaw_version: "${openclawVersion}"\n`);
   fs.mkdirSync(openclawInstall, { recursive: true });
   fs.writeFileSync(openclawShim, "");
   const command = dockerRunCommandBetween(
@@ -254,10 +243,9 @@ describe("fetch-guard patch regression guard", () => {
     const baseImageVersion = readDockerfileBaseOpenClawVersion();
     const runtimeVersion = readDockerfileOpenClawVersion();
 
-    expect(
-      compareDottedVersions(baseImageVersion, blueprintMinVersion),
-      "Dockerfile.base must not build below the pinned blueprint artifact floor.",
-    ).toBeGreaterThanOrEqual(0);
+    expect(baseImageVersion, "Dockerfile.base and blueprint must pin the same OpenClaw version.").toBe(
+      blueprintMinVersion,
+    );
     expect(runtimeVersion, "Dockerfile and Dockerfile.base must build the same OpenClaw target.").toBe(
       baseImageVersion,
     );
