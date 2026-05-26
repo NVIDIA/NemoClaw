@@ -166,7 +166,7 @@ Add or extend suite entries in `test/e2e/validation_suites/suites.yaml`:
 - `hermes-provider-compatibility`
 - `hermes-security-tui`
 
-Where existing generic suites already provide a shared assertion, keep the shared suite and add only Hermes-specific wrappers/steps where domain behavior differs.
+Keep existing generic suites (`messaging-discord`, `messaging-slack`, `messaging-telegram`, `rebuild`, `inference-routing`, `security-shields`) available for shared OpenClaw/Hermes behavior. Add Hermes-specific suites only for assertions that need `expected.hermes.*` IDs, Hermes config paths, Hermes bug expectations, or Hermes-only state. Hermes provider-specific scenarios may list both the generic provider suite and the Hermes-specific provider suite when both shared and Hermes-only checks are useful.
 
 ### Scenario Wiring
 
@@ -177,7 +177,7 @@ Use existing Hermes setup scenarios and onboarding profiles when possible:
 - `ubuntu-repo-docker__cloud-nvidia-hermes-discord`
 - `ubuntu-repo-docker__cloud-nvidia-hermes-slack`
 
-Add only the minimum additional scenarios/profiles needed for Telegram, provider compatibility, macOS security, or live-secret gated coverage. Every platform-specific scenario must declare `runner_requirements`.
+Update existing Hermes test plans to attach the new Hermes-specific suites where relevant. For example, the Hermes Discord and Slack plans should keep any useful shared messaging suite and also add `hermes-discord` or `hermes-slack` for Hermes-only expected IDs and product-bug metadata. Add only the minimum additional scenarios/profiles needed for Telegram, provider compatibility, macOS security, or live-secret gated coverage. Every platform-specific scenario must declare `runner_requirements`.
 
 ### Assertion ID Contract
 
