@@ -122,7 +122,6 @@ const runner: typeof import("./runner") = require("./runner");
 const { ROOT, SCRIPTS, redact, run, runShell, runCapture, runFile, shellQuote, validateName } =
   runner;
 const braveProviderProfile: typeof import("./onboard/brave-provider-profile") = require("./onboard/brave-provider-profile");
-const { ensureBraveProviderProfile: ensureBraveProviderProfileImpl } = braveProviderProfile;
 const nameValidation: typeof import("./name-validation") = require("./name-validation");
 const { NAME_ALLOWED_FORMAT, getNameValidationGuidance } = nameValidation;
 const docker: typeof import("./adapters/docker") = require("./adapters/docker");
@@ -837,12 +836,7 @@ function upsertProvider(
   return result;
 }
 
-type MessagingTokenDef = {
-  name: string;
-  envKey: string;
-  token: string | null;
-  providerType?: string;
-};
+type MessagingTokenDef = { name: string; envKey: string; token: string | null; providerType?: string };
 
 type EndpointValidationResult =
   | { ok: true; api: string | null; retry?: undefined }
@@ -859,7 +853,7 @@ function upsertMessagingProviders(
   tokenDefs: MessagingTokenDef[],
   options: { replaceExisting?: boolean } = {},
 ) {
-  ensureBraveProviderProfileImpl(tokenDefs, { root: ROOT, runOpenshell, redact });
+  braveProviderProfile.ensureBraveProviderProfile(tokenDefs, { root: ROOT, runOpenshell, redact });
   const upserted = onboardProviders.upsertMessagingProviders(
     tokenDefs,
     runOpenshell,
@@ -3110,11 +3104,7 @@ async function createSandbox(
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
 
   if (webSearchConfig) {
-    // Tag the provider type as "brave" so the L7 proxy rewrites
-    // X-Subscription-Token via the registered Brave provider profile.
-    // No `replaceExistingProvider` — OpenShell rejects `provider delete` on
-    // providers still attached to a live sandbox, so reuse paths must rely
-    // on `provider update` to refresh the credential in place.
+    // `brave` providerType wires X-Subscription-Token rewrite at egress (#3626).
     messagingTokenDefs.push({
       name: `${sandboxName}-brave-search`,
       envKey: webSearch.BRAVE_API_KEY_ENV,
@@ -3616,16 +3606,10 @@ async function createSandbox(
   ];
 
   appendResourceFlagsForProfile(createArgs, resourceProfile, getOpenshellBinary(), { isNonInteractive, note, prompt, promptOrDefault });
-  // Create OpenShell providers for messaging/search credentials so they flow
-  // through the provider/placeholder system instead of raw env vars. The L7
-  // proxy rewrites provider-auth locations with real secrets at egress.
-  //
-  // `replaceExisting: true` is safe here because any prior sandbox was just
-  // deleted by the recreate path above, detaching its provider(s). For Brave
-  // this also migrates legacy `${sandbox}-brave-search` providers off the
-  // pre-fix `generic` type — `openshell provider update` cannot change the
-  // type, so delete+create is the only path that re-registers the provider
-  // under the `brave` profile that drives the X-Subscription-Token rewrite.
+  // The recreate path above just deleted the previous sandbox, so any
+  // attached providers are detached and safe to delete+create. That's
+  // required for the legacy Brave generic→brave type migration since
+  // `openshell provider update` cannot change `--type` (#3626).
   const messagingProviders = [
     ...new Set([
       ...upsertMessagingProviders(messagingTokenDefs, { replaceExisting: true }),
@@ -7417,8 +7401,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       webSearchEnabled: Boolean(webSearchConfig?.fetchEnabled),
       deps: {
         ensureAgentDashboardForward,
-        verifyWebSearchInsideSandbox: (name, agentRef) =>
-          verifyWebSearchInsideSandbox(name, agentRef),
+        verifyWebSearchInsideSandbox,
         recordPostVerifyStarted,
         recordSessionComplete,
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
