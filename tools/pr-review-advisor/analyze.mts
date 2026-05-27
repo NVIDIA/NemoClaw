@@ -10,7 +10,13 @@ import { getChangedFiles, getCommits, getDiff, getDiffStat, getHeadSha, gitOutpu
 import { githubGraphql, githubRest, githubRestPaginated } from "../advisors/github.mts";
 import { advisorArtifactPaths, parseArgs, parsePositiveInt, readJson, writeJson, type AdvisorArtifactPaths } from "../advisors/io.mts";
 import { enumValue, extractJson, getPath, isRecord, recordItems, stringArray, stringOrDefault, stringOrUndefined } from "../advisors/json.mts";
-import { DEFAULT_ADVISOR_MODEL, DEFAULT_ADVISOR_PROVIDER, type RunAdvisorResult, runReadOnlyAdvisor } from "../advisors/session.mts";
+import {
+  DEFAULT_ADVISOR_MODEL,
+  DEFAULT_ADVISOR_PROVIDER,
+  type AdvisorPromptTurn,
+  type RunAdvisorResult,
+  runReadOnlyAdvisor,
+} from "../advisors/session.mts";
 
 const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
@@ -243,9 +249,9 @@ async function main(): Promise<void> {
   const deterministic = await collectDeterministicContext({ baseRef, headRef, changedFiles, diff });
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
   const securityReviewSkill = readTrustedSecurityReviewSkill();
-  const systemPrompt = buildSystemPrompt(schema, securityReviewSkill);
-  const prompt = buildPrompt({ metadata, diff, securityReviewSkill });
-  fs.writeFileSync(artifacts.prompt, prompt);
+  const systemPrompt = buildSystemPrompt(securityReviewSkill);
+  const promptTurns = buildPromptTurns({ metadata, diff, securityReviewSkill, schema });
+  writePromptArtifacts({ outDir, systemPrompt, promptTurns });
 
   const writeFailure = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, true);
   const writeUnavailable = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, false);
@@ -260,7 +266,7 @@ async function main(): Promise<void> {
   try {
     sdkResult = await runReadOnlyAdvisor({
       cwd: root,
-      prompt,
+      promptTurns,
       systemPrompt,
       configDir,
       htmlExportPath: artifacts.sessionHtml,
@@ -272,6 +278,7 @@ async function main(): Promise<void> {
       logProgress,
     });
     fs.writeFileSync(artifacts.raw, sdkResult.raw);
+    logProgress(`PR review advisor conversation finished: turns=${sdkResult.turnTexts.length}`);
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     fs.writeFileSync(artifacts.raw, `PR review advisor SDK execution failed: ${reason}\n`);
@@ -306,9 +313,10 @@ function writeUnavailableArtifacts(
   failed: boolean,
 ): void {
   const result = unavailableResult(metadata, reason, failed);
+  const promptPath = path.join(path.dirname(paths.prompt), "prompts");
   writeJson(
     paths.result,
-    failed ? { failed: true, reason, promptPath: paths.prompt, rawPath: paths.raw } : { skipped: true, reason, promptPath: paths.prompt },
+    failed ? { failed: true, reason, promptPath, rawPath: paths.raw } : { skipped: true, reason, promptPath },
   );
   writeJson(paths.finalResult, result);
   fs.writeFileSync(paths.summary, renderSummary(result));
@@ -677,7 +685,7 @@ export function readTrustedSecurityReviewSkill(): string {
   }
 }
 
-export function buildSystemPrompt(schema: Record<string, unknown>, securityReviewSkill = ""): string {
+export function buildSystemPrompt(securityReviewSkill = ""): string {
   return [
     "You are the NemoClaw PR Review Advisor for GitHub Actions.",
     "NemoClaw runs OpenClaw assistants inside OpenShell sandboxes. Security boundaries, workflows, credentials, network policy, SSRF validation, Dockerfiles, installers, and sandbox lifecycle code are high risk.",
@@ -701,36 +709,118 @@ export function buildSystemPrompt(schema: Record<string, unknown>, securityRevie
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "Set summary.topItem to the most important actionable finding title or short description for first-review comments. Keep it concise and code-focused.",
     "Finding severity mapping: blocker renders as 'Needs attention'; warning renders as 'Worth checking'; suggestion renders as 'Nice ideas'.",
-    "Return JSON only matching this schema:",
-    "```json",
-    JSON.stringify(schema),
-    "```",
+    "This review runs as a multi-turn conversation. In intermediate turns, produce concise working notes only. In the final synthesis turn, return JSON only matching the schema provided in that turn.",
   ].join("\n");
 }
 
-function buildPrompt({ metadata, diff, securityReviewSkill }: { metadata: ReviewMetadata; diff: string; securityReviewSkill: string }): string {
-  return `Return a NemoClaw PR review advisor result for this PR.
+export function buildPromptTurns({
+  metadata,
+  diff,
+  securityReviewSkill,
+  schema,
+}: {
+  metadata: ReviewMetadata;
+  diff: string;
+  securityReviewSkill: string;
+  schema: Record<string, unknown>;
+}): AdvisorPromptTurn[] {
+  const metadataFields = exactMetadataFields(metadata);
+  const deterministicContext = JSON.stringify(metadata.deterministic, null, 2);
+  return [
+    {
+      name: "orient-drift",
+      prompt: `Turn 1/4 — orient on the PR and codebase drift.
 
-Set these fields exactly:
-- version: 1
-- baseRef: ${JSON.stringify(metadata.baseRef)}
-- headRef: ${JSON.stringify(metadata.headRef)}
-- headSha: ${JSON.stringify(metadata.headSha)}
-- changedFiles: ${JSON.stringify(metadata.changedFiles)}
+Use this turn to understand the patch, changed surfaces, prior advisor review, overlapping PRs/issues, drift evidence, monolith growth, and localized-patch signals. Inspect repository files with read-only tools when useful. Do not produce final JSON yet; reply with concise working notes only.
+
+Set these final-result fields exactly later:
+${metadataFields}
 
 Deterministic context gathered by trusted code:
 \`\`\`json
-${JSON.stringify(metadata.deterministic, null, 2)}
+${deterministicContext}
 \`\`\`
-
-Trusted security review skill path: ${SECURITY_REVIEW_SKILL_PATH}
-Trusted security review skill loaded: ${securityReviewSkill ? "yes" : "no"}
 
 Git diff, truncated if large:
 \`\`\`diff
 ${diff || "<no diff available>"}
 \`\`\`
-`;
+`,
+    },
+    {
+      name: "security",
+      prompt: `Turn 2/4 — security review.
+
+Apply the trusted NemoClaw security-review rubric to the already-provided diff and any nearby files you need to inspect. Focus on sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, workflow trusted-code boundaries, unsafe shell/string execution, and auth/authorization regressions.
+
+Trusted security review skill path: ${SECURITY_REVIEW_SKILL_PATH}
+Trusted security review skill loaded: ${securityReviewSkill ? "yes" : "no"}
+
+For each security category, decide PASS/WARNING/FAIL with evidence. Do not produce final JSON yet; reply with concise working notes only.
+`,
+    },
+    {
+      name: "acceptance-correctness-tests",
+      prompt: `Turn 3/4 — acceptance, correctness, test depth, and source-of-truth review.
+
+Using the same PR context, inspect linked issue clauses and comments from the deterministic GitHub context when available. Map each acceptance clause to diff/test evidence. Review correctness risks, negative-path coverage, mocked boundaries, runtime-validation needs, and documentation/source-of-truth drift. For any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior, answer the source-of-truth questions from the system rubric.
+
+Do not produce final JSON yet; reply with concise working notes only.
+`,
+    },
+    {
+      name: "synthesize-json",
+      prompt: `Turn 4/4 — synthesize the final advisor result.
+
+Return the final NemoClaw PR Review Advisor JSON only. Use your prior working notes, but keep the output focused on actionable findings. Any unmet acceptance clause or security fail/warning must be represented as a finding. Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless already covered by a more specific finding.
+
+Set these fields exactly:
+${metadataFields}
+
+Return JSON matching this schema. Prefer <pr_review_advisor_json>{...}</pr_review_advisor_json> with raw JSON directly inside the tags and no Markdown outside the tags:
+\`\`\`json
+${JSON.stringify(schema)}
+\`\`\`
+`,
+    },
+  ];
+}
+
+export function writePromptArtifacts({
+  outDir,
+  systemPrompt,
+  promptTurns,
+}: {
+  outDir: string;
+  systemPrompt: string;
+  promptTurns: AdvisorPromptTurn[];
+}): void {
+  const promptDir = path.join(outDir, "prompts");
+  fs.rmSync(promptDir, { recursive: true, force: true });
+  fs.mkdirSync(promptDir, { recursive: true });
+
+  const systemPromptPath = path.join(promptDir, "00-system.md");
+  fs.writeFileSync(systemPromptPath, `${systemPrompt.trimEnd()}\n`);
+
+  for (const [index, turn] of promptTurns.entries()) {
+    const fileName = `${String(index + 1).padStart(2, "0")}-${promptArtifactSlug(turn.name)}.md`;
+    const filePath = path.join(promptDir, fileName);
+    fs.writeFileSync(filePath, `${turn.prompt.trimEnd()}\n`);
+  }
+}
+
+function promptArtifactSlug(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9._-]/g, "").slice(0, 80) || "turn";
+}
+
+function exactMetadataFields(metadata: ReviewMetadata): string {
+  return [
+    "- version: 1",
+    `- baseRef: ${JSON.stringify(metadata.baseRef)}`,
+    `- headRef: ${JSON.stringify(metadata.headRef)}`,
+    `- headSha: ${JSON.stringify(metadata.headSha)}`,
+    `- changedFiles: ${JSON.stringify(metadata.changedFiles)}`,
+  ].join("\n");
 }
 
 export function normalizeReviewResult(result: unknown, metadata: ReviewMetadata): ReviewAdvisorResult {
