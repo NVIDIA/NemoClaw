@@ -72,6 +72,7 @@ export interface SandboxStatusReport {
   phase: string | null;
   gatewayState: string;
   inferenceHealth: ProviderHealthStatus | null;
+  rpcIssue: { kind: "image_drift" | "protobuf_mismatch" } | null;
   hostGpuDetected: boolean;
   sandboxGpuEnabled: boolean;
   sandboxGpuMode: string | null;
@@ -81,9 +82,19 @@ export interface SandboxStatusReport {
   policies: string[];
 }
 
-export async function getSandboxStatusReport(
+interface SandboxStatusSnapshot {
+  sb: registry.SandboxEntry | null;
+  lookup: SandboxGatewayState;
+  liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null;
+  rpcIssue: ReturnType<typeof detectOpenShellStateRpcResultIssue>;
+  currentModel: string;
+  currentProvider: string;
+  inferenceHealth: ProviderHealthStatus | null;
+}
+
+async function collectSandboxStatusSnapshot(
   sandboxName: string,
-): Promise<SandboxStatusReport> {
+): Promise<SandboxStatusSnapshot> {
   const sb = registry.getSandbox(sandboxName);
   let lookup: SandboxGatewayState;
   try {
@@ -105,6 +116,7 @@ export async function getSandboxStatusReport(
       liveResult = null;
     }
   }
+  const rpcIssue = liveResult ? detectOpenShellStateRpcResultIssue(liveResult) : null;
   const live =
     liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
@@ -114,6 +126,35 @@ export async function getSandboxStatusReport(
     currentProvider,
     currentModel,
   );
+  // #3265 optional gateway-chain subprobe: from inside the sandbox so a
+  // broken hop the host-side probes can't see still surfaces.
+  if (
+    inferenceHealth &&
+    lookup.state === "present" &&
+    (currentProvider === "ollama-local" || currentProvider === "vllm-local")
+  ) {
+    const gatewayChain = await probeSandboxInferenceGatewayHealth(sandboxName);
+    if (gatewayChain) {
+      const gatewaySubprobe: ProviderHealthStatus = {
+        ok: gatewayChain.ok,
+        probed: true,
+        providerLabel: "Inference gateway chain",
+        endpoint: gatewayChain.endpoint,
+        detail: gatewayChain.detail,
+        probeLabel: "gateway",
+        ...(gatewayChain.ok ? {} : { failureLabel: "unreachable" as const }),
+      };
+      inferenceHealth.subprobes = [...(inferenceHealth.subprobes ?? []), gatewaySubprobe];
+    }
+  }
+  return { sb, lookup, liveResult, rpcIssue, currentModel, currentProvider, inferenceHealth };
+}
+
+export async function getSandboxStatusReport(
+  sandboxName: string,
+): Promise<SandboxStatusReport> {
+  const snapshot = await collectSandboxStatusSnapshot(sandboxName);
+  const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
   const phase =
     lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
   const sandboxGpuEnabled = sb
@@ -132,6 +173,7 @@ export async function getSandboxStatusReport(
     phase,
     gatewayState: lookup.state,
     inferenceHealth,
+    rpcIssue: rpcIssue ? { kind: rpcIssue.kind } : null,
     hostGpuDetected: !!(sb && sb.hostGpuDetected),
     sandboxGpuEnabled,
     sandboxGpuMode: (sb && sb.sandboxGpuMode) || null,
@@ -192,73 +234,20 @@ async function printGatewayFailureLayerHeader(sandboxName: string): Promise<void
 
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
-  const sb = registry.getSandbox(sandboxName);
-  maybeEnsureHermesToolGatewayBroker(sb);
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
   // hanging when its container is stopped and the published port is held by a
   // foreign listener) suppress the sandbox header. The downstream switch
   // handles `gateway_error` by printing an actionable block + exit(1), so a
   // synthesized fallback keeps the user-visible contract intact.
-  let lookup: SandboxGatewayState;
-  try {
-    lookup = await getReconciledSandboxGatewayState(sandboxName, {
-      getState: getSandboxGatewayStateForStatus,
+  const snapshot = await collectSandboxStatusSnapshot(sandboxName);
+  const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
+  maybeEnsureHermesToolGatewayBroker(sb);
+  if (rpcIssue) {
+    printOpenShellStateRpcIssue(rpcIssue, {
+      action: `checking inference status for sandbox '${sandboxName}'`,
+      command: `${CLI_NAME} ${sandboxName} status`,
     });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    lookup = {
-      state: "gateway_error",
-      output: `  Could not probe live gateway state: ${message}`,
-    };
-  }
-  let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
-  if (lookup.state === "present") {
-    try {
-      liveResult = await captureOpenshellForStatus(["inference", "get"]);
-    } catch {
-      liveResult = null;
-    }
-  }
-  if (liveResult) {
-    const inferenceIssue = detectOpenShellStateRpcResultIssue(liveResult);
-    if (inferenceIssue) {
-      printOpenShellStateRpcIssue(inferenceIssue, {
-        action: `checking inference status for sandbox '${sandboxName}'`,
-        command: `${CLI_NAME} ${sandboxName} status`,
-      });
-      process.exit(1);
-    }
-  }
-  const live =
-    liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
-  const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
-  const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
-  const inferenceHealth = getSandboxStatusInferenceHealth(
-    lookup.state === "present",
-    currentProvider,
-    currentModel,
-  );
-  // #3265 optional 3rd line: probe the full inference chain (openclaw gateway
-  // → auth proxy → backend) from inside the sandbox so a broken hop the
-  // host-side probes can't see still surfaces in `status`.
-  if (
-    inferenceHealth &&
-    lookup.state === "present" &&
-    (currentProvider === "ollama-local" || currentProvider === "vllm-local")
-  ) {
-    const gatewayChain = await probeSandboxInferenceGatewayHealth(sandboxName);
-    if (gatewayChain) {
-      const gatewaySubprobe: ProviderHealthStatus = {
-        ok: gatewayChain.ok,
-        probed: true,
-        providerLabel: "Inference gateway chain",
-        endpoint: gatewayChain.endpoint,
-        detail: gatewayChain.detail,
-        probeLabel: "gateway",
-        ...(gatewayChain.ok ? {} : { failureLabel: "unreachable" as const }),
-      };
-      inferenceHealth.subprobes = [...(inferenceHealth.subprobes ?? []), gatewaySubprobe];
-    }
+    process.exit(1);
   }
   if (sb) {
     console.log("");

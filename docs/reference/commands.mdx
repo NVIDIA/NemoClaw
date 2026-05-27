@@ -378,6 +378,16 @@ $ nemoclaw my-assistant recover
 
 Show sandbox status, health, and inference configuration.
 
+Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
+The JSON output includes `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, and `policies`.
+`openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks.
+The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, or the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`).
+
+```console
+$ nemoclaw my-assistant status
+$ nemoclaw my-assistant status --json
+```
+
 The command probes every inference provider and reports one of three states on the `Inference` line:
 
 | State | Meaning |

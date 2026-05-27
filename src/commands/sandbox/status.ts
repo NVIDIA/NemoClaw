@@ -27,7 +27,7 @@ export default class SandboxStatusCommand extends NemoClawCommand {
     const { args } = await this.parse(SandboxStatusCommand);
     if (this.jsonEnabled()) {
       const report = await getSandboxStatusReport(args.sandboxName);
-      if (!report.found || report.gatewayState !== "present") {
+      if (!report.found || report.gatewayState !== "present" || report.rpcIssue) {
         process.exitCode = 1;
       }
       return report;

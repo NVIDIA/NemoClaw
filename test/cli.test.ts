@@ -992,6 +992,7 @@ describe("CLI dispatch", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
+    expect(r.code).toBe(0);
     expect(r.out.trim().startsWith("{")).toBe(true);
     expect(r.out.trim().endsWith("}")).toBe(true);
     expect(r.out).not.toContain("Sandbox: ");
@@ -1011,6 +1012,7 @@ describe("CLI dispatch", () => {
       openshellDriver: "docker",
       openshellVersion: "0.0.44",
       policies: ["npm"],
+      rpcIssue: null,
     });
     expect(typeof parsed.openshellDriver).toBe("string");
     expect(typeof parsed.openshellVersion).toBe("string");
@@ -1038,10 +1040,50 @@ describe("CLI dispatch", () => {
     });
 
     const parsed = JSON.parse(r.out);
+    expect(r.code).toBe(0);
     expect(parsed.openshellDriver).toBe("unknown");
     expect(parsed.openshellVersion).toBe("unknown");
     expect(typeof parsed.openshellDriver).toBe("string");
     expect(typeof parsed.openshellVersion).toBe("string");
+  });
+
+  it("sandbox status --json surfaces rpcIssue and exits 1 on protobuf mismatch", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-rpc-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha");
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'protobuf decode: invalid wire type'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status --json", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    const parsed = JSON.parse(r.out);
+    expect(parsed.rpcIssue).toEqual({ kind: "protobuf_mismatch" });
   });
 
   it("sandbox status --help advertises --json flag", () => {
