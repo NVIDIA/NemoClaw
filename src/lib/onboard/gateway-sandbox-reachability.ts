@@ -10,10 +10,13 @@
  * diagnosis; a plain helper container on the bridge is not equivalent.
  */
 
-import { spawnSync } from "node:child_process";
-
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { GATEWAY_PORT } from "../core/ports";
+import type { UfwAutoApplyResult } from "./ufw-auto-apply";
+import { isUfwAutoApplyOptedIn, tryAutoApplyUfwRule } from "./ufw-auto-apply";
+
+export type { UfwAutoApplyOptions, UfwAutoApplyResult } from "./ufw-auto-apply";
+export { tryAutoApplyUfwRule } from "./ufw-auto-apply";
 
 const DEFAULT_PROBE_IMAGE =
   "busybox@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662";
@@ -305,150 +308,60 @@ export function formatSandboxBridgeUnreachableMessage(
   ].join("\n");
 }
 
-/**
- * Result of attempting to auto-apply the UFW rule that opens
- * `<subnet> -> <gatewayIp>:<port>` so sandbox containers can reach the
- * gateway. (#4265)
- */
-export interface UfwAutoApplyResult {
-  applied: boolean;
-  reason:
-    | "applied"
-    | "not_opted_in"
-    | "no_subnet_or_gateway"
-    | "ufw_missing"
-    | "ufw_inactive"
-    | "sudo_unavailable"
-    | "ufw_rule_rejected";
-  detail?: string;
-}
-
-export interface UfwAutoApplyOptions {
+interface SandboxBridgeVerifierOptions {
+  skip?: boolean;
   port?: number;
-  /**
-   * Run a process with argv. Returns the exit code (null on signal/error)
-   * and trimmed stderr/stdout. Injected for testability — callers in
-   * production code should rely on the default which uses `spawnSync`.
-   */
-  runImpl?: (argv: readonly string[]) => { status: number | null; stdout: string; stderr: string };
-  /** Override to force the opt-in check off in tests. */
-  optedIn?: boolean;
+  reachabilityImpl?: () => Promise<SandboxBridgeReachabilityResult> | SandboxBridgeReachabilityResult;
+  autoApplyImpl?: (
+    reach: SandboxBridgeReachabilityResult,
+  ) => Promise<UfwAutoApplyResult> | UfwAutoApplyResult;
+  autoApplyOptedInImpl?: () => boolean;
 }
 
-function defaultRunArgv(
-  argv: readonly string[],
-): { status: number | null; stdout: string; stderr: string } {
-  const result = spawnSync(argv[0]!, argv.slice(1), { encoding: "utf-8" });
-  return {
-    status: result.status,
-    stdout: (result.stdout || "").trim(),
-    stderr: (result.stderr || "").trim(),
-  };
-}
-
-function isUfwAutoApplyOptedIn(): boolean {
-  return process.env.NEMOCLAW_AUTO_FIX_FIREWALL === "1";
-}
-
-/**
- * Try to apply the `ufw allow from <subnet> to <gatewayIp> port <port>` rule
- * non-interactively. Only fires when the operator has opted in via
- * `NEMOCLAW_AUTO_FIX_FIREWALL=1`. Returns a structured result so the caller
- * can decide whether to re-probe reachability. (#4265)
- *
- * Safety:
- * - Opt-in only — operators must set `NEMOCLAW_AUTO_FIX_FIREWALL=1`.
- * - `sudo -n` only — never prompts for a password. If passwordless sudo isn't
- *   available, falls back to the existing manual-instructions path.
- * - Skips on hosts without UFW or with UFW inactive (the rule is moot there).
- * - The rule itself is narrow: docker-bridge subnet → host gateway port only.
- */
-export async function tryAutoApplyUfwRule(
-  reach: SandboxBridgeReachabilityResult,
-  options: UfwAutoApplyOptions = {},
-): Promise<UfwAutoApplyResult> {
-  const port = options.port ?? GATEWAY_PORT;
-  const run = options.runImpl ?? defaultRunArgv;
-  const optedIn = options.optedIn ?? isUfwAutoApplyOptedIn();
-
-  if (!optedIn) return { applied: false, reason: "not_opted_in" };
-  if (!reach.subnet || !reach.gatewayIp) {
-    return { applied: false, reason: "no_subnet_or_gateway" };
-  }
-
-  const sudoCheck = run(["sudo", "-n", "true"]);
-  if (sudoCheck.status !== 0) {
-    return {
-      applied: false,
-      reason: "sudo_unavailable",
-      detail: "Passwordless sudo not available; cannot auto-apply UFW rule.",
-    };
-  }
-
-  const ufwWhich = run(["sudo", "-n", "which", "ufw"]);
-  if (ufwWhich.status !== 0) {
-    return { applied: false, reason: "ufw_missing", detail: "ufw not installed." };
-  }
-
-  const status = run(["sudo", "-n", "ufw", "status"]);
-  if (status.status !== 0 || !/Status:\s*active/i.test(status.stdout)) {
-    return { applied: false, reason: "ufw_inactive", detail: "ufw is not active." };
-  }
-
-  const apply = run([
-    "sudo",
-    "-n",
-    "ufw",
-    "allow",
-    "from",
-    reach.subnet,
-    "to",
-    reach.gatewayIp,
-    "port",
-    String(port),
-    "proto",
-    "tcp",
-  ]);
-  if (apply.status !== 0) {
-    return {
-      applied: false,
-      reason: "ufw_rule_rejected",
-      detail: apply.stderr || apply.stdout || "ufw rejected the rule.",
-    };
-  }
-
-  return { applied: true, reason: "applied", detail: apply.stdout || undefined };
-}
+const SILENT_UFW_AUTO_APPLY_REASONS = new Set<UfwAutoApplyResult["reason"]>([
+  "not_opted_in",
+  "ufw_missing",
+  "ufw_inactive",
+]);
 
 export async function verifySandboxBridgeGatewayReachableOrExit(
   exitOnFailure: boolean,
-  options: { skip?: boolean } = {},
+  options: SandboxBridgeVerifierOptions = {},
 ): Promise<void> {
   if (options.skip) {
     console.log("  Docker-driver GPU host networking active; skipping sandbox bridge gateway reachability probe.");
     return;
   }
-  let reach = await isSandboxBridgeGatewayReachable();
+  const port = options.port ?? GATEWAY_PORT;
+  const reachability = options.reachabilityImpl ?? isSandboxBridgeGatewayReachable;
+  const autoApplyOptedIn = options.autoApplyOptedInImpl ?? isUfwAutoApplyOptedIn;
+  const autoApply =
+    options.autoApplyImpl ??
+    ((result: SandboxBridgeReachabilityResult) => tryAutoApplyUfwRule(result, { optedIn: true, port }));
+
+  let reach = await reachability();
   if (reach.ok) return;
 
-  // #4265: when operator opts in, try to auto-apply the firewall rule and
-  // re-probe before surfacing the manual-fix message.
-  if (reach.routeKind === "bridge_gateway" && isUfwAutoApplyOptedIn()) {
-    const autoApply = await tryAutoApplyUfwRule(reach);
-    if (autoApply.applied) {
+  // #4265: when operator opts in and the probe proved a bridge TCP failure,
+  // try to auto-apply the firewall rule and re-probe before surfacing the
+  // manual-fix message. Do not mutate firewall state for probe helper/DNS
+  // failures, even if route metadata is present.
+  if (reach.routeKind === "bridge_gateway" && reach.reason === "tcp_failed" && autoApplyOptedIn()) {
+    const autoApplyResult = await autoApply(reach);
+    if (autoApplyResult.applied) {
       console.log(
-        `  ✓ Applied UFW rule (NEMOCLAW_AUTO_FIX_FIREWALL=1): allow from ${reach.subnet} to ${reach.gatewayIp}:${GATEWAY_PORT}/tcp`,
+        `  ✓ Applied UFW rule (NEMOCLAW_AUTO_FIX_FIREWALL=1): allow from ${reach.subnet} to ${reach.gatewayIp}:${port}/tcp`,
       );
-      reach = await isSandboxBridgeGatewayReachable();
+      reach = await reachability();
       if (reach.ok) return;
-    } else if (autoApply.reason !== "not_opted_in") {
+    } else if (!SILENT_UFW_AUTO_APPLY_REASONS.has(autoApplyResult.reason)) {
       console.warn(
-        `  ⚠ NEMOCLAW_AUTO_FIX_FIREWALL=1 set but could not auto-apply UFW rule (${autoApply.reason}${autoApply.detail ? `: ${autoApply.detail}` : ""}); falling back to manual instructions.`,
+        `  ⚠ NEMOCLAW_AUTO_FIX_FIREWALL=1 set but could not auto-apply UFW rule (${autoApplyResult.reason}${autoApplyResult.detail ? `: ${autoApplyResult.detail}` : ""}); falling back to manual instructions.`,
       );
     }
   }
 
-  const message = formatSandboxBridgeUnreachableMessage(reach);
+  const message = formatSandboxBridgeUnreachableMessage(reach, port);
   if (reach.reason === "probe_unavailable") {
     console.warn(message);
     return;

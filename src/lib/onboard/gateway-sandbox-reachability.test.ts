@@ -1,13 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   __test,
   formatSandboxBridgeUnreachableMessage,
   isSandboxBridgeGatewayReachable,
   tryAutoApplyUfwRule,
+  verifySandboxBridgeGatewayReachableOrExit,
 } from "../../../dist/lib/onboard/gateway-sandbox-reachability";
 
 describe("gateway sandbox reachability route modeling", () => {
@@ -201,13 +202,44 @@ describe("tryAutoApplyUfwRule (#4265)", () => {
     expect(recorded).toHaveLength(0);
   });
 
-  it("skips when subnet or gatewayIp is unknown", async () => {
+  it("skips when gatewayIp is unknown", async () => {
     const { runImpl, recorded } = makeRunner([]);
     const result = await tryAutoApplyUfwRule(
       { ...reach, gatewayIp: undefined },
       { runImpl, optedIn: true },
     );
     expect(result).toEqual({ applied: false, reason: "no_subnet_or_gateway" });
+    expect(recorded).toHaveLength(0);
+  });
+
+  it("skips when subnet is unknown", async () => {
+    const { runImpl, recorded } = makeRunner([]);
+    const result = await tryAutoApplyUfwRule(
+      { ...reach, subnet: undefined },
+      { runImpl, optedIn: true },
+    );
+    expect(result).toEqual({ applied: false, reason: "no_subnet_or_gateway" });
+    expect(recorded).toHaveLength(0);
+  });
+
+  it("rejects malformed or overly broad UFW operands before sudo", async () => {
+    const { runImpl, recorded } = makeRunner([]);
+    const broadSubnet = await tryAutoApplyUfwRule(
+      { ...reach, subnet: "0.0.0.0/0" },
+      { runImpl, optedIn: true },
+    );
+    const outsideGateway = await tryAutoApplyUfwRule(
+      { ...reach, gatewayIp: "172.19.0.1" },
+      { runImpl, optedIn: true },
+    );
+    const invalidPort = await tryAutoApplyUfwRule(reach, {
+      runImpl,
+      optedIn: true,
+      port: 70000,
+    });
+    expect(broadSubnet.reason).toBe("invalid_rule_operand");
+    expect(outsideGateway.reason).toBe("invalid_rule_operand");
+    expect(invalidPort.reason).toBe("invalid_rule_operand");
     expect(recorded).toHaveLength(0);
   });
 
@@ -263,5 +295,85 @@ describe("tryAutoApplyUfwRule (#4265)", () => {
       "to", "172.18.0.1",
       "port", "8080", "proto", "tcp",
     ]);
+  });
+});
+
+describe("verifySandboxBridgeGatewayReachableOrExit UFW auto-apply (#4265)", () => {
+  const tcpFailure = {
+    ok: false as const,
+    reason: "tcp_failed" as const,
+    routeKind: "bridge_gateway" as const,
+    networkName: "openshell-docker",
+    subnet: "172.18.0.0/16",
+    gatewayIp: "172.18.0.1",
+  };
+
+  it("does not auto-apply UFW when the bridge-gateway probe is unavailable", async () => {
+    const autoApplyImpl = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await verifySandboxBridgeGatewayReachableOrExit(false, {
+      autoApplyImpl,
+      autoApplyOptedInImpl: () => true,
+      reachabilityImpl: () => ({
+        ...tcpFailure,
+        reason: "probe_unavailable",
+        detail: "nc: bad address 'host.openshell.internal'",
+      }),
+    });
+    expect(autoApplyImpl).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Could not verify"));
+    warn.mockRestore();
+  });
+
+  it("re-probes and returns cleanly after a successful UFW apply", async () => {
+    const reachabilityImpl = vi
+      .fn()
+      .mockResolvedValueOnce(tcpFailure)
+      .mockResolvedValueOnce({ ...tcpFailure, ok: true, reason: "ok" });
+    const autoApplyImpl = vi.fn().mockReturnValue({ applied: true, reason: "applied" });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    await verifySandboxBridgeGatewayReachableOrExit(true, {
+      autoApplyImpl,
+      autoApplyOptedInImpl: () => true,
+      reachabilityImpl,
+    });
+    expect(autoApplyImpl).toHaveBeenCalledWith(tcpFailure);
+    expect(reachabilityImpl).toHaveBeenCalledTimes(2);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining("Applied UFW rule"));
+    log.mockRestore();
+  });
+
+  it("falls back to the manual message when apply succeeds but the re-probe still fails", async () => {
+    const reachabilityImpl = vi.fn().mockResolvedValue(tcpFailure);
+    const autoApplyImpl = vi.fn().mockReturnValue({ applied: true, reason: "applied" });
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      verifySandboxBridgeGatewayReachableOrExit(false, {
+        autoApplyImpl,
+        autoApplyOptedInImpl: () => true,
+        reachabilityImpl,
+      }),
+    ).rejects.toThrow("sandbox-bridge unreachable");
+    expect(reachabilityImpl).toHaveBeenCalledTimes(2);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("ufw allow"));
+    log.mockRestore();
+    error.mockRestore();
+  });
+
+  it("does not warn for unsupported UFW environments when auto-apply is opted in", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await expect(
+      verifySandboxBridgeGatewayReachableOrExit(false, {
+        autoApplyImpl: () => ({ applied: false, reason: "ufw_inactive" }),
+        autoApplyOptedInImpl: () => true,
+        reachabilityImpl: () => tcpFailure,
+      }),
+    ).rejects.toThrow("sandbox-bridge unreachable");
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).toHaveBeenCalledWith(expect.stringContaining("ufw allow"));
+    warn.mockRestore();
+    error.mockRestore();
   });
 });
