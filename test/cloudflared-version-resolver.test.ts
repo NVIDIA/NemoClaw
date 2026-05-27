@@ -107,6 +107,13 @@ describe("cloudflared APT package resolver", () => {
     expect(result.stderr).toContain("invalid CLOUDFLARED_MIN_VERSION");
   });
 
+  it("fails closed when Cloudflare APT metadata includes an invalid version", () => {
+    const result = runResolver("2026.5.1\nbad/min", "2026.5.1");
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("invalid cloudflared version from Cloudflare APT repo");
+  });
+
   it("uses Debian package ordering when choosing the newest version", () => {
     const result = runResolver("2026.5.9\n2026.5.10\n2026.6.0\n1:2026.5.1", "2026.5.1");
 
