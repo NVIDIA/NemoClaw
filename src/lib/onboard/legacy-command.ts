@@ -58,7 +58,7 @@ function onboardUsageLines(noticeAcceptFlag: string): string[] {
     `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${noticeAcceptFlag}]`,
     "",
     "  --from <Dockerfile> uses the Dockerfile's parent directory as the Docker build context.",
-    "  --no-ollama-autostart disables wizard auto-start of a local Ollama daemon; if Ollama is not running, the wizard prints a warning and selects the default fallback model.",
+    "  --no-ollama-autostart skips the wizard's eager Ollama auto-start during inference-provider selection so onboard surfaces the unreachable-Ollama warning and the default fallback model; later setup steps still expect a reachable Ollama, and on Linux hosts with a systemd Ollama unit the loopback-override path may still restart the daemon ahead of this gate.",
     "  --gpu enables direct NVIDIA GPU access inside the sandbox; --no-gpu forces CPU sandbox behavior.",
     "  --sandbox-gpu enables direct NVIDIA GPU access inside the sandbox; --no-sandbox-gpu forces CPU sandbox behavior.",
     "  --sandbox-gpu-device passes a specific OpenShell GPU device selector to sandbox create; requires --sandbox-gpu.",

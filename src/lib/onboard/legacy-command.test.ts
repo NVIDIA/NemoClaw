@@ -699,8 +699,6 @@ describe("onboard command", () => {
       exit: exitWithCode,
     });
     expect(lines.join("\n")).toContain("--no-ollama-autostart");
-    expect(lines.join("\n")).toContain(
-      "disables wizard auto-start of a local Ollama daemon",
-    );
+    expect(lines.join("\n")).toContain("inference-provider selection");
   });
 });

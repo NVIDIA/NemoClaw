@@ -64,7 +64,15 @@ export function runOllamaStartupOrGate(args: {
   });
   if (!wait.waitForHttp(`http://127.0.0.1:${ollamaPort}/`, 10)) {
     console.error(`  Ollama did not become ready on :${ollamaPort} within timeout.`);
-    if (isNonInteractive()) process.exit(1);
+    const providerPinned = process.env.NEMOCLAW_PROVIDER === "ollama";
+    if (isNonInteractive() || providerPinned) {
+      if (providerPinned) {
+        console.error(
+          "  NEMOCLAW_PROVIDER=ollama is pinned but Ollama is unreachable; refusing to loop on provider selection.",
+        );
+      }
+      process.exit(1);
+    }
     return { kind: "continue" };
   }
   return { kind: "ready" };

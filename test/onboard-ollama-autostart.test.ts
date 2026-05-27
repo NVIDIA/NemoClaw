@@ -481,4 +481,41 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
       assert.equal(payload.sentinelTripped, false);
     },
   );
+
+  it(
+    "Scenario E: stopped Ollama + flag NOT set + NEMOCLAW_PROVIDER=ollama + waitForHttp timeout → process.exit, no selectionLoop re-entry",
+    { timeout: OLLAMA_AUTOSTART_TEST_TIMEOUT_MS },
+    () => {
+      // Reporter scenario: provider pinned via env, gate not set, Ollama
+      // unreachable, spawn-then-wait fails. Previously `continue selectionLoop`
+      // would immediately re-enter the same Ollama branch because
+      // NEMOCLAW_PROVIDER=ollama forces the menu to keep selecting Ollama.
+      // The fix surfaces a failure (process.exit) instead of looping.
+      const payload = runOllamaAutostartScenario({
+        ollamaRunning: false,
+        noAutostartEnv: false,
+        nonInteractive: false,
+        waitForHttpReturnsFalse: true,
+      });
+
+      assert.ok(
+        payload.processExitCalled >= 1,
+        `expected process.exit to be called when provider is pinned and Ollama is unreachable; lines:\n${payload.lines.join("\n")}`,
+      );
+      assert.ok(
+        payload.lines.some((line) =>
+          line.includes("NEMOCLAW_PROVIDER=ollama is pinned but Ollama is unreachable"),
+        ),
+        `expected pinned-provider abort message; lines:\n${payload.lines.join("\n")}`,
+      );
+      // Sentinel guards the post-spawn proxy step. If selectionLoop had looped
+      // and a future iteration reached the proxy, the sentinel would have
+      // tripped. With the fix, we exit before that.
+      assert.equal(
+        payload.sentinelTripped,
+        false,
+        "abort must happen before reaching the proxy stage",
+      );
+    },
+  );
 });

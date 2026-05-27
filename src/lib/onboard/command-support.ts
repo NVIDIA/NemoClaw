@@ -83,7 +83,7 @@ export function buildOnboardFlags(): Record<string, any> {
     }),
     "no-ollama-autostart": Flags.boolean({
       description:
-        "Disable wizard auto-start of a local Ollama daemon; if Ollama is not running, the wizard prints a warning and selects the default fallback model",
+        "Skip the wizard's eager Ollama auto-start during inference-provider selection so onboard surfaces the unreachable-Ollama warning and the default fallback model; later setup steps still expect a reachable Ollama, and on Linux/systemd hosts the loopback-override path may still restart the daemon",
     }),
     [acceptFlagName]: Flags.boolean({ description: "Accept the third-party software notice" }),
   } as Record<string, any>;
