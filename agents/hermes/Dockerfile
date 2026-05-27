@@ -89,6 +89,7 @@ ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 # is never baked here — it flows through the OpenShell L7 proxy via the
 # WECHAT_BOT_TOKEN credential slot.
 ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
+ARG NEMOCLAW_SLACK_CONFIG_B64=e30=
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=0
 ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=W10=
 ARG NEMOCLAW_BUILD_ID=default
@@ -104,6 +105,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
     NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
     NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
+    NEMOCLAW_SLACK_CONFIG_B64=${NEMOCLAW_SLACK_CONFIG_B64} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER=${NEMOCLAW_HERMES_TOOL_GATEWAY_BROKER} \
     NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64}
 
@@ -133,10 +135,11 @@ RUN mkdir -p /sandbox/.hermes/memories \
     'file, and web tools. Be concise and helpful.' \
     > /sandbox/.hermes/SOUL.md
 
-# Set mutable-default permissions (640/750 sandbox:sandbox).
+# Set mutable-default permissions (640 files, 3770 config root).
 # The sandbox user can write config; the gateway user can read it via
-# supplementary sandbox-group membership. Shields-up applies 444 root:root +
-# chattr +i.
+# supplementary sandbox-group membership and create Hermes v0.14 runtime dirs
+# without being able to remove sticky-protected config files. Shields-up applies
+# 444 root:root + chattr +i.
 # hadolint ignore=DL3002
 USER root
 # Flatten stale published base images that still contain the old .hermes-data
@@ -213,11 +216,15 @@ RUN set -eu; \
         "$config_dir/plugins" \
         "$config_dir/cron" \
         "$config_dir/logs" \
+        "$config_dir/logs/curator" \
         "$config_dir/skins" \
         "$config_dir/plans" \
         "$config_dir/workspace" \
         "$config_dir/profiles" \
         "$config_dir/cache" \
+        "$config_dir/hooks" \
+        "$config_dir/image_cache" \
+        "$config_dir/audio_cache" \
         "$config_dir/pairing" \
         "$config_dir/platforms" \
         "$config_dir/platforms/whatsapp" \
@@ -249,7 +256,7 @@ RUN set -eu; \
     rm -rf /root/.cache/pip /sandbox/.cache \
     && chown -R sandbox:sandbox /sandbox/.hermes \
     && chown gateway:sandbox /sandbox/.hermes/runtime \
-    && chmod 750 /sandbox/.hermes \
+    && chmod 3770 /sandbox/.hermes \
     && chmod 770 \
         /sandbox/.hermes/memories \
         /sandbox/.hermes/sessions \
@@ -257,11 +264,15 @@ RUN set -eu; \
         /sandbox/.hermes/plugins \
         /sandbox/.hermes/cron \
         /sandbox/.hermes/logs \
+        /sandbox/.hermes/logs/curator \
         /sandbox/.hermes/skins \
         /sandbox/.hermes/plans \
         /sandbox/.hermes/workspace \
         /sandbox/.hermes/profiles \
         /sandbox/.hermes/cache \
+        /sandbox/.hermes/hooks \
+        /sandbox/.hermes/image_cache \
+        /sandbox/.hermes/audio_cache \
         /sandbox/.hermes/pairing \
         /sandbox/.hermes/platforms \
         /sandbox/.hermes/platforms/whatsapp \
@@ -276,7 +287,7 @@ RUN set -eu; \
     && chmod 2770 /sandbox/.hermes/runtime \
     && chmod 640 /sandbox/.hermes/config.yaml \
     && chmod 640 /sandbox/.hermes/.env \
-    && for name in state.db state.db-wal state.db-shm gateway.pid gateway.lock gateway_state.json channel_directory.json; do \
+    && for name in state.db state.db-wal state.db-shm gateway.lock gateway_state.json channel_directory.json; do \
         rm -f "/sandbox/.hermes/${name}"; \
         ln -s "runtime/${name}" "/sandbox/.hermes/${name}"; \
     done
