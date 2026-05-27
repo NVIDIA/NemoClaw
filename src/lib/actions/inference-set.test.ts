@@ -29,6 +29,7 @@ vi.mock("../shields/audit", () => ({
 
 import {
   type InferenceSetDeps,
+  InferenceSetError,
   patchHermesInferenceConfig,
   patchOpenClawInferenceConfig,
   runInferenceSet,
@@ -525,5 +526,166 @@ describe("runInferenceSet", () => {
 
     expect(deps.calls.writeSandboxConfig).not.toHaveBeenCalled();
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+  });
+
+  it("wraps writeSandboxConfig failures (OpenClaw) in a clean InferenceSetError that explains gateway drift", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "moonshotai/kimi-k2.6", name: "inference/moonshotai/kimi-k2.6" }],
+          },
+        },
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: { name: "slack2", agent: "openclaw" },
+      defaultSandbox: "slack2",
+    });
+    deps.calls.writeSandboxConfig.mockImplementation(() => {
+      throw new Error(
+        "No running direct OpenShell sandbox container found for 'slack2' (driver: vm). Start the sandbox first.",
+      );
+    });
+
+    const promise = runInferenceSet(
+      { provider: "ollama-local", model: "llama3.2:3b", sandboxName: "slack2" },
+      deps,
+    );
+
+    await expect(promise).rejects.toBeInstanceOf(InferenceSetError);
+    let captured: unknown;
+    try {
+      await promise;
+    } catch (err) {
+      captured = err;
+    }
+    expect(captured).toBeInstanceOf(InferenceSetError);
+    const message = (captured as InferenceSetError).message;
+    expect(message).toContain("slack2");
+    expect(message).toContain("gateway route");
+    expect(message).toContain("ollama-local");
+    expect(message).toContain("llama3.2:3b");
+    expect(message).toMatch(/sync/i);
+    expect(message).toContain("No running direct OpenShell sandbox container");
+    expect(message).toMatch(/nemoclaw\s+\S+\s+connect/);
+    // Single-line so failWithLines renders cleanly.
+    expect(message).not.toMatch(/\n/);
+
+    // Failure path must not advance to recompute / registry / audit.
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+  });
+
+  it("wraps recomputeSandboxConfigHash failures (OpenClaw) in a clean InferenceSetError after a successful write", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "moonshotai/kimi-k2.6", name: "inference/moonshotai/kimi-k2.6" }],
+          },
+        },
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: { name: "slack2", agent: "openclaw" },
+      defaultSandbox: "slack2",
+    });
+    deps.calls.recomputeSandboxConfigHash.mockImplementation(() => {
+      throw new Error("hash recompute failed: container exited");
+    });
+
+    const promise = runInferenceSet(
+      { provider: "ollama-local", model: "llama3.2:3b", sandboxName: "slack2" },
+      deps,
+    );
+
+    await expect(promise).rejects.toBeInstanceOf(InferenceSetError);
+    let captured: unknown;
+    try {
+      await promise;
+    } catch (err) {
+      captured = err;
+    }
+    const message = (captured as InferenceSetError).message;
+    expect(message).toContain("slack2");
+    expect(message).toContain("gateway route");
+    expect(message).toContain("ollama-local");
+    expect(message).toContain("llama3.2:3b");
+    expect(message).toMatch(/sync/i);
+    expect(message).toContain("hash recompute failed: container exited");
+    expect(message).toMatch(/nemoclaw\s+\S+\s+connect/);
+    expect(message).not.toMatch(/\n/);
+
+    // Write succeeded once before the failure.
+    expect(deps.calls.writeSandboxConfig).toHaveBeenCalledTimes(1);
+    // Registry + audit must not have been touched after the recompute failure.
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
+  });
+
+  it("wraps writeSandboxConfig failures (Hermes) in a clean InferenceSetError symmetric to the OpenClaw branch", async () => {
+    const config: ConfigObject = {
+      model: {
+        default: "moonshotai/kimi-k2.6",
+        provider: "custom",
+        base_url: "https://inference.local/v1",
+      },
+      terminal: { backend: "local" },
+    };
+    const deps = createDeps({
+      config,
+      entry: {
+        name: "hermes-vm",
+        agent: "hermes",
+        provider: "hermes-provider",
+        model: "moonshotai/kimi-k2.6",
+      },
+      defaultSandbox: "hermes-vm",
+      target: HERMES_TARGET,
+      session: baseSession({ agent: "hermes", sandboxName: "hermes-vm" }),
+    });
+    deps.calls.writeSandboxConfig.mockImplementation(() => {
+      throw new Error(
+        "No running direct OpenShell sandbox container found for 'hermes-vm' (driver: vm).",
+      );
+    });
+
+    const promise = runInferenceSet(
+      {
+        provider: "hermes-provider",
+        model: "openai/gpt-5.4-mini",
+        sandboxName: "hermes-vm",
+      },
+      deps,
+    );
+
+    await expect(promise).rejects.toBeInstanceOf(InferenceSetError);
+    let captured: unknown;
+    try {
+      await promise;
+    } catch (err) {
+      captured = err;
+    }
+    const message = (captured as InferenceSetError).message;
+    expect(message).toContain("hermes-vm");
+    expect(message).toContain("gateway route");
+    expect(message).toContain("hermes-provider");
+    expect(message).toContain("openai/gpt-5.4-mini");
+    expect(message).toMatch(/sync/i);
+    expect(message).toContain("No running direct OpenShell sandbox container");
+    expect(message).toMatch(/nemoclaw\s+\S+\s+connect/);
+    expect(message).not.toMatch(/\n/);
+
+    expect(deps.calls.recomputeSandboxConfigHash).not.toHaveBeenCalled();
+    expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
+    expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
   });
 });
