@@ -1,0 +1,29 @@
+apiVersion: nemoclaw.io/v1
+kind: NemoClawInstance
+metadata:
+  name: openclaw-nvidia-custom-policies
+spec:
+  setup:
+    install:
+      source: repo-current
+    runtime:
+      containerEngine: docker
+      containerDaemon: running
+    platform:
+      os: ubuntu
+      executionTarget: local
+  onboarding:
+    agent: openclaw
+    provider: nvidia
+    modelRoute: inference-local
+    policyTier: custom
+    messaging: []
+    features:
+      model: nvidia/nemotron-3-super-120b-a12b
+      policyPresets:
+        - npm
+        - pypi
+  state:
+    workspaceRef: default
+    credentialRefs:
+      - NVIDIA_API_KEY

@@ -1,0 +1,26 @@
+apiVersion: nemoclaw.io/v1
+kind: NemoClawInstance
+metadata:
+  name: openclaw-nvidia-brev-launchable
+spec:
+  setup:
+    install:
+      source: launchable
+    runtime:
+      containerEngine: docker
+      containerDaemon: running
+    platform:
+      os: ubuntu
+      executionTarget: remote
+  onboarding:
+    agent: openclaw
+    provider: nvidia
+    modelRoute: inference-local
+    policyTier: balanced
+    messaging: []
+    gateway:
+      bindAddress: 0.0.0.0
+  state:
+    workspaceRef: default
+    credentialRefs:
+      - NVIDIA_API_KEY
