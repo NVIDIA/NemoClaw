@@ -279,6 +279,11 @@ RUN set -eu; \
         fi; \
     fi; \
     # --- Patch 2b: allow OpenShell host gateway only through web_fetch trusted env proxy --- \
+    # Reviewed against openclaw@2026.5.22 dist: fetchWithWebToolsNetworkGuard \
+    # passes useEnvProxy into withTrustedEnvProxyGuardedFetchMode(resolved), and \
+    # the SSRF guard consumes policy.allowedHostnames to skip private-network \
+    # checks for an exact normalized hostname. hostnameAllowlist only gates \
+    # hostname pattern matching and does not bypass .internal/private blocking. \
     web_guard_files="$(grep -RIlE --include='*.js' 'function fetchWithWebToolsNetworkGuard\(params\)' "$OC_DIST" || true)"; \
     if [ -n "$web_guard_files" ]; then \
         patched_host_gateway=0; \
@@ -298,7 +303,7 @@ RUN set -eu; \
             echo "INFO: Patch 2b applied to OpenClaw ${OC_VERSION} web_fetch trusted-proxy host-gateway policy"; \
         fi; \
     else \
-        web_fetch_proxy_refs="$(grep -RIlE --include='*.js' 'web_fetch|useTrustedEnvProxy|withTrustedEnvProxyGuardedFetchMode\(resolved\)' "$OC_DIST" || true)"; \
+        web_fetch_proxy_refs="$(grep -RIlE --include='*.js' 'web_fetch|useEnvProxy|useTrustedEnvProxy|withTrustedEnvProxyGuardedFetchMode\(resolved\)' "$OC_DIST" || true)"; \
         if [ -z "$web_fetch_proxy_refs" ]; then \
             echo "INFO: OpenClaw ${OC_VERSION} has no web_fetch trusted env-proxy callsite; Patch 2b not needed"; \
         else \

@@ -18,6 +18,72 @@ const REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSIONS = [
 const CURRENT_REVIEWED_OPENCLAW_PATCH_CLASSIFIER_VERSION = "2026.5.22";
 const EXPECTED_OPENCLAW_INTEGRITY =
   "sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==";
+const REVIEWED_OPENCLAW_2026_5_22_WEB_FETCH_SHAPE = [
+  "async function fetchWithWebToolsNetworkGuard(params) {",
+  "  const { timeoutSeconds, useEnvProxy, ...rest } = params;",
+  "  const resolved = {",
+  "    ...rest,",
+  "    timeoutMs: resolveTimeoutMs({",
+  "      timeoutMs: rest.timeoutMs,",
+  "      timeoutSeconds",
+  "    })",
+  "  };",
+  "  return fetchWithSsrFGuard(useEnvProxy ? withTrustedEnvProxyGuardedFetchMode(resolved) : withStrictGuardedFetchMode(resolved));",
+  "}",
+].join("\n");
+const REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE = [
+  "function shouldSkipPrivateNetworkChecks(hostname, policy) {",
+  "  return isPrivateNetworkAllowedByPolicy(policy) || normalizeHostnameSet(policy?.allowedHostnames).has(hostname);",
+  "}",
+  "function resolveHostnamePolicyChecks(hostname, policy) {",
+  "  const normalized = normalizeHostname(hostname);",
+  '  if (!normalized) throw new Error("Invalid hostname");',
+  "  const hostnameAllowlist = normalizeHostnameAllowlist(policy?.hostnameAllowlist);",
+  "  const skipPrivateNetworkChecks = shouldSkipPrivateNetworkChecks(normalized, policy);",
+  '  if (!matchesHostnameAllowlist(normalized, hostnameAllowlist)) throw new SsrFBlockedError(`Blocked hostname (not in allowlist): ${hostname}`);',
+  "  if (!skipPrivateNetworkChecks) assertAllowedHostOrIpOrThrow(normalized, policy);",
+  "  return {",
+  "    normalized,",
+  "    skipPrivateNetworkChecks",
+  "  };",
+  "}",
+].join("\n");
+
+function loadReviewedOpenClaw20260522SsrfPolicyShape() {
+  return new Function(`
+class SsrFBlockedError extends Error {}
+function normalizeHostname(value) {
+  return String(value || "").toLowerCase().replace(/\\.+$/, "");
+}
+function normalizeHostnameSet(values) {
+  if (!values || values.length === 0) return new Set();
+  return new Set(values.map((value) => normalizeHostname(value)).filter(Boolean));
+}
+function normalizeHostnameAllowlist(values) {
+  if (!values || values.length === 0) return [];
+  return Array.from(new Set(values.map((value) => normalizeHostname(value)).filter((value) => value !== "*" && value !== "*." && value.length > 0)));
+}
+function isPrivateNetworkAllowedByPolicy(policy) {
+  return policy?.dangerouslyAllowPrivateNetwork === true || policy?.allowPrivateNetwork === true;
+}
+function matchesHostnameAllowlist(hostname, allowlist) {
+  return allowlist.length === 0 || allowlist.includes(hostname);
+}
+function assertAllowedHostOrIpOrThrow(hostnameOrIp) {
+  if (hostnameOrIp === "host.openshell.internal" || hostnameOrIp.endsWith(".internal") || hostnameOrIp === "10.0.0.1") {
+    throw new SsrFBlockedError("blocked " + hostnameOrIp);
+  }
+}
+${REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE}
+return { shouldSkipPrivateNetworkChecks, resolveHostnamePolicyChecks };
+  `)() as {
+    shouldSkipPrivateNetworkChecks: (hostname: string, policy?: Record<string, unknown>) => boolean;
+    resolveHostnamePolicyChecks: (
+      hostname: string,
+      policy?: Record<string, unknown>,
+    ) => { normalized: string; skipPrivateNetworkChecks: boolean };
+  };
+}
 
 function readRequiredMatch(file: string, pattern: RegExp, description: string): string {
   const match = fs.readFileSync(file, "utf-8").match(pattern);
@@ -248,6 +314,46 @@ function webGuardedFetchFixtureSource(): string {
 }
 
 describe("fetch-guard patch regression guard", () => {
+  it("anchors web_fetch host-gateway policy to the reviewed OpenClaw 2026.5.22 SSRF contract", () => {
+    expect(REVIEWED_OPENCLAW_2026_5_22_WEB_FETCH_SHAPE).toContain(
+      "function fetchWithWebToolsNetworkGuard(params)",
+    );
+    expect(REVIEWED_OPENCLAW_2026_5_22_WEB_FETCH_SHAPE).toContain(
+      "withTrustedEnvProxyGuardedFetchMode(resolved)",
+    );
+    expect(REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE).toContain(
+      "normalizeHostnameSet(policy?.allowedHostnames).has(hostname)",
+    );
+    expect(REVIEWED_OPENCLAW_2026_5_22_SSRF_POLICY_SHAPE).toContain(
+      "normalizeHostnameAllowlist(policy?.hostnameAllowlist)",
+    );
+
+    const reviewed = loadReviewedOpenClaw20260522SsrfPolicyShape();
+    expect(
+      reviewed.shouldSkipPrivateNetworkChecks("host.openshell.internal", {
+        allowedHostnames: ["HOST.OPENSHELL.INTERNAL."],
+      }),
+    ).toBe(true);
+    expect(
+      reviewed.shouldSkipPrivateNetworkChecks("host.openshell.internal", {
+        hostnameAllowlist: ["host.openshell.internal"],
+      }),
+    ).toBe(false);
+    expect(
+      reviewed.resolveHostnamePolicyChecks("host.openshell.internal", {
+        allowedHostnames: ["host.openshell.internal"],
+      }),
+    ).toEqual({
+      normalized: "host.openshell.internal",
+      skipPrivateNetworkChecks: true,
+    });
+    expect(() =>
+      reviewed.resolveHostnamePolicyChecks("host.openshell.internal", {
+        hostnameAllowlist: ["host.openshell.internal"],
+      }),
+    ).toThrow(/blocked host\.openshell\.internal/);
+  });
+
   it("fails the image build when the NemoClaw OpenClaw plugin cannot install", () => {
     const command = dockerRunCommandBetween(
       "# Install NemoClaw plugin into OpenClaw",
@@ -781,6 +887,39 @@ if (!blocked) throw new Error('private IP literal was not blocked');`,
         "}",
         "const toolName = 'web_fetch';",
         "export { withTrustedEnvProxyGuardedFetchMode as a };",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.6.1");
+      expect(patch.status).toBe(1);
+      expect(patch.stderr).toContain(
+        "Patch 2b target missing but web_fetch/trusted-proxy references remain",
+      );
+      expect(patch.stderr).toContain("Patch 2b cannot safely skip");
+      expect(patch.stderr).toContain("OpenClaw 2026.6.1");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the web_fetch target disappears but the runtime useEnvProxy symbol remains", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-use-env-proxy-unknown-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(
+      path.join(dist, "ssrf-host-gateway-use-env-proxy-unknown.js"),
+      [
+        "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
+        "async function fetchGuardedMediaResponse() {",
+        "  return fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({ url: 'http://example.com' }));",
+        "}",
+        "async function renamedWebToolsNetworkGuard(params) {",
+        "  const { useEnvProxy, ...rest } = params;",
+        "  return useEnvProxy ? rest : { ...rest, strict: true };",
+        "}",
+        "export { renamedWebToolsNetworkGuard as t };",
         "",
       ].join("\n"),
     );
