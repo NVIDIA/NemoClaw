@@ -20,10 +20,6 @@ on:
         description: "Branch to test (default: ref used for this dispatch; schedule always tests main)"
         required: false
         default: ""
-      launchable_id:
-        description: "Published launchable ID override (empty = workflow/test default)"
-        required: false
-        default: ""
       keep_alive:
         description: "Keep Brev instances alive after tests (for SSH debugging)"
         required: false
@@ -49,8 +45,6 @@ jobs:
       branch: ${{ github.event_name == 'schedule' && 'main' || inputs.branch || github.ref_name }}
       test_suite: ${{ matrix.test_suite }}
       use_launchable: true
-      use_published_launchable: true
-      launchable_id: ${{ github.event_name == 'workflow_dispatch' && inputs.launchable_id || '' }}
       keep_alive: ${{ github.event_name == 'workflow_dispatch' && inputs.keep_alive || false }}
     secrets:
       BREV_API_KEY: ${{ secrets.BREV_API_KEY }}
