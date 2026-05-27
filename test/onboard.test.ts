@@ -1360,6 +1360,257 @@ const { setupInference } = require(${onboardPath});
     );
   });
 
+  it("surfaces a contextual error and exits when ollama-local inference set fails after the proxy-ready warning (#4257)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-set-fail-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "ollama-set-fail.cjs");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const platformPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "platform.js"));
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    );
+    const proxyPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "ollama", "proxy.js"),
+    );
+    const topologyPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "onboard", "local-inference-topology.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const platform = require(${platformPath});
+const localInference = require(${localInferencePath});
+const proxy = require(${proxyPath});
+const topology = require(${topologyPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+
+let exitCode = null;
+const realExit = process.exit;
+process.exit = (code) => {
+  if (exitCode === null) exitCode = code;
+  const err = new Error("EXIT_CALLED:" + code);
+  err.__exit = true;
+  throw err;
+};
+
+const errLog = [];
+const origErr = console.error;
+console.error = (...args) => {
+  errLog.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
+  origErr.apply(console, args);
+};
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const cmd = _n(command);
+  commands.push({ command: cmd, ignoreError: !!opts.ignoreError });
+  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
+  if (cmd.includes("inference set") && cmd.includes("ollama-local")) {
+    return { status: 7, stdout: "", stderr: "openshell: route apply failed" };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("inference") && cmd.includes("get")) {
+    return [
+      "Gateway inference:",
+      "",
+      "  Route: inference.local",
+      "  Provider: ollama-local",
+      "  Model: qwen2.5:7b",
+      "  Version: 1",
+    ].join("\\n");
+  }
+  return "";
+};
+registry.updateSandbox = () => true;
+platform.isWsl = () => true;
+topology.shouldFrontOllamaWithProxy = () => true;
+localInference.validateLocalProvider = () => ({
+  ok: false,
+  message: "container cannot reach Ollama",
+  diagnostic: "simulated WSL native Docker reachability failure",
+});
+localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:11435/v1";
+localInference.getOllamaWarmupCommand = () => ["true"];
+localInference.validateOllamaModel = () => ({ ok: true });
+proxy.ensureOllamaAuthProxy = () => {};
+proxy.isProxyHealthy = () => true;
+proxy.getOllamaProxyToken = () => "proxy-token";
+proxy.persistAndProbeOllamaProxy = async () => {};
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  try {
+    await setupInference("test-box", "qwen2.5:7b", "ollama-local");
+  } catch (err) {
+    if (!err || !err.__exit) {
+      origErr("[TEST] outer error:", err && err.message);
+      process.stdout.write(JSON.stringify({ commands, errLog, exitCode, error: String(err && err.message) }) + "\n");
+      realExit.call(process, 99);
+    }
+  }
+  process.stdout.write(JSON.stringify({ commands, errLog, exitCode }) + "\n");
+  realExit.call(process, 0);
+})();
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        // Force the non-interactive branch so the bug surfaces as a hard exit
+        // rather than a recovery prompt that would hang in CI.
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    // Exit 0 because we override process.exit and end with realExit(0) after
+    // catching the simulated exit. Test asserts on the captured payload instead.
+    expect(result.status).toBe(0);
+    const payload = parseStdoutJson<{
+      commands: { command: string; ignoreError: boolean }[];
+      errLog: string[];
+      exitCode: number | null;
+    }>(result.stdout);
+
+    // Pre-fix, runOpenshell was called without ignoreError, so the runtime
+    // wrapper exited before we could attach context. Post-fix, the local
+    // path must use ignoreError + a contextual error message.
+    const setCmd = payload.commands.find((entry) =>
+      entry.command.includes("inference set --no-verify --provider ollama-local"),
+    );
+    assert.ok(setCmd, "expected ollama-local inference set command to be issued");
+    assert.equal(setCmd.ignoreError, true, "ollama-local inference set must use ignoreError so onboard can recover");
+
+    // The user must see the no-sandbox / resume-onboard guidance, not a silent stop.
+    const combinedErr = payload.errLog.join("\n");
+    assert.match(combinedErr, /No sandbox was created/);
+    assert.match(combinedErr, /nemoclaw onboard --resume/);
+
+    // And the process should still propagate the nonzero status from openshell,
+    // not exit 0.
+    assert.equal(payload.exitCode, 7, "non-interactive onboard must exit with the openshell status");
+  });
+
+  it("surfaces a contextual error and exits when vllm-local inference set fails (#4257)", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-set-fail-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "vllm-set-fail.cjs");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+    const localInferencePath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "inference", "local.js"),
+    );
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+const registry = require(${registryPath});
+const localInference = require(${localInferencePath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+
+let exitCode = null;
+const realExit = process.exit;
+process.exit = (code) => {
+  if (exitCode === null) exitCode = code;
+  const err = new Error("EXIT_CALLED:" + code);
+  err.__exit = true;
+  throw err;
+};
+
+const errLog = [];
+const origErr = console.error;
+console.error = (...args) => {
+  errLog.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" "));
+  origErr.apply(console, args);
+};
+
+const commands = [];
+runner.run = (command, opts = {}) => {
+  const cmd = _n(command);
+  commands.push({ command: cmd, ignoreError: !!opts.ignoreError });
+  if (cmd.includes("provider get")) return { status: 1, stdout: "", stderr: "" };
+  if (cmd.includes("inference set") && cmd.includes("vllm-local")) {
+    return { status: 13, stdout: "", stderr: "openshell: vllm route apply failed" };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCapture = () => "";
+registry.updateSandbox = () => true;
+localInference.validateLocalProvider = () => ({ ok: true });
+localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:8000/v1";
+
+const { setupInference } = require(${onboardPath});
+
+(async () => {
+  try {
+    await setupInference("test-box", "meta-llama", "vllm-local");
+  } catch (err) {
+    if (!err || !err.__exit) {
+      origErr("[TEST] outer error:", err && err.message);
+      process.stdout.write(JSON.stringify({ commands, errLog, exitCode, error: String(err && err.message) }) + "\n");
+      realExit.call(process, 99);
+    }
+  }
+  process.stdout.write(JSON.stringify({ commands, errLog, exitCode }) + "\n");
+  realExit.call(process, 0);
+})();
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+      },
+    });
+
+    expect(result.status).toBe(0);
+    const payload = parseStdoutJson<{
+      commands: { command: string; ignoreError: boolean }[];
+      errLog: string[];
+      exitCode: number | null;
+    }>(result.stdout);
+
+    const setCmd = payload.commands.find((entry) =>
+      entry.command.includes("inference set --no-verify --provider vllm-local"),
+    );
+    assert.ok(setCmd, "expected vllm-local inference set command to be issued");
+    assert.equal(setCmd.ignoreError, true, "vllm-local inference set must use ignoreError so onboard can recover");
+
+    const combinedErr = payload.errLog.join("\n");
+    assert.match(combinedErr, /No sandbox was created/);
+    assert.match(combinedErr, /nemoclaw onboard --resume/);
+
+    assert.equal(payload.exitCode, 13, "non-interactive onboard must exit with the openshell status");
+  });
+
   it("detects when the live inference route already matches the requested provider and model", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-inference-ready-"));

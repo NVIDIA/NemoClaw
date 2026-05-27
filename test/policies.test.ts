@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { createRequire } from "node:module";
 import type { Interface as ReadlineInterface } from "node:readline";
-import { afterEach, describe, it, expect, vi } from "vitest";
+import { afterEach, beforeEach, describe, it, expect, vi } from "vitest";
 import { spawnSync } from "node:child_process";
 import * as policies from "../dist/lib/policy";
 import { execTimeout } from "./helpers/timeouts";
@@ -15,6 +15,9 @@ const requireForTest = createRequire(import.meta.url);
 const readline = requireForTest("node:readline") as typeof import("node:readline");
 const YAML = requireForTest("yaml");
 const REPO_ROOT = path.join(import.meta.dirname, "..");
+const resolveOpenshellModule = requireForTest(
+  path.join(REPO_ROOT, "dist", "lib", "adapters", "openshell", "resolve.js"),
+) as { resolveOpenshell: (...args: unknown[]) => string | null };
 const CLI_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "nemoclaw.js"));
 const CREDENTIALS_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "credentials", "store.js"));
 const POLICIES_PATH = JSON.stringify(path.join(REPO_ROOT, "dist", "lib", "policy", "index.js"));
@@ -778,8 +781,10 @@ exit 1
   describe("buildPolicySetCommand", () => {
     it("returns an argv array with sandbox name as a separate element", () => {
       const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
-      expect(cmd).toEqual([
-        "openshell",
+      // The binary is resolved via resolveOpenshell() so it may be an absolute
+      // path; assert the openshell tail and the rest of the argv shape.
+      expect(cmd[0]).toMatch(/openshell$/);
+      expect(cmd.slice(1)).toEqual([
         "policy",
         "set",
         "--policy",
@@ -803,11 +808,15 @@ exit 1
     });
 
     it("uses the resolved openshell binary when provided by the installer path", () => {
-      process.env.NEMOCLAW_OPENSHELL_BIN = "/tmp/fake path/openshell";
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-bin-"));
+      const override = path.join(tmpDir, "openshell");
+      fs.writeFileSync(override, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      const prev = process.env.NEMOCLAW_OPENSHELL_BIN;
+      process.env.NEMOCLAW_OPENSHELL_BIN = override;
       try {
         const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
         expect(cmd).toEqual([
-          "/tmp/fake path/openshell",
+          override,
           "policy",
           "set",
           "--policy",
@@ -816,7 +825,9 @@ exit 1
           "my-assistant",
         ]);
       } finally {
-        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+        if (prev === undefined) delete process.env.NEMOCLAW_OPENSHELL_BIN;
+        else process.env.NEMOCLAW_OPENSHELL_BIN = prev;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
       }
     });
   });
@@ -824,7 +835,161 @@ exit 1
   describe("buildPolicyGetCommand", () => {
     it("returns an argv array with sandbox name as a separate element", () => {
       const cmd = policies.buildPolicyGetCommand("my-assistant");
-      expect(cmd).toEqual(["openshell", "policy", "get", "--full", "my-assistant"]);
+      expect(cmd[0]).toMatch(/openshell$/);
+      expect(cmd.slice(1)).toEqual(["policy", "get", "--full", "my-assistant"]);
+    });
+  });
+
+  // Regression for issue #4224: when openshell is installed at ~/.local/bin/openshell
+  // (the installer's user-local location) but PATH from a non-interactive shell does
+  // not include ~/.local/bin/, buildPolicySetCommand / buildPolicyGetCommand must
+  // resolve openshell to an absolute path so spawnSync does not raise ENOENT.
+  describe("issue 4224: spawnSync openshell ENOENT in non-interactive shells", () => {
+    let tmpHome: string;
+    let fakeOpenshell: string;
+    let origHome: string | undefined;
+    let origPath: string | undefined;
+    let origBin: string | undefined;
+
+    beforeEach(() => {
+      tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-issue4224-"));
+      const localBin = path.join(tmpHome, ".local", "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      fakeOpenshell = path.join(localBin, "openshell");
+      fs.writeFileSync(fakeOpenshell, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+
+      origHome = process.env.HOME;
+      origPath = process.env.PATH;
+      origBin = process.env.NEMOCLAW_OPENSHELL_BIN;
+      // Simulate the non-interactive shell: openshell not on PATH, no override.
+      process.env.HOME = tmpHome;
+      process.env.PATH = "/nonexistent-nemoclaw-path";
+      delete process.env.NEMOCLAW_OPENSHELL_BIN;
+    });
+
+    afterEach(() => {
+      if (origHome === undefined) delete process.env.HOME;
+      else process.env.HOME = origHome;
+      if (origPath === undefined) delete process.env.PATH;
+      else process.env.PATH = origPath;
+      if (origBin === undefined) delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      else process.env.NEMOCLAW_OPENSHELL_BIN = origBin;
+      fs.rmSync(tmpHome, { recursive: true, force: true });
+    });
+
+    it("buildPolicySetCommand resolves openshell to ~/.local/bin/openshell when PATH lacks it", () => {
+      const cmd = policies.buildPolicySetCommand("/tmp/policy.yaml", "my-assistant");
+      expect(cmd[0]).toBe(fakeOpenshell);
+      expect(cmd).toEqual([
+        fakeOpenshell,
+        "policy",
+        "set",
+        "--policy",
+        "/tmp/policy.yaml",
+        "--wait",
+        "my-assistant",
+      ]);
+    });
+
+    it("buildPolicyGetCommand resolves openshell to ~/.local/bin/openshell when PATH lacks it", () => {
+      const cmd = policies.buildPolicyGetCommand("my-assistant");
+      expect(cmd[0]).toBe(fakeOpenshell);
+      expect(cmd).toEqual([fakeOpenshell, "policy", "get", "--full", "my-assistant"]);
+    });
+
+    it("assertOpenshellResolvable emits a diagnostic listing every checked location and exits nonzero when openshell cannot be resolved", () => {
+      const resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(null);
+      const errors: string[] = [];
+      const errSpy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+        errors.push(args.map((a) => String(a)).join(" "));
+      });
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+        throw new Error("__test_exit__");
+      }) as never);
+
+      process.env.HOME = tmpHome;
+      process.env.PATH = "/nonexistent-nemoclaw-path";
+      process.env.NEMOCLAW_OPENSHELL_BIN = "/nonexistent/openshell";
+
+      try {
+        expect(() => policies.assertOpenshellResolvable()).toThrow(/__test_exit__/);
+        expect(exitSpy).toHaveBeenCalledWith(1);
+        const combined = errors.join("\n");
+        expect(combined).toMatch(/openshell binary not found/);
+        expect(combined).toMatch(/NEMOCLAW_OPENSHELL_BIN=\/nonexistent\/openshell/);
+        // PATH value should be logged verbatim so bug reports name what was searched.
+        expect(combined).toContain("PATH=/nonexistent-nemoclaw-path");
+        expect(combined).toContain(`${tmpHome}/.local/bin/openshell`);
+        expect(combined).toContain("/usr/local/bin/openshell");
+        expect(combined).toContain("/usr/bin/openshell");
+        expect(combined).toMatch(/Install OpenShell|NEMOCLAW_OPENSHELL_BIN/);
+      } finally {
+        resolveSpy.mockRestore();
+        errSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+    });
+
+    it("assertOpenshellResolvable is a noop when openshell resolves", () => {
+      const resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(fakeOpenshell);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+        throw new Error("should not exit");
+      }) as never);
+      try {
+        expect(() => policies.assertOpenshellResolvable()).not.toThrow();
+        expect(exitSpy).not.toHaveBeenCalled();
+        expect(errSpy).not.toHaveBeenCalled();
+      } finally {
+        resolveSpy.mockRestore();
+        errSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
+    });
+
+    // The assertion must fire BEFORE any temp dir/file creation. With a real
+    // `process.exit(1)` the matching `finally` does not run, so a temp dir
+    // created before the exit gets orphaned in $TMPDIR. A mocked exit (which
+    // throws) doesn't reproduce that — `finally` still runs and cleans up. To
+    // catch the real-world bug, snapshot $TMPDIR at the *moment* of exit:
+    // if the assertion fires before mkdtempSync, no nemoclaw-policy-* dir
+    // should exist yet.
+    it("applyPreset does not create temp dirs before the openshell resolvability check", () => {
+      const beforeCount = fs
+        .readdirSync(os.tmpdir())
+        .filter((entry) => entry.startsWith("nemoclaw-policy-")).length;
+      let countAtExit = -1;
+
+      const resolveSpy = vi
+        .spyOn(resolveOpenshellModule, "resolveOpenshell")
+        .mockReturnValue(null);
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+      const exitSpy = vi.spyOn(process, "exit").mockImplementation(((_code?: number) => {
+        countAtExit = fs
+          .readdirSync(os.tmpdir())
+          .filter((entry) => entry.startsWith("nemoclaw-policy-")).length;
+        throw new Error("__test_exit__");
+      }) as never);
+
+      try {
+        // Apply a real built-in preset so applyPresetContent runs end-to-end
+        // up to the resolvability check.
+        expect(() => policies.applyPreset("my-assistant", "npm")).toThrow(/__test_exit__/);
+        expect(exitSpy).toHaveBeenCalledWith(1);
+        // No `nemoclaw-policy-*` temp dir should have been created before
+        // the resolvability check exited.
+        expect(countAtExit).toBe(beforeCount);
+      } finally {
+        resolveSpy.mockRestore();
+        errSpy.mockRestore();
+        logSpy.mockRestore();
+        exitSpy.mockRestore();
+      }
     });
   });
 

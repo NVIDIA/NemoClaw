@@ -222,4 +222,28 @@ describe("handleGatewayState", () => {
     expect(calls.startGateway).toHaveBeenCalledOnce();
     expect(result.gatewayReuseState).toBe("missing");
   });
+
+  it("emits the step [2/8] header before retiring the legacy Docker-driver gateway", async () => {
+    const order: string[] = [];
+    const { deps, calls } = createDeps({
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+      reconcileGatewayGpuReuseForGpuIntent: vi.fn(() => "stale" as GatewayReuseState),
+      startRecordedStep: vi.fn(async (step: string) => {
+        order.push(`startRecordedStep:${step}`);
+      }),
+      retireLegacyGatewayForDockerDriverUpgrade: vi.fn(() => {
+        order.push("retireLegacy");
+      }),
+      startGateway: vi.fn(async () => {
+        order.push("startGateway");
+      }),
+    });
+
+    await handleGatewayState(baseOptions(deps, "healthy"));
+
+    expect(order).toEqual(["startRecordedStep:gateway", "retireLegacy", "startGateway"]);
+    expect(calls.note).toHaveBeenCalledWith(
+      "  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.",
+    );
+  });
 });

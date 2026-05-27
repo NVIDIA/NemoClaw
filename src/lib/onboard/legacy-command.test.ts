@@ -49,6 +49,7 @@ describe("onboard command", () => {
       gpu: false,
       noGpu: false,
       autoYes: false,
+      noOllamaAutostart: false,
     });
   });
 
@@ -97,6 +98,7 @@ describe("onboard command", () => {
       gpu: false,
       noGpu: false,
       autoYes: false,
+      noOllamaAutostart: false,
     });
   });
 
@@ -126,6 +128,7 @@ describe("onboard command", () => {
       gpu: false,
       noGpu: false,
       autoYes: false,
+      noOllamaAutostart: false,
     });
   });
 
@@ -184,6 +187,7 @@ describe("onboard command", () => {
       gpu: false,
       noGpu: false,
       autoYes: false,
+      noOllamaAutostart: false,
     });
   });
 
@@ -214,6 +218,7 @@ describe("onboard command", () => {
       gpu: false,
       noGpu: false,
       autoYes: false,
+      noOllamaAutostart: false,
     });
   });
 
@@ -265,6 +270,7 @@ describe("onboard command", () => {
       gpu: false,
       noGpu: false,
       autoYes: false,
+      noOllamaAutostart: false,
     });
   });
 
@@ -405,6 +411,7 @@ describe("onboard command", () => {
       gpu: false,
       noGpu: false,
       autoYes: false,
+      noOllamaAutostart: false,
     });
   });
 
@@ -577,6 +584,7 @@ describe("onboard command", () => {
       gpu: false,
       noGpu: false,
       autoYes: false,
+      noOllamaAutostart: false,
     });
   });
 
@@ -646,5 +654,51 @@ describe("onboard command", () => {
       ),
     ).toThrow("exit:1");
     expect(errors.join("\n")).toContain("--gpu and --no-gpu are mutually exclusive");
+  });
+
+  it("defaults noOllamaAutostart to false when the flag is absent", () => {
+    const result = parseOnboardArgs(
+      [],
+      "--yes-i-accept-third-party-software",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      {
+        env: {},
+        error: () => {},
+        exit: exitWithCode,
+      },
+    );
+    expect(result.noOllamaAutostart).toBe(false);
+  });
+
+  it("parses --no-ollama-autostart as noOllamaAutostart=true without rejecting it as unknown", () => {
+    const errors: string[] = [];
+    const result = parseOnboardArgs(
+      ["--no-ollama-autostart"],
+      "--yes-i-accept-third-party-software",
+      "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      {
+        env: {},
+        error: (message = "") => errors.push(message),
+        exit: exitWithPrefixedCode,
+      },
+    );
+    expect(result.noOllamaAutostart).toBe(true);
+    expect(errors.join("\n")).not.toContain("Unknown onboard option(s)");
+  });
+
+  it("--help advertises --no-ollama-autostart in the usage output", async () => {
+    const lines: string[] = [];
+    await runOnboardCommand({
+      args: ["--help"],
+      noticeAcceptFlag: "--yes-i-accept-third-party-software",
+      noticeAcceptEnv: "NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE",
+      env: {},
+      runOnboard: vi.fn(async () => {}),
+      log: (message = "") => lines.push(message),
+      error: () => {},
+      exit: exitWithCode,
+    });
+    expect(lines.join("\n")).toContain("--no-ollama-autostart");
+    expect(lines.join("\n")).toContain("inference-provider selection");
   });
 });
