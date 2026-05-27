@@ -680,6 +680,10 @@ export function readTrustedSecurityReviewSkill(): string {
 
 export function buildSystemPrompt(): string {
   const securityReviewSkill = readTrustedSecurityReviewSkill();
+  const securityRubric = securityReviewSkill || [
+    "Trusted security review skill was unavailable; use this built-in 9-category security rubric instead:",
+    ...SECURITY_CATEGORIES.map((category, index) => `${index + 1}. ${category}`),
+  ].join("\n");
   return [
     "You are the NemoClaw PR Review Advisor for GitHub Actions.",
     "NemoClaw runs OpenClaw assistants inside OpenShell sandboxes. Security boundaries, workflows, credentials, network policy, SSRF validation, Dockerfiles, installers, and sandbox lifecycle code are high risk.",
@@ -691,9 +695,7 @@ export function buildSystemPrompt(): string {
     "2. Keep the review focused on the code changes in this PR. Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status; those are handled by other PR surfaces.",
     "3. Security: use the trusted security code review skill embedded below as the authoritative security rubric. Apply every category with PASS/WARNING/FAIL evidence. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
     "Trusted security review skill from main checkout:",
-    "```markdown",
-    securityReviewSkill || "Security review skill was unavailable; fall back to the built-in 9-category security review.",
-    "```",
+    fencedBlock(securityRubric, "markdown"),
     "4. Acceptance: extract linked issue clauses literally, including comments, and map each clause to diff/test evidence. Named list items are separate clauses.",
     "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
@@ -728,14 +730,10 @@ export function buildPromptTurns({
 Use this turn to understand the patch, changed surfaces, prior advisor review, overlapping PRs/issues, drift evidence, and monolith growth. Inspect repository files with read-only tools when useful. Do not produce final JSON yet; reply with concise working notes only.
 
 Drift-focused deterministic context gathered by trusted code:
-\`\`\`json
-${driftContext}
-\`\`\`
+${fencedBlock(driftContext, "json")}
 
 Git diff, truncated if large:
-\`\`\`diff
-${diff || "<no diff available>"}
-\`\`\`
+${fencedBlock(diff || "<no diff available>", "diff")}
 `,
     },
     {
@@ -745,9 +743,7 @@ ${diff || "<no diff available>"}
 Apply the trusted NemoClaw security-review rubric to the already-provided diff and any nearby files you need to inspect. Focus on sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, workflow trusted-code boundaries, unsafe shell/string execution, and auth/authorization regressions.
 
 Security-focused deterministic context gathered by trusted code:
-\`\`\`json
-${securityContext}
-\`\`\`
+${fencedBlock(securityContext, "json")}
 
 Use the trusted security review skill embedded in the system prompt. For each security category, decide PASS/WARNING/FAIL with evidence. Do not produce final JSON yet; reply with concise working notes only.
 `,
@@ -759,9 +755,7 @@ Use the trusted security review skill embedded in the system prompt. For each se
 Using the same PR context, inspect linked issue clauses and comments from the deterministic GitHub context when available. Map each acceptance clause to diff/test evidence. Review correctness risks, negative-path coverage, mocked boundaries, runtime-validation needs, and documentation/source-of-truth drift. For any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior, answer the source-of-truth questions from the system rubric.
 
 Acceptance/correctness/source-of-truth context gathered by trusted code:
-\`\`\`json
-${validationContext}
-\`\`\`
+${fencedBlock(validationContext, "json")}
 
 Do not produce final JSON yet; reply with concise working notes only.
 `,
@@ -776,12 +770,16 @@ Set these fields exactly:
 ${metadataFields}
 
 Return JSON matching this schema. Prefer <pr_review_advisor_json>{...}</pr_review_advisor_json> with raw JSON directly inside the tags and no Markdown outside the tags:
-\`\`\`json
-${JSON.stringify(schema)}
-\`\`\`
+${fencedBlock(JSON.stringify(schema), "json")}
 `,
     },
   ];
+}
+
+function fencedBlock(content: string, language = ""): string {
+  const longestBacktickRun = Math.max(0, ...Array.from(content.matchAll(/`+/g), (match) => match[0]?.length ?? 0));
+  const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
+  return `${fence}${language}\n${content}\n${fence}`;
 }
 
 function buildDriftTurnContext(context: DeterministicReviewContext): Record<string, unknown> {
