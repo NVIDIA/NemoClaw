@@ -129,7 +129,7 @@ function Get-WslDistros { return @() }
 function Wait-WslDistroRegistration { param([string]$Name) return $true }
 function Wait-WslDefaultUserReady { param([string]$Name) return 1000 }
 function Ensure-WslDistroVersion2 { param([string]$Name) }
-function Stop-WslDistroForDockerIntegration { param([string]$Name) $script:nativeCalls += ,@('Stop-WslDistroForDockerIntegration', $Name) }
+function Stop-WslDistroForDockerIntegration { param([string]$Name, [string]$Reason) $script:nativeCalls += ,@('Stop-WslDistroForDockerIntegration', $Name) }
 function Ensure-WslDockerCliConfigDirectory { param([string]$Name) $script:nativeCalls += ,@('Ensure-WslDockerCliConfigDirectory', $Name) }
 function Invoke-NativeCommand {
   param([string]$FilePath, [string[]]$ArgumentList = @(), [switch]$SuppressOutput)
