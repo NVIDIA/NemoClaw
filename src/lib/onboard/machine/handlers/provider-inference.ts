@@ -3,6 +3,7 @@
 
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
 
 export type ProviderInferenceRetry = { retry: "selection" } | { ok: true; retry?: undefined };
 
@@ -214,7 +215,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
     } else {
       await deps.startRecordedStep("provider_selection");
-      const selection = await deps.setupNim(gpu, sandboxName, agent);
+      const selection = await withProviderSelectionTrace(
+        sandboxName,
+        (agent as { name?: string } | null)?.name,
+        () => deps.setupNim(gpu, sandboxName, agent),
+      );
       model = selection.model;
       provider = selection.provider;
       endpointUrl = selection.endpointUrl;
@@ -228,8 +233,10 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     }
 
     const selected = requireSelection(provider, model, deps);
-    provider = selected.provider;
-    model = selected.model;
+    const selectedProvider = selected.provider;
+    const selectedModel = selected.model;
+    provider = selectedProvider;
+    model = selectedModel;
     if (shouldRecordProviderSelection) {
       session = await deps.recordStepComplete(
         "provider_selection",
@@ -258,16 +265,24 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         let inferenceResult: ProviderInferenceRetry;
         try {
           if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
+          const confirmedSandboxName = sandboxName;
           await deps.startRecordedStep("inference", { provider, model });
-          inferenceResult = await deps.setupInference(
-            sandboxName,
-            model,
-            provider,
-            endpointUrl,
+          inferenceResult = await withInferenceTrace(
+            confirmedSandboxName,
+            selectedProvider,
+            selectedModel,
             credentialEnv,
-            hermesAuthMethod,
-            hermesToolGateways,
-            { allowToolsIncompatible },
+            () =>
+              deps.setupInference(
+                confirmedSandboxName,
+                selectedModel,
+                selectedProvider,
+                endpointUrl,
+                credentialEnv,
+                hermesAuthMethod,
+                hermesToolGateways,
+                { allowToolsIncompatible },
+              ),
           );
         } finally {
           clearStagedCredentialEnv(deps, credentialEnv);
@@ -307,6 +322,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     let inferenceResult: ProviderInferenceRetry;
     try {
       if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
+      const confirmedSandboxName = sandboxName;
       const buildEstimateNote =
         env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1"
           ? null
@@ -320,7 +336,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           webSearchConfig,
           hermesToolGateways,
           enabledChannels: selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
-          sandboxName,
+          sandboxName: confirmedSandboxName,
           notes: buildEstimateNote ? [buildEstimateNote] : [],
         }),
       );
@@ -335,15 +351,22 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
 
       await deps.startRecordedStep("inference", { provider, model });
-      inferenceResult = await deps.setupInference(
-        sandboxName,
-        model,
-        provider,
-        endpointUrl,
+      inferenceResult = await withInferenceTrace(
+        confirmedSandboxName,
+        selectedProvider,
+        selectedModel,
         credentialEnv,
-        hermesAuthMethod,
-        hermesToolGateways,
-        { allowToolsIncompatible },
+        () =>
+          deps.setupInference(
+            confirmedSandboxName,
+            selectedModel,
+            selectedProvider,
+            endpointUrl,
+            credentialEnv,
+            hermesAuthMethod,
+            hermesToolGateways,
+            { allowToolsIncompatible },
+          ),
       );
     } finally {
       clearStagedCredentialEnv(deps, credentialEnv);
