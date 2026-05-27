@@ -861,6 +861,15 @@ try:
 except Exception as e:
     print(json.dumps({'error': str(e)}))
 \"" 2>/dev/null || true)
+plugin_entries_json=$(sandbox_exec "python3 -c \"
+import json, sys
+try:
+    cfg = json.load(open('/sandbox/.openclaw/openclaw.json'))
+    entries = cfg.get('plugins', {}).get('entries', {})
+    print(json.dumps(entries))
+except Exception as e:
+    print(json.dumps({'error': str(e)}))
+\"" 2>/dev/null || true)
 
 if [ -z "$channel_json" ] || echo "$channel_json" | grep -q '"error"'; then
   fail "M6: Could not read openclaw.json channels (${channel_json:0:200})"
@@ -1243,6 +1252,17 @@ print('yes' if d.get('slack', {}).get('enabled') is True else 'no')
       pass "M11e1: Slack channel is enabled at the top level for fresh startup discovery"
     else
       fail "M11e1: Slack channel missing top-level enabled=true; fresh startup may report disabled"
+    fi
+
+    sl_plugin_enabled=$(echo "$plugin_entries_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+print('yes' if d.get('slack', {}).get('enabled') is True else 'no')
+" 2>/dev/null || true)
+    if [ "$sl_plugin_enabled" = "yes" ]; then
+      pass "M11e2: Slack plugin entry is enabled so the external channel plugin activates"
+    else
+      fail "M11e2: Slack plugin entry missing plugins.entries.slack.enabled=true; OpenClaw may show Slack installed but disabled"
     fi
 
     # M11f/M11g/M11h: SLACK_ALLOWED_USERS should authorize both DMs and

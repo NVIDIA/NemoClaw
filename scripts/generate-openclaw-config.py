@@ -720,6 +720,8 @@ def build_config(env: dict | None = None) -> dict:
         # registered an accountId under channels.openclaw-weixin.accounts.
         "openclaw-weixin": {"enabled": True},
     }
+    if "slack" in _ch_cfg:
+        plugin_entries["slack"] = {"enabled": True}
     _bundled_provider_plugins = {
         "amazon-bedrock": {"amazon-bedrock", "bedrock"},
         "amazon-bedrock-mantle": {"amazon-bedrock-mantle"},

@@ -542,6 +542,7 @@ describe("generate-openclaw-config.py: config generation", () => {
     const channels = Buffer.from(JSON.stringify(["slack"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     expect(config.channels.slack.enabled).toBe(true);
+    expect(config.plugins.entries.slack).toEqual({ enabled: true });
     const slack = config.channels.slack.accounts.default;
     // Bolt validates ^xoxb-[A-Za-z0-9_-]+$ / ^xapp-…$ at App construction.
     // OpenShell resolves these provider-shaped aliases at the egress boundary.
@@ -562,6 +563,7 @@ describe("generate-openclaw-config.py: config generation", () => {
     const slack = config.channels.slack.accounts.default;
 
     expect(config.channels.slack.enabled).toBe(true);
+    expect(config.plugins.entries.slack).toEqual({ enabled: true });
     expect(slack.dmPolicy).toBe("allowlist");
     expect(slack.allowFrom).toEqual(allowedUsers);
     expect(slack.groupPolicy).toBe("allowlist");
