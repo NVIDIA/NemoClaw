@@ -547,7 +547,8 @@ Follow these steps to reconnect.
    $ nemoclaw tunnel start
    ```
 
-   OpenShell-managed channel messaging handles Telegram, Discord, Slack, and WhatsApp at onboarding, not through a separate bridge process from `nemoclaw tunnel start`.
+   OpenShell-managed channel messaging handles Telegram, Discord, Slack, WeChat, and WhatsApp at onboarding, not through a separate bridge process from `nemoclaw tunnel start`.
+   WeChat and WhatsApp are experimental.
    To pause a single bridge without destroying the sandbox, use `nemoclaw <name> channels stop <channel>`.
 
 **If the sandbox does not recover:**
@@ -756,12 +757,18 @@ Run the equivalent host-side command instead:
 
 ```console
 $ nemoclaw <sandbox> channels list
-$ nemoclaw <sandbox> channels add <telegram|discord|slack|whatsapp>
-$ nemoclaw <sandbox> channels remove <telegram|discord|slack|whatsapp>
+$ nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>
+$ nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
 ```
 
-`channels add` registers credentials with the OpenShell gateway and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
+`channels add` registers credentials with the OpenShell gateway and `channels remove` clears them.
+Both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
+WeChat and WhatsApp are experimental.
+Review Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) before enabling them.
+
+WeChat captures its bot token through a host-side QR scan during `nemoclaw onboard` or `channels add wechat`.
+You scan the iLink QR from WeChat on your phone and NemoClaw registers the captured token with the OpenShell gateway.
 
 WhatsApp pairs entirely inside the sandbox.
 NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes after you add the channel on the host.
@@ -884,6 +891,11 @@ Check the gateway logs and blocked-request output with `openshell term`, and loo
 ### Messaging bridge appears running but no messages arrive
 
 Bot tokens for Telegram (`getUpdates`), Discord (gateway), and Slack (Socket Mode) only allow one active consumer per token. If two NemoClaw sandboxes are configured with the same bot token, each one kicks the other off its polling connection and neither delivers messages. `nemoclaw status` still reports the bridge as running because the gateway process itself is alive.
+
+For Telegram group chats, first check BotFather privacy mode.
+New Telegram bots default to privacy mode enabled, which prevents group messages from reaching `getUpdates` even when the user mentions the bot.
+In @BotFather, run `/setprivacy`, choose the bot, and choose **Disable**.
+Then remove the bot from the affected group and add it back; Telegram applies the privacy-mode change to group delivery only after the bot rejoins.
 
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 
@@ -1067,6 +1079,38 @@ $ nemoclaw onboard
 
 Docker Desktop, WSL, and hosts without the OpenShell Docker network use different routing models.
 In those cases NemoClaw treats an unavailable sandbox-side probe as non-blocking and relies on the regular proxy health check.
+
+### `host.docker.internal` does not reliably reach the host from the sandbox
+
+Configuring an inference provider with a base URL like
+`http://host.docker.internal:11434/v1` does not reliably reach a host Ollama
+service from inside the OpenShell sandbox.
+OpenShell runs sandboxes inside a k3s network, where `host.docker.internal` is
+not a portable host-service route. Depending on the platform, it may fail DNS
+resolution or resolve to an internal gateway/bridge address where the host's
+port `11434` is not forwarded. The sandbox then sees a DNS failure or
+`connection refused`:
+
+```console
+$ getent hosts host.docker.internal
+172.17.0.1      host.docker.internal host.openshell.internal
+$ no_proxy=host.docker.internal curl -v http://host.docker.internal:11434/api/tags
+* connect to 172.17.0.1 port 11434 failed: Connection refused
+```
+
+For local Ollama, use the auth-proxy URL that NemoClaw's "Local Ollama" onboard
+option configures automatically:
+
+```text
+http://host.openshell.internal:11435/v1
+```
+
+`host.openshell.internal` resolves to the same gateway IP, and the
+[token-gated Ollama auth proxy](#ollama-auth-proxy-did-not-start) binds port
+`11435` there and forwards requests to `127.0.0.1:11434` on the host.
+If you need a different host service exposed to the sandbox, route it through
+the OpenShell gateway rather than relying on `host.docker.internal`.
+See issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
 
 ### Local inference health check resolves to IPv6
 
@@ -1285,7 +1329,7 @@ Skills that require macOS-only binaries cannot be enabled on Brev.
 Skills that require additional CLI binaries require a custom sandbox image rebuild.
 
 For credentials, use the supported host-side setup flow.
-Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack|whatsapp>` for messaging channels.
+Re-run onboarding for inference or Brave Search credentials, or use `nemoclaw <name> channels add <telegram|discord|slack|wechat|whatsapp>` for messaging channels.
 To add a binary to the sandbox image, update the sandbox `Dockerfile.base` to install the required package, then rebuild:
 
 ```console

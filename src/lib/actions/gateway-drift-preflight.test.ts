@@ -154,6 +154,34 @@ describe("gateway drift preflight for maintenance actions", () => {
     expect(backupSandboxStateSpy).not.toHaveBeenCalled();
   });
 
+  it("backup-all skips sandboxes that are not in Ready phase", async () => {
+    const registry = requireDist("../../../dist/lib/state/registry.js");
+    (registry.listSandboxes as ReturnType<typeof vi.fn>).mockReturnValue({
+      sandboxes: [
+        { name: "alpha", provider: "nvidia-prod", model: "nemotron" },
+        { name: "beta", provider: "nvidia-prod", model: "nemotron" },
+      ],
+    });
+    captureOpenshellSpy.mockReturnValue({
+      status: 0,
+      output: [
+        "NAME              NAMESPACE  CREATED              PHASE",
+        "alpha             openshell  2026-03-24 10:00:00  Ready",
+        "beta              openshell  2026-03-24 10:01:00  Error",
+      ].join("\n"),
+    });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    spies.push(logSpy);
+
+    await backupAll();
+
+    expect(backupSandboxStateSpy).toHaveBeenCalledWith("alpha");
+    expect(backupSandboxStateSpy).not.toHaveBeenCalledWith("beta");
+    expect(logSpy.mock.calls.flat().join("\n")).toContain(
+      "Skipping 'beta' (not running)",
+    );
+  });
+
   it("backup-all fails closed on protobuf mismatch instead of treating sandboxes as stopped", async () => {
     const protobufIssue: OpenShellStateRpcIssue = {
       kind: "protobuf_mismatch",

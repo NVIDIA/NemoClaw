@@ -1,8 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import fs from "node:fs";
-import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -13,7 +11,21 @@ import {
   validateGitRef,
 } from "../tools/e2e-advisor/dispatch.mts";
 
-const ROOT = path.resolve(import.meta.dirname, "..");
+const NIGHTLY_E2E_WORKFLOW_FIXTURE = `
+jobs:
+  network-policy-e2e:
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',network-policy-e2e,')
+    steps: []
+  cloud-e2e:
+    if: github.event_name != 'workflow_dispatch' || inputs.jobs == '' || contains(format(',{0},', inputs.jobs), ',cloud-e2e,')
+    steps: []
+  report-to-pr:
+    steps: []
+  notify-on-failure:
+    steps: []
+  scorecard:
+    steps: []
+`;
 
 function pullRequest(authorAssociation = "MEMBER", overrides = {}) {
   return {
@@ -33,7 +45,7 @@ function pullRequest(authorAssociation = "MEMBER", overrides = {}) {
 }
 
 function nightlyWorkflowText(): string {
-  return fs.readFileSync(path.join(ROOT, ".github/workflows/nightly-e2e.yaml"), "utf8");
+  return NIGHTLY_E2E_WORKFLOW_FIXTURE;
 }
 
 function advisorResult(job = "network-policy-e2e") {
@@ -87,10 +99,7 @@ describe("E2E advisor auto-dispatch planning", () => {
   });
 
   it("dispatches all required jobs without applying the retired max-jobs cap", () => {
-    const workflowText = fs.readFileSync(
-      path.join(ROOT, ".github/workflows/nightly-e2e.yaml"),
-      "utf8",
-    );
+    const workflowText = nightlyWorkflowText();
     const plan = planAutoDispatch({
       result: {
         confidence: "high",

@@ -38,6 +38,17 @@ Print the installed NemoClaw CLI version.
 $ nemoclaw --version
 ```
 
+### `nemoclaw resources`
+
+Display host hardware inventory and configured sandbox resource profiles.
+Use `--json` for machine-readable CPU, memory, GPU, Kubernetes allocatable-capacity, and profile data.
+
+```console
+$ nemoclaw resources [--json]
+```
+
+If the gateway is not running, Kubernetes allocatable fields are omitted and host CPU/RAM totals are still shown.
+
 ### `nemoclaw onboard`
 
 Run the interactive setup wizard (recommended for new installs).
@@ -45,7 +56,7 @@ The wizard creates an OpenShell gateway, registers inference providers, builds t
 Use this command for new installs and for recreating a sandbox after changes to policy or configuration.
 
 ```console
-$ nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--yes-i-accept-third-party-software]
+$ nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
 **Warning:**
@@ -151,6 +162,7 @@ This flag takes precedence over `CHAT_UI_URL`, `NEMOCLAW_DASHBOARD_PORT`, the pr
 If you enable Slack during onboarding, the wizard collects both the Bot Token (`SLACK_BOT_TOKEN`) and the App-Level Token (`SLACK_APP_TOKEN`).
 Socket Mode requires both tokens.
 The app-level token is stored in a dedicated `slack-app` OpenShell provider and forwarded to the sandbox alongside the bot token.
+The wizard also accepts optional `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` values so you can restrict Slack DMs, channel `@mention` users, and channel IDs before the sandbox image is built.
 
 If you enable Discord during onboarding, the wizard can also prompt for a Discord Server ID, whether the bot should reply only to `@mentions` or to all messages in that server, and an optional Discord User ID.
 NemoClaw bakes those values into the sandbox image as Discord guild workspace config so the bot can respond in the selected server, not just in DMs.
@@ -388,7 +400,8 @@ $ nemoclaw my-assistant status
 #### Checking the OpenClaw version
 
 NemoClaw pins the OpenClaw version inside the sandbox at build time, not at runtime.
-The minimum version comes from `min_openclaw_version` in `nemoclaw-blueprint/blueprint.yaml`, and the sandbox image upgrades OpenClaw to that version during `docker build` if the cached base image is older.
+The NemoClaw runtime build target is declared by `OPENCLAW_VERSION` in the NemoClaw Dockerfiles.
+The `min_openclaw_version` field in `nemoclaw-blueprint/blueprint.yaml` remains the compatibility floor for direct blueprint consumers, so it can be lower than the Dockerfile target.
 Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a newer pin — you upgrade by rebuilding the sandbox.
 
 `nemoclaw <name> status` prints the running OpenClaw version on the `Agent` line:
@@ -396,7 +409,7 @@ Existing sandboxes do not auto-upgrade when a newer NemoClaw release ships a new
 ```console
 $ nemoclaw my-assistant status
 ...
-    Agent:    OpenClaw v2026.5.18
+    Agent:    OpenClaw v2026.5.22
 ...
 ```
 
@@ -633,8 +646,9 @@ $ nemoclaw my-assistant hosts-remove searxng.local
 
 ### `nemoclaw <name> channels list`
 
-List the messaging channels NemoClaw knows about (`telegram`, `discord`, `slack`, `whatsapp`) with a short description.
+List the messaging channels NemoClaw knows about (`telegram`, `discord`, `slack`, `wechat`, `whatsapp`) with a short description.
 The command is a static reference; it does not consult credentials or the running sandbox.
+WeChat and WhatsApp are experimental.
 
 ```console
 $ nemoclaw my-assistant channels list
@@ -646,7 +660,12 @@ Register a messaging channel with the sandbox and rebuild so the image picks up 
 Channels fall into three login modes:
 
 - **Token paste** (`telegram`, `discord`, `slack`): the command prompts for any missing token and registers it with the OpenShell gateway.
-- **In-sandbox QR** (`whatsapp`): the command records the channel without a host-side token or OpenShell credential provider.
+- **Host-side QR** (`wechat`, experimental): the command renders an iLink QR code on the host and you scan it from WeChat on your phone.
+  On confirm, NemoClaw captures the bot token, registers it with the OpenShell gateway, and stores non-secret per-account metadata (`WECHAT_ACCOUNT_ID`, `WECHAT_BASE_URL`, `WECHAT_USER_ID`) for the in-sandbox bridge.
+  NemoClaw automatically adds the scanning operator's WeChat user ID to `WECHAT_ALLOWED_IDS`.
+  Supply additional comma-separated IDs to authorize more DM senders.
+  NemoClaw advertises WeChat for both OpenClaw (the `@tencent-weixin/openclaw-weixin` plugin) and Hermes (the built-in iLink WeChat adapter).
+- **In-sandbox QR** (`whatsapp`, experimental): the command records the channel without a host-side token or OpenShell credential provider.
   NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes; after rebuild, run `openclaw channels login --channel whatsapp` for OpenClaw or `hermes whatsapp` for Hermes.
   This intentionally leaves QR-created mutable session state in the sandbox until you unpair it or clear the durable agent state.
 
@@ -664,6 +683,7 @@ $ nemoclaw my-assistant channels add telegram
 | `--dry-run` | Validate the channel and token inputs without saving credentials or rebuilding |
 
 Slack requires both `SLACK_BOT_TOKEN` (bot user OAuth) and `SLACK_APP_TOKEN` (app-level Socket Mode token); the command prompts for each in turn.
+Optional Slack allowlists come from `SLACK_ALLOWED_USERS` and `SLACK_ALLOWED_CHANNELS` at rebuild time.
 When `NEMOCLAW_NON_INTERACTIVE=1` is set, any missing token fails fast and no rebuild prompt is shown — instead, the change is queued and you are told to run `nemoclaw <name> rebuild` manually.
 If you omit the required `<channel>` argument, the CLI prints the `channels add <channel>` usage with the supported channel list instead of falling back to top-level help.
 
@@ -672,7 +692,7 @@ If you omit the required `<channel>` argument, the CLI prints the `channels add 
 Clear the stored credentials for a messaging channel and rebuild the sandbox so the image drops the channel.
 Running `remove` for a channel that was never configured is a no-op against the credentials file and still triggers the rebuild prompt.
 When the bridge provider is attached to a live sandbox, NemoClaw detaches it before deleting the provider from the OpenShell gateway.
-If the matching built-in policy preset is applied, such as `telegram`, `discord`, `slack`, or `whatsapp`, NemoClaw also removes that preset so the upstream API is no longer allow-listed after the channel is gone.
+If the matching built-in policy preset is applied, such as `telegram`, `discord`, `slack`, `wechat`, or `whatsapp`, NemoClaw also removes that preset so the upstream API is no longer allow-listed after the channel is gone.
 NemoClaw also strips the channel from `session.policyPresets` so a subsequent `onboard --resume` does not re-apply the preset on the next rebuild.
 
 For QR-paired channels (today: WhatsApp), NemoClaw destructively clears the in-sandbox session directory before the rebuild so the `state_dirs` backup does not restore the auth blob and let the channel reconnect:
@@ -697,7 +717,7 @@ Host-side removal is the supported path because agent channel config is baked in
 
 ### `nemoclaw <name> channels stop <channel>`
 
-Pause a single messaging bridge (`telegram`, `discord`, `slack`, or `whatsapp`) without clearing its credentials.
+Pause a single messaging bridge (`telegram`, `discord`, `slack`, `wechat`, or `whatsapp`) without clearing its credentials.
 The channel is marked disabled in the per-sandbox registry, and the sandbox is rebuilt so the onboard step skips registering the bridge with the gateway.
 The provider stays registered with the OpenShell gateway, so a later `channels start` brings the bridge back without re-entering tokens.
 
@@ -960,9 +980,21 @@ For a remote Brev instance, SSH to the instance and run `openshell term` there, 
 
 ### `nemoclaw tunnel start`
 
-Start optional host auxiliary services. This is the cloudflared tunnel when `cloudflared` is installed (for a public URL to the dashboard). Channel messaging (Telegram, Discord, Slack) is not started here; it is configured during `nemoclaw onboard` and runs through OpenShell-managed constructs.
+Start optional host auxiliary services.
+This is the cloudflared tunnel when `cloudflared` is installed, which exposes the dashboard with a public URL.
+Channel messaging (Telegram, Discord, Slack) is not started here; it is configured during `nemoclaw onboard` and runs through OpenShell-managed constructs.
 
 ```console
+$ nemoclaw tunnel start
+```
+
+By default, NemoClaw starts a Cloudflare quick tunnel and prints the generated `*.trycloudflare.com` URL when `cloudflared` reports it.
+Set `CLOUDFLARE_TUNNEL_TOKEN` to start a Cloudflare named tunnel instead.
+The named tunnel hostname and `localhost:<dashboard-port>` route must already be configured in the Cloudflare dashboard.
+NemoClaw passes the token to `cloudflared` through the `TUNNEL_TOKEN` environment variable, so the token does not appear in the `cloudflared` command-line arguments.
+
+```console
+$ export CLOUDFLARE_TUNNEL_TOKEN=<cloudflare-tunnel-token>
 $ nemoclaw tunnel start
 ```
 
@@ -1047,7 +1079,7 @@ Use `--no-verify` only when OpenShell cannot verify the provider at switch time 
 The `nemoclaw setup` command is deprecated.
 Use `nemoclaw onboard` instead.
 
-This command remains as a compatibility alias to `nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```console
 $ nemoclaw setup
@@ -1060,7 +1092,7 @@ $ nemoclaw setup
 The `nemoclaw setup-spark` command is deprecated.
 Use the standard installer and run `nemoclaw onboard` instead, because current OpenShell releases handle the older DGX Spark cgroup behavior.
 
-This command remains as a compatibility alias to `nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--yes-i-accept-third-party-software`.
+This command remains as a compatibility alias to `nemoclaw onboard` and accepts the same flags: `--non-interactive`, `--resume`, `--fresh`, `--recreate-sandbox`, `--gpu` / `--no-gpu`, `--from`, `--name`, `--sandbox-gpu` / `--no-sandbox-gpu`, `--sandbox-gpu-device`, `--agent`, `--control-ui-port`, `--yes` / `-y`, `--no-ollama-autostart`, `--yes-i-accept-third-party-software`.
 
 ```console
 $ nemoclaw setup-spark
@@ -1213,7 +1245,7 @@ Set them before running `nemoclaw onboard`.
 
 | Variable | Format | Effect |
 |----------|--------|--------|
-| `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermesProvider`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. Aliases: `cloud` → `build`, `nim` → `nim-local`, `hermes` / `hermes-provider` / `nous` / `nous-portal` → `hermesProvider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
+| `NEMOCLAW_PROVIDER` | provider key (e.g. `build`, `openai`, `anthropic`, `anthropicCompatible`, `gemini`, `ollama`, `custom`, `vllm`, `nim-local`, `routed`, `hermes-provider`, `install-vllm`, `install-ollama`, `install-windows-ollama`, `start-windows-ollama`) | Selects the inference provider during onboarding. The wizard skips the provider menu in both interactive and non-interactive runs when this is set. Aliases: `cloud` → `build`, `nim` → `nim-local`, `hermes` / `nous` / `nous-portal` → `hermes-provider`, `anthropiccompatible` → `anthropicCompatible`. Invalid values fail fast with the list of accepted keys. |
 | `NEMOCLAW_HERMES_AUTH_METHOD` | `oauth` | Selects Hermes Provider authentication in non-interactive onboarding. Valid values: `oauth`, `nous-portal-oauth`, `api-key`, `nous-api-key`. |
 | `NEMOCLAW_HERMES_AUTH` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Back-compatible alias for Hermes Provider authentication selection. |
 | `NEMOCLAW_NOUS_AUTH_METHOD` | same as `NEMOCLAW_HERMES_AUTH_METHOD` | Nous-specific alias for Hermes Provider authentication selection. |
@@ -1226,6 +1258,7 @@ Set them before running `nemoclaw onboard`.
 | `NEMOCLAW_REASONING` | `true` or `false` | Overrides the model's reasoning-mode flag in the built OpenClaw config. |
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | duration with `s`, `m`, or `h` suffix (for example `30m`, `1h`, or `0m`) | Overrides `agents.defaults.heartbeat.every` in the built OpenClaw config. Set `0m` to disable periodic agent turns. |
 | `NEMOCLAW_OLLAMA_REQUIRE_TOOLS` | `0` to disable, anything else to keep the default | When set to `0`, skips the Ollama tool-calling capability check during local-inference onboarding. |
+| `NEMOCLAW_OLLAMA_INSTALL_MODE` | `system`, `user`, or empty/unset | Pins the Linux Ollama install location; see the Linux Ollama install mode details below. |
 | `NEMOCLAW_PROXY_HOST` | hostname or IP | Overrides the sandbox-side outbound HTTP proxy host. Defaults to `10.200.0.1`. |
 | `NEMOCLAW_PROXY_PORT` | integer port | Overrides the sandbox-side outbound HTTP proxy port. Defaults to `3128`. |
 | `NEMOCLAW_OPENSHELL_BIN` | path | Overrides the `openshell` binary the CLI invokes. Defaults to `openshell` (resolved via `PATH`). |
@@ -1235,6 +1268,19 @@ Set them before running `nemoclaw onboard`.
 | `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `qwen3.6-27b`, `nemotron-3-nano-4b`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
 | `NEMOCLAW_MODEL_ROUTER_PYTHON` | absolute path | Pins the host Python interpreter used to create the Model Router virtual environment. Strict. NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to another python. Relative command names such as `python3.12` are rejected. When unset, NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, retains every interpreter whose version is in `[3.10, 3.14)` and whose `ensurepip`, `pyexpat`, `ssl`, and `venv` stdlib modules import cleanly, and tries `python -m venv` on each in priority order until one succeeds. Set the pin when the auto-discovered interpreter is broken (for example, Homebrew `python@3.14` with a `pyexpat` dlopen mismatch on macOS). |
 
+#### Linux Ollama install mode details
+
+Set `NEMOCLAW_OLLAMA_INSTALL_MODE=system` to run the official `https://ollama.com/install.sh` installer, which uses sudo, writes to `/usr/local`, and configures systemd.
+Set `NEMOCLAW_OLLAMA_INSTALL_MODE=user` to extract the release tarball to `${HOME}/.local` without sudo and launch the daemon manually without systemd persistence.
+Leave `NEMOCLAW_OLLAMA_INSTALL_MODE` empty or unset to let NemoClaw auto-detect the mode.
+Auto-detection selects `system` when the current user is root or passwordless `sudo` works.
+Auto-detection selects `user` in non-interactive runs without passwordless `sudo`.
+An interactive shell falls back to `system` so the official installer can prompt for the password.
+NemoClaw rejects any other value.
+On upgrades, NemoClaw rejects `user` because a user-local install cannot replace the system daemon on `:11434`.
+On upgrades, NemoClaw also rejects `system` under `NEMOCLAW_NON_INTERACTIVE=1` when passwordless `sudo` is unavailable because the installer would hang on a hidden sudo prompt.
+The run exits with an actionable diagnostic instead.
+
 ### Onboarding Behavior Flags
 
 These flags toggle optional behaviors during onboarding; set them before running `nemoclaw onboard`.
@@ -1242,6 +1288,7 @@ These flags toggle optional behaviors during onboarding; set them before running
 | Variable | Format | Effect |
 |----------|--------|--------|
 | `NEMOCLAW_YES` | `1` to enable | Auto-accepts confirmation prompts (`--yes` equivalent) including in helpers like the Ollama proxy auth setup. |
+| `NEMOCLAW_OLLAMA_NO_AUTOSTART` | `1` to enable | Skips the wizard's eager Ollama auto-start during inference-provider selection (equivalent to passing `--no-ollama-autostart`). When set and Ollama is not running on `localhost:11434`, the `nemoclaw onboard` Local Ollama path prints a warning and selects the default fallback model instead of spawning `ollama serve`. The flag covers only the provider-selection step; later setup steps (auth proxy, validation, model warm) still expect a reachable Ollama. On Linux hosts with a systemd Ollama unit, the loopback-override path may still restart the daemon before this gate runs. |
 | `NEMOCLAW_NON_INTERACTIVE_SUDO_MODE` | `prompt` or empty/unset | When set to `prompt`, allows non-interactive onboarding to use prompt-capable `sudo` for host setup steps that require elevation, which can ask for a password. Empty/unset is the default and uses `sudo -n`, which fails instead of asking for a password. Any other value is rejected. |
 | `NEMOCLAW_NO_EXPRESS` | `1` to enable | Installer-only. Skips the DGX Spark, DGX Station, and Windows WSL express install prompt and continues with the normal interactive onboarding flow. |
 | `NEMOCLAW_EXPERIMENTAL` | `1` to enable | Surfaces experimental providers and flows in onboarding. |
@@ -1250,12 +1297,31 @@ These flags toggle optional behaviors during onboarding; set them before running
 | `NEMOCLAW_OVERLAY_SNAPSHOTTER` | snapshotter name | Selects the containerd overlay snapshotter for sandbox builds. Empty (default) preserves containerd's choice. |
 | `NEMOCLAW_SKIP_TELEGRAM_REACHABILITY` | `1` to enable | Skips the Telegram bot reachability probe during onboard (useful in restricted networks). |
 | `NEMOCLAW_CONFIG_ACCEPT_NEW_PATH` | `1` to enable | Accepts a new sandbox config path without an interactive prompt when the stored path differs from the discovered one. |
+| `NEMOCLAW_RESOURCE_PROFILE` | profile name or `default` | Selects a sandbox CPU/RAM resource profile from the blueprint during onboarding. `default` means no resource preference, so NemoClaw passes no OpenShell CPU or memory flags. Unknown names fail fast. |
+| `NEMOCLAW_CPU` | percentage or Kubernetes CPU quantity | Overrides the selected profile's CPU size passed to OpenShell `--cpu`. Percentages resolve against detected capacity. |
+| `NEMOCLAW_RAM` | percentage or Kubernetes memory quantity | Overrides the selected profile's memory size passed to OpenShell `--memory`. Percentages resolve against detected capacity. |
 | `NEMOCLAW_SANDBOX_GPU` | `auto`, `1`, or `0` | Controls sandbox GPU passthrough during onboarding. `auto` enables GPU passthrough when an NVIDIA GPU is detected, `1` requires GPU passthrough, and `0` forces CPU-only sandbox creation. |
 | `NEMOCLAW_SANDBOX_GPU_DEVICE` | OpenShell GPU device selector | Selects the GPU device passed with `openshell sandbox create --gpu-device`. Requires explicit sandbox GPU enablement with `NEMOCLAW_SANDBOX_GPU=1` (or `--sandbox-gpu` for CLI-driven onboarding); otherwise onboarding rejects the selector instead of treating it as an implicit opt-in. |
 | `NEMOCLAW_DOCKER_GPU_PATCH` | `0` to disable, anything else to keep the default | Controls the Linux Docker-driver GPU sandbox compatibility patch. Set to `0` only as an escape hatch when the patch fails and you need onboarding to continue without patching the GPU sandbox container. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_BIN` | path | Advanced override for the `openshell-gateway` binary used by the Linux Docker-driver gateway. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_SANDBOX_BIN` | path | Advanced override for the `openshell-sandbox` binary passed to the Linux Docker-driver gateway supervisor. Defaults to the binary next to `openshell`, then common install paths. |
 | `NEMOCLAW_OPENSHELL_GATEWAY_STATE_DIR` | path | Advanced override for the Linux Docker-driver gateway pid file and SQLite state directory. Defaults to `~/.local/state/nemoclaw/openshell-docker-gateway`. |
+| `NEMOCLAW_WECHAT_QUIET` | `1` to enable | Silences the `[wechat]` diagnostic lines printed during the host-side WeChat QR login (poll status, IDC redirects, swallowed gateway errors), which are visible by default while the experimental WeChat path stabilizes; set `1` once the flow is reliable in your environment. |
+
+### Onboard Profiling Traces
+
+Set `NEMOCLAW_TRACE=1` before `nemoclaw onboard` to write an OpenTelemetry-style JSON trace for the run.
+When no explicit path is provided, NemoClaw writes a timestamped file under `.e2e/traces/` in the current working directory.
+Use `NEMOCLAW_TRACE_DIR` to choose the output directory, or `NEMOCLAW_TRACE_FILE` to choose the exact output file.
+
+```console
+$ NEMOCLAW_TRACE=1 nemoclaw onboard
+$ NEMOCLAW_TRACE_DIR=/tmp/nemoclaw-traces nemoclaw onboard
+$ NEMOCLAW_TRACE_FILE=/tmp/nemoclaw-onboard-trace.json nemoclaw onboard
+```
+
+Trace artifacts include onboard phase timing, sandbox and dashboard readiness waits, policy application, inference validation probes, curl probe results, and sandbox build progress events.
+Secret-like metadata such as API keys, bearer tokens, cookies, and credentials is redacted before the file is written.
 
 ### Probe Timeouts
 

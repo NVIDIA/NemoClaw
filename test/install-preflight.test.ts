@@ -529,10 +529,9 @@ exit 98
   });
 
   it("piped --help does not show the placeholder installer version", () => {
-    const result = spawnSync("bash", ["-s", "--", "--help"], {
+    const result = spawnSync("bash", ["-lc", `cat ${JSON.stringify(INSTALLER)} | bash -s -- --help`], {
       cwd: os.tmpdir(),
       encoding: "utf-8",
-      input: fs.readFileSync(INSTALLER, "utf-8"),
     });
 
     expect(result.status).toBe(0);
@@ -542,10 +541,9 @@ exit 98
   });
 
   it("piped --version omits the placeholder installer version", () => {
-    const result = spawnSync("bash", ["-s", "--", "--version"], {
+    const result = spawnSync("bash", ["-lc", `cat ${JSON.stringify(INSTALLER)} | bash -s -- --version`], {
       cwd: os.tmpdir(),
       encoding: "utf-8",
-      input: fs.readFileSync(INSTALLER, "utf-8"),
     });
 
     expect(result.status).toBe(0);
@@ -1222,8 +1220,12 @@ fi`,
 
   function runNvidiaCdiInstallerRepairTest({
     systemctlScript,
+    isWsl = false,
+    runtime = "docker",
   }: {
     systemctlScript: string;
+    isWsl?: boolean;
+    runtime?: string;
   }) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-cdi-repair-"));
     const fakeBin = path.join(tmp, "bin");
@@ -1240,21 +1242,31 @@ fi`,
       `
 const fs = require("fs");
 exports.assessHost = () => ({
-  runtime: "docker",
+  runtime: ${JSON.stringify(runtime)},
+  isWsl: ${isWsl ? "true" : "false"},
   notes: [],
   dockerCdiSpecDirs: [process.env.CDI_DIR],
   cdiNvidiaGpuSpecMissing: !fs.existsSync(process.env.CDI_STATE),
 });
 exports.getNvidiaCdiSpecPath = (host) =>
   String(host.dockerCdiSpecDirs[0]).replace(/\\/+$/, "") + "/nvidia.yaml";
+exports.isWslDockerDesktopRuntime = (host) =>
+  Boolean(host && host.isWsl && host.runtime === "docker-desktop");
 exports.planHostRemediation = (host) =>
   host.cdiNvidiaGpuSpecMissing
-    ? [{
-        title: "Generate NVIDIA CDI device specs",
-        reason: "missing nvidia.com/gpu",
-        commands: ["sudo nvidia-ctk cdi generate --output=" + exports.getNvidiaCdiSpecPath(host)],
-        blocking: true,
-      }]
+    ? host.isWsl && host.runtime === "docker-desktop"
+      ? [{
+          title: "Use Docker Desktop WSL GPU compatibility path",
+          reason: "missing nvidia.com/gpu CDI; using Docker --gpus",
+          commands: ["verify Docker --gpus support from WSL"],
+          blocking: false,
+        }]
+      : [{
+          title: "Generate NVIDIA CDI device specs",
+          reason: "missing nvidia.com/gpu",
+          commands: ["sudo nvidia-ctk cdi generate --output=" + exports.getNvidiaCdiSpecPath(host)],
+          blocking: true,
+        }]
     : [];
 `,
     );
@@ -1332,6 +1344,7 @@ run_installer_host_preflight
       cdiDir,
       output: `${result.stdout}${result.stderr}`,
       result,
+      cdiStateExists: fs.existsSync(cdiState),
       sudoLog: fs.existsSync(sudoLog) ? fs.readFileSync(sudoLog, "utf-8") : "",
       systemctlLog: fs.existsSync(systemctlLog) ? fs.readFileSync(systemctlLog, "utf-8") : "",
     };
@@ -1394,6 +1407,29 @@ exit 1
     );
     expect(sudoLog).toMatch(/^-v$/m);
     expect(sudoLog).toContain(`nvidia-ctk cdi generate --output=${cdiDir}/nvidia.yaml`);
+  });
+
+  it("skips Linux NVIDIA CDI auto-repair on WSL Docker Desktop", () => {
+    const { cdiStateExists, output, result, sudoLog, systemctlLog } =
+      runNvidiaCdiInstallerRepairTest({
+        isWsl: true,
+        runtime: "docker-desktop",
+        systemctlScript: `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"
+touch "$CDI_STATE"
+exit 0
+`,
+      });
+
+    expect(result.status, output).toBe(0);
+    expect(cdiStateExists).toBe(false);
+    expect(output).toMatch(/Host preflight found warnings/);
+    expect(output).toMatch(/Use Docker Desktop WSL GPU compatibility path/);
+    expect(output).not.toMatch(/Trying NVIDIA CDI refresh service/);
+    expect(output).not.toMatch(/Generated NVIDIA CDI device spec/);
+    expect(systemctlLog).toBe("");
+    expect(sudoLog).toBe("");
   });
 
   it("warns on Podman but still runs onboarding", () => {
@@ -3646,9 +3682,8 @@ main() {
 }`,
     );
 
-    const result = spawnSync("bash", ["-s", "--", "--version"], {
+    const result = spawnSync("bash", ["-lc", `cat ${JSON.stringify(rootInstaller)} | bash -s -- --version`], {
       cwd: repoLike,
-      input: fs.readFileSync(rootInstaller, "utf-8"),
       encoding: "utf-8",
       env: {
         ...process.env,

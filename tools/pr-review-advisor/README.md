@@ -13,6 +13,7 @@ It complements the existing PR surfaces by keeping a NemoClaw maintainer code-re
 - acceptance-clause coverage against linked issues;
 - previous PR Review Advisor follow-up for code findings;
 - codebase drift, monolith growth, and architecture guardrails;
+- source-of-truth review for fallback, recovery, tolerant parsing, monkeypatching, and other localized workaround behavior;
 - correctness and test-quality checks that CI cannot prove.
 
 It intentionally does not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or E2E pass/fail status; those are handled elsewhere in the PR UI.
@@ -27,8 +28,9 @@ It intentionally does not report GitHub mergeability, branch protection, CI stat
 4. Installs a pinned Pi SDK package with lifecycle scripts disabled.
 5. Waits for repository-required status checks, plus the E2E Advisor recommendation, to leave the pending/in-progress state.
 6. Runs `tools/pr-review-advisor/analyze.mts` from the trusted checkout.
-7. Writes artifacts under `artifacts/pr-review-advisor/`.
-8. Posts or updates a sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->`.
+7. Opens one Pi session and reviews the PR as a short conversation: orientation/drift, security, acceptance/correctness/tests, then final JSON synthesis.
+8. Writes artifacts under `artifacts/pr-review-advisor/`.
+9. Posts or updates a sticky PR comment marked by `<!-- nemoclaw-pr-review-advisor -->`.
 
 The workflow is advisory and must not be configured as a required status check. Making it required can
 create circular wait behavior and defeats the goal of letting it observe settled required-check state.
@@ -66,11 +68,16 @@ If present, this token is used for sticky PR comments. Otherwise the workflow fa
 
 ## Artifacts
 
-- `pr-review-advisor-prompt.md` — prompt sent to the advisor.
-- `pr-review-advisor-raw-output.txt` — raw advisor transcript and diagnostics.
+- `prompts/00-system.md` — system prompt sent to the advisor.
+- `prompts/01-orient-drift.md` — orientation, codebase drift, overlaps, monolith, and localized-patch scan.
+- `prompts/02-security.md` — security-review turn.
+- `prompts/03-acceptance-correctness-tests.md` — acceptance, correctness, tests, and source-of-truth turn.
+- `prompts/04-synthesize-json.md` — final JSON synthesis turn.
+- `pr-review-advisor-raw-output.txt` — raw multi-turn advisor transcript and diagnostics.
 - `pr-review-advisor-result.json` — parsed advisor response or execution metadata.
 - `pr-review-advisor-final-result.json` — normalized result used for comments.
 - `pr-review-advisor-summary.md` — markdown summary used in the job summary/comment.
+- `pr-review-advisor-detailed-review.md` — expanded acceptance, security, and source-of-truth review details.
 - `pr-review-advisor-session.html` — exported advisor session transcript.
 
 ## Manual run

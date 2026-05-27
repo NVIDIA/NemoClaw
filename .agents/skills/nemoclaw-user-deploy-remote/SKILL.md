@@ -87,7 +87,7 @@ $ ssh <instance-name> 'cd ~/nemoclaw && set -a && . .env && set +a && openshell 
 Run a test agent prompt inside the remote sandbox:
 
 ```console
-$ openclaw agent --agent main --local -m "Hello from the remote sandbox" --session-id test
+$ openclaw agent --agent main -m "Hello from the remote sandbox" --session-id test
 ```
 
 ## Remote Dashboard Access

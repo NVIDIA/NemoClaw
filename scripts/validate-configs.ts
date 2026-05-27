@@ -9,8 +9,8 @@
 //   npx tsx scripts/validate-configs.ts              # validate all known config files
 //   npx tsx scripts/validate-configs.ts --file <config> --schema <schema>  # validate one file
 
-import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv from "ajv/dist/2020.js";
 import YAML from "yaml";
@@ -26,6 +26,10 @@ type ConfigScalar = string | number | boolean | null;
 type ConfigValue = ConfigScalar | ConfigObject | ConfigValue[];
 type ConfigObject = { [key: string]: ConfigValue };
 
+function pathRelativeToRepo(absPath: string): string {
+  return relative(REPO_ROOT, absPath).replaceAll("\\", "/");
+}
+
 /**
  * Build the list of config files and their corresponding JSON Schemas.
  * Preset YAML files are discovered dynamically from the presets directory.
@@ -39,13 +43,67 @@ function discoverTargets(): ConfigTarget[] {
     },
     {
       schema: "schemas/sandbox-policy.schema.json",
-      files: ["nemoclaw-blueprint/policies/openclaw-sandbox.yaml"],
+      files: [
+        "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+        "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+      ],
     },
     {
       schema: "schemas/openclaw-plugin.schema.json",
       files: ["nemoclaw/openclaw.plugin.json"],
     },
+    {
+      schema: "schemas/router-pool-config.schema.json",
+      files: ["nemoclaw-blueprint/router/pool-config.yaml"],
+    },
   ];
+
+  const agentsDir = join(REPO_ROOT, "agents");
+  try {
+    const agentPolicyFiles = readdirSync(agentsDir, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .flatMap((entry) => {
+        const base = `agents/${entry.name}`;
+        return [`${base}/policy-additions.yaml`, `${base}/policy-permissive.yaml`];
+      })
+      .filter((file) => existsSync(join(REPO_ROOT, file)));
+    if (agentPolicyFiles.length > 0) {
+      const sandboxPolicyTarget = targets.find(
+        (target) => target.schema === "schemas/sandbox-policy.schema.json",
+      );
+      sandboxPolicyTarget?.files.push(...agentPolicyFiles);
+    }
+  } catch (err) {
+    const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
+    // agents directory may not exist — not an error
+  }
+
+  const modelSetupDir = join(REPO_ROOT, "nemoclaw-blueprint", "model-specific-setup");
+  try {
+    const modelSetupFiles: string[] = [];
+    const walkModelSetup = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const abs = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walkModelSetup(abs);
+        } else if (entry.isFile() && entry.name.endsWith(".json") && entry.name !== "schema.json") {
+          modelSetupFiles.push(pathRelativeToRepo(abs));
+        }
+      }
+    };
+    walkModelSetup(modelSetupDir);
+    if (modelSetupFiles.length > 0) {
+      targets.push({
+        schema: "nemoclaw-blueprint/model-specific-setup/schema.json",
+        files: modelSetupFiles.sort(),
+      });
+    }
+  } catch (err) {
+    const code = typeof err === "object" && err !== null && "code" in err ? err.code : undefined;
+    if (code !== "ENOENT" && code !== "ENOTDIR") throw err;
+    // model-specific setup directory may not exist — not an error
+  }
 
   // Discover all preset YAML files dynamically.
   const presetsDir = join(REPO_ROOT, "nemoclaw-blueprint/policies/presets");
@@ -151,6 +209,8 @@ interface DangerousHostFinding {
   host: string;
 }
 
+const ROUTER_API_BASE_HOST_ALLOWLIST: ReadonlySet<string> = new Set(["integrate.api.nvidia.com"]);
+
 /**
  * Walk a parsed policy document (full `network_policies` map or a preset
  * fragment with a `preset:` block) and return every endpoint whose host
@@ -178,6 +238,38 @@ function findDangerousHosts(data: unknown): DangerousHostFinding[] {
       }
     });
   }
+  return findings;
+}
+
+function findDangerousRouterApiBases(data: unknown): DangerousHostFinding[] {
+  const findings: DangerousHostFinding[] = [];
+  if (!data || typeof data !== "object") return findings;
+  const models = (data as Record<string, unknown>).models;
+  if (!Array.isArray(models)) return findings;
+
+  models.forEach((model, index) => {
+    if (!model || typeof model !== "object") return;
+    const apiBase = (model as Record<string, unknown>).api_base;
+    if (typeof apiBase !== "string") return;
+    let url: URL;
+    try {
+      url = new URL(apiBase);
+    } catch {
+      return;
+    }
+    const hostname = url.hostname.toLowerCase();
+    if (
+      url.protocol !== "https:" ||
+      isDangerousHost(hostname) ||
+      !ROUTER_API_BASE_HOST_ALLOWLIST.has(hostname)
+    ) {
+      findings.push({
+        path: `/models/${index}/api_base`,
+        host: apiBase,
+      });
+    }
+  });
+
   return findings;
 }
 
@@ -247,7 +339,7 @@ function main(): void {
       const schemaErrors = !valid && validate.errors ? validate.errors.length : 0;
       // Semantic check: walk the parsed doc and reject catch-all hosts.
       // Runs regardless of schema outcome so operators see all issues at once.
-      const dangerous = findDangerousHosts(data);
+      const dangerous = [...findDangerousHosts(data), ...findDangerousRouterApiBases(data)];
 
       if (schemaErrors > 0 || dangerous.length > 0) {
         console.error(`FAIL: ${file}`);
@@ -258,8 +350,8 @@ function main(): void {
         }
         for (const finding of dangerous) {
           console.error(
-            `  ${finding.path}: host "${finding.host}" grants access to any destination — ` +
-              `use a specific hostname (subdomain wildcards like "*.example.com" are allowed)`,
+            `  ${finding.path}: host "${finding.host}" is not allowed — ` +
+              `use a specific public hostname (subdomain wildcards like "*.example.com" are allowed for policy hosts)`,
           );
         }
         totalErrors += schemaErrors + dangerous.length;
@@ -279,7 +371,14 @@ function main(): void {
 }
 
 // Export for unit tests without re-running main().
-export { DANGEROUS_HOSTS, isDangerousHost, findDangerousHosts };
+export {
+  DANGEROUS_HOSTS,
+  ROUTER_API_BASE_HOST_ALLOWLIST,
+  isDangerousHost,
+  findDangerousHosts,
+  findDangerousRouterApiBases,
+  discoverTargets,
+};
 
 // Only run main() when invoked directly (skip on test `import`).
 if (

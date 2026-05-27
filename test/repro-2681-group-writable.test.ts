@@ -3,13 +3,13 @@
 
 /**
  * Behavioral regression coverage for the group-writable mutable-default
- * contract (#2681).
+ * contract (#2681 and the Hermes root-entrypoint gateway split).
  *
  * These tests execute the entrypoint's permission-normalization function
  * against a temporary OpenClaw config tree instead of asserting on production
- * source text. The contract is what matters: when shields are down, OpenClaw's
- * config tree is group-writable and setgid; when shields are up (root-owned),
- * startup must not weaken the lock.
+ * source text. The contract is what matters: when shields are down, mutable
+ * config roots have the write modes needed by their gateway model; when
+ * shields are up (root-owned), startup must not weaken the lock.
  */
 
 import fs from "node:fs";
@@ -50,16 +50,30 @@ function withMockedDockerExecFileSync<T>(calls: string[][], run: () => T): T {
   };
   const originalDockerExecFileSync = dockerExecModule.dockerExecFileSync;
   const shieldsModulePath = require.resolve("../dist/lib/shields/index.js");
+  const privilegedExecPath = require.resolve("../dist/lib/sandbox/privileged-exec.js");
+  const priorPrivilegedExec = require.cache[privilegedExecPath];
   delete require.cache[shieldsModulePath];
+  require.cache[privilegedExecPath] = {
+    id: privilegedExecPath,
+    filename: privilegedExecPath,
+    loaded: true,
+    exports: {
+      privilegedSandboxExecArgv: (_sandboxName: string, cmd: readonly string[]) => [...cmd],
+    },
+  } as any;
 
   dockerExecModule.dockerExecFileSync = vi.fn((args: readonly string[]) => {
     const separator = args.indexOf("--");
     const command = separator >= 0 ? args.slice(separator + 1) : [...args];
     calls.push(command);
     if (command[0] === "stat" && command[1] === "-c") {
-      return command.at(-1) === "/sandbox/.openclaw"
-        ? "2770 sandbox:sandbox\n"
-        : "660 sandbox:sandbox\n";
+      const target = command.at(-1);
+      if (target === "/sandbox/.openclaw") return "2770 sandbox:sandbox\n";
+      if (target === "/sandbox/.hermes") return "3770 sandbox:sandbox\n";
+      if (typeof target === "string" && target.startsWith("/sandbox/.hermes/")) {
+        return "640 sandbox:sandbox\n";
+      }
+      return "660 sandbox:sandbox\n";
     }
     if (command[0] === "lsattr") {
       return `---------------------- ${command.at(-1)}\n`;
@@ -72,6 +86,8 @@ function withMockedDockerExecFileSync<T>(calls: string[][], run: () => T): T {
   } finally {
     dockerExecModule.dockerExecFileSync = originalDockerExecFileSync;
     delete require.cache[shieldsModulePath];
+    if (priorPrivilegedExec) require.cache[privilegedExecPath] = priorPrivilegedExec;
+    else delete require.cache[privilegedExecPath];
   }
 }
 
@@ -88,7 +104,7 @@ function mkdtempOnPosixFs(prefix: string): string {
   throw lastError;
 }
 
-describe("Issue #2681 — mutable OpenClaw config permissions", () => {
+describe("mutable agent config permissions", () => {
   it("restores group-write and setgid on mutable config trees during non-root startup", () => {
     const tmpDir = mkdtempOnPosixFs("nemoclaw-2681-perms-");
     const configDir = path.join(tmpDir, ".openclaw");
@@ -166,6 +182,35 @@ describe("Issue #2681 — mutable OpenClaw config permissions", () => {
     );
   });
 
+  it("shields-down restores Hermes sticky group-writable config root without group-writable config files", () => {
+    const commands: string[][] = [];
+    withMockedDockerExecFileSync(commands, () => {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { unlockAgentConfig } = require("../dist/lib/shields/index.js") as {
+        unlockAgentConfig: (
+          sandboxName: string,
+          target: {
+            agentName?: string;
+            configPath: string;
+            configDir: string;
+            sensitiveFiles?: string[];
+          },
+        ) => void;
+      };
+
+      unlockAgentConfig("sandbox-pod", {
+        agentName: "hermes",
+        configPath: "/sandbox/.hermes/config.yaml",
+        configDir: "/sandbox/.hermes",
+        sensitiveFiles: ["/sandbox/.hermes/.env"],
+      });
+    });
+
+    expect(commands).toContainEqual(["chmod", "640", "/sandbox/.hermes/config.yaml"]);
+    expect(commands).toContainEqual(["chmod", "640", "/sandbox/.hermes/.env"]);
+    expect(commands).toContainEqual(["chmod", "3770", "/sandbox/.hermes"]);
+  });
+
   it("shields-up strips setgid from the OpenClaw config root before verifying lock", () => {
     const probe = spawnSync(
       process.execPath,
@@ -191,6 +236,13 @@ Module._load = function patchedLoad(request, parent, isMain) {
           return "----i----------------- " + command.at(-1) + "\n";
         }
         return "";
+      },
+    };
+  }
+  if (request === "../sandbox/privileged-exec") {
+    return {
+      privilegedSandboxExecArgv(_sandboxName, cmd) {
+        return [...cmd];
       },
     };
   }

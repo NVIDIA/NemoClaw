@@ -14,6 +14,16 @@ import { runCurlProbe } from "../adapters/http/probe";
 import type { ContainerRuntime } from "../platform";
 import type { CaptureResult } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
+import {
+  applyOllamaRuntimeContextWindow as applyOllamaRuntimeContextWindowWithHost,
+  MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  parsePositiveInteger,
+  probeOllamaRuntimeModelStatus as probeOllamaRuntimeModelStatusWithHost,
+  resetOllamaRuntimeContextWindowAutoState,
+  resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
+} from "./ollama-runtime-context";
+import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
+export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 
 const { shellQuote, runCapture, runCaptureEx } = require("../runner");
 
@@ -77,6 +87,13 @@ export const DEFAULT_OLLAMA_MODEL = assertRegistryTag("nemotron-3-nano:30b");
 export const QWEN3_6_OLLAMA_MODEL = assertRegistryTag("qwen3.6:35b");
 
 export type RunCaptureFn = (cmd: string | string[], opts?: { ignoreError?: boolean }) => string;
+
+export {
+  getInstalledOllamaVersion,
+  getRunningOllamaDaemonVersion,
+  isOllamaVersionAtLeast,
+  MIN_OLLAMA_VERSION,
+} from "./ollama-version";
 
 export type RunCaptureExFn = (cmd: string[]) => CaptureResult;
 
@@ -220,6 +237,23 @@ function defaultLoadOllamaProxyToken(): string | null {
 
 function runLocalCurlProbe(argv: string[]): CurlProbeResult {
   return runCurlProbe(argv, { env: buildSubprocessEnv(), replaceEnv: true });
+}
+
+// A 200 response on `/api/tags` alone is not enough to call Ollama healthy —
+// a captive HTTP_PROXY, a stale listener, or a stub on the loopback port can
+// all answer with arbitrary 2xx bodies that look healthy at the curl-status
+// level. The authoritative signal is the Ollama wire format itself:
+// `{ "models": [...] }`. An empty array is fine — that just means no models
+// pulled yet — but a body that doesn't parse as JSON-with-array-`models` did
+// not come from Ollama and the probe should not call it healthy. (#4275)
+function isValidOllamaTagsResponseBody(body: string): boolean {
+  if (!body) return false;
+  try {
+    const parsed = JSON.parse(body);
+    return parsed !== null && typeof parsed === "object" && Array.isArray(parsed.models);
+  } catch {
+    return false;
+  }
 }
 
 export function validateOllamaPortConfiguration(): ValidationResult {
@@ -369,6 +403,21 @@ export function probeOllamaAuthProxyHealth(
     probeLabel: "auth proxy",
   };
   if (result.ok) {
+    // A 200 from the proxy alone is not a healthy signal — the proxy may be
+    // serving a captive HTTP_PROXY page, or its upstream Ollama backend may
+    // be down but the proxy returned a stub. Confirm with the wire format. (#4275)
+    if (!isValidOllamaTagsResponseBody(result.body)) {
+      return {
+        ...base,
+        ok: false,
+        failureLabel: "unhealthy",
+        detail:
+          `Ollama auth proxy returned HTTP ${result.httpStatus} on ${endpoint} but the body ` +
+          `is not a valid /api/tags response. The proxy is reachable but its upstream Ollama ` +
+          `backend is not, or an HTTP proxy is intercepting the loopback. ` +
+          `Restart \`ollama serve\` and check HTTP_PROXY/NO_PROXY.`,
+      };
+    }
     return { ...base, ok: true, detail: `Ollama auth proxy is reachable on ${endpoint}.` };
   }
   if (result.httpStatus === 401) {
@@ -429,6 +478,25 @@ export function probeLocalProviderHealth(
   const attachProbeLabel = probeLabel ? { probeLabel } : {};
 
   if (result.ok) {
+    // For ollama-local, a 200 is necessary but not sufficient: a captive
+    // HTTP_PROXY, a stale listener on 11434, or any other HTTP responder
+    // can return 200 with an arbitrary body. Treat the probe as healthy
+    // only when the response is the Ollama /api/tags JSON shape. (#4275)
+    if (provider === "ollama-local" && !isValidOllamaTagsResponseBody(result.body)) {
+      return {
+        ok: false,
+        providerLabel,
+        endpoint,
+        failureLabel: "unhealthy",
+        detail:
+          `${providerLabel} responded on ${endpoint} with HTTP ${result.httpStatus} but the ` +
+          `body is not a valid /api/tags response. The listener may not be Ollama (e.g. a ` +
+          `stale process or an HTTP proxy intercepting the loopback). Restart \`ollama serve\` ` +
+          `and verify HTTP_PROXY/NO_PROXY.`,
+        ...attachProbeLabel,
+        ...attachSubprobes,
+      };
+    }
     return {
       ok: true,
       providerLabel,
@@ -659,67 +727,32 @@ export function parseOllamaTags(output: string | null | undefined): string[] {
   }
 }
 
-export interface OllamaRuntimeModelStatus {
-  probed: boolean;
-  loaded: boolean;
-  cpuOnly: boolean;
-  processor?: string;
-  sizeVram?: number;
-}
-
-function normalizeOllamaModelName(value: unknown): string {
-  return String(value || "").trim();
-}
+export { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW, parsePositiveInteger };
 
 export function probeOllamaRuntimeModelStatus(
   model: string,
   runCaptureImpl?: RunCaptureFn,
 ): OllamaRuntimeModelStatus {
-  const capture = runCaptureImpl ?? runCapture;
-  const host = getResolvedOllamaHost();
-  const output = capture(
-    [
-      "curl",
-      "-sf",
-      "--connect-timeout",
-      "3",
-      "--max-time",
-      "5",
-      `http://${host}:${OLLAMA_PORT}/api/ps`,
-    ],
-    { ignoreError: true },
+  return probeOllamaRuntimeModelStatusWithHost(model, getResolvedOllamaHost, runCaptureImpl);
+}
+
+export function resolveOllamaRuntimeContextWindow(
+  model: string,
+  currentContextWindow: string | null | undefined = null,
+  runCaptureImpl?: RunCaptureFn,
+): number | null {
+  return resolveOllamaRuntimeContextWindowWithHost(
+    model,
+    currentContextWindow,
+    getResolvedOllamaHost,
+    runCaptureImpl,
   );
-  if (!output) return { probed: false, loaded: false, cpuOnly: false };
+}
 
-  try {
-    const parsed = JSON.parse(String(output || ""));
-    const models = Array.isArray(parsed?.models) ? parsed.models : [];
-    const target = normalizeOllamaModelName(model);
-    const loaded = models.find((entry: { name?: unknown; model?: unknown }) => {
-      return (
-        normalizeOllamaModelName(entry?.name) === target ||
-        normalizeOllamaModelName(entry?.model) === target
-      );
-    });
-    if (!loaded) return { probed: true, loaded: false, cpuOnly: false };
+export { resetOllamaRuntimeContextWindowAutoState };
 
-    const rawSizeVram = Number((loaded as { size_vram?: unknown }).size_vram);
-    const hasSizeVram = Number.isFinite(rawSizeVram);
-    const processor = normalizeOllamaModelName((loaded as { processor?: unknown }).processor);
-    const mentionsGpu = /\bGPU\b/i.test(processor);
-    const processorCpuOnly = /\bCPU\b/i.test(processor) && !mentionsGpu;
-    const sizeVramCpuOnly = hasSizeVram && rawSizeVram === 0 && !mentionsGpu;
-
-    return {
-      probed: true,
-      loaded: true,
-      cpuOnly: processorCpuOnly || sizeVramCpuOnly,
-      ...(processor ? { processor } : {}),
-      ...(hasSizeVram ? { sizeVram: rawSizeVram } : {}),
-    };
-  } catch {
-    return { probed: true, loaded: false, cpuOnly: false };
-  }
+export function applyOllamaRuntimeContextWindow(selectedModel: string): void {
+  applyOllamaRuntimeContextWindowWithHost(selectedModel, getResolvedOllamaHost);
 }
 
 function formatOllamaCpuOnlyDiagnostic(model: string, status: OllamaRuntimeModelStatus): string {
@@ -789,6 +822,7 @@ export function resolveNonInteractiveOllamaModel(
   recoveredModel: string | null,
   gpu: GpuInfo | null,
   log: (message: string) => void = (m) => console.warn(m),
+  runCaptureImpl?: RunCaptureFn,
 ): string {
   const explicit = requestedModel || recoveredModel;
   if (explicit && !modelFitsAvailableMemory(explicit, gpu)) {
@@ -805,7 +839,7 @@ export function resolveNonInteractiveOllamaModel(
   if (!explicit && !anyRegistryModelFits(gpu)) {
     warnNoBootstrapModelFits(gpu, log);
   }
-  return explicit || getDefaultOllamaModel(gpu);
+  return explicit || getDefaultOllamaModel(gpu, runCaptureImpl);
 }
 
 function warnNoBootstrapModelFits(
@@ -896,6 +930,7 @@ export function validateOllamaModel(
   runCaptureImpl?: RunCaptureFn,
   isSparkImpl?: () => boolean,
   runCaptureExImpl?: RunCaptureExFn,
+  options: { allowToolsIncompatible?: boolean } = {},
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
   const captureEx = runCaptureExImpl ?? runCaptureEx;
@@ -925,37 +960,46 @@ export function validateOllamaModel(
     if (parsed && typeof parsed.error === "string" && parsed.error.trim()) {
       const errText = parsed.error.trim();
       if (/does not support tools/i.test(errText)) {
-        return {
-          ok: false,
-          message:
-            `Selected Ollama model '${model}' does not support tool calling, which ` +
-            `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
-            `model's capabilities and pick one whose list includes 'tools'.`,
-        };
-      }
-      // Ollama checks available RAM instead of total; false positive on DGX Spark
-      // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
-      const memMatch = errText.match(
-        /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
-      );
-      if (memMatch && sparkHost) {
-        const requiresGiB = parseFloat(memMatch[1]);
-        const freeOut = capture(["free", "-m"], { ignoreError: true });
-        if (freeOut) {
-          const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
-          if (memLine) {
-            const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
-            const totalGiB = totalMB / 1024;
-            if (totalGiB >= requiresGiB) {
-              return { ok: true };
+        if (options.allowToolsIncompatible !== true) {
+          return {
+            ok: false,
+            message:
+              `Selected Ollama model '${model}' does not support tool calling, which ` +
+              `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
+              `model's capabilities and pick one whose list includes 'tools'.`,
+          };
+        }
+        // Override accepted — log and fall through to the Spark CPU-only
+        // runtime check below so it still enforces. (#4241)
+        console.warn(
+          `  ⚠ Ollama model '${model}' confirmed not to support tools; ` +
+            `continuing because the no-tools override was accepted.`,
+        );
+      } else {
+        // Ollama checks available RAM instead of total; false positive on DGX Spark
+        // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
+        const memMatch = errText.match(
+          /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
+        );
+        if (memMatch && sparkHost) {
+          const requiresGiB = parseFloat(memMatch[1]);
+          const freeOut = capture(["free", "-m"], { ignoreError: true });
+          if (freeOut) {
+            const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
+            if (memLine) {
+              const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
+              const totalGiB = totalMB / 1024;
+              if (totalGiB >= requiresGiB) {
+                return { ok: true };
+              }
             }
           }
         }
+        return {
+          ok: false,
+          message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
+        };
       }
-      return {
-        ok: false,
-        message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
-      };
     }
   } catch {
     /* ignored */
@@ -972,6 +1016,29 @@ export function validateOllamaModel(
   }
 
   return { ok: true };
+}
+
+// Helpers for threading the user's "use this no-tools Ollama model anyway"
+// override (see #4241) through onboard validators so they don't loop the
+// wizard back to model selection after the user already accepted.
+
+export function buildOllamaProbeOptions(allowToolsIncompatible: boolean): {
+  skipResponsesProbe: true;
+  requireChatCompletionsToolCalling: boolean;
+  allowHostDockerInternal: boolean;
+} {
+  return {
+    skipResponsesProbe: true,
+    requireChatCompletionsToolCalling: !allowToolsIncompatible,
+    allowHostDockerInternal: getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
+  };
+}
+
+export function validateOllamaModelWithToolsOverride(
+  model: string,
+  allowToolsIncompatible: boolean,
+): ValidationResult {
+  return validateOllamaModel(model, undefined, undefined, undefined, { allowToolsIncompatible });
 }
 
 // ─── Tools-capability probe (issue #2667) ─────────────────────────

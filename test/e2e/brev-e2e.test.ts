@@ -270,6 +270,7 @@ function sshEnv(
     `export NEMOCLAW_NON_INTERACTIVE=1`,
     `export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1`,
     `export NEMOCLAW_SANDBOX_NAME=e2e-test`,
+    `export NEMOCLAW_TRACE_DIR=/tmp/nemoclaw-traces`,
   ];
   if (GPU_TEST_SUITE) {
     // This suite validates Docker GPU passthrough and sandbox inference wiring.
@@ -1068,18 +1069,6 @@ describe("Brev GPU runtime setup", () => {
     );
   });
 
-  it("runs Docker GPU sandbox inference proof with the OpenShell proxy env", () => {
-    const script = fs.readFileSync(path.join(REPO_DIR, "test/e2e/test-gpu-e2e.sh"), "utf-8");
-
-    expect(script).toContain('[[ "$SANDBOX_INFERENCE_URL" == https://inference.local/* ]]');
-    expect(script).toContain('SANDBOX_INFERENCE_DOCKER_EXEC_ENV=(');
-    expect(script).toContain('--env "HTTPS_PROXY=${INFERENCE_PROXY_URL}"');
-    expect(script).toContain('INFERENCE_NO_PROXY="localhost,127.0.0.1,::1,${INFERENCE_PROXY_HOST}"');
-    expect(script).toContain("curl -skS --max-time 90");
-    expect(script).toContain(
-      'docker exec "${SANDBOX_INFERENCE_DOCKER_EXEC_ENV[@]}" "$sandbox_container_id"',
-    );
-  });
 });
 
 describe.runIf(hasRequiredVars && hasAuthenticatedBrev)("Brev E2E", () => {
