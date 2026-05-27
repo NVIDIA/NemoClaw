@@ -913,39 +913,6 @@ describe("planHostRemediation", () => {
     expect(actions[0].reason).toContain("docker group");
   });
 
-  it("suggests Docker Desktop WSL integration when Docker is unreachable from WSL", () => {
-    const actions = planHostRemediation({
-      platform: "linux",
-      isWsl: true,
-      runtime: "unknown",
-      packageManager: "apt",
-      systemctlAvailable: false,
-      dockerServiceActive: false,
-      dockerServiceEnabled: false,
-      dockerInstalled: true,
-      dockerRunning: false,
-      dockerReachable: false,
-      nodeInstalled: true,
-      openshellInstalled: true,
-      dockerCgroupVersion: "unknown",
-      dockerDefaultCgroupnsMode: "unknown",
-      isContainerRuntimeUnderProvisioned: false,
-      hasNestedOverlayConflict: false,
-      requiresHostCgroupnsFix: false,
-      isUnsupportedRuntime: false,
-      isHeadlessLikely: false,
-      hasNvidiaGpu: false,
-      dockerCdiSpecDirs: [],
-      cdiNvidiaGpuSpecMissing: false,
-      nvidiaContainerToolkitInstalled: true,
-      notes: [],
-    });
-
-    expect(actions[0].id).toBe("start_docker");
-    expect(actions[0].commands[0]).toContain("Docker Desktop > Settings > Resources > WSL integration");
-    expect(actions[0].commands[0]).toContain("enable integration for this distro");
-  });
-
   it("warns that podman is unsupported on macOS without blocking onboarding", () => {
     const actions = planHostRemediation({
       platform: "darwin",

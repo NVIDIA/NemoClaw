@@ -165,12 +165,89 @@ Ensure-UbuntuWsl
     expect(parsed.startProcessCalls[0][1]).toContain("--install -d 'Ubuntu-24.04'");
     expect(parsed.startProcessCalls[0][1]).not.toContain("--no-launch");
     expect(parsed.nativeCalls).not.toContainEqual(["wsl.exe", "--set-default Ubuntu-24.04"]);
+    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "-d Ubuntu-24.04 -- echo WSL_OK"]);
     expect(parsed.nativeCalls).toContainEqual(["Stop-WslDistroForDockerIntegration", "Ubuntu-24.04"]);
     expect(parsed.nativeCalls).toContainEqual(["Ensure-WslDockerCliConfigDirectory", "Ubuntu-24.04"]);
     expect(parsed.statusMessages).toContain(
       "WSL distro registered: Ubuntu-24.04",
     );
     expect(parsed.statusMessages).toContain("Ubuntu-24.04 first-run user is registered (UID 1000).");
+  });
+
+  itPowerShell("verifies WSL startup even when Docker Desktop install is disabled", () => {
+    const result = runPowerShellHarness(`
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$InstallDockerDesktop = $false
+$script:nativeCalls = @()
+$script:statusMessages = @()
+
+function Resolve-WslExe { return 'wsl.exe' }
+function Get-WslDistros { return @('Ubuntu-24.04') }
+function Ensure-WslDistroVersion2 { param([string]$Name) }
+function Invoke-NativeCommand {
+  param([string]$FilePath, [string[]]$ArgumentList = @(), [switch]$SuppressOutput)
+  $script:nativeCalls += ,@($FilePath, ($ArgumentList -join ' '))
+  return 0
+}
+function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:statusMessages += $Message }
+
+Ensure-UbuntuWsl
+
+[pscustomobject]@{
+  nativeCalls = $script:nativeCalls
+  statusMessages = $script:statusMessages
+} | ConvertTo-Json -Depth 5 -Compress
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "-d Ubuntu-24.04 -- echo WSL_OK"]);
+    expect(parsed.statusMessages).toContain("Verified WSL distro 'Ubuntu-24.04' starts.");
+    expect(parsed.statusMessages).toContain("Ubuntu-24.04 is ready.");
+  });
+
+  itPowerShell("fails an already registered distro that cannot start", () => {
+    const result = runPowerShellHarness(`
+$ErrorActionPreference = 'Stop'
+. ${JSON.stringify(BOOTSTRAP_WINDOWS)}
+
+$InstallDockerDesktop = $false
+$script:nativeCalls = @()
+$script:statusMessages = @()
+$script:outcome = 'success'
+
+function Resolve-WslExe { return 'wsl.exe' }
+function Get-WslDistros { return @('Ubuntu-24.04') }
+function Ensure-WslDistroVersion2 { param([string]$Name) }
+function Invoke-NativeCommand {
+  param([string]$FilePath, [string[]]$ArgumentList = @(), [switch]$SuppressOutput)
+  $script:nativeCalls += ,@($FilePath, ($ArgumentList -join ' '))
+  return 1
+}
+function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:statusMessages += $Message }
+
+try {
+  Ensure-UbuntuWsl
+} catch {
+  $script:outcome = $_.Exception.Message
+}
+
+[pscustomobject]@{
+  nativeCalls = $script:nativeCalls
+  statusMessages = $script:statusMessages
+  outcome = $script:outcome
+} | ConvertTo-Json -Depth 5 -Compress
+`);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toBe("");
+    const parsed = JSON.parse(result.stdout.trim().split(/\r?\n/).at(-1) ?? "{}");
+    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "-d Ubuntu-24.04 -- echo WSL_OK"]);
+    expect(parsed.outcome).toContain("WSL distro 'Ubuntu-24.04' is registered but could not start");
+    expect(parsed.statusMessages).not.toContain("Ubuntu-24.04 is ready.");
   });
 
   itPowerShell("prints the issue 3974 guidance when the deferred Ubuntu launch fails", () => {

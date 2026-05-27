@@ -850,6 +850,18 @@ function Stop-WslDistroForDockerIntegration {
     }
 }
 
+function Assert-WslDistroStarts {
+    param([Parameter(Mandatory)] [string]$Name)
+
+    $wsl = Resolve-WslExe
+    Write-Status "Verifying WSL distro '$Name' starts..."
+    $startExitCode = Invoke-NativeCommand -FilePath $wsl -ArgumentList @('-d', $Name, '--', 'echo', 'WSL_OK') -SuppressOutput
+    if ($startExitCode -ne 0) {
+        throw "WSL distro '$Name' is registered but could not start. Run 'wsl -d $Name' from PowerShell, resolve the startup error, then rerun this script."
+    }
+    Write-Status "Verified WSL distro '$Name' starts."
+}
+
 function Ensure-WslDockerCliConfigDirectory {
     param([Parameter(Mandatory)] [string]$Name)
 
@@ -914,6 +926,7 @@ function Ensure-UbuntuWsl {
     }
 
     Ensure-WslDistroVersion2 -Name $DistroName
+    Assert-WslDistroStarts -Name $DistroName
     Ensure-WslDockerCliConfigDirectory -Name $DistroName
 
     Write-Status "$DistroName is ready."
