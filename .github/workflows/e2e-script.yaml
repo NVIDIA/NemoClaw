@@ -66,6 +66,13 @@ on:
 permissions:
   contents: read
 
+env:
+  # GitHub-hosted Linux runners retain dangerous bounding-set capabilities but
+  # do not grant CAP_SETPCAP to the sandbox entrypoint. Functional E2E runs opt
+  # in explicitly so #4264's fail-closed guard remains covered by the dedicated
+  # gateway-isolation security regression instead of breaking every sandbox use.
+  NEMOCLAW_ALLOW_RESIDUAL_CAPS: "1"
+
 jobs:
   run:
     runs-on: ${{ inputs.runner }}

@@ -137,6 +137,14 @@ on:
 permissions:
   contents: read
 
+env:
+  # GitHub-hosted Linux runners retain dangerous bounding-set capabilities but
+  # do not grant CAP_SETPCAP to the sandbox entrypoint. Nightly functional E2E
+  # jobs opt in explicitly so #4264's fail-closed guard remains covered by the
+  # dedicated gateway-isolation security regression instead of breaking every
+  # sandbox use on these CI hosts.
+  NEMOCLAW_ALLOW_RESIDUAL_CAPS: "1"
+
 concurrency:
   group: nightly-e2e-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && format('{0}-{1}', github.ref, inputs.pr_number || 'manual') || 'schedule' }}
   cancel-in-progress: true
