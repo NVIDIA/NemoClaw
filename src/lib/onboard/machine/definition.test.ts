@@ -10,6 +10,7 @@ import {
   ONBOARD_MACHINE_STATE_IDS,
   ONBOARD_MACHINE_TERMINAL_STATE_IDS,
 } from "./definition";
+import { ONBOARD_SESSION_STEP_TO_MACHINE_STATE } from "./events";
 
 const expectedStateOrder = [
   "init",
@@ -63,6 +64,16 @@ describe("onboard machine definition", () => {
       "openclaw",
       "policies",
     ]);
+  });
+
+  it("derives the session step mapping from state definitions", () => {
+    const mappingFromDefinitions = Object.fromEntries(
+      ONBOARD_MACHINE_STATE_DEFINITIONS.flatMap((definition) =>
+        "stepName" in definition ? [[definition.stepName, definition.state]] : [],
+      ),
+    );
+
+    expect(ONBOARD_SESSION_STEP_TO_MACHINE_STATE).toEqual(mappingFromDefinitions);
   });
 
   it("keeps progress metadata attached only to state-backed steps", () => {

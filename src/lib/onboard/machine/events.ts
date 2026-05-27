@@ -4,24 +4,32 @@
 import type { JsonObject, JsonValue } from "../../core/json-types";
 import { redactSensitiveText, redactUrl } from "../../security/redact";
 import type { HermesAuthMethod, Session } from "../../state/onboard-session";
+import {
+  ONBOARD_MACHINE_STATE_DEFINITIONS,
+  type OnboardMachineStateWithStepDefinition,
+} from "./definition";
 import type {
   OnboardMachineContext,
   OnboardMachineEventType,
   OnboardMachineState,
 } from "./types";
 
-export const ONBOARD_SESSION_STEP_TO_MACHINE_STATE = {
-  preflight: "preflight",
-  gateway: "gateway",
-  provider_selection: "provider_selection",
-  inference: "inference",
-  sandbox: "sandbox",
-  agent_setup: "agent_setup",
-  openclaw: "openclaw",
-  policies: "policies",
-} as const satisfies Readonly<Record<string, OnboardMachineState>>;
+type OnboardSessionStepDefinition = OnboardMachineStateWithStepDefinition;
 
-export type OnboardSessionStepName = keyof typeof ONBOARD_SESSION_STEP_TO_MACHINE_STATE;
+export type OnboardSessionStepName = OnboardSessionStepDefinition["stepName"];
+
+type OnboardSessionStepToMachineState = {
+  readonly [StepName in OnboardSessionStepName]: Extract<
+    OnboardSessionStepDefinition,
+    { stepName: StepName }
+  >["state"];
+};
+
+export const ONBOARD_SESSION_STEP_TO_MACHINE_STATE = Object.fromEntries(
+  ONBOARD_MACHINE_STATE_DEFINITIONS.flatMap((definition) =>
+    "stepName" in definition ? [[definition.stepName, definition.state]] : [],
+  ),
+) as OnboardSessionStepToMachineState;
 
 export interface OnboardMachineEvent {
   version: 1;
