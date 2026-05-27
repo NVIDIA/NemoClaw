@@ -25,10 +25,11 @@ const debounceMs = 500;
 const fernConfig = JSON.parse(
   readFileSync(path.join(repoRoot, "fern", "fern.config.json"), "utf8"),
 ) as FernConfig;
-if (typeof fernConfig.version !== "string" || fernConfig.version.length === 0) {
-  throw new Error("fern.config.json must contain a non-empty string version");
+const trimmedFernVersion = typeof fernConfig.version === "string" ? fernConfig.version.trim() : "";
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(trimmedFernVersion)) {
+  throw new Error("fern.config.json must contain an exact semver version");
 }
-const fernVersion = fernConfig.version;
+const fernVersion = trimmedFernVersion;
 
 const branchName = currentBranchName();
 let running = false;

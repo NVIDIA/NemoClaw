@@ -40,7 +40,7 @@ type ImageBuildResult = {
 
 function requireValue(argv: string[], index: number, flag: string): string {
   const value = argv[index];
-  if (!value) {
+  if (!value || value.startsWith("-")) {
     throw new Error(`Missing value for ${flag}`);
   }
   return value;
@@ -88,7 +88,12 @@ function run(command: string, args: string[], options: RunOptions = {}): string 
 
 function makeTempWorktree(mainRef: string, currentRepo: string): string {
   const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-main-worktree-"));
-  run("git", ["worktree", "add", "--detach", worktreeRoot, mainRef], { cwd: currentRepo });
+  try {
+    run("git", ["worktree", "add", "--detach", worktreeRoot, mainRef], { cwd: currentRepo });
+  } catch (error) {
+    fs.rmSync(worktreeRoot, { recursive: true, force: true });
+    throw error;
+  }
   return worktreeRoot;
 }
 
