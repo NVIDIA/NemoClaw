@@ -943,6 +943,119 @@ describe("CLI dispatch", () => {
     });
   });
 
+  it("sandbox status --json emits structured per-sandbox report", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-"),
+    );
+    const localBin = path.join(home, "bin");
+    const sandboxName = `alpha-${process.pid}-${Date.now()}`;
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, sandboxName, {
+      model: "configured-model",
+      provider: "configured-provider",
+      gpuEnabled: true,
+      policies: ["npm"],
+      hostGpuDetected: true,
+      sandboxGpuEnabled: true,
+      sandboxGpuMode: "passthrough",
+      sandboxGpuDevice: "0",
+      openshellDriver: "docker",
+      openshellVersion: "0.0.44",
+    } as unknown as Partial<SandboxEntry>);
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: nvidia/nemotron'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv(`${sandboxName} status --json`, {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.out.trim().startsWith("{")).toBe(true);
+    expect(r.out.trim().endsWith("}")).toBe(true);
+    expect(r.out).not.toContain("Sandbox: ");
+    expect(r.out).not.toContain("Nonexistent flag: --json");
+
+    const parsed = JSON.parse(r.out);
+    expect(parsed).toMatchObject({
+      schemaVersion: 1,
+      name: sandboxName,
+      found: true,
+      model: "nvidia/nemotron",
+      provider: "nvidia-prod",
+      hostGpuDetected: true,
+      sandboxGpuEnabled: true,
+      sandboxGpuMode: "passthrough",
+      sandboxGpuDevice: "0",
+      openshellDriver: "docker",
+      openshellVersion: "0.0.44",
+      policies: ["npm"],
+    });
+    expect(typeof parsed.openshellDriver).toBe("string");
+    expect(typeof parsed.openshellVersion).toBe("string");
+    expect(parsed).toHaveProperty("phase");
+    expect(parsed).toHaveProperty("inferenceHealth");
+    expect(parsed).toHaveProperty("gatewayState");
+  });
+
+  it("sandbox status --json defaults openshell driver/version to 'unknown' strings", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-unknown-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha");
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      ["#!/usr/bin/env bash", "exit 0"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status --json", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    const parsed = JSON.parse(r.out);
+    expect(parsed.openshellDriver).toBe("unknown");
+    expect(parsed.openshellVersion).toBe("unknown");
+    expect(typeof parsed.openshellDriver).toBe("string");
+    expect(typeof parsed.openshellVersion).toBe("string");
+  });
+
+  it("sandbox status --help advertises --json flag", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-help-json-"),
+    );
+    writeSandboxRegistry(home);
+    const r = runWithEnv("sandbox status alpha --help", { HOME: home });
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("--json");
+    expect(r.out).toContain("$ nemoclaw sandbox status <name> [--json]");
+    expect(r.out).toContain("$ nemoclaw sandbox status alpha --json");
+  });
+
   it("status rejects unknown flags through current dispatch path", () => {
     const r = run("status --bogus");
     expect(r.code).toBe(2);

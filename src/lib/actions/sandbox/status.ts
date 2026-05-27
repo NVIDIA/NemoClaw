@@ -63,6 +63,85 @@ export function getSandboxStatusInferenceHealth(
   });
 }
 
+export interface SandboxStatusReport {
+  schemaVersion: 1;
+  name: string;
+  found: boolean;
+  model: string;
+  provider: string;
+  phase: string | null;
+  gatewayState: string;
+  inferenceHealth: ProviderHealthStatus | null;
+  hostGpuDetected: boolean;
+  sandboxGpuEnabled: boolean;
+  sandboxGpuMode: string | null;
+  sandboxGpuDevice: string | null;
+  openshellDriver: string;
+  openshellVersion: string;
+  policies: string[];
+}
+
+export async function getSandboxStatusReport(
+  sandboxName: string,
+): Promise<SandboxStatusReport> {
+  const sb = registry.getSandbox(sandboxName);
+  let lookup: SandboxGatewayState;
+  try {
+    lookup = await getReconciledSandboxGatewayState(sandboxName, {
+      getState: getSandboxGatewayStateForStatus,
+    });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    lookup = {
+      state: "gateway_error",
+      output: `  Could not probe live gateway state: ${message}`,
+    };
+  }
+  let liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null = null;
+  if (lookup.state === "present") {
+    try {
+      liveResult = await captureOpenshellForStatus(["inference", "get"]);
+    } catch {
+      liveResult = null;
+    }
+  }
+  const live =
+    liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
+  const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
+  const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
+  const inferenceHealth = getSandboxStatusInferenceHealth(
+    lookup.state === "present",
+    currentProvider,
+    currentModel,
+  );
+  const phase =
+    lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
+  const sandboxGpuEnabled = sb
+    ? (sb.sandboxGpuEnabled ?? (sb.gpuEnabled === true))
+    : false;
+  const policies =
+    sb && Array.isArray(sb.policies)
+      ? sb.policies.filter((policy): policy is string => typeof policy === "string")
+      : [];
+  return {
+    schemaVersion: 1,
+    name: sandboxName,
+    found: !!sb,
+    model: currentModel,
+    provider: currentProvider,
+    phase,
+    gatewayState: lookup.state,
+    inferenceHealth,
+    hostGpuDetected: !!(sb && sb.hostGpuDetected),
+    sandboxGpuEnabled,
+    sandboxGpuMode: (sb && sb.sandboxGpuMode) || null,
+    sandboxGpuDevice: (sb && sb.sandboxGpuDevice) || null,
+    openshellDriver: (sb && sb.openshellDriver) || "unknown",
+    openshellVersion: (sb && sb.openshellVersion) || "unknown",
+    policies,
+  };
+}
+
 /**
  * Render one Inference status line. The main probe and each subprobe go
  * through this helper so multi-hop providers (e.g. ollama-local backend +
