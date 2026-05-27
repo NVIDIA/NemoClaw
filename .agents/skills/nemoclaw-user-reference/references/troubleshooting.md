@@ -211,7 +211,7 @@ $ NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 nemoclaw onbo
 Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only when other hosts on the
 network should be able to reach the gateway.
 
-See Environment Variables (use the `nemoclaw-user-reference` skill) for the full list of port overrides.
+See [Environment Variables](commands.md#environment-variables) for the full list of port overrides.
 
 ### Running multiple sandboxes simultaneously
 
@@ -1383,7 +1383,7 @@ If you see this error, use the host-side config command instead:
 $ nemoclaw <name> config set --key <dotpath> --value '<json-or-string>' --restart
 ```
 
-Refer to Commands (use the `nemoclaw-user-reference` skill) for the full list of supported configuration keys.
+Refer to [Commands](commands.md) for the full list of supported configuration keys.
 
 ### OpenClaw dashboard is unreachable after extended uptime on Brev
 

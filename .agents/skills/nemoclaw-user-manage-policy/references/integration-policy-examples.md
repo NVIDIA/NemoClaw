@@ -330,7 +330,7 @@ Use `nemoclaw my-assistant policy-add` for maintained NemoClaw presets.
 
 ## Next Steps
 
-- Approve or Deny Agent Network Requests (use the `nemoclaw-user-manage-policy` skill) for the interactive OpenShell TUI flow.
-- Customize the Sandbox Network Policy (use the `nemoclaw-user-manage-policy` skill) for static policy edits and raw OpenShell policy files.
+- [Approve or Deny Agent Network Requests](approve-network-requests.md) for the interactive OpenShell TUI flow.
+- [Customize the Sandbox Network Policy](../SKILL.md) for static policy edits and raw OpenShell policy files.
 - Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) for Telegram, Discord, Slack, WeChat, and WhatsApp channel configuration.
 - Commands (use the `nemoclaw-user-reference` skill) for the full `policy-add`, `policy-list`, `policy-remove`, and `channels` command reference.

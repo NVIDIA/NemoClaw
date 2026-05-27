@@ -204,4 +204,4 @@ The status output includes the active provider, model, and endpoint with the res
 
 ## Related Topics
 
-- Inference Options (use the `nemoclaw-user-configure-inference` skill) for the full list of providers available during onboarding.
+- [Inference Options](inference-options.md) for the full list of providers available during onboarding.
