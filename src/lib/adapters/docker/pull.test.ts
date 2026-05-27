@@ -60,6 +60,9 @@ describe("docker pull progress watchdog", () => {
     expect(dockerPullProgressSignature("b39b21d4717d: Download complete ")).toBe(
       "layer:b39b21d4717d:Download complete",
     );
+    expect(
+      dockerPullProgressSignature("#12 sha256:abc123 25.4MB/100MB 4.0s 10.1MB/s"),
+    ).toBeNull();
   });
 
   it("spawns plain docker pull without unsupported progress flags", async () => {
@@ -128,6 +131,26 @@ describe("docker pull progress watchdog", () => {
       timeoutKind: "stall",
     });
     expect(child.kill).toHaveBeenCalledWith("SIGTERM");
+  });
+
+  it("keeps returned diagnostics to a bounded output tail", async () => {
+    const child = new FakeChild();
+    const emitted: string[] = [];
+    const pull = dockerPullWithProgressWatchdog("example/image:latest", {
+      logLine: (line) => emitted.push(line),
+      spawnImpl: () => child,
+    });
+
+    for (let i = 0; i < 210; i += 1) {
+      child.stderr.emit("data", Buffer.from(`diagnostic line ${String(i)}\n`));
+    }
+    child.emit("close", 1, null);
+
+    const result = await pull;
+    expect(emitted).toHaveLength(210);
+    expect(result.output.split("\n")).toHaveLength(200);
+    expect(result.output).not.toContain("diagnostic line 0");
+    expect(result.output).toContain("diagnostic line 209");
   });
 
   it("clamps positive sub-millisecond watchdog intervals to 1ms", async () => {

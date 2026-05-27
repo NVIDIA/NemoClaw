@@ -14,6 +14,8 @@ export function dockerPull(imageRef: string, opts: DockerRunOptions = {}): Docke
 
 export const DEFAULT_DOCKER_PULL_STALL_TIMEOUT_MS = 120 * 1000;
 export const DEFAULT_DOCKER_PULL_MAX_TIMEOUT_MS = 12 * 60 * 60 * 1000;
+const DOCKER_PULL_OUTPUT_TAIL_LINES = 200;
+const DOCKER_PULL_PROGRESS_STATE_LIMIT = 512;
 
 export interface DockerPullWatchdogOptions {
   suppressOutput?: boolean;
@@ -76,7 +78,18 @@ export function dockerPullProgressSignature(line: string): string | null {
     return `status:${normalized}`;
   }
 
+  // This vLLM watchdog intentionally recognizes observed `docker pull`
+  // layer/status output only; BuildKit-style build output is not pull progress.
   return null;
+}
+
+function dockerPullProgressKey(signature: string): string {
+  const layerMatch = signature.match(/^layer:([^:]+):([^:]+)(?::.*)?$/);
+  if (layerMatch) return `layer:${layerMatch[1]}:${layerMatch[2]}`;
+  if (signature.startsWith("source:")) return "source";
+  if (signature.startsWith("digest:")) return "digest";
+  if (signature.startsWith("status:")) return "status";
+  return signature;
 }
 
 export async function dockerPullWithProgressWatchdog(
@@ -105,7 +118,7 @@ export async function dockerPullWithProgressWatchdog(
 
   return new Promise((resolve) => {
     const lines: string[] = [];
-    const seenProgress = new Set<string>();
+    const latestProgressByKey = new Map<string, string>();
     const startedAt = Date.now();
     let lastProgressAt = startedAt;
     let stdoutPending = "";
@@ -117,15 +130,30 @@ export async function dockerPullWithProgressWatchdog(
 
     function noteProgress(line: string) {
       const signature = dockerPullProgressSignature(line);
-      if (!signature || seenProgress.has(signature)) return;
-      seenProgress.add(signature);
+      if (!signature) return;
+      const key = dockerPullProgressKey(signature);
+      if (latestProgressByKey.get(key) === signature) return;
+      latestProgressByKey.delete(key);
+      latestProgressByKey.set(key, signature);
+      while (latestProgressByKey.size > DOCKER_PULL_PROGRESS_STATE_LIMIT) {
+        const oldestKey = latestProgressByKey.keys().next().value;
+        if (oldestKey === undefined) break;
+        latestProgressByKey.delete(oldestKey);
+      }
       lastProgressAt = Date.now();
+    }
+
+    function rememberLine(line: string) {
+      lines.push(line);
+      if (lines.length > DOCKER_PULL_OUTPUT_TAIL_LINES) {
+        lines.splice(0, lines.length - DOCKER_PULL_OUTPUT_TAIL_LINES);
+      }
     }
 
     function flushLine(line: string) {
       const trimmed = line.trimEnd();
       if (!trimmed) return;
-      lines.push(trimmed);
+      rememberLine(trimmed);
       noteProgress(trimmed);
       if (!opts.suppressOutput) logLine(trimmed);
     }
@@ -156,7 +184,7 @@ export async function dockerPullWithProgressWatchdog(
         kind === "stall"
           ? `docker pull stalled after ${formatSeconds(stallTimeoutMs)} without progress`
           : `docker pull exceeded maximum safety budget ${formatSeconds(maxTimeoutMs)}`;
-      lines.push(detail);
+      rememberLine(detail);
       if (!opts.suppressOutput) logLine(`  ${detail}`);
       try {
         child.kill?.("SIGTERM");
@@ -211,7 +239,7 @@ export async function dockerPullWithProgressWatchdog(
     });
     child.on("error", (error: Error) => {
       capturedError = error;
-      lines.push(`docker pull failed to start: ${error.message}`);
+      rememberLine(`docker pull failed to start: ${error.message}`);
       finish(1, null);
     });
     child.on("close", (code: number | null, signal: NodeJS.Signals | null) => {

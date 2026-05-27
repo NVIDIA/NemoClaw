@@ -5,14 +5,14 @@
 // offer vLLM at all" lives in onboard.ts; this module owns picking the
 // right profile per platform and running the install.
 
-const { runCapture, runShell } = require("../runner");
-const {
+import {
   dockerCapture,
   dockerPullWithProgressWatchdog,
   dockerSpawn,
-} = require("../adapters/docker");
-const { VLLM_PORT } = require("../core/ports");
-const { getGpuIndicesByName } = require("./nim");
+} from "../adapters/docker";
+import { VLLM_PORT } from "../core/ports";
+import { runCapture, runShell } from "../runner";
+import { getGpuIndicesByName } from "./nim";
 import {
   DEFAULT_VLLM_MODEL,
   VLLM_MODELS,
@@ -25,7 +25,7 @@ import {
 // Per-platform install recipe. Add new platforms by appending an entry to
 // the profile table at the bottom of this file. The menu key in onboard.ts
 // stays "install-vllm" regardless of platform.
-interface VllmProfile {
+export interface VllmProfile {
   name: string;            // human label, e.g. "DGX Spark"
   image: string;           // container image
   // Default model when NEMOCLAW_VLLM_MODEL is unset. Per-platform default
@@ -225,7 +225,7 @@ function dockerPrereqsOk(): { ok: boolean; reason?: string } {
   return { ok: true };
 }
 
-async function pullImage(profile: VllmProfile): Promise<{ ok: boolean; reason?: string }> {
+export async function pullImage(profile: VllmProfile): Promise<{ ok: boolean; reason?: string }> {
   emit(`Pulling vLLM image: ${profile.image}`);
   const result = await dockerPullWithProgressWatchdog(profile.image, {
     maxTimeoutMs: profile.pullTimeoutSec * 1000,
@@ -300,8 +300,8 @@ function downloadModel(
       }
     }
 
-    proc.stdout.on("data", onChunk);
-    proc.stderr.on("data", onChunk);
+    proc.stdout?.on("data", onChunk);
+    proc.stderr?.on("data", onChunk);
 
     proc.on("error", (err: Error) => {
       resolve({ ok: false, reason: `spawn error: ${err.message}` });
@@ -418,10 +418,10 @@ function streamLogsUntilReady(
 
     let stdoutBuffer = "";
     let stderrBuffer = "";
-    proc.stdout.on("data", (raw: Buffer) => {
+    proc.stdout?.on("data", (raw: Buffer) => {
       stdoutBuffer = consumeChunk(stdoutBuffer, raw);
     });
-    proc.stderr.on("data", (raw: Buffer) => {
+    proc.stderr?.on("data", (raw: Buffer) => {
       stderrBuffer = consumeChunk(stderrBuffer, raw);
     });
 
