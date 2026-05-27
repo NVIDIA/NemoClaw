@@ -1265,6 +1265,26 @@ print('yes' if d.get('slack', {}).get('enabled') is True else 'no')
       fail "M11e2: Slack plugin entry missing plugins.entries.slack.enabled=true; OpenClaw may show Slack installed but disabled"
     fi
 
+    sl_runtime_json=$(sandbox_exec "timeout 45 openclaw channels list --all --json --no-color 2>/dev/null" 2>/dev/null || true)
+    sl_runtime_state=$(echo "$sl_runtime_json" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    slack = d.get('chat', {}).get('slack', {})
+    accounts = slack.get('accounts', [])
+    if slack.get('installed') is True and slack.get('origin') == 'configured' and 'default' in accounts:
+        print('yes')
+    else:
+        print('no installed=%s origin=%s accounts=%s' % (slack.get('installed'), slack.get('origin'), accounts))
+except Exception as e:
+    print('error %s' % e)
+" 2>/dev/null || true)
+    if [ "$sl_runtime_state" = "yes" ]; then
+      pass "M11e3: OpenClaw runtime discovery reports Slack installed and configured"
+    else
+      fail "M11e3: OpenClaw runtime discovery did not report Slack installed/configured (${sl_runtime_state}; output=${sl_runtime_json:0:300})"
+    fi
+
     # M11f/M11g/M11h: SLACK_ALLOWED_USERS should authorize both DMs and
     # channel @mentions from the same users. Config lives on the Slack account
     # because OpenClaw supports multi-account Slack channel policy.
