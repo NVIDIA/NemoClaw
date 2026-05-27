@@ -975,15 +975,6 @@ refresh_openclaw_provider_placeholders() {
   [ -f "$config_file" ] || return 0
 
   local keys="TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN SLACK_BOT_TOKEN SLACK_APP_TOKEN BRAVE_API_KEY"
-  local has_scoped_placeholder=0
-  local key value
-  for key in $keys; do
-    value="${!key:-}"
-    case "$value" in
-      openshell:resolve:env:*) has_scoped_placeholder=1 ;;
-    esac
-  done
-  [ "$has_scoped_placeholder" -eq 1 ] || return 0
 
   if [ -L "$config_file" ] || [ -L "$hash_file" ]; then
     printf '[SECURITY] Refusing provider placeholder refresh — config or hash path is a symlink\n' >&2
@@ -992,9 +983,11 @@ refresh_openclaw_provider_placeholders() {
 
   prepare_openclaw_config_for_write "$config_file" "$hash_file"
   local _write_rc=0
+  local _placeholder_report=""
 
-  NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS="$keys" \
-    python3 - "$config_file" <<'PYPLACEHOLDERS' || _write_rc=$?
+  _placeholder_report="$(
+    NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS="$keys" \
+      python3 - "$config_file" <<'PYPLACEHOLDERS'
 import json
 import os
 import sys
@@ -1003,22 +996,29 @@ config_file = sys.argv[1]
 prefix = "openshell:resolve:env:"
 keys = os.environ.get("NEMOCLAW_PROVIDER_PLACEHOLDER_KEYS", "").split()
 replacements = {}
+warnings = []
 
 for key in keys:
     value = os.environ.get(key, "")
-    if value.startswith(prefix):
-        replacements[f"{prefix}{key}"] = value
+    if value.startswith(prefix) and value != f"{prefix}{key}":
+        replacements[f"{prefix}{key}"] = (key, value)
 
-if not replacements:
-    sys.exit(0)
+channel_credentials = {
+    "telegram": ("botToken", "TELEGRAM_BOT_TOKEN"),
+    "discord": ("token", "DISCORD_BOT_TOKEN"),
+    }
 
 with open(config_file, encoding="utf-8") as f:
     config = json.load(f)
 
+refreshed = set()
+
 def rewrite(value):
     if isinstance(value, str):
-        for old, new in replacements.items():
-            value = value.replace(old, new)
+        for old, (key, new) in replacements.items():
+            if old in value:
+                value = value.replace(old, new)
+                refreshed.add(key)
         return value
     if isinstance(value, list):
         return [rewrite(item) for item in value]
@@ -1027,22 +1027,62 @@ def rewrite(value):
     return value
 
 updated = rewrite(config)
-if updated == config:
-    sys.exit(0)
 
-with open(config_file, "w", encoding="utf-8") as f:
-    json.dump(updated, f, indent=2)
-    f.write("\n")
+channels = updated.get("channels", {}) if isinstance(updated, dict) else {}
+if isinstance(channels, dict):
+    for channel, (field, env_key) in channel_credentials.items():
+        channel_cfg = channels.get(channel, {})
+        if not isinstance(channel_cfg, dict):
+            continue
+        accounts = channel_cfg.get("accounts", {})
+        if not isinstance(accounts, dict):
+            continue
+        env_value = os.environ.get(env_key, "")
+        for account_id, account in accounts.items():
+            if not isinstance(account, dict):
+                continue
+            token = account.get(field)
+            if not isinstance(token, str) or not token.startswith(prefix):
+                continue
+            label = f"{channel}.{account_id}.{field}"
+            if not env_value:
+                warnings.append(
+                    f"[channels] {label} is an OpenShell placeholder but {env_key} is missing from the runtime environment"
+                )
+            elif not env_value.startswith(prefix):
+                warnings.append(
+                    f"[channels] {label} left unchanged because {env_key} is not an OpenShell placeholder; refusing to write raw credentials to openclaw.json"
+                )
+            elif token != env_value:
+                warnings.append(
+                    f"[channels] {label} placeholder does not match the OpenShell runtime placeholder for {env_key}"
+                )
 
-print("refreshed=" + ",".join(sorted(replacements)))
+if updated != config:
+    with open(config_file, "w", encoding="utf-8") as f:
+        json.dump(updated, f, indent=2)
+        f.write("\n")
+
+if refreshed:
+    print("refreshed=" + ",".join(sorted(refreshed)))
+for warning in warnings:
+    print("warning=" + warning)
 PYPLACEHOLDERS
+  )" || _write_rc=$?
 
   if [ "$_write_rc" -eq 0 ]; then
-    if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
-      printf '[config] Refreshed provider placeholders from OpenShell runtime env\n' >&2
-    else
-      _write_rc=$?
+    local _refreshed_keys
+    _refreshed_keys="$(printf '%s\n' "$_placeholder_report" | sed -n 's/^refreshed=//p' | tail -n 1)"
+    if [ -n "$_refreshed_keys" ]; then
+      if (cd /sandbox/.openclaw && sha256sum openclaw.json >"$hash_file"); then
+        printf '[config] Refreshed provider placeholders from OpenShell runtime env: %s\n' "$_refreshed_keys" >&2
+      else
+        _write_rc=$?
+      fi
     fi
+    printf '%s\n' "$_placeholder_report" | sed -n 's/^warning=//p' | while IFS= read -r _warning; do
+      [ -n "$_warning" ] && printf '%s\n' "$_warning" >&2
+    done
   fi
 
   restore_openclaw_config_after_write "$config_file" "$hash_file"
@@ -1360,9 +1400,31 @@ import subprocess
 import time
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
-DEADLINE = time.time() + 600
+
+
+def _env_seconds(name, default):
+    raw = os.environ.get(name, '').strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# Total runtime cap. After convergence the watcher polls at a slow cadence,
+# so it can stay alive for the typical sandbox session without saturating
+# the gateway. Late `openclaw agent` runs (NemoClaw#4263) request additional
+# scopes that the gateway holds as pending until something approves them; an
+# exited watcher leaves those upgrades stuck and the agent falls back to
+# embedded mode. Defaults: 8h total, 30s slow-mode cadence.
+FAST_DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS', 600)
+DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
+SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 30)
 QUIET_POLLS = 0
 APPROVED = 0
+SLOW_MODE = False
 HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # SECURITY NOTE: clientId/clientMode are client-supplied and spoofable
 # (the gateway stores connectParams.client.id verbatim). This allowlist
@@ -1371,24 +1433,49 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 ALLOWED_CLIENTS = {'openclaw-control-ui'}
 ALLOWED_MODES = {'webchat', 'cli'}
 
+RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
+
 def run(*args):
-    proc = subprocess.run(args, capture_output=True, text=True)
-    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    # Bound every openclaw CLI invocation so a wedged child cannot pin
+    # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
+    # no timeout would hold a hung `openclaw devices list/approve` past
+    # the fast→slow transition and the 8h deadline check.
+    try:
+        proc = subprocess.run(
+            args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS,
+        )
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    except subprocess.TimeoutExpired as exc:
+        # 124 matches GNU `timeout` exit status so log scrapers can spot it.
+        out = (exc.stdout or '') if isinstance(exc.stdout, str) else ''
+        err = (exc.stderr or '') if isinstance(exc.stderr, str) else ''
+        print(f'[auto-pair] timeout calling {args[1] if len(args) > 1 else "openclaw"} {args[2] if len(args) > 2 else ""}'.rstrip())
+        return 124, out.strip(), err.strip()
 
 while time.time() < DEADLINE:
     rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
     if rc != 0 or not out:
-        time.sleep(1)
+        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
         continue
     try:
         data = json.loads(out)
     except Exception:
-        time.sleep(1)
+        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
         continue
 
     pending = data.get('pending') or []
     paired = data.get('paired') or []
     has_browser = any((d.get('clientId') == 'openclaw-control-ui') or (d.get('clientMode') == 'webchat') for d in paired if isinstance(d, dict))
+
+    # Fast-deadline transition is checked here, BEFORE the pending-branch
+    # `continue`, so that a sticky pending request (rejected unknown client
+    # added to HANDLED, or a permanent approve failure) cannot hold the
+    # watcher in 1s polling for the full DEADLINE window — that would
+    # re-create the NemoClaw#2484 connect-handler pile-up on a much longer
+    # timeline.
+    if not SLOW_MODE and time.time() >= FAST_DEADLINE:
+        SLOW_MODE = True
+        print(f'[auto-pair] fast-mode deadline reached; switching to slow-mode approvals={APPROVED}')
 
     if pending:
         QUIET_POLLS = 0
@@ -1405,45 +1492,61 @@ while time.time() < DEADLINE:
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
                 continue
             arc, aout, aerr = run(OPENCLAW, 'devices', 'approve', request_id, '--json')
+            # rc=124 is the timeout sentinel from run() — do NOT add the
+            # request to HANDLED on a transient timeout, so the next poll
+            # can retry (CodeRabbit #4292). Permanent failures (other
+            # non-zero rc) still get HANDLED so we don't spin on a stuck
+            # bad request.
+            if arc == 124:
+                continue
             HANDLED.add(request_id)
             if arc == 0:
                 APPROVED += 1
-                print(f'[auto-pair] approved request={request_id} client={client_id}')
+                print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
-        time.sleep(1)
+        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
         continue
 
     QUIET_POLLS += 1
-    # Exit-on-quiet conditions, checked in order of strength:
+    # Convergence conditions, checked in order of strength:
     #   1. Browser device paired — original control-UI workflow
     #   2. Any paired device — covers dangerouslyDisableDeviceAuth setups
     #      where the gateway auto-pairs CLI clients directly without the
     #      watcher running `openclaw devices approve` (so APPROVED stays
     #      0 forever in those configurations)
     #   3. We approved at least one device explicitly
-    # Without these, the watcher polled `openclaw devices list --json`
-    # every 1 second for 10 minutes whenever no browser device joined,
-    # saturating the gateway connect handler and starving concurrent
-    # `openclaw agent` connects (NemoClaw#2484: WS handshake-timeout).
-    if QUIET_POLLS >= 4:
+    # On convergence the watcher used to exit. That left late CLI scope
+    # upgrades pending forever (NemoClaw#4263). Now we transition to a slow
+    # polling cadence (default 30s) so late allowlisted scope upgrades for
+    # already-paired clients still get approved without saturating the
+    # gateway connect handler (NemoClaw#2484: WS handshake-timeout). The
+    # fast-deadline transition is now evaluated above (before the pending
+    # branch) so a stuck pending request cannot defer it.
+    if not SLOW_MODE and QUIET_POLLS >= 4:
         if has_browser:
-            print(f'[auto-pair] browser pairing converged approvals={APPROVED}')
-            break
-        if paired:
-            print(f'[auto-pair] devices paired ({len(paired)}); exiting approvals={APPROVED}')
-            break
-        if APPROVED > 0:
-            print(f'[auto-pair] non-browser pairing converged approvals={APPROVED}')
-            break
+            SLOW_MODE = True
+            print(f'[auto-pair] browser pairing converged; entering slow-mode approvals={APPROVED}')
+        elif paired:
+            SLOW_MODE = True
+            print(f'[auto-pair] devices paired ({len(paired)}); entering slow-mode approvals={APPROVED}')
+        elif APPROVED > 0:
+            SLOW_MODE = True
+            print(f'[auto-pair] non-browser pairing converged; entering slow-mode approvals={APPROVED}')
 
-    # Back off polling once anything is paired or approved: 1s when
-    # actively processing pending requests / waiting for first pairing,
-    # 5s thereafter. The 5s cadence avoids connect-handler pile-up under
-    # high gateway connect latency.
-    time.sleep(5 if (APPROVED > 0 or paired) else 1)
+    # Back off polling: 1s in fast mode while waiting for first pairing,
+    # 5s in fast mode once anything is paired/approved, and SLOW_INTERVAL
+    # (default 30s) after convergence. Slow-mode keepalive lets late CLI
+    # scope upgrades get approved through the rest of DEADLINE without
+    # hammering the gateway.
+    if SLOW_MODE:
+        time.sleep(SLOW_INTERVAL)
+    elif APPROVED > 0 or paired:
+        time.sleep(5)
+    else:
+        time.sleep(1)
 else:
-    print(f'[auto-pair] watcher timed out approvals={APPROVED}')
+    print(f'[auto-pair] watcher deadline reached approvals={APPROVED}')
 PYAUTOPAIR
   AUTO_PAIR_PID=$!
   echo "[gateway] auto-pair watcher launched (pid $AUTO_PAIR_PID)" >&2
@@ -2344,6 +2447,9 @@ if [ "$(id -u)" -ne 0 ]; then
   fi
 
   configure_messaging_channels
+  refresh_openclaw_provider_placeholders
+  ensure_mutable_openclaw_config_hash
+  write_openclaw_config_baseline
   install_telegram_diagnostics
   install_slack_channel_guard
   verify_no_slack_secrets_on_disk
@@ -2464,6 +2570,7 @@ normalize_mutable_config_perms
 apply_model_override
 reconcile_agent_model_with_provider
 apply_cors_override
+configure_messaging_channels
 refresh_openclaw_provider_placeholders
 ensure_mutable_openclaw_config_hash
 if needs_gateway_token_for_current_command; then
@@ -2478,10 +2585,9 @@ write_runtime_shell_env
 ensure_runtime_shell_env_shim
 lock_rc_files "$_SANDBOX_HOME"
 
-# Inject messaging channel config if provider tokens are present.
-# Must run AFTER integrity check (to detect build-time tampering) and
-# BEFORE chattr +i (which locks the config permanently).
-configure_messaging_channels
+# Messaging channel config was announced before placeholder refresh so the
+# baseline captures the same provider placeholders the gateway will use.
+# Install channel-specific preloads before starting OpenClaw.
 install_telegram_diagnostics
 install_slack_channel_guard
 verify_no_slack_secrets_on_disk

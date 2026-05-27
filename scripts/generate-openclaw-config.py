@@ -813,14 +813,14 @@ def build_config(env: dict | None = None) -> dict:
             "loopbackMode": "proxy",
         }
 
+    tools_web = config.setdefault("tools", {}).setdefault("web", {})
+    tools_web["fetch"] = {"enabled": True, "useTrustedEnvProxy": True}
+
     if env.get("NEMOCLAW_WEB_SEARCH_ENABLED", "") == "1":
-        config.setdefault("tools", {})["web"] = {
-            "search": {
-                "enabled": True,
-                "provider": "brave",
-                "apiKey": "openshell:resolve:env:BRAVE_API_KEY",
-            },
-            "fetch": {"enabled": True},
+        tools_web["search"] = {
+            "enabled": True,
+            "provider": "brave",
+            "apiKey": "openshell:resolve:env:BRAVE_API_KEY",
         }
 
     return config
