@@ -3002,7 +3002,13 @@ const { createSandbox } = require(${onboardPath});
     assert.match(createCommand.command, /NEMOCLAW_DASHBOARD_PORT=19000/);
     assert.match(createCommand.command, /HTTP_PROXY=http:\/\/127\.0\.0\.1:8888/);
     assert.match(createCommand.command, /HTTPS_PROXY=http:\/\/127\.0\.0\.1:8888/);
-    assert.match(createCommand.command, /NO_PROXY=corp\.internal,localhost,127\.0\.0\.1/);
+    const noProxyMatch = createCommand.command.match(/(?:^|\s)NO_PROXY=([^\s]+)/);
+    assert.ok(noProxyMatch, `expected NO_PROXY in sandbox create command:\n${createCommand.command}`);
+    const noProxyEntries = noProxyMatch[1].split(",");
+    assert.ok(noProxyEntries.includes("corp.internal"));
+    assert.ok(noProxyEntries.includes("localhost"));
+    assert.ok(noProxyEntries.includes("127.0.0.1"));
+    assert.ok(noProxyEntries.includes("host.docker.internal"));
     // Forward must use same-port mapping (openshell does not support asymmetric)
     assert.ok(
       payload.commands.some(

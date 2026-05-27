@@ -172,8 +172,10 @@ const {
   collectBuildContextStats,
   stageOptimizedSandboxBuildContext,
 } = require("./sandbox/build-context");
-const { buildSubprocessEnv, withLocalNoProxy } =
+const { buildSubprocessEnv } =
   require("./subprocess-env") as typeof import("./subprocess-env");
+const { appendHostProxyEnvArgs }: typeof import("./onboard/host-proxy-env") =
+  require("./onboard/host-proxy-env");
 const {
   DASHBOARD_PORT,
   GATEWAY_PORT,
@@ -700,37 +702,6 @@ const {
   parsePolicyPresetEnv,
 } = urlUtils;
 
-const HOST_PROXY_ENV_NAMES = [
-  "HTTP_PROXY",
-  "HTTPS_PROXY",
-  "NO_PROXY",
-  "http_proxy",
-  "https_proxy",
-  "no_proxy",
-] as const;
-
-function appendHostProxyEnvArgs(
-  envArgs: string[],
-  env: NodeJS.ProcessEnv = process.env,
-): void {
-  const proxyEnv: Record<string, string> = {};
-  for (const name of HOST_PROXY_ENV_NAMES) {
-    const value = env[name];
-    if (typeof value === "string" && value.trim() !== "") {
-      proxyEnv[name] = value;
-    }
-  }
-
-  const hasProxy =
-    proxyEnv.HTTP_PROXY || proxyEnv.HTTPS_PROXY || proxyEnv.http_proxy || proxyEnv.https_proxy;
-  if (!hasProxy) return;
-
-  withLocalNoProxy(proxyEnv);
-  for (const name of HOST_PROXY_ENV_NAMES) {
-    const value = proxyEnv[name];
-    if (value) envArgs.push(formatEnvAssignment(name, value));
-  }
-}
 const { hydrateCredentialEnv }: typeof import("./onboard/credential-env") =
   require("./onboard/credential-env");
 
