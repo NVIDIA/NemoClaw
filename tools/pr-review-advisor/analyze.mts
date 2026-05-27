@@ -753,10 +753,7 @@ ${diff || "<no diff available>"}
 
 Apply the trusted NemoClaw security-review rubric to the already-provided diff and any nearby files you need to inspect. Focus on sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, workflow trusted-code boundaries, unsafe shell/string execution, and auth/authorization regressions.
 
-Trusted security review skill path: ${SECURITY_REVIEW_SKILL_PATH}
-Trusted security review skill loaded: ${securityReviewSkill ? "yes" : "no"}
-
-For each security category, decide PASS/WARNING/FAIL with evidence. Do not produce final JSON yet; reply with concise working notes only.
+Use the trusted security review skill embedded in the system prompt. For each security category, decide PASS/WARNING/FAIL with evidence. Do not produce final JSON yet; reply with concise working notes only.
 `,
     },
     {
