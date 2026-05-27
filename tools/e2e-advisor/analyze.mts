@@ -114,7 +114,7 @@ async function main(): Promise<void> {
   try {
     sdkResult = await runReadOnlyAdvisor({
       cwd: root,
-      prompt,
+      promptTurns: [{ name: "analysis", prompt }],
       systemPrompt,
       configDir,
       htmlExportPath: artifacts.sessionHtml,

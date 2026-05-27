@@ -1,0 +1,102 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Skills / Catalog Refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Regenerate and report changes without pushing or opening a PR"
+        type: boolean
+        required: true
+        default: true
+      request_nvskills_ci:
+        description: "Comment /nvskills-ci on the refresh PR after opening/updating it"
+        type: boolean
+        required: true
+        default: false
+  schedule:
+    - cron: "17 10 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: catalog-skills-refresh
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Configure git author
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Regenerate catalog skills export
+        run: python3 scripts/export-catalog-skills.py
+
+      - name: Check for changes
+        id: diff
+        run: |
+          if git diff --quiet -- .agents/catalog-skills.yaml skills/nemoclaw; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No catalog skill export changes detected."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            git diff --stat -- .agents/catalog-skills.yaml skills/nemoclaw
+          fi
+
+      - name: Stop after dry run
+        if: ${{ (github.event_name == 'workflow_dispatch' && inputs.dry_run) || (github.event_name == 'schedule' && steps.diff.outputs.changed != 'true') }}
+        run: |
+          if [[ "${{ steps.diff.outputs.changed }}" == "true" ]]; then
+            echo "Dry run detected catalog skill export changes; no branch or PR was created."
+          else
+            echo "Catalog skill export is already current."
+          fi
+
+      - name: Create or update refresh pull request
+        id: cpr
+        if: ${{ steps.diff.outputs.changed == 'true' && (github.event_name == 'schedule' || !inputs.dry_run) }}
+        uses: peter-evans/create-pull-request@8ce3b843f60ac63fbde403f79364ff7d80b5fbb1 # v7.0.8
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: automation/catalog-skills-refresh
+          delete-branch: true
+          commit-message: "chore(skills): refresh catalog export"
+          title: "chore(skills): refresh catalog export"
+          body: |
+            ## Summary
+            - Regenerates `skills/nemoclaw/` from `.agents/catalog-skills.yaml` and `.agents/skills/`.
+            - Keeps the NVIDIA Verified Skills catalog export deterministic and reviewable.
+
+            ## Validation
+            - `python3 scripts/export-catalog-skills.py --check`
+
+            After maintainer review, request signing by commenting `/nvskills-ci` on this PR if the workflow did not do so automatically.
+          labels: |
+            documentation
+            CI/CD
+          add-paths: |
+            .agents/catalog-skills.yaml
+            skills/nemoclaw
+
+      - name: Request NVSkills signing
+        if: ${{ steps.cpr.outputs.pull-request-number != '' && github.event_name == 'workflow_dispatch' && inputs.request_nvskills_ci && !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+        run: |
+          gh pr comment "$PR_NUMBER" --body "/nvskills-ci"

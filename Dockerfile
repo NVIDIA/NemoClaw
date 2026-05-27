@@ -176,12 +176,24 @@ RUN set -eu; \
 # runtime and image ENV vars set by Dockerfile are stripped. OPENSHELL_SANDBOX
 # is the only marker reliably present in the runtime.
 #
+# === Patch 2b: allow OpenShell host gateway through web_fetch guard ===
+# OpenClaw's web_fetch SSRF guard blocks *.internal hostnames before the
+# OpenShell L7 proxy sees the request. NemoClaw users legitimately reach
+# host-local approved services through host.openshell.internal after the
+# OpenShell policy explicitly allows that host:port. Allow only this exact
+# hostname, only inside an OpenShell sandbox, and only at the hostname-only
+# check used by trusted env-proxy mode. Direct DNS-pinned/private-IP paths
+# remain blocked, and metadata/link-local/private IP literals are unchanged.
+#
 # === Removal criteria ===
 # Patch 1: drop when OpenClaw deprecates withStrictGuardedFetchMode or
 #   when all media-fetch callsites unconditionally pass useEnvProxy.
 # Patch 2: drop when OpenClaw fixes assertExplicitProxyAllowed to skip the
 #   target hostname allowlist for the proxy hostname check (or exposes config
 #   to disable the check).
+# Patch 2b: drop when OpenClaw ships a reviewed host-gateway SSRF policy
+#   surface that can allow host.openshell.internal without allowing broader
+#   private/special-use hostnames.
 #
 # SYNC WITH OPENCLAW: these patches classify the compiled OpenClaw dist at
 # build time. They apply the legacy patch when the old target exists, skip
@@ -264,6 +276,34 @@ RUN set -eu; \
             echo "ERROR: Patch 2 target missing but proxy hostname validation references remain:" >&2; \
             printf '%s\n' "$proxy_hostname_checks" | head -n 5 >&2; \
             patch_fail "Patch 2 cannot safely skip"; \
+        fi; \
+    fi; \
+    # --- Patch 2b: allow OpenShell host gateway hostname in trusted proxy mode --- \
+    ssrf_hostname_files="$(grep -RIlE --include='*.js' 'function assertHostnameAllowedWithPolicy\(hostname, policy\)' "$OC_DIST" || true)"; \
+    if [ -n "$ssrf_hostname_files" ]; then \
+        patched_host_gateway=0; \
+        for f in $ssrf_hostname_files; do \
+            if grep -q 'nemoclaw: OpenShell host gateway' "$f"; then \
+                echo "INFO: Patch 2b already present in $f"; \
+            else \
+                grep -q 'normalizeHostname' "$f" || patch_fail "Patch 2b target $f is missing normalizeHostname"; \
+                sed -i -E 's|(function assertHostnameAllowedWithPolicy\(hostname, policy\) \{)|\1 const normalizedHost = normalizeHostname(hostname); if (process.env.OPENSHELL_SANDBOX === "1" \&\& normalizedHost === "host.openshell.internal") return normalizedHost; /* nemoclaw: OpenShell host gateway via trusted proxy, see Dockerfile */ |' "$f"; \
+                grep -Eq 'assertHostnameAllowedWithPolicy\(hostname, policy\) \{ const normalizedHost = normalizeHostname\(hostname\); if \(process\.env\.OPENSHELL_SANDBOX === "1" && normalizedHost === "host\.openshell\.internal"\) return normalizedHost; /\* nemoclaw: OpenShell host gateway' "$f" \
+                    || patch_fail "Patch 2b verification failed for $f"; \
+                patched_host_gateway=1; \
+            fi; \
+        done; \
+        if [ "$patched_host_gateway" = "1" ]; then \
+            echo "INFO: Patch 2b applied to OpenClaw ${OC_VERSION} host-gateway hostname validator"; \
+        fi; \
+    else \
+        internal_hostname_blocks="$(grep -RIlE --include='*.js' '\.internal|Blocked hostname or private/internal/special-use IP address|assertHostnameAllowedWithPolicy' "$OC_DIST" || true)"; \
+        if [ -z "$internal_hostname_blocks" ]; then \
+            echo "INFO: OpenClaw ${OC_VERSION} has no host-gateway hostname validator; Patch 2b not needed"; \
+        else \
+            echo "ERROR: Patch 2b target missing but internal-hostname SSRF blocks remain:" >&2; \
+            printf '%s\n' "$internal_hostname_blocks" | head -n 5 >&2; \
+            patch_fail "Patch 2b cannot safely skip"; \
         fi; \
     fi; \
     # --- Patch 3: follow symlinks in plugin-install path checks (#2203) --- \

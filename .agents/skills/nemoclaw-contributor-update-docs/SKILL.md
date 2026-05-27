@@ -115,7 +115,8 @@ Write the doc update following these conventions:
 - **No em dashes** unless used sparingly. Prefer commas or separate sentences.
 - **Start sections with an introductory sentence** that orients the reader.
 - **No superlatives.** Say what the feature does, not how great it is.
-- **Code examples use `console` language** with `$` prompt prefix.
+- **Copyable code examples use language-specific fences** such as `bash`, `sh`, or `powershell`, without prompt markers.
+- **Use `console` only for terminal transcripts** that include prompts, output, or interactive sessions.
 - **Include the SPDX header** if creating a new page.
 - **Match existing frontmatter format** if creating a new page.
 - **Always write NVIDIA in all caps.** Wrong: Nvidia, nvidia.

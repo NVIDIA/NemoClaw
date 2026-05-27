@@ -30,6 +30,11 @@
 /docs/                              @NVIDIA/nemoclaw-engineer
 /spark-install.md                   @NVIDIA/nemoclaw-engineer
 
+# ── Agent skills catalog ──
+/.agents/catalog-skills.yaml        @NVIDIA/nemoclaw-maintainer @NVIDIA/nemoclaw-engineer
+/.agents/skills/                    @NVIDIA/nemoclaw-maintainer @NVIDIA/nemoclaw-engineer
+/skills/nemoclaw/                   @NVIDIA/nemoclaw-maintainer @NVIDIA/nemoclaw-engineer
+
 # ── Tests ──
 /test/                              @NVIDIA/nemoclaw-engineer
 
