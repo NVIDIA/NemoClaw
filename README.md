@@ -24,9 +24,25 @@ It provides guided onboarding, a hardened blueprint, routed inference, network p
 - [OpenClaw](https://openclaw.ai) (default)
 - [Hermes](https://get-hermes.ai/)
 
-For capabilities, architecture, security controls, and the full feature list, see the [NemoClaw documentation](https://docs.nvidia.com/nemoclaw/latest/).
+## Get Involved
 
-## Get Started
+NemoClaw is early alpha software, and feedback from users and contributors helps shape the project.
+Use the links below to pick the right channel:
+
+| Need | Where to go |
+|------|-------------|
+| Ask setup or usage questions | [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions) or [Discord](https://discord.gg/XFpfPv9Uvx) |
+| Report a reproducible bug | [GitHub Issues](https://github.com/NVIDIA/NemoClaw/issues) |
+| Propose a feature or larger design change | [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions) first, then open an issue when the scope is clear |
+| Start contributing | [CONTRIBUTING.md](CONTRIBUTING.md), especially issues labeled [`good first issue`](https://github.com/NVIDIA/NemoClaw/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22) |
+| Follow current priorities | [Open milestones](https://github.com/NVIDIA/NemoClaw/milestones) and labeled issues |
+| Report a vulnerability | [SECURITY.md](SECURITY.md), not public issues |
+
+Please also review the [Code of Conduct](CODE_OF_CONDUCT.md) before participating.
+
+## Getting Started
+
+For capabilities, architecture, security controls, and the full feature list, see the [NemoClaw documentation](https://docs.nvidia.com/nemoclaw/latest/).
 
 Review [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) before installing.
 For Hermes, set `NEMOCLAW_AGENT=hermes` before running the installer, or use the `nemohermes` alias after install.
@@ -56,6 +72,9 @@ Refer to the following pages on the official documentation website for more info
 | [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html) | Common issues and resolution steps. |
 
 ## Community
+
+Join the NemoClaw community to ask questions and share feedback.
+For bugs, feature proposals, contribution guidance, roadmap pointers, and security reporting, use the channel matrix in [Get Involved](#get-involved).
 
 - [Discord](https://discord.gg/XFpfPv9Uvx)
 - [GitHub Discussions](https://github.com/NVIDIA/NemoClaw/discussions)
