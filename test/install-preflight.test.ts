@@ -334,6 +334,7 @@ exit 98
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -425,6 +426,7 @@ exit 98
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
       },
     });
@@ -527,10 +529,9 @@ exit 98
   });
 
   it("piped --help does not show the placeholder installer version", () => {
-    const result = spawnSync("bash", ["-s", "--", "--help"], {
+    const result = spawnSync("bash", ["-lc", `cat ${JSON.stringify(INSTALLER)} | bash -s -- --help`], {
       cwd: os.tmpdir(),
       encoding: "utf-8",
-      input: fs.readFileSync(INSTALLER, "utf-8"),
     });
 
     expect(result.status).toBe(0);
@@ -540,10 +541,9 @@ exit 98
   });
 
   it("piped --version omits the placeholder installer version", () => {
-    const result = spawnSync("bash", ["-s", "--", "--version"], {
+    const result = spawnSync("bash", ["-lc", `cat ${JSON.stringify(INSTALLER)} | bash -s -- --version`], {
       cwd: os.tmpdir(),
       encoding: "utf-8",
-      input: fs.readFileSync(INSTALLER, "utf-8"),
     });
 
     expect(result.status).toBe(0);
@@ -636,6 +636,7 @@ fi`,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
         NPM_LOG_PATH: npmLog,
         PYTHON_LOG_PATH: pythonLog,
@@ -655,6 +656,174 @@ fi`,
     const gitCalls = fs.existsSync(gitLog) ? fs.readFileSync(gitLog, "utf-8") : "";
     expect(gitCalls).not.toMatch(/submodule/);
   });
+
+  it(
+    "source-checkout: installs OpenShell when missing from PATH (#3989)",
+    { timeout: 20000 },
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-source-osh-"));
+      const fakeBin = path.join(tmp, "bin");
+      const prefix = path.join(tmp, "prefix");
+      const npmLog = path.join(tmp, "npm.log");
+      const openshellLog = path.join(tmp, "install-openshell.log");
+      fs.mkdirSync(fakeBin);
+      fs.mkdirSync(path.join(tmp, ".git"));
+      fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+
+      writeNodeStub(fakeBin);
+      writeNpmStub(
+        fakeBin,
+        `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+if [ "$1" = "onboard" ]; then exit 0; fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+      );
+
+      fs.writeFileSync(
+        path.join(tmp, "package.json"),
+        JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+      );
+      fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmp, "nemoclaw", "package.json"),
+        JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+      );
+
+      fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
+      writeExecutable(
+        path.join(tmp, "scripts", "install-openshell.sh"),
+        `#!/usr/bin/env bash
+printf 'install-openshell.sh invoked\\n' >> "$INSTALL_OPENSHELL_LOG"
+exit 0
+`,
+      );
+      fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.json"), "{}\n");
+
+      const result = spawnSync("bash", [INSTALLER], {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_REPO_ROOT: tmp,
+          NPM_PREFIX: prefix,
+          NPM_LOG_PATH: npmLog,
+          INSTALL_OPENSHELL_LOG: openshellLog,
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(openshellLog)).toBe(true);
+      expect(fs.readFileSync(openshellLog, "utf-8")).toMatch(/install-openshell\.sh invoked/);
+    },
+  );
+
+  it(
+    "source-checkout: skips OpenShell install when openshell is already on PATH (#3989)",
+    { timeout: 20000 },
+    () => {
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-source-osh-skip-"));
+      const fakeBin = path.join(tmp, "bin");
+      const prefix = path.join(tmp, "prefix");
+      const npmLog = path.join(tmp, "npm.log");
+      const openshellLog = path.join(tmp, "install-openshell.log");
+      fs.mkdirSync(fakeBin);
+      fs.mkdirSync(path.join(tmp, ".git"));
+      fs.mkdirSync(path.join(prefix, "bin"), { recursive: true });
+
+      writeNodeStub(fakeBin);
+      writeExecutable(
+        path.join(fakeBin, "openshell"),
+        `#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "openshell 0.0.39"; exit 0; fi
+exit 0
+`,
+      );
+      writeNpmStub(
+        fakeBin,
+        `printf '%s\\n' "$*" >> "$NPM_LOG_PATH"
+if [ "$1" = "pack" ]; then
+  tmpdir="$4"
+  mkdir -p "$tmpdir/package"
+  tar -czf "$tmpdir/openclaw-2026.3.11.tgz" -C "$tmpdir" package
+  exit 0
+fi
+if [ "$1" = "install" ]; then exit 0; fi
+if [ "$1" = "run" ] && { [ "$2" = "build" ] || [ "$2" = "build:cli" ] || [ "$2" = "--if-present" ]; }; then exit 0; fi
+if [ "$1" = "link" ]; then
+  cat > "$NPM_PREFIX/bin/nemoclaw" <<'EOS'
+#!/usr/bin/env bash
+if [ "$1" = "--version" ]; then echo "nemoclaw v0.1.0-test"; exit 0; fi
+if [ "$1" = "onboard" ]; then exit 0; fi
+exit 0
+EOS
+  chmod +x "$NPM_PREFIX/bin/nemoclaw"
+  exit 0
+fi`,
+      );
+
+      fs.writeFileSync(
+        path.join(tmp, "package.json"),
+        JSON.stringify({ name: "nemoclaw", version: "0.1.0" }, null, 2),
+      );
+      fs.mkdirSync(path.join(tmp, "nemoclaw"), { recursive: true });
+      fs.writeFileSync(
+        path.join(tmp, "nemoclaw", "package.json"),
+        JSON.stringify({ name: "nemoclaw-plugin", version: "0.1.0" }, null, 2),
+      );
+
+      fs.mkdirSync(path.join(tmp, "scripts"), { recursive: true });
+      writeExecutable(
+        path.join(tmp, "scripts", "install-openshell.sh"),
+        `#!/usr/bin/env bash
+printf 'install-openshell.sh invoked\\n' >> "$INSTALL_OPENSHELL_LOG"
+exit 0
+`,
+      );
+      fs.mkdirSync(path.join(tmp, "bin", "lib"), { recursive: true });
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.js"), "process.exit(0);\n");
+      fs.writeFileSync(path.join(tmp, "bin", "lib", "usage-notice.json"), "{}\n");
+
+      const result = spawnSync("bash", [INSTALLER], {
+        cwd: tmp,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmp,
+          PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+          NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+          NEMOCLAW_REPO_ROOT: tmp,
+          NPM_PREFIX: prefix,
+          NPM_LOG_PATH: npmLog,
+          INSTALL_OPENSHELL_LOG: openshellLog,
+        },
+      });
+
+      expect(result.status).toBe(0);
+      expect(fs.existsSync(openshellLog)).toBe(false);
+    },
+  );
 
   it("auto-resumes an interrupted onboarding session during install", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-install-resume-"));
@@ -1180,6 +1349,13 @@ exit 99
     });
 
     expect(result.status, output).toBe(0);
+    expect(output).toMatch(
+      /NVIDIA GPU passthrough uses CDI specs so Docker\/OpenShell can request nvidia\.com\/gpu devices/,
+    );
+    expect(output).toMatch(/Docker is configured for CDI, but the nvidia\.com\/gpu spec is missing/);
+    expect(output).toMatch(
+      /You may be asked for your password to authorize these host-level admin changes/,
+    );
     expect(output).toMatch(/Trying NVIDIA CDI refresh service \(auto-generates GPU CDI specs\)/);
     expect(output).toMatch(/Enabled NVIDIA CDI refresh service/);
     expect(output).not.toMatch(/falling back to direct generation/);
@@ -1204,6 +1380,8 @@ exit 1
 
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Generating missing NVIDIA CDI device spec/);
+    expect(output).toMatch(/NemoClaw will first enable NVIDIA's CDI refresh service/);
+    expect(output).toMatch(/NemoClaw does not store your password/);
     expect(output).toMatch(/Generated NVIDIA CDI device spec/);
     expect(output).toMatch(/Trying NVIDIA CDI refresh service \(auto-generates GPU CDI specs\)/);
     expect(output).toMatch(/falling back to direct generation/);
@@ -1754,8 +1932,9 @@ exit 0
     expect(result.status).toBe(0);
     expect(output).not.toMatch(/current shell cannot resolve 'nemoclaw'/);
     expect(output).not.toMatch(/this shell needs PATH refresh/);
-    expect(output).toMatch(/\$ source /);
-    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).not.toMatch(/\$ source /);
+    expect(output).not.toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).toContain("Use the Start chatting section above");
   });
 
   it("makes current-shell PATH refresh obvious when the installer added the bin dir", () => {
@@ -1846,7 +2025,7 @@ fi`,
     expect(output).not.toContain(
       "Onboarding did not run because this shell cannot resolve 'nemoclaw' yet.",
     );
-    expect(output).toMatch(/\$ nemoclaw my-assistant connect/);
+    expect(output).not.toMatch(/\$ nemoclaw my-assistant connect/);
   });
 });
 
@@ -1985,6 +2164,7 @@ exit 0`,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -2061,6 +2241,7 @@ fi`,
         PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
         NPM_PREFIX: prefix,
         GIT_LOG_PATH: gitLog,
       },
@@ -2854,6 +3035,11 @@ printf 'Linux\\n'
         "-c",
         `
 source "$INSTALLER_UNDER_TEST" >/dev/null
+# These tests validate the Linux Docker bootstrap branches. On a real WSL
+# runner the installer intentionally skips that bootstrap, so force the helper
+# under test to behave as a non-WSL Linux host while keeping uname/id/docker
+# stubbed through PATH.
+is_wsl_host() { return 1; }
 info() { printf 'INFO: %s\\n' "$*" >&2; }
 warn() { printf 'WARN: %s\\n' "$*" >&2; }
 error() { printf 'ERROR: %s\\n' "$*" >&2; exit 1; }
@@ -3187,6 +3373,10 @@ sys.exit(exit_code)
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected DGX Spark/);
+    expect(output).toMatch(
+      /Express install will configure managed local Ollama with model qwen3\.6:35b/,
+    );
+    expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for DGX Spark/);
     expect(output).toMatch(
@@ -3225,6 +3415,10 @@ detect_express_platform
     const output = `${result.stdout}${result.stderr}`;
     expect(result.status, output).toBe(0);
     expect(output).toMatch(/Detected Windows WSL/);
+    expect(output).toMatch(
+      /Express install will configure Windows-host Ollama through host\.docker\.internal/,
+    );
+    expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for Windows WSL/);
     expect(output).toMatch(
@@ -3450,9 +3644,8 @@ main() {
 }`,
     );
 
-    const result = spawnSync("bash", ["-s", "--", "--version"], {
+    const result = spawnSync("bash", ["-lc", `cat ${JSON.stringify(rootInstaller)} | bash -s -- --version`], {
       cwd: repoLike,
-      input: fs.readFileSync(rootInstaller, "utf-8"),
       encoding: "utf-8",
       env: {
         ...process.env,
@@ -3641,6 +3834,7 @@ exit 0`,
         env: {
           HOME: tmp,
           PATH: `${fakeBin}:${TEST_SYSTEM_PATH}`,
+          NEMOCLAW_DEFER_OPENSHELL_INSTALL: "1",
           ...env,
         },
       },

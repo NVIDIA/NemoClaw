@@ -8,6 +8,7 @@ import { describe, it } from "vitest";
 import {
   findAvailableDashboardPort,
   findDashboardForwardOwner,
+  preflightDashboardPortRangeAvailability,
 } from "../../../dist/lib/onboard/dashboard-port";
 
 describe("findDashboardForwardOwner", () => {
@@ -91,5 +92,50 @@ describe("findAvailableDashboardPort port-conflict detection (#3260)", () => {
     };
     findAvailableDashboardPort("cursor", 18789, "", stub);
     assert.deepEqual(seen, [18789, 18790]);
+  });
+});
+
+describe("preflightDashboardPortRangeAvailability (#3953)", () => {
+  const allBound = (_p: number) => true;
+  const noneBound = (_p: number) => false;
+  const someBound = (...bound: number[]) => {
+    const set = new Set(bound);
+    return (p: number) => set.has(p);
+  };
+
+  it("exits 1 with the canonical message when every port in the range is bound", () => {
+    let exitCode: number | undefined;
+    const exitFn = ((code?: number) => {
+      exitCode = code;
+      throw new Error(`__exit_${code ?? 0}__`);
+    }) as (code?: number) => never;
+    const stderrChunks: string[] = [];
+    const origError = console.error;
+    console.error = (msg: string) => { stderrChunks.push(msg); };
+    try {
+      assert.throws(() => preflightDashboardPortRangeAvailability(allBound, exitFn), /__exit_1__/);
+    } finally {
+      console.error = origError;
+    }
+    assert.equal(exitCode, 1);
+    const combined = stderrChunks.join("\n");
+    assert.match(combined, /All dashboard ports in range 18789-18799 are occupied:/);
+    assert.match(combined, /  18789 → non-OpenShell host listener/);
+    assert.match(combined, /  18799 → non-OpenShell host listener/);
+    assert.match(combined, /--control-ui-port <N>/);
+  });
+
+  it("returns without exiting when at least one port in the range is free", () => {
+    // Even if 10 of 11 ports are bound, the one free port short-circuits success.
+    const bound = someBound(18789, 18790, 18791, 18792, 18793, 18794, 18795, 18796, 18797, 18798);
+    preflightDashboardPortRangeAvailability(bound, (() => {
+      throw new Error("exitFn must not be called when a port is free");
+    }) as (code?: number) => never);
+  });
+
+  it("returns without exiting when no port is bound", () => {
+    preflightDashboardPortRangeAvailability(noneBound, (() => {
+      throw new Error("exitFn must not be called when no port is bound");
+    }) as (code?: number) => never);
   });
 });

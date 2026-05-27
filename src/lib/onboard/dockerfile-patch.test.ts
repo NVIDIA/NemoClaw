@@ -75,6 +75,7 @@ describe("dockerfile patch helpers", () => {
         "ARG NEMOCLAW_MESSAGING_ALLOWED_IDS_B64=old",
         "ARG NEMOCLAW_DISCORD_GUILDS_B64=old",
         "ARG NEMOCLAW_TELEGRAM_CONFIG_B64=old",
+        "ARG NEMOCLAW_SLACK_CONFIG_B64=old",
       ].join("\n"),
     );
 
@@ -93,6 +94,9 @@ describe("dockerfile patch helpers", () => {
       { requireMention: true },
       {},
       true,
+      null,
+      [],
+      { allowedChannels: ["C012AB3CD", "C987ZY6XW"] },
     );
 
     const patched = fs.readFileSync(dockerfilePath, "utf-8");
@@ -110,6 +114,13 @@ describe("dockerfile patch helpers", () => {
     expect(patched).toContain("ARG NEMOCLAW_DISABLE_DEVICE_AUTH=1");
     expect(patched).not.toContain("ARG NEMOCLAW_MESSAGING_CHANNELS_B64=old");
     expect(patched).not.toContain("ARG NEMOCLAW_TELEGRAM_CONFIG_B64=old");
+    const slackLine = patched
+      .split("\n")
+      .find((line) => line.startsWith("ARG NEMOCLAW_SLACK_CONFIG_B64="));
+    assert.ok(slackLine, "expected slack config build arg");
+    assert.deepEqual(JSON.parse(Buffer.from(slackLine.split("=")[1], "base64").toString("utf8")), {
+      allowedChannels: ["C012AB3CD", "C987ZY6XW"],
+    });
   });
 
   it("uses the shared sandbox inference mapping", () => {

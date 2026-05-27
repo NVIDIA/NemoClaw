@@ -6,7 +6,7 @@
 
 .DESCRIPTION
     Prepares a Windows host for NemoClaw by enabling WSL 2, installing an
-    Ubuntu WSL distro when needed, installing Docker Desktop, verifying Docker
+    Ubuntu 24.04 WSL distro when needed, installing Docker Desktop, verifying Docker
     from WSL, and then opening Ubuntu so the user can run the standard
     curl|bash installer in a native Linux terminal:
 
@@ -17,7 +17,7 @@
     onboarding to scripts/install.sh and nemoclaw onboard.
 
 .PARAMETER DistroName
-    WSL distro to install/use. Defaults to Ubuntu.
+    WSL distro to install/use. Defaults to Ubuntu-24.04.
 
 .PARAMETER InstallerUrl
     NemoClaw installer URL to print in the final WSL handoff command.
@@ -41,7 +41,7 @@
 
 [CmdletBinding()]
 param(
-    [string]$DistroName = 'Ubuntu',
+    [string]$DistroName = 'Ubuntu-24.04',
     [string]$InstallerUrl = 'https://www.nvidia.com/nemoclaw.sh',
     [string]$InstallerArgs = '',
     [bool]$InstallDockerDesktop = $true,
@@ -359,7 +359,14 @@ function Install-DockerDesktop {
 
     $winget = Resolve-WingetExe
     if (-not $winget) {
-        throw 'winget.exe not found. Install App Installer from the Microsoft Store and re-run.'
+        $scriptHint = if ($PSCommandPath) { $PSCommandPath } else { 'this bootstrap script' }
+        Write-Status -Level ERROR 'Cannot install Docker Desktop automatically: winget.exe is not available on this machine.'
+        Write-Status -Level ERROR 'This usually means the Windows App Installer package is missing (common on Windows Server or stripped images).'
+        Write-Status -Level INFO  "To finish setup, do one of the following, then re-run ${scriptHint}:"
+        Write-Status -Level INFO  '  1) Install "App Installer" from the Microsoft Store (provides winget), or'
+        Write-Status -Level INFO  '  2) Download Docker Desktop manually from https://www.docker.com/products/docker-desktop/ and install it.'
+        Write-Status -Level INFO  'After Docker Desktop is installed, the bootstrap script will skip the install step on the next run.'
+        exit 1
     }
 
     Write-Status 'Installing Docker Desktop with winget...'
@@ -646,6 +653,28 @@ function Ensure-WslDistroVersion2 {
     Write-Status "$Name is now WSL 2."
 }
 
+function Get-WslInstallCommandText {
+    param([Parameter(Mandatory)] [string]$Name)
+
+    return "wsl --install -d $Name"
+}
+
+function Write-WslUbuntuRequiredNotice {
+    param([Parameter(Mandatory)] [string]$Name)
+
+    Write-Host ''
+    if ($Name -eq 'Ubuntu-24.04') {
+        Write-Host 'NemoClaw on Windows ARM requires WSL2 Ubuntu 24.04.' -ForegroundColor Yellow
+        Write-Host "Please run: $(Get-WslInstallCommandText -Name $Name)" -ForegroundColor Yellow
+        Write-Host 'Then re-run this installer.' -ForegroundColor Yellow
+    } else {
+        Write-Host "NemoClaw on Windows requires a WSL2 distro named $Name." -ForegroundColor Yellow
+        Write-Host "Please run: $(Get-WslInstallCommandText -Name $Name)" -ForegroundColor Yellow
+        Write-Host 'Then re-run this installer.' -ForegroundColor Yellow
+    }
+    Write-Host ''
+}
+
 function Ensure-UbuntuWsl {
     $wsl = Resolve-WslExe
     $script:InstallDistroAtHandoff = $false
@@ -797,6 +826,7 @@ function Open-UbuntuForInstaller {
     } catch {
         Write-Status -Level WARN "Could not open $DistroName automatically: $($_.Exception.Message)"
         if ($script:InstallDistroAtHandoff) {
+            Write-WslUbuntuRequiredNotice -Name $DistroName
             throw
         }
     }
@@ -808,7 +838,7 @@ function Write-InstallerHandoff {
     Write-Host 'Windows preparation is complete.' -ForegroundColor Green
     Write-Host ''
     if ($script:InstallDistroAtHandoff) {
-        Write-Host "Ubuntu will install and launch now. After first-run setup completes, run this command inside Ubuntu to install NemoClaw:" -ForegroundColor Cyan
+        Write-Host "Ubuntu will install and launch in a separate window. After first-run setup completes, run this command inside Ubuntu to install NemoClaw:" -ForegroundColor Cyan
     } else {
         Write-Host "An Ubuntu window is opening. Run this command inside Ubuntu to install NemoClaw:" -ForegroundColor Cyan
     }
@@ -841,4 +871,6 @@ function Invoke-Main {
     Write-InstallerHandoff
 }
 
-Invoke-Main
+if ($env:NEMOCLAW_BOOTSTRAP_WINDOWS_SOURCE_ONLY -ne '1') {
+    Invoke-Main
+}

@@ -13,6 +13,7 @@ import {
   buildDockerGpuMode,
   buildDockerGpuModeCandidates,
   collectDockerGpuPatchDiagnostics,
+  type DockerContainerInspect,
   detectSandboxFallbackDns,
   dockerReportsNvidiaCdiDevices,
   formatDockerInspectNetworkSummary,
@@ -21,7 +22,6 @@ import {
   recreateOpenShellDockerSandboxWithGpu,
   selectDockerGpuPatchMode,
   shouldApplyDockerGpuPatch,
-  type DockerContainerInspect,
 } from "../../../dist/lib/onboard/docker-gpu-patch";
 
 function inspectFixture(): DockerContainerInspect {
@@ -34,6 +34,7 @@ function inspectFixture(): DockerContainerInspect {
         "A=1",
         "OPENSHELL_ENDPOINT=http://host.openshell.internal:8080/",
         "OPENSHELL_TEST=1",
+        "OPENSHELL_SANDBOX_COMMAND=sleep infinity",
         "NVIDIA_VISIBLE_DEVICES=void",
       ],
       Labels: {
@@ -141,6 +142,51 @@ describe("docker-gpu-patch", () => {
       ]),
     );
     expect(args).not.toEqual(expect.arrayContaining(["--env", "NVIDIA_VISIBLE_DEVICES=void"]));
+  });
+
+  it("replaces OpenShell's idle sandbox command when recreating a managed container", () => {
+    const sandboxCommand = [
+      "env",
+      "CHAT_UI_URL=http://127.0.0.1:8642",
+      "NEMOCLAW_DASHBOARD_PORT=8642",
+      "nemoclaw-start",
+    ];
+
+    const args = buildDockerGpuCloneRunArgs(inspectFixture(), buildDockerGpuMode("gpus"), {
+      openshellSandboxCommand: sandboxCommand,
+    });
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--env",
+        "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:8642 NEMOCLAW_DASHBOARD_PORT=8642 nemoclaw-start",
+      ]),
+    );
+    expect(args).not.toEqual(
+      expect.arrayContaining(["--env", "OPENSHELL_SANDBOX_COMMAND=sleep infinity"]),
+    );
+    expect(args.slice(args.indexOf("openshell/sandbox:abc"))).toEqual([
+      "openshell/sandbox:abc",
+      ...sandboxCommand,
+    ]);
+  });
+
+  it("adds OpenShell's sandbox command env when the inspected container lacks one", () => {
+    const inspect = inspectFixture();
+    inspect.Config!.Env = inspect.Config!.Env!.filter(
+      (entry) => !entry.startsWith("OPENSHELL_SANDBOX_COMMAND="),
+    );
+
+    const args = buildDockerGpuCloneRunArgs(inspect, buildDockerGpuMode("gpus"), {
+      openshellSandboxCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
+    });
+
+    expect(args).toEqual(
+      expect.arrayContaining([
+        "--env",
+        "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:8642 nemoclaw-start",
+      ]),
+    );
   });
 
   it("adds SYS_PTRACE to the GPU clone when the baseline container lacks it", () => {
@@ -254,6 +300,22 @@ describe("docker-gpu-patch", () => {
     expect(buildDockerGpuMode("gpus", "1,2").args).toEqual(["--gpus", "device=1,2"]);
   });
 
+  it("uses Jetson NVIDIA runtime args without selecting generic --gpus or CDI candidates", () => {
+    expect(buildDockerGpuMode("nvidia-runtime", null, { backend: "jetson" }).args).toEqual([
+      "--runtime",
+      "nvidia",
+      "--env",
+      "NVIDIA_VISIBLE_DEVICES=all",
+      "--env",
+      "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
+    ]);
+    expect(
+      buildDockerGpuModeCandidates("all", { backend: "jetson", cdiAvailable: true }).map(
+        (m) => m.kind,
+      ),
+    ).toEqual(["nvidia-runtime"]);
+  });
+
   it("uses a Docker-GPU-specific supervisor reconnect wait with an override", () => {
     expect(getDockerGpuSupervisorReconnectTimeoutSecs(180, {})).toBe(900);
     expect(getDockerGpuSupervisorReconnectTimeoutSecs(600, {})).toBe(900);
@@ -330,6 +392,34 @@ describe("docker-gpu-patch", () => {
     ]);
   });
 
+  it("probes only NVIDIA runtime for Jetson Docker GPU mode", () => {
+    const dockerCapture = vi.fn(() => "");
+    const dockerRun = vi.fn(() => ({ status: 0, stdout: "probe-id" }));
+
+    const selected = selectDockerGpuPatchMode(
+      { image: "openshell/sandbox:abc", backend: "jetson" },
+      {
+        dockerCapture,
+        dockerRun,
+        dockerRm: vi.fn(() => ({ status: 0 })),
+      },
+    );
+
+    expect(selected.mode?.kind).toBe("nvidia-runtime");
+    expect(selected.attempts.map((attempt) => attempt.mode.kind)).toEqual(["nvidia-runtime"]);
+    expect(dockerRun).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "create",
+        "--runtime",
+        "nvidia",
+        "--env",
+        "NVIDIA_DRIVER_CAPABILITIES=compute,utility",
+      ]),
+      expect.objectContaining({ ignoreError: true }),
+    );
+    expect(dockerCapture).not.toHaveBeenCalled();
+  });
+
   it("tries CDI only when Docker reports readable NVIDIA CDI specs", () => {
     expect(buildDockerGpuModeCandidates("all", { cdiAvailable: false }).map((m) => m.kind)).toEqual(
       ["gpus", "nvidia-runtime"],
@@ -352,6 +442,72 @@ describe("docker-gpu-patch", () => {
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
+  });
+
+  it("detects NVIDIA CDI specs in /etc/cdi when docker info reports no dirs (#3575)", () => {
+    // Reproduces the Docker 29 + nvidia-container-toolkit + no daemon.json
+    // case: `docker info` returns an empty CDISpecDirs list, but Docker is
+    // still reading specs from its well-known default /etc/cdi. The detector
+    // should mirror Docker's behavior and surface cdi as available so the
+    // candidate list keeps `cdi` for fallback after `--gpus all` trips the
+    // AMD-CDI bug.
+    const readDir = vi.fn((dirPath: string) =>
+      dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null,
+    );
+    const readFile = vi.fn((filePath: string) =>
+      filePath === "/etc/cdi/nvidia.yaml"
+        ? "cdiVersion: 0.6.0\nkind: nvidia.com/gpu\ndevices:\n  - name: all\n"
+        : null,
+    );
+    expect(
+      dockerReportsNvidiaCdiDevices({
+        dockerCapture: vi.fn(() => ""),
+        readDir,
+        readFile,
+      }),
+    ).toBe(true);
+    expect(readDir).toHaveBeenCalledWith("/etc/cdi");
+  });
+
+  it("returns false when default CDI dirs hold no NVIDIA specs", () => {
+    expect(
+      dockerReportsNvidiaCdiDevices({
+        dockerCapture: vi.fn(() => ""),
+        readDir: vi.fn(() => null),
+        readFile: vi.fn(() => null),
+      }),
+    ).toBe(false);
+  });
+
+  it("falls back to default CDI dirs even when docker info errors", () => {
+    const dockerCapture = vi.fn(() => {
+      throw new Error("docker daemon unreachable");
+    });
+    const readDir = vi.fn((dirPath: string) =>
+      dirPath === "/var/run/cdi" ? ["nvidia.json"] : null,
+    );
+    const readFile = vi.fn((filePath: string) =>
+      filePath === "/var/run/cdi/nvidia.json"
+        ? JSON.stringify({ cdiVersion: "0.6.0", kind: "nvidia.com/gpu" })
+        : null,
+    );
+    expect(dockerReportsNvidiaCdiDevices({ dockerCapture, readDir, readFile })).toBe(true);
+  });
+
+  it("does not re-scan a directory that docker info already reported", () => {
+    const readDir = vi.fn((dirPath: string) =>
+      dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null,
+    );
+    const readFile = vi.fn(() =>
+      "cdiVersion: 0.6.0\nkind: nvidia.com/gpu\n",
+    );
+    dockerReportsNvidiaCdiDevices({
+      dockerCapture: vi.fn(() => JSON.stringify(["/etc/cdi"])),
+      readDir,
+      readFile,
+    });
+    const etcCdiCalls = readDir.mock.calls.filter(([dir]) => dir === "/etc/cdi");
+    expect(etcCdiCalls.length).toBe(1);
   });
 
   it("recreates the OpenShell-managed container and waits for supervisor exec", () => {
@@ -427,14 +583,20 @@ describe("docker-gpu-patch", () => {
       if (args[0] === "info") return "";
       return "";
     });
+    const dockerRunDetached = vi.fn(() => ({ status: 0, stdout: "new-container-id\n" }));
     const runOpenshell = vi.fn(() => ({ status: 1, stderr: "phase: Provisioning" }));
 
     const result = recreateOpenShellDockerSandboxWithGpu(
-      { sandboxName: "alpha", timeoutSecs: 1, waitForSupervisor: false },
+      {
+        sandboxName: "alpha",
+        timeoutSecs: 1,
+        waitForSupervisor: false,
+        openshellSandboxCommand: ["env", "CHAT_UI_URL=http://127.0.0.1:8642", "nemoclaw-start"],
+      },
       {
         dockerCapture,
         dockerRun: vi.fn(() => ({ status: 0, stdout: "probe-id\n" })),
-        dockerRunDetached: vi.fn(() => ({ status: 0, stdout: "new-container-id\n" })),
+        dockerRunDetached,
         dockerRename: vi.fn(() => ({ status: 0 })),
         dockerStop: vi.fn(() => ({ status: 0 })),
         dockerRm: vi.fn(() => ({ status: 0 })),
@@ -446,6 +608,17 @@ describe("docker-gpu-patch", () => {
 
     expect(result.newContainerId).toBe("new-container-id");
     expect(runOpenshell).not.toHaveBeenCalled();
+    expect(dockerRunDetached).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        "--env",
+        "OPENSHELL_SANDBOX_COMMAND=env CHAT_UI_URL=http://127.0.0.1:8642 nemoclaw-start",
+        "openshell/sandbox:abc",
+        "env",
+        "CHAT_UI_URL=http://127.0.0.1:8642",
+        "nemoclaw-start",
+      ]),
+      expect.objectContaining({ ignoreError: true }),
+    );
   });
 });
 

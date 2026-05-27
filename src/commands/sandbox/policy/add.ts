@@ -2,12 +2,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { Flags } from "@oclif/core";
-import type { PublicCommandDisplayEntry } from "../../../lib/cli/command-display";
+import { addSandboxPolicy } from "../../../lib/actions/sandbox/policy-channel";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import {
   commonPolicyOptions,
-  getPolicyRuntimeBridge,
   policyMutationArgs,
   policyMutationFlags,
 } from "../../../lib/sandbox/policy-command-support";
@@ -25,16 +24,6 @@ export default class PolicyAddCommand extends NemoClawCommand {
     "<%= config.bin %> sandbox policy add alpha --from-file ./policy.yaml --dry-run",
     "<%= config.bin %> sandbox policy add alpha --from-dir ./policies --yes",
   ];
-  static publicDisplay = [
-    {
-      usage: "nemoclaw <name> policy-add",
-      description: "Add a network or filesystem policy preset",
-      flags: "(--yes, -y, --dry-run, --from-file <path>, --from-dir <path>)",
-      group: "Policy Presets",
-      scope: "sandbox",
-      order: 17,
-    },
-  ] satisfies readonly PublicCommandDisplayEntry[];
   static args = policyMutationArgs;
   static flags = {
     ...policyMutationFlags,
@@ -50,7 +39,7 @@ export default class PolicyAddCommand extends NemoClawCommand {
 
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(PolicyAddCommand);
-    await getPolicyRuntimeBridge().sandboxPolicyAdd(args.sandboxName, {
+    await addSandboxPolicy(args.sandboxName, {
       preset: args.preset,
       ...commonPolicyOptions(flags),
       fromFile: flags["from-file"],

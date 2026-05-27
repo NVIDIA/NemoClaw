@@ -164,7 +164,7 @@ jobs:
 
       - name: Upload gateway health-honesty logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: gateway-health-honest-logs
           path: |
@@ -175,8 +175,8 @@ jobs:
 
 
   # ── OpenShell version-pin E2E ──────────────────────────────
-  # Coverage guard for #3474. If a host has sticky OpenShell 0.0.40 on PATH
-  # but this NemoClaw release supports only <=0.0.39, install-openshell.sh
+  # Coverage guard for #3474. If a host has sticky OpenShell 0.0.45 on PATH
+  # but this NemoClaw release supports only <=0.0.44, install-openshell.sh
   # must replace it with the pinned compatible release instead of hard-failing.
   openshell-version-pin-e2e:
     needs: select_regression_jobs
@@ -194,7 +194,7 @@ jobs:
 
       - name: Upload OpenShell version-pin logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openshell-version-pin-logs
           path: |
@@ -227,16 +227,25 @@ jobs:
         env:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_TRACE_DIR: /tmp/nemoclaw-traces
         run: bash test/e2e/test-onboard-inference-smoke.sh
 
       - name: Upload onboard inference smoke logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: onboard-inference-smoke-logs
           path: |
             /tmp/nemoclaw-e2e-onboard-inference-smoke.log
             /tmp/nemoclaw-e2e-onboard-inference-smoke-node.log
+          if-no-files-found: ignore
+
+      - name: Upload onboard profiling traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: onboard-inference-smoke-traces
+          path: /tmp/nemoclaw-traces/
           if-no-files-found: ignore
 
   # ── Gateway drift preflight E2E ─────────────────────────────
@@ -289,7 +298,7 @@ jobs:
 
       - name: Upload Model Router provider-routed inference logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: model-router-provider-routed-inference-logs
           path: |
@@ -323,7 +332,7 @@ jobs:
 
       - name: Upload OpenClaw plugin runtime-deps EXDEV logs on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: openclaw-plugin-runtime-exdev-logs
           path: |

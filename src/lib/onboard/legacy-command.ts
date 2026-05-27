@@ -21,6 +21,7 @@ export interface OnboardCommandOptions {
   gpu: boolean;
   noGpu: boolean;
   autoYes: boolean;
+  noOllamaAutostart: boolean;
 }
 
 export interface RunOnboardCommandDeps {
@@ -48,14 +49,16 @@ const ONBOARD_BASE_ARGS = [
   "--no-gpu",
   "--yes",
   "-y",
+  "--no-ollama-autostart",
 ];
 
 function onboardUsageLines(noticeAcceptFlag: string): string[] {
   const name = CLI_NAME;
   return [
-    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [${noticeAcceptFlag}]`,
+    `  Usage: ${name} onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [${noticeAcceptFlag}]`,
     "",
     "  --from <Dockerfile> uses the Dockerfile's parent directory as the Docker build context.",
+    "  --no-ollama-autostart skips the wizard's eager Ollama auto-start during inference-provider selection so onboard surfaces the unreachable-Ollama warning and the default fallback model; later setup steps still expect a reachable Ollama, and on Linux hosts with a systemd Ollama unit the loopback-override path may still restart the daemon ahead of this gate.",
     "  --gpu enables direct NVIDIA GPU access inside the sandbox; --no-gpu forces CPU sandbox behavior.",
     "  --sandbox-gpu enables direct NVIDIA GPU access inside the sandbox; --no-sandbox-gpu forces CPU sandbox behavior.",
     "  --sandbox-gpu-device passes a specific OpenShell GPU device selector to sandbox create; requires --sandbox-gpu.",
@@ -241,6 +244,7 @@ export function parseOnboardArgs(
     gpu,
     noGpu,
     autoYes: parsedArgs.includes("--yes") || parsedArgs.includes("-y"),
+    noOllamaAutostart: parsedArgs.includes("--no-ollama-autostart"),
   };
 }
 
@@ -252,6 +256,7 @@ export async function runOnboardCommand(deps: RunOnboardCommandDeps): Promise<vo
   }
 
   const options = parseOnboardArgs(deps.args, deps.noticeAcceptFlag, deps.noticeAcceptEnv, deps);
+  if (options.noOllamaAutostart) process.env.NEMOCLAW_OLLAMA_NO_AUTOSTART = "1";
   await deps.runOnboard(options);
 }
 

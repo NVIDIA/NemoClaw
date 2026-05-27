@@ -19,6 +19,7 @@ import { envInt } from "./env";
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
 export const OPENSHELL_SANDBOX_NAME_LABEL = "openshell.ai/sandbox-name";
+const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
 
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_PATCH_WAIT_SECS = 180;
@@ -65,9 +66,14 @@ export type DockerGpuPatchDeps = {
   homedir?: () => string;
   now?: () => Date;
   detectSandboxFallbackDns?: () => string | null;
+  /** Injectable directory lister for unit testing CDI spec discovery. */
+  readDir?: (dirPath: string) => string[] | null;
+  /** Injectable file reader for unit testing CDI spec content checks. */
+  readFile?: (filePath: string) => string | null;
 };
 
 export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi";
+export type DockerGpuPatchBackend = "generic" | "jetson";
 
 export type DockerGpuPatchMode = {
   kind: DockerGpuPatchModeKind;
@@ -103,6 +109,7 @@ export type DockerGpuCloneRunOptions = {
   networkMode?: string | null;
   openshellEndpoint?: string | null;
   sandboxFallbackDns?: string | null;
+  openshellSandboxCommand?: readonly string[] | null;
 };
 
 export type DockerGpuPatchDiagnostics = {
@@ -246,6 +253,11 @@ function replaceEnvValue(entry: string, key: string, value: string | null | unde
   return `${key}=${value}`;
 }
 
+function openshellSandboxCommandEnvValue(command: readonly string[] | null | undefined): string | null {
+  const parts = (command || []).map((part) => String(part)).filter((part) => part.length > 0);
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 function dockerGpuHostEndpointFromOpenShellEndpoint(endpoint: string): string | null {
   try {
     const url = new URL(endpoint);
@@ -287,7 +299,11 @@ function normalizeGpuDeviceForCdi(device: string | null | undefined): string {
   return `nvidia.com/gpu=${dockerDevice || "all"}`;
 }
 
-export function buildDockerGpuMode(kind: DockerGpuPatchModeKind, device?: string | null): DockerGpuPatchMode {
+export function buildDockerGpuMode(
+  kind: DockerGpuPatchModeKind,
+  device?: string | null,
+  options: { backend?: DockerGpuPatchBackend } = {},
+): DockerGpuPatchMode {
   const dockerDevice = normalizeGpuDeviceForDocker(device);
   if (kind === "gpus") {
     const gpuValue = dockerDevice === "all" ? "all" : `device=${dockerDevice}`;
@@ -299,11 +315,15 @@ export function buildDockerGpuMode(kind: DockerGpuPatchModeKind, device?: string
     };
   }
   if (kind === "nvidia-runtime") {
+    const args = ["--runtime", "nvidia", "--env", `NVIDIA_VISIBLE_DEVICES=${dockerDevice}`];
+    if (options.backend === "jetson") {
+      args.push("--env", "NVIDIA_DRIVER_CAPABILITIES=compute,utility");
+    }
     return {
       kind,
       label: `--runtime nvidia (NVIDIA_VISIBLE_DEVICES=${dockerDevice})`,
       device: dockerDevice,
-      args: ["--runtime", "nvidia", "--env", `NVIDIA_VISIBLE_DEVICES=${dockerDevice}`],
+      args,
     };
   }
   const cdiDevice = normalizeGpuDeviceForCdi(device);
@@ -317,12 +337,12 @@ export function buildDockerGpuMode(kind: DockerGpuPatchModeKind, device?: string
 
 export function buildDockerGpuModeCandidates(
   device?: string | null,
-  options: { cdiAvailable?: boolean } = {},
+  options: { cdiAvailable?: boolean; backend?: DockerGpuPatchBackend } = {},
 ): DockerGpuPatchMode[] {
-  const candidates = [
-    buildDockerGpuMode("gpus", device),
-    buildDockerGpuMode("nvidia-runtime", device),
-  ];
+  if (options.backend === "jetson") {
+    return [buildDockerGpuMode("nvidia-runtime", device, { backend: "jetson" })];
+  }
+  const candidates = [buildDockerGpuMode("gpus", device), buildDockerGpuMode("nvidia-runtime", device)];
   if (options.cdiAvailable) candidates.push(buildDockerGpuMode("cdi", device));
   return candidates;
 }
@@ -443,8 +463,21 @@ export function buildDockerGpuCloneRunArgs(
   if (config.Tty) args.push("--tty");
   if (config.OpenStdin) args.push("--interactive");
 
+  const openshellSandboxCommandEnv = openshellSandboxCommandEnvValue(
+    options.openshellSandboxCommand,
+  );
+  let sawOpenShellSandboxCommandEnv = false;
   for (const env of stringArray(config.Env).filter((entry) => !GPU_ENV_KEYS.has(envKey(entry)))) {
+    const key = envKey(env);
+    if (key === OPENSHELL_SANDBOX_COMMAND_ENV && openshellSandboxCommandEnv) {
+      sawOpenShellSandboxCommandEnv = true;
+      args.push("--env", `${OPENSHELL_SANDBOX_COMMAND_ENV}=${openshellSandboxCommandEnv}`);
+      continue;
+    }
     args.push("--env", replaceEnvValue(env, "OPENSHELL_ENDPOINT", options.openshellEndpoint));
+  }
+  if (openshellSandboxCommandEnv && !sawOpenShellSandboxCommandEnv) {
+    args.push("--env", `${OPENSHELL_SANDBOX_COMMAND_ENV}=${openshellSandboxCommandEnv}`);
   }
 
   const labels = config.Labels || {};
@@ -527,7 +560,10 @@ export function buildDockerGpuCloneRunArgs(
 
   const entrypoint = stringArray(config.Entrypoint);
   if (entrypoint.length > 0) args.push("--entrypoint", entrypoint[0]);
-  const commandArgs = [...entrypoint.slice(1), ...stringArray(config.Cmd)];
+  const commandArgs =
+    options.openshellSandboxCommand && options.openshellSandboxCommand.length > 0
+      ? [...options.openshellSandboxCommand]
+      : [...entrypoint.slice(1), ...stringArray(config.Cmd)];
   args.push(image, ...commandArgs);
   return args;
 }
@@ -595,15 +631,65 @@ function parseDockerCdiSpecDirs(value: string | null | undefined): string[] {
   }
 }
 
-function isLikelyNvidiaCdiSpecFile(filePath: string): boolean {
-  if (!/\.(json|ya?ml)$/i.test(filePath)) return false;
+/**
+ * Docker's well-known default CDI spec directories. Docker reads CDI specs
+ * from these paths even when `docker info` reports an empty `CDISpecDirs`
+ * (for example, on Docker 29 hosts with `nvidia-container-toolkit` installed
+ * but no `/etc/docker/daemon.json`). Scanning them lets us detect that the
+ * `cdi` GPU mode is viable when the docker-info detection alone would miss
+ * it (NemoClaw issue #3575).
+ */
+export const DEFAULT_DOCKER_CDI_SPEC_DIRS = ["/etc/cdi", "/var/run/cdi"] as const;
+
+function readCdiSpecContent(
+  filePath: string,
+  readFile?: (p: string) => string | null,
+): string | null {
+  if (readFile) return readFile(filePath);
   try {
-    return /nvidia\.com\/gpu|nvidia-container|libcuda|cuda/i.test(
-      fs.readFileSync(filePath, "utf-8"),
-    );
+    return fs.readFileSync(filePath, "utf-8");
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isLikelyNvidiaCdiSpecFile(
+  filePath: string,
+  readFile?: (p: string) => string | null,
+): boolean {
+  if (!/\.(json|ya?ml)$/i.test(filePath)) return false;
+  const content = readCdiSpecContent(filePath, readFile);
+  if (content === null) return false;
+  return /nvidia\.com\/gpu|nvidia-container|libcuda|cuda/i.test(content);
+}
+
+function listDirEntries(
+  dirPath: string,
+  readDir?: (p: string) => string[] | null,
+): string[] | null {
+  if (readDir) return readDir(dirPath);
+  try {
+    return fs.readdirSync(dirPath);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns the set of directories to scan for CDI specs: those reported by
+ * `docker info` (if any), plus Docker's well-known defaults. Deduplicated
+ * so a host that surfaces `/etc/cdi` explicitly is not scanned twice.
+ */
+function resolveCdiScanDirs(reportedDirs: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const dir of [...reportedDirs, ...DEFAULT_DOCKER_CDI_SPEC_DIRS]) {
+    const trimmed = dir.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    ordered.push(trimmed);
+  }
+  return ordered;
 }
 
 export function dockerReportsNvidiaCdiDevices(deps: DockerGpuPatchDeps = {}): boolean {
@@ -615,16 +701,14 @@ export function dockerReportsNvidiaCdiDevices(deps: DockerGpuPatchDeps = {}): bo
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
   } catch {
-    return false;
+    // `docker info` failed, but the default CDI dirs may still hold a valid
+    // spec (e.g. issue #3575). Continue with the defaults below.
   }
-  for (const dir of parseDockerCdiSpecDirs(raw)) {
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(dir);
-    } catch {
-      continue;
-    }
-    if (entries.some((entry) => isLikelyNvidiaCdiSpecFile(path.join(dir, entry)))) {
+  const reported = parseDockerCdiSpecDirs(raw);
+  for (const dir of resolveCdiScanDirs(reported)) {
+    const entries = listDirEntries(dir, deps.readDir);
+    if (!entries) continue;
+    if (entries.some((entry) => isLikelyNvidiaCdiSpecFile(path.join(dir, entry), deps.readFile))) {
       return true;
     }
   }
@@ -662,12 +746,15 @@ function probeDockerGpuMode(
 }
 
 export function selectDockerGpuPatchMode(
-  options: { image: string; device?: string | null },
+  options: { image: string; device?: string | null; backend?: DockerGpuPatchBackend },
   deps: DockerGpuPatchDeps = {},
 ): { mode: DockerGpuPatchMode | null; attempts: DockerGpuPatchModeAttempt[] } {
-  const cdiAvailable = dockerReportsNvidiaCdiDevices(deps);
+  const cdiAvailable = options.backend === "jetson" ? false : dockerReportsNvidiaCdiDevices(deps);
   const attempts: DockerGpuPatchModeAttempt[] = [];
-  for (const mode of buildDockerGpuModeCandidates(options.device, { cdiAvailable })) {
+  for (const mode of buildDockerGpuModeCandidates(options.device, {
+    cdiAvailable,
+    backend: options.backend,
+  })) {
     const result = probeDockerGpuMode(mode, options.image, deps);
     const attempt = { mode, ok: result.ok, error: result.error };
     attempts.push(attempt);
@@ -760,6 +847,8 @@ export function recreateOpenShellDockerSandboxWithGpu(
     gpuDevice?: string | null;
     timeoutSecs?: number;
     waitForSupervisor?: boolean;
+    openshellSandboxCommand?: readonly string[] | null;
+    backend?: DockerGpuPatchBackend;
   },
   deps: DockerGpuPatchDeps = {},
 ): DockerGpuPatchResult {
@@ -783,13 +872,17 @@ export function recreateOpenShellDockerSandboxWithGpu(
     if (!image) throw new Error("OpenShell sandbox container inspect did not include an image.");
 
     const selection = selectDockerGpuPatchMode(
-      { image, device: options.gpuDevice },
+      { image, device: options.gpuDevice, backend: options.backend },
       deps,
     );
     context.modeAttempts = selection.attempts;
     context.selectedMode = selection.mode;
     if (!selection.mode) {
-      throw new Error("Docker did not accept --gpus, NVIDIA runtime, or CDI GPU modes.");
+      const modeMessage =
+        options.backend === "jetson"
+          ? "Docker did not accept the Jetson NVIDIA runtime GPU mode."
+          : "Docker did not accept --gpus, NVIDIA runtime, or CDI GPU modes.";
+      throw new Error(modeMessage);
     }
 
     const originalName = dockerContainerName(inspect);
@@ -811,6 +904,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     }
 
     const cloneOptions = buildDockerGpuCloneRunOptions(inspect);
+    cloneOptions.openshellSandboxCommand = options.openshellSandboxCommand ?? null;
     const sandboxFallbackDns = d.detectSandboxFallbackDns();
     if (sandboxFallbackDns) cloneOptions.sandboxFallbackDns = sandboxFallbackDns;
     const cloneArgs = buildDockerGpuCloneRunArgs(inspect, selection.mode, cloneOptions);

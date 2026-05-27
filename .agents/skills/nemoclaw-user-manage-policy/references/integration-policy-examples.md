@@ -50,7 +50,6 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Python Package Index | `pypi` |
 | Slack messaging | `slack` |
 | Telegram Bot API | `telegram` |
-| WeChat messaging | `wechat` |
 | WhatsApp Web messaging | `whatsapp` |
 
 Preview the endpoints before applying:
@@ -111,7 +110,7 @@ If delivery fails, open the TUI and send a test message to the bot:
 $ openshell term
 ```
 
-The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, `slack`, `wechat`, or `whatsapp`).
+The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, `slack`, or `whatsapp`).
 
 ## Slack or Discord Messaging
 
@@ -164,6 +163,20 @@ $ nemoclaw my-assistant policy-add github --yes
 $ nemoclaw my-assistant policy-add jira --yes
 ```
 
+The `jira` preset intentionally allows Node.js access to Atlassian Cloud and does not allow `curl`.
+When validating it manually, avoid plain `curl -s` against `auth.atlassian.com`.
+Atlassian can return an empty redirect body even when the request succeeds.
+Use an explicit status probe instead:
+
+```console
+$ node -e "require('https').get('https://api.atlassian.com', r => console.log(r.statusCode))"
+$ curl -sS -o /dev/null -w '%{http_code}' --max-time 10 https://auth.atlassian.com
+```
+
+Before approval, the curl probe should report `000` or a local policy denial.
+After approving the blocked request in OpenShell, it should report an HTTP
+status such as `301` or `200`.
+
 Remove access when the task is done:
 
 ```console
@@ -212,6 +225,18 @@ $ nemoclaw my-assistant policy-remove brew --yes
 $ nemoclaw my-assistant policy-remove huggingface --yes
 ```
 
+### Homebrew Specifics
+
+The sandbox base image includes Homebrew (Linuxbrew), so applying the `brew` preset is the only step needed before installing a formula.
+A `/usr/local/bin/brew` symlink puts the entry point on the sandbox `PATH`, so the agent can run `brew install <formula>` directly:
+
+```console
+$ nemoclaw my-assistant policy-add brew --yes
+$ nemoclaw my-assistant exec -- brew install <formula>
+```
+
+You do not need to bootstrap Homebrew, install build dependencies, or source `brew shellenv` inside the sandbox.
+
 ## Local Inference
 
 Use `local-inference` when the sandbox needs access to host-side local inference services such as Ollama or vLLM through the OpenShell host gateway.
@@ -257,5 +282,5 @@ Use `nemoclaw my-assistant policy-add` for maintained NemoClaw presets.
 
 - Approve or Deny Agent Network Requests (use the `nemoclaw-user-manage-policy` skill) for the interactive OpenShell TUI flow.
 - Customize the Sandbox Network Policy (use the `nemoclaw-user-manage-policy` skill) for static policy edits and raw OpenShell policy files.
-- Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) for Telegram, Discord, Slack, WeChat, and WhatsApp channel configuration.
+- Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) for Telegram, Discord, Slack, and WhatsApp channel configuration.
 - Commands (use the `nemoclaw-user-reference` skill) for the full `policy-add`, `policy-list`, `policy-remove`, and `channels` command reference.

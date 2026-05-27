@@ -9,6 +9,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  ensureLocalAdapterStateDir,
   isLocalAdapterProcess,
   killLocalAdapterPid,
   loadLocalAdapterPid,
@@ -127,5 +128,26 @@ describe("local adapter lifecycle", () => {
         expectedTokenHash: localAdapterTokenHash("other-token"),
       }),
     ).resolves.toBe(false);
+  });
+});
+
+describe("ensureLocalAdapterStateDir", () => {
+  it("creates directory with owner-only permissions (0o700)", () => {
+    if (process.platform === "win32") return;
+    const dir = tempDir();
+    const stateDir = path.join(dir, "nested", "state");
+    ensureLocalAdapterStateDir(stateDir);
+    const stat = fs.statSync(stateDir);
+    expect(stat.mode & 0o777).toBe(0o700);
+  });
+
+  it("tightens permissions on an existing world-readable directory", () => {
+    if (process.platform === "win32") return;
+    const dir = tempDir();
+    const stateDir = path.join(dir, "lax");
+    fs.mkdirSync(stateDir, { mode: 0o755 });
+    ensureLocalAdapterStateDir(stateDir);
+    const stat = fs.statSync(stateDir);
+    expect(stat.mode & 0o777).toBe(0o700);
   });
 });

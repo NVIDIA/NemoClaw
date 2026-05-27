@@ -28,6 +28,8 @@ RUN npm ci && npm run build
 # Stage 2: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
+ARG OPENCLAW_VERSION=2026.5.22
+ARG OPENCLAW_2026_5_22_INTEGRITY=sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
@@ -63,7 +65,7 @@ COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
 COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
-RUN chmod -R a+rX /opt/nemoclaw-blueprint/
+RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/
 
 # Install runtime dependencies only (no devDependencies, no build step)
 WORKDIR /opt/nemoclaw
@@ -76,7 +78,9 @@ ENV NPM_CONFIG_AUDIT=false \
     NPM_CONFIG_FETCH_TIMEOUT=300000
 RUN npm ci --omit=dev
 COPY scripts/patch-openclaw-tool-catalog.js /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
-RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
+COPY scripts/patch-openclaw-chat-send.js /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
+RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
+        /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js
 
 # Upgrade OpenClaw if the base image is stale.
 #
@@ -86,24 +90,39 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js
 # silently skipping patches (leaving the sandbox unpatched), upgrade OpenClaw
 # in-place so every build gets the version the patches expect.
 #
-# The minimum required version comes from nemoclaw-blueprint/blueprint.yaml
-# (already COPYed to /opt/nemoclaw-blueprint/ above).
+# OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
+# blueprint minimum, which also supports the legacy direct-blueprint image path.
 # hadolint ignore=DL3059,DL4006
 RUN set -eu; \
+    echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
+        || { echo "ERROR: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)" >&2; exit 1; }; \
     MIN_VER=$(grep -m 1 'min_openclaw_version' /opt/nemoclaw-blueprint/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
     [ -n "$MIN_VER" ] || { echo "ERROR: Could not parse min_openclaw_version from blueprint.yaml" >&2; exit 1; }; \
+    if [ "$(printf '%s\n%s' "$MIN_VER" "$OPENCLAW_VERSION" | sort -V | head -n1)" != "$MIN_VER" ]; then \
+        echo "ERROR: OpenClaw build target ${OPENCLAW_VERSION} is below blueprint minimum ${MIN_VER}" >&2; exit 1; \
+    fi; \
+    EXPECTED_INTEGRITY=""; \
+    if [ "$OPENCLAW_VERSION" = "2026.5.22" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_22_INTEGRITY"; fi; \
+    if [ -n "$EXPECTED_INTEGRITY" ]; then \
+        REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
+        if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
+            echo "ERROR: OpenClaw ${OPENCLAW_VERSION} npm integrity mismatch" >&2; \
+            echo "Expected: ${EXPECTED_INTEGRITY}" >&2; \
+            echo "Actual:   ${REGISTRY_INTEGRITY}" >&2; exit 1; \
+        fi; \
+    fi; \
     CUR_VER=$(openclaw --version 2>/dev/null | awk '{print $2}' || echo "0.0.0"); \
-    if [ "$(printf '%s\n%s' "$MIN_VER" "$CUR_VER" | sort -V | head -n1)" = "$MIN_VER" ]; then \
-        echo "INFO: OpenClaw $CUR_VER is current (>= $MIN_VER), no upgrade needed"; \
+    if [ "$(printf '%s\n%s' "$OPENCLAW_VERSION" "$CUR_VER" | sort -V | head -n1)" = "$OPENCLAW_VERSION" ]; then \
+        echo "INFO: OpenClaw $CUR_VER is current (>= $OPENCLAW_VERSION), no upgrade needed"; \
     else \
-        echo "INFO: Base image has OpenClaw $CUR_VER, upgrading to $MIN_VER (minimum required)"; \
+        echo "INFO: Base image has OpenClaw $CUR_VER, upgrading to $OPENCLAW_VERSION"; \
         # npm 10's atomic-move install can hit EROFS on overlayfs when the
         # prior install spans multiple image layers (e.g. openclaw was
         # baked into sandbox-base, then we upgrade on top here). Clearing
         # at the shell level first gives npm a clean slate and avoids the
         # rmdir failure inside npm's own install path.
         rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
-        npm install -g --no-audit --no-fund --no-progress "openclaw@${MIN_VER}"; \
+        npm install -g --no-audit --no-fund --no-progress "openclaw@${OPENCLAW_VERSION}"; \
     fi; \
     # Pre-install the codex-acp package so the embedded ACPx runtime can
     # call the local binary instead of `npx @zed-industries/codex-acp`.
@@ -164,52 +183,117 @@ RUN set -eu; \
 #   target hostname allowlist for the proxy hostname check (or exposes config
 #   to disable the check).
 #
-# SYNC WITH OPENCLAW: these patches grep for specific exports and function
-# definitions in the compiled OpenClaw dist (withStrictGuardedFetchMode,
-# assertExplicitProxyAllowed). If OpenClaw renames, removes, or restructures
-# either symbol in a future release, the grep will fail and the build will
-# abort. When bumping OPENCLAW_VERSION, verify both symbols still exist in
-# the new dist and update the regex / sed replacement accordingly.
-#
-# Both patches fail-close: if grep finds no targets, the build aborts so
-# the next maintainer reviewing an OPENCLAW_VERSION bump knows to revisit.
+# SYNC WITH OPENCLAW: these patches classify the compiled OpenClaw dist at
+# build time. They apply the legacy patch when the old target exists, skip
+# only when the dist shape proves OpenClaw no longer needs that patch, and
+# fail with the OpenClaw version plus dist path for mixed or unknown shapes.
+# When bumping OPENCLAW_VERSION, verify the new dist
+# takes the expected branch and update the regex / sed replacement if needed.
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
     OC_DIST=/usr/local/lib/node_modules/openclaw/dist; \
+    OC_VERSION="$(openclaw --version 2>/dev/null | awk '{print $2}' || true)"; \
+    OC_VERSION="${OC_VERSION:-unknown}"; \
+    patch_fail() { \
+        echo "ERROR: OpenClaw ${OC_VERSION} fetch-guard patch cannot classify this dist shape: $*" >&2; \
+        echo "       Inspect ${OC_DIST} and update the Dockerfile patch rules for this OpenClaw layout." >&2; \
+        exit 1; \
+    }; \
     # --- Patch 1: rewrite fetch-guard export --- \
-    fg_export="$(grep -RIlE --include='*.js' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' "$OC_DIST")"; \
-    test -n "$fg_export"; \
-    for f in $fg_export; do \
-        grep -q 'withTrustedEnvProxyGuardedFetchMode' "$f" || { echo "ERROR: $f missing withTrustedEnvProxyGuardedFetchMode"; exit 1; }; \
-    done; \
-    printf '%s\n' "$fg_export" | xargs sed -i -E 's|withStrictGuardedFetchMode as ([a-z])|withTrustedEnvProxyGuardedFetchMode as \1|g'; \
-    if grep -REq --include='*.js' 'withStrictGuardedFetchMode as [a-z]' "$OC_DIST"; then echo "ERROR: Patch 1 left strict-mode export alias" >&2; exit 1; fi; \
+    fg_export="$(grep -RIlE --include='*.js' 'export \{[^}]*withStrictGuardedFetchMode as [a-z]' "$OC_DIST" || true)"; \
+    if [ -n "$fg_export" ]; then \
+        for f in $fg_export; do \
+            grep -q 'withTrustedEnvProxyGuardedFetchMode' "$f" || patch_fail "Patch 1 target $f is missing withTrustedEnvProxyGuardedFetchMode"; \
+        done; \
+        printf '%s\n' "$fg_export" | xargs sed -i -E 's|withStrictGuardedFetchMode as ([a-z])|withTrustedEnvProxyGuardedFetchMode as \1|g'; \
+        if grep -REq --include='*.js' 'withStrictGuardedFetchMode as [a-z]' "$OC_DIST"; then echo "ERROR: Patch 1 left strict-mode export alias" >&2; exit 1; fi; \
+        echo "INFO: Patch 1 applied to OpenClaw ${OC_VERSION} strict fetch export"; \
+    else \
+        strict_refs="$(grep -RIl --include='*.js' 'withStrictGuardedFetchMode' "$OC_DIST" || true)"; \
+        trusted_refs="$(grep -RIl --include='*.js' 'withTrustedEnvProxyGuardedFetchMode' "$OC_DIST" || true)"; \
+        media_fetch_files="$(grep -RIl --include='*.js' 'fetchGuardedMediaResponse' "$OC_DIST" || true)"; \
+        trusted_media_fetch=0; \
+        untrusted_media_fetch=0; \
+        for f in $media_fetch_files; do \
+            if ! grep -q 'fetchWithSsrFGuard' "$f"; then \
+                continue; \
+            elif grep -E 'fetchWithSsrFGuard' "$f" | grep -q 'withTrustedEnvProxyGuardedFetchMode' \
+                && ! grep -E 'fetchWithSsrFGuard' "$f" | grep -vq 'withTrustedEnvProxyGuardedFetchMode'; then \
+                trusted_media_fetch=1; \
+            else \
+                echo "ERROR: Patch 1 unreviewed media fetch shape in $f" >&2; \
+                untrusted_media_fetch=1; \
+            fi; \
+        done; \
+        if [ "$OC_VERSION" != "unknown" ] && [ -z "$strict_refs" ] && [ -n "$trusted_refs" ] && [ "$trusted_media_fetch" = "1" ] && [ "$untrusted_media_fetch" = "0" ]; then \
+            echo "INFO: OpenClaw ${OC_VERSION} has no withStrictGuardedFetchMode references; Patch 1 not needed"; \
+        elif [ -z "$trusted_refs" ]; then \
+            patch_fail "Patch 1 target missing and withTrustedEnvProxyGuardedFetchMode is also absent"; \
+        else \
+            echo "ERROR: Patch 1 target missing but the fetch-guard shape is not a reviewed trusted-proxy-only layout:" >&2; \
+            if [ -n "$strict_refs" ]; then printf '%s\n' "$strict_refs" | head -n 5 >&2; fi; \
+            patch_fail "Patch 1 cannot safely skip"; \
+        fi; \
+    fi; \
     # --- Patch 2: neutralize assertExplicitProxyAllowed --- \
-    fg_assert="$(grep -RIlE --include='*.js' 'async function assertExplicitProxyAllowed' "$OC_DIST")"; \
-    test -n "$fg_assert"; \
-    printf '%s\n' "$fg_assert" | xargs sed -i -E 's|(async function assertExplicitProxyAllowed\([^)]*\) \{)|\1 if (process.env.OPENSHELL_SANDBOX === "1") return; /* nemoclaw: env-gated bypass, see Dockerfile */ |'; \
-    grep -REq --include='*.js' 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.OPENSHELL_SANDBOX === "1"\) return; /\* nemoclaw' "$OC_DIST"; \
+    fg_assert="$(grep -RIlE --include='*.js' 'async function assertExplicitProxyAllowed' "$OC_DIST" || true)"; \
+    if [ -n "$fg_assert" ]; then \
+        patched_assert=0; \
+        for f in $fg_assert; do \
+            if grep -q 'process.env.OPENSHELL_SANDBOX === "1"' "$f"; then \
+                echo "INFO: Patch 2 already present in $f"; \
+            else \
+                sed -i -E 's|(async function assertExplicitProxyAllowed\([^)]*\) \{)|\1 if (process.env.OPENSHELL_SANDBOX === "1") return; /* nemoclaw: env-gated bypass, see Dockerfile */ |' "$f"; \
+                grep -Eq 'assertExplicitProxyAllowed\([^)]*\) \{ if \(process\.env\.OPENSHELL_SANDBOX === "1"\) return; /\* nemoclaw' "$f" \
+                    || patch_fail "Patch 2 verification failed for $f"; \
+                patched_assert=1; \
+            fi; \
+        done; \
+        if [ "$patched_assert" = "1" ]; then \
+            echo "INFO: Patch 2 applied to OpenClaw ${OC_VERSION} explicit proxy validator"; \
+        fi; \
+    else \
+        proxy_hostname_checks="$(grep -RIlE --include='*.js' 'resolvePinnedHostnameWithPolicy' "$OC_DIST" | while IFS= read -r f; do \
+            if grep -Eq 'parsedProxyUrl|proxyUrl|proxyHostname|proxy.*[Hh]ostname|[Hh]ostname.*proxy|allowPrivateProxy' "$f"; then \
+                printf '%s\n' "$f"; \
+            fi; \
+        done || true)"; \
+        if [ -z "$proxy_hostname_checks" ]; then \
+            echo "INFO: OpenClaw ${OC_VERSION} has no assertExplicitProxyAllowed proxy hostname validator; Patch 2 not needed"; \
+        else \
+            echo "ERROR: Patch 2 target missing but proxy hostname validation references remain:" >&2; \
+            printf '%s\n' "$proxy_hostname_checks" | head -n 5 >&2; \
+            patch_fail "Patch 2 cannot safely skip"; \
+        fi; \
+    fi; \
     # --- Patch 3: follow symlinks in plugin-install path checks (#2203) --- \
     # OpenClaw's install-safe-path and install-package-dir reject symlinked \
     # directories via lstat. Changing lstat → stat in these two modules lets \
     # symlinks resolve; the real security gates (realpath + isPathInside \
     # containment) remain intact — a symlink escaping the base tree is still caught. \
     # Scoped to install-safe-path + install-package-dir only. \
-    isp_file="$(grep -RIlE --include='*.js' 'const baseLstat = await fs\.lstat\(baseDir\)' "$OC_DIST/install-safe-path-"*.js)"; \
+    isp_file="$(grep -RIlE --include='*.js' 'const baseLstat = await fs\.(lstat|stat)\(baseDir\)' "$OC_DIST/install-safe-path-"*.js || true)"; \
     test -n "$isp_file" || { echo "ERROR: install-safe-path baseLstat pattern not found" >&2; exit 1; }; \
     sed -i 's/const baseLstat = await fs\.lstat(baseDir)/const baseLstat = await fs.stat(baseDir)/' "$isp_file"; \
     if grep -q 'const baseLstat = await fs\.lstat(baseDir)' "$isp_file"; then echo "ERROR: Patch 3a (install-safe-path) left baseLstat lstat call" >&2; exit 1; fi; \
-    ipd_file="$(grep -RIlE --include='*.js' 'assertInstallBaseStable' "$OC_DIST/install-package-dir-"*.js)"; \
+    if ! grep -q 'const baseLstat = await fs\.stat(baseDir)' "$isp_file"; then echo "ERROR: Patch 3a (install-safe-path) did not find patched baseLstat stat call" >&2; exit 1; fi; \
+    ipd_file="$(grep -RIlE --include='*.js' 'assertInstallBaseStable' "$OC_DIST/install-package-dir-"*.js || true)"; \
     test -n "$ipd_file" || { echo "ERROR: install-package-dir assertInstallBaseStable not found" >&2; exit 1; }; \
-    sed -i 's/const baseLstat = await fs\.lstat(params\.installBaseDir)/const baseLstat = await fs.stat(params.installBaseDir)/' "$ipd_file"; \
-    sed -i 's/baseLstat\.isSymbolicLink()/false \/* nemoclaw: symlink check disabled, realpath guards containment *\//' "$ipd_file"; \
-    if grep -q 'fs\.lstat(params\.installBaseDir)' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left lstat in assertInstallBaseStable" >&2; exit 1; fi; \
+	    if grep -q 'const baseLstat = await fs\.lstat(params\.installBaseDir)' "$ipd_file"; then \
+	        sed -i 's/const baseLstat = await fs\.lstat(params\.installBaseDir)/const baseLstat = await fs.stat(params.installBaseDir)/' "$ipd_file"; \
+	        sed -i 's/baseLstat\.isSymbolicLink()/false \/* nemoclaw: symlink check disabled, realpath guards containment *\//' "$ipd_file"; \
+	        if grep -q 'fs\.lstat(params\.installBaseDir)' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left lstat in assertInstallBaseStable" >&2; exit 1; fi; \
+	        if ! grep -q 'const baseLstat = await fs\.stat(params\.installBaseDir)' "$ipd_file" && ! grep -q 'await fs\.stat(params\.installBaseDir)).isDirectory()' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) did not find patched/safe installBaseDir stat call" >&2; exit 1; fi; \
+	        if grep -q 'baseLstat\.isSymbolicLink()' "$ipd_file"; then echo "ERROR: Patch 3b (install-package-dir) left baseLstat symlink check" >&2; exit 1; fi; \
+	    else \
+	        grep -q 'await fs\.realpath(params\.installBaseDir) !== params\.expectedRealPath' "$ipd_file" || { echo "ERROR: install-package-dir lacks expected realpath stability guard" >&2; exit 1; }; \
+	    fi; \
     # --- Patch 5: bump default WS handshake timeout 10s -> 60s (#2484) --- \
     # OpenClaw's WS connect handshake has a hard-coded 10s timeout on both \
     # client and server. Server-side connect-handler processing can exceed \
-    # 10s under load (multiple concurrent connects on slow CI infra), \
+    # that limit under load (multiple concurrent connects on slow CI infra), \
     # causing `openclaw agent --json` to fail with "gateway timeout after \
-    # 10000ms" and TC-SBX-02 to hit its 90s SSH timeout. \
+    # <timeout>ms" and TC-SBX-02 to hit its 90s SSH timeout. \
     # \
     # Both env vars (OPENCLAW_HANDSHAKE_TIMEOUT_MS, \
     # OPENCLAW_CONNECT_CHALLENGE_TIMEOUT_MS) are clamped at the same \
@@ -219,12 +303,29 @@ RUN set -eu; \
     # \
     # Removal criteria: drop when openclaw fixes the underlying connect \
     # latency, or exposes the timeout as an unbounded env override. \
-    hto_files="$(grep -RIlE --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4' "$OC_DIST")"; \
+    hto_files="$(grep -RIlE --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3|6e4)' "$OC_DIST" || true)"; \
     test -n "$hto_files" || { echo "ERROR: handshake-timeout constant not found" >&2; exit 1; }; \
-    printf '%s\n' "$hto_files" | xargs sed -i -E 's|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4|DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4|g'; \
-    if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 1e4' "$OC_DIST"; then echo "ERROR: Patch 5 left a 1e4 constant" >&2; exit 1; fi
+    printf '%s\n' "$hto_files" | xargs sed -i -E 's#DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)#DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4#g'; \
+    if grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = (1e4|15e3)' "$OC_DIST"; then echo "ERROR: Patch 5 left a short handshake-timeout constant" >&2; exit 1; fi; \
+    if ! grep -REq --include='*.js' 'DEFAULT_PREAUTH_HANDSHAKE_TIMEOUT_MS = 6e4' "$OC_DIST"; then echo "ERROR: Patch 5 did not find patched 6e4 constant" >&2; exit 1; fi
 
-# Patch OpenClaw's pinned 2026.4.24 compiled selection runtime to expose a
+# Patch OpenClaw chat.send gateway behavior for OpenClaw 2026.5.x.
+#
+# OpenClaw can accept rapid TUI/WebChat chat.send requests and then emit a
+# terminal chat event with state="final" but no assistant message for the later
+# submitted run. That makes clients treat the turn as complete even though no
+# visible reply was delivered. The shim also correlates real agent run IDs back
+# to the submitted chat.send run ID when OpenClaw starts an internal run with a
+# different ID, carries that submitted ID through queued follow-up turns, and
+# adds the submitted run ID as the transcript idempotency key.
+#
+# Removal criteria: drop when upstream OpenClaw fixes openclaw/openclaw#70164
+# and openclaw/openclaw#50298, or when NemoClaw no longer ships OpenClaw 2026.5.x.
+# hadolint ignore=DL3059
+RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
+    /usr/local/lib/node_modules/openclaw/dist
+
+# Patch OpenClaw's pinned 2026.5.22 compiled selection runtime to expose a
 # compact searchable tool catalog to the model while preserving the full
 # effective tool set behind tool_call. NEMOCLAW_TOOL_CATALOG=0 disables this
 # wrapper if an emergency rollback is needed. The script fails closed if the
@@ -311,6 +412,11 @@ ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 # metadata only — the bot token flows through the OpenShell provider, never
 # baked into the image. Default: empty map.
 ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
+# Base64-encoded JSON Slack config (e.g.
+# {"allowedChannels":["C012AB3CD","C987ZY6XW"]}).
+# Channel IDs scope Slack channel @mention handling. User allowlists still come
+# from NEMOCLAW_MESSAGING_ALLOWED_IDS_B64. Default: empty map.
+ARG NEMOCLAW_SLACK_CONFIG_B64=e30=
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
 # since terminal-based pairing is impossible in those contexts.
@@ -358,6 +464,8 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
     NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
     NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
+    NEMOCLAW_SLACK_CONFIG_B64=${NEMOCLAW_SLACK_CONFIG_B64} \
+    NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED=1 \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
@@ -378,20 +486,15 @@ USER sandbox
 # is opt-in via `shields up` (DAC 444 root:root + chattr +i).
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 #
-# Temporary workaround for NemoClaw#1738: the OpenClaw Discord extension's
-# gateway uses `ws` (via @buape/carbon), which ignores HTTPS_PROXY/HTTP_PROXY
-# env vars and opens a direct TCP socket to gateway.discord.gg. Sandbox netns
-# blocks direct egress, so the WSS handshake never reaches Discord and the
-# bot loops on close-code 1006. Baking `accounts.default.proxy` into
-# openclaw.json feeds DiscordAccountConfig.proxy, which the gateway plugin
-# threads through to the `ws` `agent` option, routing the upgrade through
-# the OpenShell proxy. Mirror of the Telegram treatment immediately below.
-# Remove once OpenClaw lands an env-var-honouring fix for the Discord
-# gateway equivalent to openclaw/openclaw#62878 (Slack Socket Mode).
 # Generate openclaw.json from environment variables. Config generation logic
 # lives in scripts/generate-openclaw-config.py — see that file for the full
 # list of env vars and derivation rules.
-RUN python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
+#
+# OpenClaw's managed proxy config activates process-wide HTTP_PROXY/HTTPS_PROXY
+# for child npm processes. During image build the OpenShell gateway is not
+# available at the runtime sandbox proxy address yet, so defer the final proxy
+# block until after build-time OpenClaw doctor/plugin commands complete.
+RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
 
 # hadolint ignore=DL3059,DL4006
 RUN openclaw doctor --fix --non-interactive
@@ -430,11 +533,21 @@ RUN openclaw plugins install /opt/nemoclaw \
 # SECURITY: Clear any gateway auth token that openclaw doctor/plugins may have
 # auto-generated. The real token is created at container startup by the
 # entrypoint (generate_gateway_token) and never stored in openclaw.json.
+# Also add the final OpenClaw managed proxy config after build-time OpenClaw
+# commands are done, so runtime Discord/WebSocket traffic uses the OpenShell
+# gateway proxy without forcing image-build npm traffic through that proxy.
 RUN python3 -c "\
 import json, os; \
 path = os.path.expanduser('~/.openclaw/openclaw.json'); \
 cfg = json.load(open(path)); \
 cfg.setdefault('gateway', {}).setdefault('auth', {})['token'] = ''; \
+proxy_host = os.environ.get('NEMOCLAW_PROXY_HOST') or '10.200.0.1'; \
+proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; \
+cfg['proxy'] = { \
+    'enabled': True, \
+    'proxyUrl': f'http://{proxy_host}:{proxy_port}', \
+    'loopbackMode': 'proxy', \
+}; \
 json.dump(cfg, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
 
@@ -449,12 +562,16 @@ USER root
 RUN set -eu; \
     config_dir=/sandbox/.openclaw; \
     data_dir=/sandbox/.openclaw-data; \
+    legacy_layout=0; \
+    legacy_marker=/tmp/nemoclaw-legacy-openclaw-layout; \
+    rm -f "$legacy_marker"; \
     mkdir -p "$config_dir"; \
     if [ -L "$data_dir" ]; then \
         echo "ERROR: refusing legacy layout cleanup because $data_dir is a symlink" >&2; \
         exit 1; \
     fi; \
     if [ -d "$data_dir" ]; then \
+        legacy_layout=1; \
         for entry in "$data_dir"/*; do \
             [ -e "$entry" ] || [ -L "$entry" ] || continue; \
             if [ -L "$entry" ]; then \
@@ -510,7 +627,32 @@ RUN set -eu; \
         done; \
         rm -rf "$data_dir"; \
     fi; \
-    mkdir -p "$config_dir/agents/main/agent" \
+    if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
+        echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
+        exit 1; \
+    fi; \
+    if [ "$legacy_layout" = "1" ]; then \
+        data_real="$(readlink -f "$data_dir" 2>/dev/null || printf '%s' "$data_dir")"; \
+        find "$config_dir" -type l -print | while IFS= read -r link; do \
+            raw_target="$(readlink "$link" 2>/dev/null || true)"; \
+            resolved_target="$(readlink -f "$link" 2>/dev/null || true)"; \
+            case "$raw_target" in \
+                "$data_real"/* | "$data_dir"/*) \
+                    echo "ERROR: legacy symlink remains after cleanup: $link -> $raw_target" >&2; \
+                    exit 1; \
+                    ;; \
+            esac; \
+            case "$resolved_target" in \
+                "$data_real"/* | "$data_dir"/*) \
+                    echo "ERROR: legacy symlink remains after cleanup: $link -> $resolved_target" >&2; \
+                    exit 1; \
+                    ;; \
+            esac; \
+        done; \
+        : > "$legacy_marker"; \
+    fi; \
+    for dir in \
+        "$config_dir/agents/main/agent" \
         "$config_dir/extensions" \
         "$config_dir/workspace" \
         "$config_dir/skills" \
@@ -527,28 +669,13 @@ RUN set -eu; \
         "$config_dir/telegram" \
         "$config_dir/wechat" \
         "$config_dir/media" \
-        "$config_dir/plugin-runtime-deps"; \
-    touch "$config_dir/update-check.json" "$config_dir/exec-approvals.json"; \
-    if [ -e "$data_dir" ] || [ -L "$data_dir" ]; then \
-        echo "ERROR: legacy data dir still exists after cleanup: $data_dir" >&2; \
-        exit 1; \
-    fi; \
-    data_real="$(readlink -f "$data_dir" 2>/dev/null || printf '%s' "$data_dir")"; \
-    find "$config_dir" -type l -print | while IFS= read -r link; do \
-        raw_target="$(readlink "$link" 2>/dev/null || true)"; \
-        resolved_target="$(readlink -f "$link" 2>/dev/null || true)"; \
-        case "$raw_target" in \
-            "$data_real"/* | "$data_dir"/*) \
-                echo "ERROR: legacy symlink remains after cleanup: $link -> $raw_target" >&2; \
-                exit 1; \
-                ;; \
-        esac; \
-        case "$resolved_target" in \
-            "$data_real"/* | "$data_dir"/*) \
-                echo "ERROR: legacy symlink remains after cleanup: $link -> $resolved_target" >&2; \
-                exit 1; \
-                ;; \
-        esac; \
+        "$config_dir/plugin-runtime-deps"; do \
+        install -d -o sandbox -g sandbox -m 2770 "$dir"; \
+    done; \
+    for file in "$config_dir/update-check.json" "$config_dir/exec-approvals.json"; do \
+        touch "$file"; \
+        chown sandbox:sandbox "$file"; \
+        chmod 660 "$file"; \
     done; \
     rm -rf /root/.npm /sandbox/.npm
 
@@ -563,22 +690,24 @@ RUN if id gateway >/dev/null 2>&1 && id sandbox >/dev/null 2>&1; then \
         fi; \
     fi
 
-# Keep the image readable to the root entrypoint after capabilities are
-# dropped. OpenShell starts the runtime as the sandbox user; the entrypoint
-# and onboard flow normalize the mutable-default group-writable permissions.
-# Shields-up applies 444 root:root + chattr +i on top.
-#
-# `chmod g+w` + setgid (chmod g+s on dirs) on the mutable config tree means
-# both `sandbox` and `gateway` (now a member of the sandbox group) can write
-# to OpenClaw config/state in default mode. New files created in setgid
-# directories inherit group=sandbox regardless of which UID created them,
-# so OpenClaw's mutateConfigFile path (control-UI toggles) writes succeed
-# without needing an EACCES-swallow patch (#2681 supersedes #2693).
-RUN chown -R sandbox:sandbox /sandbox/.openclaw \
-    && chmod -R g+rwX,o-rwx /sandbox/.openclaw \
-    && find /sandbox/.openclaw -type d -exec chmod g+s {} + \
-    && chmod 2770 /sandbox/.openclaw \
-    && chmod 660 /sandbox/.openclaw/openclaw.json
+# Keep the image readable to the root entrypoint after capabilities are dropped.
+# Current base images already have a unified .openclaw tree. Avoid walking
+# plugin-runtime-deps on every build; only fall back to the broad repair when
+# the stale .openclaw-data migration path actually ran.
+RUN set -eu; \
+    if [ -e /tmp/nemoclaw-legacy-openclaw-layout ]; then \
+        chown -R sandbox:sandbox /sandbox/.openclaw; \
+        chmod -R g+rwX,o-rwx /sandbox/.openclaw; \
+        find /sandbox/.openclaw -type d -exec chmod g+s {} +; \
+        rm -f /tmp/nemoclaw-legacy-openclaw-layout; \
+    else \
+        chown sandbox:sandbox \
+            /sandbox/.openclaw \
+            /sandbox/.openclaw/openclaw.json \
+            /sandbox/.openclaw/plugin-runtime-deps; \
+        chmod 2770 /sandbox/.openclaw /sandbox/.openclaw/plugin-runtime-deps; \
+        chmod 660 /sandbox/.openclaw/openclaw.json; \
+    fi
 
 # System-wide proxy hooks for shells where ~/.bashrc / ~/.profile aren't
 # sourced (e.g. `bash -ic` / `bash -lc` invoked under a different user or
@@ -630,7 +759,7 @@ RUN chown root:root /sandbox/.nemoclaw \
     && chmod -R 755 /sandbox/.nemoclaw/blueprints \
     && mkdir -p /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
     && chown sandbox:sandbox /sandbox/.nemoclaw/state /sandbox/.nemoclaw/migration /sandbox/.nemoclaw/snapshots /sandbox/.nemoclaw/staging \
-    && touch /sandbox/.nemoclaw/config.json \
+    && printf '%s' '{}' > /sandbox/.nemoclaw/config.json \
     && chown sandbox:sandbox /sandbox/.nemoclaw/config.json
 
 # OpenShell 0.0.37's macOS VM backend currently remaps rootfs ownership to the
@@ -647,6 +776,67 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
         done; \
         chmod a+rw /sandbox/.nemoclaw/config.json; \
     fi
+
+# Health check: poll the gateway's /health endpoint so Docker (and Compose)
+# can detect and restart unhealthy containers in standalone deployments.
+# Ref: https://github.com/NVIDIA/NemoClaw/issues/1430
+#
+# Two-stage probe so Docker health does not contradict the NemoClaw delivery
+# chain on runtimes where the dashboard port lives in a different network
+# namespace (e.g. DGX Spark / aarch64 with OpenShell-managed forwarding).
+# The reporter saw `nemoclaw status` Ready + the host forward succeed while
+# Docker marked the container unhealthy because the in-container curl could
+# not see the dashboard listener. See #3975.
+#
+#   1. Direct in-container probe (HTTP 200) — definitive when it works,
+#      preserves the original Compose/standalone health signal.
+#   2. ONLY on curl exit 7 ("Couldn't connect"), fall back to verifying
+#      ALL of:
+#        - the OpenClaw gateway process started by nemoclaw-start is
+#          still alive (via pgrep --ignore-ancestors), AND
+#        - the gateway log file exists and is non-empty (proves the
+#          process started and emitted its banner; rules out cases
+#          where the gateway never came up).
+#      Exit 7 means the in-container TCP connect was refused by the
+#      kernel because nothing is bound to the dashboard port inside
+#      this network namespace — the namespace-mismatch shape reported
+#      in #3975. A connect timeout (curl exit 28) is treated as a real
+#      failure: a listener exists but is not responding (wedged HTTP
+#      server), and we want Docker to restart in that case.
+#
+# Tradeoff: this fallback also fires in a standalone deployment where the
+# gateway process is alive but the configured dashboard port is wrong or
+# the listener never came up. We accept that residual risk because it
+# requires a misconfiguration the start-period (45s) already gives the
+# wizard a chance to fix, and the existing host-side delivery chain
+# probes (verify-deployment.ts, host port forward, sandbox status) still
+# catch it from outside.
+#
+# The process pattern matches both `openclaw gateway run` (the launcher
+# command nemoclaw-start runs) and `openclaw-gateway` (the re-execed
+# binary form OpenClaw switches into after startup). This is the same
+# variant set the host-side gateway-stop script in services.ts matches.
+#
+# pgrep uses --ignore-ancestors so it cannot self-match the healthcheck
+# shell that Docker spawns to run this CMD — that shell's argv contains
+# the literal 'openclaw gateway' string we're searching for, and
+# without --ignore-ancestors `pgrep -f` would happily report it as the
+# live gateway even after the real process exited (procps 4.0+ supports
+# this flag; the base image pins procps to 2:4.0.4-9).
+#
+# We deliberately do not fall back on HTTP 4xx/5xx — those mean the gateway
+# answered with a failure inside this container, which is a real bad signal.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
+    CMD port="${NEMOCLAW_DASHBOARD_PORT:-${OPENCLAW_GATEWAY_PORT:-}}"; \
+        if [ -z "$port" ]; then \
+            port="$(python3 -c 'import os; from urllib.parse import urlparse; raw = os.environ.get("CHAT_UI_URL") or "http://127.0.0.1:18789"; raw = raw if "://" in raw else "http://" + raw; u = urlparse(raw); print(u.port or 18789)' 2>/dev/null || printf '18789')"; \
+        fi; \
+        rc=0; \
+        curl -sf --max-time 3 "http://127.0.0.1:${port}/health" > /dev/null 2>&1 || rc=$?; \
+        if [ "$rc" = 0 ]; then exit 0; fi; \
+        if [ "$rc" != 7 ]; then exit 1; fi; \
+        pgrep --ignore-ancestors -f 'openclaw[ -]gateway' > /dev/null 2>&1 || exit 1; \
+        [ -s /tmp/gateway.log ]
 
 # Entrypoint runs as root to start the gateway as the gateway user,
 # then drops to sandbox for agent commands. See nemoclaw-start.sh.

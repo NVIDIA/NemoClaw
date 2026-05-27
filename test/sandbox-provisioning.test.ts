@@ -60,6 +60,40 @@ function dockerRunCommandBetween(
     .replace(/\\\n/g, " ");
 }
 
+function dockerHealthCommandBetween(
+  dockerfile: string,
+  startMarker: string,
+  endMarker?: string,
+): string {
+  const start = dockerfile.indexOf(startMarker);
+  const end = endMarker ? dockerfile.indexOf(endMarker, start) : dockerfile.length;
+  if (start === -1 || end === -1 || end <= start) {
+    throw new Error(`Expected Dockerfile health check after ${startMarker}`);
+  }
+  const healthOffset = dockerfile.slice(start, end).search(/^HEALTHCHECK\b/m);
+  const healthIndex = healthOffset === -1 ? -1 : start + healthOffset;
+  if (healthIndex === -1) {
+    throw new Error(`Expected HEALTHCHECK instruction after ${startMarker}`);
+  }
+  const healthLines: string[] = [];
+  for (const line of dockerfile.slice(healthIndex, end).split("\n")) {
+    healthLines.push(line);
+    if (!line.trimEnd().endsWith("\\")) {
+      break;
+    }
+  }
+  const lastLine = healthLines[healthLines.length - 1]?.trimEnd() ?? "";
+  if (lastLine.endsWith("\\")) {
+    throw new Error(`Expected complete HEALTHCHECK instruction after ${startMarker}`);
+  }
+  const instruction = healthLines.join("\n").trim().replace(/\\\n/g, " ");
+  const command = instruction.match(/(?:^|\s)CMD\s+([\s\S]+)$/)?.[1];
+  if (!command) {
+    throw new Error(`Expected shell-form HEALTHCHECK CMD after ${startMarker}`);
+  }
+  return command.trim();
+}
+
 function runDockerShell(command: string, sandboxRoot: string) {
   const logPath = path.join(sandboxRoot, "calls.log");
   fs.rmSync(logPath, { force: true });
@@ -78,7 +112,12 @@ function runDockerShell(command: string, sandboxRoot: string) {
   return { result, calls };
 }
 
-function runLoggedDockerShell(command: string, tmp: string, functionDefs: string[] = []) {
+function runLoggedDockerShell(
+  command: string,
+  tmp: string,
+  functionDefs: string[] = [],
+  env: Record<string, string | undefined> = {},
+) {
   const logPath = path.join(tmp, "calls.log");
   fs.rmSync(logPath, { force: true });
   const script = [
@@ -90,13 +129,343 @@ function runLoggedDockerShell(command: string, tmp: string, functionDefs: string
   ].join("\n");
   const scriptPath = path.join(tmp, "run-docker-block.sh");
   fs.writeFileSync(scriptPath, script, { mode: 0o700 });
-  const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+  const childEnv = { ...process.env };
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) {
+      delete childEnv[key];
+    } else {
+      childEnv[key] = value;
+    }
+  }
+  const result = spawnSync("bash", [scriptPath], {
+    encoding: "utf-8",
+    env: childEnv,
+    timeout: 5000,
+  });
   const calls = fs.existsSync(logPath) ? fs.readFileSync(logPath, "utf-8") : "";
   return { result, calls };
 }
 
+function runOpenclawRepairLayoutCase(legacy: boolean) {
+  const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+  const cleanupBlock = dockerRunCommandBetween(
+    dockerfile,
+    "# Flatten stale published base images",
+    "# Stale-base fallback for the gateway-in-sandbox-group setup",
+  );
+  const permissionBlock = dockerRunCommandBetween(
+    dockerfile,
+    "# Keep the image readable to the root entrypoint",
+    "# System-wide proxy hooks",
+  );
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-repair-"));
+  const sandboxRoot = path.join(tmp, "sandbox");
+  const openclawDir = path.join(sandboxRoot, ".openclaw");
+  const dataDir = path.join(sandboxRoot, ".openclaw-data");
+  const marker = path.join(tmp, "legacy-marker");
+  const rootNpm = path.join(tmp, "root-npm");
+  const sandboxNpm = path.join(sandboxRoot, ".npm");
+  const relativePath = (entry: string) => path.relative(openclawDir, entry) || ".";
+  const listRelativeEntries = (dir: string, kind: "directory" | "file"): string[] => {
+    const entries: string[] = [];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (kind === "directory") {
+          entries.push(relativePath(entryPath));
+        }
+        entries.push(...listRelativeEntries(entryPath, kind));
+      } else if (kind === "file" && entry.isFile()) {
+        entries.push(relativePath(entryPath));
+      }
+    }
+    return entries.sort();
+  };
+  const rewrite = (command: string) =>
+    command
+      .replaceAll("/sandbox/.openclaw-data", "__NEMOCLAW_TEST_OPENCLAW_DATA__")
+      .replaceAll("/sandbox/.openclaw", "__NEMOCLAW_TEST_OPENCLAW_DIR__")
+      .replaceAll("/sandbox/.npm", "__NEMOCLAW_TEST_SANDBOX_NPM__")
+      .replaceAll("/tmp/nemoclaw-legacy-openclaw-layout", marker)
+      .replaceAll("/root/.npm", rootNpm)
+      .replaceAll("__NEMOCLAW_TEST_OPENCLAW_DATA__", dataDir)
+      .replaceAll("__NEMOCLAW_TEST_OPENCLAW_DIR__", openclawDir)
+      .replaceAll("__NEMOCLAW_TEST_SANDBOX_NPM__", sandboxNpm);
+  const functionDefs = [
+    'install() { printf "install %s\\n" "$*" >> "$call_log"; local target="${*: -1}"; mkdir -p "$target"; }',
+    'chown() { printf "chown %s\\n" "$*" >> "$call_log"; }',
+    'chmod() { printf "chmod %s\\n" "$*" >> "$call_log"; command chmod "$@"; }',
+    'find() { printf "find %s\\n" "$*" >> "$call_log"; command find "$@"; }',
+  ];
+
+  fs.mkdirSync(openclawDir, { recursive: true });
+  if (legacy) {
+    fs.mkdirSync(path.join(dataDir, "extensions"), { recursive: true });
+    fs.writeFileSync(path.join(dataDir, "extensions", "legacy-plugin.json"), "{}\n");
+  }
+
+  const cleanup = runLoggedDockerShell(rewrite(cleanupBlock), tmp, functionDefs);
+  const markerExistsAfterCleanup = fs.existsSync(marker);
+  const dirsAfterCleanup = [".", ...listRelativeEntries(openclawDir, "directory")];
+  const filesAfterCleanup = listRelativeEntries(openclawDir, "file");
+  fs.writeFileSync(path.join(openclawDir, "openclaw.json"), "{}\n");
+  const permission = runLoggedDockerShell(rewrite(permissionBlock), tmp, functionDefs);
+  const markerExistsAfterPermission = fs.existsSync(marker);
+
+  try {
+    return {
+      cleanup,
+      dirsAfterCleanup,
+      filesAfterCleanup,
+      markerExistsAfterCleanup,
+      markerExistsAfterPermission,
+      openclawDir,
+      permission,
+      pluginRuntimeDeps: path.join(openclawDir, "plugin-runtime-deps"),
+    };
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+}
+
+describe("sandbox provisioning: image health checks (#1430)", () => {
+  it.each([
+    ["default dashboard URL", {}, "http://127.0.0.1:18789/health"],
+    [
+      "CHAT_UI_URL with scheme",
+      { CHAT_UI_URL: "http://127.0.0.1:19000" },
+      "http://127.0.0.1:19000/health",
+    ],
+    [
+      "CHAT_UI_URL without scheme",
+      { CHAT_UI_URL: "remote-host:19111" },
+      "http://127.0.0.1:19111/health",
+    ],
+    [
+      "OPENCLAW_GATEWAY_PORT",
+      { CHAT_UI_URL: "http://127.0.0.1:19000", OPENCLAW_GATEWAY_PORT: "19333" },
+      "http://127.0.0.1:19333/health",
+    ],
+    [
+      "NEMOCLAW_DASHBOARD_PORT override",
+      {
+        CHAT_UI_URL: "http://127.0.0.1:19000",
+        NEMOCLAW_DASHBOARD_PORT: "19222",
+        OPENCLAW_GATEWAY_PORT: "19333",
+      },
+      "http://127.0.0.1:19222/health",
+    ],
+  ])("routes production gateway probe through %s", (_label, env, expectedUrl) => {
+    const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+    const command = dockerHealthCommandBetween(
+      dockerfile,
+      "# Health check: poll the gateway's /health endpoint",
+      "# Entrypoint runs as root",
+    );
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-probe-"));
+
+    try {
+      const probe = runLoggedDockerShell(
+        command,
+        tmp,
+        ['curl() { printf "%s\\n" "$*" >> "$call_log"; }'],
+        {
+          NEMOCLAW_DASHBOARD_PORT: undefined,
+          OPENCLAW_GATEWAY_PORT: undefined,
+          CHAT_UI_URL: undefined,
+          ...env,
+        },
+      );
+
+      expect(probe.result.status).toBe(0);
+      expect(probe.calls).toContain("-sf");
+      expect(probe.calls).toContain(expectedUrl);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  // #3975: on runtime shapes where the dashboard port lives in a different
+  // network namespace (DGX Spark / OpenShell-managed forwarding), the
+  // in-container curl probe sees "connection refused" while the actual
+  // delivery chain is fine. The healthcheck must not contradict that by
+  // failing the container outright — it falls back to verifying that the
+  // OpenClaw gateway process is still alive in this container.
+  describe("falls back to local liveness when the in-container dashboard port has no listener (#3975)", () => {
+    function runProductionHealthProbe({
+      curlExit,
+      pgrepExit,
+      gatewayLog = "gateway log line\n",
+    }: {
+      curlExit: number;
+      pgrepExit: number;
+      gatewayLog?: string;
+    }) {
+      const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
+      const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-health-fallback-"));
+      const logPath = path.join(tmp, "gateway.log");
+      const rawCommand = dockerHealthCommandBetween(
+        dockerfile,
+        "# Health check: poll the gateway's /health endpoint",
+        "# Entrypoint runs as root",
+      );
+      const command = rawCommand.replaceAll("/tmp/gateway.log", logPath);
+
+      if (gatewayLog !== "") {
+        fs.writeFileSync(logPath, gatewayLog);
+      }
+
+      try {
+        const probe = runLoggedDockerShell(command, tmp, [
+          `curl() { printf "curl %s\\n" "$*" >> "$call_log"; return ${curlExit}; }`,
+          `pgrep() { printf "pgrep %s\\n" "$*" >> "$call_log"; return ${pgrepExit}; }`,
+        ]);
+        return probe;
+      } finally {
+        fs.rmSync(tmp, { recursive: true, force: true });
+      }
+    }
+
+    it("reports healthy when in-container curl works (Docker-driver / standalone)", () => {
+      const probe = runProductionHealthProbe({ curlExit: 0, pgrepExit: 1, gatewayLog: "" });
+      expect(probe.result.status).toBe(0);
+      expect(probe.calls).toContain("curl");
+      // Fast path: should not consult pgrep at all.
+      expect(probe.calls).not.toContain("pgrep");
+    });
+
+    it("reports healthy when curl gets connection refused but openclaw is alive and started (DGX Spark / OpenShell-managed)", () => {
+      const probe = runProductionHealthProbe({ curlExit: 7, pgrepExit: 0 });
+      expect(probe.result.status).toBe(0);
+      expect(probe.calls).toContain("curl");
+      // --ignore-ancestors prevents pgrep from self-matching the
+      // healthcheck shell whose argv contains the gateway pattern.
+      // The [ -] class matches both `openclaw gateway` (launcher) and
+      // `openclaw-gateway` (re-execed binary).
+      expect(probe.calls).toContain("pgrep --ignore-ancestors -f openclaw[ -]gateway");
+    });
+
+    it("reports unhealthy when curl times out (wedged HTTP server, not namespace mismatch)", () => {
+      // A connect timeout means a listener exists but is not responding,
+      // e.g. a wedged HTTP server. We deliberately do not fall back to the
+      // process check there — Docker should restart the container.
+      const probe = runProductionHealthProbe({ curlExit: 28, pgrepExit: 0 });
+      expect(probe.result.status).toBe(1);
+      expect(probe.calls).not.toContain("pgrep");
+    });
+
+    it("reports unhealthy when curl gets connection refused and openclaw is not running", () => {
+      const probe = runProductionHealthProbe({ curlExit: 7, pgrepExit: 1 });
+      expect(probe.result.status).toBe(1);
+    });
+
+    it("reports unhealthy when curl gets connection refused and the gateway log was never written (openclaw never started)", () => {
+      const probe = runProductionHealthProbe({ curlExit: 7, pgrepExit: 0, gatewayLog: "" });
+      expect(probe.result.status).toBe(1);
+    });
+
+    it("does not fall back when curl reports an HTTP error (gateway answered with failure)", () => {
+      const probe = runProductionHealthProbe({ curlExit: 22, pgrepExit: 0 });
+      expect(probe.result.status).toBe(1);
+      // HTTP errors from the in-container probe should bypass the fallback;
+      // a 4xx/5xx means the gateway is reachable and unhappy, not a
+      // namespace mismatch — so pgrep should not run.
+      expect(probe.calls).not.toContain("pgrep");
+    });
+  });
+
+  it.each([
+    [
+      "base image",
+      DOCKERFILE_BASE,
+      "# Baseline health check.",
+      undefined,
+    ],
+    [
+      "test image",
+      DOCKERFILE_SANDBOX,
+      "# Test image: no long-running service",
+      "ENTRYPOINT",
+    ],
+  ])("keeps %s non-service probe runtime-only", (_label, imagePath, startMarker, endMarker) => {
+    const imageDefinition = fs.readFileSync(imagePath, "utf-8");
+    const command = dockerHealthCommandBetween(imageDefinition, startMarker, endMarker);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-runtime-probe-"));
+
+    try {
+      const probe = runLoggedDockerShell(command, tmp, [
+        'curl() { printf "%s\\n" "$*" >> "$call_log"; return 42; }',
+      ]);
+
+      expect(probe.result.status).toBe(0);
+      expect(probe.calls).toBe("");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+});
+
 describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
-  it("provisions unified mutable .openclaw layout and trusted rc shims", () => {
+  it("uses targeted permission repair unless legacy migration ran", () => {
+    const modern = runOpenclawRepairLayoutCase(false);
+    expect(modern.cleanup.result.status).toBe(0);
+    expect(modern.permission.result.status).toBe(0);
+    expect(modern.markerExistsAfterCleanup).toBe(false);
+    expect(modern.markerExistsAfterPermission).toBe(false);
+    expect(modern.dirsAfterCleanup).toEqual([
+      ".",
+      "agents",
+      "agents/main",
+      "agents/main/agent",
+      "canvas",
+      "credentials",
+      "cron",
+      "devices",
+      "extensions",
+      "flows",
+      "hooks",
+      "identity",
+      "logs",
+      "media",
+      "memory",
+      "plugin-runtime-deps",
+      "sandbox",
+      "skills",
+      "telegram",
+      "wechat",
+      "workspace",
+    ]);
+    expect(modern.filesAfterCleanup).toEqual(["exec-approvals.json", "update-check.json"]);
+    expect(modern.cleanup.calls.split("\n").filter(Boolean)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/^find /)]),
+    );
+    expect(modern.permission.calls.split("\n").filter(Boolean)).toEqual([
+      `chown sandbox:sandbox ${modern.openclawDir} ${path.join(
+        modern.openclawDir,
+        "openclaw.json",
+      )} ${modern.pluginRuntimeDeps}`,
+      `chmod 2770 ${modern.openclawDir} ${modern.pluginRuntimeDeps}`,
+      `chmod 660 ${path.join(modern.openclawDir, "openclaw.json")}`,
+    ]);
+
+    const legacy = runOpenclawRepairLayoutCase(true);
+    expect(legacy.cleanup.result.status).toBe(0);
+    expect(legacy.permission.result.status).toBe(0);
+    expect(legacy.markerExistsAfterCleanup).toBe(true);
+    expect(legacy.markerExistsAfterPermission).toBe(false);
+    expect(legacy.cleanup.calls.split("\n").filter(Boolean)).toEqual(
+      expect.arrayContaining([`find ${legacy.openclawDir} -type l -print`]),
+    );
+    expect(legacy.permission.calls.split("\n").filter(Boolean)).toEqual(
+      expect.arrayContaining([
+        `chown -R sandbox:sandbox ${legacy.openclawDir}`,
+        `chmod -R g+rwX,o-rwx ${legacy.openclawDir}`,
+        `find ${legacy.openclawDir} -type d -exec chmod g+s {} +`,
+      ]),
+    );
+  });
+
+  it("provisions unified mutable .openclaw layout and clean trusted rc files", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-layout-"));
     const sandboxRoot = path.join(tmp, "sandbox");
@@ -138,11 +507,11 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
         sandboxRoot,
       );
       expect(rc.result.status).toBe(0);
-      const runtimeEnvShim = "[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh";
       for (const rcName of [".bashrc", ".profile"]) {
         const rcPath = path.join(sandboxRoot, rcName);
         const content = fs.readFileSync(rcPath, "utf-8");
-        expect(content.split(runtimeEnvShim).length - 1).toBe(1);
+        expect(content.toLowerCase()).not.toContain("proxy");
+        expect(content).not.toContain("/tmp/nemoclaw-proxy-env.sh");
         expect((fs.statSync(rcPath).mode & 0o777).toString(8)).toBe("444");
       }
       expect(rc.calls).toContain(
@@ -192,12 +561,20 @@ describe("sandbox provisioning: base runtime tools", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));
     const lists = path.join(tmp, "apt-lists");
+    const fakePy3 = path.join(tmp, "usr-bin", "python3");
+    const fakePyLink = path.join(tmp, "usr-local-bin", "python");
     fs.mkdirSync(lists);
+    fs.mkdirSync(path.dirname(fakePy3), { recursive: true });
+    fs.mkdirSync(path.dirname(fakePyLink), { recursive: true });
+    fs.writeFileSync(fakePy3, "#!/bin/sh\n", { mode: 0o755 });
     const command = dockerRunCommandBetween(
       dockerfile,
       "RUN apt-get update",
       "# gosu for privilege separation",
-    ).replaceAll("/var/lib/apt/lists", lists);
+    )
+      .replaceAll("/var/lib/apt/lists", lists)
+      .replaceAll("/usr/local/bin/python", fakePyLink)
+      .replaceAll("/usr/bin/python3", fakePy3);
 
     try {
       const { result, calls } = runLoggedDockerShell(command, tmp, [
@@ -208,6 +585,38 @@ describe("sandbox provisioning: base runtime tools", () => {
       expect(calls).toContain("procps=2:4.0.4-9");
       expect(calls).toContain("e2fsprogs=1.47.2-3+b11");
       expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u4");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("symlinks bare `python` to python3 so agent tool calls don't fail with command-not-found (#1452)", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-pysymlink-"));
+    const lists = path.join(tmp, "apt-lists");
+    const fakePy3 = path.join(tmp, "usr-bin", "python3");
+    const fakePyLink = path.join(tmp, "usr-local-bin", "python");
+    fs.mkdirSync(lists, { recursive: true });
+    fs.mkdirSync(path.dirname(fakePy3), { recursive: true });
+    fs.mkdirSync(path.dirname(fakePyLink), { recursive: true });
+    fs.writeFileSync(fakePy3, "#!/bin/sh\necho 3.13\n", { mode: 0o755 });
+
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "RUN apt-get update",
+      "# gosu for privilege separation",
+    )
+      .replaceAll("/var/lib/apt/lists", lists)
+      .replaceAll("/usr/local/bin/python", fakePyLink)
+      .replaceAll("/usr/bin/python3", fakePy3);
+
+    try {
+      const { result } = runLoggedDockerShell(command, tmp, [
+        'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; }',
+      ]);
+      expect(result.status).toBe(0);
+      expect(fs.lstatSync(fakePyLink).isSymbolicLink()).toBe(true);
+      expect(fs.readlinkSync(fakePyLink)).toBe(fakePy3);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -263,8 +672,10 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-mode-"));
     const blueprintRoot = path.join(tmp, "opt", "nemoclaw-blueprint");
+    const nemoclawRoot = path.join(tmp, "opt", "nemoclaw");
     const manifestDir = path.join(blueprintRoot, "model-specific-setup", "openclaw");
     const manifestPath = path.join(manifestDir, "kimi-k2.6-managed-inference.json");
+    const pluginPackageJson = path.join(nemoclawRoot, "package.json");
 
     try {
       fs.mkdirSync(manifestDir, { recursive: true });
@@ -272,17 +683,26 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       fs.chmodSync(path.join(blueprintRoot, "model-specific-setup"), 0o700);
       fs.chmodSync(manifestDir, 0o700);
       fs.chmodSync(manifestPath, 0o600);
+      fs.mkdirSync(nemoclawRoot, { recursive: true });
+      fs.writeFileSync(pluginPackageJson, "{}\n", { mode: 0o400 });
+      fs.chmodSync(nemoclawRoot, 0o700);
+      fs.chmodSync(pluginPackageJson, 0o400);
 
       const command = dockerRunCommandBetween(
         dockerfile,
         "# Copy built plugin and blueprint",
         "# Install runtime dependencies only",
-      ).replaceAll("/opt/nemoclaw-blueprint", blueprintRoot);
+      )
+        .replaceAll("/opt/nemoclaw-blueprint", "__BLUEPRINT__")
+        .replaceAll("/opt/nemoclaw", nemoclawRoot)
+        .replaceAll("__BLUEPRINT__", blueprintRoot);
       const { result } = runLoggedDockerShell(command, tmp);
 
       expect(result.status, result.stderr).toBe(0);
       expect((fs.statSync(manifestDir).mode & 0o777).toString(8)).toBe("755");
       expect((fs.statSync(manifestPath).mode & 0o777).toString(8)).toBe("644");
+      expect((fs.statSync(nemoclawRoot).mode & 0o777).toString(8)).toBe("755");
+      expect((fs.statSync(pluginPackageJson).mode & 0o777).toString(8)).toBe("444");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
@@ -485,8 +905,16 @@ describe("Hermes sandbox provisioning", () => {
       for (const run of runs) {
         expect(run.result.status).toBe(0);
         const hermesDir = path.join(run.sandboxRoot, ".hermes");
-        expect((fs.statSync(hermesDir).mode & 0o777).toString(8)).toBe("750");
-        for (const dir of ["logs", "cache", "platforms"]) {
+        expect((fs.statSync(hermesDir).mode & 0o7777).toString(8)).toBe("3770");
+        for (const dir of [
+          "logs",
+          "logs/curator",
+          "cache",
+          "hooks",
+          "image_cache",
+          "audio_cache",
+          "platforms",
+        ]) {
           expect((fs.statSync(path.join(hermesDir, dir)).mode & 0o777).toString(8)).toBe("770");
         }
         expect((fs.statSync(path.join(hermesDir, "platforms")).mode & 0o7777).toString(8)).toBe(
@@ -500,6 +928,7 @@ describe("Hermes sandbox provisioning", () => {
         expect(fs.readlinkSync(path.join(hermesDir, "gateway_state.json"))).toBe(
           "runtime/gateway_state.json",
         );
+        expect(() => fs.lstatSync(path.join(hermesDir, "gateway.pid"))).toThrow();
         expect(run.calls).toContain(`chown gateway:sandbox ${path.join(hermesDir, "runtime")}`);
       }
     } finally {
