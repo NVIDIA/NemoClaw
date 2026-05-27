@@ -688,4 +688,45 @@ describe("runInferenceSet", () => {
     expect(deps.calls.updateSandbox).not.toHaveBeenCalled();
     expect(deps.calls.appendAuditEntry).not.toHaveBeenCalled();
   });
+
+  it("flattens multi-line underlying errors into a single-line InferenceSetError message", async () => {
+    const config: ConfigObject = {
+      agents: { defaults: { model: { primary: "inference/moonshotai/kimi-k2.6" } } },
+      models: {
+        providers: {
+          inference: {
+            api: "openai-completions",
+            models: [{ id: "moonshotai/kimi-k2.6", name: "inference/moonshotai/kimi-k2.6" }],
+          },
+        },
+      },
+    };
+    const deps = createDeps({
+      config,
+      entry: { name: "slack2", agent: "openclaw" },
+      defaultSandbox: "slack2",
+    });
+    deps.calls.writeSandboxConfig.mockImplementation(() => {
+      throw new Error(
+        "Command failed: docker exec -i --user root openshell-slack2 sh -c 'cat > /sandbox/.openclaw/openclaw.json'\nError response from daemon: container not running\n  at someStack (line:1)",
+      );
+    });
+
+    const promise = runInferenceSet(
+      { provider: "ollama-local", model: "llama3.2:3b", sandboxName: "slack2" },
+      deps,
+    );
+
+    await expect(promise).rejects.toBeInstanceOf(InferenceSetError);
+    let captured: unknown;
+    try {
+      await promise;
+    } catch (err) {
+      captured = err;
+    }
+    const message = (captured as InferenceSetError).message;
+    expect(message).not.toMatch(/[\n\r]/);
+    expect(message).toContain("container not running");
+    expect(message).toContain("docker exec");
+  });
 });

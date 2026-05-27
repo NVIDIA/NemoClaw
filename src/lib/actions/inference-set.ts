@@ -379,7 +379,9 @@ export async function runInferenceSet(
     deps.writeSandboxConfig(sandboxName, target, config);
     deps.recomputeSandboxConfigHash(sandboxName, target);
   } catch (err) {
-    const underlying = err instanceof Error ? err.message : String(err);
+    const underlying = (err instanceof Error ? err.message : String(err))
+      .replace(/\s+/g, " ")
+      .trim();
     throw new InferenceSetError(
       `Sandbox '${sandboxName}': OpenShell gateway route was updated to ${provider} / ${model}, but the sandbox-side config could not be synced: ${underlying}. Verify sandbox health with 'nemoclaw ${sandboxName} status' and rerun 'nemoclaw inference set' once the sandbox is running; note that the next 'nemoclaw ${sandboxName} connect' may revert the gateway model.`,
     );
