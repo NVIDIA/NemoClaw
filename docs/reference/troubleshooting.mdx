@@ -774,11 +774,14 @@ $ nemoclaw <sandbox> channels add <telegram|discord|slack|wechat|whatsapp>
 $ nemoclaw <sandbox> channels remove <telegram|discord|slack|wechat|whatsapp>
 ```
 
-`channels add` registers credentials with the OpenShell gateway and `channels remove` clears them; both offer to rebuild the sandbox so the image reflects the new channel set.
+`channels add` registers credentials with the OpenShell gateway and `channels remove` clears them.
+Both offer to rebuild the sandbox so the image reflects the new channel set.
 In non-interactive mode (`NEMOCLAW_NON_INTERACTIVE=1`), the commands stage the change and leave the rebuild to a follow-up `nemoclaw <sandbox> rebuild`.
-WeChat and WhatsApp are experimental; review [Messaging Channels](/manage-sandboxes/messaging-channels) before enabling them.
+WeChat and WhatsApp are experimental.
+Review [Messaging Channels](/manage-sandboxes/messaging-channels) before enabling them.
 
-WeChat captures its bot token through a host-side QR scan during `nemoclaw onboard` or `channels add wechat`; you scan the iLink QR from WeChat on your phone and NemoClaw registers the captured token with the OpenShell gateway.
+WeChat captures its bot token through a host-side QR scan during `nemoclaw onboard` or `channels add wechat`.
+You scan the iLink QR from WeChat on your phone and NemoClaw registers the captured token with the OpenShell gateway.
 
 WhatsApp pairs entirely inside the sandbox.
 NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes after you add the channel on the host.

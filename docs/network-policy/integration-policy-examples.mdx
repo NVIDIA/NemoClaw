@@ -167,10 +167,10 @@ Both rely on QR-based pairing flows that are more fragile than token-based bots,
 
 WeChat uses Tencent's iLink Bot API for personal accounts.
 The bot token is captured by a host-side QR scan during onboarding rather than pasted from a developer portal.
-Add the channel and apply the preset:
+Add the channel interactively and apply the preset:
 
 ```console
-$ NEMOCLAW_NON_INTERACTIVE=1 nemoclaw my-assistant channels add wechat
+$ nemoclaw my-assistant channels add wechat
 $ nemoclaw my-assistant rebuild
 $ nemoclaw my-assistant policy-add wechat --yes
 ```
