@@ -120,9 +120,8 @@ NemoClaw filters tier suggestions and resume selections by active agent support,
 | `custom` | Apply exactly `NEMOCLAW_POLICY_PRESETS`. Previously-applied presets not in the list are removed. Alias: `list`. |
 | `skip` | Skip the policy step entirely. Aliases: `none`, `no`. |
 
-If you enable Brave Search during onboarding, NemoClaw currently stores the Brave API key in the sandbox's OpenClaw configuration.
-That means the OpenClaw agent can read the key.
-NemoClaw explores an OpenShell-hosted credential path first, but the current OpenClaw Brave runtime does not consume that path end to end yet.
+If you enable Brave Search during onboarding, NemoClaw registers a Brave Search OpenShell provider and keeps `openclaw.json` on an OpenShell credential placeholder.
+At egress, OpenShell rewrites Brave's `X-Subscription-Token` header with the real `BRAVE_API_KEY`.
 Treat Brave Search as an explicit opt-in and use a dedicated low-privilege Brave key.
 
 For non-interactive onboarding, you must explicitly accept the third-party software notice:
@@ -184,6 +183,13 @@ If you run onboarding again with the same sandbox name and choose a different in
 In interactive mode, the wizard asks for confirmation before delete and recreate.
 In non-interactive mode, NemoClaw recreates automatically when the stored selection is readable and differs; if NemoClaw cannot read the stored selection, NemoClaw reuses by default.
 Set `NEMOCLAW_RECREATE_SANDBOX=1` to force recreation even when no drift is detected.
+
+Before deleting an existing sandbox during recreation, NemoClaw backs up the workspace state (agents, extensions, workspace, skills, hooks, identity, devices, canvas, cron, memory, telegram, wechat, credentials) and restores it into the new sandbox once it is live.
+This applies whether the existing sandbox is ready or marked not-ready, so cross-version upgrades that pass `NEMOCLAW_RECREATE_SANDBOX=1` no longer drop user files under `/sandbox/.openclaw/workspace/`.
+The behaviour matches `nemoclaw <name> rebuild --force`.
+NemoClaw aborts the recreate when the backup cannot complete in full — including when individual state directories or files fail mid-backup — so failed entries are not silently dropped on delete.
+Set `NEMOCLAW_RECREATE_WITHOUT_BACKUP=1` to skip the pre-recreate backup.
+The destination sandbox starts with a fresh workspace.
 
 Before creating the gateway, the wizard runs preflight checks.
 It verifies that Docker is reachable, warns on untested runtimes such as Podman, and prints host remediation guidance when prerequisites are missing.
@@ -1271,6 +1277,7 @@ Set them before running `nemoclaw onboard`.
 | `NEMOCLAW_OLLAMA_INSTALL_MODE` | `system`, `user`, or empty/unset | Pins the Linux Ollama install location; see the Linux Ollama install mode details below. |
 | `NEMOCLAW_PROXY_HOST` | hostname or IP | Overrides the sandbox-side outbound HTTP proxy host. Defaults to `10.200.0.1`. |
 | `NEMOCLAW_PROXY_PORT` | integer port | Overrides the sandbox-side outbound HTTP proxy port. Defaults to `3128`. |
+| `NEMOCLAW_ALLOW_RESIDUAL_CAPS` | `1` to opt in; unset by default | Allows sandbox startup to continue on hosts that cannot drop dangerous bounding-set capabilities. Only set this when you accept the weaker security posture. |
 | `NEMOCLAW_OPENSHELL_BIN` | path | Overrides the `openshell` binary the CLI invokes. Defaults to `openshell` (resolved via `PATH`). |
 | `NEMOCLAW_SANDBOX` | sandbox name | Alternate spelling of `NEMOCLAW_SANDBOX_NAME`; used by `services` and `debug` lookups when neither a flag nor `NEMOCLAW_SANDBOX_NAME` is set. |
 | `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
