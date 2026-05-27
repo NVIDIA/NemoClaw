@@ -12,6 +12,9 @@ export interface ChannelBase {
   userIdHelp?: string;
   userIdLabel?: string;
   allowIdsMode?: "dm" | "guild";
+  channelIdEnvKey?: string;
+  channelIdHelp?: string;
+  channelIdLabel?: string;
   serverIdEnvKey?: string;
   serverIdHelp?: string;
   serverIdLabel?: string;
@@ -118,6 +121,10 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
       "In Slack, open each allowed human user's profile -> More -> Copy member ID. Enter one or more comma-separated member IDs, not the app or bot user ID. Member IDs look like U01ABC2DEF3.",
     userIdLabel: "Slack Member IDs (comma-separated allowlist)",
     allowIdsMode: "dm",
+    channelIdEnvKey: "SLACK_ALLOWED_CHANNELS",
+    channelIdHelp:
+      "Optional: enter comma-separated Slack channel IDs where the bot may answer @mentions. Channel IDs look like C012AB3CD.",
+    channelIdLabel: "Slack Channel IDs (comma-separated allowlist)",
   },
   whatsapp: {
     description: "WhatsApp Web messaging (QR pairing)",

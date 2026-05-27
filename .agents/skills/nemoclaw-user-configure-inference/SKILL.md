@@ -31,10 +31,36 @@ The onboard wizard detects Ollama automatically when it is installed or running 
 
 If Ollama is installed but not running, NemoClaw starts it for you.
 On macOS and Linux, the wizard can also offer to install Ollama when it is not present.
+When the host Ollama is below the minimum version NemoClaw expects for its starter models (currently `0.7.0`), the wizard surfaces an explicit **Upgrade Ollama** entry in the provider menu instead of silently reusing the older daemon, and the express setup path resolves to that entry.
+The wizard inspects both the CLI binary (`ollama --version`) and the locally running daemon (`/api/version` on `:11434`) so the upgrade entry still appears when only one side is stale, for example a fresh user-local binary paired with the original system daemon.
+The gate skips Windows-host Ollama reached from WSL via `host.docker.internal`; the separate **Use / Start / Install Ollama on Windows host** entries handle that case and run their own actions on the Windows side.
+On macOS, the wizard runs the platform install or upgrade path with `brew upgrade ollama`.
+On Linux, the wizard runs the official `https://ollama.com/install.sh` path.
+Upgrades on Linux always take the sudo-driven system path because the sudo-free user-local fallback would leave the existing system daemon on `:11434` serving the stale binary.
+If sudo is not available in a non-interactive run, NemoClaw refuses to silently downgrade the path and asks you to rerun interactively or upgrade Ollama manually.
+After an upgrade finishes, NemoClaw re-probes the running daemon's `/api/version` and fails the run if the daemon still reports below the minimum.
+Fresh installs skip this re-probe because the bundled installers ship a daemon at or above the minimum.
 On WSL, the wizard can use, start, restart, or install Ollama on the Windows host through PowerShell interop.
-On Debian and Ubuntu, the native Linux install path checks for `zstd` before it runs the Ollama installer.
-If `zstd` is missing, NemoClaw installs it with `apt-get` and explains the sudo prompt before continuing.
-On non-apt Linux distributions, install `zstd` first, then rerun onboarding.
+
+### Linux Install Modes
+
+On native Linux, the install path picks between a system install (under `/usr/local`, via the official `https://ollama.com/install.sh`) and a sudo-free user-local install (under `${HOME}/.local`).
+NemoClaw selects the mode automatically:
+
+- Running as root or with passwordless sudo (`sudo -n true` returns 0) selects the system install.
+- A non-interactive run (`NEMOCLAW_NON_INTERACTIVE=1` or no TTY on stdin) without passwordless sudo selects the user-local install.
+  This is the path that lets headless hosts complete onboarding without prompting for a sudo password.
+- An interactive shell without passwordless sudo selects the system install and lets the official installer prompt for the password as usual.
+
+Override the detection with `NEMOCLAW_OLLAMA_INSTALL_MODE=system` or `NEMOCLAW_OLLAMA_INSTALL_MODE=user`.
+
+The user-local install replicates only the binary extraction step of the official installer.
+It downloads the release tarball, extracts it to `${HOME}/.local`, and launches `${HOME}/.local/bin/ollama serve` once.
+It does not configure a systemd service, does not create the `ollama` system user, and does not install CUDA drivers, so the daemon must be relaunched manually after a reboot.
+NemoClaw also prints a one-line `PATH` hint if `${HOME}/.local/bin` is not already on your `PATH`; you can add `export PATH="${HOME}/.local/bin:$PATH"` to your shell profile to invoke `ollama` directly.
+
+Both modes rely on `zstd` for archive extraction. On Debian and Ubuntu, the system path uses `sudo apt-get` to install `zstd` automatically and explains the prompt before continuing.
+The user-local path cannot bootstrap system packages without elevation, so if `zstd` is missing it prints per-distro install hints and exits — install `zstd` manually, then rerun onboarding.
 
 Run the onboard wizard.
 
@@ -44,7 +70,8 @@ $ nemoclaw onboard
 
 Select **Local Ollama** from the provider list.
 NemoClaw lists installed models or offers starter models if none are installed.
-On hosts with at least 32 GiB of detected GPU memory, the starter list includes `qwen3.6:35b` and selects it by default.
+On hosts where the larger starter models fit the currently available GPU memory, the starter list includes `qwen3.6:35b` and selects it by default.
+When another GPU workload is using most of the memory at onboard time, NemoClaw downgrades the menu to the largest model that still fits.
 It pulls the selected model, loads it into memory, and validates it before continuing.
 If the selected model declares that it does not support tool calling, onboarding stops with guidance to choose a model whose `ollama show <model>` capabilities include `tools`.
 The validation also requires structured chat-completions tool calls.
@@ -136,6 +163,8 @@ $ NEMOCLAW_PROVIDER=ollama \
 ```
 
 If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on available memory.
+If `NEMOCLAW_MODEL` names a known bootstrap model (for example `qwen3.6:35b`) that does not fit the host's currently available GPU memory, NemoClaw warns and falls back to the largest known model that does fit.
+Unknown or custom tags (any value the bootstrap registry has not seen) are still passed through; the Ollama runner validates the choice itself.
 
 `--yes` (or `NEMOCLAW_YES=1`) authorises the Ollama model download without an interactive confirmation prompt.
 Under `--non-interactive`, `--yes` (or `NEMOCLAW_YES=1`) is required to authorise the download — onboard exits otherwise, since it cannot prompt.

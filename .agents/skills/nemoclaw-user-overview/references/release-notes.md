@@ -4,13 +4,38 @@
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
+## v0.0.51
+
+NemoClaw v0.0.51 improves messaging controls, local inference setup, policy validation, and onboarding recovery:
+
+- Slack setup now supports channel allowlisting. During onboarding, `channels add slack`, and non-interactive rebuilds, set `SLACK_ALLOWED_CHANNELS` to restrict channel `@mention` handling to selected Slack channel IDs. Combine it with `SLACK_ALLOWED_USERS` when you want both channel and member checks.
+- Local Ollama setup now detects host installations that are below the minimum supported version and offers an explicit upgrade path. On macOS, NemoClaw uses Homebrew. On Linux, NemoClaw uses the system installer for upgrades and refuses non-interactive upgrade paths that would require a hidden sudo prompt.
+- Managed Ollama model selection now uses a memory-aware registry for starter models. If a known bootstrap model does not fit currently available GPU memory, NemoClaw warns and falls back to the largest known model that does fit instead of starting a model that is likely to fail.
+- `nemoclaw resources` and `NEMOCLAW_RESOURCE_PROFILE` expose sandbox CPU and memory profiles. Profiles can be selected during onboarding, and `NEMOCLAW_CPU` or `NEMOCLAW_RAM` can override the selected profile for scripted runs.
+- Cloudflare named tunnels are supported through `CLOUDFLARE_TUNNEL_TOKEN`. `nemoclaw tunnel start` passes the token through the environment and expects the named tunnel route to already point at the dashboard port.
+- Jira policy validation guidance now matches the maintained preset. Use a Node HTTPS status probe for Atlassian API access and an explicit status-only curl probe for `auth.atlassian.com` when validating approved requests manually.
+- Onboarding recovers more cleanly across host and runtime edge cases, including root-owned config sync directories, stale dashboard port allocation, unreachable Docker daemons, stale dashboard forwards, default NVIDIA CDI spec directories, and Linux Docker-driver health checks.
+
+## v0.0.50
+
+NemoClaw v0.0.50 focused on onboarding reliability, local inference hardening, messaging diagnostics, and sandbox lifecycle cleanup:
+
+- `nemoclaw onboard` handles DGX Spark and DGX Station managed vLLM setup more consistently, including restored vLLM menu entries and CPU-fallback detection on Spark hosts.
+- Non-interactive Linux Ollama setup can use a sudo-free user-local install path when passwordless sudo is unavailable. The docs now describe `NEMOCLAW_OLLAMA_INSTALL_MODE`, the user-local install trade-offs, and the manual `zstd` requirement.
+- Compatible endpoint setup rejects `host.docker.internal` inference URLs because OpenShell sandboxes do not have a portable host-service route through that name. Use Local Ollama's authenticated proxy path or a policy-managed host service instead.
+- Telegram setup now surfaces BotFather group privacy guidance. Disable privacy mode, then remove and re-add the bot to each group before testing group delivery.
+- Sandbox logs merge OpenClaw gateway output and OpenShell audit events into one stream, and `--tail` applies once to the merged result so policy denials appear beside gateway logs.
+- Maintenance commands recover the OpenShell gateway before retrying sandbox-list operations, which makes rebuild, recover, upgrade, and backup flows more resilient after gateway drift.
+- NemoClaw no longer writes proxy hooks into sandbox shell startup files. Local proxy configuration stays on supported OpenShell and NemoClaw paths rather than mutating user shell rc files.
+- Windows bootstrap installs Ubuntu 24.04 when WSL is present but no Ubuntu distribution is registered.
+
 ## v0.0.49
 
 NemoClaw v0.0.49 is a hardening release focused on reliability, clearer diagnostics, OpenClaw compatibility, and stronger validation coverage:
 
 - Gateway failures now fail faster and explain more. `nemoclaw status` classifies gateway probe failures by layer, distinguishing a named gateway port that is not accepting connections, a named gateway that is present but not Connected, the active OpenShell gateway pointing at a different name, and a named gateway that is not configured at all. `nemoclaw <name> connect` exits early with recovery guidance when the OpenShell gateway is down.
 - Gateway upgrade and fallback paths are more stable. The release hardens older gateway fallback coverage, OpenShell gateway upgrade checks, crash-loop detection tests, and Brev GPU bridge gateway traffic coverage.
-- Status, doctor, and `shields status` now report a fresh mutable sandbox as not configured instead of `down`, and `nemoclaw <name> logs --tail <lines>` is locked in as a NemoClaw line count rather than OpenShell's follow-flag pun. `nemoclaw debug --quick` reports restricted kernel-log access as a skipped section instead of surfacing raw `dmesg` permission errors.
+- Status and doctor now report a fresh mutable sandbox as not configured instead of `down`, and `nemoclaw <name> logs --tail <lines>` is locked in as a NemoClaw line count rather than OpenShell's follow-flag pun. `nemoclaw debug --quick` reports restricted kernel-log access as a skipped section instead of surfacing raw `dmesg` permission errors.
 - OpenClaw compatibility is more resilient across runtime changes. Kimi mixed tool calls are normalized more consistently, compatible OpenClaw JSON envelope changes are tolerated in tests, and OpenClaw patch drift is easier to classify during image builds.
 - Messaging channel removal is now a clean teardown. The sandbox registry and onboard session policy preset state stay in sync so removed presets do not return during later `onboard --resume` or rebuild flows; QR-paired channels also have their durable in-sandbox session directory wiped before the rebuild and removal aborts cleanly when that wipe cannot be confirmed; and `~/.nemoclaw/config.json` is re-synced from the host across every rebuild resume path so the OpenClaw plugin no longer crashes on the Dockerfile placeholder.
 - Hermes sandboxes apply only the messaging channel policies the operator selects instead of pre-enabling every Hermes messaging provider, and dynamic preset application resolves Hermes-specific policy content so Discord on Hermes no longer falls back to generic Node allowlists.

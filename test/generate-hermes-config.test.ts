@@ -246,6 +246,9 @@ describe("agents/hermes/generate-config.ts", () => {
         slack: ["U0123456789", "U09ABCDEFGH"],
       }),
       NEMOCLAW_TELEGRAM_CONFIG_B64: encodeJson({ requireMention: true }),
+      NEMOCLAW_SLACK_CONFIG_B64: encodeJson({
+        allowedChannels: ["C012AB3CD", "C987ZY6XW"],
+      }),
     });
 
     expect(config.telegram).toEqual({ require_mention: true });
@@ -262,6 +265,7 @@ describe("agents/hermes/generate-config.ts", () => {
     expect(envFile).not.toContain("SLACK_BOT_TOKEN=openshell:resolve:env:SLACK_BOT_TOKEN\n");
     expect(envFile).not.toContain("SLACK_APP_TOKEN=openshell:resolve:env:SLACK_APP_TOKEN\n");
     expect(envFile).toContain("SLACK_ALLOWED_USERS=U0123456789,U09ABCDEFGH\n");
+    expect(envFile).toContain("SLACK_ALLOWED_CHANNELS=C012AB3CD,C987ZY6XW\n");
   });
 
   it("bridges captured WeChat metadata to Hermes' WEIXIN_* env contract", () => {
