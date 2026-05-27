@@ -2341,8 +2341,6 @@ jobs:
               || (github.event_name == 'workflow_dispatch' && inputs.post_to_slack)) }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          # To promote from preview to production, swap the right-hand
-          # secret to `secrets.SLACK_WEBHOOK_URL`. Keep the left-hand name.
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SCORECARD_DATA: ${{ steps.scorecard.outputs.scorecardData }}
         with:
