@@ -4,6 +4,9 @@
 import { NemoClawCommand } from "../lib/cli/nemoclaw-oclif-command";
 import { CLI_NAME } from "../lib/cli/branding";
 
+/**
+ * Root CLI command for cloudflared public-URL tunnel management.
+ */
 export default class TunnelCommand extends NemoClawCommand {
   static id = "tunnel";
   static strict = true;
@@ -18,6 +21,9 @@ export default class TunnelCommand extends NemoClawCommand {
   static flags = {
   };
 
+  /**
+   * Run the root tunnel command to display help text and list subcommands.
+   */
   public async run(): Promise<void> {
     await this.parse(TunnelCommand);
     this.log("");

@@ -8,6 +8,9 @@ import { getSandboxStatusReport } from "../../lib/inventory";
 import { sandboxNameArg } from "../../lib/sandbox/command-support";
 import { buildStatusCommandDeps } from "../../lib/status-command-deps";
 
+/**
+ * CLI command to query and show the detailed health and status of a sandbox.
+ */
 export default class SandboxStatusCommand extends NemoClawCommand {
   static id = "sandbox:status";
   static strict = true;
@@ -22,6 +25,9 @@ export default class SandboxStatusCommand extends NemoClawCommand {
   static flags = {
   };
 
+  /**
+   * Run the sandbox status command. Supports standard printed output or JSON format.
+   */
   public async run(): Promise<unknown> {
     const { args } = await this.parse(SandboxStatusCommand);
     if (this.jsonEnabled()) {

@@ -44,14 +44,27 @@ type SetupPolicyPresetSupportOptions = {
   webSearchSupported?: boolean | null;
 };
 
+/**
+ * Check if the given value is a policy document object.
+ */
 function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/**
+ * Check if the given value is a plain policy object.
+ */
+function isPolicyObject(value: PolicyValue): value is PolicyObject {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Read the name and description metadata from a preset YAML file.
+ */
 function readPresetInfo(content: string, fallbackName: string): { name: string; description: string } {
   try {
     const parsed = YAML.parse(content);
-    const preset = isPolicyDocument(parsed) && isPolicyDocument(parsed.preset) ? parsed.preset : null;
+    const preset = isPolicyDocument(parsed) && isPolicyObject(parsed.preset) ? parsed.preset : null;
     const name = typeof preset?.name === "string" ? preset.name.trim() : fallbackName;
     const description = typeof preset?.description === "string" ? preset.description.trim() : "";
     return {
@@ -100,10 +113,6 @@ function loadPreset(name: string): string | null {
     return null;
   }
   return fs.readFileSync(file, "utf-8");
-}
-
-function isPolicyObject(value: PolicyValue): value is PolicyObject {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function parseNetworkPolicies(content: string | null | undefined): PolicyObject | null {

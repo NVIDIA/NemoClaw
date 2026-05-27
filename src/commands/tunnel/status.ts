@@ -7,6 +7,9 @@ import { showStatus } from "../../lib/tunnel/services";
 import { resolveDefaultSandboxName } from "../../lib/tunnel/service-command";
 import { serviceDeps } from "../../lib/tunnel/command-support";
 
+/**
+ * CLI command to show the status of the cloudflared public-URL tunnel.
+ */
 export default class TunnelStatusCommand extends NemoClawCommand {
   static id = "tunnel:status";
   static strict = true;
@@ -17,6 +20,9 @@ export default class TunnelStatusCommand extends NemoClawCommand {
   static flags = {
   };
 
+  /**
+   * Run the tunnel status command to display tunnel and public URL health.
+   */
   public async run(): Promise<void> {
     await this.parse(TunnelStatusCommand);
     const deps = serviceDeps();

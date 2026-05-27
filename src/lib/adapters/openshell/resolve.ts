@@ -14,12 +14,19 @@ export interface ResolveOpenshellOptions {
   home?: string;
 }
 
+/**
+ * Check if the given value is an absolute path.
+ * Supports both Windows-style absolute paths (with drive letters) and POSIX-style paths (starting with '/').
+ */
 function isAbsolutePath(value: string): boolean {
   return path.isAbsolute(value) || value.startsWith("/");
 }
 
+/**
+ * Return the expected local openshell executable path located under the user's home directory.
+ */
 function homeLocalOpenshell(home: string): string {
-  return home.startsWith("/") ? `${home}/.local/bin/openshell` : path.join(home, ".local", "bin", "openshell");
+  return path.join(home, ".local", "bin", "openshell");
 }
 
 /**
@@ -53,11 +60,11 @@ export function resolveOpenshell(opts: ResolveOpenshellOptions = {}): string | n
         encoding: "utf-8",
         stdio: ["ignore", "pipe", "ignore"],
       }).trim();
-      if (found.startsWith("/")) return found;
+      if (isAbsolutePath(found)) return found;
     } catch {
       /* ignored */
     }
-  } else if (opts.commandVResult?.startsWith("/")) {
+  } else if (opts.commandVResult && isAbsolutePath(opts.commandVResult)) {
     return opts.commandVResult;
   }
 
