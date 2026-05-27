@@ -73,6 +73,7 @@ NemoClaw lists installed models or offers starter models if none are installed.
 On hosts where the larger starter models fit the currently available GPU memory, the starter list includes `qwen3.6:35b` and selects it by default.
 When another GPU workload is using most of the memory at onboard time, NemoClaw downgrades the menu to the largest model that still fits.
 It pulls the selected model, loads it into memory, and validates it before continuing.
+When Ollama reports a loaded-model context length, NemoClaw uses that value for the `contextWindow` baked into `openclaw.json` unless you set `NEMOCLAW_CONTEXT_WINDOW` yourself.
 If the selected model declares that it does not support tool calling, onboarding stops with guidance to choose a model whose `ollama show <model>` capabilities include `tools`.
 The validation also requires structured chat-completions tool calls.
 If the model leaks tool-call JSON as plain message text, onboarding stops so you can choose a model that returns tool calls in the expected response field.

@@ -13,6 +13,7 @@ import {
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
+import { withPolicyApplicationTrace } from "./tracing";
 
 type Preset = { name: string; access?: string };
 type SupportOptions = { webSearchSupported?: boolean | null };
@@ -37,6 +38,7 @@ export type SetupPresetSuggestionOptions = {
   enabledChannels?: string[] | null;
   webSearchConfig?: WebSearchConfig | null;
   provider?: string | null;
+  agent?: string | null;
   knownPresetNames?: string[] | null;
   webSearchSupported?: boolean | null;
   hermesToolGateways?: string[] | null;
@@ -48,6 +50,7 @@ export type SetupPolicySelectionOptions = {
   webSearchConfig?: WebSearchConfig | null;
   enabledChannels?: string[] | null;
   provider?: string | null;
+  agent?: string | null;
   knownPresetNames?: string[];
   webSearchSupported?: boolean | null;
   hermesToolGateways?: string[] | null;
@@ -127,7 +130,12 @@ export function computeSetupPresetSuggestions(
   tierName: string,
   options: SetupPresetSuggestionOptions = {},
 ): string[] {
-  const { enabledChannels = null, webSearchConfig = null, provider = null } = options;
+  const {
+    enabledChannels = null,
+    webSearchConfig = null,
+    provider = null,
+    agent = null,
+  } = options;
   const known = Array.isArray(options.knownPresetNames) ? new Set(options.knownPresetNames) : null;
   const supportOptions = { webSearchSupported: options.webSearchSupported };
   const suggestions = deps.tiers
@@ -144,6 +152,7 @@ export function computeSetupPresetSuggestions(
   };
   if (webSearchConfig) add("brave");
   if (provider && deps.localInferenceProviders.includes(provider)) add("local-inference");
+  if (agent === "openclaw") add("openclaw-pricing");
   if (Array.isArray(enabledChannels)) {
     for (const channel of enabledChannels) add(channel);
     for (const preset of requiredMessagingChannelPolicyPresets(enabledChannels)) add(preset);
@@ -232,11 +241,22 @@ export async function setupPoliciesWithSelection(
   sandboxName: string,
   options: SetupPolicySelectionOptions = {},
 ): Promise<string[]> {
+  return withPolicyApplicationTrace(sandboxName, options, () =>
+    setupPoliciesWithSelectionInner(deps, sandboxName, options),
+  );
+}
+
+async function setupPoliciesWithSelectionInner(
+  deps: SetupPolicySelectionDeps,
+  sandboxName: string,
+  options: SetupPolicySelectionOptions = {},
+): Promise<string[]> {
   const selectedPresets = Array.isArray(options.selectedPresets) ? options.selectedPresets : null;
   const onSelection = typeof options.onSelection === "function" ? options.onSelection : null;
   const webSearchConfig = options.webSearchConfig || null;
   const enabledChannels = Array.isArray(options.enabledChannels) ? options.enabledChannels : null;
   const provider = options.provider || null;
+  const agent = options.agent || null;
   const hermesToolGateways = Array.isArray(options.hermesToolGateways)
     ? options.hermesToolGateways
     : null;
@@ -315,6 +335,7 @@ export async function setupPoliciesWithSelection(
       enabledChannels,
       webSearchConfig,
       provider,
+      agent,
       knownPresetNames: allPresets.map((preset) => preset.name),
       webSearchSupported: options.webSearchSupported,
       hermesToolGateways,

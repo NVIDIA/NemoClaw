@@ -51,7 +51,7 @@ Run the docs and hook checks instead:
 
 ```bash
 npx prek run --all-files
-make docs
+npm run docs
 ```
 
 If a required check fails, fix the issue before creating the PR.
@@ -134,7 +134,7 @@ Use the exact template structure below. Fill in each section based on the diff (
 - [ ] Tests added or updated for new or changed behavior
 - [ ] No secrets, API keys, or credentials committed
 - [ ] Docs updated for user-facing behavior changes
-- [ ] `make docs` builds without warnings (doc changes only)
+- [ ] `npm run docs` builds without warnings (doc changes only)
 - [ ] Doc pages follow the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md) (doc changes only)
 - [ ] New doc pages include SPDX header and frontmatter (new pages only)
 
@@ -197,7 +197,7 @@ Created PR [#NNN](https://github.com/NVIDIA/NemoClaw/pull/NNN)
 
 - **Do not invent your own PR body format.** Use the template from Step 5 exactly.
 - **Do not omit sections.** Even if a section is not applicable, keep it with the "Skip if..." comment.
-- **Do not check boxes for steps you did not run.** If you did not run `make docs`, leave that box unchecked.
+- **Do not check boxes for steps you did not run.** If you did not run `npm run docs`, leave that box unchecked.
 - **Do not run the full test suite for doc-only changes by default.** Run docs and hook checks instead, and leave `npm test` unchecked unless you actually ran it.
 - **Do not forget the DCO sign-off.** CI will reject the PR without it.
 - **Do not forget `--assignee @me`.** Every PR must be assigned to its creator.

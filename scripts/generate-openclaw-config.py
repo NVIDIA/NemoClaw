@@ -32,6 +32,7 @@ Environment variables:
     NEMOCLAW_DISCORD_GUILDS_B64         Base64-encoded Discord guild config
     NEMOCLAW_TELEGRAM_CONFIG_B64        Base64-encoded Telegram config (e.g. {"requireMention": true})
     NEMOCLAW_WECHAT_CONFIG_B64          Base64-encoded WeChat config (e.g. {"accountId": "...", "baseUrl": "...", "userId": "..."})
+    NEMOCLAW_SLACK_CONFIG_B64           Base64-encoded Slack config (e.g. {"allowedChannels": ["C012AB3CD"]})
     NEMOCLAW_DISABLE_DEVICE_AUTH        Set to "1" to force-disable device auth
     NEMOCLAW_PROXY_HOST                 Egress proxy host (default: 10.200.0.1)
     NEMOCLAW_PROXY_PORT                 Egress proxy port (default: 3128)
@@ -510,6 +511,27 @@ def build_config(env: dict | None = None) -> dict:
             env.get("NEMOCLAW_TELEGRAM_CONFIG_B64", "e30=") or "e30="
         ).decode("utf-8")
     )
+    _slack_config = json.loads(
+        base64.b64decode(
+            env.get("NEMOCLAW_SLACK_CONFIG_B64", "e30=") or "e30="
+        ).decode("utf-8")
+    )
+    _raw_slack_channels = (
+        _slack_config.get("allowedChannels")
+        if isinstance(_slack_config, dict)
+        else []
+    )
+    _slack_allowed_channels = (
+        list(
+            dict.fromkeys(
+                str(channel).replace("\r", "").replace("\n", "").strip()
+                for channel in _raw_slack_channels
+                if str(channel).replace("\r", "").replace("\n", "").strip()
+            )
+        )
+        if isinstance(_raw_slack_channels, list)
+        else []
+    )
     # NEMOCLAW_WECHAT_CONFIG_B64 is intentionally not decoded here. The
     # WeChat plugin's per-account state (accountId/baseUrl/userId) is read by
     # seed-wechat-accounts.py, which runs after the base image has installed
@@ -577,6 +599,18 @@ def build_config(env: dict | None = None) -> dict:
                         "users": _allowed_ids[ch],
                     }
                 }
+        if ch == "slack" and _slack_allowed_channels:
+            account["groupPolicy"] = "allowlist"
+            slack_channel_config = {
+                "enabled": True,
+                "requireMention": True,
+            }
+            if ch in _allowed_ids and _allowed_ids[ch]:
+                slack_channel_config["users"] = _allowed_ids[ch]
+            account["channels"] = {
+                channel_id: dict(slack_channel_config)
+                for channel_id in _slack_allowed_channels
+            }
         _ch_cfg[ch] = {"accounts": {"default": account}}
 
     # WeChat (openclaw-weixin) is NOT added to channels.* here in build
@@ -779,14 +813,19 @@ def build_config(env: dict | None = None) -> dict:
             "loopbackMode": "proxy",
         }
 
+    # Keep keyless web_fetch available by default, but force it through the
+    # trusted env proxy. OpenShell's L7 policy remains the egress authority:
+    # without an approved host:port, the proxy denies the request. Remove this
+    # default only if OpenClaw gains a first-class least-privilege web_fetch
+    # policy that can preserve host-gateway fetch without bypassing OpenShell.
+    tools_web = config.setdefault("tools", {}).setdefault("web", {})
+    tools_web["fetch"] = {"enabled": True, "useTrustedEnvProxy": True}
+
     if env.get("NEMOCLAW_WEB_SEARCH_ENABLED", "") == "1":
-        config.setdefault("tools", {})["web"] = {
-            "search": {
-                "enabled": True,
-                "provider": "brave",
-                "apiKey": "openshell:resolve:env:BRAVE_API_KEY",
-            },
-            "fetch": {"enabled": True},
+        tools_web["search"] = {
+            "enabled": True,
+            "provider": "brave",
+            "apiKey": "openshell:resolve:env:BRAVE_API_KEY",
         }
 
     return config

@@ -44,7 +44,7 @@ The TUI presents an approval prompt for each blocked request.
 
 Approved endpoints remain in the running policy until the sandbox stops.
 They are not persisted to the baseline policy file.
-To keep an endpoint allowed after a restart, update the policy YAML or apply a preset as described in Customize the Sandbox Network Policy (use the `nemoclaw-user-manage-policy` skill).
+To keep an endpoint allowed after a restart, update the policy YAML or apply a preset as described in [Customize the Sandbox Network Policy](../SKILL.md).
 
 ## Run the Walkthrough
 
@@ -59,6 +59,6 @@ The walkthrough requires tmux and the `NVIDIA_API_KEY` environment variable, and
 
 ## Related Topics
 
-- Customize the Sandbox Network Policy (use the `nemoclaw-user-manage-policy` skill) to add endpoints permanently.
+- [Customize the Sandbox Network Policy](../SKILL.md) to add endpoints permanently.
 - Network Policies (use the `nemoclaw-user-reference` skill) for the full baseline policy reference.
 - Monitor Sandbox Activity (use the `nemoclaw-user-monitor-sandbox` skill) for general sandbox monitoring.

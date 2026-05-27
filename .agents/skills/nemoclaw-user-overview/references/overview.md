@@ -57,7 +57,7 @@ You can use NemoClaw for various use cases including the following.
 
 Navigate to the following topics to learn more about NemoClaw and how to install and use it.
 
-- Architecture Overview (use the `nemoclaw-user-overview` skill) to understand how NemoClaw works.
-- Ecosystem (use the `nemoclaw-user-overview` skill) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
+- [Architecture Overview](how-it-works.md) to understand how NemoClaw works.
+- [Ecosystem](ecosystem.md) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
 - Quickstart (use the `nemoclaw-user-get-started` skill) to install NemoClaw and run your first sandboxed agent.
 - Inference Options (use the `nemoclaw-user-configure-inference` skill) to check the inference providers that NemoClaw supports and how inference routing works.

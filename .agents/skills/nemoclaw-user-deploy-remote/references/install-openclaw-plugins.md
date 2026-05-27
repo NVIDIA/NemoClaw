@@ -85,7 +85,7 @@ other NemoClaw extension paths.
 
 ## Next Steps
 
-- Review Sandbox Hardening (use the `nemoclaw-user-deploy-remote` skill) before adding plugin code to a
+- Review [Sandbox Hardening](sandbox-hardening.md) before adding plugin code to a
   shared or long-lived sandbox.
 - Review Network Policies (use the `nemoclaw-user-reference` skill) to plan plugin
   egress rules.

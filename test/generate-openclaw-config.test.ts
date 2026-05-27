@@ -572,9 +572,48 @@ describe("generate-openclaw-config.py: config generation", () => {
     });
   });
 
+  it("uses Slack allowed channels to scope channel @mentions", () => {
+    const allowedUsers = ["U01ABC2DEF3", "U04GHI5JKL6"];
+    const allowedChannels = ["C012AB3CD", "C987ZY6XW"];
+    const channels = Buffer.from(JSON.stringify(["slack"])).toString("base64");
+    const allowedIds = Buffer.from(JSON.stringify({ slack: allowedUsers })).toString("base64");
+    const slackConfig = Buffer.from(JSON.stringify({ allowedChannels })).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: allowedIds,
+      NEMOCLAW_SLACK_CONFIG_B64: slackConfig,
+    });
+    const slack = config.channels.slack.accounts.default;
+
+    expect(slack.dmPolicy).toBe("allowlist");
+    expect(slack.allowFrom).toEqual(allowedUsers);
+    expect(slack.groupPolicy).toBe("allowlist");
+    expect(slack.channels).toEqual({
+      C012AB3CD: {
+        enabled: true,
+        requireMention: true,
+        users: allowedUsers,
+      },
+      C987ZY6XW: {
+        enabled: true,
+        requireMention: true,
+        users: allowedUsers,
+      },
+    });
+  });
+
   it("enables native OpenClaw Tool Search by default", () => {
     const config = runConfigScript();
     expect(config.tools?.toolSearch).toBe(true);
+  });
+
+  it("enables keyless web_fetch through the trusted env proxy by default", () => {
+    const config = runConfigScript();
+    expect(config.tools?.web?.fetch).toEqual({
+      enabled: true,
+      useTrustedEnvProxy: true,
+    });
+    expect(config.tools?.web?.search).toBeUndefined();
   });
 
   it("enables web search when env is '1'", () => {
@@ -585,13 +624,16 @@ describe("generate-openclaw-config.py: config generation", () => {
       provider: "brave",
       apiKey: "openshell:resolve:env:BRAVE_API_KEY",
     });
-    expect(config.tools?.web?.fetch?.enabled).toBe(true);
+    expect(config.tools?.web?.fetch).toEqual({
+      enabled: true,
+      useTrustedEnvProxy: true,
+    });
   });
 
   it("omits web search when env is not set", () => {
     const config = runConfigScript();
     expect(config.tools?.toolSearch).toBe(true);
-    expect(config.tools?.web).toBeUndefined();
+    expect(config.tools?.web?.search).toBeUndefined();
   });
 
   it("propagates agent timeout", () => {
