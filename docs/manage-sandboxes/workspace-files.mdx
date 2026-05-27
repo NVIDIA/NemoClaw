@@ -105,6 +105,20 @@ You can edit them in two ways:
 1. Ask your agent to update its persona, memory, or user context.
 2. Use `nemoclaw <name> connect` to open a terminal inside the sandbox and edit files directly, or use `openshell sandbox upload` to push edited files from your host.
 
+## Mount Sandbox Files on the Host
+
+For longer editing sessions, mount a sandbox path onto the host with SSHFS and use your local editor:
+
+```console
+$ nemoclaw my-assistant share mount /sandbox/.openclaw/workspace ~/my-assistant-workspace
+$ nemoclaw my-assistant share status
+$ nemoclaw my-assistant share unmount ~/my-assistant-workspace
+```
+
+`share mount` defaults to the sandbox workspace when no path is provided.
+The mount remains active until you unmount it or destroy the sandbox.
+If the command reports that `sshfs` is missing, install it on the host and rerun the mount command.
+
 ## Next Steps
 
 - [Set Up Task-Specific Sub-Agents](/inference/set-up-sub-agent)

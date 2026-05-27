@@ -34,9 +34,23 @@ The table below maps each commonly changed item to the layer that owns it and th
 | Sandbox name | **Locked at creation** | Re-onboard with a different `--name` |
 | GPU passthrough enable / device selector | **Locked at creation** | Re-onboard with `--gpu` / `--sandbox-gpu-device` |
 | Agents allow-list (`agents.list` in `openclaw.json`) | Runtime — hot-reloaded by OpenClaw on config change | Prefer agent or NemoClaw commands that keep host and sandbox state aligned |
+| `/etc/hosts` aliases inside the sandbox | Runtime — updates the sandbox pod template and active hosts file | `nemoclaw <name> hosts-add <hostname> <ip>`, `hosts-list`, and `hosts-remove` |
 | `openclaw.json` keys (general — model, agents.list, web.backend, channel config, etc.) | Mixed. Individual keys still follow the rebuild rules in the rows above, such as provider switch requiring rebuild even after editing the JSON. | Prefer NemoClaw host commands so the host registry and rebuilt image stay aligned |
 
 If a row above conflicts with what you observe, the runtime source of truth inside the sandbox is `/opt/nemoclaw/openclaw.json`; the host registry caches metadata but the image and OpenClaw read from the in-sandbox file.
+
+## Override DNS Inside the Sandbox
+
+Use host aliases when a sandbox needs to reach a private hostname that normal DNS cannot resolve:
+
+```console
+$ nemoclaw my-assistant hosts-add internal.example.com 10.0.0.42
+$ nemoclaw my-assistant hosts-list
+$ nemoclaw my-assistant hosts-remove internal.example.com
+```
+
+Aliases are useful for private test services, local gateways, and temporary lab names.
+Use `hosts-add --dry-run` to validate the entry without changing the sandbox.
 
 ## See also
 

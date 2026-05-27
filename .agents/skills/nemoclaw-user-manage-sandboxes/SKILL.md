@@ -36,6 +36,16 @@ Check a specific sandbox's health, inference route, active connections, live pol
 $ nemoclaw my-assistant status
 ```
 
+Run the per-sandbox doctor when you need a readiness gate for automation or a deeper diagnostic bundle for one sandbox:
+
+```console
+$ nemoclaw my-assistant doctor
+$ nemoclaw my-assistant doctor --json
+```
+
+`doctor` checks the host, gateway, sandbox, inference route, messaging channels, and local services.
+Failed checks exit non-zero.
+
 Use the host-level status command when you want the sandbox inventory plus host auxiliary service state, such as cloudflared:
 
 ```console
@@ -56,7 +66,26 @@ Stream logs while you reproduce a problem:
 $ nemoclaw my-assistant logs --follow
 ```
 
+Limit the history window with `--tail` (or `-n`) and `--since`:
+
+```console
+$ nemoclaw my-assistant logs --tail 100
+$ nemoclaw my-assistant logs --since 10m
+```
+
 The log command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
+
+## Retrieve Gateway Token
+
+Print the OpenClaw gateway auth token when an in-container client or debug script needs to call the gateway directly:
+
+```console
+$ nemoclaw my-assistant gateway-token
+$ TOKEN=$(nemoclaw my-assistant gateway-token --quiet)
+```
+
+Use `--quiet` when the command is part of shell substitution and you want only the token on stdout.
+Treat the token as a secret.
 
 ## Collect Diagnostics
 
@@ -73,6 +102,7 @@ $ nemoclaw debug --quick --sandbox my-assistant
 ```
 
 The debug command gathers system information, Docker state, gateway logs, and sandbox status.
+The debug command auto-redacts known secrets before writing files, but review the tarball before sharing it outside your trusted support path.
 
 ## Manage Dashboard Ports
 
@@ -116,15 +146,20 @@ For full details on port conflicts and overrides, refer to Port already in use (
 ## Reconfigure or Recover
 
 Recover from a misconfigured sandbox without re-running the full onboard wizard or destroying workspace state.
+Use `recover` when the sandbox container is still healthy but gateway or dashboard forwarding needs repair.
+Use `rebuild` when the sandbox image, agent runtime, provider bake-in, or container state needs to be recreated while preserving workspace state.
 
 ### Change Inference Model or API
 
 Change the active model or provider at runtime without rebuilding the sandbox:
 
 ```console
+$ nemoclaw inference get
+$ nemoclaw inference get --json
 $ nemoclaw inference set --model <model> --provider <provider>
 ```
 
+`inference get` is the read-only companion for checking the current route before you change it.
 Refer to Switch Inference Providers (use the `nemoclaw-user-configure-inference` skill) for provider-specific model IDs and API compatibility notes.
 
 ### Restart the Gateway and Port Forward
@@ -187,7 +222,7 @@ Re-run the installer.
 Before it onboards anything, the installer calls `nemoclaw backup-all` (use the `nemoclaw-user-reference` skill) automatically, storing a snapshot of each running sandbox in `~/.nemoclaw/rebuild-backups/` as a safety net.
 If your existing gateway is from OpenShell earlier than `0.0.37`, the installer prompts before it runs the new automatic gateway upgrade path.
 The automatic path is offered only when the existing `nemoclaw` CLI supports `backup-all`; older installs must preserve sandbox state manually before retiring the gateway.
-For unattended installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1`, or manually run `nemoclaw backup-all` and `openshell gateway destroy -g nemoclaw || openshell gateway destroy` before rerunning the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
+For unattended installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1`, or manually run `nemoclaw backup-all`, `openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy` (both verbs are tried so the right one runs on either OpenShell release), and `sudo pkill -f openshell-gateway` if a privileged host gateway remains before rerunning the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
 
 ```console
 $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
@@ -243,6 +278,18 @@ Your existing container keeps serving traffic until the new image is ready.
 
 ## Uninstall
 
+### Garbage Collect Orphan Images
+
+After destroying or rebuilding older sandboxes, remove Docker images that are no longer referenced by registered sandboxes:
+
+```console
+$ nemoclaw gc --dry-run
+$ nemoclaw gc --yes
+```
+
+Use `--dry-run` first to preview deletions.
+Use `--force` only when you intentionally want to remove images referenced by stopped containers.
+
 To remove NemoClaw and all resources created during setup, run the CLI's built-in uninstall command:
 
 ```bash
@@ -254,6 +301,14 @@ nemoclaw uninstall
 | `--yes`            | Skip the confirmation prompt.                        |
 | `--keep-openshell` | Leave OpenShell binaries installed.                  |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
+
+**Note:**
+
+`nemoclaw uninstall` preserves `~/.nemoclaw/rebuild-backups/` (host-side snapshots that `nemoclaw <name> snapshot create` and `nemoclaw backup-all` write), `~/.nemoclaw/backups/` (workspace backups that `scripts/backup-workspace.sh` writes), and `~/.nemoclaw/sandboxes.json` (the sandbox registry) by default.
+Uninstall removes every other entry under `~/.nemoclaw/`.
+Interactive runs prompt before they remove the preserved entries; the default answer keeps them.
+For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries as well.
+See `nemoclaw uninstall` (use the `nemoclaw-user-reference` skill) for the full preservation contract.
 
 `nemoclaw uninstall` runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
 

@@ -38,6 +38,16 @@ Check a specific sandbox's health, inference route, active connections, live pol
 $ nemoclaw my-assistant status
 ```
 
+Run the per-sandbox doctor when you need a readiness gate for automation or a deeper diagnostic bundle for one sandbox:
+
+```console
+$ nemoclaw my-assistant doctor
+$ nemoclaw my-assistant doctor --json
+```
+
+`doctor` checks the host, gateway, sandbox, inference route, messaging channels, and local services.
+Failed checks exit non-zero.
+
 Use the host-level status command when you want the sandbox inventory plus host auxiliary service state, such as cloudflared:
 
 ```console
@@ -58,7 +68,26 @@ Stream logs while you reproduce a problem:
 $ nemoclaw my-assistant logs --follow
 ```
 
+Limit the history window with `--tail` (or `-n`) and `--since`:
+
+```console
+$ nemoclaw my-assistant logs --tail 100
+$ nemoclaw my-assistant logs --since 10m
+```
+
 The log command reads both OpenClaw gateway output and OpenShell audit events, so policy denials appear beside gateway logs.
+
+## Retrieve Gateway Token
+
+Print the OpenClaw gateway auth token when an in-container client or debug script needs to call the gateway directly:
+
+```console
+$ nemoclaw my-assistant gateway-token
+$ TOKEN=$(nemoclaw my-assistant gateway-token --quiet)
+```
+
+Use `--quiet` when the command is part of shell substitution and you want only the token on stdout.
+Treat the token as a secret.
 
 ## Collect Diagnostics
 
@@ -75,6 +104,7 @@ $ nemoclaw debug --quick --sandbox my-assistant
 ```
 
 The debug command gathers system information, Docker state, gateway logs, and sandbox status.
+The debug command auto-redacts known secrets before writing files, but review the tarball before sharing it outside your trusted support path.
 
 ## Manage Dashboard Ports
 
@@ -118,15 +148,20 @@ For full details on port conflicts and overrides, refer to [Port already in use]
 ## Reconfigure or Recover
 
 Recover from a misconfigured sandbox without re-running the full onboard wizard or destroying workspace state.
+Use `recover` when the sandbox container is still healthy but gateway or dashboard forwarding needs repair.
+Use `rebuild` when the sandbox image, agent runtime, provider bake-in, or container state needs to be recreated while preserving workspace state.
 
 ### Change Inference Model or API
 
 Change the active model or provider at runtime without rebuilding the sandbox:
 
 ```console
+$ nemoclaw inference get
+$ nemoclaw inference get --json
 $ nemoclaw inference set --model <model> --provider <provider>
 ```
 
+`inference get` is the read-only companion for checking the current route before you change it.
 Refer to [Switch Inference Providers](/inference/switch-inference-providers) for provider-specific model IDs and API compatibility notes.
 
 ### Restart the Gateway and Port Forward
@@ -244,6 +279,18 @@ Your existing container keeps serving traffic until the new image is ready.
 </Note>
 
 ## Uninstall
+
+### Garbage Collect Orphan Images
+
+After destroying or rebuilding older sandboxes, remove Docker images that are no longer referenced by registered sandboxes:
+
+```console
+$ nemoclaw gc --dry-run
+$ nemoclaw gc --yes
+```
+
+Use `--dry-run` first to preview deletions.
+Use `--force` only when you intentionally want to remove images referenced by stopped containers.
 
 To remove NemoClaw and all resources created during setup, run the CLI's built-in uninstall command:
 
