@@ -1057,10 +1057,6 @@ function appendFindings(lines: string[], heading: string, findings: Finding[]): 
   lines.push("");
 }
 
-export function formatRecommendation(recommendation: SummaryRecommendation): string {
-  return recommendation.replaceAll("_", " ");
-}
-
 function unavailableResult(metadata: ReviewMetadata, reason: string, failed: boolean): ReviewAdvisorResult {
   return {
     version: 1,
