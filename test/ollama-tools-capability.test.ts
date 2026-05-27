@@ -518,6 +518,34 @@ describe("validateOllamaModel — no-tools override propagation (#4241)", () => 
     expect(result.ok).toBe(false);
     expect(result.message!).toContain("more system memory");
   });
+
+  // The override only suppresses the tools-capability rejection. The Spark
+  // CPU-only runtime check (probeOllamaRuntimeModelStatus) must still run
+  // after the warning fires and surface its own diagnostic — otherwise an
+  // accepted no-tools model on Spark could silently land on CPU.
+  it("Spark CPU-only check still rejects after override is accepted", () => {
+    const cpuOnlyApiPs = JSON.stringify({
+      models: [{ name: "tinyllama:1.1b", model: "tinyllama:1.1b", size_vram: 0, processor: "100% CPU" }],
+    });
+    const { capture } = makeCapture([{ match: /\/api\/ps/, output: cpuOnlyApiPs }]);
+    const captureEx = captureExReturning(
+      "registry.ollama.ai/library/tinyllama:1.1b does not support tools",
+    );
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const result = localInference.validateOllamaModel(
+        "tinyllama:1.1b",
+        capture,
+        () => true,
+        captureEx,
+        { allowToolsIncompatible: true },
+      );
+      expect(result.ok).toBe(false);
+      expect(result.message!.toLowerCase()).toContain("cpu");
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 // ─────────────────────────────────────────────────────────────────
