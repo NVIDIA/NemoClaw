@@ -41,6 +41,8 @@ function runPowerShellHarness(script: string) {
         encoding: "utf8",
         env: {
           ...process.env,
+          TEMP: process.env.TEMP ?? process.env.TMPDIR ?? os.tmpdir(),
+          TMP: process.env.TMP ?? process.env.TMPDIR ?? os.tmpdir(),
           NEMOCLAW_BOOTSTRAP_WINDOWS_SOURCE_ONLY: "1",
           SystemRoot: process.env.SystemRoot ?? "C:\\Windows",
         },
