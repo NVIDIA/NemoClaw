@@ -9,7 +9,7 @@
 // `openshell-<sandbox>` container.
 
 import { createRequire } from "node:module";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 // Build must run before these tests (imports from dist/).
 const require = createRequire(import.meta.url);
@@ -49,17 +49,25 @@ function stubRegistry(opts: {
   sandboxNames?: string[];
   containerNames: string;
 }): void {
-  const sandboxName = "my-assistant";
+  // Every name passed in sandboxNames (plus the canonical "my-assistant") must
+  // resolve through getSandbox so the prefix-collision test actually exercises
+  // selectPrivilegedSandboxContainer's longest-known-name disambiguation rather
+  // than falling out of resolvePrivilegedSandboxContainer's `driver == null`
+  // short-circuit (CodeRabbit #4290).
+  const canonicalName = "my-assistant";
+  const knownSandboxNames = opts.sandboxNames ?? [canonicalName];
   vi.spyOn(registry, "getSandbox").mockImplementation((name) => {
-    if (name === sandboxName) return { name, openshellDriver: opts.driver };
+    if (knownSandboxNames.includes(name)) {
+      return { name, openshellDriver: opts.driver };
+    }
     return null;
   });
   vi.spyOn(registry, "listSandboxes").mockReturnValue({
-    sandboxes: (opts.sandboxNames ?? [sandboxName]).map((name) => ({
+    sandboxes: knownSandboxNames.map((name) => ({
       name,
       openshellDriver: opts.driver,
     })),
-    defaultSandbox: sandboxName,
+    defaultSandbox: canonicalName,
   });
   vi.spyOn(dockerRun, "dockerCapture").mockReturnValue(opts.containerNames);
 }
