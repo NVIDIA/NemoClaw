@@ -16,10 +16,6 @@ const { fork } = require("child_process");
 const { randomBytes } = require("crypto");
 const { run, runCapture, validateName } = require("../runner");
 const { dockerExecFileSync } = require("../adapters/docker/exec");
-const { dockerCapture } = require("../adapters/docker/run");
-const registry = require("../state/registry") as {
-  getSandbox?: (name: string) => { openshellDriver?: string | null } | null;
-};
 const {
   buildPolicyGetCommand,
   buildPolicySetCommand,
@@ -43,6 +39,9 @@ const { resolveNemoclawStateDir } = require("../state/paths");
 const { appendAuditEntry } = require("./audit");
 const { resolveAgentConfig } = require("../sandbox/config");
 const {
+  privilegedSandboxExecArgv,
+}: typeof import("../sandbox/privileged-exec") = require("../sandbox/privileged-exec");
+const {
   buildRuntimePermissivePolicy,
 }: typeof import("./permissive-runtime") = require("./permissive-runtime");
 const { cleanupTempDir } = require("../onboard/temp-files");
@@ -53,65 +52,11 @@ const STATE_DIR = resolveNemoclawStateDir();
 // privileged sandbox exec — bypasses the sandbox's Landlock context
 //
 // openshell sandbox exec runs commands INSIDE the Landlock domain, so it
-// can't modify read_only paths or change chattr flags. kubectl exec starts
-// a new process in the pod that does NOT inherit the Landlock ruleset.
-// On the legacy gateway we reach kubectl via the K3s container. On the
-// Docker-driver gateway there is no K3s container, so we exec into the
-// sandbox Docker container directly as root.
+// can't modify read_only paths or change chattr flags. Privileged Docker exec
+// starts a new root process that does NOT inherit the Landlock ruleset.
+// OpenShell gateways expose sandboxes as Docker containers, so we exec into
+// the sandbox container directly as root.
 // ---------------------------------------------------------------------------
-
-const K3S_CONTAINER = "openshell-cluster-nemoclaw";
-
-function resolveDockerDriverSandboxContainer(
-  sandboxName: string,
-): string | null {
-  try {
-    if (registry.getSandbox?.(sandboxName)?.openshellDriver !== "docker") {
-      return null;
-    }
-  } catch {
-    return null;
-  }
-  const prefix = `openshell-${sandboxName}-`;
-  const exact = `openshell-${sandboxName}`;
-  const output = dockerCapture(["ps", "--format", "{{.Names}}"], {
-    ignoreError: true,
-  });
-  return (
-    output
-      .split("\n")
-      .map((line: string) => line.trim())
-      .find((name: string) => name === exact || name.startsWith(prefix)) || null
-  );
-}
-
-function kubectlExecArgv(sandboxName: string, cmd: string[]): string[] {
-  return [
-    "exec",
-    K3S_CONTAINER,
-    "kubectl",
-    "exec",
-    "-n",
-    "openshell",
-    sandboxName,
-    "-c",
-    "agent",
-    "--",
-    ...cmd,
-  ];
-}
-
-function privilegedSandboxExecArgv(
-  sandboxName: string,
-  cmd: string[],
-): string[] {
-  const dockerDriverContainer =
-    resolveDockerDriverSandboxContainer(sandboxName);
-  if (dockerDriverContainer) {
-    return ["exec", "--user", "root", dockerDriverContainer, ...cmd];
-  }
-  return kubectlExecArgv(sandboxName, cmd);
-}
 
 function privilegedSandboxExec(sandboxName: string, cmd: string[]): void {
   dockerExecFileSync(privilegedSandboxExecArgv(sandboxName, cmd), {
@@ -500,7 +445,7 @@ function assertNoLegacyStateLayout(
 // user and the gateway UID can write the mutable config tree. Hermes keeps its
 // tighter single-user layout.
 //
-// Note on chattr: best-effort — it may silently fail if kubectl exec
+// Note on chattr: best-effort — it may silently fail if privileged exec
 // lacks CAP_LINUX_IMMUTABLE or if the file was never immutable. That's fine:
 // the file becomes writable through the permissive policy (disables Landlock
 // read_only) + chown/chmod below.
@@ -518,10 +463,12 @@ function unlockAgentConfig(
   // control-UI mutations (Enable Dreaming, account toggles) EACCES
   // against sandbox:sandbox 600 even after shields-down
   // (#2681 supersedes #2693).
-  // Hermes is unchanged — its sandbox does not run a separate gateway UID,
-  // so the shared-group contract does not apply.
+  // Hermes keeps config files non-group-writable, but its root entrypoint runs
+  // the gateway as a separate UID in the sandbox group. The config root stays
+  // group-writable + sticky so Hermes can create top-level runtime state while
+  // the gateway UID cannot remove sandbox-owned config files.
   const fileMode = target.agentName === "hermes" ? "640" : "660";
-  const dirMode = target.agentName === "hermes" ? "750" : "2770";
+  const dirMode = target.agentName === "hermes" ? "3770" : "2770";
   for (const f of filesToUnlock) {
     try {
       privilegedSandboxExec(sandboxName, ["chattr", "-i", f]);
@@ -632,7 +579,7 @@ function unlockAgentConfig(
 //   2. UNIX permissions — 444 root:root (mandatory, verified here)
 //   3. chattr +i immutable bit — defense-in-depth (best-effort)
 //
-// Layer 3 is best-effort because kubectl exec may lack
+// Layer 3 is best-effort because privileged exec may lack
 // CAP_LINUX_IMMUTABLE. Layers 1+2 are sufficient. We still attempt it
 // in case the runtime environment supports it.
 // ---------------------------------------------------------------------------
@@ -673,7 +620,7 @@ function lockAgentConfig(
     errors.push("chown root:root config dir");
   }
 
-  // Best-effort: kubectl exec may lack CAP_LINUX_IMMUTABLE. Track the
+  // Best-effort: privileged exec may lack CAP_LINUX_IMMUTABLE. Track the
   // result so verification doesn't require something that was never there.
   let chattrSucceeded = true;
   for (const f of filesToLock) {
@@ -810,7 +757,7 @@ function rollbackShieldsDown(
   } else {
     console.error("  Config remains unlocked — manual intervention required.");
     console.error(
-      `  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`,
+      `  Restore sandbox access, then run: nemoclaw ${sandboxName} shields up`,
     );
   }
 }
@@ -1073,7 +1020,7 @@ function shieldsDown(sandboxName: string, opts: ShieldsDownOpts = {}): void {
 
   // 4. Start auto-restore timer (detached child process), unless skipped.
   //    Pass the absolute restore time, not a relative timeout. Steps 1-2b
-  //    can take minutes (policy apply + kubectl chmod), so a relative timeout
+  //    can take minutes (policy apply + privileged chmod), so a relative timeout
   //    passed at fork time would fire too early.
   if (!opts.skipTimer) {
     const restoreAt = new Date(Date.now() + timeoutSeconds * 1000);
@@ -1203,13 +1150,13 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
         "  Config remains unlocked — manual intervention required.",
       );
       console.error(
-        `  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`,
+        `  Restore sandbox access, then run: nemoclaw ${sandboxName} shields up`,
       );
       return failShieldsCommand(activation.error ?? "unknown restore error", opts.throwOnError);
     }
   } else {
     // 2b. Lock config file to read-only.
-    //     Uses kubectl exec to bypass Landlock (same as shields down).
+    //     Uses direct privileged exec to bypass Landlock (same as shields down).
     //     Each operation runs independently and the result is verified.
     //     If verification fails, config remains unlocked — we do not lie about state.
     const target = resolveAgentConfig(sandboxName);
@@ -1225,7 +1172,7 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
         "  Config remains unlocked — manual intervention required.",
       );
       console.error(
-        `  Re-lock manually via kubectl exec, then run: nemoclaw ${sandboxName} shields up`,
+        `  Restore sandbox access, then run: nemoclaw ${sandboxName} shields up`,
       );
       return failShieldsCommand(message, opts.throwOnError);
     }

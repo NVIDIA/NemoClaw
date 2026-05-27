@@ -28,6 +28,8 @@ RUN npm ci && npm run build
 # Stage 2: Runtime image — pull cached base from GHCR
 # hadolint ignore=DL3006
 FROM ${BASE_IMAGE}
+ARG OPENCLAW_VERSION=2026.5.22
+ARG OPENCLAW_2026_5_22_INTEGRITY=sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==
 
 # Harden: remove unnecessary build tools and network probes from base image (#830)
 # Protect runtime tools before autoremove — the GHCR base may predate the
@@ -63,7 +65,7 @@ COPY --from=builder /opt/nemoclaw/dist/ /opt/nemoclaw/dist/
 COPY nemoclaw/openclaw.plugin.json /opt/nemoclaw/
 COPY nemoclaw/package.json nemoclaw/package-lock.json /opt/nemoclaw/
 COPY nemoclaw-blueprint/ /opt/nemoclaw-blueprint/
-RUN chmod -R a+rX /opt/nemoclaw-blueprint/
+RUN chmod -R a+rX /opt/nemoclaw /opt/nemoclaw-blueprint/
 
 # Install runtime dependencies only (no devDependencies, no build step)
 WORKDIR /opt/nemoclaw
@@ -88,24 +90,39 @@ RUN chmod 755 /usr/local/lib/nemoclaw/patch-openclaw-tool-catalog.js \
 # silently skipping patches (leaving the sandbox unpatched), upgrade OpenClaw
 # in-place so every build gets the version the patches expect.
 #
-# The minimum required version comes from nemoclaw-blueprint/blueprint.yaml
-# (already COPYed to /opt/nemoclaw-blueprint/ above).
+# OPENCLAW_VERSION is the NemoClaw runtime build target. It must be at least the
+# blueprint minimum, which also supports the legacy direct-blueprint image path.
 # hadolint ignore=DL3059,DL4006
 RUN set -eu; \
+    echo "$OPENCLAW_VERSION" | grep -qxE '[0-9]+(\.[0-9]+)*' \
+        || { echo "ERROR: OPENCLAW_VERSION='$OPENCLAW_VERSION' is invalid (expected e.g. 2026.3.11)" >&2; exit 1; }; \
     MIN_VER=$(grep -m 1 'min_openclaw_version' /opt/nemoclaw-blueprint/blueprint.yaml | awk '{print $2}' | tr -d '"'); \
     [ -n "$MIN_VER" ] || { echo "ERROR: Could not parse min_openclaw_version from blueprint.yaml" >&2; exit 1; }; \
+    if [ "$(printf '%s\n%s' "$MIN_VER" "$OPENCLAW_VERSION" | sort -V | head -n1)" != "$MIN_VER" ]; then \
+        echo "ERROR: OpenClaw build target ${OPENCLAW_VERSION} is below blueprint minimum ${MIN_VER}" >&2; exit 1; \
+    fi; \
+    EXPECTED_INTEGRITY=""; \
+    if [ "$OPENCLAW_VERSION" = "2026.5.22" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_22_INTEGRITY"; fi; \
+    if [ -n "$EXPECTED_INTEGRITY" ]; then \
+        REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
+        if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
+            echo "ERROR: OpenClaw ${OPENCLAW_VERSION} npm integrity mismatch" >&2; \
+            echo "Expected: ${EXPECTED_INTEGRITY}" >&2; \
+            echo "Actual:   ${REGISTRY_INTEGRITY}" >&2; exit 1; \
+        fi; \
+    fi; \
     CUR_VER=$(openclaw --version 2>/dev/null | awk '{print $2}' || echo "0.0.0"); \
-    if [ "$(printf '%s\n%s' "$MIN_VER" "$CUR_VER" | sort -V | head -n1)" = "$MIN_VER" ]; then \
-        echo "INFO: OpenClaw $CUR_VER is current (>= $MIN_VER), no upgrade needed"; \
+    if [ "$(printf '%s\n%s' "$OPENCLAW_VERSION" "$CUR_VER" | sort -V | head -n1)" = "$OPENCLAW_VERSION" ]; then \
+        echo "INFO: OpenClaw $CUR_VER is current (>= $OPENCLAW_VERSION), no upgrade needed"; \
     else \
-        echo "INFO: Base image has OpenClaw $CUR_VER, upgrading to $MIN_VER (minimum required)"; \
+        echo "INFO: Base image has OpenClaw $CUR_VER, upgrading to $OPENCLAW_VERSION"; \
         # npm 10's atomic-move install can hit EROFS on overlayfs when the
         # prior install spans multiple image layers (e.g. openclaw was
         # baked into sandbox-base, then we upgrade on top here). Clearing
         # at the shell level first gives npm a clean slate and avoids the
         # rmdir failure inside npm's own install path.
         rm -rf /usr/local/lib/node_modules/openclaw /usr/local/bin/openclaw; \
-        npm install -g --no-audit --no-fund --no-progress "openclaw@${MIN_VER}"; \
+        npm install -g --no-audit --no-fund --no-progress "openclaw@${OPENCLAW_VERSION}"; \
     fi; \
     # Pre-install the codex-acp package so the embedded ACPx runtime can
     # call the local binary instead of `npx @zed-industries/codex-acp`.
@@ -170,7 +187,7 @@ RUN set -eu; \
 # build time. They apply the legacy patch when the old target exists, skip
 # only when the dist shape proves OpenClaw no longer needs that patch, and
 # fail with the OpenClaw version plus dist path for mixed or unknown shapes.
-# When bumping OPENCLAW_VERSION or min_openclaw_version, verify the new dist
+# When bumping OPENCLAW_VERSION, verify the new dist
 # takes the expected branch and update the regex / sed replacement if needed.
 # hadolint ignore=SC2016,DL3059,DL4006
 RUN set -eu; \
@@ -308,7 +325,7 @@ RUN set -eu; \
 RUN node /usr/local/lib/nemoclaw/patch-openclaw-chat-send.js \
     /usr/local/lib/node_modules/openclaw/dist
 
-# Patch OpenClaw's pinned 2026.5.18 compiled selection runtime to expose a
+# Patch OpenClaw's pinned 2026.5.22 compiled selection runtime to expose a
 # compact searchable tool catalog to the model while preserving the full
 # effective tool set behind tool_call. NEMOCLAW_TOOL_CATALOG=0 disables this
 # wrapper if an emergency rollback is needed. The script fails closed if the
@@ -395,6 +412,11 @@ ARG NEMOCLAW_TELEGRAM_CONFIG_B64=e30=
 # metadata only — the bot token flows through the OpenShell provider, never
 # baked into the image. Default: empty map.
 ARG NEMOCLAW_WECHAT_CONFIG_B64=e30=
+# Base64-encoded JSON Slack config (e.g.
+# {"allowedChannels":["C012AB3CD","C987ZY6XW"]}).
+# Channel IDs scope Slack channel @mention handling. User allowlists still come
+# from NEMOCLAW_MESSAGING_ALLOWED_IDS_B64. Default: empty map.
+ARG NEMOCLAW_SLACK_CONFIG_B64=e30=
 # Set to "1" to force-disable device-pairing auth. Also auto-disabled when
 # CHAT_UI_URL is a non-loopback address (Brev Launchable, remote deployments)
 # since terminal-based pairing is impossible in those contexts.
@@ -442,6 +464,7 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_DISCORD_GUILDS_B64=${NEMOCLAW_DISCORD_GUILDS_B64} \
     NEMOCLAW_TELEGRAM_CONFIG_B64=${NEMOCLAW_TELEGRAM_CONFIG_B64} \
     NEMOCLAW_WECHAT_CONFIG_B64=${NEMOCLAW_WECHAT_CONFIG_B64} \
+    NEMOCLAW_SLACK_CONFIG_B64=${NEMOCLAW_SLACK_CONFIG_B64} \
     NEMOCLAW_OPENCLAW_WECHAT_PLUGIN_PREINSTALLED=1 \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
@@ -757,12 +780,63 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 # Health check: poll the gateway's /health endpoint so Docker (and Compose)
 # can detect and restart unhealthy containers in standalone deployments.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/1430
+#
+# Two-stage probe so Docker health does not contradict the NemoClaw delivery
+# chain on runtimes where the dashboard port lives in a different network
+# namespace (e.g. DGX Spark / aarch64 with OpenShell-managed forwarding).
+# The reporter saw `nemoclaw status` Ready + the host forward succeed while
+# Docker marked the container unhealthy because the in-container curl could
+# not see the dashboard listener. See #3975.
+#
+#   1. Direct in-container probe (HTTP 200) — definitive when it works,
+#      preserves the original Compose/standalone health signal.
+#   2. ONLY on curl exit 7 ("Couldn't connect"), fall back to verifying
+#      ALL of:
+#        - the OpenClaw gateway process started by nemoclaw-start is
+#          still alive (via pgrep --ignore-ancestors), AND
+#        - the gateway log file exists and is non-empty (proves the
+#          process started and emitted its banner; rules out cases
+#          where the gateway never came up).
+#      Exit 7 means the in-container TCP connect was refused by the
+#      kernel because nothing is bound to the dashboard port inside
+#      this network namespace — the namespace-mismatch shape reported
+#      in #3975. A connect timeout (curl exit 28) is treated as a real
+#      failure: a listener exists but is not responding (wedged HTTP
+#      server), and we want Docker to restart in that case.
+#
+# Tradeoff: this fallback also fires in a standalone deployment where the
+# gateway process is alive but the configured dashboard port is wrong or
+# the listener never came up. We accept that residual risk because it
+# requires a misconfiguration the start-period (45s) already gives the
+# wizard a chance to fix, and the existing host-side delivery chain
+# probes (verify-deployment.ts, host port forward, sandbox status) still
+# catch it from outside.
+#
+# The process pattern matches both `openclaw gateway run` (the launcher
+# command nemoclaw-start runs) and `openclaw-gateway` (the re-execed
+# binary form OpenClaw switches into after startup). This is the same
+# variant set the host-side gateway-stop script in services.ts matches.
+#
+# pgrep uses --ignore-ancestors so it cannot self-match the healthcheck
+# shell that Docker spawns to run this CMD — that shell's argv contains
+# the literal 'openclaw gateway' string we're searching for, and
+# without --ignore-ancestors `pgrep -f` would happily report it as the
+# live gateway even after the real process exited (procps 4.0+ supports
+# this flag; the base image pins procps to 2:4.0.4-9).
+#
+# We deliberately do not fall back on HTTP 4xx/5xx — those mean the gateway
+# answered with a failure inside this container, which is a real bad signal.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD port="${NEMOCLAW_DASHBOARD_PORT:-${OPENCLAW_GATEWAY_PORT:-}}"; \
         if [ -z "$port" ]; then \
             port="$(python3 -c 'import os; from urllib.parse import urlparse; raw = os.environ.get("CHAT_UI_URL") or "http://127.0.0.1:18789"; raw = raw if "://" in raw else "http://" + raw; u = urlparse(raw); print(u.port or 18789)' 2>/dev/null || printf '18789')"; \
         fi; \
-        curl -sf "http://127.0.0.1:${port}/health"
+        rc=0; \
+        curl -sf --max-time 3 "http://127.0.0.1:${port}/health" > /dev/null 2>&1 || rc=$?; \
+        if [ "$rc" = 0 ]; then exit 0; fi; \
+        if [ "$rc" != 7 ]; then exit 1; fi; \
+        pgrep --ignore-ancestors -f 'openclaw[ -]gateway' > /dev/null 2>&1 || exit 1; \
+        [ -s /tmp/gateway.log ]
 
 # Entrypoint runs as root to start the gateway as the gateway user,
 # then drops to sandbox for agent commands. See nemoclaw-start.sh.

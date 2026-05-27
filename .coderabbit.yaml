@@ -338,11 +338,47 @@ reviews:
         trail, and auto-restore timer.
 
         **E2E test recommendation:**
+        - `vm-driver-privileged-exec-routing-e2e` — direct Docker/VM privileged
+          exec routing for shields/config mutations
         - `shields-config-e2e` — shields lifecycle + config get/set/rotate
 
         To run selectively:
         ```
-        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=shields-config-e2e
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=vm-driver-privileged-exec-routing-e2e,shields-config-e2e
+        ```
+
+    - path: "src/lib/sandbox/privileged-exec.ts"
+      instructions: |
+        This file selects the privileged mutation transport for host-side
+        sandbox writes. Changes can break shields up/down and config set on
+        Docker Desktop VM-driver sandboxes.
+
+        **E2E test recommendation:**
+        - `vm-driver-privileged-exec-routing-e2e` — fake Docker registry
+          coverage for VM/Docker direct-container routing and prefix
+          collision handling
+        - `shields-config-e2e` — live shields lifecycle + config get/set/rotate
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=vm-driver-privileged-exec-routing-e2e,shields-config-e2e
+        ```
+
+    - path: "src/lib/sandbox/config.ts"
+      instructions: |
+        This file implements host-side config get/set/rotate. Changes to
+        config writes, hash recomputation, or privileged exec routing affect
+        Docker/VM sandboxes.
+
+        **E2E test recommendation:**
+        - `vm-driver-privileged-exec-routing-e2e` — direct privileged exec
+          routing for host-side config mutation
+        - `shields-config-e2e` — live config get/set/rotate while shields
+          transitions are exercised
+
+        To run selectively:
+        ```
+        gh workflow run nightly-e2e.yaml --ref <branch> -f jobs=vm-driver-privileged-exec-routing-e2e,shields-config-e2e
         ```
 
     - path: "agents/hermes/**"

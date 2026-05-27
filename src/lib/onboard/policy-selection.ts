@@ -13,6 +13,7 @@ import {
   pruneDisabledMessagingPolicyPresets,
   requiredMessagingChannelPolicyPresets,
 } from "./messaging-policy-presets";
+import { withPolicyApplicationTrace } from "./tracing";
 
 type Preset = { name: string; access?: string };
 type SupportOptions = { webSearchSupported?: boolean | null };
@@ -228,6 +229,16 @@ export function preparePolicyPresetResumeSelection(
 }
 
 export async function setupPoliciesWithSelection(
+  deps: SetupPolicySelectionDeps,
+  sandboxName: string,
+  options: SetupPolicySelectionOptions = {},
+): Promise<string[]> {
+  return withPolicyApplicationTrace(sandboxName, options, () =>
+    setupPoliciesWithSelectionInner(deps, sandboxName, options),
+  );
+}
+
+async function setupPoliciesWithSelectionInner(
   deps: SetupPolicySelectionDeps,
   sandboxName: string,
   options: SetupPolicySelectionOptions = {},

@@ -4,7 +4,7 @@
 version: "0.1.0"
 min_openshell_version: "0.0.44"
 max_openshell_version: "0.0.44"
-min_openclaw_version: "2026.5.18"
+min_openclaw_version: "2026.3.11"
 # Mirrors the components.sandbox.image manifest digest below. Lets a
 # downstream consumer (or release tooling) verify the blueprint declares
 # a specific sandbox image without parsing the components tree, and

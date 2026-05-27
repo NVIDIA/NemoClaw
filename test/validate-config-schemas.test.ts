@@ -9,12 +9,14 @@
  * Vitest project.
  */
 
-import { readFileSync, readdirSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it, expect } from "vitest";
 import Ajv, { type ValidateFunction } from "ajv/dist/2020.js";
 import YAML from "yaml";
+
+import { discoverTargets } from "../scripts/validate-configs";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -87,6 +89,34 @@ function expectValid(validate: ValidateFunction, data: object, label: string): v
     expect.unreachable(`${label} failed schema validation:\n${messages.join("\n")}`);
   }
 }
+
+// ── Validation target discovery ─────────────────────────────────────────────
+
+describe("config validation target discovery", () => {
+  const targets = discoverTargets();
+  const filesBySchema = new Map(targets.map((target) => [target.schema, target.files]));
+  const sandboxPolicyFiles = filesBySchema.get("schemas/sandbox-policy.schema.json") ?? [];
+
+  it("includes every binary-scoped sandbox policy family", () => {
+    expect(sandboxPolicyFiles).toEqual(
+      expect.arrayContaining([
+        "nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
+        "nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
+        "agents/hermes/policy-additions.yaml",
+        "agents/hermes/policy-permissive.yaml",
+        "agents/openclaw/policy-permissive.yaml",
+      ]),
+    );
+  });
+
+  it("discovers model-specific setup manifests", () => {
+    expect(filesBySchema.get("nemoclaw-blueprint/model-specific-setup/schema.json") ?? []).toEqual(
+      expect.arrayContaining([
+        "nemoclaw-blueprint/model-specific-setup/openclaw/kimi-k2.6-managed-inference.json",
+      ]),
+    );
+  });
+});
 
 // ── Blueprint ────────────────────────────────────────────────────────────────
 
@@ -182,6 +212,38 @@ describe("blueprint.schema.json", () => {
   });
 });
 
+// ── Model Router pool config ────────────────────────────────────────────────
+
+describe("router-pool-config.schema.json", () => {
+  const validate = compileSchema("schemas/router-pool-config.schema.json");
+  const data = loadYAML(repoPath("nemoclaw-blueprint/router/pool-config.yaml"));
+
+  it("pool-config.yaml passes schema validation", () => {
+    expectValid(validate, data, "pool-config.yaml");
+  });
+
+  it("rejects router pool config without routing settings", () => {
+    const bad = cloneObject(data);
+    delete bad.routing;
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects router pool config models without LiteLLM model IDs", () => {
+    const root = asRecord(data);
+    const firstModel = asRecord(Array.isArray(root.models) ? root.models[0] : undefined);
+    const { litellm_model: _litellmModel, ...modelWithoutId } = firstModel;
+    const bad = { ...root, models: [modelWithoutId] };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects router pool config api_base without HTTPS", () => {
+    const root = asRecord(data);
+    const firstModel = asRecord(Array.isArray(root.models) ? root.models[0] : undefined);
+    const bad = { ...root, models: [{ ...firstModel, api_base: "http://integrate.api.nvidia.com/v1" }] };
+    expect(validate(bad)).toBe(false);
+  });
+});
+
 // ── Base sandbox policy ──────────────────────────────────────────────────────
 
 describe("sandbox-policy.schema.json", () => {
@@ -191,6 +253,26 @@ describe("sandbox-policy.schema.json", () => {
   it("openclaw-sandbox.yaml passes schema validation", () => {
     expectValid(validate, data, "openclaw-sandbox.yaml");
   });
+
+  it("openclaw-sandbox-permissive.yaml passes schema validation", () => {
+    expectValid(
+      validate,
+      loadYAML(repoPath("nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml")),
+      "openclaw-sandbox-permissive.yaml",
+    );
+  });
+
+  for (const file of [
+    "agents/openclaw/policy-permissive.yaml",
+    "agents/hermes/policy-additions.yaml",
+    "agents/hermes/policy-permissive.yaml",
+  ]) {
+    if (existsSync(repoPath(file))) {
+      it(`${file} passes schema validation`, () => {
+        expectValid(validate, loadYAML(repoPath(file)), file);
+      });
+    }
+  }
 
   it("rejects policy with missing network_policies", () => {
     const bad = cloneObject(data);
@@ -209,7 +291,21 @@ describe("sandbox-policy.schema.json", () => {
       network_policies: {
         test_service: {
           name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [{ host: "api.example.com", port: 443, protocol: "rest" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects sandbox-policy network entries without explicit binary scoping", () => {
+    const bad = {
+      version: 1,
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "api.example.com", port: 443, access: "full" }],
         },
       },
     };
@@ -222,6 +318,7 @@ describe("sandbox-policy.schema.json", () => {
       network_policies: {
         test_service: {
           name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [
             {
               host: "gateway.example.com",
@@ -248,6 +345,7 @@ describe("sandbox-policy.schema.json", () => {
       network_policies: {
         slack: {
           name: "Slack",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [
             {
               host: "api.slack.com",
@@ -270,6 +368,7 @@ describe("sandbox-policy.schema.json", () => {
       network_policies: {
         test_service: {
           name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [{ host: "gateway.example.com", port: 443, protocol: "websocket" }],
         },
       },
@@ -320,7 +419,21 @@ describe("policy-preset.schema.json", () => {
       network_policies: {
         test_service: {
           name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [{ host: "api.example.com", port: 443, protocol: "rest" }],
+        },
+      },
+    };
+    expect(validate(bad)).toBe(false);
+  });
+
+  it("rejects preset network entries without explicit binary scoping", () => {
+    const bad = {
+      preset: { name: "test", description: "test" },
+      network_policies: {
+        test_service: {
+          name: "Test Service",
+          endpoints: [{ host: "api.example.com", port: 443, access: "full" }],
         },
       },
     };
@@ -333,6 +446,7 @@ describe("policy-preset.schema.json", () => {
       network_policies: {
         test_service: {
           name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [
             {
               host: "gateway.example.com",
@@ -359,6 +473,7 @@ describe("policy-preset.schema.json", () => {
       network_policies: {
         slack: {
           name: "Slack",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [
             {
               host: "api.slack.com",
@@ -381,6 +496,7 @@ describe("policy-preset.schema.json", () => {
       network_policies: {
         test_service: {
           name: "Test Service",
+          binaries: [{ path: "/usr/bin/node" }],
           endpoints: [{ host: "gateway.example.com", port: 443, protocol: "websocket" }],
         },
       },
@@ -394,19 +510,24 @@ describe("policy-preset.schema.json", () => {
 describe("openclaw-plugin.schema.json", () => {
   const validate = compileSchema("schemas/openclaw-plugin.schema.json");
   const data = loadJSON(repoPath("nemoclaw/openclaw.plugin.json"));
+  const validPluginFixture = {
+    id: "fixture-plugin",
+    name: "Fixture Plugin",
+    version: "1.2.3",
+    description: "Schema fixture",
+  };
 
   it("openclaw.plugin.json passes schema validation", () => {
     expectValid(validate, data, "openclaw.plugin.json");
   });
 
   it("rejects plugin with missing id", () => {
-    const bad = cloneObject(data);
-    delete bad.id;
+    const { id: _id, ...bad } = validPluginFixture;
     expect(validate(bad)).toBe(false);
   });
 
   it("rejects plugin with invalid version format", () => {
-    const bad = { ...cloneObject(data), version: "not-semver" };
+    const bad = { ...validPluginFixture, version: "not-semver" };
     expect(validate(bad)).toBe(false);
   });
 });

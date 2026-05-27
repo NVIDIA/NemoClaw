@@ -306,7 +306,7 @@ describe("inference health", () => {
           ok: true,
           httpStatus: 200,
           curlStatus: 0,
-          body: "{}",
+          body: '{"models":[]}',
           stderr: "",
           message: "HTTP 200",
         }),

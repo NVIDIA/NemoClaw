@@ -2,29 +2,38 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
-import * as agentRuntime from "../../agent/runtime";
-import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
-import { parseSandboxPhase } from "../../state/gateway";
-import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
-import { parseGatewayInference } from "../../inference/config";
-import {
-  probeProviderHealth,
-  type ProviderHealthProbeOptions,
-  type ProviderHealthStatus,
-} from "../../inference/health";
-import * as nim from "../../inference/nim";
-import * as onboardSession from "../../state/onboard-session";
-import type { Session } from "../../state/onboard-session";
-import {
-  captureOpenshellForStatus,
-  isCommandTimeout,
-} from "../../adapters/openshell/runtime";
 import {
   detectOpenShellStateRpcResultIssue,
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
-import * as registry from "../../state/registry";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
+import {
+  captureOpenshellForStatus,
+  isCommandTimeout,
+} from "../../adapters/openshell/runtime";
+import * as agentRuntime from "../../agent/runtime";
+import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
+import { D, G, R, RD, YW } from "../../cli/terminal-style";
+import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
+import { parseGatewayInference } from "../../inference/config";
+import {
+  type ProviderHealthProbeOptions,
+  type ProviderHealthStatus,
+  probeProviderHealth,
+} from "../../inference/health";
+import * as nim from "../../inference/nim";
+import * as sandboxVersion from "../../sandbox/version";
+import * as shields from "../../shields";
+import { parseSandboxPhase } from "../../state/gateway";
+import type { Session } from "../../state/onboard-session";
+import * as onboardSession from "../../state/onboard-session";
+import * as registry from "../../state/registry";
+import {
+  createSystemDeps as createSessionDeps,
+  getActiveSandboxSessions,
+} from "../../state/sandbox-session";
+import { getSandboxDockerHealth } from "./docker-health";
+import { classifyGatewayFailure, getLayerHeader } from "./gateway-failure-classifier";
 import type { SandboxGatewayState } from "./gateway-state";
 import {
   getReconciledSandboxGatewayState,
@@ -32,18 +41,10 @@ import {
   printGatewayLifecycleHint,
   printWrongGatewayActiveGuidance,
 } from "./gateway-state";
-import { classifyGatewayFailure, getLayerHeader } from "./gateway-failure-classifier";
 import {
   isSandboxGatewayRunningForStatus,
   probeSandboxInferenceGatewayHealth,
 } from "./process-recovery";
-import {
-  createSystemDeps as createSessionDeps,
-  getActiveSandboxSessions,
-} from "../../state/sandbox-session";
-import * as sandboxVersion from "../../sandbox/version";
-import * as shields from "../../shields";
-import { D, G, R, RD, YW } from "../../cli/terminal-style";
 
 type ProbeProviderHealth = (
   provider: string,
@@ -388,6 +389,38 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
         console.log(`    ${D}${CLI_NAME} ${sandboxName} connect${R}  (auto-recovers on connect)`);
         console.log("  Or manually inside the sandbox:");
         console.log(`    ${D}${agentRuntime.getGatewayCommand(sessionAgent)}${R}`);
+      }
+    }
+  }
+
+  // Surface the Docker healthcheck signal as its own line so users can
+  // tell when it disagrees with NemoClaw's own delivery-chain probes
+  // (sandbox phase, OpenClaw process, host port forward). On runtimes
+  // where the dashboard port lives in a different network namespace
+  // (e.g. DGX Spark / aarch64 with OpenShell-managed forwarding), the
+  // in-container /health curl can fail even though the delivery chain
+  // is fine — older images without the #3975 healthcheck fallback will
+  // emit a stale "unhealthy" here while the rest of `status` shows the
+  // sandbox is reachable. We deliberately do not downgrade the signal
+  // automatically: the in-sandbox `isSandboxGatewayRunningForStatus`
+  // probe uses the same 127.0.0.1 endpoint Docker checks, so it cannot
+  // independently confirm that Docker's reading is stale. (#3975)
+  if (lookup.state === "present") {
+    const dockerHealth = getSandboxDockerHealth(sandboxName);
+    if (dockerHealth.state !== "none" && dockerHealth.state !== "unknown") {
+      if (dockerHealth.state === "healthy") {
+        console.log(`    Docker health: ${G}healthy${R}`);
+      } else if (dockerHealth.state === "starting") {
+        console.log(`    Docker health: ${D}starting${R}`);
+      } else {
+        console.log(`    Docker health: ${RD}unhealthy${R}`);
+        console.log(
+          `      ${D}This is the in-container Docker probe; compare with the host-side delivery${R}`,
+        );
+        console.log(
+          `      ${D}chain above. A mismatch can be a stale signal on OpenShell-managed${R}`,
+        );
+        console.log(`      ${D}runtimes — see #3975.${R}`);
       }
     }
   }

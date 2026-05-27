@@ -9,18 +9,26 @@ import { OLLAMA_PORT } from "../core/ports";
 import { sleepSeconds, waitForHttp } from "../core/wait";
 import { cliName } from "./branding";
 import {
+  decideInstallOllamaLinuxMode,
+  hostCommandExists,
+  type InstallOllamaLinuxMode,
+  type InstallOllamaLinuxModeOptions,
+} from "./install-ollama-linux-mode";
+import {
   ensureManagedOllamaLoopbackSystemdOverride,
   type OllamaLoopbackSystemdOverrideState,
 } from "./ollama-systemd";
 
+export type { InstallOllamaLinuxMode } from "./install-ollama-linux-mode";
+export { decideInstallOllamaLinuxMode } from "./install-ollama-linux-mode";
+
 const {
-  runCapture,
   runCaptureEx,
   runShell,
   shellQuote,
 }: typeof import("../runner") = require("../runner");
 const {
-  findReachableOllamaHost,
+  setResolvedOllamaHost,
 }: typeof import("../inference/local") = require("../inference/local");
 
 /**
@@ -36,41 +44,21 @@ const {
  *                 launched once via a backgrounded `ollama serve`; reboot
  *                 persistence is the user's responsibility.
  */
-export type InstallOllamaLinuxMode = "system" | "user-local";
-
 export type InstallOllamaLinuxResult = {
   ok: boolean;
   mode: InstallOllamaLinuxMode;
   binPath: string;
 };
 
-export type InstallOllamaLinuxOptions = {
-  /** Returns true when onboard is running headless (NEMOCLAW_NON_INTERACTIVE=1
-   *  or the `--non-interactive` flag was passed). Used to decide whether sudo
-   *  prompts are viable and whether the systemd override may prompt. */
-  isNonInteractive: () => boolean;
-  /** Test seam: override the auto-detected install mode. */
-  modeOverride?: InstallOllamaLinuxMode;
-  /** Test seam: override the `sudo -n true` probe result. */
-  canSudoNonInteractive?: () => boolean;
-  /** Test seam: override `process.getuid()`. */
-  getEuid?: () => number | undefined;
-  /** Test seam: override stdin TTY detection. */
-  isTty?: () => boolean;
+export type InstallOllamaLinuxOptions = InstallOllamaLinuxModeOptions & {
   /** Test seam: override `os.homedir()`. */
   homedir?: () => string;
   /** Test seam: override `process.arch`. */
   arch?: () => NodeJS.Architecture;
-  /** Test seam: override `runCapture`. */
-  runCaptureImpl?: typeof runCapture;
-  /** Test seam: override `runCaptureEx`. */
-  runCaptureExImpl?: typeof runCaptureEx;
   /** Test seam: override `runShell`. */
   runShellImpl?: typeof runShell;
   /** Test seam: override systemd loopback override. */
   ensureManagedOllamaLoopbackSystemdOverrideImpl?: typeof ensureManagedOllamaLoopbackSystemdOverride;
-  /** Test seam: override `findReachableOllamaHost`. */
-  findReachableOllamaHostImpl?: typeof findReachableOllamaHost;
   /** Test seam: override `waitForHttp`. */
   waitForHttpImpl?: typeof waitForHttp;
   /** Test seam: override `sleepSeconds`. */
@@ -81,63 +69,7 @@ export type InstallOllamaLinuxOptions = {
   readFileImpl?: (path: string) => string;
   /** Test seam: redirect log output. */
   log?: (message: string) => void;
-  /** Test seam: redirect error output. */
-  errorLog?: (message: string) => void;
 };
-
-const INSTALL_MODE_ENV = "NEMOCLAW_OLLAMA_INSTALL_MODE";
-
-/**
- * Resolve the install mode.
- *
- * Order of precedence (highest first):
- *  1. The `NEMOCLAW_OLLAMA_INSTALL_MODE` env var when set to `user` or
- *     `system`. Any other value is rejected.
- *  2. Running as root (`euid === 0`) → `system` (no sudo required).
- *  3. Passwordless sudo available (`sudo -n true` returns 0) → `system`.
- *  4. Non-interactive context (either the `NEMOCLAW_NON_INTERACTIVE=1` flag
- *     or no TTY attached to stdin) → `user-local`. This is the path that
- *     fixes #4114: a headless run that cannot prompt for a sudo password
- *     falls back to a sudo-free user-local install instead of crashing
- *     mid-install.
- *  5. Interactive shell → `system` (sudo can prompt the user for a password).
- */
-export function decideInstallOllamaLinuxMode(
-  opts: InstallOllamaLinuxOptions,
-): InstallOllamaLinuxMode {
-  if (opts.modeOverride) return opts.modeOverride;
-  const explicit = String(process.env[INSTALL_MODE_ENV] || "").trim().toLowerCase();
-  if (explicit === "user") return "user-local";
-  if (explicit === "system") return "system";
-  if (explicit) {
-    const errorLog = opts.errorLog ?? ((m: string) => console.error(m));
-    errorLog(
-      `  Unsupported ${INSTALL_MODE_ENV} value: ${explicit}. Use 'system', 'user', or leave it unset.`,
-    );
-    process.exit(1);
-  }
-  const getEuid = opts.getEuid ?? (() => process.getuid?.());
-  if (getEuid() === 0) return "system";
-  if (canRunSudoNonInteractive(opts)) return "system";
-  const isTty = opts.isTty ?? (() => Boolean(process.stdin.isTTY));
-  if (opts.isNonInteractive() || !isTty()) return "user-local";
-  return "system";
-}
-
-function canRunSudoNonInteractive(opts: InstallOllamaLinuxOptions): boolean {
-  if (opts.canSudoNonInteractive) return opts.canSudoNonInteractive();
-  const runCaptureExImpl = opts.runCaptureExImpl ?? runCaptureEx;
-  if (!hostCommandExists("sudo", opts)) return false;
-  const result = runCaptureExImpl(["sudo", "-n", "true"], { timeout: 2_000 });
-  return result.exitCode === 0;
-}
-
-function hostCommandExists(name: string, opts: InstallOllamaLinuxOptions): boolean {
-  const runCaptureImpl = opts.runCaptureImpl ?? runCapture;
-  return !!runCaptureImpl(["sh", "-c", 'command -v "$1"', "--", name], {
-    ignoreError: true,
-  });
-}
 
 /**
  * Map Node's `process.arch` to the architecture suffix Ollama publishes
@@ -364,8 +296,6 @@ function installOllamaSystem(opts: InstallOllamaLinuxOptions): InstallOllamaLinu
   const runShellImpl = opts.runShellImpl ?? runShell;
   const sleepSecondsImpl = opts.sleepSecondsImpl ?? sleepSeconds;
   const waitForHttpImpl = opts.waitForHttpImpl ?? waitForHttp;
-  const findReachableOllamaHostImpl =
-    opts.findReachableOllamaHostImpl ?? findReachableOllamaHost;
   const ensureOverrideImpl =
     opts.ensureManagedOllamaLoopbackSystemdOverrideImpl
     ?? ensureManagedOllamaLoopbackSystemdOverride;
@@ -381,14 +311,31 @@ function installOllamaSystem(opts: InstallOllamaLinuxOptions): InstallOllamaLinu
     return { ok: false, mode: "system", binPath: "/usr/local/bin/ollama" };
   }
 
-  if (overrideState === "not-applicable" && !findReachableOllamaHostImpl()) {
-    log("  Starting Ollama...");
-    runShellImpl(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
-      ignoreError: true,
-    });
-    if (!waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
-      errorLog(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
-      return { ok: false, mode: "system", binPath: "/usr/local/bin/ollama" };
+  if (overrideState === "not-applicable") {
+    if (opts.isUpgrade) {
+      // The stale daemon still owns `:11434` and would answer the readiness
+      // probe with the old binary's version. Stop it before launching so
+      // the freshly installed binary takes the port; brief sleep lets the
+      // kernel release the socket.
+      log("  Stopping stale Ollama daemon before relaunching...");
+      runShellImpl("pkill -x ollama || true", { ignoreError: true });
+      sleepSecondsImpl(1);
+    }
+    // Re-probe loopback fresh here so this decision reflects the
+    // post-install daemon state, not the cached `findReachableOllamaHost`
+    // result that lingers for the rest of the onboard run. Skip the probe
+    // entirely on upgrade — we just killed the daemon and must relaunch.
+    const localDaemonReachable =
+      !opts.isUpgrade && waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 1);
+    if (!localDaemonReachable) {
+      log("  Starting Ollama...");
+      runShellImpl(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
+        ignoreError: true,
+      });
+      if (!waitForHttpImpl(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
+        errorLog(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
+        return { ok: false, mode: "system", binPath: "/usr/local/bin/ollama" };
+      }
     }
   }
 
@@ -405,6 +352,9 @@ export function installOllamaOnLinux(
   opts: InstallOllamaLinuxOptions,
 ): InstallOllamaLinuxResult {
   const mode = decideInstallOllamaLinuxMode(opts);
-  if (mode === "user-local") return installOllamaUserLocal(opts);
-  return installOllamaSystem(opts);
+  const result = mode === "user-local" ? installOllamaUserLocal(opts) : installOllamaSystem(opts);
+  // Pin to local loopback so a cached `host.docker.internal` from an
+  // earlier WSL probe cannot route validation/pull at the Windows host.
+  if (result.ok) setResolvedOllamaHost("127.0.0.1");
+  return result;
 }

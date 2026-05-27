@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import {
-  getCredential,
   normalizeCredentialValue,
   prompt,
   saveCredential,
@@ -10,14 +9,28 @@ import {
 import { normalizeMessagingChannelConfigValue } from "../messaging-channel-config";
 import { channelHasStaticToken, type ChannelDef } from "../sandbox/channels";
 import { dispatchHostQrLogin } from "./host-qr-dispatch";
+import {
+  getMessagingToken,
+  isMessagingTokenFormatValid,
+} from "./messaging-token";
 
 type ChannelEntry = { name: string } & ChannelDef;
 
-const getMessagingToken = (envKey: string): string | null =>
-  normalizeCredentialValue(process.env[envKey]) || getCredential(envKey) || null;
-
 const getMessagingConfigValue = (envKey: string): string | null =>
   normalizeMessagingChannelConfigValue(envKey, process.env[envKey]);
+
+function getExistingMessagingToken(
+  ch: ChannelEntry,
+  envKey: string | undefined,
+  label: "token" | "app token",
+): string | null {
+  const token = getMessagingToken(envKey);
+  if (token && !isMessagingTokenFormatValid(ch, envKey, token)) {
+    console.log(`  ✗ Invalid existing ${ch.name} ${label} ignored.`);
+    return null;
+  }
+  return token;
+}
 
 /**
  * Prompt for token + per-channel config (app token, server ID, mention
@@ -41,7 +54,7 @@ export async function setupSelectedMessagingChannels(
       console.log(`  Unknown channel: ${name}`);
       continue;
     }
-    if (channelHasStaticToken(ch) && getMessagingToken(ch.envKey)) {
+    if (channelHasStaticToken(ch) && getExistingMessagingToken(ch, ch.envKey, "token")) {
       console.log(`  ✓ ${ch.name} — already configured`);
     } else if (ch.loginMethod === "host-qr") {
       console.log("");
@@ -88,7 +101,7 @@ export async function setupSelectedMessagingChannels(
       console.log(`  ${line}`);
     }
     if (ch.appTokenEnvKey) {
-      const existingAppToken = getMessagingToken(ch.appTokenEnvKey);
+      const existingAppToken = getExistingMessagingToken(ch, ch.appTokenEnvKey, "app token");
       if (existingAppToken) {
         console.log(`  ✓ ${ch.name} app token — already configured`);
       } else {
@@ -171,6 +184,22 @@ export async function setupSelectedMessagingChannels(
               ? "any member in the configured server can message the bot"
               : "bot will require manual pairing";
           console.log(`  Skipped ${ch.name} user ID (${skippedReason})`);
+        }
+      }
+    }
+    if (ch.channelIdEnvKey && (!ch.serverIdEnvKey || process.env[ch.serverIdEnvKey])) {
+      const existingChannelIds = getMessagingConfigValue(ch.channelIdEnvKey) || "";
+      if (existingChannelIds) {
+        process.env[ch.channelIdEnvKey] = existingChannelIds;
+        console.log(`  ✓ ${ch.name} — channel IDs already set: ${existingChannelIds}`);
+      } else {
+        console.log(`  ${ch.channelIdHelp}`);
+        const channelIds = (await prompt(`  ${ch.channelIdLabel}: `)).trim();
+        if (channelIds) {
+          process.env[ch.channelIdEnvKey] = channelIds;
+          console.log(`  ✓ ${ch.name} channel IDs saved`);
+        } else {
+          console.log(`  Skipped ${ch.name} channel IDs (channel @mentions stay disabled)`);
         }
       }
     }

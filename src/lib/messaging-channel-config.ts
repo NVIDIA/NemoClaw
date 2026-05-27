@@ -15,9 +15,12 @@ const requireMentionKeys = new Set(
 export const MESSAGING_CHANNEL_CONFIG_ENV_KEYS: readonly string[] = [
   ...new Set(
     channels.flatMap((channel) =>
-      [channel.serverIdEnvKey, channel.userIdEnvKey, channel.requireMentionEnvKey].filter(
-        (key): key is string => typeof key === "string" && key.length > 0,
-      ),
+      [
+        channel.serverIdEnvKey,
+        channel.userIdEnvKey,
+        channel.channelIdEnvKey,
+        channel.requireMentionEnvKey,
+      ].filter((key): key is string => typeof key === "string" && key.length > 0),
     ),
   ),
 ];
@@ -26,7 +29,7 @@ const knownConfigKeys = new Set(MESSAGING_CHANNEL_CONFIG_ENV_KEYS);
 
 function normalizeValue(value: unknown): string | null {
   if (typeof value !== "string") return null;
-  const normalized = value.replace(/\r/g, "").trim();
+  const normalized = value.replace(/[\r\n]/g, "").trim();
   return normalized || null;
 }
 

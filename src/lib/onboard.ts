@@ -20,6 +20,7 @@ const {
   createInferenceSelectionValidationHelpers,
 }: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
+const { abortNonInteractive }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const {
   ensureOllamaLoopbackSystemdOverride,
@@ -82,6 +83,8 @@ const {
 }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
 const { syncPresetSelection }: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
 const { maybeForceE2eStepFailure }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
+const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
+const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
 const {
   gatherWechatConfig,
   hasWechatConfigDrift,
@@ -105,6 +108,9 @@ const {
 const {
   installOllamaOnLinux,
 }: typeof import("./onboard/install-ollama-linux") = require("./onboard/install-ollama-linux");
+const {
+  installOllamaOnMacOS,
+}: typeof import("./onboard/install-ollama-macos") = require("./onboard/install-ollama-macos");
 const crypto = require("node:crypto");
 const fs = require("fs");
 const os = require("os");
@@ -183,6 +189,9 @@ const {
   validateOllamaModel,
   validateLocalProvider,
 } = localInference;
+const { resolveOllamaInstallMenuEntry, assertOllamaUpgradeApplied } = require(
+  "./onboard/ollama-install-menu",
+);
 const {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
@@ -244,7 +253,6 @@ const {
   LOCAL_INFERENCE_PROVIDERS,
   OLLAMA_PROXY_CREDENTIAL_ENV,
   VLLM_LOCAL_CREDENTIAL_ENV,
-  DISCORD_SNOWFLAKE_RE,
   getProviderLabel,
   getEffectiveProviderName,
   getNonInteractiveProvider,
@@ -257,7 +265,6 @@ const {
   LOCAL_INFERENCE_PROVIDERS: string[];
   OLLAMA_PROXY_CREDENTIAL_ENV: string;
   VLLM_LOCAL_CREDENTIAL_ENV: string;
-  DISCORD_SNOWFLAKE_RE: RegExp;
   getProviderLabel: (key: string) => string;
   getEffectiveProviderName: (key: string | null | undefined) => string | null;
   getNonInteractiveProvider: () => string | null;
@@ -330,6 +337,9 @@ const { createWebSearchFlowHelpers }: typeof import("./onboard/web-search-flow")
 const {
   createValidationRecoveryPromptHelpers,
 }: typeof import("./onboard/validation-recovery-prompt") = require("./onboard/validation-recovery-prompt");
+const {
+  createLocalInferenceRouteApplier,
+}: typeof import("./onboard/local-inference-route") = require("./onboard/local-inference-route");
 const { createOpenshellCliHelpers }: typeof import("./onboard/openshell-cli") = require("./onboard/openshell-cli");
 const sandboxGpuPreflight: typeof import("./onboard/sandbox-gpu-preflight") = require("./onboard/sandbox-gpu-preflight");
 const {
@@ -366,6 +376,7 @@ const {
   getRecordedMessagingChannelsForResume: getRecordedMessagingChannelsForResumeFromState,
 }: typeof import("./onboard/messaging-credentials") = require("./onboard/messaging-credentials");
 const {
+  collectMessagingBuildConfig,
   computeTelegramRequireMention,
   getStoredMessagingChannelConfig,
   messagingChannelConfigsEqual,
@@ -412,7 +423,7 @@ const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
 const { ensureUsageNoticeConsent } = require("./onboard/usage-notice");
 const {
   findAvailableDashboardPort,
-  findDashboardForwardOwner,
+  preflightDashboardPortRangeAvailability,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
 const { verifyGatewayContainerRunning } =
@@ -481,6 +492,7 @@ import {
   readMessagingChannelConfigFromEnv,
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
+import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
   normalizeHermesToolGatewaySelections,
@@ -494,7 +506,7 @@ import {
   resolveMessagingChannelSeed,
   resolveQrSelectedChannels,
 } from "./onboard/messaging-state";
-import { getMessagingToken } from "./onboard/messaging-token";
+import { getValidatedMessagingToken, getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
 import type {
   DockerDriverBinaryOverrides,
   OpenShellInstallDeps,
@@ -724,6 +736,16 @@ const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
     validateNvidiaApiKeyValue(key, credentialEnv ?? undefined),
   getTransportRecoveryMessage: (failure: any) => getTransportRecoveryMessage(failure),
   exitOnboardFromPrompt,
+});
+
+const applyLocalInferenceRoute = createLocalInferenceRouteApplier({
+  runOpenshell,
+  isNonInteractive,
+  promptValidationRecovery,
+  classifyApplyFailure,
+  compactText,
+  redact,
+  localInferenceTimeoutSecs: LOCAL_INFERENCE_TIMEOUT_SECS,
 });
 
 // Provider CRUD — thin wrappers that inject runOpenshell to avoid circular deps.
@@ -2359,7 +2381,7 @@ async function preflight(
     }
   }
 
-  return gpu;
+  if (_preflightDashboardPort === null) preflightDashboardPortRangeAvailability(); return gpu; // #3953 — fail-fast before next step
 }
 
 // ── Step 2: Gateway ──────────────────────────────────────────────
@@ -2990,11 +3012,11 @@ async function createSandbox(
   const conflictCheckChannels = Array.isArray(enabledChannels)
     ? enabledChannels.flatMap((name) => {
         const def = MESSAGING_CHANNELS.find((c) => c.name === name);
-        if (!def || !def.envKey || !getMessagingToken(def.envKey)) return [];
+        if (!def || !def.envKey || !getValidatedMessagingToken(def, def.envKey)) return [];
         const tokenEnvKeys = getChannelTokenKeys(def);
         const credentialHashes: Record<string, string> = {};
         for (const envKey of tokenEnvKeys) {
-          const hash = hashCredential(getMessagingToken(envKey));
+          const hash = hashCredential(getValidatedMessagingToken(def, envKey));
           if (hash) credentialHashes[envKey] = hash;
         }
         if (Object.keys(credentialHashes).length === 0) return [];
@@ -3062,27 +3084,27 @@ async function createSandbox(
     {
       name: `${sandboxName}-discord-bridge`,
       envKey: "DISCORD_BOT_TOKEN",
-      token: getMessagingToken("DISCORD_BOT_TOKEN"),
+      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "DISCORD_BOT_TOKEN"),
     },
     {
       name: `${sandboxName}-slack-bridge`,
       envKey: "SLACK_BOT_TOKEN",
-      token: getMessagingToken("SLACK_BOT_TOKEN"),
+      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "SLACK_BOT_TOKEN"),
     },
     {
       name: `${sandboxName}-slack-app`,
       envKey: "SLACK_APP_TOKEN",
-      token: getMessagingToken("SLACK_APP_TOKEN"),
+      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "SLACK_APP_TOKEN"),
     },
     {
       name: `${sandboxName}-telegram-bridge`,
       envKey: "TELEGRAM_BOT_TOKEN",
-      token: getMessagingToken("TELEGRAM_BOT_TOKEN"),
+      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "TELEGRAM_BOT_TOKEN"),
     },
     {
       name: `${sandboxName}-wechat-bridge`,
       envKey: "WECHAT_BOT_TOKEN",
-      token: getMessagingToken("WECHAT_BOT_TOKEN"),
+      token: getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "WECHAT_BOT_TOKEN"),
     },
   ]
     .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
@@ -3606,49 +3628,14 @@ async function createSandbox(
 
   console.log(`  Creating sandbox '${sandboxName}' (this takes a few minutes on first run)...`);
   const messagingChannelConfig = readMessagingChannelConfigFromEnv();
-  // Build allowed sender IDs map from env vars set during the messaging prompt.
-  // Each channel with a userIdEnvKey in MESSAGING_CHANNELS may have a
-  // comma-separated list of IDs (e.g. TELEGRAM_ALLOWED_IDS="123,456").
-  const messagingAllowedIds: Record<string, string[]> = {};
   const enabledTokenEnvKeys = new Set(messagingTokenDefs.map(({ envKey }) => envKey));
   const activeChannelNames = new Set(activeMessagingChannels);
-  for (const ch of MESSAGING_CHANNELS) {
-    if (activeChannelNames.has(ch.name) && ch.userIdEnvKey && process.env[ch.userIdEnvKey]) {
-      const ids = String(process.env[ch.userIdEnvKey])
-        .split(",")
-        .map((s) => s.trim())
-        .filter(Boolean);
-      if (ids.length > 0) messagingAllowedIds[ch.name] = ids;
-    }
-  }
-  const discordGuilds: Record<string, { requireMention: boolean; users?: string[] }> = {};
-  if (enabledTokenEnvKeys.has("DISCORD_BOT_TOKEN")) {
-    const serverIds = (process.env.DISCORD_SERVER_IDS || process.env.DISCORD_SERVER_ID || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    const userIds = (process.env.DISCORD_ALLOWED_IDS || process.env.DISCORD_USER_ID || "")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean);
-    for (const serverId of serverIds) {
-      if (!DISCORD_SNOWFLAKE_RE.test(serverId)) {
-        console.warn("  Warning: configured Discord server ID does not look like a snowflake.");
-      }
-    }
-    for (const userId of userIds) {
-      if (!DISCORD_SNOWFLAKE_RE.test(userId)) {
-        console.warn("  Warning: configured Discord user ID does not look like a snowflake.");
-      }
-    }
-    const requireMention = process.env.DISCORD_REQUIRE_MENTION !== "0";
-    for (const serverId of serverIds) {
-      discordGuilds[serverId] = {
-        requireMention,
-        ...(userIds.length > 0 ? { users: userIds } : {}),
-      };
-    }
-  }
+  const { messagingAllowedIds, discordGuilds, slackConfig } = collectMessagingBuildConfig({
+    channels: MESSAGING_CHANNELS,
+    activeChannelNames,
+    enabledTokenEnvKeys,
+    discordSnowflakeRe: onboardProviders.DISCORD_SNOWFLAKE_RE,
+  });
   // Telegram mention-only mode — parity with Discord's requireMention.
   // Off by default so existing sandboxes behave the same; opt-in via
   // TELEGRAM_REQUIRE_MENTION=1 or the interactive prompt. See #1737.
@@ -3737,6 +3724,7 @@ async function createSandbox(
     false,
     sandboxInferenceBaseUrlOverride,
     hermesToolGateways,
+    slackConfig,
   );
   // Only pass non-sensitive env vars to the sandbox. Credentials flow through
   // OpenShell providers — the gateway injects them as placeholders and the L7
@@ -3828,6 +3816,7 @@ async function createSandbox(
       return false;
     },
     failureCheck: dockerGpuCreatePatch.createFailureMessage,
+    traceEvent: onboardTracing.addTraceEvent,
   });
 
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
@@ -3877,16 +3866,13 @@ async function createSandbox(
   // without this gate, NemoClaw registers a phantom sandbox that
   // causes "sandbox not found" on every subsequent connect/status call.
   console.log("  Waiting for sandbox to become ready...");
-  let ready = false;
-  const readyAttempts = Math.max(1, Math.ceil(sandboxReadyTimeoutSecs / 2));
-  for (let i = 0; i < readyAttempts; i++) {
-    const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-    if (isSandboxReady(list, sandboxName)) {
-      ready = true;
-      break;
-    }
-    if (i < readyAttempts - 1) sleepSeconds(2);
-  }
+  const ready = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
+    sandboxName,
+    timeoutSecs: sandboxReadyTimeoutSecs,
+    runCaptureOpenshell,
+    isSandboxReady,
+    sleep: sleepSeconds,
+  });
 
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
@@ -3939,23 +3925,12 @@ async function createSandbox(
   // Probes /health endpoint and accepts 200 or 401 (device auth) as "alive".
   // Previously used `curl -sf` which failed on 401, causing false negatives. Fixes #2342.
   console.log("  Waiting for NemoClaw dashboard to become ready...");
-  for (let i = 0; i < 15; i++) {
-    const readyOutput = runCaptureOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "curl", "-so", "/dev/null", "-w", "%{http_code}",
-        "--max-time", "3", `http://localhost:${effectiveDashboardPort}/health`],
-      { ignoreError: true },
-    );
-    const readyCode = parseInt((readyOutput || "").trim(), 10) || 0;
-    if (readyCode === 200 || readyCode === 401) {
-      console.log("  ✓ Dashboard is live");
-      break;
-    }
-    if (i === 14) {
-      console.warn("  Dashboard taking longer than expected to start. Continuing...");
-    } else {
-      sleepSeconds(2);
-    }
-  }
+  sandboxReadinessTracing.waitForDashboardReadyWithTrace({
+    sandboxName,
+    port: effectiveDashboardPort,
+    runCaptureOpenshell,
+    sleep: sleepSeconds,
+  });
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
     try {
@@ -4138,7 +4113,6 @@ const { readLiveInference, readRecordedProvider, readRecordedNimContainer, readR
 type OllamaModelSelectionOutcome =
   | { outcome: "selected"; model: string }
   | { outcome: "back-to-selection" };
-
 // Pick an Ollama model, pull it if missing, and validate it via the local
 // proxy. Shared by the three Ollama provider branches (running, Windows-host
 // install/start, install-locally). Returns "back-to-selection" so the caller
@@ -4194,32 +4168,33 @@ async function selectAndValidateOllamaModel(
     const probe = await prepareOllamaModel(selectedModel, installedModels);
     if (!probe.ok) {
       console.error(`  ${probe.message}`);
-      if (isNonInteractive()) process.exit(1);
+      if (isNonInteractive()) abortNonInteractive(`Ollama model '${selectedModel}' unavailable.`);
       console.log("  Choose a different Ollama model or select Other.");
       console.log("");
       continue;
     }
     const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
-    if (!validationBaseUrl) {
-      console.error("  Local Ollama validation URL could not be determined.");
-      process.exit(1);
-    }
+    if (!validationBaseUrl)
+      abortNonInteractive("Local Ollama validation URL could not be determined.");
     const validation = await validateOpenAiLikeSelection(
       "Local Ollama",
-      validationBaseUrl,
+      validationBaseUrl!,
       selectedModel,
       null,
       "Choose a different Ollama model or select Other.",
       null,
       {
         skipResponsesProbe: true,
-        requireChatCompletionsToolCalling: true,
+        requireChatCompletionsToolCalling: process.env.NEMOCLAW_OLLAMA_REQUIRE_TOOLS !== "0",
         allowHostDockerInternal:
           localInference.getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
       },
     );
     if (validation.retry === "selection") return { outcome: "back-to-selection" };
-    if (!validation.ok) continue;
+    if (!validation.ok) {
+      if (isNonInteractive()) abortNonInteractive(`model '${selectedModel}' failed validation.`);
+      continue;
+    }
     // Ollama's /v1/responses endpoint does not produce correctly formatted
     // tool calls — force chat completions like vLLM/NIM.
     if (validation.api !== "openai-completions") {
@@ -4227,6 +4202,7 @@ async function selectAndValidateOllamaModel(
         "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
       );
     }
+    localInference.applyOllamaRuntimeContextWindow(selectedModel);
     return { outcome: "selected", model: selectedModel };
   }
 }
@@ -4261,7 +4237,6 @@ async function setupNim(
   // (#2674).
   const localProbeCurlArgs = ["--connect-timeout", "2", "--max-time", "5"] as const;
   const hasOllama = hostCommandExists("ollama");
-  // run and consumed by the Ollama lifecycle helpers in inference/local.ts.
   const ollamaHost = findReachableOllamaHost();
   const ollamaRunning = ollamaHost !== null;
   const vllmRunning = !!runCapture(
@@ -4350,6 +4325,7 @@ async function setupNim(
       vllmRunning,
       vllmProfile,
       experimental: EXPERIMENTAL,
+      platform: gpu?.platform,
       hasVllmImage,
     }),
   );
@@ -4375,19 +4351,15 @@ async function setupNim(
       label: "Install Ollama on Windows host (recommended)",
     });
   }
-  // Without any Ollama, offer to install one locally as a fallback (e.g. when
-  // the NVIDIA API server is down and cloud keys are unavailable).
-  if (!hasOllama && !ollamaRunning && !hasWindowsOllama) {
-    if (process.platform === "darwin") {
-      options.push({ key: "install-ollama", label: "Install Ollama (macOS)" });
-    } else if (process.platform === "linux") {
-      if (isWsl()) {
-        options.push({ key: "install-ollama", label: "Install Ollama (WSL Linux)" });
-      } else {
-        options.push({ key: "install-ollama", label: "Install Ollama (Linux)" });
-      }
-    }
-  }
+  const ollamaInstallMenu = resolveOllamaInstallMenuEntry({
+    hasOllama,
+    ollamaRunning,
+    hasWindowsOllama,
+    ollamaHost,
+    platform: process.platform,
+    isWsl: isWsl(),
+  });
+  if (ollamaInstallMenu.entry) options.push(ollamaInstallMenu.entry);
 
   // Model Router: complexity-based routing via blueprint config.
   const blueprintRouterCfg = loadBlueprintProfile("routed");
@@ -5134,18 +5106,16 @@ async function setupNim(
           );
           process.exit(1);
         }
-        if (!ollamaReady) {
-          console.log("  Starting Ollama...");
-          // Keep raw Ollama loopback-only; the auth proxy (or Docker Desktop
-          // on WSL via host.docker.internal) fronts container access.
-          runShell(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
-            ignoreError: true,
-          });
-          if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
-            console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
+        const ollamaStartup = runOllamaStartupOrGate({
+          ollamaReady,
+          ollamaPort: OLLAMA_PORT,
+          getLocalProviderBaseUrl,
+          isNonInteractive,
+        });
+        if (ollamaStartup.kind === "continue") continue selectionLoop;
+        if (ollamaStartup.kind === "fallback") {
+          ({ provider, credentialEnv, endpointUrl, model, preferredInferenceApi } = ollamaStartup.result);
+          break;
         }
         if (shouldFrontOllamaWithProxy()) {
           if (!startOllamaAuthProxy()) process.exit(1);
@@ -5265,26 +5235,19 @@ async function setupNim(
         break;
       } else if (selected.key === "install-ollama") {
         if (!checkOllamaPortsOrWarn()) continue selectionLoop;
-        if (process.platform === "darwin") {
-          console.log("  Installing Ollama via Homebrew...");
-          run(["brew", "install", "ollama"], { ignoreError: true });
-          // brew install doesn't auto-start a service; launch directly.
-          // Shell required: backgrounding (&), env var prefix, output redirection.
-          console.log("  Starting Ollama...");
-          runShell(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
-            ignoreError: true,
-          });
-          if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
-            console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
-        } else {
-          const installResult = installOllamaOnLinux({ isNonInteractive });
-          if (!installResult.ok) {
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
+        const isUpgrade = ollamaInstallMenu.hasUpgradableOllama;
+        const installResult = process.platform === "darwin"
+          ? installOllamaOnMacOS({ isNonInteractive, isUpgrade })
+          : installOllamaOnLinux({ isNonInteractive, isUpgrade });
+        if (!installResult.ok) {
+          if (isNonInteractive()) abortNonInteractive("Ollama install failed. See errors above.");
+          continue selectionLoop;
+        }
+        const upgradeCheck = assertOllamaUpgradeApplied(ollamaInstallMenu);
+        if (!upgradeCheck.ok) {
+          console.error(`  ${upgradeCheck.message}`);
+          if (isNonInteractive()) process.exit(1);
+          continue selectionLoop;
         }
         if (shouldFrontOllamaWithProxy()) {
           if (!startOllamaAuthProxy()) process.exit(1);
@@ -5324,7 +5287,7 @@ async function setupNim(
           promptFn: prompt,
         });
         if (!result.ok) {
-          if (isNonInteractive()) process.exit(1);
+          if (isNonInteractive()) abortNonInteractive("vLLM install failed. See errors above.");
           continue selectionLoop;
         }
         // Fall through to the same provider/model setup as the running-vLLM
@@ -5708,17 +5671,7 @@ async function setupInference(
       console.error(`  ${providerResult.message}`);
       process.exit(providerResult.status || 1);
     }
-    runOpenshell([
-      "inference",
-      "set",
-      "--no-verify",
-      "--provider",
-      "vllm-local",
-      "--model",
-      model,
-      "--timeout",
-      String(LOCAL_INFERENCE_TIMEOUT_SECS),
-    ]);
+    if (await applyLocalInferenceRoute("vllm-local", model)) return { retry: "selection" };
     // Do not mutate ~/.nemoclaw/credentials.json here: local vLLM now uses
     // VLLM_LOCAL_CREDENTIAL_ENV, so any saved OPENAI_API_KEY remains available
     // to unrelated OpenAI-backed sandboxes.
@@ -5790,17 +5743,7 @@ async function setupInference(
       console.error(`  ${providerResult.message}`);
       process.exit(providerResult.status || 1);
     }
-    runOpenshell([
-      "inference",
-      "set",
-      "--no-verify",
-      "--provider",
-      "ollama-local",
-      "--model",
-      model,
-      "--timeout",
-      String(LOCAL_INFERENCE_TIMEOUT_SECS),
-    ]);
+    if (await applyLocalInferenceRoute("ollama-local", model)) return { retry: "selection" };
     console.log(`  Priming Ollama model: ${model}`);
     run(getOllamaWarmupCommand(model), { ignoreError: true });
     const probe = validateOllamaModel(model);
@@ -5948,7 +5891,7 @@ async function setupMessagingChannels(
     resolveMessagingChannelSeed(
       availableChannels,
       existingChannels,
-      (channel) => Boolean(getMessagingToken(channel.envKey)),
+      (channel) => Boolean(getValidatedMessagingToken(channel, channel.envKey)),
       { includeAllExisting },
     );
 
@@ -5958,7 +5901,7 @@ async function setupMessagingChannels(
     if (found.length > 0) {
       note(`  [non-interactive] Messaging tokens detected: ${found.join(", ")}`);
       if (found.includes("telegram")) {
-        const telegramToken = getMessagingToken("TELEGRAM_BOT_TOKEN");
+        const telegramToken = getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "TELEGRAM_BOT_TOKEN");
         if (telegramToken) {
           await checkTelegramReachability(telegramToken);
         }
@@ -5988,7 +5931,7 @@ async function setupMessagingChannels(
     output.write("  Available messaging channels:\n");
     availableChannels.forEach((ch, i) => {
       const marker = enabled.has(ch.name) ? "●" : "○";
-      const status = getMessagingToken(ch.envKey) ? " (configured)" : "";
+      const status = getValidatedMessagingToken(ch, ch.envKey) ? " (configured)" : "";
       output.write(`    [${i + 1}] ${marker} ${ch.name} — ${ch.description}${status}\n`);
     });
     output.write("\n");
@@ -6087,7 +6030,7 @@ async function setupMessagingChannels(
   // so this second call only fires on the interactive path — guard explicitly
   // to make the no-double-probe invariant visible at the call site.
   if (!isNonInteractive() && enabled.has("telegram")) {
-    const telegramToken = getMessagingToken("TELEGRAM_BOT_TOKEN");
+    const telegramToken = getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "TELEGRAM_BOT_TOKEN");
     if (telegramToken) {
       await checkTelegramReachability(telegramToken);
     }
@@ -6725,7 +6668,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   NON_INTERACTIVE = opts.nonInteractive || process.env.NEMOCLAW_NON_INTERACTIVE === "1";
   RECREATE_SANDBOX = opts.recreateSandbox || process.env.NEMOCLAW_RECREATE_SANDBOX === "1";
   AUTO_YES = opts.autoYes === true || process.env.NEMOCLAW_YES === "1";
-  _preflightDashboardPort = opts.controlUiPort || null;
+  _preflightDashboardPort = opts.controlUiPort ?? (process.env.NEMOCLAW_DASHBOARD_PORT != null ? DASHBOARD_PORT : null);
   onboardRuntimeBoundary.reset();
   delete process.env.OPENSHELL_GATEWAY;
   const resume = opts.resume === true;
@@ -6873,7 +6816,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   };
   process.once("exit", releaseOnboardLock);
 
+  let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = { collector: null, span: null };
+  let traceCompleted = false;
   try {
+    onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
     let session: Session | null;
     let selectedMessagingChannels: string[] = [];
     // Merged, absolute fromDockerfile: explicit flag/env takes precedence; on
@@ -7083,6 +7029,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         updateSession: onboardSession.updateSession,
       },
     });
+    if (resume && _preflightDashboardPort === null) preflightDashboardPortRangeAvailability(); // #3953 — resume must mirror preflight()'s fail-fast
     session = preflightResult.session;
     const {
       sandboxGpuConfig,
@@ -7442,9 +7389,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         log: (message) => console.log(message),
       },
     });
+    traceCompleted = true;
   } finally {
     releaseOnboardLock();
     onboardRuntimeBoundary.clear();
+    onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);
   }
 }
 
@@ -7530,7 +7479,6 @@ module.exports = {
 
   startGateway,
   findAvailableDashboardPort,
-  findDashboardForwardOwner,
   startGatewayForRecovery,
   openshellArgv,
   runCaptureOpenshell,
