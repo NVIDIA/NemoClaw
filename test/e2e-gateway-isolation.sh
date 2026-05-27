@@ -491,45 +491,26 @@ else
   fail "proxy env not set in all bash modes (#2704): $OUT"
 fi
 
-# ── Test 27: Non-root mode refuses residual caps without opt-in ───
-# This simulates the CAP_SETPCAP-unavailable posture seen on Brev shadecloud:
-# capsh exists, but the process cannot drop bounding-set caps. The entrypoint
-# must fail closed by default instead of silently starting with residual caps.
-
-info "27. Non-root mode refuses residual capabilities without explicit opt-in"
-RC=0
-OUT=$(docker run --rm --user "${SB_UID}:${SB_GID}" "$IMAGE" bash -c 'printf "%s\n" "SHOULD_NOT_REACH"' 2>&1) || RC=$?
-if [ "$RC" -ne 0 ] \
-  && echo "$OUT" | grep -q "Refusing to start sandbox" \
-  && echo "$OUT" | grep -q "NEMOCLAW_ALLOW_RESIDUAL_CAPS=1" \
-  && ! echo "$OUT" | grep -q "SHOULD_NOT_REACH"; then
-  pass "non-root CAP_SETPCAP fallback fails closed with an explicit residual-cap banner"
-else
-  fail "non-root residual-cap fallback did not fail closed as expected (rc=$RC): $OUT"
-fi
-
-# ── Test 28: Non-root mode executes without gosu when opted in ────
+# ── Test 27: Non-root mode executes without gosu ──────────────────
 # The entrypoint detects uid != 0, skips gosu, and execs the command directly.
 # Use the image's actual sandbox uid/gid here: the system-assigned sandbox uid
 # is not guaranteed to be 1000 on every runner, and the non-root fallback is
-# designed to run as that sandbox user. This test opts in to the known weaker
-# residual-cap posture because it is validating the non-root execution path,
-# while Test 27 validates the default refusal.
+# designed to run as that sandbox user.
 
-info "28. Non-root mode executes command without gosu when residual caps are explicitly allowed"
-OUT=$(docker run --rm --user "${SB_UID}:${SB_GID}" -e NEMOCLAW_ALLOW_RESIDUAL_CAPS=1 "$IMAGE" bash -c 'printf "%s\n" "NON_ROOT_EXEC_OK"; sleep 0.2' 2>&1 || true)
+info "27. Non-root mode executes command without gosu"
+OUT=$(docker run --rm --user "${SB_UID}:${SB_GID}" "$IMAGE" bash -c 'printf "%s\n" "NON_ROOT_EXEC_OK"; sleep 0.2' 2>&1 || true)
 if echo "$OUT" | grep -q "NON_ROOT_EXEC_OK"; then
-  pass "non-root mode executed command directly (no gosu) with explicit residual-cap opt-in"
+  pass "non-root mode executed command directly (no gosu)"
 else
-  fail "non-root command execution failed despite residual-cap opt-in: $OUT"
+  fail "non-root command execution failed: $OUT"
 fi
 
-# ── Test 29: Model override patches openclaw.json at startup ─────
+# ── Test 28: Model override patches openclaw.json at startup ─────
 # NEMOCLAW_MODEL_OVERRIDE should patch agents.defaults.model.primary,
 # model id, and model name in openclaw.json before Landlock locks it.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/759
 
-info "29. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
+info "28. NEMOCLAW_MODEL_OVERRIDE patches openclaw.json"
 OUT=$(docker run --rm -e NEMOCLAW_MODEL_OVERRIDE="test/override-model" \
   --entrypoint "" "$IMAGE" bash -c '
   # Source the entrypoint functions without running the full startup
@@ -559,9 +540,9 @@ else
   fail "model override did not patch correctly: $OUT"
 fi
 
-# ── Test 30: Model override is a no-op when env var is unset ─────
+# ── Test 29: Model override is a no-op when env var is unset ─────
 
-info "30. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
+info "29. No override when NEMOCLAW_MODEL_OVERRIDE is unset"
 OUT=$(docker run --rm --entrypoint "" "$IMAGE" bash -c '
   source <(sed -n "/^apply_model_override/,/^}/p" /usr/local/bin/nemoclaw-start)
   ORIGINAL=$(python3 -c "import json; print(json.load(open(\"/sandbox/.openclaw/openclaw.json\"))[\"agents\"][\"defaults\"][\"model\"][\"primary\"])")

@@ -6,7 +6,7 @@
 # The export is regenerated with: python3 scripts/export-catalog-skills.py
 version: 1
 source: .agents/skills
-export: skills/nemoclaw
+export: skills
 include:
   - skill: nemoclaw-skills-guide
     rationale: Public index for user-facing NemoClaw skills.
