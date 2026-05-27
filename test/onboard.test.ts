@@ -7,6 +7,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { appendHostProxyEnvArgs } from "../dist/lib/onboard/host-proxy-env.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
@@ -25,10 +26,6 @@ type CommandEntry = {
 type ResumeConflict = { field: string; requested: string | null; recorded: string | null };
 
 type OnboardTestInternals = {
-  appendHostProxyEnvArgs: (
-    envArgs: string[],
-    env?: Record<string, string | undefined>,
-  ) => void;
   getNavigationChoice: (value?: string | null) => string | null;
   getFutureShellPathHint: (binDir: string, pathValue?: string) => string | null;
   getRequestedModelHint: ShimFn<string | null>;
@@ -81,7 +78,6 @@ if (!isOnboardTestInternals(onboardTestInternals)) {
 }
 
 const {
-  appendHostProxyEnvArgs,
   getNavigationChoice,
   getFutureShellPathHint,
   getRequestedModelHint,

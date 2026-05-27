@@ -168,14 +168,8 @@ type RunnerOptions = {
   openshellBinary?: string;
 };
 
-const {
-  collectBuildContextStats,
-  stageOptimizedSandboxBuildContext,
-} = require("./sandbox/build-context");
-const { buildSubprocessEnv } =
-  require("./subprocess-env") as typeof import("./subprocess-env");
-const { appendHostProxyEnvArgs }: typeof import("./onboard/host-proxy-env") =
-  require("./onboard/host-proxy-env");
+const { collectBuildContextStats, stageOptimizedSandboxBuildContext } = require("./sandbox/build-context");
+const { buildSubprocessEnv } = require("./subprocess-env");
 const {
   DASHBOARD_PORT,
   GATEWAY_PORT,
@@ -701,7 +695,6 @@ const {
   formatEnvAssignment,
   parsePolicyPresetEnv,
 } = urlUtils;
-
 const { hydrateCredentialEnv }: typeof import("./onboard/credential-env") =
   require("./onboard/credential-env");
 
@@ -3578,7 +3571,7 @@ async function createSandbox(
     hermesDashboardState,
     formatEnvAssignment,
   );
-  appendHostProxyEnvArgs(envArgs);
+  require("./onboard/host-proxy-env").appendHostProxyEnvArgs(envArgs);
   // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to the runtime
   // sandbox container. patchStagedDockerfile() already substitutes them
   // into the build-time Dockerfile ARG/ENV, but `openshell sandbox create
@@ -7122,7 +7115,6 @@ module.exports = {
   buildCompatibleEndpointSandboxSmokeScript,
   buildSandboxConfigSyncScript,
   buildSandboxGpuCreateArgs,
-  appendHostProxyEnvArgs,
   buildDirectGpuPolicyYaml,
   buildDirectSandboxGpuProofCommands,
   compactText,
