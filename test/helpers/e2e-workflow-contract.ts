@@ -23,10 +23,12 @@ export type WorkflowStep = {
 };
 
 export type NightlyWorkflow = {
+  env?: Record<string, string>;
   jobs: Record<string, WorkflowJob>;
 };
 
 export type RunnerWorkflow = {
+  env?: Record<string, string>;
   jobs: {
     run: {
       steps: WorkflowStep[];

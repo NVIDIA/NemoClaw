@@ -65,7 +65,7 @@ repos:
         name: SPDX license headers (insert if missing)
         entry: bash scripts/check-spdx-headers.sh --fix
         language: system
-        files: ^(nemoclaw/src/.*\.ts|scripts/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
+        files: ^(nemoclaw/src/.*\.ts|scripts/export-catalog-skills\.py|scripts/.*\.ts|nemoclaw-blueprint/.*\.py|.*\.sh)$
         exclude: ^nemoclaw-blueprint/.*__init__\.py$
         pass_filenames: true
         priority: 4
@@ -154,6 +154,14 @@ repos:
         entry: npm run checks
         language: system
         files: ^(bin/.*\.(cjs|js|mjs)$|src/.*\.tsx?$|scripts/.*\.(cjs|js|mjs|ts|tsx)$|test/.*\.(cjs|js|mjs|ts|tsx)$|nemoclaw/src/.*\.tsx?$)
+        pass_filenames: false
+        priority: 10
+
+      - id: catalog-skills-export
+        name: Verify catalog skills export
+        entry: python3 scripts/export-catalog-skills.py --check --allow-missing
+        language: system
+        files: ^(\.agents/catalog-skills\.yaml|\.agents/skills/.*|skills/nemoclaw/.*|scripts/export-catalog-skills\.py)$
         pass_filenames: false
         priority: 10
 

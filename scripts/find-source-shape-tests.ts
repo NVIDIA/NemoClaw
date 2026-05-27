@@ -116,7 +116,12 @@ function looksLikeTestFixturePath(text: string): boolean {
   return (
     /Dockerfile\.sandbox/.test(normalized) ||
     /(?:^|\/)fixtures?\//.test(normalized) ||
-    /\.agents\/skills/.test(normalized)
+    /\.agents\/skills/.test(normalized) ||
+    // The isolated scenario suite under test/e2e-scenario/ is entirely test
+    // assets and a self-contained runtime: scenario manifests, validation
+    // suite YAMLs, expected-state YAMLs, and the suite's own runner. Reads of
+    // these paths are not source-shape coupling to product code.
+    /(?:^|["'`/])test\/e2e-scenario(?:["'`/]|$)/.test(normalized)
   );
 }
 
@@ -128,6 +133,7 @@ function looksLikeDeclarativeConfigPath(text: string): boolean {
   return (
     /nemoclaw-blueprint\/blueprint\.yaml/.test(normalized) ||
     /nemoclaw-blueprint\/policies\//.test(normalized) ||
+    /nemoclaw-blueprint\/provider-profiles\//.test(normalized) ||
     /nemoclaw-blueprint\/router\/pool-config\.yaml/.test(normalized) ||
     /nemoclaw-blueprint\/model-specific-setup\//.test(normalized) ||
     /agents\/[^/]+\/policy-(?:additions|permissive)\.yaml/.test(normalized)

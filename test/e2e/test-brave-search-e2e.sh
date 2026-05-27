@@ -255,9 +255,13 @@ check_no_real_key_in_sandbox() {
   config_dump=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc \
     'cat /sandbox/.openclaw/openclaw.json 2>/dev/null || true' 2>&1) || true
 
+  # Accept both the canonical placeholder and any revision-scoped form
+  # OpenShell may emit (e.g. `openshell:resolve:env:v11_BRAVE_API_KEY`).
+  local placeholder_pattern='openshell:resolve:env:([A-Za-z0-9_]+_)?BRAVE_API_KEY'
+
   if [ -n "${BRAVE_API_KEY:-}" ] && printf '%s' "$config_dump" | grep -qF "$BRAVE_API_KEY"; then
     fail "B3a: SECURITY — real BRAVE_API_KEY found verbatim in /sandbox/.openclaw/openclaw.json"
-  elif printf '%s' "$config_dump" | grep -q "openshell:resolve:env:BRAVE_API_KEY"; then
+  elif printf '%s' "$config_dump" | grep -qE "$placeholder_pattern"; then
     pass "B3a: openclaw.json contains the placeholder, not the real key"
   else
     fail "B3a: openclaw.json has neither the real key nor the placeholder — web search not configured"
@@ -268,7 +272,7 @@ check_no_real_key_in_sandbox() {
 
   if [ -n "${BRAVE_API_KEY:-}" ] && printf '%s' "$env_value" | grep -qF "$BRAVE_API_KEY"; then
     fail "B3b: SECURITY — real BRAVE_API_KEY visible to sandbox shell via printenv"
-  elif [ -z "$env_value" ] || printf '%s' "$env_value" | grep -q "openshell:resolve:env:BRAVE_API_KEY"; then
+  elif [ -z "$env_value" ] || printf '%s' "$env_value" | grep -qE "$placeholder_pattern"; then
     pass "B3b: sandbox shell env does not expose the real key (placeholder or empty)"
   else
     fail "B3b: unexpected non-empty BRAVE_API_KEY in sandbox env"
@@ -319,17 +323,35 @@ check_real_brave_search_via_agent() {
   fi
 }
 
-# B4b — real Brave search via curl from inside the sandbox (literal reading
-# of "e.g. via curl" in the issue). Pre-req: curl must be in brave.yaml's
-# `binaries:` allowlist.
+# B4b — real Brave search via curl from inside the sandbox. This proves the
+# placeholder is rewritten to the real key at egress for Brave's custom
+# X-Subscription-Token header. The placeholder is read from the running
+# openclaw.json so we exercise whatever shape OpenShell wrote (canonical
+# `openshell:resolve:env:BRAVE_API_KEY` or a revision-scoped variant).
 check_real_brave_search_via_curl() {
-  local response status_code body rc=0
+  local response status_code body rc=0 placeholder
+  placeholder=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc \
+    'python3 -c "
+import json, sys
+try:
+    with open(\"/sandbox/.openclaw/openclaw.json\") as f:
+        cfg = json.load(f)
+    print(cfg.get(\"tools\", {}).get(\"web\", {}).get(\"search\", {}).get(\"apiKey\", \"\") or \"\")
+except Exception:
+    sys.exit(1)
+"' 2>/dev/null) || true
+  placeholder="${placeholder#"${placeholder%%[![:space:]]*}"}"
+  placeholder="${placeholder%"${placeholder##*[![:space:]]}"}"
+  if [ -z "$placeholder" ]; then
+    fail "B4b: could not read tools.web.search.apiKey placeholder from /sandbox/.openclaw/openclaw.json"
+    return
+  fi
 
   response=$(openshell sandbox exec --name "$SANDBOX_NAME" -- sh -lc \
     "curl -sS --max-time 20 -G 'https://api.search.brave.com/res/v1/web/search' \
       --data-urlencode 'q=NVIDIA' \
       --data-urlencode 'count=1' \
-      -H 'X-Subscription-Token: openshell:resolve:env:BRAVE_API_KEY' \
+      -H 'X-Subscription-Token: ${placeholder}' \
       -w '\nHTTP_STATUS:%{http_code}\n'" \
     2>&1) || rc=$?
 
@@ -351,7 +373,7 @@ sys.exit(0 if len(results) > 0 else 2)
       fail "B4b: HTTP 200 but response had no web.results[] (body parsed empty)"
     fi
   elif [ "$status_code" = "401" ] || [ "$status_code" = "403" ]; then
-    skip "B4b: HTTP $status_code — proxy did not substitute the placeholder for a generic curl caller. B4a covers the positive path; drop B4b in the PR if so."
+    fail "B4b: HTTP $status_code — proxy did not substitute the Brave placeholder at egress"
   elif [ "$status_code" = "000" ] || [ -z "$status_code" ]; then
     fail "B4b: curl never completed an HTTP transaction — check curl is in brave.yaml binaries allowlist. $(printf '%s' "${response:0:300}" | redact_stream "${BRAVE_API_KEY:-}")"
   else
