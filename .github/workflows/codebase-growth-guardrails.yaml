@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: CI / Onboard Entrypoint Budget
+name: CI / Codebase Growth Guardrails
 
 # pull_request_target runs in the base repo context, so this policy cannot be
 # bypassed by editing workflow files or scripts in the PR. Keep this workflow
@@ -15,8 +15,8 @@ permissions:
   pull-requests: read
 
 jobs:
-  onboard-entrypoint-budget:
-    name: onboard-entrypoint-budget
+  codebase-growth-guardrails:
+    name: codebase-growth-guardrails
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -69,5 +69,52 @@ jobs:
 
           This check allows src/lib/onboard/** to grow. It only blocks net growth
           in the top-level onboard entrypoint.
+          EOF
+          exit 1
+
+      - name: Block added lines in legacy test/e2e suite
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          LEGACY_E2E_DIR: test/e2e/
+          SCENARIO_E2E_DIR: tests/e2e-scenario/
+        run: |
+          set -euo pipefail
+
+          rows="$(gh api --paginate "/repos/${REPO}/pulls/${PR_NUMBER}/files" \
+            --jq '.[] | select(.filename | startswith("test/e2e/")) | [.additions, .deletions, .filename] | @tsv')"
+
+          if [ -z "$rows" ]; then
+            echo "${LEGACY_E2E_DIR} was not changed. New E2E scenarios should go under ${SCENARIO_E2E_DIR}."
+            exit 0
+          fi
+
+          additions=0
+          deletions=0
+          while IFS=$'\t' read -r file_additions file_deletions _file_path; do
+            if [ -z "${file_additions:-}" ]; then
+              continue
+            fi
+            additions=$((additions + file_additions))
+            deletions=$((deletions + file_deletions))
+          done <<< "$rows"
+
+          echo "${LEGACY_E2E_DIR}: +${additions}/-${deletions}"
+          echo "New scenario-based E2E tests belong under ${SCENARIO_E2E_DIR}."
+
+          if [ "$additions" -eq 0 ]; then
+            echo "PASS: ${LEGACY_E2E_DIR} has no added lines. Deletions and moves out of the legacy suite are allowed."
+            exit 0
+          fi
+
+          cat <<EOF
+          FAIL: ${LEGACY_E2E_DIR} has ${additions} added line(s).
+
+          The legacy E2E suite is being migrated to scenario-based coverage.
+          Please add new E2E coverage under ${SCENARIO_E2E_DIR} instead.
+
+          This check allows ${SCENARIO_E2E_DIR} to grow. It blocks added lines
+          in the legacy ${LEGACY_E2E_DIR} suite while still allowing deletions.
           EOF
           exit 1
