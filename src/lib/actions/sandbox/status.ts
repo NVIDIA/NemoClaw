@@ -32,6 +32,7 @@ import {
   createSystemDeps as createSessionDeps,
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
+import { dockerInfo } from "../../adapters/docker/info";
 import { getSandboxDockerHealth } from "./docker-health";
 import { classifyGatewayFailure, getLayerHeader } from "./gateway-failure-classifier";
 import type { SandboxGatewayState } from "./gateway-state";
@@ -253,6 +254,12 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   }
 
   if (lookup.state === "present") {
+    if (dockerInfo({ ignoreError: true, timeout: 3000 }).length === 0) {
+      console.log("");
+      await printGatewayFailureLayerHeader(sandboxName);
+      process.exitCode = 1;
+      return;
+    }
     console.log("");
     if ("recoveredGateway" in lookup && lookup.recoveredGateway) {
       console.log(
