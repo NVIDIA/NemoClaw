@@ -48,6 +48,21 @@ function isPolicyDocument(value: PolicyValue): value is PolicyDocument {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function readPresetInfo(content: string, fallbackName: string): { name: string; description: string } {
+  try {
+    const parsed = YAML.parse(content);
+    const preset = isPolicyDocument(parsed) && isPolicyDocument(parsed.preset) ? parsed.preset : null;
+    const name = typeof preset?.name === "string" ? preset.name.trim() : fallbackName;
+    const description = typeof preset?.description === "string" ? preset.description.trim() : "";
+    return {
+      name: name || fallbackName,
+      description,
+    };
+  } catch {
+    return { name: fallbackName, description: "" };
+  }
+}
+
 /**
  * Enumerate every preset YAML under `nemoclaw-blueprint/policies/presets/`
  * and return `{ file, name, description }` triples parsed from the file's
@@ -60,12 +75,12 @@ function listPresets(): PresetInfo[] {
     .filter((f: string) => f.endsWith(".yaml"))
     .map((f: string) => {
       const content = fs.readFileSync(path.join(PRESETS_DIR, f), "utf-8");
-      const nameMatch = content.match(/^\s*name:\s*(.+)$/m);
-      const descMatch = content.match(/^\s*description:\s*"?([^"]*)"?$/m);
+      const fallbackName = f.replace(".yaml", "");
+      const info = readPresetInfo(content, fallbackName);
       return {
         file: f,
-        name: nameMatch ? nameMatch[1].trim() : f.replace(".yaml", ""),
-        description: descMatch ? descMatch[1].trim() : "",
+        name: info.name,
+        description: info.description,
       };
     });
 }
@@ -295,7 +310,7 @@ function clampSetupPolicyPresetNames(
  */
 function extractPresetEntries(presetContent: string | null | undefined): string | null {
   if (!presetContent) return null;
-  const npMatch = presetContent.match(/^network_policies:\n([\s\S]*)$/m);
+  const npMatch = presetContent.match(/^network_policies:\r?\n([\s\S]*)$/m);
   if (!npMatch) return null;
   return npMatch[1].trimEnd();
 }
@@ -362,7 +377,13 @@ function assertOpenshellResolvable(): void {
       ? `PATH=${currentPath} (via \`command -v openshell\`)`
       : "PATH=<unset> (via `command -v openshell`)",
   );
-  if (home?.startsWith("/")) checked.push(`${home}/.local/bin/openshell`);
+  if (home && path.isAbsolute(home)) {
+    checked.push(path.join(home, ".local", "bin", "openshell"));
+    const posixStyleHomeCandidate = `${home}/.local/bin/openshell`;
+    if (posixStyleHomeCandidate !== checked[checked.length - 1]) {
+      checked.push(posixStyleHomeCandidate);
+    }
+  }
   checked.push("/usr/local/bin/openshell", "/usr/bin/openshell");
 
   console.error("  openshell binary not found. Checked:");

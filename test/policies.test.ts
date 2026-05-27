@@ -157,6 +157,16 @@ describe("policies", () => {
       }
     });
 
+    it("parses unquoted preset descriptions without absorbing the YAML body", () => {
+      const whatsapp = policies
+        .listPresets()
+        .find((preset: { name: string }) => preset.name === "whatsapp");
+
+      expect(whatsapp?.description).toBe("WhatsApp Web WebSocket and media access");
+      expect(whatsapp?.description).not.toContain("network_policies");
+      expect(whatsapp?.description).not.toContain("endpoints");
+    });
+
     it("returns expected preset names", () => {
       const names = policies
         .listPresets()
