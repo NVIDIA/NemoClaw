@@ -56,6 +56,7 @@ ONBOARDING_PATH="$(read_plan_value dimensions.onboarding.profile.path)"
 AGENT="$(read_plan_value dimensions.onboarding.profile.agent)"
 PROVIDER="$(read_plan_value dimensions.onboarding.profile.provider)"
 INFERENCE_ROUTE="$(read_plan_value dimensions.onboarding.profile.inference_route)"
+MESSAGING_PROVIDER="$(read_plan_value dimensions.onboarding.profile.messaging)"
 
 : "${PLATFORM_OS:=unknown}"
 : "${EXECUTION_TARGET:=local}"
@@ -77,6 +78,9 @@ e2e_context_set E2E_ONBOARDING_PATH "${ONBOARDING_PATH}"
 e2e_context_set E2E_AGENT "${AGENT}"
 e2e_context_set E2E_PROVIDER "${PROVIDER}"
 e2e_context_set E2E_INFERENCE_ROUTE "${INFERENCE_ROUTE}"
+if [[ -n "${MESSAGING_PROVIDER}" ]]; then
+  e2e_context_set E2E_MESSAGING_PROVIDER "${MESSAGING_PROVIDER}"
+fi
 
 # Sandbox name and gateway URL are normally discovered/assigned by
 # onboarding. Seed them here so dry-run consumers can exercise the suite
