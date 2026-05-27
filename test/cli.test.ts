@@ -451,6 +451,36 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Unknown command")).toBeTruthy();
   });
 
+  it("points OpenShell-only commands at openshell instead of sandbox connect (#3388)", () => {
+    const term = run("term");
+    expect(term.code).toBe(1);
+    expect(term.out).toContain("Unknown nemoclaw command: term");
+    expect(term.out).toContain("Run: openshell term");
+    expect(term.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
+
+    const policy = run("policy set");
+    expect(policy.code).toBe(1);
+    expect(policy.out).toContain("Unknown nemoclaw command: policy set");
+    expect(policy.out).toContain("Run: openshell policy set --policy <policy-file> <sandbox-name>");
+    expect(policy.out).toContain("nemoclaw <sandbox-name> policy-add <preset>");
+    expect(policy.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
+
+    const gateway = run("gateway stop");
+    expect(gateway.code).toBe(1);
+    expect(gateway.out).toContain("Unknown nemoclaw command: gateway stop");
+    expect(gateway.out).toContain("Run: openshell gateway stop -g nemoclaw");
+    expect(gateway.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
+  });
+
+  it("prints oclif validation failures without stack traces", () => {
+    const r = run("inference set 2>&1");
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("Missing required flag model");
+    expect(r.out).toContain("Missing required flag provider");
+    expect(r.out).not.toContain("FailedFlagValidationError");
+    expect(r.out).not.toContain("node_modules/@oclif/core");
+  });
+
   it("suggests list for a mistyped list command", () => {
     // Isolate from any real openshell gateway on the host so recovery
     // doesn't intercept the typo suggestion.
@@ -1410,8 +1440,8 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Done")).toBeTruthy();
   });
 
-  it(
-    "debug --quick explains restricted dmesg instead of printing raw stderr",
+  it.skipIf(os.platform() !== "linux")(
+    "debug --quick explains restricted dmesg instead of printing raw stderr on Linux",
     testTimeoutOptions(30_000),
     () => {
       const env = createDebugCommandTestEnv("nemoclaw-cli-debug-dmesg-");
@@ -2049,18 +2079,36 @@ describe("CLI dispatch", () => {
     expect(snapshots.out).toContain("No snapshots found for 'alpha'.");
   });
 
-  it("policy and channel mutations reject missing parser-owned values before dispatch", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-mutation-missing-values-"));
-    writeSandboxRegistry(home);
+  it(
+    "policy and channel mutations reject missing parser-owned values before dispatch",
+    testTimeoutOptions(30_000),
+    () => {
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-cli-mutation-missing-values-"),
+      );
+      writeSandboxRegistry(home);
 
-    const missingPolicyFile = runWithEnv("alpha policy-add --from-file 2>&1", { HOME: home });
-    expect(missingPolicyFile.code).not.toBe(0);
-    expect(missingPolicyFile.out).toContain("--from-file");
+      const missingPolicyFile = runWithEnv("alpha policy-add --from-file 2>&1", {
+        HOME: home,
+      });
+      expect(missingPolicyFile.code).not.toBe(0);
+      expect(missingPolicyFile.out).toContain("--from-file");
 
-    const missingChannel = runWithEnv("alpha channels add 2>&1", { HOME: home });
-    expect(missingChannel.code).not.toBe(0);
-    expect(missingChannel.out).toContain("channel");
-  });
+      for (const action of ["add", "remove", "start", "stop"]) {
+        const missingChannel = runWithEnv(`alpha channels ${action} 2>&1`, { HOME: home });
+        expect(missingChannel.code).toBe(PARSER_EXIT_CODE);
+        expect(missingChannel.out).toContain("Missing 1 required arg:");
+        expect(missingChannel.out).toContain("channel  Messaging channel");
+        expect(missingChannel.out).toContain("USAGE");
+        expect(missingChannel.out).toContain(
+          `$ nemoclaw sandbox channels ${action} <name> <channel> [--dry-run]`,
+        );
+        expect(missingChannel.out).not.toContain("RequiredArgsError");
+        expect(missingChannel.out).not.toContain("at validateArgs");
+        expect(missingChannel.out).not.toContain(`Command alpha:channels:${action} not found`);
+      }
+    },
+  );
 
   it("diagnostic commands reject invalid parser-owned flags before dispatch", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-diagnostics-invalid-flags-"));
@@ -5616,8 +5664,10 @@ describe("list shows live gateway inference", () => {
     expect(r.out).not.toContain(
       "agent: openclaw  model: configured-model  provider: configured-provider  sandbox GPU  policies: pypi, npm",
     );
-    // Onboarded values appear in the drift annotation.
-    expect(r.out).toContain("(onboarded: model=configured-model, provider=configured-provider)");
+    // Onboarded values appear in an explicit live-gateway drift annotation.
+    expect(r.out).toContain(
+      "(live OpenShell gateway differs from onboarded: model=configured-model, provider=configured-provider)",
+    );
   });
 
   it("falls back to registry values when openshell inference get fails", () => {

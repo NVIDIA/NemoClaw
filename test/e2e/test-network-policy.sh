@@ -14,6 +14,7 @@
 #   TC-NET-05: Hot-reload (policy change without sandbox restart)
 #   TC-NET-06: Permissive policy mode (open all egress)
 #   TC-NET-07: Inference exemption + direct provider blocked
+#   TC-NET-08: Jira per-binary policy enforcement
 #   TC-NET-09: SSRF validation (dangerous IPs rejected)
 #
 # Prerequisites:
@@ -377,6 +378,95 @@ fetch('$target_url', {signal: AbortSignal.timeout(15000)})
 }
 
 # =============================================================================
+# TC-NET-08: Jira per-binary policy enforcement
+# =============================================================================
+test_net_08_jira_per_binary_enforcement() {
+  log "=== TC-NET-08: Jira Per-Binary Policy Enforcement ==="
+
+  log "  Step 1: Applying jira preset..."
+  if ! apply_preset "jira"; then
+    fail "TC-NET-08: Setup" "Could not apply jira preset"
+    return
+  fi
+
+  log "  Step 2: Verify Node HTTPS can reach Atlassian API..."
+  local node_response
+  node_response=$(sandbox_exec "node -e \"
+const https = require('https');
+const req = https.get('https://api.atlassian.com', (res) => {
+  console.log('NODE_STATUS_' + res.statusCode);
+  res.resume();
+});
+req.setTimeout(30000, () => {
+  console.log('NODE_ERROR_TIMEOUT');
+  req.destroy();
+});
+req.on('error', (error) => console.log('NODE_ERROR_' + (error.code || error.message)));
+\"" 2>&1) || true
+  log "  Node response: $node_response"
+
+  if echo "$node_response" | grep -qE "NODE_STATUS_[23][0-9][0-9]"; then
+    pass "TC-NET-08: Node reaches Atlassian API after jira preset ($node_response)"
+  elif echo "$node_response" | grep -qE "NODE_STATUS_403|NODE_ERROR_"; then
+    fail "TC-NET-08: Node policy" "Node did not reach Atlassian API after jira preset ($node_response)"
+    return
+  else
+    fail "TC-NET-08: Node policy" "Unexpected Node response ($node_response)"
+    return
+  fi
+
+  log "  Step 3: Verify curl remains blocked by the Jira preset..."
+  local curl_before
+  curl_before=$(sandbox_exec "set +e
+OUT=\$(curl -sS -o /dev/null -w 'CURL_STATUS_%{http_code} CURL_APPCONNECT_%{time_appconnect}' --max-time 10 https://auth.atlassian.com 2>&1)
+RC=\$?
+echo \"\$OUT CURL_RC_\$RC\"
+" 2>&1) || true
+  log "  Curl before explicit approval: $curl_before"
+
+  if echo "$curl_before" | grep -qE "CURL_STATUS_[23][0-9][0-9]"; then
+    fail "TC-NET-08: Curl pre-approval" "curl reached Atlassian without explicit approval ($curl_before)"
+    return
+  elif echo "$curl_before" | grep -qE "CURL_STATUS_000|CURL_STATUS_403|CURL_RC_[1-9]|denied|policy|forbidden"; then
+    if echo "$curl_before" | grep -qE "CURL_APPCONNECT_0(\.0+)?( |$)"; then
+      pass "TC-NET-08: curl blocked before explicit approval and before outbound TLS ($curl_before)"
+    else
+      fail "TC-NET-08: Curl pre-approval" "curl was denied but appeared to establish outbound TLS ($curl_before)"
+      return
+    fi
+  else
+    fail "TC-NET-08: Curl pre-approval" "Unexpected curl denial signal ($curl_before)"
+    return
+  fi
+
+  log "  Step 4: Explicitly allow curl to auth.atlassian.com via OpenShell policy update..."
+  if ! openshell policy update "$SANDBOX_NAME" \
+    --add-endpoint auth.atlassian.com:443:read-only:rest:enforce \
+    --binary /usr/bin/curl \
+    --binary /usr/local/bin/curl \
+    --wait 2>&1 | tee -a "$LOG_FILE"; then
+    fail "TC-NET-08: Curl approval" "Could not apply explicit curl approval"
+    return
+  fi
+  sleep 5
+
+  log "  Step 5: Verify curl reaches Atlassian after explicit approval..."
+  local curl_after
+  curl_after=$(sandbox_exec "set +e
+OUT=\$(curl -sS -o /dev/null -w 'CURL_STATUS_%{http_code}' --max-time 10 https://auth.atlassian.com 2>&1)
+RC=\$?
+echo \"\$OUT CURL_RC_\$RC\"
+" 2>&1) || true
+  log "  Curl after explicit approval: $curl_after"
+
+  if echo "$curl_after" | grep -qE "CURL_STATUS_[23][0-9][0-9]"; then
+    pass "TC-NET-08: curl reaches Atlassian after explicit approval ($curl_after)"
+  else
+    fail "TC-NET-08: Curl post-approval" "curl did not reach Atlassian after explicit approval ($curl_after)"
+  fi
+}
+
+# =============================================================================
 # TC-NET-07: Inference exemption + direct provider blocked
 # =============================================================================
 test_net_07_inference_exemption() {
@@ -565,6 +655,7 @@ main() {
   test_net_02_whitelist_access
   test_net_03_live_policy_add
   test_net_04_dry_run
+  test_net_08_jira_per_binary_enforcement
   test_net_05_hot_reload
   test_net_07_inference_exemption
   test_net_09_ssrf_validation

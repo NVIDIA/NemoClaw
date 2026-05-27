@@ -54,8 +54,37 @@ function writeOpenclawConfig(extra: Record<string, unknown> = {}) {
   return cfgPath;
 }
 
+function writeWeChatPluginMetadata(manifest: Record<string, unknown>) {
+  const pluginDir = path.join(tmpDir, ".openclaw", "extensions", "openclaw-weixin");
+  fs.mkdirSync(pluginDir, { recursive: true });
+  fs.writeFileSync(path.join(pluginDir, "openclaw.plugin.json"), JSON.stringify(manifest, null, 2));
+}
+
+function writeWeChatNpmPackageMetadata(manifest: Record<string, unknown>) {
+  const pluginDir = path.join(
+    tmpDir,
+    ".openclaw",
+    "npm",
+    "node_modules",
+    "@tencent-weixin",
+    "openclaw-weixin",
+  );
+  fs.mkdirSync(pluginDir, { recursive: true });
+  fs.writeFileSync(path.join(pluginDir, "package.json"), JSON.stringify(manifest, null, 2));
+}
+
 function wechatExtensionPath(stateDir = path.join(tmpDir, ".openclaw")) {
   return path.join(fs.realpathSync(stateDir), "extensions", "openclaw-weixin");
+}
+
+function wechatNpmPackagePath(stateDir = path.join(tmpDir, ".openclaw")) {
+  return path.join(
+    fs.realpathSync(stateDir),
+    "npm",
+    "node_modules",
+    "@tencent-weixin",
+    "openclaw-weixin",
+  );
 }
 
 function readJson(p: string): any {
@@ -202,6 +231,38 @@ describe("seed-wechat-accounts.py: openclaw.json patching (channels.openclaw-wei
     expect(cfg.channels["openclaw-weixin"].accounts.primary.enabled).toBe(true);
   });
 
+  it("derives the WeChat channel id from installed plugin metadata", () => {
+    writeOpenclawConfig();
+    writeWeChatPluginMetadata({
+      id: "openclaw-weixin",
+      channels: ["vendor-weixin"],
+      channelConfigs: { "vendor-weixin": {} },
+    });
+    const result = runSeed({
+      NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "primary" }),
+    });
+    expect(result.status).toBe(0);
+
+    const cfg = readJson(path.join(tmpDir, ".openclaw", "openclaw.json"));
+    expect(cfg.channels["vendor-weixin"].accounts.primary.enabled).toBe(true);
+  });
+
+  it("keeps the legacy openclaw-weixin channel registration for older plugin loads", () => {
+    writeOpenclawConfig();
+    writeWeChatPluginMetadata({
+      id: "openclaw-weixin",
+      channels: ["vendor-weixin"],
+      channelConfigs: { "vendor-weixin": {} },
+    });
+    runSeed({
+      NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "primary" }),
+    });
+
+    const cfg = readJson(path.join(tmpDir, ".openclaw", "openclaw.json"));
+    expect(cfg.channels["vendor-weixin"].accounts.primary.enabled).toBe(true);
+    expect(cfg.channels["openclaw-weixin"].accounts.primary.enabled).toBe(true);
+  });
+
   it("writes a channelConfigUpdatedAt in JS Date.toISOString() shape (ms + 'Z')", () => {
     // The upstream plugin compares this string with values it produces via
     // Date.toISOString(). A Python isoformat() with offset would diverge.
@@ -260,13 +321,46 @@ describe("seed-wechat-accounts.py: openclaw.json patching (channels.openclaw-wei
     const cfg = readJson(path.join(tmpDir, ".openclaw", "openclaw.json"));
     expect(cfg.plugins.installs["openclaw-weixin"]).toEqual({
       source: "npm",
-      spec: "@tencent-weixin/openclaw-weixin@2.4.2",
+      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
       installPath: wechatExtensionPath(),
     });
     expect(cfg.plugins.load.paths).toEqual([wechatExtensionPath()]);
     expect(cfg.plugins.entries["openclaw-weixin"].enabled).toBe(true);
     expect(Object.keys(cfg.channels)).toEqual(["telegram", "slack", "openclaw-weixin"]);
     expect(cfg.channels["openclaw-weixin"].accounts.primary.enabled).toBe(true);
+  });
+
+  it("uses OpenClaw's npm package install path when no legacy extension directory exists", () => {
+    writeOpenclawConfig({
+      plugins: {
+        installs: {
+          "openclaw-weixin": {
+            source: "npm",
+            spec: "@tencent-weixin/openclaw-weixin@2.4.3",
+          },
+        },
+      },
+    });
+    writeWeChatNpmPackageMetadata({
+      name: "@tencent-weixin/openclaw-weixin",
+      openclaw: { channels: ["vendor-weixin"] },
+    });
+
+    const result = runSeed({
+      NEMOCLAW_WECHAT_CONFIG_B64: configB64({ accountId: "primary" }),
+    });
+    expect(result.status).toBe(0);
+
+    const cfg = readJson(path.join(tmpDir, ".openclaw", "openclaw.json"));
+    expect(cfg.plugins.installs["openclaw-weixin"]).toEqual({
+      source: "npm",
+      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
+      installPath: wechatNpmPackagePath(),
+    });
+    expect(cfg.plugins.load.paths).toEqual([wechatNpmPackagePath()]);
+    expect(cfg.channels["vendor-weixin"].accounts.primary.enabled).toBe(true);
+    expect(cfg.channels["openclaw-weixin"].accounts.primary.enabled).toBe(true);
+    expect(fs.existsSync(wechatExtensionPath())).toBe(false);
   });
 
   it("preserves existing plugin load paths and appends the WeChat extension path", () => {

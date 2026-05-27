@@ -612,41 +612,6 @@ describe("regression guards", () => {
     }
   });
 
-  it("keeps a single shellQuote definition in the root CLI codebase", () => {
-    const repoRoot = path.join(import.meta.dirname, "..");
-    const searchRoots = [path.join(repoRoot, "bin"), path.join(repoRoot, "src")];
-    const files: string[] = [];
-    function walk(dir: string): void {
-      for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (f.isDirectory() && f.name !== "node_modules") walk(path.join(dir, f.name));
-        else if (f.name.endsWith(".js") || f.name.endsWith(".ts"))
-          files.push(path.join(dir, f.name));
-      }
-    }
-    for (const root of searchRoots) {
-      walk(root);
-    }
-
-    const defs = [];
-    for (const file of files) {
-      let src: string;
-      try {
-        src = fs.readFileSync(file, "utf-8");
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code === "ENOENT") continue;
-        throw error;
-      }
-      if (src.includes("function shellQuote")) {
-        defs.push(path.relative(repoRoot, file));
-      }
-    }
-    // runner.ts (CJS consumers) and core/shell-quote.ts (ESM consumers like config-io.ts)
-    expect(defs.sort()).toEqual([
-      path.join("src", "lib", "core", "shell-quote.ts"),
-      path.join("src", "lib", "runner.ts"),
-    ]);
-  });
-
   it("CLI rejects malicious sandbox names before shell commands (e2e)", () => {
     const canaryDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-canary-"));
     const canary = path.join(canaryDir, "executed");

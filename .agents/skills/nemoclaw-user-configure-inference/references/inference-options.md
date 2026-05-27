@@ -45,10 +45,10 @@ The managed install/start vLLM entry appears by default on DGX Spark and DGX Sta
 |--------|-------------|----------------|
 | NVIDIA Endpoints | Routes to models hosted on [build.nvidia.com](https://build.nvidia.com). You can also enter any model ID from the catalog. Set `NVIDIA_API_KEY`. | Nemotron 3 Super 120B, GLM-5.1, MiniMax M2.7, GPT-OSS 120B, DeepSeek V4 Pro |
 | OpenAI | Routes to the OpenAI API. Set `OPENAI_API_KEY`. | `gpt-5.4`, `gpt-5.4-mini`, `gpt-5.4-nano`, `gpt-5.4-pro-2026-03-05` |
-| Other OpenAI-compatible endpoint | Routes to any server that implements `/v1/chat/completions`. If the endpoint also supports `/responses` with OpenClaw-style tool calling, NemoClaw can use that path; otherwise it falls back to `/chat/completions`. The wizard prompts for a base URL and model name. Works with OpenRouter, LocalAI, llama.cpp, or any compatible proxy. When you enable Telegram messaging, onboarding also runs a bounded sandbox-side smoke check through `https://inference.local/v1/chat/completions`. Set `COMPATIBLE_API_KEY`. | You provide the model name. |
+| Other OpenAI-compatible endpoint | Routes to any server that implements `/v1/chat/completions`. NemoClaw uses `/v1/chat/completions` at runtime by default; set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` for proxies that implement it, such as some llama.cpp builds. The wizard prompts for a base URL and model name. Works with OpenRouter, LocalAI, llama.cpp, or any compatible proxy. When you enable Telegram messaging, onboarding also runs a bounded sandbox-side smoke check through `https://inference.local/v1/chat/completions`. Set `COMPATIBLE_API_KEY`. | You provide the model name. |
 | Anthropic | Routes to the Anthropic Messages API. Set `ANTHROPIC_API_KEY`. | `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-opus-4-6` |
 | Other Anthropic-compatible endpoint | Routes to any server that implements the Anthropic Messages API (`/v1/messages`). The wizard prompts for a base URL and model name. Set `COMPATIBLE_ANTHROPIC_API_KEY`. | You provide the model name. |
-| Google Gemini | Routes to Google's OpenAI-compatible endpoint. NemoClaw prefers `/responses` only when the endpoint proves it can handle tool calling in a way OpenClaw uses; otherwise it falls back to `/chat/completions`. Set `GEMINI_API_KEY`. | `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` |
+| Google Gemini | Routes to Google's OpenAI-compatible chat-completions endpoint. NemoClaw skips the Responses-API probe because Gemini does not support `/v1/responses`. Set `GEMINI_API_KEY`. | `gemini-3.1-pro-preview`, `gemini-3.1-flash-lite-preview`, `gemini-3-flash-preview`, `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.5-flash-lite` |
 | Hermes Provider | Routes Hermes Agent through the host OpenShell provider registered by NemoClaw when onboarding Hermes Agent. | Curated Hermes Provider models such as `moonshotai/kimi-k2.6`, `openai/gpt-5.4-mini`, and `z-ai/glm-5.1`. |
 | Local Ollama | Routes to a local Ollama instance on `localhost:11434`. NemoClaw detects installed models, offers starter models if none are present, pulls and warms the selected model, and validates it. | Selected during onboarding. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill). |
 | Model Router | Starts a host-side router on port `4000`, registers it as an OpenAI-compatible provider, and keeps the sandbox pointed at `inference.local`. Set `NEMOCLAW_PROVIDER=routed` for non-interactive setup. | The router pool defines the model names. |
@@ -127,13 +127,13 @@ Other provider credentials, such as `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMI
 | Provider type | Validation method |
 |---|---|
 | OpenAI | Tries `/responses` first, then `/chat/completions`. |
-| NVIDIA Endpoints | Tries `/responses` first with a tool-calling probe that matches OpenClaw behavior. Falls back to `/chat/completions` if the endpoint does not return a compatible tool call. |
-| Google Gemini | Tries `/responses` first with a tool-calling probe that matches OpenClaw behavior. Falls back to `/chat/completions` if the endpoint does not return a compatible tool call. |
-| Other OpenAI-compatible endpoint | Tries `/responses` first with a tool-calling probe that matches OpenClaw behavior. Falls back to `/chat/completions` if the endpoint does not return a compatible tool call. |
+| NVIDIA Endpoints | Validates via `/v1/chat/completions` only; the `/v1/responses` probe is skipped because NVIDIA Build does not expose `/v1/responses` (returns 404 for every model). |
+| Google Gemini | Validates via Gemini's OpenAI-compatible chat-completions path only; the `/v1/responses` probe is skipped because Gemini does not support the Responses API. |
+| Other OpenAI-compatible endpoint | Tries `/v1/responses` first with a tool-calling probe; falls back to `/v1/chat/completions`. Selected runtime API defaults to `/v1/chat/completions`; set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` at runtime when validation succeeds. |
 | Anthropic-compatible | Tries `/v1/messages`. |
 | NVIDIA Endpoints (manual model entry) | Validates the model name against the catalog API. |
-| Compatible endpoints | Sends a real inference request because many proxies do not expose a `/models` endpoint. For OpenAI-compatible endpoints, the probe includes tool calling before NemoClaw favors `/responses`. |
-| Local NVIDIA NIM | Uses the same validation behavior as NVIDIA Endpoints and skips the `/v1/responses` probe for endpoints that do not expose it. |
+| Compatible endpoints | Sends a real inference request because many proxies do not expose a `/models` endpoint. For OpenAI-compatible endpoints, the probe tries `/v1/responses` first then falls back to `/v1/chat/completions`; the selected runtime API defaults to `/v1/chat/completions`. Set `NEMOCLAW_PREFERRED_API=openai-responses` to allow `/v1/responses` at runtime when validation succeeds. |
+| Local NVIDIA NIM | Validates via `/v1/chat/completions` only; the `/v1/responses` probe is skipped (same as NVIDIA Endpoints). |
 
 ## Next Steps
 

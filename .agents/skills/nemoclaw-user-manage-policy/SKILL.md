@@ -179,7 +179,8 @@ Available presets:
 | `pypi` | Python Package Index |
 | `slack` | Slack API and webhooks |
 | `telegram` | Telegram Bot API |
-| `whatsapp` | WhatsApp Web messaging |
+| `wechat` | WeChat (personal) iLink Bot API (experimental) |
+| `whatsapp` | WhatsApp Web messaging (experimental) |
 
 To apply a preset to a running sandbox:
 

@@ -10,7 +10,7 @@
 # would otherwise drive an in-sandbox QR scan that has no terminal and no
 # paired phone access.
 #
-# Files written (matching auth/accounts.ts in @tencent-weixin/openclaw-weixin@2.4.2):
+# Files written (matching auth/accounts.ts in @tencent-weixin/openclaw-weixin@2.4.3):
 #   <stateDir>/openclaw-weixin/accounts.json                  — JSON array of accountIds
 #   <stateDir>/openclaw-weixin/accounts/<accountId>.json      — { token, savedAt, baseUrl, userId }
 #   <stateDir>/openclaw.json (plugins.load.paths + channels.openclaw-weixin)
@@ -22,7 +22,10 @@
 # disabled and the bridge won't start, even if the per-account state files
 # above exist. The patch also restores the openclaw-weixin plugin registry and
 # load path because later OpenClaw config rewrites can drop them while leaving
-# the pre-installed extension files in place.
+# the pre-installed extension files in place. generate-openclaw-config.py
+# invokes this only after the base image's installed plugin metadata, install
+# registry, or preinstalled-plugin signal proves OpenClaw knows the WeChat
+# channel id.
 #
 # State dir resolution mirrors the upstream's resolveStateDir():
 #   $OPENCLAW_STATE_DIR || $CLAWDBOT_STATE_DIR || ~/.openclaw
@@ -53,11 +56,14 @@ import json
 import os
 import pathlib
 import sys
+from collections.abc import Iterable
 
 
-WECHAT_PLUGIN_ID = "openclaw-weixin"
-WECHAT_PLUGIN_SPEC = "@tencent-weixin/openclaw-weixin@2.4.2"
 WECHAT_TOKEN_PLACEHOLDER = "openshell:resolve:env:WECHAT_BOT_TOKEN"
+WECHAT_PLUGIN_ID = "openclaw-weixin"
+WECHAT_PLUGIN_PACKAGE = "@tencent-weixin/openclaw-weixin"
+WECHAT_PLUGIN_SPEC = f"{WECHAT_PLUGIN_PACKAGE}@2.4.3"
+LEGACY_WECHAT_CHANNEL_IDS = (WECHAT_PLUGIN_ID,)
 
 
 def _wechat_enabled() -> bool:
@@ -85,12 +91,23 @@ def _state_dir() -> pathlib.Path:
     return pathlib.Path(raw.strip()).resolve()
 
 
+def _legacy_wechat_extension_path() -> pathlib.Path:
+    return _state_dir() / "extensions" / WECHAT_PLUGIN_ID
+
+
+def _wechat_npm_package_path() -> pathlib.Path:
+    return _state_dir() / "npm" / "node_modules" / "@tencent-weixin" / "openclaw-weixin"
+
+
 def _wechat_plugin_install_path(install_record: object | None = None) -> str:
     if isinstance(install_record, dict):
         install_path = install_record.get("installPath")
         if isinstance(install_path, str) and install_path.strip():
             return install_path.strip()
-    return str(_state_dir() / "extensions" / WECHAT_PLUGIN_ID)
+    npm_path = _wechat_npm_package_path()
+    if npm_path.exists():
+        return str(npm_path)
+    return str(_legacy_wechat_extension_path())
 
 
 def _decode_config() -> dict:
@@ -123,10 +140,104 @@ def _js_iso_utc() -> str:
     return f"{now.strftime('%Y-%m-%dT%H:%M:%S')}.{now.microsecond // 1000:03d}Z"
 
 
+def _dedupe(values: Iterable[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        item = str(value or "").strip()
+        if not item or item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def _read_json_file(path: pathlib.Path) -> dict:
+    try:
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _metadata_files() -> Iterable[pathlib.Path]:
+    matches: list[pathlib.Path] = []
+    package_dir = _wechat_npm_package_path()
+    for filename in ("openclaw.plugin.json", "package.json"):
+        candidate = package_dir / filename
+        if candidate.exists():
+            matches.append(candidate)
+
+    extensions_dir = _state_dir() / "extensions"
+    if not extensions_dir.exists():
+        return matches
+
+    for root, dirs, files in os.walk(extensions_dir):
+        dirs[:] = [
+            item
+            for item in dirs
+            if item not in {"node_modules", "plugin-runtime-deps", ".git"}
+        ]
+        root_path = pathlib.Path(root)
+        for filename in files:
+            if filename in {"openclaw.plugin.json", "package.json"}:
+                matches.append(root_path / filename)
+    return matches
+
+
+def _declared_channel_ids_from_metadata() -> list[str]:
+    ids: list[str] = []
+    for path in _metadata_files():
+        metadata = _read_json_file(path)
+        if not metadata:
+            continue
+
+        path_hint = str(path).lower()
+        package_name = str(metadata.get("name") or "")
+        plugin_id = str(metadata.get("id") or "")
+        openclaw = metadata.get("openclaw")
+        is_wechat_plugin = (
+            plugin_id == WECHAT_PLUGIN_ID
+            or package_name == WECHAT_PLUGIN_PACKAGE
+            or WECHAT_PLUGIN_ID in path_hint
+        )
+        if not is_wechat_plugin:
+            continue
+
+        channels = metadata.get("channels")
+        if isinstance(channels, list):
+            ids.extend(item for item in channels if isinstance(item, str))
+
+        channel_configs = metadata.get("channelConfigs")
+        if isinstance(channel_configs, dict):
+            ids.extend(str(key) for key in channel_configs.keys())
+
+        if isinstance(openclaw, dict):
+            channel = openclaw.get("channel")
+            if isinstance(channel, dict) and isinstance(channel.get("id"), str):
+                ids.append(channel["id"])
+            elif isinstance(channel, str):
+                ids.append(channel)
+
+            channels = openclaw.get("channels")
+            if isinstance(channels, list):
+                ids.extend(item for item in channels if isinstance(item, str))
+
+            channel_configs = openclaw.get("channelConfigs")
+            if isinstance(channel_configs, dict):
+                ids.extend(str(key) for key in channel_configs.keys())
+
+    return _dedupe(ids)
+
+
+def _wechat_channel_ids() -> list[str]:
+    return _dedupe([*_declared_channel_ids_from_metadata(), *LEGACY_WECHAT_CHANNEL_IDS])
+
+
 def _patch_openclaw_config(account_id: str) -> None:
-    """Register channels.openclaw-weixin.accounts.<accountId>.enabled=true in
-    openclaw.json. The upstream plugin's auth/accounts.ts reads this block to
-    decide which accounts to start at boot."""
+    """Register enabled WeChat account blocks under the plugin channel ids
+    OpenClaw can load. The upstream plugin's auth/accounts.ts reads these blocks
+    to decide which accounts to start at boot."""
     cfg_path = _state_dir() / "openclaw.json"
     if not cfg_path.exists():
         # generate-openclaw-config.py runs before us and is responsible for
@@ -201,14 +312,28 @@ def _patch_openclaw_config(account_id: str) -> None:
     wechat_entry["enabled"] = True
 
     channels = cfg.setdefault("channels", {})
-    weixin = channels.setdefault("openclaw-weixin", {})
-    weixin["channelConfigUpdatedAt"] = _js_iso_utc()
-    accounts = weixin.setdefault("accounts", {})
-    accounts[account_id] = {"enabled": True}
+    if not isinstance(channels, dict):
+        channels = {}
+        cfg["channels"] = channels
+
+    channel_ids = _wechat_channel_ids()
+    for channel_id in channel_ids:
+        channel_cfg = channels.setdefault(channel_id, {})
+        if not isinstance(channel_cfg, dict):
+            channel_cfg = {}
+            channels[channel_id] = channel_cfg
+        channel_cfg["channelConfigUpdatedAt"] = _js_iso_utc()
+        accounts = channel_cfg.setdefault("accounts", {})
+        if not isinstance(accounts, dict):
+            accounts = {}
+            channel_cfg["accounts"] = accounts
+        accounts[account_id] = {"enabled": True}
 
     _atomic_write(cfg_path, json.dumps(cfg, indent=2) + "\n", 0o600)
     print(
-        f"[seed-wechat-accounts] registered channels.openclaw-weixin.accounts.{account_id} in {cfg_path}"
+        "[seed-wechat-accounts] registered "
+        f"{', '.join(f'channels.{channel_id}.accounts.{account_id}' for channel_id in channel_ids)} "
+        f"in {cfg_path}"
     )
 
 

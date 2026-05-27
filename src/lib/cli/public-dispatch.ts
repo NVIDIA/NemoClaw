@@ -115,6 +115,50 @@ function sandboxActionList(): string[] {
   return sandboxActionTokens();
 }
 
+type OpenShellCommandHint = {
+  entered: string;
+  command: string;
+  note?: string;
+};
+
+function getOpenShellCommandHint(argv: readonly string[]): OpenShellCommandHint | null {
+  const [cmd, subcommand] = argv;
+  if (cmd === "term") {
+    return {
+      entered: argv.join(" "),
+      command: "openshell term",
+      note: "Use this to monitor gateway logs and policy approval prompts.",
+    };
+  }
+  if (cmd === "policy" && subcommand === "set") {
+    return {
+      entered: argv.join(" "),
+      command: "openshell policy set --policy <policy-file> <sandbox-name>",
+      note: `For NemoClaw presets, use: ${CLI_NAME} <sandbox-name> policy-add <preset>`,
+    };
+  }
+  if (cmd === "gateway" && subcommand === "stop") {
+    return {
+      entered: argv.join(" "),
+      command: "openshell gateway stop -g nemoclaw",
+    };
+  }
+  return null;
+}
+
+function printOpenShellCommandHint(hint: OpenShellCommandHint): never {
+  console.error(`  Unknown ${CLI_NAME} command: ${hint.entered}`);
+  console.error("");
+  console.error("  This operation belongs to OpenShell.");
+  console.error(`  Run: ${hint.command}`);
+  if (hint.note) {
+    console.error(`  ${hint.note}`);
+  }
+  console.error("");
+  console.error(`  Run '${CLI_NAME} help' for NemoClaw commands.`);
+  process.exit(1);
+}
+
 function isKnownSandboxAction(action: string): boolean {
   return sandboxActionList().includes(action);
 }
@@ -283,6 +327,16 @@ export async function dispatchCli(argv: string[] = process.argv.slice(2)): Promi
       },
     );
     return;
+  }
+
+  // #3447 — when the typed command matches an OpenShell-owned operation
+  // (term / policy set / gateway stop) and there is no sandbox by that name,
+  // point users at the correct tool. Must run before recovery so bare
+  // `nemoclaw term` (which normalizes to sandboxName=term, action=connect)
+  // doesn't get swallowed by the recovery's "Sandbox does not exist" exit.
+  const openshellHint = getOpenShellCommandHint(argv);
+  if (openshellHint && !registry().getSandbox(cmd)) {
+    printOpenShellCommandHint(openshellHint);
   }
 
   // If the registry doesn't know this name but the action is a sandbox-scoped

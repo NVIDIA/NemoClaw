@@ -55,6 +55,7 @@ function section(title: string): void {
 // ---------------------------------------------------------------------------
 
 import { redactFull as redact } from "../security/redact";
+
 export { redact };
 
 // ---------------------------------------------------------------------------
@@ -133,15 +134,14 @@ function writeCollectedMessage(collectDir: string, label: string, message: strin
   console.log(message);
 }
 
-function isRootUser(): boolean {
-  return typeof process.getuid === "function" && process.getuid() === 0;
-}
-
-function isDmesgRestrictedForCurrentUser(): boolean {
-  if (isRootUser()) return false;
+export function isDmesgRestrictedForCurrentUser(
+  restrictPath = DMESG_RESTRICT_PATH,
+  euid = process.geteuid?.() ?? process.getuid?.() ?? 0,
+): boolean {
+  if (euid === 0) return false;
 
   try {
-    return readFileSync(DMESG_RESTRICT_PATH, "utf-8").trim() === "1";
+    return readFileSync(restrictPath, "utf-8").trim() === "1";
   } catch {
     return false;
   }
@@ -371,18 +371,14 @@ function collectSandboxInternals(
 ): void {
   if (!commandExists("openshell")) return;
 
-  // Check if sandbox exists
+  // Check if sandbox exists. OpenShell ssh-config may succeed for unknown
+  // names, so verify the live sandbox first.
   try {
-    const output = execFileSync("openshell", ["sandbox", "list"], {
+    execFileSync("openshell", ["sandbox", "get", sandboxName], {
       encoding: "utf-8",
       timeout: 10_000,
       stdio: ["ignore", "pipe", "ignore"],
     });
-    const names = output
-      .split("\n")
-      .map((l) => l.trim().split(/\s+/)[0])
-      .filter((n) => n && n.toLowerCase() !== "name");
-    if (!names.includes(sandboxName)) return;
   } catch {
     return;
   }

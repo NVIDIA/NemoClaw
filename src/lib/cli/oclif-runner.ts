@@ -30,6 +30,7 @@ function isOclifParseError(error: unknown): boolean {
     name === "NonExistentFlagsError" ||
     name === "RequiredArgsError" ||
     name === "UnexpectedArgsError" ||
+    name === "FailedFlagValidationError" ||
     name === "CLIError" ||
     message.startsWith("Parsing --")
   );
@@ -127,11 +128,19 @@ export async function runOclifCommandById(
 export async function runOclifArgv(args: string[], opts: OclifCommandRunOptions): Promise<void> {
   const config = await OclifConfig.load(opts.rootDir);
   applyBrandedBin(config);
-  await executeOclif({
-    args,
-    loadOptions: {
-      root: opts.rootDir,
-      pjson: config.pjson,
-    },
-  });
+  const originalArgv = process.argv;
+  // oclif's parse-error help renderer consults process.argv, not just the
+  // explicit execute({ args }) value, so keep both views on the native route.
+  process.argv = [originalArgv[0] ?? process.execPath, originalArgv[1] ?? CLI_NAME, ...args];
+  try {
+    await executeOclif({
+      args,
+      loadOptions: {
+        root: opts.rootDir,
+        pjson: config.pjson,
+      },
+    });
+  } finally {
+    process.argv = originalArgv;
+  }
 }

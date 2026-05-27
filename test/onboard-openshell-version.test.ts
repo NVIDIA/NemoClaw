@@ -171,6 +171,26 @@ describe("OpenShell version helpers", () => {
     }
   });
 
+  it("rejects OpenShell blueprint version constraints with suffixes", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-blueprint-bad-openshell-version-"));
+    const blueprintDir = path.join(tmpDir, "nemoclaw-blueprint");
+    fs.mkdirSync(blueprintDir, { recursive: true });
+    fs.writeFileSync(
+      path.join(blueprintDir, "blueprint.yaml"),
+      [
+        'version: "0.1.0"',
+        'min_openshell_version: "0.0.44-dev"',
+        'max_openshell_version: "0.0.44-dev"',
+      ].join("\n"),
+    );
+    try {
+      expect(getBlueprintMinOpenshellVersion(tmpDir)).toBe(null);
+      expect(getBlueprintMaxOpenshellVersion(tmpDir)).toBe(null);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("returns null for missing or absent max_openshell_version", () => {
     expect(getBlueprintMaxOpenshellVersion(path.join(os.tmpdir(), `missing-${Date.now()}`))).toBe(
       null,

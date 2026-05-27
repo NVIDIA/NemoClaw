@@ -5,19 +5,28 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import {
   baseImageInputsChangedSinceMain,
   formatBuildFailureDiagnostics,
   getSourceShortShaTags,
+  getVersionedBaseImageTags,
   parseGlibcVersion,
   versionGte,
 } from "../../dist/lib/sandbox-base-image";
 
 const tmpRoots: string[] = [];
+const emptyGitConfigDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-empty-gitconfig-"));
+const emptyGitConfig = path.join(emptyGitConfigDir, "gitconfig");
+const emptyGitConfigFd = fs.openSync(emptyGitConfig, "wx", 0o600);
+fs.closeSync(emptyGitConfigFd);
+
 const gitEnv = {
   ...process.env,
+  GIT_CONFIG_GLOBAL: emptyGitConfig,
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_TERMINAL_PROMPT: "0",
   GIT_AUTHOR_NAME: "Test User",
   GIT_AUTHOR_EMAIL: "test@example.com",
   GIT_COMMITTER_NAME: "Test User",
@@ -77,6 +86,10 @@ afterEach(() => {
   }
 });
 
+afterAll(() => {
+  fs.rmSync(emptyGitConfigDir, { recursive: true, force: true });
+});
+
 describe("sandbox base image helpers", () => {
   it("parses glibc versions from ldd output", () => {
     expect(parseGlibcVersion("ldd (Debian GLIBC 2.41-12+deb13u2) 2.41")).toBe("2.41");
@@ -94,6 +107,34 @@ describe("sandbox base image helpers", () => {
       GITHUB_SHA: "1E94F2E207C5456EBC35E2BD5BB380D4430292C6",
     } as NodeJS.ProcessEnv);
     expect(tags).toEqual(["1e94f2e2", "1e94f2e"]);
+  });
+
+  it("derives versioned sandbox-base tags from pinned install refs", () => {
+    const tags = getVersionedBaseImageTags("/definitely/not/a/git/repo", {
+      NEMOCLAW_INSTALL_REF: "v0.0.31",
+      NEMOCLAW_INSTALL_TAG: "latest",
+      GITHUB_SHA: "1e94f2e207c5456ebc35e2bd5bb380d4430292c6",
+    } as NodeJS.ProcessEnv);
+    expect(tags).toEqual(["v0.0.31"]);
+  });
+
+  it("normalizes .version files to release image tags", () => {
+    const root = createGitFixture();
+    writeFixture(root, ".version", "0.0.50\n");
+    const tags = getVersionedBaseImageTags(root, {} as NodeJS.ProcessEnv);
+    expect(tags).toEqual(["v0.0.50"]);
+  });
+
+  it("uses exact git release tags but ignores non-release refs", () => {
+    const root = createGitFixture();
+    git(root, ["tag", "v0.0.42"]);
+    expect(getVersionedBaseImageTags(root, gitEnv)).toEqual(["v0.0.42"]);
+
+    git(root, ["switch", "-c", "feature"]);
+    writeFixture(root, "src/other.ts", "export const value = 42;\n");
+    git(root, ["add", "src/other.ts"]);
+    git(root, ["commit", "-m", "move off tag"]);
+    expect(getVersionedBaseImageTags(root, gitEnv)).toEqual([]);
   });
 
   it("surfaces stderr build diagnostics on failure (#3584)", () => {

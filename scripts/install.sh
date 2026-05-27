@@ -981,6 +981,26 @@ prefer_user_local_openshell() {
   fi
 }
 
+# Run scripts/install-openshell.sh during install_nemoclaw when appropriate.
+# - mode=force:      always invoke (GitHub-clone branch — fresh install path)
+# - mode=if-missing: invoke only when openshell is absent from PATH
+#                    (source-checkout branch — preserves developer autonomy
+#                    over their own openshell version)
+# Both modes defer when NEMOCLAW_DEFER_OPENSHELL_INSTALL=1 so the pre-upgrade
+# backup flow can run before any version bump.
+maybe_install_openshell_during_install() {
+  local mode="${1:-force}"
+  if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
+    info "Deferring OpenShell CLI installation until after pre-upgrade backup."
+    return 0
+  fi
+  if [[ "$mode" == "if-missing" ]] && command_exists openshell; then
+    return 0
+  fi
+  spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
+  prefer_user_local_openshell
+}
+
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
   local npm_bin shim_path node_path node_dir cli_path expected_shim
@@ -1365,6 +1385,16 @@ install_nemoclaw() {
     spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm run --if-present build:cli"
     spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm install --ignore-scripts && npm run build"
     spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link"
+
+    # Bootstrap OpenShell when the source checkout is being used as a fresh
+    # install entrypoint (e.g. `git clone … && bash install.sh`) and the host
+    # has no openshell on PATH. Skipping here previously left the user at a
+    # circular preflight error ("Run the NemoClaw installer or
+    # scripts/install-openshell.sh") even though they were running the
+    # installer. A developer who already has a managed openshell on PATH
+    # keeps their existing binary — install-openshell.sh is only invoked
+    # when openshell is genuinely missing. See #3989.
+    maybe_install_openshell_during_install if-missing
   else
     if [[ -f "$package_json" ]]; then
       info "Installer payload is not a persistent source checkout — installing from GitHub…"
@@ -1404,15 +1434,10 @@ install_nemoclaw() {
     # onboard, so any later skip of onboard (preflight blocking,
     # interrupted session) leaves openshell stale below blueprint's
     # min_openshell_version even though the new NemoClaw declared a higher
-    # floor. The source-checkout branch intentionally skips this — a developer
-    # running ./scripts/install.sh manages their own openshell. The script is
-    # idempotent on the happy path. See #2272.
-    if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
-      info "Deferring OpenShell CLI installation until after pre-upgrade backup."
-    else
-      spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
-      prefer_user_local_openshell
-    fi
+    # floor. The source-checkout branch invokes the same helper in
+    # `if-missing` mode so developers keep autonomy when openshell is already
+    # on PATH. The script is idempotent on the happy path. See #2272, #3989.
+    maybe_install_openshell_during_install force
   fi
 
   refresh_path

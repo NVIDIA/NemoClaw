@@ -98,8 +98,8 @@ System paths remain read-only to prevent agents from:
 - Modifying DNS resolution or TLS trust stores
 - Tampering with libraries or shell configuration outside `/sandbox`
 
-The image build pre-creates shell init files `.bashrc` and `.profile`.
-These files source runtime proxy configuration from `/tmp/nemoclaw-proxy-env.sh`.
+The image build pre-creates locked shell init files `.bashrc` and `.profile` without proxy entries.
+Runtime proxy configuration is sourced from system-wide shell hooks that read `/tmp/nemoclaw-proxy-env.sh`.
 
 ### Landlock Kernel Requirements
 

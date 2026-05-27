@@ -5,13 +5,13 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import { captureSandboxSshConfig } from "../../adapters/openshell/runtime";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../../adapters/openshell/timeouts";
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_NAME } from "../../cli/branding";
-import { captureOpenshell } from "../../adapters/openshell/runtime";
-import { ensureLiveSandboxOrExit } from "./gateway-state";
-import * as skillInstall from "../../skill-install";
 import { D, G, R, YW } from "../../cli/terminal-style";
+import * as skillInstall from "../../skill-install";
+import { ensureLiveSandboxOrExit } from "./gateway-state";
 
 export function printSkillInstallUsage(): void {
   console.log("");
@@ -169,8 +169,9 @@ export async function installSandboxSkill(
   const paths = skillInstall.resolveSkillPaths(agent, frontmatter.name);
 
   // 4. Get SSH config
-  const sshConfigResult = captureOpenshell(["sandbox", "ssh-config", sandboxName], {
+  const sshConfigResult = captureSandboxSshConfig(sandboxName, {
     ignoreError: true,
+    timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   if (sshConfigResult.status !== 0) {
     console.error("  Failed to obtain SSH configuration for the sandbox.");

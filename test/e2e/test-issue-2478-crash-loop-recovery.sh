@@ -92,6 +92,7 @@ info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
 SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-e2e-2478}"
 CRASH_CYCLES="${NEMOCLAW_E2E_CRASH_CYCLES:-5}"
 SOAK_SECONDS="${NEMOCLAW_E2E_SOAK_SECONDS:-300}"
+DASHBOARD_PORT="${NEMOCLAW_DASHBOARD_PORT:-18789}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")/../.." && pwd)"
 
 # ── Helpers ──────────────────────────────────────────────────────
@@ -103,26 +104,14 @@ sandbox_exec() {
 }
 
 # Get the current OpenClaw gateway PID inside the sandbox, or empty string.
-# OpenClaw process labels vary by runtime/build: some expose argv as
-# `openclaw gateway run`, some re-title as `openclaw-gateway`, and current
-# 2026.5.x builds can show only `openclaw` in pgrep/ps even after the gateway
-# is ready. Prefer explicit gateway argv/title matches, then fall back to the
-# oldest live `openclaw` process when gateway.log proves it reached ready.
+# OpenClaw v0.0.44/2026.5.18 can show the long-running process as plain
+# `openclaw` rather than the older `openclaw-gateway` argv. Match the process
+# table directly so readiness does not depend on the legacy rename.
 gateway_pid() {
-  local script
-  script=$(
-    cat <<'SH'
-set -eu
-pid="$(ps -eo pid=,comm=,args= 2>/dev/null | awk '
-  $2 == "openclaw-gateway" || $0 ~ /openclaw[[:space:]]+gateway([[:space:]]|$)/ || $0 ~ /openclaw-gateway/ { print $1 }
-' | sort -n | head -n 1)"
-if [ -z "$pid" ] && grep -Eq "\[gateway\] (ready|http server listening)" /tmp/gateway.log 2>/dev/null; then
-  pid="$(ps -eo pid=,comm=,args= 2>/dev/null | awk '$2 == "openclaw" { print $1 }' | sort -n | head -n 1)"
-fi
-printf "%s\n" "$pid"
-SH
-  )
-  sandbox_exec sh -c "$script" | awk '/^[0-9]+$/ { print; exit }'
+  local out
+  # shellcheck disable=SC2016 # Single-quoted body runs inside the sandbox shell.
+  out="$(sandbox_exec sh -c 'pid="$(ps -eo pid=,comm=,args= 2>/dev/null | awk '\''($2 == "openclaw" && $0 ~ /gateway/) || $0 ~ /openclaw[ -]gateway/ { print $1 }'\'' | sort -n | head -n 1)"; if [ -z "$pid" ]; then pid="$(ps -eo pid=,comm=,args= 2>/dev/null | awk '\''$2 == "openclaw" { print $1 }'\'' | sort -n | head -n 1)"; fi; printf "%s\n" "$pid"')"
+  printf '%s\n' "$out" | awk '/^[0-9]+$/ { print; exit }'
 }
 
 # Read /tmp/nemoclaw-proxy-env.sh — the single source of truth for the
@@ -244,8 +233,8 @@ gateway_diagnostics() {
   sandbox_exec sh -c "tail -n 60 /tmp/gateway.log 2>&1 || echo '(no gateway.log)'" | sed 's/^/    /'
   echo "  [nemoclaw status]"
   nemoclaw "$SANDBOX_NAME" status 2>&1 | head -30 | sed 's/^/    /'
-  echo "  [openshell sandbox get]"
-  openshell sandbox get "$SANDBOX_NAME" 2>&1 | head -40 | sed 's/^/    /' || true
+  echo "  [openshell sandbox list]"
+  openshell sandbox list 2>&1 | head -20 | sed 's/^/    /' || true
   if [ -n "$pid" ]; then
     echo "  [reported pid: $pid]"
     echo "  [/proc/${pid} listing]"
@@ -272,13 +261,39 @@ run_probe_only_or_fail() {
   rm -f "$probe_out"
 }
 
-# Wait until gateway PID is non-empty (or timeout). Echoes pid, returns 0/1.
+# Returns 0 when the current OpenClaw runtime has crossed the same readiness
+# surface used by newer gateway E2Es: ready log, local /health, or healthy host
+# status. This avoids failing on the old PID-name-only probe when OpenClaw is
+# already serving.
+gateway_runtime_ready() {
+  if sandbox_exec sh -c "grep -Fq '[gateway] ready' /tmp/gateway.log 2>/dev/null"; then
+    return 0
+  fi
+  local health_code
+  health_code="$(sandbox_exec sh -c "curl -so /dev/null -w '%{http_code}' --max-time 3 http://localhost:${DASHBOARD_PORT}/health 2>/dev/null" | tr -d '[:space:]')" || true
+  if [ "$health_code" = "200" ]; then
+    return 0
+  fi
+  local status_output
+  status_output="$(timeout 20 nemoclaw "$SANDBOX_NAME" status 2>&1)" || true
+  if echo "$status_output" | grep -Eiq '\b(healthy|ready)\b'; then
+    return 0
+  fi
+  if echo "$status_output" | grep -Eiq '\brunning\b' \
+    && ! echo "$status_output" | grep -Eiq '\bnot[[:space:]]+running\b'; then
+    return 0
+  fi
+  return 1
+}
+
+# Wait until gateway PID is non-empty and runtime-ready (or timeout). Echoes
+# pid, returns 0/1.
 wait_for_gateway_up() {
   local timeout="${1:-30}"
   local elapsed=0 pid=""
   while [ "$elapsed" -lt "$timeout" ]; do
     pid="$(gateway_pid)"
-    if [ -n "$pid" ]; then
+    if [ -n "$pid" ] && gateway_runtime_ready; then
       echo "$pid"
       return 0
     fi
@@ -396,7 +411,7 @@ section "Phase 3: Crash-recovery loop ($CRASH_CYCLES cycles)"
 prev_pid="$INIT_PID"
 for cycle in $(seq 1 "$CRASH_CYCLES"); do
   info "Cycle $cycle/$CRASH_CYCLES — killing gateway pid=$prev_pid"
-  sandbox_exec sh -c "kill -9 $prev_pid 2>/dev/null; sleep 1; pgrep -fo '[o]penclaw[ -]gateway' || echo DEAD" >/dev/null
+  sandbox_exec sh -c "kill -9 $prev_pid 2>/dev/null; sleep 1" >/dev/null
 
   # Trigger recovery via the actual operator probe path:
   # `nemoclaw <name> connect --probe-only` calls

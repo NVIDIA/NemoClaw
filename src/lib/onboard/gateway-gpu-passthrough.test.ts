@@ -141,43 +141,29 @@ describe("gateway GPU passthrough inspection", () => {
     expect(canRestartCpuOnlyGatewayForGpuIntent(["alpha", "beta"], "alpha", true)).toBe(false);
   });
 
-  it("aborts unsupported Jetson GPU passthrough before gateway inspection or cleanup", () => {
+  it("does not categorically abort Jetson GPU passthrough on Docker-driver gateways", () => {
     vi.mocked(docker.dockerInspect).mockClear();
     const stopDashboardForwards = vi.fn();
     const retireLegacyGatewayForDockerDriverUpgrade = vi.fn();
     const destroyGatewayRuntimeForGpuReuse = vi.fn();
-    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number | string | null) => {
-      throw new Error(`exit:${code}`);
-    }) as never);
 
-    try {
-      expect(() =>
-        reconcileGatewayGpuReuseForGpuIntent({
-          gatewayReuseState: healthy,
-          gpuPassthrough: true,
-          gatewayName: "nemoclaw",
-          currentSandboxName: "jetson-box",
-          hostGpuPlatform: "jetson",
-          recreateSandbox: true,
-          confirmedDockerDriverGateway: false,
-          stopDashboardForwards,
-          retireLegacyGatewayForDockerDriverUpgrade,
-          destroyGatewayRuntimeForGpuReuse,
-        }),
-      ).toThrow("exit:1");
+    const result = reconcileGatewayGpuReuseForGpuIntent({
+      gatewayReuseState: healthy,
+      gpuPassthrough: true,
+      gatewayName: "nemoclaw",
+      currentSandboxName: "jetson-box",
+      hostGpuPlatform: "jetson",
+      recreateSandbox: true,
+      confirmedDockerDriverGateway: true,
+      stopDashboardForwards,
+      retireLegacyGatewayForDockerDriverUpgrade,
+      destroyGatewayRuntimeForGpuReuse,
+    });
 
-      const message = errorSpy.mock.calls.map((call) => call[0]).join("\n");
-      expect(message).toContain("Jetson/Tegra sandbox GPU passthrough is not supported");
-      expect(message).toContain("--no-gpu");
-      expect(message).not.toContain("destroy --yes");
-      expect(docker.dockerInspect).not.toHaveBeenCalled();
-      expect(stopDashboardForwards).not.toHaveBeenCalled();
-      expect(retireLegacyGatewayForDockerDriverUpgrade).not.toHaveBeenCalled();
-      expect(destroyGatewayRuntimeForGpuReuse).not.toHaveBeenCalled();
-    } finally {
-      errorSpy.mockRestore();
-      exitSpy.mockRestore();
-    }
+    expect(result).toBe(healthy);
+    expect(docker.dockerInspect).not.toHaveBeenCalled();
+    expect(stopDashboardForwards).not.toHaveBeenCalled();
+    expect(retireLegacyGatewayForDockerDriverUpgrade).not.toHaveBeenCalled();
+    expect(destroyGatewayRuntimeForGpuReuse).not.toHaveBeenCalled();
   });
 });

@@ -397,19 +397,7 @@ if openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_config" 2>/dev/null; then
 fi
 rm -f "$ssh_config"
 
-agent_reply=$(echo "$agent_response" | python3 -c "
-import json, sys
-try:
-    doc = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-result = doc.get('result') or {}
-parts = []
-for p in result.get('payloads') or []:
-    if isinstance(p, dict) and isinstance(p.get('text'), str):
-        parts.append(p['text'])
-print('\n'.join(parts))
-" 2>/dev/null) || true
+agent_reply=$(printf '%s' "$agent_response" | parse_openclaw_agent_text 2>/dev/null) || true
 
 if grep -qE "(^|[^0-9])42([^0-9]|$)" <<<"$agent_reply"; then
   pass "[LIVE] openclaw agent: model answered 6×7=42 through openclaw → inference.local"

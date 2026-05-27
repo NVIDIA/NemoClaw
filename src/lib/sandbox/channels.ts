@@ -7,10 +7,14 @@ export interface ChannelBase {
   description: string;
   help: string;
   label: string;
+  setupNotes?: readonly string[];
   userIdEnvKey?: string;
   userIdHelp?: string;
   userIdLabel?: string;
   allowIdsMode?: "dm" | "guild";
+  channelIdEnvKey?: string;
+  channelIdHelp?: string;
+  channelIdLabel?: string;
   serverIdEnvKey?: string;
   serverIdHelp?: string;
   serverIdLabel?: string;
@@ -57,6 +61,10 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
     description: "Telegram bot messaging",
     help: "Create a bot via @BotFather on Telegram, then copy the token.",
     label: "Telegram Bot Token",
+    setupNotes: [
+      "For Telegram group chats, disable privacy mode in @BotFather (/setprivacy -> your bot -> Disable).",
+      "After changing privacy mode, remove and re-add the bot to each group before testing @mentions.",
+    ],
     userIdEnvKey: "TELEGRAM_ALLOWED_IDS",
     userIdHelp: "Send /start to @userinfobot on Telegram to get your numeric user ID.",
     userIdLabel: "Telegram User ID (for DM access)",
@@ -113,6 +121,10 @@ export const KNOWN_CHANNELS: Record<string, ChannelDef> = {
       "In Slack, open each allowed human user's profile -> More -> Copy member ID. Enter one or more comma-separated member IDs, not the app or bot user ID. Member IDs look like U01ABC2DEF3.",
     userIdLabel: "Slack Member IDs (comma-separated allowlist)",
     allowIdsMode: "dm",
+    channelIdEnvKey: "SLACK_ALLOWED_CHANNELS",
+    channelIdHelp:
+      "Optional: enter comma-separated Slack channel IDs where the bot may answer @mentions. Channel IDs look like C012AB3CD.",
+    channelIdLabel: "Slack Channel IDs (comma-separated allowlist)",
   },
   whatsapp: {
     description: "WhatsApp Web messaging (QR pairing)",

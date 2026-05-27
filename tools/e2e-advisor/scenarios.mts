@@ -1,13 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-
-const require = createRequire(import.meta.url);
-const yaml: { load(input: string): unknown } = require("js-yaml");
 
 import { getChangedFiles } from "../advisors/git.mts";
 import { parseArgs, writeJson } from "../advisors/io.mts";
@@ -50,23 +46,6 @@ export type ScenarioAdvisorResult = {
 type ScenarioEntry = {
   suites?: unknown;
   runner_requirements?: unknown;
-  dimensions?: {
-    platform?: unknown;
-    onboarding?: unknown;
-  };
-};
-
-type ScenariosFile = {
-  setup_scenarios?: Record<string, ScenarioEntry>;
-  test_plans?: Record<string, ScenarioEntry>;
-};
-
-type SuiteEntry = {
-  steps?: Array<{ script?: unknown }>;
-};
-
-type SuitesFile = {
-  suites?: Record<string, SuiteEntry>;
 };
 
 if (
@@ -305,27 +284,97 @@ function loadScenarios(root: string): Record<string, ScenarioEntry> {
     "test/e2e/nemoclaw_scenarios/scenarios.yaml",
   );
   if (!fs.existsSync(filePath)) return {};
-  const doc = yaml.load(fs.readFileSync(filePath, "utf8")) as
-    | ScenariosFile
-    | undefined;
-  return { ...(doc?.test_plans ?? {}), ...(doc?.setup_scenarios ?? {}) };
+  const text = fs.readFileSync(filePath, "utf8");
+  return {
+    ...parseScenarioSection(text, "test_plans"),
+    ...parseScenarioSection(text, "setup_scenarios"),
+  };
 }
 
 function loadSuiteScriptMap(root: string): Record<string, string[]> {
   const filePath = path.join(root, "test/e2e/validation_suites/suites.yaml");
   if (!fs.existsSync(filePath)) return {};
-  const doc = yaml.load(fs.readFileSync(filePath, "utf8")) as
-    | SuitesFile
-    | undefined;
-  const output: Record<string, string[]> = {};
-  for (const [suiteId, suite] of Object.entries(doc?.suites ?? {})) {
-    output[suiteId] = Array.isArray(suite.steps)
-      ? suite.steps
-          .map((step) => step.script)
-          .filter((script): script is string => typeof script === "string")
-      : [];
+  return parseSuiteScripts(fs.readFileSync(filePath, "utf8"));
+}
+
+function parseScenarioSection(
+  text: string,
+  sectionName: string,
+): Record<string, ScenarioEntry> {
+  const section = extractTopLevelSection(text, sectionName);
+  const scenarios: Record<string, ScenarioEntry> = {};
+  let currentId: string | undefined;
+  let inSuites = false;
+  let inRunnerRequirements = false;
+
+  for (const line of section.split(/\r?\n/)) {
+    const entryMatch = line.match(
+      /^  ([A-Za-z0-9_.-]+(?:__[A-Za-z0-9_.-]+)?):\s*$/,
+    );
+    if (entryMatch) {
+      currentId = entryMatch[1];
+      scenarios[currentId] = { suites: [], runner_requirements: [] };
+      inSuites = false;
+      inRunnerRequirements = false;
+      continue;
+    }
+    if (!currentId) continue;
+    if (/^    suites:\s*(?:\[\])?\s*$/.test(line)) {
+      inSuites = true;
+      inRunnerRequirements = false;
+      continue;
+    }
+    if (/^    runner_requirements:\s*$/.test(line)) {
+      inSuites = false;
+      inRunnerRequirements = true;
+      continue;
+    }
+    if (/^    [A-Za-z0-9_-]+:/.test(line)) {
+      inSuites = false;
+      inRunnerRequirements = false;
+      continue;
+    }
+    const listItem = line.match(/^    - ([A-Za-z0-9_.-]+)\s*$/);
+    if (listItem && inSuites) {
+      (scenarios[currentId].suites as string[]).push(listItem[1]);
+    } else if (listItem && inRunnerRequirements) {
+      (scenarios[currentId].runner_requirements as string[]).push(listItem[1]);
+    }
   }
-  return output;
+
+  return scenarios;
+}
+
+function parseSuiteScripts(text: string): Record<string, string[]> {
+  const section = extractTopLevelSection(text, "suites");
+  const suites: Record<string, string[]> = {};
+  let currentId: string | undefined;
+
+  for (const line of section.split(/\r?\n/)) {
+    const suiteMatch = line.match(/^  ([A-Za-z0-9_.-]+):\s*$/);
+    if (suiteMatch) {
+      currentId = suiteMatch[1];
+      suites[currentId] = [];
+      continue;
+    }
+    if (!currentId) continue;
+    const scriptMatch = line.match(/^      script:\s*([A-Za-z0-9_./-]+)\s*$/);
+    if (scriptMatch) suites[currentId].push(scriptMatch[1]);
+  }
+
+  return suites;
+}
+
+function extractTopLevelSection(text: string, sectionName: string): string {
+  const lines = text.split(/\r?\n/);
+  const start = lines.findIndex((line) => line === `${sectionName}:`);
+  if (start === -1) return "";
+  const sectionLines: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (/^[A-Za-z0-9_-]+:/.test(line)) break;
+    sectionLines.push(line);
+  }
+  return sectionLines.join("\n");
 }
 
 function buildSuiteToScenarios(
