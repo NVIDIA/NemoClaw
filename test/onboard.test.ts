@@ -8,6 +8,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { appendHostProxyEnvArgs } from "../dist/lib/onboard/host-proxy-env.js";
+import {
+  isValidInferenceInputsOverride,
+  maybePromptForInferenceInputCapability,
+  shouldPromptForInferenceInputCapability,
+} from "../dist/lib/onboard/inference-input-capability.js";
 import { stageOptimizedSandboxBuildContext } from "../dist/lib/sandbox/build-context.js";
 import { testTimeoutOptions } from "./helpers/timeouts";
 
@@ -32,16 +37,6 @@ type OnboardTestInternals = {
   getRequestedProviderHint: ShimFn<string | null>;
   getRequestedSandboxNameHint: ShimFn<string | null>;
   getResumeConfigConflicts: ShimFn<ResumeConflict[]>;
-  isValidInferenceInputsOverride: (value?: string) => boolean;
-  shouldPromptForInferenceInputCapability: (model?: string | null) => boolean;
-  maybePromptForInferenceInputCapability: (
-    model: string | null,
-    deps: {
-      env?: NodeJS.ProcessEnv;
-      isNonInteractive: () => boolean;
-      prompt: (message: string) => Promise<string>;
-    },
-  ) => Promise<void>;
   getResumeSandboxConflict: ShimFn<{
     requestedSandboxName: string;
     recordedSandboxName: string;
@@ -94,9 +89,6 @@ const {
   getRequestedProviderHint,
   getRequestedSandboxNameHint,
   getResumeConfigConflicts,
-  isValidInferenceInputsOverride,
-  shouldPromptForInferenceInputCapability,
-  maybePromptForInferenceInputCapability,
   getResumeSandboxConflict,
   clearAgentScopedResumeState,
   SANDBOX_BASE_IMAGE,
