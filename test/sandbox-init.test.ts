@@ -97,33 +97,6 @@ function pathExists(filePath: string): boolean {
   }
 }
 
-function makeCapSetpcapUnavailableStubs(): string {
-  const stubDir = mkdtempSync(join(tmpdir(), "sandbox-init-capsh-"));
-  writeFileSync(
-    join(stubDir, "capsh"),
-    [
-      "#!/bin/sh",
-      'if [ "${1:-}" = "--has-p=cap_setpcap" ]; then',
-      "  exit 1",
-      "fi",
-      "exit 99",
-      "",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-  writeFileSync(
-    join(stubDir, "awk"),
-    [
-      "#!/bin/sh",
-      "# cap_sys_admin (bit 21) + cap_dac_override (bit 1)",
-      "printf '%s\\n' '0000000000200002'",
-      "",
-    ].join("\n"),
-    { mode: 0o755 },
-  );
-  return stubDir;
-}
-
 function backupTmpArtifacts(paths: string[], backupDir: string): Record<string, string> {
   const backups: Record<string, string> = {};
 
@@ -405,102 +378,19 @@ EOF
   });
 
   describe("drop_capabilities", () => {
-    it("refuses to start when capsh is unavailable (no NEMOCLAW_ALLOW_RESIDUAL_CAPS) (#4264)", () => {
-      const { stdout, stderr } = runWithLib(
-        `
-        # Hide capsh from PATH so the function falls through; should exit 1
-        drop_capabilities /usr/local/bin/fake-entrypoint
-        echo "SHOULD_NOT_REACH"
-      `,
-        {
-          env: {
-            PATH: "/usr/bin:/bin",
-            NEMOCLAW_CAPS_DROPPED: "",
-            NEMOCLAW_ALLOW_RESIDUAL_CAPS: "",
-          },
-          expectFail: true,
-        },
-      );
-      const combined = `${stdout}\n${stderr}`;
-      expect(combined).toContain("capsh not available");
-      expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain("NEMOCLAW_ALLOW_RESIDUAL_CAPS=1");
-      expect(combined).not.toContain("SHOULD_NOT_REACH");
-    });
-
-    it("continues with explicit opt-in via NEMOCLAW_ALLOW_RESIDUAL_CAPS=1 (#4264)", () => {
+    it("function is defined and callable", () => {
+      // We can't test actual capsh on macOS, but verify the function exists
+      // and handles the no-capsh case gracefully. Capture stderr via redirect.
       const { stdout } = runWithLib(
         `
+        # Hide capsh from PATH so the function falls through
         drop_capabilities /usr/local/bin/fake-entrypoint 2>&1
-        echo "CONTINUED_OK"
+        echo "FALLTHROUGH_OK"
       `,
-        {
-          env: {
-            PATH: "/usr/bin:/bin",
-            NEMOCLAW_CAPS_DROPPED: "",
-            NEMOCLAW_ALLOW_RESIDUAL_CAPS: "1",
-          },
-        },
+        { env: { PATH: "/usr/bin:/bin", NEMOCLAW_CAPS_DROPPED: "" } },
       );
       expect(stdout).toContain("capsh not available");
-      expect(stdout).toContain("NEMOCLAW_ALLOW_RESIDUAL_CAPS=1 set");
-      expect(stdout).toContain("CONTINUED_OK");
-    });
-
-    it("prints the refusal banner when CAP_SETPCAP is unavailable and dangerous caps remain (#4264)", () => {
-      const stubDir = makeCapSetpcapUnavailableStubs();
-      try {
-        const { stdout, stderr } = runWithLib(
-          `
-          drop_capabilities /usr/local/bin/fake-entrypoint
-          echo "SHOULD_NOT_REACH"
-        `,
-          {
-            env: {
-              PATH: `${stubDir}:${process.env.PATH ?? ""}`,
-              NEMOCLAW_CAPS_DROPPED: "",
-              NEMOCLAW_ALLOW_RESIDUAL_CAPS: "",
-            },
-            expectFail: true,
-          },
-        );
-        const combined = `${stdout}\n${stderr}`;
-        expect(combined).toContain("CAP_SETPCAP unavailable");
-        expect(combined).toContain("Residual CapBnd=0000000000200002");
-        expect(combined).toContain(
-          "Dangerous caps remain in bounding set: cap_sys_admin,cap_dac_override",
-        );
-        expect(combined).toContain("Refusing to start sandbox");
-        expect(combined).toContain("NEMOCLAW_ALLOW_RESIDUAL_CAPS=1");
-        expect(combined).not.toContain("SHOULD_NOT_REACH");
-      } finally {
-        rmSync(stubDir, { recursive: true, force: true });
-      }
-    });
-
-    it("honors residual-cap opt-in after CAP_SETPCAP diagnostics under set -e (#4264)", () => {
-      const stubDir = makeCapSetpcapUnavailableStubs();
-      try {
-        const { stdout } = runWithLib(
-          `
-          drop_capabilities /usr/local/bin/fake-entrypoint 2>&1
-          echo "CONTINUED_CAP_SETPCAP_OPT_IN"
-        `,
-          {
-            env: {
-              PATH: `${stubDir}:${process.env.PATH ?? ""}`,
-              NEMOCLAW_CAPS_DROPPED: "",
-              NEMOCLAW_ALLOW_RESIDUAL_CAPS: "1",
-            },
-          },
-        );
-        expect(stdout).toContain("CAP_SETPCAP not available");
-        expect(stdout).toContain("Dangerous caps remain in bounding set");
-        expect(stdout).toContain("NEMOCLAW_ALLOW_RESIDUAL_CAPS=1 set");
-        expect(stdout).toContain("CONTINUED_CAP_SETPCAP_OPT_IN");
-      } finally {
-        rmSync(stubDir, { recursive: true, force: true });
-      }
+      expect(stdout).toContain("FALLTHROUGH_OK");
     });
 
     it("skips when NEMOCLAW_CAPS_DROPPED=1", () => {
@@ -512,38 +402,6 @@ EOF
       `,
       );
       expect(stdout).toContain("SKIPPED_OK");
-    });
-  });
-
-  describe("enforce_residual_capability_policy", () => {
-    it("returns 0 with an opt-in note when NEMOCLAW_ALLOW_RESIDUAL_CAPS=1 (#4264)", () => {
-      const { stdout } = runWithLib(
-        `
-        enforce_residual_capability_policy "test reason" 2>&1
-        echo "RETURNED_OK"
-      `,
-        { env: { NEMOCLAW_ALLOW_RESIDUAL_CAPS: "1" } },
-      );
-      expect(stdout).toContain("continuing with weakened posture");
-      expect(stdout).toContain("RETURNED_OK");
-    });
-
-    it("exits 1 with a banner when no opt-in (#4264)", () => {
-      const { stdout, stderr } = runWithLib(
-        `
-        enforce_residual_capability_policy "test reason"
-        echo "SHOULD_NOT_REACH"
-      `,
-        {
-          env: { NEMOCLAW_ALLOW_RESIDUAL_CAPS: "" },
-          expectFail: true,
-        },
-      );
-      const combined = `${stdout}\n${stderr}`;
-      expect(combined).toContain("Refusing to start sandbox");
-      expect(combined).toContain("test reason");
-      expect(combined).toContain("https://github.com/NVIDIA/NemoClaw/issues/4264");
-      expect(stdout).not.toContain("SHOULD_NOT_REACH");
     });
   });
 

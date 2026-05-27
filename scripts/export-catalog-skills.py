@@ -4,7 +4,7 @@
 """Export catalog-safe NemoClaw skills to the NVSkills watched directory.
 
 The repository source of truth remains `.agents/skills/`. This script copies the
-checked-in allowlist from `.agents/catalog-skills.yaml` into `skills/nemoclaw/`
+checked-in allowlist from `.agents/catalog-skills.yaml` into `skills/`
 using deterministic ordering and metadata so CI can detect stale or hand-edited
 catalog exports.
 """
@@ -133,7 +133,7 @@ def load_config(path: Path) -> CatalogConfig:
         raise ValueError(f"{repo_path(path)} version must be 1")
 
     source = Path(str(raw.get("source", ".agents/skills")))
-    export = Path(str(raw.get("export", "skills/nemoclaw")))
+    export = Path(str(raw.get("export", "skills")))
     for label, candidate in (("source", source), ("export", export)):
         if candidate.is_absolute() or ".." in candidate.parts:
             raise ValueError(f"{repo_path(path)} {label} must be a safe relative path")
