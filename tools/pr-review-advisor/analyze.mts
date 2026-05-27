@@ -727,9 +727,6 @@ export function buildPromptTurns({
 
 Use this turn to understand the patch, changed surfaces, prior advisor review, overlapping PRs/issues, drift evidence, and monolith growth. Inspect repository files with read-only tools when useful. Do not produce final JSON yet; reply with concise working notes only.
 
-Set these final-result fields exactly later:
-${metadataFields}
-
 Drift-focused deterministic context gathered by trusted code:
 \`\`\`json
 ${driftContext}
