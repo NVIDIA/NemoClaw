@@ -207,8 +207,12 @@ describe("PR review advisor", () => {
       "synthesize-json",
     ]);
     expect(turns).toHaveLength(4);
-    expect(turns[0]?.prompt).toContain("Do not produce final JSON yet");
+    expect(turns[0]?.prompt).toContain("Drift-focused deterministic context");
+    expect(turns[0]?.prompt).not.toContain("localizedPatchSignals");
+    expect(turns[1]?.prompt).toContain("Security-focused deterministic context");
     expect(turns[1]?.prompt).toContain("sandbox escape");
+    expect(turns[2]?.prompt).toContain("Acceptance/correctness/source-of-truth context");
+    expect(turns[2]?.prompt).toContain("localizedPatchSignals");
     expect(turns[2]?.prompt).toContain("source-of-truth questions");
     expect(turns[3]?.prompt).toContain("<pr_review_advisor_json>");
   });

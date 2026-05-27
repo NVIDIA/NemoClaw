@@ -723,20 +723,22 @@ export function buildPromptTurns({
   schema: Record<string, unknown>;
 }): AdvisorPromptTurn[] {
   const metadataFields = exactMetadataFields(metadata);
-  const deterministicContext = JSON.stringify(metadata.deterministic, null, 2);
+  const driftContext = JSON.stringify(buildDriftTurnContext(metadata.deterministic), null, 2);
+  const securityContext = JSON.stringify(buildSecurityTurnContext(metadata.deterministic), null, 2);
+  const validationContext = JSON.stringify(buildValidationTurnContext(metadata.deterministic), null, 2);
   return [
     {
       name: "orient-drift",
       prompt: `Turn 1/4 — orient on the PR and codebase drift.
 
-Use this turn to understand the patch, changed surfaces, prior advisor review, overlapping PRs/issues, drift evidence, monolith growth, and localized-patch signals. Inspect repository files with read-only tools when useful. Do not produce final JSON yet; reply with concise working notes only.
+Use this turn to understand the patch, changed surfaces, prior advisor review, overlapping PRs/issues, drift evidence, and monolith growth. Inspect repository files with read-only tools when useful. Do not produce final JSON yet; reply with concise working notes only.
 
 Set these final-result fields exactly later:
 ${metadataFields}
 
-Deterministic context gathered by trusted code:
+Drift-focused deterministic context gathered by trusted code:
 \`\`\`json
-${deterministicContext}
+${driftContext}
 \`\`\`
 
 Git diff, truncated if large:
@@ -751,6 +753,11 @@ ${diff || "<no diff available>"}
 
 Apply the trusted NemoClaw security-review rubric to the already-provided diff and any nearby files you need to inspect. Focus on sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, workflow trusted-code boundaries, unsafe shell/string execution, and auth/authorization regressions.
 
+Security-focused deterministic context gathered by trusted code:
+\`\`\`json
+${securityContext}
+\`\`\`
+
 Use the trusted security review skill embedded in the system prompt. For each security category, decide PASS/WARNING/FAIL with evidence. Do not produce final JSON yet; reply with concise working notes only.
 `,
     },
@@ -759,6 +766,11 @@ Use the trusted security review skill embedded in the system prompt. For each se
       prompt: `Turn 3/4 — acceptance, correctness, test depth, and source-of-truth review.
 
 Using the same PR context, inspect linked issue clauses and comments from the deterministic GitHub context when available. Map each acceptance clause to diff/test evidence. Review correctness risks, negative-path coverage, mocked boundaries, runtime-validation needs, and documentation/source-of-truth drift. For any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior, answer the source-of-truth questions from the system rubric.
+
+Acceptance/correctness/source-of-truth context gathered by trusted code:
+\`\`\`json
+${validationContext}
+\`\`\`
 
 Do not produce final JSON yet; reply with concise working notes only.
 `,
@@ -779,6 +791,37 @@ ${JSON.stringify(schema)}
 `,
     },
   ];
+}
+
+function buildDriftTurnContext(context: DeterministicReviewContext): Record<string, unknown> {
+  return {
+    diffStat: context.diffStat,
+    commits: context.commits,
+    riskyAreas: context.riskyAreas,
+    workflowSignals: context.workflowSignals,
+    monolithDeltas: context.monolithDeltas,
+    driftEvidence: context.driftEvidence,
+    previousAdvisorReview: context.previousAdvisorReview,
+    openPrOverlaps: context.github?.openPrOverlaps ?? [],
+  };
+}
+
+function buildSecurityTurnContext(context: DeterministicReviewContext): Record<string, unknown> {
+  return {
+    riskyAreas: context.riskyAreas,
+    workflowSignals: context.workflowSignals,
+  };
+}
+
+function buildValidationTurnContext(context: DeterministicReviewContext): Record<string, unknown> {
+  return {
+    testDepth: context.testDepth,
+    localizedPatchSignals: context.localizedPatchSignals,
+    previousAdvisorReview: context.previousAdvisorReview,
+    pullRequest: context.github?.pullRequest ?? null,
+    linkedIssues: context.github?.linkedIssues ?? [],
+    githubFetchError: context.github?.fetchError,
+  };
 }
 
 export function writePromptArtifacts({
