@@ -5434,6 +5434,63 @@ async function setupNim(
 
 // ── Step 4: Inference provider ───────────────────────────────────
 
+// Wraps `openshell inference set` for local providers (ollama-local, vllm-local)
+// with the same retry/recovery surface as the remote-provider path. Without this,
+// a nonzero exit from `openshell inference set` propagates through runOpenshell
+// and calls process.exit() directly, which terminates onboarding mid-step with no
+// context — onboarding appears to stop silently after the [4/8] warning. See #4257.
+async function applyLocalInferenceRoute({
+  provider,
+  model,
+  label,
+}: {
+  provider: string;
+  model: string;
+  label: string;
+}): Promise<{ ok: true; retry?: undefined } | { retry: "selection" }> {
+  const args = [
+    "inference",
+    "set",
+    "--no-verify",
+    "--provider",
+    provider,
+    "--model",
+    model,
+    "--timeout",
+    String(LOCAL_INFERENCE_TIMEOUT_SECS),
+  ];
+  while (true) {
+    const applyResult = runOpenshell(args, { ignoreError: true });
+    if (applyResult.status === 0) {
+      return { ok: true };
+    }
+    const detail =
+      compactText(redact(`${applyResult.stderr || ""} ${applyResult.stdout || ""}`)) ||
+      `Failed to configure inference provider '${provider}'.`;
+    console.error(`  ${detail}`);
+    if (isNonInteractive()) {
+      // Only surface the resume guidance when we are actually about to exit —
+      // printing it on every interactive retry is misleading because the user
+      // is still inside an active onboard run.
+      console.error(
+        "  No sandbox was created. Fix the inference route and re-run " +
+          "`nemoclaw onboard --resume` to continue, or choose a different provider/model.",
+      );
+      process.exit(applyResult.status || 1);
+    }
+    const retry = await promptValidationRecovery(
+      label,
+      classifyApplyFailure(detail),
+      null,
+      null,
+    );
+    if (retry === "credential" || retry === "retry") {
+      continue;
+    }
+    return { retry: "selection" };
+  }
+}
+
 async function setupInference(
   sandboxName: string | null,
   model: string,
@@ -5671,17 +5728,12 @@ async function setupInference(
       console.error(`  ${providerResult.message}`);
       process.exit(providerResult.status || 1);
     }
-    runOpenshell([
-      "inference",
-      "set",
-      "--no-verify",
-      "--provider",
-      "vllm-local",
-      "--model",
+    const vllmSetResult = await applyLocalInferenceRoute({
+      provider: "vllm-local",
       model,
-      "--timeout",
-      String(LOCAL_INFERENCE_TIMEOUT_SECS),
-    ]);
+      label: "Local vLLM",
+    });
+    if (vllmSetResult.retry === "selection") return { retry: "selection" };
     // Do not mutate ~/.nemoclaw/credentials.json here: local vLLM now uses
     // VLLM_LOCAL_CREDENTIAL_ENV, so any saved OPENAI_API_KEY remains available
     // to unrelated OpenAI-backed sandboxes.
@@ -5753,17 +5805,12 @@ async function setupInference(
       console.error(`  ${providerResult.message}`);
       process.exit(providerResult.status || 1);
     }
-    runOpenshell([
-      "inference",
-      "set",
-      "--no-verify",
-      "--provider",
-      "ollama-local",
-      "--model",
+    const ollamaSetResult = await applyLocalInferenceRoute({
+      provider: "ollama-local",
       model,
-      "--timeout",
-      String(LOCAL_INFERENCE_TIMEOUT_SECS),
-    ]);
+      label: "Local Ollama",
+    });
+    if (ollamaSetResult.retry === "selection") return { retry: "selection" };
     console.log(`  Priming Ollama model: ${model}`);
     run(getOllamaWarmupCommand(model), { ignoreError: true });
     const probe = validateOllamaModel(model);
