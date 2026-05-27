@@ -4,7 +4,8 @@
 
 You can run NemoClaw inside Windows Subsystem for Linux (WSL 2) on Windows.
 Complete these steps before following the Quickstart (use the `nemoclaw-user-get-started` skill).
-Linux and macOS users do not need this page and can go directly to the Quickstart.
+Linux users do not need this page and can go directly to the Quickstart.
+macOS users should use the macOS preparation guide (use the `nemoclaw-user-get-started` skill).
 
 **Note:**
 

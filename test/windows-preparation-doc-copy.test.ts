@@ -10,6 +10,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..");
 const windowsPreparationDoc = path.join(repoRoot, "docs", "get-started", "windows-preparation.mdx");
+const macosPreparationDoc = path.join(repoRoot, "docs", "get-started", "macos-preparation.mdx");
 const contributingDoc = path.join(repoRoot, "docs", "CONTRIBUTING.md");
 const codeRabbitConfig = path.join(repoRoot, ".coderabbit.yaml");
 const contributorUpdateDocsSkill = path.join(
@@ -91,5 +92,25 @@ describe("Windows preparation docs copyable commands", () => {
         ).not.toMatch(pattern);
       }
     }
+  });
+});
+
+describe("macOS preparation docs copyable commands", () => {
+  it("uses bash command blocks without prompt prefixes", () => {
+    const markdown = fs.readFileSync(macosPreparationDoc, "utf8");
+    const blocks = collectFencedBlocks(markdown);
+    const promptLines = blocks.flatMap((block) =>
+      block.lines
+        .map((line, offset) => ({ line, lineNumber: block.line + offset + 1 }))
+        .filter(({ line }) => /^\s*\$ /.test(line))
+        .map(
+          ({ line, lineNumber }) =>
+            `${path.relative(repoRoot, macosPreparationDoc)}:${lineNumber}: ${line}`,
+        ),
+    );
+    const languages = new Set(blocks.map((block) => block.language));
+
+    expect(promptLines).toEqual([]);
+    expect(languages.has("bash")).toBe(true);
   });
 });

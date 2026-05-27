@@ -65,5 +65,6 @@ The table is generated from [`ci/platform-matrix.json`](https://github.com/NVIDI
 
 ## Next Steps
 
+- Prepare macOS for NemoClaw (use the `nemoclaw-user-get-started` skill) if you are using macOS.
 - Prepare Windows for NemoClaw (use the `nemoclaw-user-get-started` skill) if you are using Windows.
 - Quickstart (use the `nemoclaw-user-get-started` skill) to install NemoClaw and launch your first sandbox.

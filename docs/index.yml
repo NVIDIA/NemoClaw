@@ -28,6 +28,9 @@ navigation:
         path: get-started/prerequisites.mdx
         slug: prerequisites
         contents:
+          - page: "(macOS Only) macOS Prerequisites"
+            path: get-started/macos-preparation.mdx
+            slug: macos-preparation
           - page: "(Windows Only) Windows Prerequisites"
             path: get-started/windows-preparation.mdx
             slug: windows-preparation
