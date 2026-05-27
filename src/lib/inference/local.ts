@@ -903,6 +903,7 @@ export function validateOllamaModel(
   runCaptureImpl?: RunCaptureFn,
   isSparkImpl?: () => boolean,
   runCaptureExImpl?: RunCaptureExFn,
+  options: { allowToolsIncompatible?: boolean } = {},
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
   const captureEx = runCaptureExImpl ?? runCaptureEx;
@@ -932,6 +933,16 @@ export function validateOllamaModel(
     if (parsed && typeof parsed.error === "string" && parsed.error.trim()) {
       const errText = parsed.error.trim();
       if (/does not support tools/i.test(errText)) {
+        if (options.allowToolsIncompatible === true) {
+          // The user (or NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 / --yes) already
+          // accepted that this model lacks tool calling. Don't loop back to
+          // model selection for the same condition — see issue #4241.
+          console.warn(
+            `  ⚠ Ollama model '${model}' confirmed not to support tools; ` +
+              `continuing because the no-tools override was accepted.`,
+          );
+          return { ok: true };
+        }
         return {
           ok: false,
           message:

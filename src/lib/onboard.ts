@@ -4108,7 +4108,7 @@ const { readLiveInference, readRecordedProvider, readRecordedNimContainer, readR
   });
 
 type OllamaModelSelectionOutcome =
-  | { outcome: "selected"; model: string }
+  | { outcome: "selected"; model: string; allowToolsIncompatible?: boolean }
   | { outcome: "back-to-selection" };
 
 // Pick an Ollama model, pull it if missing, and validate it via the local
@@ -4171,6 +4171,7 @@ async function selectAndValidateOllamaModel(
       console.log("");
       continue;
     }
+    const allowToolsIncompatible = probe.allowToolsIncompatible === true;
     const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
     if (!validationBaseUrl)
       abortNonInteractive("Local Ollama validation URL could not be determined.");
@@ -4183,7 +4184,7 @@ async function selectAndValidateOllamaModel(
       null,
       {
         skipResponsesProbe: true,
-        requireChatCompletionsToolCalling: process.env.NEMOCLAW_OLLAMA_REQUIRE_TOOLS !== "0",
+        requireChatCompletionsToolCalling: !allowToolsIncompatible,
         allowHostDockerInternal:
           localInference.getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
       },
@@ -4200,7 +4201,7 @@ async function selectAndValidateOllamaModel(
         "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
       );
     }
-    return { outcome: "selected", model: selectedModel };
+    return { outcome: "selected", model: selectedModel, allowToolsIncompatible };
   }
 }
 
@@ -4217,6 +4218,7 @@ async function setupNim(
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   nimContainer: string | null;
+  allowToolsIncompatible: boolean;
 }> {
   step(3, 8, "Configuring inference provider");
 
@@ -4228,6 +4230,7 @@ async function setupNim(
   let hermesAuthMethod: HermesAuthMethod | null = null;
   let hermesToolGateways: string[] = [];
   let preferredInferenceApi: string | null = null;
+  let allowToolsIncompatible = false;
 
   // Detect local inference options. Bound curl with --connect-timeout/--max-time
   // so a half-open port or stalled listener cannot hang the onboard at step 3
@@ -5143,6 +5146,7 @@ async function setupNim(
           });
           if (result.outcome === "back-to-selection") continue selectionLoop;
           model = result.model;
+          allowToolsIncompatible = result.allowToolsIncompatible === true;
           preferredInferenceApi = "openai-completions";
         }
         break;
@@ -5229,6 +5233,7 @@ async function setupNim(
             continue selectionLoop;
           }
           model = result.model;
+          allowToolsIncompatible = result.allowToolsIncompatible === true;
           preferredInferenceApi = "openai-completions";
         }
         break;
@@ -5271,6 +5276,7 @@ async function setupNim(
           });
           if (result.outcome === "back-to-selection") continue selectionLoop;
           model = result.model;
+          allowToolsIncompatible = result.allowToolsIncompatible === true;
           preferredInferenceApi = "openai-completions";
         }
         break;
@@ -5428,6 +5434,7 @@ async function setupNim(
     hermesToolGateways,
     preferredInferenceApi,
     nimContainer,
+    allowToolsIncompatible,
   };
 }
 
@@ -5441,6 +5448,7 @@ async function setupInference(
   credentialEnv: string | null = null,
   hermesAuthMethod: HermesAuthMethod | string | null = null,
   hermesToolGateways: string[] = [],
+  options: { allowToolsIncompatible?: boolean } = {},
 ): Promise<{ ok: true; retry?: undefined } | { retry: "selection" }> {
   step(4, 8, "Setting up inference provider");
   runOpenshell(["gateway", "select", GATEWAY_NAME], { ignoreError: true });
@@ -5765,7 +5773,9 @@ async function setupInference(
     ]);
     console.log(`  Priming Ollama model: ${model}`);
     run(getOllamaWarmupCommand(model), { ignoreError: true });
-    const probe = validateOllamaModel(model);
+    const probe = validateOllamaModel(model, undefined, undefined, undefined, {
+      allowToolsIncompatible: options.allowToolsIncompatible === true,
+    });
     if (!probe.ok) {
       console.error(`  ${probe.message}`);
       process.exit(1);
