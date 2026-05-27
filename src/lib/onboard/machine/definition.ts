@@ -45,7 +45,6 @@ export const ONBOARD_MACHINE_STATE_DEFINITIONS = [
     state: "agent_setup",
     terminal: false,
     stepName: "agent_setup",
-    progress: { number: 7, total: 8, title: "Setting up agent inside sandbox" },
   },
   {
     state: "openclaw",
