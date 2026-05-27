@@ -133,6 +133,13 @@ on:
         required: false
         type: string
         default: ""
+      post_to_slack:
+        description: >-
+          Force the scorecard Slack notification on this manual dispatch.
+          Schedule runs always post; dispatch runs opt in via this flag.
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -2149,6 +2156,13 @@ jobs:
     permissions:
       actions: read
     steps:
+      - name: Checkout scorecard builder
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          sparse-checkout: |
+            scripts/scorecard
+          sparse-checkout-cone-mode: false
+
       - name: Generate nightly scorecard
         id: scorecard
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -2270,8 +2284,8 @@ jobs:
               `**Jobs run:** ${ran} of ${total}`,
               `  ✅ ${success} passed`,
               `  ❌ ${failure} failed`,
-              `  ⊘  ${cancelled} cancelled`,
-              `  ⏭️  ${skipped} skipped`,
+              `  🚫 ${cancelled} cancelled`,
+              `  ⏭️ ${skipped} skipped`,
             );
 
             if (failedJobs.length > 0) {
@@ -2297,13 +2311,39 @@ jobs:
             await core.summary.write();
             core.setOutput('scorecard', scorecard);
 
-      # ── Optional Slack notification ────────────────────────────
+            // Structured data for the Slack step.
+            // Contract: scripts/scorecard/build-slack-blocks.js
+            core.setOutput('scorecardData', JSON.stringify({
+              today,
+              runMode,
+              isSelectiveDispatch,
+              requestedJobs,
+              total,
+              ran,
+              success,
+              failure,
+              cancelled,
+              skipped,
+              perfect,
+              failedJobs,
+              trendLine,
+              runUrl,
+            }));
+
+      # ── Slack notification ────────────────────────────
+      # Schedule runs always post. Manual dispatches must opt in via the
+      # `post_to_slack` input to avoid spamming the channel while testing.
       - name: Post scorecard to Slack
-        if: ${{ steps.scorecard.outputs.scorecard != '' }}
+        if: >-
+          ${{ steps.scorecard.outputs.scorecardData != ''
+            && (github.event_name == 'schedule'
+              || (github.event_name == 'workflow_dispatch' && inputs.post_to_slack)) }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          SCORECARD_TEXT: ${{ steps.scorecard.outputs.scorecard }}
+          # To promote from preview to production, swap the right-hand
+          # secret to `secrets.SLACK_WEBHOOK_URL`. Keep the left-hand name.
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL_PREVIEW }}
+          SCORECARD_DATA: ${{ steps.scorecard.outputs.scorecardData }}
         with:
           script: |
             const webhookUrl = process.env.SLACK_WEBHOOK_URL;
@@ -2312,18 +2352,27 @@ jobs:
               return;
             }
 
-            const scorecard = process.env.SCORECARD_TEXT;
+            const path = require('path');
+            const { buildBlocks, buildFallbackText, getStatusColor } = require(
+              path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.js'),
+            );
 
-            // Strip markdown formatting for Slack plain-text rendering
-            const slackText = scorecard
-              .replace(/^## /gm, '')
-              .replace(/\*\*/g, '*')
-              .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<$2|$1>');
+            const data = JSON.parse(process.env.SCORECARD_DATA);
+            // Legacy attachment wrapper enables the coloured left-edge bar.
+            const payload = {
+              text: buildFallbackText(data),
+              attachments: [
+                {
+                  color: getStatusColor(data),
+                  blocks: buildBlocks(data),
+                },
+              ],
+            };
 
             const resp = await fetch(webhookUrl, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ text: slackText }),
+              body: JSON.stringify(payload),
             });
 
             if (!resp.ok) {
