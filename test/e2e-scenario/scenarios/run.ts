@@ -1,24 +1,55 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import { compileRunPlans, renderPlanText, writePlanArtifacts } from "./compiler.ts";
 import { ScenarioRunner } from "./orchestrators/runner.ts";
 import { listScenarios } from "./registry.ts";
+import { resolveRunnerForScenario } from "./runner-routing.ts";
+import type { ScenarioDefinition } from "./types.ts";
 
 interface Args {
   list: boolean;
   planOnly: boolean;
   dryRun: boolean;
   validateOnly: boolean;
+  emitMatrix: boolean;
   scenarios: string[];
 }
 
+/**
+ * Shape of a single GitHub Actions matrix `include` entry emitted by
+ * `--emit-matrix`. The fields are kept short and JSON-stable so the consuming
+ * workflow can reference them as `${{ matrix.id }}`, `${{ matrix.runner }}`,
+ * etc. without further parsing.
+ */
+export interface ScenarioMatrixEntry {
+  id: string;
+  runner: string;
+  label: string;
+  platform: string;
+  suites: string[];
+}
+
 function parseArgs(argv: string[]): Args {
-  const args: Args = { list: false, planOnly: false, dryRun: false, validateOnly: false, scenarios: [] };
+  const args: Args = {
+    list: false,
+    planOnly: false,
+    dryRun: false,
+    validateOnly: false,
+    emitMatrix: false,
+    scenarios: [],
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
     if (arg === "--list") {
       args.list = true;
+      continue;
+    }
+    if (arg === "--emit-matrix") {
+      args.emitMatrix = true;
       continue;
     }
     if (arg === "--plan-only") {
@@ -54,10 +85,54 @@ function printList() {
   }
 }
 
+function buildLabel(scenario: ScenarioDefinition): string {
+  const platform = scenario.environment?.platform ?? "unknown-platform";
+  const suites = scenario.suiteIds ?? [];
+  if (scenario.expectedFailure) {
+    const cls = scenario.expectedFailure.errorClass ?? "expected-failure";
+    return `${platform} \u00b7 ${scenario.id} \u00b7 expect-fail:${cls}`;
+  }
+  if (suites.length === 0) {
+    return `${platform} \u00b7 ${scenario.id}`;
+  }
+  if (suites.length <= 3) {
+    return `${platform} \u00b7 ${scenario.id} \u00b7 ${suites.join("+")}`;
+  }
+  return `${platform} \u00b7 ${scenario.id} \u00b7 ${suites.length} suites`;
+}
+
+/**
+ * Build the GitHub Actions matrix for every scenario in the typed registry.
+ * Sorted by id so workflow runs are deterministic and diffable.
+ */
+export function buildScenarioMatrix(): ScenarioMatrixEntry[] {
+  return listScenarios().map((scenario): ScenarioMatrixEntry => {
+    const { runner } = resolveRunnerForScenario(scenario);
+    return {
+      id: scenario.id,
+      runner,
+      label: buildLabel(scenario),
+      platform: scenario.environment?.platform ?? "unknown",
+      suites: scenario.suiteIds ?? [],
+    };
+  });
+}
+
+function emitMatrix() {
+  // Single line so GHA's `$GITHUB_OUTPUT` can consume it via
+  //   echo "matrix=$(npx tsx ... --emit-matrix)" >> "$GITHUB_OUTPUT"
+  // without needing heredoc multi-line output handling.
+  process.stdout.write(`${JSON.stringify(buildScenarioMatrix())}\n`);
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.list) {
     printList();
+    return;
+  }
+  if (args.emitMatrix) {
+    emitMatrix();
     return;
   }
 
@@ -86,9 +161,25 @@ async function main() {
   }
 }
 
-try {
-  await main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
+// Only execute when invoked directly as a script. Importing this module from
+// tests (e.g. `buildScenarioMatrix`) must not trigger the CLI side-effects.
+// Compare via realpath so symlinked paths (e.g. `/tmp` -> `/private/tmp` on
+// macOS) still resolve as equal.
+function isInvokedDirectly(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isInvokedDirectly()) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  }
 }

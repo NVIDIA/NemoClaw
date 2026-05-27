@@ -1,15 +1,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
-# Scenario-based E2E fan-out. Runs every setup scenario from the current
-# migration catalog by calling the single-scenario runner workflow.
+# Scenario-based E2E fan-out. Generates the job matrix from the typed
+# scenario registry (`test/e2e-scenario/scenarios/registry.ts`) so that
+# adding a scenario in `baseline.ts` automatically produces a tile here on
+# the next run -- no workflow edits required.
 #
-# Each child job passes its scenario id through the called workflow's
-# `scenarios` input (comma-separated; one id here per child). The legacy
-# per-call `suite_filter` input was retired when the runner moved to a
-# typed scenario contract, so this fan-out no longer accepts a fan-out-wide
-# suite filter; if per-suite scoping is needed in the future, route it
-# through `e2e-scenarios.yaml` directly with a custom scenario list.
+# The single-scenario runner workflow `e2e-scenarios.yaml` remains the
+# authoritative execution path; this file just fans out one call per
+# scenario id with the runner label resolved by `--emit-matrix`.
 
 name: E2E / Scenario Runner / All
 
@@ -24,51 +23,63 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  ubuntu-repo-cloud-openclaw:
-    uses: ./.github/workflows/e2e-scenarios.yaml
-    with:
-      scenarios: ubuntu-repo-cloud-openclaw
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+  generate-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.emit.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
-  ubuntu-repo-cloud-hermes:
-    uses: ./.github/workflows/e2e-scenarios.yaml
-    with:
-      scenarios: ubuntu-repo-cloud-hermes
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      - name: Set up Node
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.0.0
+        with:
+          node-version: 22
+          cache: npm
 
-  gpu-repo-local-ollama-openclaw:
-    uses: ./.github/workflows/e2e-scenarios.yaml
-    with:
-      scenarios: gpu-repo-local-ollama-openclaw
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      - name: Install root dependencies
+        run: npm ci --ignore-scripts
 
-  macos-repo-cloud-openclaw:
-    uses: ./.github/workflows/e2e-scenarios.yaml
-    with:
-      scenarios: macos-repo-cloud-openclaw
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      - id: emit
+        name: Emit scenario matrix from typed registry
+        run: |
+          set -euo pipefail
+          matrix="$(npx tsx test/e2e-scenario/scenarios/run.ts --emit-matrix)"
+          # Sanity-check that the output is non-empty JSON before handing it
+          # to GHA, so a registry error fails this job loudly instead of
+          # producing zero matrix tiles.
+          if [ -z "${matrix}" ] || [ "${matrix}" = "[]" ]; then
+            echo "::error::scenario matrix is empty; check typed registry" >&2
+            exit 1
+          fi
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
 
-  wsl-repo-cloud-openclaw:
-    uses: ./.github/workflows/e2e-scenarios.yaml
-    with:
-      scenarios: wsl-repo-cloud-openclaw
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      - name: Render matrix summary
+        env:
+          MATRIX_JSON: ${{ steps.emit.outputs.matrix }}
+        run: |
+          {
+            echo '## E2E scenario matrix'
+            echo ''
+            echo '| Scenario | Runner | Label |'
+            echo '| --- | --- | --- |'
+            python3 - <<'PY'
+          import json, os
+          for e in json.loads(os.environ["MATRIX_JSON"]):
+              print(f"| `{e['id']}` | {e['runner']} | {e['label']} |")
+          PY
+          } >> "$GITHUB_STEP_SUMMARY"
 
-  brev-launchable-cloud-openclaw:
+  run-scenario:
+    needs: generate-matrix
+    name: ${{ matrix.label }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.generate-matrix.outputs.matrix) }}
     uses: ./.github/workflows/e2e-scenarios.yaml
     with:
-      scenarios: brev-launchable-cloud-openclaw
-    secrets:
-      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
-
-  ubuntu-no-docker-preflight-negative:
-    uses: ./.github/workflows/e2e-scenarios.yaml
-    with:
-      scenarios: ubuntu-no-docker-preflight-negative
+      scenarios: ${{ matrix.id }}
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
