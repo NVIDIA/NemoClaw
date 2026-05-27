@@ -8,24 +8,39 @@
 // without a real NemoClaw installation.
 //
 // Usage:
-//   node scripts/dev-tier-selector.js
+//   npx tsx scripts/dev-tier-selector.ts
 //
 // This script is intentionally not part of the vitest suite. For automated coverage
 // of this flow see test/policy-tiers-onboard.test.js.
 
-"use strict";
+import { createRequire } from "node:module";
+import readline from "node:readline";
 
-const readline = require("readline");
+const require = createRequire(import.meta.url);
+
+type MutableCredentials = typeof import("../dist/lib/credentials/store.js") & {
+  ensureApiKey: () => Promise<{ kind: "credential"; value: string }>;
+  prompt: (message: string) => Promise<string>;
+};
+type MutableRunner = typeof import("../dist/lib/runner.js");
+type MutableRegistry = typeof import("../dist/lib/state/registry.js");
+type OnboardUi = {
+  selectPolicyTier: () => Promise<string>;
+  selectTierPresetsAndAccess: (tierName: string, allPresets: unknown[]) => Promise<unknown>;
+};
+type PolicyModule = {
+  listPresets: () => unknown[];
+};
 
 // ── Stubs ──────────────────────────────────────────────────────────────────
-const creds = require("../dist/lib/credentials/store.js");
-const runner = require("../dist/lib/runner.js");
-const registry = require("../dist/lib/state/registry.js");
+const creds = require("../dist/lib/credentials/store.js") as MutableCredentials;
+const runner = require("../dist/lib/runner.js") as MutableRunner;
+const registry = require("../dist/lib/state/registry.js") as MutableRegistry;
 
 creds.ensureApiKey = async () => ({ kind: "credential", value: "dev-tier-selector" });
 creds.getCredential = () => null;
-creds.prompt = (msg) =>
-  new Promise((resolve) => {
+creds.prompt = (msg: string) =>
+  new Promise<string>((resolve) => {
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     rl.question(msg, (answer) => {
       rl.close();
@@ -50,12 +65,9 @@ registry.registerSandbox = () => true;
 registry.updateSandbox = () => true;
 
 // ── Run ────────────────────────────────────────────────────────────────────
-const onboard = /** @type {{
- *   selectPolicyTier: () => Promise<string>;
- *   selectTierPresetsAndAccess: (tierName: string, allPresets: unknown[]) => Promise<unknown>;
- * }} */ (require("../dist/lib/onboard.js"));
-const { selectPolicyTier, selectTierPresetsAndAccess } = onboard;
-const policies = require("../dist/lib/policy/index.js");
+const { selectPolicyTier, selectTierPresetsAndAccess } =
+  require("../dist/lib/onboard.js") as OnboardUi;
+const policies = require("../dist/lib/policy/index.js") as PolicyModule;
 
 (async () => {
   const tier = await selectPolicyTier();
@@ -64,7 +76,7 @@ const policies = require("../dist/lib/policy/index.js");
   const allPresets = policies.listPresets();
   const resolved = await selectTierPresetsAndAccess(tier, allPresets);
   console.log("\nResolved presets:", resolved);
-})().catch((err) => {
+})().catch((err: unknown) => {
   console.error(err);
   process.exit(1);
 });

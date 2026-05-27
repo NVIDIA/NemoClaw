@@ -3,20 +3,42 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 import { parse } from "yaml";
 
-const repoRoot = path.resolve(new URL("..", import.meta.url).pathname);
+type Metadata = Record<string, unknown>;
+type DirectiveComponent = {
+  name: string;
+  title: string;
+};
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const docsRoot = path.join(repoRoot, "docs");
 
-const skipFiles = new Set(["CONTRIBUTING.md", "index.md"]);
-const skipDirs = new Set([]);
+const skipFiles = new Set<string>(["CONTRIBUTING.md", "index.md"]);
+const skipDirs = new Set<string>();
 
-const esc = (value) => JSON.stringify(String(value ?? ""));
-const scalar = (value) =>
+const esc = (value: unknown): string => JSON.stringify(String(value ?? ""));
+const scalar = (value: unknown): string =>
   typeof value === "number" || typeof value === "boolean" ? String(value) : esc(value);
-const inlineList = (values) => `[${values.map((value) => esc(value)).join(", ")}]`;
+const inlineList = (values: unknown[]): string =>
+  `[${values.map((value) => esc(value)).join(", ")}]`;
 
-function walk(dir) {
+function isRecord(value: unknown): value is Metadata {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function nestedValue(metadata: Metadata, key: string, nestedKey: string): unknown {
+  const value = metadata[key];
+  return isRecord(value) ? value[nestedKey] : undefined;
+}
+
+function firstPresent(...values: unknown[]): unknown {
+  return values.find((value) => value !== undefined && value !== null && value !== "");
+}
+
+function walk(dir: string): string[] {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   return entries.flatMap((entry) => {
     const fullPath = path.join(dir, entry.name);
@@ -27,29 +49,48 @@ function walk(dir) {
   });
 }
 
-function splitFrontmatter(text) {
+function splitFrontmatter(text: string): [Metadata, string] {
   const match = /^---\n([\s\S]*?)\n---\n?/.exec(text);
   if (!match) {
     return [{}, text];
   }
-  return [parse(match[1]) ?? {}, text.slice(match[0].length)];
+  const parsed = parse(match[1]) ?? {};
+  return [isRecord(parsed) ? parsed : {}, text.slice(match[0].length)];
 }
 
-function titleFromBody(body, fallback) {
+function titleFromBody(body: string, fallback: string): string {
   const heading = body.match(/^#\s+(.+)$/m);
   return heading ? heading[1].trim() : fallback;
 }
 
-function frontmatterFor(sourcePath, metadata, body) {
-  const title =
-    metadata.title?.page ?? metadata.title ?? titleFromBody(body, path.basename(sourcePath, ".md"));
-  const sidebarTitle = metadata.title?.nav ?? metadata["sidebar-title"];
-  const description = metadata.description?.main ?? metadata.description ?? "";
-  const descriptionAgent =
-    metadata.description?.agent ?? metadata["description-agent"] ?? metadata.description_agent ?? "";
+function frontmatterFor(sourcePath: string, metadata: Metadata, body: string): string {
+  const titleMetadata = metadata.title;
+  const title = firstPresent(
+    isRecord(titleMetadata) ? titleMetadata.page : titleMetadata,
+    titleFromBody(body, path.basename(sourcePath, ".md")),
+  );
+  const sidebarTitle = firstPresent(
+    nestedValue(metadata, "title", "nav"),
+    metadata["sidebar-title"],
+  );
+  const description = firstPresent(
+    nestedValue(metadata, "description", "main"),
+    metadata.description,
+    "",
+  );
+  const descriptionAgent = firstPresent(
+    nestedValue(metadata, "description", "agent"),
+    metadata["description-agent"],
+    metadata.description_agent,
+    "",
+  );
   const keywords = metadata.keywords;
-  const contentType = metadata.content?.type ?? "";
-  const skillPriority = metadata.skill?.priority ?? metadata.skill_priority ?? "";
+  const contentType = firstPresent(nestedValue(metadata, "content", "type"), "");
+  const skillPriority = firstPresent(
+    nestedValue(metadata, "skill", "priority"),
+    metadata.skill_priority,
+    "",
+  );
 
   const lines = [
     "---",
@@ -79,7 +120,7 @@ function frontmatterFor(sourcePath, metadata, body) {
   return lines.join("\n");
 }
 
-function stripInitialH1(body) {
+function stripInitialH1(body: string): string {
   const lines = body.split("\n");
   const index = lines.findIndex((line) => line.trim() !== "");
   if (index >= 0 && /^#\s+/.test(lines[index])) {
@@ -91,18 +132,21 @@ function stripInitialH1(body) {
   return lines.join("\n");
 }
 
-function stripSpdxComment(body) {
+function stripSpdxComment(body: string): string {
   return body.replace(
     /^\s*<!--\s*\n\s*SPDX-FileCopyrightText:[\s\S]*?SPDX-License-Identifier:[\s\S]*?-->\s*\n?/,
     "",
   );
 }
 
-function convertHtmlComments(body) {
-  return body.replace(/<!--([\s\S]*?)-->/g, (_match, comment) => `{/*${comment}*/}`);
+function convertHtmlComments(body: string): string {
+  return body.replace(
+    /<!--([\s\S]*?)-->/g,
+    (_match: string, comment: string) => `{/*${comment}*/}`,
+  );
 }
 
-function resolveInclude(sourcePath, includeTarget, optionsText) {
+function resolveInclude(sourcePath: string, includeTarget: string, optionsText: string): string {
   const sourceDir = path.dirname(sourcePath);
   const includePath = path.resolve(sourceDir, includeTarget.trim());
   let content = fs.readFileSync(includePath, "utf8");
@@ -125,7 +169,7 @@ function resolveInclude(sourcePath, includeTarget, optionsText) {
   return content.trim();
 }
 
-function convertFencedDirectives(sourcePath, body) {
+function convertFencedDirectives(sourcePath: string, body: string): string {
   let converted = body;
 
   converted = converted.replace(/```\{toctree\}[\s\S]*?```/g, "");
@@ -133,12 +177,13 @@ function convertFencedDirectives(sourcePath, body) {
 
   converted = converted.replace(
     /```\{include\}\s+([^\n]+)\n([\s\S]*?)```/g,
-    (_match, includeTarget, optionsText) => resolveInclude(sourcePath, includeTarget, optionsText),
+    (_match: string, includeTarget: string, optionsText: string) =>
+      resolveInclude(sourcePath, includeTarget, optionsText),
   );
 
   converted = converted.replace(
     /```\{figure\}\s+([^\n]+)\n([\s\S]*?)```/g,
-    (_match, imageTarget, block) => {
+    (_match: string, imageTarget: string, block: string) => {
       const alt = block.match(/:alt:\s*(.+)/)?.[1]?.trim();
       const caption = block
         .split("\n")
@@ -152,7 +197,7 @@ function convertFencedDirectives(sourcePath, body) {
 
   converted = converted.replace(
     /```\{admonition\}\s*([^\n]*)\n([\s\S]*?)```/g,
-    (_match, title, block) => {
+    (_match: string, title: string, block: string) => {
       const content = block
         .split("\n")
         .filter((line) => !line.trim().startsWith(":"))
@@ -165,7 +210,7 @@ function convertFencedDirectives(sourcePath, body) {
   return converted;
 }
 
-function directiveComponent(kind, title) {
+function directiveComponent(kind: string, title: string): DirectiveComponent {
   switch (kind) {
     case "tip":
       return { name: "Tip", title: title.trim() };
@@ -183,10 +228,10 @@ function directiveComponent(kind, title) {
   }
 }
 
-function parseListTable(block) {
-  const rows = [];
-  let currentRow = null;
-  let currentCell = null;
+function parseListTable(block: string): string {
+  const rows: string[][] = [];
+  let currentRow: string[] | null = null;
+  let currentCell: number | null = null;
 
   for (const rawLine of block.split("\n")) {
     if (!rawLine.trim() || rawLine.trim().startsWith(":")) {
@@ -214,25 +259,25 @@ function parseListTable(block) {
     return "";
   }
   const width = Math.max(...rows.map((row) => row.length));
-  const normalized = rows.map((row) => [...row, ...Array(width - row.length).fill("")]);
+  const normalized = rows.map((row) => [...row, ...Array<string>(width - row.length).fill("")]);
   const header = normalized[0];
-  const separator = Array(width).fill("---");
+  const separator = Array<string>(width).fill("---");
   return [header, separator, ...normalized.slice(1)]
     .map((row) => `| ${row.map((cell) => cell.replace(/\|/g, "\\|")).join(" | ")} |`)
     .join("\n");
 }
 
-function convertColonDirectives(body) {
+function convertColonDirectives(body: string): string {
   const lines = body.split("\n");
-  const output = [];
-  const stack = [];
+  const output: string[] = [];
+  const stack: string[] = [];
   let skipOptions = false;
 
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index];
     const listTable = line.match(/^:{3,}\{list-table\}/);
     if (listTable) {
-      const block = [];
+      const block: string[] = [];
       index += 1;
       while (index < lines.length && !/^:{3,}\s*$/.test(lines[index])) {
         block.push(lines[index]);
@@ -280,7 +325,7 @@ function convertColonDirectives(body) {
   return output.join("\n");
 }
 
-function routeForLink(sourcePath, target) {
+function routeForLink(sourcePath: string, target: string): string {
   const [withoutFragment, fragment = ""] = target.split("#", 2);
   const [withoutQuery, query = ""] = withoutFragment.split("?", 2);
   if (!withoutQuery.endsWith(".md")) {
@@ -296,10 +341,10 @@ function routeForLink(sourcePath, target) {
   return `${route}${query ? `?${query}` : ""}${fragment ? `#${fragment}` : ""}`;
 }
 
-function convertLinks(sourcePath, body) {
+function convertLinks(sourcePath: string, body: string): string {
   return body.replace(
     /(!?)\[([^\]]*)\]\(([^)\s]+)(\s+["'][^)"']*["'])?\)/g,
-    (match, bang, label, target, title) => {
+    (match: string, bang: string, label: string, target: string, title: string | undefined) => {
       if (
         bang ||
         target.startsWith("http://") ||
@@ -314,7 +359,7 @@ function convertLinks(sourcePath, body) {
   );
 }
 
-function convert(sourcePath) {
+function convert(sourcePath: string): string {
   const text = fs.readFileSync(sourcePath, "utf8");
   const [metadata, rawBody] = splitFrontmatter(text);
   let body = stripSpdxComment(rawBody);
