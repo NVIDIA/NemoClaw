@@ -229,7 +229,10 @@ describe("PR review advisor", () => {
         systemPrompt: "system prompt",
         promptTurns: turns,
       });
-      const written = fs.readdirSync(path.join(tmp, "prompts")).map((file) => `prompts/${file}`);
+      const written = fs
+        .readdirSync(path.join(tmp, "prompts"))
+        .sort((a, b) => a.localeCompare(b))
+        .map((file) => `prompts/${file}`);
 
       expect(written).toEqual([
         "prompts/00-system.md",
