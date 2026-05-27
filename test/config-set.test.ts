@@ -120,6 +120,33 @@ describe("selectDockerDriverSandboxContainer", () => {
       selectDockerDriverSandboxContainer("demo", "kubernetes", "openshell-demo\n"),
     ).toBeNull();
   });
+
+  it("resolves the VM-driver sandbox container instead of falling back to k3s (#4245)", () => {
+    // macOS Docker Desktop with the OpenShell VM driver: there is no
+    // openshell-cluster-* container, but the sandbox container is still
+    // exposed on the host docker engine. Host-initiated config writes must
+    // exec into it directly instead of hitting kubectl through a container
+    // that does not exist.
+    expect(
+      selectDockerDriverSandboxContainer(
+        "my-assistant",
+        "vm",
+        "openshell-my-assistant\n",
+        ["my-assistant"],
+      ),
+    ).toBe("openshell-my-assistant");
+  });
+
+  it("disambiguates VM-driver sandbox names with shared prefixes", () => {
+    expect(
+      selectDockerDriverSandboxContainer(
+        "my",
+        "vm",
+        "openshell-my-assistant-12ab\n",
+        ["my", "my-assistant"],
+      ),
+    ).toBeNull();
+  });
 });
 
 describe("config set helpers", () => {

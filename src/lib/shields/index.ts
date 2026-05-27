@@ -16,10 +16,10 @@ const { fork } = require("child_process");
 const { randomBytes } = require("crypto");
 const { run, runCapture, validateName } = require("../runner");
 const { dockerExecFileSync } = require("../adapters/docker/exec");
-const { dockerCapture } = require("../adapters/docker/run");
-const registry = require("../state/registry") as {
-  getSandbox?: (name: string) => { openshellDriver?: string | null } | null;
-};
+const {
+  resolvePrivilegedSandboxContainer,
+  buildPrivilegedExecArgv,
+}: typeof import("../sandbox/privileged-container") = require("../sandbox/privileged-container");
 const {
   buildPolicyGetCommand,
   buildPolicySetCommand,
@@ -55,62 +55,19 @@ const STATE_DIR = resolveNemoclawStateDir();
 // openshell sandbox exec runs commands INSIDE the Landlock domain, so it
 // can't modify read_only paths or change chattr flags. kubectl exec starts
 // a new process in the pod that does NOT inherit the Landlock ruleset.
-// On the legacy gateway we reach kubectl via the K3s container. On the
-// Docker-driver gateway there is no K3s container, so we exec into the
-// sandbox Docker container directly as root.
+// On the legacy k3s gateway we reach kubectl via the K3s container. On
+// direct-container drivers (`docker`, `vm`) there is no K3s container, so
+// we exec into the sandbox Docker container directly as root. Resolution
+// is delegated to a shared helper shared with sandbox/config.ts so the two
+// privileged-exec callers stay in sync (see #4245).
 // ---------------------------------------------------------------------------
-
-const K3S_CONTAINER = "openshell-cluster-nemoclaw";
-
-function resolveDockerDriverSandboxContainer(
-  sandboxName: string,
-): string | null {
-  try {
-    if (registry.getSandbox?.(sandboxName)?.openshellDriver !== "docker") {
-      return null;
-    }
-  } catch {
-    return null;
-  }
-  const prefix = `openshell-${sandboxName}-`;
-  const exact = `openshell-${sandboxName}`;
-  const output = dockerCapture(["ps", "--format", "{{.Names}}"], {
-    ignoreError: true,
-  });
-  return (
-    output
-      .split("\n")
-      .map((line: string) => line.trim())
-      .find((name: string) => name === exact || name.startsWith(prefix)) || null
-  );
-}
-
-function kubectlExecArgv(sandboxName: string, cmd: string[]): string[] {
-  return [
-    "exec",
-    K3S_CONTAINER,
-    "kubectl",
-    "exec",
-    "-n",
-    "openshell",
-    sandboxName,
-    "-c",
-    "agent",
-    "--",
-    ...cmd,
-  ];
-}
 
 function privilegedSandboxExecArgv(
   sandboxName: string,
   cmd: string[],
 ): string[] {
-  const dockerDriverContainer =
-    resolveDockerDriverSandboxContainer(sandboxName);
-  if (dockerDriverContainer) {
-    return ["exec", "--user", "root", dockerDriverContainer, ...cmd];
-  }
-  return kubectlExecArgv(sandboxName, cmd);
+  const directContainer = resolvePrivilegedSandboxContainer(sandboxName);
+  return buildPrivilegedExecArgv(sandboxName, cmd, directContainer);
 }
 
 function privilegedSandboxExec(sandboxName: string, cmd: string[]): void {
@@ -1368,6 +1325,7 @@ export {
   parseDuration,
   lockAgentConfig,
   unlockAgentConfig,
+  privilegedSandboxExecArgv,
   MAX_TIMEOUT_SECONDS,
   DEFAULT_TIMEOUT_SECONDS,
 };
