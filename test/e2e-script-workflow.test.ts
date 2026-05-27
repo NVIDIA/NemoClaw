@@ -8,6 +8,11 @@ import { loadE2eWorkflowContract, reusableNightlyJobs } from "./helpers/e2e-work
 describe("E2E reusable workflow contract", () => {
   const { runnerWorkflow, nightlyWorkflow, action } = loadE2eWorkflowContract();
 
+  it("opts functional E2E workflows into residual-cap execution on CI hosts", () => {
+    expect(runnerWorkflow.env?.NEMOCLAW_ALLOW_RESIDUAL_CAPS).toBe("1");
+    expect(nightlyWorkflow.env?.NEMOCLAW_ALLOW_RESIDUAL_CAPS).toBe("1");
+  });
+
   it("does not persist checkout credentials in the reusable runner", () => {
     const checkoutSteps = runnerWorkflow.jobs.run.steps.filter((step) =>
       String(step.uses ?? "").startsWith("actions/checkout@"),
