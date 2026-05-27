@@ -2066,7 +2066,14 @@ async function preflight(
     console.warn(
       "    Set NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1 to silence this check.",
     );
-    if (!isNonInteractive()) {
+    if (isNonInteractive()) {
+      console.warn(
+        "    WARNING: Non-interactive mode is continuing despite under-provisioned runtime.",
+      );
+      console.warn(
+        "    If the build stalls, resize the container runtime and rerun onboarding.",
+      );
+    } else {
       const proceed = await promptYesNoOrDefault("  Continue with onboarding?", null, false);
       if (!proceed) {
         console.error("  Aborted by user. Resize your container runtime and rerun `nemoclaw onboard`.");
