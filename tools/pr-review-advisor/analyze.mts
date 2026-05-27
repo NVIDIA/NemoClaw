@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { getChangedFiles, getCommits, getDiff, getDiffStat, getHeadSha, gitOutput } from "../advisors/git.mts";
-import { githubGraphql, githubRest, githubRestPaginated } from "../advisors/github.mts";
+import { githubRest, githubRestPaginated } from "../advisors/github.mts";
 import { parseArgs, parsePositiveInt, readJson, writeJson } from "../advisors/io.mts";
 import { enumValue, extractJson, getPath, isRecord, recordItems, stringArray, stringOrDefault, stringOrUndefined } from "../advisors/json.mts";
 import {
@@ -208,7 +208,6 @@ type GitHubReviewContext = {
   prNumber: number;
   fetchError?: string;
   pullRequest?: unknown;
-  graphQl?: unknown;
   linkedIssues?: LinkedIssue[];
   openPrOverlaps?: OpenPrOverlap[];
   previousAdvisorReview?: PreviousAdvisorReview | null;
@@ -571,15 +570,12 @@ async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
 
   const context: GitHubReviewContext = { repo, prNumber };
   try {
-    const [owner, name] = repo.split("/");
-    const [pullRequest, issueComments, graphQl, openPulls] = await Promise.all([
+    const [pullRequest, issueComments, openPulls] = await Promise.all([
       githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token),
       githubRestPaginated<unknown>(`repos/${repo}/issues/${prNumber}/comments`, token, 100),
-      githubGraphql(token, buildPrGraphqlQuery(), { owner, name, number: prNumber }).catch((error: unknown) => ({ error: String(error) })),
       githubRestPaginated<unknown>(`repos/${repo}/pulls?state=open&sort=updated&direction=desc`, token, 100),
     ]);
     context.pullRequest = pullRequest;
-    context.graphQl = graphQl;
     context.previousAdvisorReview = extractPreviousAdvisorReview(issueComments);
     const prText = [
       stringOrUndefined(getPath<unknown>(pullRequest, ["title"])),
@@ -670,21 +666,6 @@ function extractPreviousAdvisorReview(issueComments: unknown[]): PreviousAdvisor
   if (!body) return null;
   const headSha = body.match(/(?:\*\*Analyzed HEAD:\*\*|Analyzed SHA:)\s*`?([^`\n\s]+)`?/)?.[1];
   return { headSha, body: body.slice(0, 12000) };
-}
-
-function buildPrGraphqlQuery(): string {
-  return `
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      number
-      title
-      isDraft
-      authorAssociation
-      headRefOid
-    }
-  }
-}`;
 }
 
 export function readTrustedSecurityReviewSkill(): string {
