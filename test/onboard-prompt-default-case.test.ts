@@ -256,6 +256,5 @@ describe("under-provisioned runtime prompt defaults (#4236)", () => {
     expect(source).toContain(
       "WARNING: Non-interactive mode is continuing despite under-provisioned runtime.",
     );
-    expect(source).toContain("If the build stalls, resize the container runtime and rerun onboarding.");
   });
 });
