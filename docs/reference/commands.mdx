@@ -599,34 +599,7 @@ network_policies:
       - { path: /bin/nc.openbsd }
 ```
 
-For an internal host alias, add the alias to the sandbox and scope the policy to the resolved IP address.
-The OpenSSH proxy helper uses `/etc/hosts` aliases for the proxy CONNECT target, so users can still type the alias while OpenShell evaluates the IP-scoped policy:
-
-```console
-$ nemoclaw my-assistant hosts-add bastion 10.0.0.5
-```
-
-```yaml
-preset:
-  name: company-ssh-private
-  description: "OpenSSH access to private company bastion"
-
-network_policies:
-  company_ssh_private:
-    name: company_ssh_private
-    endpoints:
-      - host: 10.0.0.5
-        port: 22
-        access: full
-        tls: skip
-        allowed_ips:
-          - 10.0.0.5/32
-    binaries:
-      - { path: /usr/bin/ssh }
-      - { path: /usr/bin/git }
-      - { path: /usr/bin/nc }
-      - { path: /bin/nc.openbsd }
-```
+If users want to type a short alias such as `ssh user@bastion`, add it with `nemoclaw my-assistant hosts-add bastion 10.0.0.5`; the SSH proxy resolves `/etc/hosts` aliases before dialing, so the policy can still stay scoped to the resolved IP address.
 
 For batch workflows, apply all preset files from a directory:
 
