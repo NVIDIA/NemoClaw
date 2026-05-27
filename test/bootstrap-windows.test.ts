@@ -253,7 +253,7 @@ Open-UbuntuForInstaller
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
-$settingsDir = Join-Path $env:TEMP 'docker-settings-test'
+$settingsDir = Join-Path $env:TEMP ('docker-settings-test-' + [guid]::NewGuid().ToString('N'))
 $env:APPDATA = $settingsDir
 $dockerDir = Join-Path $settingsDir 'Docker'
 New-Item -ItemType Directory -Path $dockerDir -Force | Out-Null
@@ -267,12 +267,14 @@ $settingsPath = Join-Path $dockerDir 'settings-store.json'
 Enable-DockerDesktopWslIntegration -Name 'Ubuntu-24.04'
 
 $settings = Get-Content -Path $settingsPath -Raw | ConvertFrom-Json
-[pscustomobject]@{
+$result = [pscustomobject]@{
   wslEngineEnabled = $settings.wslEngineEnabled
   enableIntegrationWithDefaultWslDistro = $settings.enableIntegrationWithDefaultWslDistro
   integratedWslDistros = $settings.integratedWslDistros
   backupCount = @(Get-ChildItem -Path $dockerDir -Filter 'settings-store.json.bak.*').Count
-} | ConvertTo-Json -Compress
+}
+Remove-Item -Path $settingsDir -Recurse -Force
+$result | ConvertTo-Json -Compress
 `);
 
     expect(result.status).toBe(0);
