@@ -11,6 +11,17 @@ content:
 ---
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
+## v0.0.52
+
+NemoClaw v0.0.52 upgrades the bundled OpenClaw runtime, repairs Hermes sandbox startup, restores onboarding ready output, and hardens Slack onboarding, Windows bootstrap, and private-network handling:
+
+- Bundles OpenClaw 2026.5.22 as the NemoClaw runtime target through `OPENCLAW_VERSION` in the NemoClaw Dockerfiles. The runtime upgrade addresses Telegram, Discord, and Slack channel registration issues seen on the 2026.5.18 runtime. `nemoclaw-blueprint/blueprint.yaml` keeps `min_openclaw_version` as a compatibility floor for direct blueprint consumers, so the blueprint floor can be lower than the Dockerfile target. Run `nemoclaw <name> rebuild` to pick up the new OpenClaw runtime in existing sandboxes.
+- Hermes sandbox startup is more reliable on the v0.14 root entrypoint. NemoClaw precreates `hooks`, `image_cache`, `audio_cache`, and `logs/curator` under `HERMES_HOME`, makes `/sandbox/.hermes` sticky group-writable so the `gateway` user can create runtime state without removing sandbox-owned config files, stops precreating `/sandbox/.hermes/gateway.pid` as a symlink that Hermes v0.14 treats as a PID race, and clears legacy PID and lock state before launch.
+- `nemoclaw onboard` ready output points users at `nemoclaw <name> dashboard-url --quiet` again, restoring the dashboard guidance that regressed during an earlier onboarding refactor.
+- Slack onboarding validates preconfigured Slack tokens before treating Slack as configured. Invalid `SLACK_BOT_TOKEN` values from the environment or stored credentials no longer cause onboarding to skip the Slack prompt, so the wizard re-prompts for a valid `xoxb-...` token instead of silently advancing with a token Slack cannot use.
+- The Windows bootstrap script defers first-run Ubuntu account setup to a separate WSL handoff window again, which keeps PowerShell prompt alignment intact during install. The default distro is `Ubuntu-24.04`, and `bootstrap-windows.ps1 -DistroName Ubuntu` reuses an existing `Ubuntu` distribution.
+- The blueprint private-network blocklist reloads when `private-networks.yaml` changes on disk, so long-running NemoClaw processes validate SSRF and private-network rules against the current file instead of stale cached data.
+
 ## v0.0.51
 
 NemoClaw v0.0.51 improves messaging controls, local inference setup, sandbox diagnostics, policy validation, and onboarding recovery:

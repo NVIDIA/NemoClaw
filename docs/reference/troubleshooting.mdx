@@ -787,6 +787,24 @@ WhatsApp pairs entirely inside the sandbox.
 NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes after you add the channel on the host.
 Run `openclaw channels login --channel whatsapp` inside OpenClaw sandboxes, or run `hermes whatsapp` inside Hermes sandboxes.
 
+### `scripts/rcf_patch.py` is missing from the blueprint
+
+`scripts/rcf_patch.py` is intentionally absent from current NemoClaw blueprints.
+Older QA plans used that helper for a Dockerfile "Patch-4" test that corrupted the build-time `replaceConfigFile` monkey-patch and expected `ERROR: Patch 4 (replaceConfigFile EACCES) not applied`.
+The old Patch-4 fail-closed test no longer applies because NemoClaw no longer patches OpenClaw's compiled `replaceConfigFile` source at image build time.
+
+Current sandboxes use a mutable-default config model instead.
+Before lockdown, `/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow.
+After lockdown, `nemoclaw <sandbox> shields up` intentionally locks the config tree as root-owned read-only state; runtime config mutations should fail cleanly or route users to the supported host-side NemoClaw command.
+
+To validate this area now, use the shields/config lifecycle tests instead of looking for `rcf_patch.py`:
+
+```console
+$ npm run build:cli
+$ npm test -- test/repro-2681-group-writable.test.ts
+$ bash test/e2e/test-shields-config.sh
+```
+
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
 This is expected.

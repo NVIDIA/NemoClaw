@@ -50,7 +50,8 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Python Package Index | `pypi` |
 | Slack messaging | `slack` |
 | Telegram Bot API | `telegram` |
-| WhatsApp Web messaging | `whatsapp` |
+| WeChat (personal) iLink Bot API (experimental) | `wechat` |
+| WhatsApp Web messaging (experimental) | `whatsapp` |
 
 Preview the endpoints before applying:
 
@@ -110,7 +111,7 @@ If delivery fails, open the TUI and send a test message to the bot:
 $ openshell term
 ```
 
-The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, `slack`, or `whatsapp`).
+The matching preset for each supported messaging channel is the channel name (`telegram`, `discord`, `slack`, `wechat`, or `whatsapp`).
 
 ## Slack or Discord Messaging
 
@@ -142,6 +143,37 @@ If you enabled Slack or Discord during onboarding, apply only the matching prese
 ```console
 $ nemoclaw my-assistant policy-add slack --yes
 $ nemoclaw my-assistant policy-add discord --yes
+```
+
+## WeChat or WhatsApp Messaging (Experimental)
+
+WeChat and WhatsApp are experimental.
+Both rely on QR-based pairing flows that are more fragile than token-based bots, and the upstream client libraries can change behavior without notice.
+
+WeChat uses Tencent's iLink Bot API for personal accounts.
+The bot token is captured by a host-side QR scan during onboarding rather than pasted from a developer portal.
+Add the channel interactively and apply the preset:
+
+```console
+$ nemoclaw my-assistant channels add wechat
+$ nemoclaw my-assistant rebuild
+$ nemoclaw my-assistant policy-add wechat --yes
+```
+
+WhatsApp Web pairs entirely inside the sandbox via QR scan, so `channels add` does not collect a host-side token.
+Apply the preset and complete the in-sandbox pairing after the rebuild:
+
+```console
+$ NEMOCLAW_NON_INTERACTIVE=1 nemoclaw my-assistant channels add whatsapp
+$ nemoclaw my-assistant rebuild
+$ nemoclaw my-assistant policy-add whatsapp --yes
+```
+
+If you enabled WeChat or WhatsApp during onboarding, apply only the matching preset:
+
+```console
+$ nemoclaw my-assistant policy-add wechat --yes
+$ nemoclaw my-assistant policy-add whatsapp --yes
 ```
 
 ## GitHub and Jira
@@ -282,5 +314,5 @@ Use `nemoclaw my-assistant policy-add` for maintained NemoClaw presets.
 
 - Approve or Deny Agent Network Requests (use the `nemoclaw-user-manage-policy` skill) for the interactive OpenShell TUI flow.
 - Customize the Sandbox Network Policy (use the `nemoclaw-user-manage-policy` skill) for static policy edits and raw OpenShell policy files.
-- Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) for Telegram, Discord, Slack, and WhatsApp channel configuration.
+- Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) for Telegram, Discord, Slack, WeChat, and WhatsApp channel configuration.
 - Commands (use the `nemoclaw-user-reference` skill) for the full `policy-add`, `policy-list`, `policy-remove`, and `channels` command reference.

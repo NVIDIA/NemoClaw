@@ -259,10 +259,12 @@ After you confirm the summary, NemoClaw registers the selected provider with the
 The wizard then asks whether to enable Brave Web Search.
 If you enable it, enter a Brave Search API key when prompted.
 
-The wizard also offers messaging channels such as Telegram, Discord, Slack, and WhatsApp.
+The wizard also offers messaging channels such as Telegram, Discord, Slack, WeChat, and WhatsApp.
 Press a channel number to toggle it, then press Enter to continue.
 If you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
 For example, Slack bot tokens must start with `xoxb-`.
+WeChat and WhatsApp are experimental.
+Review Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) before enabling them.
 
 ### Choose Network Policy Presets
 

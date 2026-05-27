@@ -20,6 +20,7 @@ const {
   createInferenceSelectionValidationHelpers,
 }: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
+const { abortNonInteractive }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
 const {
   ensureOllamaLoopbackSystemdOverride,
@@ -82,6 +83,8 @@ const {
 }: typeof import("./onboard/gateway-gpu-passthrough") = require("./onboard/gateway-gpu-passthrough");
 const { syncPresetSelection }: typeof import("./onboard/policy-preset-sync") = require("./onboard/policy-preset-sync");
 const { maybeForceE2eStepFailure }: typeof import("./onboard/e2e-failure-injection") = require("./onboard/e2e-failure-injection");
+const onboardTracing: typeof import("./onboard/tracing") = require("./onboard/tracing");
+const sandboxReadinessTracing: typeof import("./onboard/sandbox-readiness-tracing") = require("./onboard/sandbox-readiness-tracing");
 const {
   gatherWechatConfig,
   hasWechatConfigDrift,
@@ -334,6 +337,9 @@ const { createWebSearchFlowHelpers }: typeof import("./onboard/web-search-flow")
 const {
   createValidationRecoveryPromptHelpers,
 }: typeof import("./onboard/validation-recovery-prompt") = require("./onboard/validation-recovery-prompt");
+const {
+  createLocalInferenceRouteApplier,
+}: typeof import("./onboard/local-inference-route") = require("./onboard/local-inference-route");
 const { createOpenshellCliHelpers }: typeof import("./onboard/openshell-cli") = require("./onboard/openshell-cli");
 const sandboxGpuPreflight: typeof import("./onboard/sandbox-gpu-preflight") = require("./onboard/sandbox-gpu-preflight");
 const {
@@ -420,8 +426,12 @@ const {
   preflightDashboardPortRangeAvailability,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
+const { applyPreflightGatewayCleanup } =
+  require("./onboard/preflight-gateway-cleanup-decision") as typeof import("./onboard/preflight-gateway-cleanup-decision");
 const { verifyGatewayContainerRunning } =
   require("./onboard/gateway-container-running") as typeof import("./onboard/gateway-container-running");
+const { applyHealthyPortReuse } =
+  require("./onboard/gateway-stale-port-reuse") as typeof import("./onboard/gateway-stale-port-reuse");
 const { destroyGatewayWithVolumeCleanup } =
   require("./onboard/gateway-destroy") as typeof import("./onboard/gateway-destroy");
 const {
@@ -486,6 +496,7 @@ import {
   readMessagingChannelConfigFromEnv,
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
+import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
   normalizeHermesToolGatewaySelections,
@@ -729,6 +740,16 @@ const { promptValidationRecovery } = createValidationRecoveryPromptHelpers({
     validateNvidiaApiKeyValue(key, credentialEnv ?? undefined),
   getTransportRecoveryMessage: (failure: any) => getTransportRecoveryMessage(failure),
   exitOnboardFromPrompt,
+});
+
+const applyLocalInferenceRoute = createLocalInferenceRouteApplier({
+  runOpenshell,
+  isNonInteractive,
+  promptValidationRecovery,
+  classifyApplyFailure,
+  compactText,
+  redact,
+  localInferenceTimeoutSecs: LOCAL_INFERENCE_TIMEOUT_SECS,
 });
 
 // Provider CRUD — thin wrappers that inject runOpenshell to avoid circular deps.
@@ -2066,11 +2087,11 @@ async function preflight(
 
   ensureOpenshellForOnboard();
 
-  // Clean up stale or unnamed NemoClaw gateway state before checking ports.
-  // A healthy named gateway can be reused later in onboarding, so avoid
-  // tearing it down here. If some other gateway is active but the named
-  // NemoClaw gateway exists, select it before the port checks so onboarding
-  // reuses the user's NemoClaw gateway instead of reporting a false conflict.
+  // Classify gateway state before port checks. Legacy non-Docker-driver
+  // path destroys stale/unnamed gateways here so the port frees up for
+  // checks below; Docker-driver path defers the destructive recreate to
+  // step [2/8] (see applyPreflightGatewayCleanup). If another gateway is
+  // active but the named one exists, select it to avoid false conflicts.
   const gatewaySnapshot = selectNamedGatewayForReuseIfNeeded(getGatewayReuseSnapshot());
   let gatewayReuseState = gatewaySnapshot.gatewayReuseState;
   gatewayReuseState = await refreshDockerDriverGatewayReuseState(gatewayReuseState);
@@ -2139,21 +2160,16 @@ async function preflight(
     }
   }
 
-  if (gatewayReuseState === "stale" || gatewayReuseState === "active-unnamed") {
-    console.log(`  Cleaning up previous ${cliDisplayName()} session...`);
-    if (isLinuxDockerDriverGatewayEnabled()) {
-      retireLegacyGatewayForDockerDriverUpgrade();
-      gatewayReuseState = "missing";
-      console.log("  ✓ Previous session cleaned up");
-    } else {
-      runOpenshell(["forward", "stop", String(DASHBOARD_PORT)], { ignoreError: true });
-      gatewayReuseState = destroyGatewayForReuse(
-        destroyGateway,
-        "  ✓ Previous session cleaned up",
-        "  ! Previous session cleanup failed; leaving registry state intact.",
-      );
-    }
-  }
+  gatewayReuseState = applyPreflightGatewayCleanup({
+    gatewayReuseState,
+    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
+    cliDisplayName: cliDisplayName(),
+    dashboardPort: DASHBOARD_PORT,
+    log: console.log,
+    runOpenshell,
+    destroyGateway,
+    destroyGatewayForReuse,
+  });
 
   // Clean up orphaned Docker containers from interrupted onboard (e.g. Ctrl+C
   // during gateway start). The container may still be running even though
@@ -2221,12 +2237,9 @@ async function preflight(
       port === GATEWAY_PORT ? dockerDriverGatewayEnv.getGatewayPortCheckOptions() : undefined;
     let portCheck = await checkPortAvailable(port, portCheckOptions);
     if (!portCheck.ok) {
-      if ((port === GATEWAY_PORT || port === DASHBOARD_PORT) && gatewayReuseState === "healthy") {
-        console.log(
-          `  ✓ Port ${port} already owned by healthy ${cliDisplayName()} runtime (${label})`,
-        );
-        continue;
-      }
+      const reuse = await applyHealthyPortReuse({ port, gatewayPort: GATEWAY_PORT, dashboardPort: DASHBOARD_PORT, label, runtimeDisplayName: cliDisplayName(), gatewayName: GATEWAY_NAME, gatewayReuseState, portCheckOptions, supportsLifecycleCommands: gatewayCliSupportsLifecycleCommands(runCaptureOpenshell), destroyGateway, runOpenshell, checkPortAvailable, verifyGatewayContainerRunning });
+      if (reuse === "continue") continue;
+      if (reuse) { ({ gatewayReuseState, portCheck } = reuse); if (portCheck.ok) continue; }
       if (port === GATEWAY_PORT) {
         const dockerGatewayPid = getDockerDriverGatewayPortListenerPid(portCheck);
         if (dockerGatewayPid !== null) {
@@ -3799,6 +3812,7 @@ async function createSandbox(
       return false;
     },
     failureCheck: dockerGpuCreatePatch.createFailureMessage,
+    traceEvent: onboardTracing.addTraceEvent,
   });
 
   if (initialSandboxPolicy.cleanup && initialSandboxPolicy.cleanup()) {
@@ -3848,16 +3862,13 @@ async function createSandbox(
   // without this gate, NemoClaw registers a phantom sandbox that
   // causes "sandbox not found" on every subsequent connect/status call.
   console.log("  Waiting for sandbox to become ready...");
-  let ready = false;
-  const readyAttempts = Math.max(1, Math.ceil(sandboxReadyTimeoutSecs / 2));
-  for (let i = 0; i < readyAttempts; i++) {
-    const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
-    if (isSandboxReady(list, sandboxName)) {
-      ready = true;
-      break;
-    }
-    if (i < readyAttempts - 1) sleepSeconds(2);
-  }
+  const ready = sandboxReadinessTracing.waitForCreatedSandboxReadyWithTrace({
+    sandboxName,
+    timeoutSecs: sandboxReadyTimeoutSecs,
+    runCaptureOpenshell,
+    isSandboxReady,
+    sleep: sleepSeconds,
+  });
 
   const restoreBackupPath =
     pendingStateRestore?.manifest?.backupPath ?? pendingStateRestoreBackupPath;
@@ -3910,23 +3921,12 @@ async function createSandbox(
   // Probes /health endpoint and accepts 200 or 401 (device auth) as "alive".
   // Previously used `curl -sf` which failed on 401, causing false negatives. Fixes #2342.
   console.log("  Waiting for NemoClaw dashboard to become ready...");
-  for (let i = 0; i < 15; i++) {
-    const readyOutput = runCaptureOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "curl", "-so", "/dev/null", "-w", "%{http_code}",
-        "--max-time", "3", `http://localhost:${effectiveDashboardPort}/health`],
-      { ignoreError: true },
-    );
-    const readyCode = parseInt((readyOutput || "").trim(), 10) || 0;
-    if (readyCode === 200 || readyCode === 401) {
-      console.log("  ✓ Dashboard is live");
-      break;
-    }
-    if (i === 14) {
-      console.warn("  Dashboard taking longer than expected to start. Continuing...");
-    } else {
-      sleepSeconds(2);
-    }
-  }
+  sandboxReadinessTracing.waitForDashboardReadyWithTrace({
+    sandboxName,
+    port: effectiveDashboardPort,
+    runCaptureOpenshell,
+    sleep: sleepSeconds,
+  });
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
     try {
@@ -4109,7 +4109,6 @@ const { readLiveInference, readRecordedProvider, readRecordedNimContainer, readR
 type OllamaModelSelectionOutcome =
   | { outcome: "selected"; model: string }
   | { outcome: "back-to-selection" };
-
 // Pick an Ollama model, pull it if missing, and validate it via the local
 // proxy. Shared by the three Ollama provider branches (running, Windows-host
 // install/start, install-locally). Returns "back-to-selection" so the caller
@@ -4165,33 +4164,31 @@ async function selectAndValidateOllamaModel(
     const probe = await prepareOllamaModel(selectedModel, installedModels);
     if (!probe.ok) {
       console.error(`  ${probe.message}`);
-      if (isNonInteractive()) process.exit(1);
+      if (isNonInteractive()) abortNonInteractive(`Ollama model '${selectedModel}' unavailable.`);
       console.log("  Choose a different Ollama model or select Other.");
       console.log("");
       continue;
     }
     const validationBaseUrl = getLocalProviderValidationBaseUrl(provider);
-    if (!validationBaseUrl) {
-      console.error("  Local Ollama validation URL could not be determined.");
-      process.exit(1);
-    }
+    if (!validationBaseUrl)
+      abortNonInteractive("Local Ollama validation URL could not be determined.");
     const validation = await validateOpenAiLikeSelection(
       "Local Ollama",
-      validationBaseUrl,
+      validationBaseUrl!,
       selectedModel,
       null,
       "Choose a different Ollama model or select Other.",
       null,
       {
         skipResponsesProbe: true,
-        requireChatCompletionsToolCalling: true,
+        requireChatCompletionsToolCalling: process.env.NEMOCLAW_OLLAMA_REQUIRE_TOOLS !== "0",
         allowHostDockerInternal:
           localInference.getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
       },
     );
     if (validation.retry === "selection") return { outcome: "back-to-selection" };
     if (!validation.ok) {
-      if (isNonInteractive()) process.exit(1);
+      if (isNonInteractive()) abortNonInteractive(`model '${selectedModel}' failed validation.`);
       continue;
     }
     // Ollama's /v1/responses endpoint does not produce correctly formatted
@@ -4201,6 +4198,7 @@ async function selectAndValidateOllamaModel(
         "  ℹ Using chat completions API (Ollama tool calls require /v1/chat/completions)",
       );
     }
+    localInference.applyOllamaRuntimeContextWindow(selectedModel);
     return { outcome: "selected", model: selectedModel };
   }
 }
@@ -5104,18 +5102,16 @@ async function setupNim(
           );
           process.exit(1);
         }
-        if (!ollamaReady) {
-          console.log("  Starting Ollama...");
-          // Keep raw Ollama loopback-only; the auth proxy (or Docker Desktop
-          // on WSL via host.docker.internal) fronts container access.
-          runShell(`OLLAMA_HOST=127.0.0.1:${OLLAMA_PORT} ollama serve > /dev/null 2>&1 &`, {
-            ignoreError: true,
-          });
-          if (!waitForHttp(`http://127.0.0.1:${OLLAMA_PORT}/`, 10)) {
-            console.error(`  Ollama did not become ready on :${OLLAMA_PORT} within timeout.`);
-            if (isNonInteractive()) process.exit(1);
-            continue selectionLoop;
-          }
+        const ollamaStartup = runOllamaStartupOrGate({
+          ollamaReady,
+          ollamaPort: OLLAMA_PORT,
+          getLocalProviderBaseUrl,
+          isNonInteractive,
+        });
+        if (ollamaStartup.kind === "continue") continue selectionLoop;
+        if (ollamaStartup.kind === "fallback") {
+          ({ provider, credentialEnv, endpointUrl, model, preferredInferenceApi } = ollamaStartup.result);
+          break;
         }
         if (shouldFrontOllamaWithProxy()) {
           if (!startOllamaAuthProxy()) process.exit(1);
@@ -5240,7 +5236,7 @@ async function setupNim(
           ? installOllamaOnMacOS({ isNonInteractive, isUpgrade })
           : installOllamaOnLinux({ isNonInteractive, isUpgrade });
         if (!installResult.ok) {
-          if (isNonInteractive()) process.exit(1);
+          if (isNonInteractive()) abortNonInteractive("Ollama install failed. See errors above.");
           continue selectionLoop;
         }
         const upgradeCheck = assertOllamaUpgradeApplied(ollamaInstallMenu);
@@ -5287,7 +5283,7 @@ async function setupNim(
           promptFn: prompt,
         });
         if (!result.ok) {
-          if (isNonInteractive()) process.exit(1);
+          if (isNonInteractive()) abortNonInteractive("vLLM install failed. See errors above.");
           continue selectionLoop;
         }
         // Fall through to the same provider/model setup as the running-vLLM
@@ -5671,17 +5667,7 @@ async function setupInference(
       console.error(`  ${providerResult.message}`);
       process.exit(providerResult.status || 1);
     }
-    runOpenshell([
-      "inference",
-      "set",
-      "--no-verify",
-      "--provider",
-      "vllm-local",
-      "--model",
-      model,
-      "--timeout",
-      String(LOCAL_INFERENCE_TIMEOUT_SECS),
-    ]);
+    if (await applyLocalInferenceRoute("vllm-local", model)) return { retry: "selection" };
     // Do not mutate ~/.nemoclaw/credentials.json here: local vLLM now uses
     // VLLM_LOCAL_CREDENTIAL_ENV, so any saved OPENAI_API_KEY remains available
     // to unrelated OpenAI-backed sandboxes.
@@ -5753,17 +5739,7 @@ async function setupInference(
       console.error(`  ${providerResult.message}`);
       process.exit(providerResult.status || 1);
     }
-    runOpenshell([
-      "inference",
-      "set",
-      "--no-verify",
-      "--provider",
-      "ollama-local",
-      "--model",
-      model,
-      "--timeout",
-      String(LOCAL_INFERENCE_TIMEOUT_SECS),
-    ]);
+    if (await applyLocalInferenceRoute("ollama-local", model)) return { retry: "selection" };
     console.log(`  Priming Ollama model: ${model}`);
     run(getOllamaWarmupCommand(model), { ignoreError: true });
     const probe = validateOllamaModel(model);
@@ -6836,7 +6812,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   };
   process.once("exit", releaseOnboardLock);
 
+  let onboardTrace: ReturnType<typeof onboardTracing.startOnboardTrace> = { collector: null, span: null };
+  let traceCompleted = false;
   try {
+    onboardTrace = onboardTracing.startOnboardTrace(opts, process.env);
     let session: Session | null;
     let selectedMessagingChannels: string[] = [];
     // Merged, absolute fromDockerfile: explicit flag/env takes precedence; on
@@ -7406,9 +7385,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         log: (message) => console.log(message),
       },
     });
+    traceCompleted = true;
   } finally {
     releaseOnboardLock();
     onboardRuntimeBoundary.clear();
+    onboardTracing.finishOnboardTrace(onboardTrace, traceCompleted);
   }
 }
 
