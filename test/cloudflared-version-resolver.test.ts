@@ -9,10 +9,12 @@ import { spawnSync } from "node:child_process";
 
 const RESOLVER = path.join(import.meta.dirname, "e2e", "lib", "cloudflared-version-resolver.sh");
 
+/** Quote a string for the inline bash resolver harness. */
 function shQuote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
+/** Provide deterministic Debian-version ordering for resolver unit tests. */
 function fakeDpkgScript(): string {
   return `#!/usr/bin/env bash
 set -euo pipefail
@@ -42,6 +44,7 @@ esac
 `;
 }
 
+/** Execute the resolver in an isolated PATH with the fake dpkg shim first. */
 function runResolver(
   availableVersions: string,
   minVersion = "2026.5.1",

@@ -13,12 +13,14 @@
 
 CLOUDFLARED_DEFAULT_MIN_VERSION="${CLOUDFLARED_DEFAULT_MIN_VERSION:-2026.5.1}"
 
+# Return success when the candidate is syntactically valid for dpkg comparison.
 cloudflared_is_debian_version() {
   local version="${1:-}"
   [[ "$version" =~ ^[0-9][0-9A-Za-z.+:~-]*$ ]] || return 1
   dpkg --compare-versions "$version" eq "$version" >/dev/null 2>&1
 }
 
+# Choose the newest signed Cloudflare APT version that satisfies the floor.
 cloudflared_resolve_package_version() {
   local available_versions="${1:-}"
   local min_version="${2:-${CLOUDFLARED_MIN_VERSION:-$CLOUDFLARED_DEFAULT_MIN_VERSION}}"
