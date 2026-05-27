@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-configure-inference"
-description: "Connects NemoClaw to a local inference server. Use when setting up Ollama, vLLM, TensorRT-LLM, NIM, or any OpenAI-compatible local model server with NemoClaw. Trigger keywords - nemoclaw local inference, ollama nemoclaw, vllm nemoclaw, local model server, openai compatible endpoint, switch nemoclaw inference model, change inference runtime, nemoclaw additional model, nemoclaw sub-agent model, openclaw sub-agent, agents.list, sessions_spawn, vlm-demo, nemoclaw inference options, nemoclaw onboarding providers, nemoclaw inference routing, nemoclaw tool calling, ollama tool calls, vllm tool-call-parser, raw json in tui."
+description: "Connects NemoClaw to a local inference server. Use when setting up Ollama, vLLM, TensorRT-LLM, NIM, or any OpenAI-compatible local model server with NemoClaw. Trigger keywords - nemoclaw local inference, ollama nemoclaw, vllm nemoclaw, local model server, openai compatible endpoint, switch nemoclaw inference model, change inference runtime, nemoclaw additional model, nemoclaw sub-agent model, openclaw sub-agent, agents.list, sessions_spawn, vlm-demo, nemoclaw dgx spark local inference, nemoclaw dgx station vllm, nemoclaw spark ollama, nemoclaw cdi gpu setup, nemoclaw inference options, nemoclaw onboarding providers, nemoclaw inference routing, nemoclaw tool calling, ollama tool calls, vllm tool-call-parser, raw json in tui."
 license: "Apache-2.0"
 ---
 
@@ -453,11 +453,13 @@ If the provider itself needs to change (for example, switching from vLLM to a cl
 
 - **Load [references/switch-inference-providers.md](references/switch-inference-providers.md)** when switching inference providers, changing the model runtime, or reconfiguring inference routing. Changes the active inference model without restarting the sandbox.
 - **Load [references/set-up-sub-agent.md](references/set-up-sub-agent.md)** when users ask how to add a second model, configure a sub-agent model, use Omni for vision tasks, configure agents.list, or use sessions_spawn in NemoClaw. Shows the NemoClaw-specific file paths and update flow for adding an auxiliary OpenClaw sub-agent model.
+- **Load [references/dgx-spark-station-local-inference.md](references/dgx-spark-station-local-inference.md)** when preparing DGX hardware, choosing Ollama or managed vLLM, checking GPU/CDI prerequisites, verifying the OpenShell gateway and local inference route, or troubleshooting CoreDNS, k3s image pull, CDI, or port 3000 conflicts. Guides DGX Spark and DGX Station users through end-to-end local inference setup with NemoClaw.
 - **Load [references/inference-options.md](references/inference-options.md)** when explaining which providers are available, what the onboard wizard presents, or how inference routing works. Lists all inference providers offered during NemoClaw onboarding.
 - **[references/tool-calling-reliability.md](references/tool-calling-reliability.md)** — Explains Ollama tool-call leak symptoms, when vLLM with a tool-call parser is recommended, and how to repoint NemoClaw to a parser-aware local endpoint.
 
 ## Related Skills
 
+- [Set Up DGX Spark or DGX Station Local Inference](references/dgx-spark-station-local-inference.md) for an end-to-end DGX hardware walkthrough.
 - [Inference Options](references/inference-options.md) for the full list of providers available during onboarding.
 - [Tool-Calling Reliability](references/tool-calling-reliability.md) for diagnosing raw JSON tool-call output with local models.
 - [Switch Inference Models](references/switch-inference-providers.md) for runtime model switching.

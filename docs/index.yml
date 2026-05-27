@@ -46,6 +46,9 @@ navigation:
       - page: "Use Local Inference"
         path: inference/use-local-inference.mdx
         slug: use-local-inference
+      - page: "DGX Local Inference"
+        path: inference/dgx-spark-station-local-inference.mdx
+        slug: dgx-spark-station-local-inference
       - page: "Tool-Calling Reliability"
         path: inference/tool-calling-reliability.mdx
         slug: tool-calling-reliability

@@ -60,7 +60,7 @@ The table is generated from [`ci/platform-matrix.json`](https://github.com/NVIDI
 |----|-------------------|--------|-------|
 | Linux | Docker | Tested | Primary tested path. |
 | macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
-| DGX Spark | Docker | Tested | Use the standard installer and `nemoclaw onboard`. For an end-to-end walkthrough with local Ollama inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
+| DGX Spark | Docker | Tested | Use the standard installer and `nemoclaw onboard`. For local inference, see Set Up DGX Spark or DGX Station Local Inference (use the `nemoclaw-user-configure-inference` skill). |
 | Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. |
 
 ## Next Steps
