@@ -227,7 +227,7 @@ describe("PR review advisor", () => {
 
     try {
       writePromptArtifacts({
-        outDir: tmp,
+        promptDir: path.join(tmp, "prompts"),
         systemPrompt: "system prompt",
         promptTurns: turns,
       });

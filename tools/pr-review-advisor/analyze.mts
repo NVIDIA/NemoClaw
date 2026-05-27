@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { getChangedFiles, getCommits, getDiff, getDiffStat, getHeadSha, gitOutput } from "../advisors/git.mts";
 import { githubGraphql, githubRest, githubRestPaginated } from "../advisors/github.mts";
-import { advisorArtifactPaths, parseArgs, parsePositiveInt, readJson, writeJson, type AdvisorArtifactPaths } from "../advisors/io.mts";
+import { parseArgs, parsePositiveInt, readJson, writeJson } from "../advisors/io.mts";
 import { enumValue, extractJson, getPath, isRecord, recordItems, stringArray, stringOrDefault, stringOrUndefined } from "../advisors/json.mts";
 import {
   DEFAULT_ADVISOR_MODEL,
@@ -72,7 +72,14 @@ type AcceptanceStatus = (typeof ACCEPTANCE_STATUSES)[number];
 type SecurityVerdict = (typeof SECURITY_VERDICTS)[number];
 type SourceOfTruthStatus = (typeof SOURCE_OF_TRUTH_STATUSES)[number];
 
-type ArtifactPaths = AdvisorArtifactPaths;
+type ArtifactPaths = {
+  promptDir: string;
+  raw: string;
+  result: string;
+  finalResult: string;
+  summary: string;
+  sessionHtml: string;
+};
 
 type ReviewMetadata = {
   baseRef: string;
@@ -250,7 +257,7 @@ async function main(): Promise<void> {
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
   const systemPrompt = buildSystemPrompt();
   const promptTurns = buildPromptTurns({ metadata, diff, schema });
-  writePromptArtifacts({ outDir, systemPrompt, promptTurns });
+  writePromptArtifacts({ promptDir: artifacts.promptDir, systemPrompt, promptTurns });
 
   const writeFailure = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, true);
   const writeUnavailable = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, false);
@@ -302,7 +309,14 @@ async function main(): Promise<void> {
 }
 
 function artifactPaths(outDir: string): ArtifactPaths {
-  return advisorArtifactPaths(outDir, "pr-review-advisor");
+  return {
+    promptDir: path.join(outDir, "prompts"),
+    raw: path.join(outDir, "pr-review-advisor-raw-output.txt"),
+    result: path.join(outDir, "pr-review-advisor-result.json"),
+    finalResult: path.join(outDir, "pr-review-advisor-final-result.json"),
+    summary: path.join(outDir, "pr-review-advisor-summary.md"),
+    sessionHtml: path.join(outDir, "pr-review-advisor-session.html"),
+  };
 }
 
 function writeUnavailableArtifacts(
@@ -312,10 +326,9 @@ function writeUnavailableArtifacts(
   failed: boolean,
 ): void {
   const result = unavailableResult(metadata, reason, failed);
-  const promptPath = path.join(path.dirname(paths.prompt), "prompts");
   writeJson(
     paths.result,
-    failed ? { failed: true, reason, promptPath, rawPath: paths.raw } : { skipped: true, reason, promptPath },
+    failed ? { failed: true, reason, promptPath: paths.promptDir, rawPath: paths.raw } : { skipped: true, reason, promptPath: paths.promptDir },
   );
   writeJson(paths.finalResult, result);
   fs.writeFileSync(paths.summary, renderSummary(result));
@@ -825,15 +838,14 @@ function buildValidationTurnContext(context: DeterministicReviewContext): Record
 }
 
 export function writePromptArtifacts({
-  outDir,
+  promptDir,
   systemPrompt,
   promptTurns,
 }: {
-  outDir: string;
+  promptDir: string;
   systemPrompt: string;
   promptTurns: AdvisorPromptTurn[];
 }): void {
-  const promptDir = path.join(outDir, "prompts");
   fs.rmSync(promptDir, { recursive: true, force: true });
   fs.mkdirSync(promptDir, { recursive: true });
 
