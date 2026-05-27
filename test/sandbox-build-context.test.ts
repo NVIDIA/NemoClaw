@@ -72,6 +72,7 @@ describe("sandbox build context staging", () => {
     fs.chmodSync(blueprintManifestDir, 0o700);
     writeFixture(path.join("scripts", "nemoclaw-start.sh"));
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
+    writeFixture(path.join("scripts", "nemoclaw-ssh.sh"));
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.py"));
     writeFixture(path.join("scripts", "seed-wechat-accounts.py"));
@@ -243,6 +244,7 @@ describe("sandbox build context staging", () => {
       ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-start.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "codex-acp-wrapper.sh"))).toBe(true);
+      expect(fs.existsSync(path.join(buildCtx, "scripts", "nemoclaw-ssh.sh"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "generate-openclaw-config.py"))).toBe(
         true,
       );

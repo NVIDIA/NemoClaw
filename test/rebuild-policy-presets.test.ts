@@ -12,6 +12,11 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
+import {
+  getRebuildCustomPolicy,
+  normalizeRebuildCustomPolicies,
+  resolveRebuildPolicyPresetNames,
+} from "../src/lib/actions/sandbox/rebuild-policy-presets";
 import { pruneDisabledMessagingPolicyPresets } from "../src/lib/onboard/messaging-policy-presets";
 
 type ManifestWithOptionalPresets = {
@@ -185,6 +190,41 @@ describe("rebuild policy preset restoration (#1952)", () => {
         ["telegram"],
       );
       expect(savedPresets).toEqual(["telegram", "npm", "pypi"]);
+    });
+
+    it("restores custom policy names when older manifests only captured built-ins", () => {
+      const customPolicies = normalizeRebuildCustomPolicies([
+        {
+          name: "openssh-local-sevenc",
+          content: "network_policies:\n  openssh_local_sevenc: {}\n",
+          sourcePath: "/tmp/openssh-local-sevenc.yaml",
+        },
+      ]);
+
+      const savedPresets = resolveRebuildPolicyPresetNames(["npm"], customPolicies, []);
+
+      expect(savedPresets).toEqual(["npm", "openssh-local-sevenc"]);
+      expect(getRebuildCustomPolicy(customPolicies, "openssh-local-sevenc")).toMatchObject({
+        content: "network_policies:\n  openssh_local_sevenc: {}\n",
+        sourcePath: "/tmp/openssh-local-sevenc.yaml",
+      });
+    });
+
+    it("deduplicates custom policy names already present in the manifest", () => {
+      const customPolicies = normalizeRebuildCustomPolicies([
+        {
+          name: "openssh-local-sevenc",
+          content: "network_policies:\n  openssh_local_sevenc: {}\n",
+        },
+      ]);
+
+      const savedPresets = resolveRebuildPolicyPresetNames(
+        ["npm", "openssh-local-sevenc"],
+        customPolicies,
+        [],
+      );
+
+      expect(savedPresets).toEqual(["npm", "openssh-local-sevenc"]);
     });
   });
 });

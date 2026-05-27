@@ -575,6 +575,59 @@ Apply a custom preset file when you need to grant access to an endpoint that is 
 $ nemoclaw my-assistant policy-add --from-file ./presets/my-internal-api.yaml
 ```
 
+For OpenSSH egress, use a custom preset with the exact destination host and SSH port.
+SSH traffic is not HTTP, so the endpoint must use L4 passthrough (`access: full` and `tls: skip`) and should stay scoped to the OpenSSH, Git, and netcat proxy binaries.
+Existing sandboxes created before OpenSSH egress support must be rebuilt so the image has the OpenSSH client, CONNECT proxy helper, and password prompt wrapper.
+
+```yaml
+preset:
+  name: company-ssh
+  description: "OpenSSH access to company bastion"
+
+network_policies:
+  company_ssh:
+    name: company_ssh
+    endpoints:
+      - host: bastion.example.com
+        port: 22
+        access: full
+        tls: skip
+    binaries:
+      - { path: /usr/bin/ssh }
+      - { path: /usr/bin/git }
+      - { path: /usr/bin/nc }
+      - { path: /bin/nc.openbsd }
+```
+
+For an internal host alias, add the alias to the sandbox and scope the policy to the resolved IP address.
+The OpenSSH proxy helper uses `/etc/hosts` aliases for the proxy CONNECT target, so users can still type the alias while OpenShell evaluates the IP-scoped policy:
+
+```console
+$ nemoclaw my-assistant hosts-add bastion 10.0.0.5
+```
+
+```yaml
+preset:
+  name: company-ssh-private
+  description: "OpenSSH access to private company bastion"
+
+network_policies:
+  company_ssh_private:
+    name: company_ssh_private
+    endpoints:
+      - host: 10.0.0.5
+        port: 22
+        access: full
+        tls: skip
+        allowed_ips:
+          - 10.0.0.5/32
+    binaries:
+      - { path: /usr/bin/ssh }
+      - { path: /usr/bin/git }
+      - { path: /usr/bin/nc }
+      - { path: /bin/nc.openbsd }
+```
+
 For batch workflows, apply all preset files from a directory:
 
 ```console
@@ -779,7 +832,7 @@ For new installs, the agent session index is refreshed so the agent discovers th
 Upgrade a sandbox to the current agent version while preserving workspace state.
 The command backs up workspace state, destroys the old sandbox (including its host-side Docker image), recreates it with the current image via `onboard --resume`, and restores workspace state into the new sandbox.
 Credentials are stripped from backups before storage.
-Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
+Built-in and custom policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
 
 ```console
 $ nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v]

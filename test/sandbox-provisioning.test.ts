@@ -557,7 +557,7 @@ describe("sandbox provisioning: unified .openclaw layout (#2227)", () => {
 });
 
 describe("sandbox provisioning: base runtime tools", () => {
-  it("base apt layer requests procps, e2fsprogs, and the SFTP server", () => {
+  it("base apt layer requests procps, e2fsprogs, and OpenSSH client/server tools", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-apt-"));
     const lists = path.join(tmp, "apt-lists");
@@ -584,10 +584,28 @@ describe("sandbox provisioning: base runtime tools", () => {
       expect(calls).toContain("apt-get update");
       expect(calls).toContain("procps=2:4.0.4-9");
       expect(calls).toContain("e2fsprogs=1.47.2-3+b11");
+      expect(calls).toContain("openssh-client=1:10.0p1-7+deb13u4");
+      expect(calls).toContain("netcat-openbsd=1.229-1");
       expect(calls).toContain("openssh-sftp-server=1:10.0p1-7+deb13u4");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
+  });
+
+  it("configures OpenSSH to use the NemoClaw proxy helper", () => {
+    const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+
+    expect(dockerfile).toContain("COPY scripts/nemoclaw-ssh.sh /usr/local/bin/nemoclaw-ssh");
+    expect(dockerfile).toContain("ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/ssh");
+    expect(dockerfile).toContain(
+      "ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/nemoclaw-ssh-proxy",
+    );
+    expect(dockerfile).toContain(
+      "ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/nemoclaw-ssh-askpass",
+    );
+    expect(dockerfile).toContain("ProxyCommand /usr/local/bin/nemoclaw-ssh-proxy %h %p");
+    expect(dockerfile).toContain("chmod 555 /usr/local/bin/nemoclaw-ssh");
+    expect(dockerfile).toContain("chmod 444 /etc/ssh/ssh_config.d/nemoclaw-proxy.conf");
   });
 
   it("symlinks bare `python` to python3 so agent tool calls don't fail with command-not-found (#1452)", () => {
@@ -622,28 +640,50 @@ describe("sandbox provisioning: base runtime tools", () => {
     }
   });
 
-  it("runtime hardening installs procps and e2fsprogs when a stale base lacks ps and chattr", () => {
+  it("runtime hardening installs required tools when a stale base lacks them", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE, "utf-8");
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-procps-"));
     const log = path.join(tmp, "calls.log");
     const marker = path.join(tmp, "ps-installed");
     const chattrMarker = path.join(tmp, "chattr-installed");
+    const sshMarker = path.join(tmp, "ssh-installed");
+    const ncMarker = path.join(tmp, "nc-installed");
+    const realSsh = path.join(tmp, "usr-bin", "ssh");
+    const sshHelper = path.join(tmp, "usr-local-bin", "nemoclaw-ssh");
+    const proxyHelper = path.join(tmp, "usr-local-bin", "nemoclaw-ssh-proxy");
+    const askpassHelper = path.join(tmp, "usr-local-bin", "nemoclaw-ssh-askpass");
+    const sshWrapper = path.join(tmp, "usr-local-bin", "ssh");
+    const sshConfigDir = path.join(tmp, "etc-ssh", "ssh_config.d");
     const lists = path.join(tmp, "apt-lists");
     fs.mkdirSync(lists);
+    fs.mkdirSync(path.dirname(sshHelper), { recursive: true });
+    fs.mkdirSync(path.dirname(realSsh), { recursive: true });
+    fs.writeFileSync(sshHelper, "# fixture\n", { mode: 0o600 });
+    expect(dockerfile).toContain("COPY scripts/nemoclaw-ssh.sh /usr/local/bin/nemoclaw-ssh");
     const command = dockerRunCommandBetween(
       dockerfile,
       "# Harden: remove unnecessary build tools",
       "# Copy built plugin and blueprint",
-    ).replaceAll("/var/lib/apt/lists", lists);
+    )
+      .replaceAll("/var/lib/apt/lists", lists)
+      .replaceAll("/usr/bin/ssh", realSsh)
+      .replaceAll("/usr/local/bin/nemoclaw-ssh-proxy", proxyHelper)
+      .replaceAll("/usr/local/bin/nemoclaw-ssh-askpass", askpassHelper)
+      .replaceAll("/usr/local/bin/nemoclaw-ssh", sshHelper)
+      .replaceAll("/usr/local/bin/ssh", sshWrapper)
+      .replaceAll("/etc/ssh/ssh_config.d", sshConfigDir);
     const script = [
       "#!/usr/bin/env bash",
       "set -euo pipefail",
       `call_log=${JSON.stringify(log)}`,
       `ps_marker=${JSON.stringify(marker)}`,
       `chattr_marker=${JSON.stringify(chattrMarker)}`,
+      `ssh_marker=${JSON.stringify(sshMarker)}`,
+      `nc_marker=${JSON.stringify(ncMarker)}`,
       'apt-mark() { printf "apt-mark %s\\n" "$*" >> "$call_log"; }',
-      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b11"* ]]; then touch "$chattr_marker"; fi; }',
-      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; else builtin command "$@"; fi; }',
+      `real_ssh=${JSON.stringify(realSsh)}`,
+      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"procps=2:4.0.4-9"* ]]; then touch "$ps_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"e2fsprogs=1.47.2-3+b11"* ]]; then touch "$chattr_marker"; fi; if [[ "$*" == *"install"* && "$*" == *"openssh-client=1:10.0p1-7+deb13u4"* ]]; then touch "$ssh_marker"; mkdir -p "$(dirname "$real_ssh")"; printf "#!/bin/sh\\n" > "$real_ssh"; chmod 755 "$real_ssh"; fi; if [[ "$*" == *"install"* && "$*" == *"netcat-openbsd=1.229-1"* ]]; then touch "$nc_marker"; fi; }',
+      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ps" ]; then [ -f "$ps_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "chattr" ]; then [ -f "$chattr_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "ssh" ]; then [ -f "$ssh_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "nc" ]; then [ -f "$nc_marker" ]; else builtin command "$@"; fi; }',
       'ps() { [ -f "$ps_marker" ] || return 127; printf "procps test version\\n"; }',
       command,
     ].join("\n");
@@ -653,14 +693,26 @@ describe("sandbox provisioning: base runtime tools", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status).toBe(0);
       const calls = fs.readFileSync(log, "utf-8");
-      expect(calls).toContain("apt-mark manual procps e2fsprogs");
+      expect(calls).toContain("apt-mark manual procps e2fsprogs openssh-client netcat-openbsd");
       expect(calls).toContain("apt-get autoremove --purge -y");
+      expect(calls).not.toContain("netcat-openbsd netcat-traditional ncat");
       expect(calls).toContain("apt-get update");
       expect(calls).toContain(
         "apt-get install -y --no-install-recommends procps=2:4.0.4-9",
       );
       expect(calls).toContain("apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b11");
+      expect(calls).toContain(
+        "apt-get install -y --no-install-recommends openssh-client=1:10.0p1-7+deb13u4",
+      );
+      expect(calls).toContain("apt-get install -y --no-install-recommends netcat-openbsd=1.229-1");
       expect(result.stdout).toContain("procps test version");
+      expect((fs.statSync(sshHelper).mode & 0o777).toString(8)).toBe("555");
+      expect(fs.readlinkSync(proxyHelper)).toBe(sshHelper);
+      expect(fs.readlinkSync(askpassHelper)).toBe(sshHelper);
+      expect(fs.readlinkSync(sshWrapper)).toBe(sshHelper);
+      expect(
+        fs.readFileSync(path.join(sshConfigDir, "nemoclaw-proxy.conf"), "utf-8"),
+      ).toContain("ProxyCommand");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }

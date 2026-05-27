@@ -41,7 +41,6 @@ import * as agentRuntime from "../../agent/runtime";
 import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
-import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
 import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
@@ -60,6 +59,11 @@ import {
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
+import {
+  getRebuildCustomPolicy,
+  normalizeRebuildCustomPolicies,
+  resolveRebuildPolicyPresetNames,
+} from "./rebuild-policy-presets";
 import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
 
 /**
@@ -215,6 +219,7 @@ export async function rebuildSandbox(
   }
 
   const rebuildAgent = sb.agent || null;
+  const rebuildCustomPolicies = normalizeRebuildCustomPolicies(sb.customPolicies);
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const agentName = agentRuntime.getAgentDisplayName(agent);
 
@@ -786,8 +791,9 @@ export async function rebuildSandbox(
   // Policy presets live in the gateway policy engine, not the sandbox filesystem.
   // They are lost when the sandbox is destroyed and recreated. Re-apply any
   // presets that were captured in the backup manifest.
-  const savedPresets = pruneDisabledMessagingPolicyPresets(
+  const savedPresets = resolveRebuildPolicyPresetNames(
     backupManifest.policyPresets || [],
+    rebuildCustomPolicies,
     rebuildDisabledChannels,
   );
   if (savedPresets.length > 0) {
@@ -798,8 +804,13 @@ export async function rebuildSandbox(
     const failedPresets: string[] = [];
     for (const presetName of savedPresets) {
       try {
-        log(`Applying preset: ${presetName}`);
-        const applied = policies.applyPreset(sandboxName, presetName);
+        const customPolicy = getRebuildCustomPolicy(rebuildCustomPolicies, presetName);
+        log(`Applying ${customPolicy ? "custom " : ""}preset: ${presetName}`);
+        const applied = customPolicy
+          ? policies.applyPresetContent(sandboxName, presetName, customPolicy.content, {
+              custom: { sourcePath: customPolicy.sourcePath },
+            })
+          : policies.applyPreset(sandboxName, presetName);
         if (applied) {
           restoredPresets.push(presetName);
         } else {

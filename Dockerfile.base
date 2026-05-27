@@ -1,7 +1,8 @@
 # NemoClaw sandbox base image — expensive, rarely-changing layers.
 #
-# Contains: node:22-trixie-slim, apt packages, gosu, user/group setup,
-# .openclaw directory structure, OpenClaw CLI, and PyYAML.
+# Contains: node:22-trixie-slim, apt packages, the OpenSSH CONNECT proxy
+# helper, gosu, user/group setup, .openclaw directory structure, OpenClaw CLI,
+# and PyYAML.
 #
 # Built on main merges and pushed to GHCR. The production Dockerfile
 # layers PR-specific code (plugin, blueprint, config) on top.
@@ -21,12 +22,14 @@
 #   .openclaw dirs      — directory structure is dictated by the OpenClaw
 #                          CLI layout; new dirs are additive (add them
 #                          here and rebuild)
+#   ssh proxy helper    — static wrapper that routes OpenSSH through the
+#                          OpenShell HTTP CONNECT proxy
 #   openclaw CLI        — version set by ARG OPENCLAW_VERSION (default below); override with --build-arg
 #   pyyaml              — pinned to exact pip version (6.0.3)
 #
-# Nothing here references NemoClaw plugin source, blueprint files,
-# startup scripts, or build-time config (model, provider, auth token).
-# Those all live in the production Dockerfile's thin top layers.
+# Nothing here references NemoClaw plugin source, blueprint files, runtime
+# startup scripts, or build-time config (model, provider, auth token). Those
+# all live in the production Dockerfile's thin top layers.
 #
 # ── When to rebuild ─────────────────────────────────────────────────────
 #
@@ -67,9 +70,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         "dos2unix=7.5.2-1*" \
         jq=1.7.1-6+deb13u2 \
         vim-tiny=2:9.1.1230-2 \
+        openssh-client=1:10.0p1-7+deb13u4 \
+        netcat-openbsd=1.229-1 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
     && rm -rf /var/lib/apt/lists/* \
     && ln -s /usr/bin/python3 /usr/local/bin/python
+
+COPY scripts/nemoclaw-ssh.sh /usr/local/bin/nemoclaw-ssh
+RUN chmod 555 /usr/local/bin/nemoclaw-ssh \
+    && ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/ssh \
+    && ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/nemoclaw-ssh-proxy \
+    && ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/nemoclaw-ssh-askpass \
+    && mkdir -p /etc/ssh/ssh_config.d \
+    && printf '%s\n' \
+        'Host *' \
+        '  ProxyCommand /usr/local/bin/nemoclaw-ssh-proxy %h %p' \
+        > /etc/ssh/ssh_config.d/nemoclaw-proxy.conf \
+    && chmod 444 /etc/ssh/ssh_config.d/nemoclaw-proxy.conf
 
 # gosu for privilege separation (gateway vs sandbox user).
 # Install from GitHub release with checksum verification instead of

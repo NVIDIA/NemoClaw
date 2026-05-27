@@ -92,7 +92,10 @@ function writeExecutable(filePath: string, source: string): void {
   fs.writeFileSync(filePath, source, { mode: 0o755 });
 }
 
-function writeOpenClawRegistry(sandboxName: string): void {
+function writeOpenClawRegistry(
+  sandboxName: string,
+  overrides: Record<string, unknown> = {},
+): void {
   fs.mkdirSync(path.join(TMP_HOME, ".nemoclaw"), { recursive: true });
   fs.writeFileSync(
     path.join(TMP_HOME, ".nemoclaw", "sandboxes.json"),
@@ -106,6 +109,7 @@ function writeOpenClawRegistry(sandboxName: string): void {
           gpuEnabled: false,
           policies: [],
           agent: null,
+          ...overrides,
         },
       },
     }),
@@ -473,6 +477,70 @@ process.exit(0);
       expect(backup.failedDirs).toEqual([]);
       expect(backup.backedUpDirs).toEqual(existingDirs);
       expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("captures built-in and custom policy preset names in the rebuild manifest", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-policy-manifest-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["workspace"];
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.join(openclawDir, "workspace"), { recursive: true });
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const cmd = process.argv[process.argv.length - 1] || "";
+if (cmd.includes("[ -d ")) {
+  process.stdout.write("workspace\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  process.exit(0);
+}
+if (cmd.includes("tar -cf -")) {
+  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, "workspace"], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  if (r.stderr) fs.writeSync(2, r.stderr);
+  process.exit(r.status || 0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha", {
+        policies: ["npm"],
+        customPolicies: [
+          {
+            name: "openssh-local-sevenc",
+            content: "network_policies:\n  openssh_local_sevenc: {}\n",
+          },
+        ],
+      });
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(true);
+      expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
+      expect(backup.manifest?.policyPresets).toEqual(["npm", "openssh-local-sevenc"]);
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;

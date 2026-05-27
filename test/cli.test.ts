@@ -1841,6 +1841,7 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Added host alias searxng.local -> 192.168.1.105");
     const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
+    expect(log.slice(0, 4)).toEqual(["exec", "openshell-cluster-nemoclaw", "kubectl", "-n"]);
     expect(log).toContain("patch");
     expect(log).toContain("--type=json");
     const patch = JSON.parse(log[log.indexOf("-p") + 1]);

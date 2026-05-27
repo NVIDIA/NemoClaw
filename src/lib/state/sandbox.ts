@@ -998,7 +998,16 @@ export function backupSandboxState(sandboxName: string, options: BackupOptions =
   // Capture applied policy presets from the registry so they can be
   // re-applied after rebuild. Presets live in the gateway policy engine,
   // not on the sandbox filesystem, so they are lost on destroy/recreate.
-  const policyPresets: string[] = sb?.policies && sb.policies.length > 0 ? [...sb.policies] : [];
+  const policyPresets: string[] = [];
+  for (const name of sb?.policies || []) {
+    if (typeof name === "string" && name.length > 0 && !policyPresets.includes(name)) {
+      policyPresets.push(name);
+    }
+  }
+  for (const entry of sb?.customPolicies || []) {
+    const name = typeof entry?.name === "string" ? entry.name : "";
+    if (name && !policyPresets.includes(name)) policyPresets.push(name);
+  }
   _log(`policyPresets from registry: [${policyPresets.join(",")}]`);
 
   const manifest: RebuildManifest = {

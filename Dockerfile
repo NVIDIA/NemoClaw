@@ -31,22 +31,28 @@ FROM ${BASE_IMAGE}
 ARG OPENCLAW_VERSION=2026.5.22
 ARG OPENCLAW_2026_5_22_INTEGRITY=sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==
 
+COPY scripts/nemoclaw-ssh.sh /usr/local/bin/nemoclaw-ssh
+
 # Harden: remove unnecessary build tools and network probes from base image (#830)
-# Protect runtime tools before autoremove — the GHCR base may predate the
-# procps/e2fsprogs additions, leaving ps/chattr absent or auto-marked. The
-# conditional install keeps stale bases usable while fresh bases skip apt.
-# Refs: #2343, shields-up chattr hardening
+# Protect runtime tools before autoremove — the GHCR base may predate additions,
+# leaving ps/chattr/ssh/nc absent or auto-marked. The conditional install keeps
+# stale bases usable while fresh bases skip apt.
+# Refs: #2343, shields-up chattr hardening, OpenSSH CONNECT proxy support
 # hadolint ignore=DL3001
 RUN set -eu; \
-    apt-mark manual procps e2fsprogs 2>/dev/null || true; \
+    apt-mark manual procps e2fsprogs openssh-client netcat-openbsd 2>/dev/null || true; \
     (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
-        netcat-openbsd netcat-traditional ncat 2>/dev/null || true); \
+        netcat-traditional ncat 2>/dev/null || true); \
     apt-get autoremove --purge -y; \
     needs_ps=0; \
     needs_chattr=0; \
+    needs_ssh=0; \
+    needs_nc=0; \
     if ! command -v ps >/dev/null 2>&1; then needs_ps=1; fi; \
     if ! command -v chattr >/dev/null 2>&1; then needs_chattr=1; fi; \
-    if [ "$needs_ps" = "1" ] || [ "$needs_chattr" = "1" ]; then \
+    if [ ! -x /usr/bin/ssh ]; then needs_ssh=1; fi; \
+    if ! command -v nc >/dev/null 2>&1; then needs_nc=1; fi; \
+    if [ "$needs_ps" = "1" ] || [ "$needs_chattr" = "1" ] || [ "$needs_ssh" = "1" ] || [ "$needs_nc" = "1" ]; then \
         apt-get update; \
         if [ "$needs_ps" = "1" ]; then \
             apt-get install -y --no-install-recommends procps=2:4.0.4-9; \
@@ -54,10 +60,28 @@ RUN set -eu; \
         if [ "$needs_chattr" = "1" ]; then \
             apt-get install -y --no-install-recommends e2fsprogs=1.47.2-3+b11; \
         fi; \
+        if [ "$needs_ssh" = "1" ]; then \
+            apt-get install -y --no-install-recommends openssh-client=1:10.0p1-7+deb13u4; \
+        fi; \
+        if [ "$needs_nc" = "1" ]; then \
+            apt-get install -y --no-install-recommends netcat-openbsd=1.229-1; \
+        fi; \
     fi; \
     rm -rf /var/lib/apt/lists/*; \
     ps --version; \
-    command -v chattr >/dev/null
+    command -v chattr >/dev/null; \
+    [ -x /usr/bin/ssh ]; \
+    command -v nc >/dev/null; \
+    chmod 555 /usr/local/bin/nemoclaw-ssh; \
+    ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/ssh; \
+    ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/nemoclaw-ssh-proxy; \
+    ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/nemoclaw-ssh-askpass; \
+    mkdir -p /etc/ssh/ssh_config.d; \
+    printf '%s\n' \
+        'Host *' \
+        '  ProxyCommand /usr/local/bin/nemoclaw-ssh-proxy %h %p' \
+        > /etc/ssh/ssh_config.d/nemoclaw-proxy.conf; \
+    chmod 444 /etc/ssh/ssh_config.d/nemoclaw-proxy.conf
 
 
 # Copy built plugin and blueprint into the sandbox
