@@ -25,6 +25,10 @@ type CommandEntry = {
 type ResumeConflict = { field: string; requested: string | null; recorded: string | null };
 
 type OnboardTestInternals = {
+  appendHostProxyEnvArgs: (
+    envArgs: string[],
+    env?: Record<string, string | undefined>,
+  ) => void;
   getNavigationChoice: (value?: string | null) => string | null;
   getFutureShellPathHint: (binDir: string, pathValue?: string) => string | null;
   getRequestedModelHint: ShimFn<string | null>;
@@ -77,6 +81,7 @@ if (!isOnboardTestInternals(onboardTestInternals)) {
 }
 
 const {
+  appendHostProxyEnvArgs,
   getNavigationChoice,
   getFutureShellPathHint,
   getRequestedModelHint,
@@ -94,6 +99,34 @@ const onboardScriptMocksPath = JSON.stringify(
 );
 
 describe("onboard helpers", () => {
+  it("adds host proxy variables to sandbox startup env args", () => {
+    const envArgs = ["CHAT_UI_URL=http://127.0.0.1:18789"];
+
+    appendHostProxyEnvArgs(envArgs, {
+      HTTP_PROXY: "http://127.0.0.1:8888",
+      HTTPS_PROXY: "http://127.0.0.1:8888",
+      NO_PROXY: "corp.internal",
+    });
+
+    expect(envArgs).toContain("HTTP_PROXY=http://127.0.0.1:8888");
+    expect(envArgs).toContain("HTTPS_PROXY=http://127.0.0.1:8888");
+    const noProxy = envArgs.find((entry) => entry.startsWith("NO_PROXY="));
+    expect(noProxy).toContain("corp.internal");
+    expect(noProxy).toContain("localhost");
+    expect(noProxy).toContain("127.0.0.1");
+    expect(noProxy).toContain("host.docker.internal");
+  });
+
+  it("does not add NO_PROXY-only values when no host proxy is configured", () => {
+    const envArgs = ["CHAT_UI_URL=http://127.0.0.1:18789"];
+
+    appendHostProxyEnvArgs(envArgs, {
+      NO_PROXY: "corp.internal",
+    });
+
+    expect(envArgs).toEqual(["CHAT_UI_URL=http://127.0.0.1:18789"]);
+  });
+
   it("prints doctor logs automatically when gateway fails to start (#1605)", testTimeoutOptions(20_000), () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-diag-"));
@@ -2925,7 +2958,16 @@ const { createSandbox } = require(${onboardPath});
     // Without this, a CHAT_UI_URL set in the developer's shell or CI would be
     // inherited, causing chatUiUrl to use the wrong port and making the forward
     // command assertion below fail spuriously.
-    const { CHAT_UI_URL: _stripped, ...inheritedEnv } = process.env;
+    const {
+      CHAT_UI_URL: _stripped,
+      HTTP_PROXY: _httpProxy,
+      HTTPS_PROXY: _httpsProxy,
+      NO_PROXY: _noProxy,
+      http_proxy: _lowerHttpProxy,
+      https_proxy: _lowerHttpsProxy,
+      no_proxy: _lowerNoProxy,
+      ...inheritedEnv
+    } = process.env;
     const result = spawnSync(process.execPath, [scriptPath], {
       cwd: repoRoot,
       encoding: "utf-8",
@@ -2935,6 +2977,9 @@ const { createSandbox } = require(${onboardPath});
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
         NEMOCLAW_NON_INTERACTIVE: "1",
         NEMOCLAW_DASHBOARD_PORT: "19000",
+        HTTP_PROXY: "http://127.0.0.1:8888",
+        HTTPS_PROXY: "http://127.0.0.1:8888",
+        NO_PROXY: "corp.internal",
       },
     });
 
@@ -2955,6 +3000,9 @@ const { createSandbox } = require(${onboardPath});
     // nemoclaw-start.sh can unconditionally override CHAT_UI_URL at runtime,
     // overriding whatever value the Docker image had baked in.
     assert.match(createCommand.command, /NEMOCLAW_DASHBOARD_PORT=19000/);
+    assert.match(createCommand.command, /HTTP_PROXY=http:\/\/127\.0\.0\.1:8888/);
+    assert.match(createCommand.command, /HTTPS_PROXY=http:\/\/127\.0\.0\.1:8888/);
+    assert.match(createCommand.command, /NO_PROXY=corp\.internal,localhost,127\.0\.0\.1/);
     // Forward must use same-port mapping (openshell does not support asymmetric)
     assert.ok(
       payload.commands.some(
