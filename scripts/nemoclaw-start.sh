@@ -1452,6 +1452,13 @@ while time.time() < DEADLINE:
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
                 continue
             arc, aout, aerr = run(OPENCLAW, 'devices', 'approve', request_id, '--json')
+            # rc=124 is the timeout sentinel from run() — do NOT add the
+            # request to HANDLED on a transient timeout, so the next poll
+            # can retry (CodeRabbit #4292). Permanent failures (other
+            # non-zero rc) still get HANDLED so we don't spin on a stuck
+            # bad request.
+            if arc == 124:
+                continue
             HANDLED.add(request_id)
             if arc == 0:
                 APPROVED += 1

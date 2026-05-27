@@ -1766,6 +1766,98 @@ exit 0
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it("retries a transient approve timeout instead of permanently handling the requestId", () => {
+    // Regression for CodeRabbit feedback on PR #4292: a transient
+    // timeout from `openclaw devices approve` used to mark the
+    // requestId HANDLED unconditionally, so the late scope upgrade was
+    // never retried — defeating the watcher's whole purpose. The fix
+    // detects the rc=124 timeout sentinel and skips HANDLED, so the
+    // next poll retries the same request.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-aretry-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const stateFile = path.join(tmpDir, "approve-count");
+    const approveLog = path.join(tmpDir, "approvals.log");
+    const pendingResponse = JSON.stringify({
+      pending: [
+        { requestId: "flaky-cli", clientId: "openclaw-cli", clientMode: "cli" },
+      ],
+      paired: [],
+    });
+    const allPaired = JSON.stringify({
+      pending: [],
+      paired: [{ clientId: "openclaw-cli", clientMode: "cli" }],
+    });
+
+    // The fake openclaw counts how many `devices approve flaky-cli`
+    // calls have been made; the first one hangs past the timeout, the
+    // second one succeeds. `devices list` returns the pending request
+    // until the approve succeeds, then returns paired.
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  if [ -f ${JSON.stringify(approveLog)} ]; then
+    printf '%s\n' ${JSON.stringify(allPaired)}
+  else
+    printf '%s\n' ${JSON.stringify(pendingResponse)}
+  fi
+  exit 0
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  count="$(cat ${JSON.stringify(stateFile)} 2>/dev/null || echo 0)"
+  count=$((count + 1))
+  echo "$count" > ${JSON.stringify(stateFile)}
+  if [ "$count" = "1" ]; then
+    # First call: hang past the per-call timeout to force rc=124.
+    sleep 5
+    exit 0
+  fi
+  # Second call: succeed and record the approval.
+  echo "$3" >> ${JSON.stringify(approveLog)}
+  printf '{}\n'
+  exit 0
+fi
+echo "unexpected: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const watcherSrc = startScriptHeredoc(
+        fs.readFileSync(START_SCRIPT, "utf-8"),
+        "PYAUTOPAIR",
+      );
+      const run = spawnSync("python3", ["-c", watcherSrc], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "600",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "8",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "1",
+        },
+        timeout: 30_000,
+      });
+      expect(run.status).toBe(0);
+      // Timeout was logged for the first attempt.
+      expect(run.stdout).toContain("[auto-pair] timeout calling devices approve");
+      // Retry succeeded on the second attempt.
+      expect(run.stdout).toContain(
+        "[auto-pair] approved request=flaky-cli client=openclaw-cli mode=cli",
+      );
+      // The approve log records exactly one successful approval (the
+      // retry, not the hung first attempt).
+      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
+        "flaky-cli",
+      ]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 40_000);
 });
 
 describe("nemoclaw-start gateway launch signal handling", () => {
