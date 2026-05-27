@@ -195,36 +195,36 @@ describe("rebuild policy preset restoration (#1952)", () => {
     it("restores custom policy names when older manifests only captured built-ins", () => {
       const customPolicies = normalizeRebuildCustomPolicies([
         {
-          name: "openssh-local-sevenc",
-          content: "network_policies:\n  openssh_local_sevenc: {}\n",
-          sourcePath: "/tmp/openssh-local-sevenc.yaml",
+          name: "openssh-test-bastion",
+          content: "network_policies:\n  openssh_test_bastion: {}\n",
+          sourcePath: "/tmp/openssh-test-bastion.yaml",
         },
       ]);
 
       const savedPresets = resolveRebuildPolicyPresetNames(["npm"], customPolicies, []);
 
-      expect(savedPresets).toEqual(["npm", "openssh-local-sevenc"]);
-      expect(getRebuildCustomPolicy(customPolicies, "openssh-local-sevenc")).toMatchObject({
-        content: "network_policies:\n  openssh_local_sevenc: {}\n",
-        sourcePath: "/tmp/openssh-local-sevenc.yaml",
+      expect(savedPresets).toEqual(["npm", "openssh-test-bastion"]);
+      expect(getRebuildCustomPolicy(customPolicies, "openssh-test-bastion")).toMatchObject({
+        content: "network_policies:\n  openssh_test_bastion: {}\n",
+        sourcePath: "/tmp/openssh-test-bastion.yaml",
       });
     });
 
     it("deduplicates custom policy names already present in the manifest", () => {
       const customPolicies = normalizeRebuildCustomPolicies([
         {
-          name: "openssh-local-sevenc",
-          content: "network_policies:\n  openssh_local_sevenc: {}\n",
+          name: "openssh-test-bastion",
+          content: "network_policies:\n  openssh_test_bastion: {}\n",
         },
       ]);
 
       const savedPresets = resolveRebuildPolicyPresetNames(
-        ["npm", "openssh-local-sevenc"],
+        ["npm", "openssh-test-bastion"],
         customPolicies,
         [],
       );
 
-      expect(savedPresets).toEqual(["npm", "openssh-local-sevenc"]);
+      expect(savedPresets).toEqual(["npm", "openssh-test-bastion"]);
     });
   });
 });

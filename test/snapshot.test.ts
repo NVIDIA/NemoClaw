@@ -529,8 +529,8 @@ process.exit(0);
         policies: ["npm"],
         customPolicies: [
           {
-            name: "openssh-local-sevenc",
-            content: "network_policies:\n  openssh_local_sevenc: {}\n",
+            name: "openssh-test-bastion",
+            content: "network_policies:\n  openssh_test_bastion: {}\n",
           },
         ],
       });
@@ -540,7 +540,7 @@ process.exit(0);
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(true);
       expect(backup.manifest?.backedUpDirs).toEqual(existingDirs);
-      expect(backup.manifest?.policyPresets).toEqual(["npm", "openssh-local-sevenc"]);
+      expect(backup.manifest?.policyPresets).toEqual(["npm", "openssh-test-bastion"]);
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;

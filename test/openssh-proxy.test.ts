@@ -103,14 +103,14 @@ describe("nemoclaw OpenSSH proxy helper", () => {
       [
         "# local sandbox aliases",
         "127.0.0.1 localhost",
-        "10.127.24.242 cr7258 cr7258.nvidia.com",
+        "10.10.10.5 internal-bastion bastion.internal.test",
         "",
       ].join("\n"),
     );
 
     const result = spawnSync(
       "/bin/sh",
-      [helperEntrypoint("nemoclaw-ssh-proxy"), "cr7258", "22"],
+      [helperEntrypoint("nemoclaw-ssh-proxy"), "internal-bastion", "22"],
       {
         encoding: "utf-8",
         env: {
@@ -129,7 +129,7 @@ describe("nemoclaw OpenSSH proxy helper", () => {
       "connect",
       "-x",
       "127.0.0.1:3128",
-      "10.127.24.242",
+      "10.10.10.5",
       "22",
     ]);
   });
