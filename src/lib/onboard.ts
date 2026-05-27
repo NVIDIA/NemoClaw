@@ -4108,7 +4108,7 @@ const { readLiveInference, readRecordedProvider, readRecordedNimContainer, readR
   });
 
 type OllamaModelSelectionOutcome =
-  | { outcome: "selected"; model: string; allowToolsIncompatible?: boolean }
+  | { outcome: "selected"; model: string; allowToolsIncompatible: boolean }
   | { outcome: "back-to-selection" };
 
 // Pick an Ollama model, pull it if missing, and validate it via the local
@@ -4182,12 +4182,7 @@ async function selectAndValidateOllamaModel(
       null,
       "Choose a different Ollama model or select Other.",
       null,
-      {
-        skipResponsesProbe: true,
-        requireChatCompletionsToolCalling: !allowToolsIncompatible,
-        allowHostDockerInternal:
-          localInference.getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
-      },
+      localInference.buildOllamaProbeOptions(allowToolsIncompatible),
     );
     if (validation.retry === "selection") return { outcome: "back-to-selection" };
     if (!validation.ok) {
@@ -5145,8 +5140,7 @@ async function setupNim(
             recoveredModel: recoveredFromSandbox ? recoveredModel : null,
           });
           if (result.outcome === "back-to-selection") continue selectionLoop;
-          model = result.model;
-          allowToolsIncompatible = result.allowToolsIncompatible === true;
+          ({ model, allowToolsIncompatible } = result);
           preferredInferenceApi = "openai-completions";
         }
         break;
@@ -5232,8 +5226,7 @@ async function setupNim(
             resetOllamaHostCache();
             continue selectionLoop;
           }
-          model = result.model;
-          allowToolsIncompatible = result.allowToolsIncompatible === true;
+          ({ model, allowToolsIncompatible } = result);
           preferredInferenceApi = "openai-completions";
         }
         break;
@@ -5275,8 +5268,7 @@ async function setupNim(
             recoveredModel: recoveredFromSandbox ? recoveredModel : null,
           });
           if (result.outcome === "back-to-selection") continue selectionLoop;
-          model = result.model;
-          allowToolsIncompatible = result.allowToolsIncompatible === true;
+          ({ model, allowToolsIncompatible } = result);
           preferredInferenceApi = "openai-completions";
         }
         break;
@@ -5773,9 +5765,7 @@ async function setupInference(
     ]);
     console.log(`  Priming Ollama model: ${model}`);
     run(getOllamaWarmupCommand(model), { ignoreError: true });
-    const probe = validateOllamaModel(model, undefined, undefined, undefined, {
-      allowToolsIncompatible: options.allowToolsIncompatible === true,
-    });
+    const probe = localInference.validateOllamaModelWithToolsOverride(model, options.allowToolsIncompatible === true);
     if (!probe.ok) {
       console.error(`  ${probe.message}`);
       process.exit(1);
