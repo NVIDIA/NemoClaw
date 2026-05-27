@@ -518,10 +518,12 @@ function unlockAgentConfig(
   // control-UI mutations (Enable Dreaming, account toggles) EACCES
   // against sandbox:sandbox 600 even after shields-down
   // (#2681 supersedes #2693).
-  // Hermes is unchanged — its sandbox does not run a separate gateway UID,
-  // so the shared-group contract does not apply.
+  // Hermes keeps config files non-group-writable, but its root entrypoint runs
+  // the gateway as a separate UID in the sandbox group. The config root stays
+  // group-writable + sticky so Hermes can create top-level runtime state while
+  // the gateway UID cannot remove sandbox-owned config files.
   const fileMode = target.agentName === "hermes" ? "640" : "660";
-  const dirMode = target.agentName === "hermes" ? "750" : "2770";
+  const dirMode = target.agentName === "hermes" ? "3770" : "2770";
   for (const f of filesToUnlock) {
     try {
       privilegedSandboxExec(sandboxName, ["chattr", "-i", f]);

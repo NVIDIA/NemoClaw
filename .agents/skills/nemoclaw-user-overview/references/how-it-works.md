@@ -14,7 +14,7 @@ NemoClaw keeps the user workflow on the host while OpenShell enforces the sandbo
 The gateway sits between NemoClaw control, the sandbox, inference providers, and external integrations.
 That placement lets NemoClaw configure the environment without giving the agent direct access to host credentials or uncontrolled network egress.
 
-![NemoClaw High-Level Component Diagram](https://docs.nvidia.com/nemoclaw/latest/about/images/nemoclaw-highlevel-component-diagram.html)
+![NemoClaw High-Level Component Diagram](images/nemoclaw-highlevel-component-diagram.png)
 
 The diagram has the following components:
 

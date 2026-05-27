@@ -885,6 +885,11 @@ Check the gateway logs and blocked-request output with `openshell term`, and loo
 
 Bot tokens for Telegram (`getUpdates`), Discord (gateway), and Slack (Socket Mode) only allow one active consumer per token. If two NemoClaw sandboxes are configured with the same bot token, each one kicks the other off its polling connection and neither delivers messages. `nemoclaw status` still reports the bridge as running because the gateway process itself is alive.
 
+For Telegram group chats, first check BotFather privacy mode.
+New Telegram bots default to privacy mode enabled, which prevents group messages from reaching `getUpdates` even when the user mentions the bot.
+In @BotFather, run `/setprivacy`, choose the bot, and choose **Disable**.
+Then remove the bot from the affected group and add it back; Telegram applies the privacy-mode change to group delivery only after the bot rejoins.
+
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 
 ```console
@@ -1067,6 +1072,38 @@ $ nemoclaw onboard
 
 Docker Desktop, WSL, and hosts without the OpenShell Docker network use different routing models.
 In those cases NemoClaw treats an unavailable sandbox-side probe as non-blocking and relies on the regular proxy health check.
+
+### `host.docker.internal` does not reliably reach the host from the sandbox
+
+Configuring an inference provider with a base URL like
+`http://host.docker.internal:11434/v1` does not reliably reach a host Ollama
+service from inside the OpenShell sandbox.
+OpenShell runs sandboxes inside a k3s network, where `host.docker.internal` is
+not a portable host-service route. Depending on the platform, it may fail DNS
+resolution or resolve to an internal gateway/bridge address where the host's
+port `11434` is not forwarded. The sandbox then sees a DNS failure or
+`connection refused`:
+
+```console
+$ getent hosts host.docker.internal
+172.17.0.1      host.docker.internal host.openshell.internal
+$ no_proxy=host.docker.internal curl -v http://host.docker.internal:11434/api/tags
+* connect to 172.17.0.1 port 11434 failed: Connection refused
+```
+
+For local Ollama, use the auth-proxy URL that NemoClaw's "Local Ollama" onboard
+option configures automatically:
+
+```text
+http://host.openshell.internal:11435/v1
+```
+
+`host.openshell.internal` resolves to the same gateway IP, and the
+[token-gated Ollama auth proxy](#ollama-auth-proxy-did-not-start) binds port
+`11435` there and forwards requests to `127.0.0.1:11434` on the host.
+If you need a different host service exposed to the sandbox, route it through
+the OpenShell gateway rather than relying on `host.docker.internal`.
+See issue [#3136](https://github.com/NVIDIA/NemoClaw/issues/3136).
 
 ### Local inference health check resolves to IPv6
 

@@ -25,11 +25,13 @@ For details, refer to Commands (use the `nemoclaw-user-reference` skill).
 |---------|-----------------|-------------------|
 | Telegram | `TELEGRAM_BOT_TOKEN` | `TELEGRAM_ALLOWED_IDS` for DM allowlisting, `TELEGRAM_REQUIRE_MENTION` for group-chat replies |
 | Discord | `DISCORD_BOT_TOKEN` | `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION` |
-| Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | `SLACK_ALLOWED_USERS` for DM and channel `@mention` user allowlisting |
+| Slack | `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN` | `SLACK_ALLOWED_USERS` for DM and channel `@mention` user allowlisting, `SLACK_ALLOWED_CHANNELS` for channel ID allowlisting |
 | WhatsApp | None. Pair via QR after rebuild | None |
 
 Telegram uses a bot token from [BotFather](https://t.me/BotFather).
 Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token.
+For Telegram group chats, disable privacy mode before testing group replies: in @BotFather, run `/setprivacy`, choose the bot, then choose **Disable**.
+After changing privacy mode, remove the bot from each Telegram group and add it back so Telegram applies the new delivery setting to that group.
 `TELEGRAM_ALLOWED_IDS` is a comma-separated list of Telegram user IDs for DM access.
 Group chats stay open by default so rebuilt sandboxes do not silently drop Telegram group messages because of an empty group allowlist.
 Set `TELEGRAM_REQUIRE_MENTION=1` to make the bot reply in Telegram groups only when users mention it.
@@ -44,6 +46,8 @@ Set `DISCORD_USER_ID` to restrict access to one user; otherwise, any member of t
 Slack uses Socket Mode and requires two tokens.
 Use `SLACK_BOT_TOKEN` for the bot user OAuth token (`xoxb-...`) and `SLACK_APP_TOKEN` for the app-level Socket Mode token (`xapp-...`).
 Set `SLACK_ALLOWED_USERS` to comma-separated Slack member IDs to authorize those users for DMs and for channel `@mention` events in channels where the Slack app is present.
+Set `SLACK_ALLOWED_CHANNELS` to comma-separated Slack channel IDs to restrict channel `@mention` handling to those channels.
+When both Slack allowlists are set, NemoClaw requires the mention to come from one of the allowed channels and one of the allowed members.
 Channel messages still require an explicit bot mention.
 
 WhatsApp Web does not use a host-side token or OpenShell credential provider.
@@ -80,6 +84,7 @@ $ export DISCORD_SERVER_ID=<your-discord-server-id>
 $ export SLACK_BOT_TOKEN=<your-slack-bot-token>
 $ export SLACK_APP_TOKEN=<your-slack-app-token>
 $ export SLACK_ALLOWED_USERS=<your-slack-member-id>
+$ export SLACK_ALLOWED_CHANNELS=<your-slack-channel-id>
 ```
 
 Then run onboarding:
@@ -112,7 +117,7 @@ $ nemoclaw my-assistant channels add whatsapp
 The command accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase channel name.
 If a matching built-in network policy preset exists, `channels add` applies it to the sandbox automatically before the rebuild so the bridge has egress to its upstream API; if applying the preset fails, NemoClaw warns and tells you to re-apply manually with `nemoclaw <sandbox> policy-add <channel>` after the rebuild.
 Choose the rebuild so the running sandbox image picks up the new channel.
-If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, or `DISCORD_REQUIRE_MENTION`, export them before the rebuild starts.
+If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION`, `SLACK_ALLOWED_USERS`, or `SLACK_ALLOWED_CHANNELS`, export them before the rebuild starts.
 If you defer the rebuild, apply the change later:
 
 ```console
@@ -187,6 +192,7 @@ Use the matching policy preset (`telegram`, `discord`, `slack`, or `whatsapp`) o
 ## Tunnel Command
 
 When the host has `cloudflared`, `nemoclaw tunnel start` starts a cloudflared tunnel that can expose the dashboard with a public URL.
+Set `CLOUDFLARE_TUNNEL_TOKEN` before running the command when you want to use a Cloudflare named tunnel instead of a generated quick-tunnel URL.
 `nemoclaw tunnel stop` stops the tunnel and asks NemoClaw to stop the in-sandbox gateway for the selected or default sandbox.
 The older `nemoclaw start` still works as a deprecated alias.
 
