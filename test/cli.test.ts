@@ -1099,6 +1099,10 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("--json");
     expect(r.out).toContain("$ nemoclaw sandbox status <name> [--json]");
     expect(r.out).toContain("$ nemoclaw sandbox status alpha --json");
+
+    const alias = runWithEnv("alpha status --help", { HOME: home });
+    expect(alias.code).toBe(0);
+    expect(alias.out).toContain("--json");
   });
 
   it("status rejects unknown flags through current dispatch path", () => {
