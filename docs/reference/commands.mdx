@@ -1021,6 +1021,15 @@ $ nemoclaw tunnel stop
 
 `nemoclaw stop` remains as a deprecated alias that prints a warning and delegates to `tunnel stop`.
 
+### `nemoclaw tunnel status`
+
+Show the current cloudflared public-URL tunnel status for the default sandbox dashboard.
+The output reports whether cloudflared is running, stopped, or stale, and includes the same recovery hint used by `nemoclaw status`.
+
+```console
+$ nemoclaw tunnel status
+```
+
 ### `nemoclaw start`
 
 <Warning>
