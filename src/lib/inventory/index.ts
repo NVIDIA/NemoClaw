@@ -158,6 +158,13 @@ export interface StatusReport {
   services: StatusServiceRow[];
 }
 
+export interface SandboxStatusReport {
+  schemaVersion: 1;
+  sandbox: StatusSandboxRow | null;
+  gatewayHealth: GatewayHealth | null;
+  services: StatusServiceRow[];
+}
+
 function safeStatusString(value: string | null | undefined): string | null {
   if (typeof value !== "string" || value.length === 0) return null;
   return redactFull(value);
@@ -384,6 +391,28 @@ export function getStatusReport(deps: ShowStatusCommandDeps): StatusReport {
     sandboxes: sandboxes.map((sandbox) =>
       buildStatusSandboxRow(sandbox, resolvedDefault, liveInference),
     ),
+    services,
+  };
+}
+
+export function getSandboxStatusReport(
+  deps: ShowStatusCommandDeps,
+  sandboxName: string,
+): SandboxStatusReport {
+  const { sandboxes, defaultSandbox } = deps.listSandboxes();
+  const resolvedDefault = defaultSandbox || null;
+  const target = sandboxes.find((sandbox) => sandbox.name === sandboxName) ?? null;
+  const liveInference =
+    target && target.name === resolvedDefault && sandboxes.length > 0 ? deps.getLiveInference() : null;
+  const gatewayHealth =
+    deps.getGatewayHealth && target ? deps.getGatewayHealth() : null;
+  const services =
+    deps.getServiceStatuses?.({ sandboxName }).map(normalizeServiceStatus) ?? [];
+
+  return {
+    schemaVersion: 1,
+    sandbox: target ? buildStatusSandboxRow(target, resolvedDefault, liveInference) : null,
+    gatewayHealth: normalizeGatewayHealth(gatewayHealth),
     services,
   };
 }

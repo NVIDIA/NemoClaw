@@ -28,6 +28,13 @@ const mocks = vi.hoisted(() => {
     shieldsStatus: vi.fn(),
     shieldsUp: vi.fn(),
     showSandboxStatus: vi.fn().mockResolvedValue(undefined),
+    buildStatusCommandDeps: vi.fn(() => ({ statusDeps: true })),
+    getSandboxStatusReport: vi.fn(() => ({
+      schemaVersion: 1,
+      sandbox: { name: "alpha" },
+      gatewayHealth: { healthy: true, state: "healthy_named" },
+      services: [],
+    })),
     SandboxConfigError,
   };
 });
@@ -46,6 +53,14 @@ vi.mock("../../lib/actions/sandbox/rebuild", () => ({
 
 vi.mock("../../lib/actions/sandbox/status", () => ({
   showSandboxStatus: mocks.showSandboxStatus,
+}));
+
+vi.mock("../../lib/inventory", () => ({
+  getSandboxStatusReport: mocks.getSandboxStatusReport,
+}));
+
+vi.mock("../../lib/status-command-deps", () => ({
+  buildStatusCommandDeps: mocks.buildStatusCommandDeps,
 }));
 
 vi.mock("../../lib/actions/sandbox/policy-channel", () => ({
@@ -147,6 +162,25 @@ describe("sandbox oclif command adapters", () => {
     expect(mocks.listSandboxPolicies).toHaveBeenCalledWith("alpha");
     expect(mocks.listSandboxChannels).toHaveBeenCalledWith("alpha");
     expect(mocks.configGet).toHaveBeenCalledWith("alpha", { key: "model", format: "yaml" });
+  });
+
+  it("maps sandbox status --json to a structured sandbox report", async () => {
+    const log = vi.spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      await SandboxStatusCommand.run(["alpha", "--json"], rootDir);
+
+      expect(mocks.buildStatusCommandDeps).toHaveBeenCalledWith(rootDir);
+      expect(mocks.getSandboxStatusReport).toHaveBeenCalledWith({ statusDeps: true }, "alpha");
+      expect(mocks.showSandboxStatus).not.toHaveBeenCalled();
+      expect(JSON.parse(String(log.mock.calls.at(-1)?.[0]))).toEqual({
+        schemaVersion: 1,
+        sandbox: { name: "alpha" },
+        gatewayHealth: { healthy: true, state: "healthy_named" },
+        services: [],
+      });
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it("maps config action failures to oclif exit codes", async () => {
