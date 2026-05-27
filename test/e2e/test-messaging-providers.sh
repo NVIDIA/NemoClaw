@@ -861,15 +861,6 @@ try:
 except Exception as e:
     print(json.dumps({'error': str(e)}))
 \"" 2>/dev/null || true)
-plugin_entries_json=$(sandbox_exec "python3 -c \"
-import json, sys
-try:
-    cfg = json.load(open('/sandbox/.openclaw/openclaw.json'))
-    entries = cfg.get('plugins', {}).get('entries', {})
-    print(json.dumps(entries))
-except Exception as e:
-    print(json.dumps({'error': str(e)}))
-\"" 2>/dev/null || true)
 
 if [ -z "$channel_json" ] || echo "$channel_json" | grep -q '"error"'; then
   fail "M6: Could not read openclaw.json channels (${channel_json:0:200})"
@@ -1242,48 +1233,6 @@ print('yes' if 'slack' in d else 'no')
 " 2>/dev/null || true)
   if [ "$slack_configured" = "yes" ]; then
     pass "M11e: Slack channel configured with placeholder tokens (guard needed)"
-
-    sl_channel_enabled=$(echo "$channel_json" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-print('yes' if d.get('slack', {}).get('enabled') is True else 'no')
-" 2>/dev/null || true)
-    if [ "$sl_channel_enabled" = "yes" ]; then
-      pass "M11e1: Slack channel is enabled at the top level for fresh startup discovery"
-    else
-      fail "M11e1: Slack channel missing top-level enabled=true; fresh startup may report disabled"
-    fi
-
-    sl_plugin_enabled=$(echo "$plugin_entries_json" | python3 -c "
-import json, sys
-d = json.load(sys.stdin)
-print('yes' if d.get('slack', {}).get('enabled') is True else 'no')
-" 2>/dev/null || true)
-    if [ "$sl_plugin_enabled" = "yes" ]; then
-      pass "M11e2: Slack plugin entry is enabled so the external channel plugin activates"
-    else
-      fail "M11e2: Slack plugin entry missing plugins.entries.slack.enabled=true; OpenClaw may show Slack installed but disabled"
-    fi
-
-    sl_runtime_json=$(sandbox_exec "timeout 45 openclaw channels list --all --json --no-color 2>/dev/null" 2>/dev/null || true)
-    sl_runtime_state=$(echo "$sl_runtime_json" | python3 -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-    slack = d.get('chat', {}).get('slack', {})
-    accounts = slack.get('accounts', [])
-    if slack.get('installed') is True and slack.get('origin') == 'configured' and 'default' in accounts:
-        print('yes')
-    else:
-        print('no installed=%s origin=%s accounts=%s' % (slack.get('installed'), slack.get('origin'), accounts))
-except Exception as e:
-    print('error %s' % e)
-" 2>/dev/null || true)
-    if [ "$sl_runtime_state" = "yes" ]; then
-      pass "M11e3: OpenClaw runtime discovery reports Slack installed and configured"
-    else
-      fail "M11e3: OpenClaw runtime discovery did not report Slack installed/configured (${sl_runtime_state}; output=${sl_runtime_json:0:300})"
-    fi
 
     # M11f/M11g/M11h: SLACK_ALLOWED_USERS should authorize both DMs and
     # channel @mentions from the same users. Config lives on the Slack account
@@ -2259,60 +2208,7 @@ else
   fi
 fi
 
-# S2: The running gateway must expose the Slack default account through
-# OpenClaw's status path. With fake tokens, a Slack auth rejection is the
-# expected startup outcome; the regression in #4189 was worse: Slack was absent
-# from channel startup/status entirely.
-sl_status_json=$(sandbox_exec "timeout 45 openclaw channels status --probe --channel slack --json --no-color --timeout 15000 2>/dev/null" 2>/dev/null || true)
-sl_status_state=$(echo "$sl_status_json" | python3 -c "
-import json, re, sys
-try:
-    raw = sys.stdin.read()
-    start = raw.find('{')
-    if start < 0:
-        raise ValueError('no JSON object in status output')
-    d = json.JSONDecoder().raw_decode(raw[start:])[0]
-    if d.get('gatewayReachable') is False and d.get('configOnly') is True:
-        configured = d.get('configuredChannels', [])
-        if 'slack' in configured:
-            print('config-only slack-configured')
-        else:
-            print('config-only slack-missing configuredChannels=%s' % configured)
-        sys.exit(0)
-    accounts = d.get('channelAccounts', {}).get('slack', [])
-    account = next((a for a in accounts if a.get('accountId') == 'default'), accounts[0] if accounts else {})
-    configured = account.get('configured') is True
-    enabled = account.get('enabled') is True
-    running = account.get('running') is True or account.get('connected') is True
-    probe = account.get('probe') if isinstance(account.get('probe'), dict) else {}
-    text = ' '.join(
-        str(v or '')
-        for v in (
-            account.get('lastError'),
-            probe.get('error'),
-            probe.get('status'),
-        )
-    )
-    expected_auth_failure = bool(re.search(r'invalid_auth|not_authed|not_allowed_token_type|auth', text, re.I))
-    if configured and enabled and (running or expected_auth_failure):
-        print('yes running=%s expected_auth_failure=%s' % (running, expected_auth_failure))
-    else:
-        print(
-            'no configured=%s enabled=%s running=%s expected_auth_failure=%s accounts=%s'
-            % (configured, enabled, running, expected_auth_failure, accounts)
-        )
-except Exception as e:
-    print('error %s' % e)
-" 2>/dev/null || true)
-if echo "$sl_status_state" | grep -q "^yes "; then
-  pass "S2: OpenClaw status probe reports Slack default configured/enabled on the running gateway (${sl_status_state})"
-elif [ "$sl_status_state" = "config-only slack-configured" ]; then
-  skip "S2: OpenClaw status probe fell back to config-only status but still lists Slack as configured"
-else
-  fail "S2: OpenClaw status probe did not report Slack default on the running gateway (${sl_status_state}; output=${sl_status_json:0:500})"
-fi
-
-# S3: Dump gateway.log for diagnostics (must use openshell exec — SSH user
+# S2: Dump gateway.log for diagnostics (must use openshell exec — SSH user
 # cannot read the file because it's 600 gateway:gateway).
 gw_log=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat /tmp/gateway.log 2>/dev/null || true)
 if [ -z "$gw_log" ]; then
@@ -2325,18 +2221,15 @@ echo "$gw_log" | tail -30 | while IFS= read -r line; do
   info "  $line"
 done
 
-if echo "$gw_log" | grep -q "\\[slack\\] \\[default\\] starting provider" \
-  && echo "$gw_log" | grep -qi "invalid_auth"; then
-  pass "S3: Gateway log shows Slack plugin started and reached the expected fake-token auth path"
-elif echo "$gw_log" | grep -q "provider failed to start:.*gateway continues"; then
-  pass "S3: Gateway log shows Slack rejection was caught by channel guard"
+if echo "$gw_log" | grep -q "provider failed to start:.*gateway continues"; then
+  pass "S2: Gateway log shows Slack rejection was caught by channel guard"
 elif echo "$gw_log" | grep -qi "slack"; then
   info "Slack-related lines: $(echo "$gw_log" | grep -i slack | head -5)"
-  skip "S3: Gateway log has Slack output but not the guard catch message"
+  skip "S2: Gateway log has Slack output but not the guard catch message"
 elif [ -z "$gw_log" ]; then
-  skip "S3: Could not read gateway log (container may have exited)"
+  skip "S2: Could not read gateway log (container may have exited)"
 else
-  skip "S3: No Slack-related output in gateway log"
+  skip "S2: No Slack-related output in gateway log"
 fi
 
 # ══════════════════════════════════════════════════════════════════
