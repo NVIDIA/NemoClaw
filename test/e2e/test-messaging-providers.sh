@@ -1390,6 +1390,38 @@ print(','.join(bad))
     fail "M-WA9: WhatsApp config contains secret-like fields: ${whatsapp_secret_fields}"
   fi
 
+  # M-W7: WeChat plugin install registry is restored alongside the channel
+  # block. The upstream plugin loader needs this install metadata after
+  # OpenClaw config rewrites; plugins.entries alone is not enough.
+  wechat_install_json=$(sandbox_exec "python3 -c \"
+import json
+cfg = json.load(open('/sandbox/.openclaw/openclaw.json'))
+inst = cfg.get('plugins', {}).get('installs', {}).get('openclaw-weixin', {})
+print(json.dumps(inst))
+\"" 2>/dev/null || true)
+  if echo "$wechat_install_json" | python3 -c "
+import json, sys
+try:
+    inst = json.load(sys.stdin)
+except Exception:
+    sys.exit(2)
+spec = inst.get(\"spec\") if isinstance(inst, dict) else None
+install_path = inst.get(\"installPath\") if isinstance(inst, dict) else None
+ok = (
+    isinstance(inst, dict)
+    and inst.get(\"source\") == \"npm\"
+    and isinstance(spec, str)
+    and spec.startswith(\"@tencent-weixin/openclaw-weixin@\")
+    and isinstance(install_path, str)
+    and bool(install_path.strip())
+)
+sys.exit(0 if ok else 1)
+" 2>/dev/null; then
+    pass "M-W7: WeChat plugin install registry restored in openclaw.json"
+  else
+    fail "M-W7: WeChat plugin install registry missing or invalid"
+  fi
+
   # M-W8: WeChat channel registered under channels.openclaw-weixin with the
   # configured accountId enabled. Written by seed-wechat-accounts.py during
   # image build using NEMOCLAW_WECHAT_CONFIG_B64. Absence here means
@@ -1405,7 +1437,7 @@ print(account.get('enabled', False))
   if [ "$wechat_enabled" = "True" ]; then
     pass "M-W8: WeChat account '$WECHAT_ACCOUNT' is enabled in openclaw.json (channels.openclaw-weixin)"
   else
-    skip "M-W8: WeChat account not enabled in openclaw.json (expected in non-root sandbox or seed-wechat-accounts.py was skipped)"
+    fail "M-W8: WeChat account not enabled in openclaw.json (channels.openclaw-weixin missing or disabled)"
   fi
 fi
 
@@ -1416,7 +1448,7 @@ fi
 # would mean someone bypassed the placeholder constant.
 wechat_account_json=$(sandbox_exec "cat /sandbox/.openclaw/openclaw-weixin/accounts/${WECHAT_ACCOUNT}.json 2>/dev/null || true" 2>/dev/null || true)
 if [ -z "$wechat_account_json" ] || echo "$wechat_account_json" | grep -qi "no such file"; then
-  skip "M-W9: WeChat per-account credential file not found (seed-wechat-accounts.py may have been skipped)"
+  fail "M-W9: WeChat per-account credential file not found (seed-wechat-accounts.py may have been skipped)"
 else
   if echo "$wechat_account_json" | grep -qF "$WECHAT_TOKEN"; then
     fail "M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — seed-wechat-accounts.py placeholder regression"
@@ -1432,7 +1464,7 @@ fi
 # auth/accounts.ts boots accounts that appear in this index.
 wechat_index_json=$(sandbox_exec "cat /sandbox/.openclaw/openclaw-weixin/accounts.json 2>/dev/null || true" 2>/dev/null || true)
 if [ -z "$wechat_index_json" ] || echo "$wechat_index_json" | grep -qi "no such file"; then
-  skip "M-W10: WeChat accounts.json index not found"
+  fail "M-W10: WeChat accounts.json index not found"
 else
   if echo "$wechat_index_json" | python3 -c "
 import json, sys
