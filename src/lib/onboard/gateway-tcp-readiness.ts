@@ -52,6 +52,7 @@ import net from "node:net";
 
 import { getGatewayConnectHost } from "../core/gateway-address";
 import { GATEWAY_PORT } from "../core/ports";
+import { withTraceSpan } from "../trace";
 
 const ISGATEWAY_TCP_READY_DEFAULT_TIMEOUT_MS = 500;
 
@@ -80,6 +81,18 @@ const ISGATEWAY_TCP_READY_MIN_TIMEOUT_MS = 50;
  *                  testing.
  */
 export function isGatewayTcpReady(
+  port: number = GATEWAY_PORT,
+  timeoutMs: number = ISGATEWAY_TCP_READY_DEFAULT_TIMEOUT_MS,
+  host = getGatewayConnectHost(),
+): Promise<boolean> {
+  return withTraceSpan(
+    "nemoclaw.gateway.tcp_probe",
+    { host, port, timeout_ms: timeoutMs },
+    () => isGatewayTcpReadyImpl(port, timeoutMs, host),
+  );
+}
+
+function isGatewayTcpReadyImpl(
   port: number = GATEWAY_PORT,
   timeoutMs: number = ISGATEWAY_TCP_READY_DEFAULT_TIMEOUT_MS,
   host = getGatewayConnectHost(),

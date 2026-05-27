@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { NvidiaPlatform } from "../../../inference/nim";
-import type { GatewayContainerState } from "../../gateway-container-running";
-import type { Session } from "../../../state/onboard-session";
 import type { GatewayReuseState } from "../../../state/gateway";
+import type { Session } from "../../../state/onboard-session";
+import type { GatewayContainerState } from "../../gateway-container-running";
+import { withGatewayTrace } from "../../tracing";
 
 export interface GatewayStateOptions<Gpu> {
   resume: boolean;
@@ -176,7 +177,9 @@ export async function handleGatewayState<Gpu>({
       gatewayReuseState = "missing";
     }
     await deps.startRecordedStep("gateway");
-    await deps.startGateway(gpu, { gpuPassthrough });
+    await withGatewayTrace(gatewayReuseState, gpuPassthrough, () =>
+      deps.startGateway(gpu, { gpuPassthrough }),
+    );
     session = await deps.recordStepComplete("gateway");
   }
 
