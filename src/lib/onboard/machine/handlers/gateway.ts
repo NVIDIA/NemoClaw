@@ -171,12 +171,12 @@ export async function handleGatewayState<Gpu>({
         deps.note("  [resume] Recorded gateway state is unavailable; recreating it.");
       }
     }
+    await deps.startRecordedStep("gateway");
     if (deps.isLinuxDockerDriverGatewayEnabled() && gatewayReuseState !== "missing") {
       deps.note("  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.");
       deps.retireLegacyGatewayForDockerDriverUpgrade();
       gatewayReuseState = "missing";
     }
-    await deps.startRecordedStep("gateway");
     await withGatewayTrace(gatewayReuseState, gpuPassthrough, () =>
       deps.startGateway(gpu, { gpuPassthrough }),
     );

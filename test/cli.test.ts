@@ -5664,8 +5664,10 @@ describe("list shows live gateway inference", () => {
     expect(r.out).not.toContain(
       "agent: openclaw  model: configured-model  provider: configured-provider  sandbox GPU  policies: pypi, npm",
     );
-    // Onboarded values appear in the drift annotation.
-    expect(r.out).toContain("(onboarded: model=configured-model, provider=configured-provider)");
+    // Onboarded values appear in an explicit live-gateway drift annotation.
+    expect(r.out).toContain(
+      "(live OpenShell gateway differs from onboarded: model=configured-model, provider=configured-provider)",
+    );
   });
 
   it("falls back to registry values when openshell inference get fails", () => {
