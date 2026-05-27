@@ -299,8 +299,18 @@ describe("fetch-guard patch regression guard", () => {
         "const withStrictGuardedFetchMode = Symbol('strict');",
         "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
         "globalThis.proxyChecks = [];",
+        "globalThis.hostnameChecks = [];",
         "async function assertExplicitProxyAllowed(proxyUrl) { globalThis.proxyChecks.push(proxyUrl); throw new Error('proxy rejected'); }",
+        "function normalizeHostname(value) { return String(value || '').toLowerCase().replace(/\\.+$/, ''); }",
+        "function resolveHostnamePolicyChecks(hostname, policy) {",
+        "  const normalized = normalizeHostname(hostname);",
+        "  globalThis.hostnameChecks.push(normalized);",
+        "  if (normalized === 'host.openshell.internal' || normalized.endsWith('.internal') || normalized === '169.254.169.254' || normalized === '10.0.0.1') throw new Error('blocked ' + normalized);",
+        "  return { normalized, skipPrivateNetworkChecks: false };",
+        "}",
+        "function assertHostnameAllowedWithPolicy(hostname, policy) { return resolveHostnamePolicyChecks(hostname, policy).normalized; }",
         "globalThis.assertExplicitProxyAllowed = assertExplicitProxyAllowed;",
+        "globalThis.assertHostnameAllowedWithPolicy = assertHostnameAllowedWithPolicy;",
         "export { withStrictGuardedFetchMode as a, withTrustedEnvProxyGuardedFetchMode as b };",
         "",
       ].join("\n"),
@@ -342,6 +352,7 @@ describe("fetch-guard patch regression guard", () => {
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 1 applied");
       expect(patch.stdout).toContain("Patch 2 applied");
+      expect(patch.stdout).toContain("Patch 2b applied");
 
       const fetchGuard = await import(`${fetchGuardPath}?${Date.now()}`);
       expect(fetchGuard.a).toBe(fetchGuard.b);
@@ -349,6 +360,15 @@ describe("fetch-guard patch regression guard", () => {
       process.env.OPENSHELL_SANDBOX = "1";
       try {
         await (globalThis as any).assertExplicitProxyAllowed("http://10.200.0.1:3128");
+        expect((globalThis as any).assertHostnameAllowedWithPolicy("host.openshell.internal")).toBe(
+          "host.openshell.internal",
+        );
+        expect(() => (globalThis as any).assertHostnameAllowedWithPolicy("foo.internal")).toThrow(
+          /blocked foo\.internal/,
+        );
+        expect(() =>
+          (globalThis as any).assertHostnameAllowedWithPolicy("169.254.169.254"),
+        ).toThrow(/blocked 169\.254\.169\.254/);
       } finally {
         if (previousSandboxEnv === undefined) {
           delete process.env.OPENSHELL_SANDBOX;
@@ -357,6 +377,7 @@ describe("fetch-guard patch regression guard", () => {
         }
       }
       expect((globalThis as any).proxyChecks).toEqual([]);
+      expect((globalThis as any).hostnameChecks).toEqual(["foo.internal", "169.254.169.254"]);
 
       const installSafe = await import(`${installSafePath}?${Date.now()}`);
       await expect(installSafe.acceptsBaseDir(symlinkBase)).resolves.toBe(true);
@@ -390,8 +411,18 @@ describe("fetch-guard patch regression guard", () => {
         "const withStrictGuardedFetchMode = Symbol('strict');",
         "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
         "globalThis.proxyChecks = [];",
+        "globalThis.hostnameChecks = [];",
         "async function assertExplicitProxyAllowed(proxyUrl) { globalThis.proxyChecks.push(proxyUrl); throw new Error('proxy rejected'); }",
+        "function normalizeHostname(value) { return String(value || '').toLowerCase().replace(/\\.+$/, ''); }",
+        "function resolveHostnamePolicyChecks(hostname, policy) {",
+        "  const normalized = normalizeHostname(hostname);",
+        "  globalThis.hostnameChecks.push(normalized);",
+        "  if (normalized === 'host.openshell.internal' || normalized.endsWith('.internal') || normalized === '10.0.0.1') throw new Error('blocked ' + normalized);",
+        "  return { normalized, skipPrivateNetworkChecks: false };",
+        "}",
+        "function assertHostnameAllowedWithPolicy(hostname, policy) { return resolveHostnamePolicyChecks(hostname, policy).normalized; }",
         "globalThis.assertExplicitProxyAllowed = assertExplicitProxyAllowed;",
+        "globalThis.assertHostnameAllowedWithPolicy = assertHostnameAllowedWithPolicy;",
         "export { withStrictGuardedFetchMode as a, withTrustedEnvProxyGuardedFetchMode as b };",
         "",
       ].join("\n"),
@@ -406,6 +437,7 @@ describe("fetch-guard patch regression guard", () => {
       expect(patch.status, `${patch.stdout}${patch.stderr}`).toBe(0);
       expect(patch.stdout).toContain("Patch 1 applied");
       expect(patch.stdout).toContain("Patch 2 applied");
+      expect(patch.stdout).toContain("Patch 2b applied");
       const verify = spawnSync(
         process.execPath,
         [
@@ -414,7 +446,11 @@ describe("fetch-guard patch regression guard", () => {
           `const exports = await import(${JSON.stringify(modulePath)});
 if (exports.a !== exports.b) throw new Error('strict export was not redirected to trusted env proxy mode');
 await globalThis.assertExplicitProxyAllowed('http://10.200.0.1:3128');
-if (globalThis.proxyChecks.length !== 0) throw new Error('sandbox proxy validation did not bypass target-policy checks');`,
+if (globalThis.proxyChecks.length !== 0) throw new Error('sandbox proxy validation did not bypass target-policy checks');
+if (globalThis.assertHostnameAllowedWithPolicy('host.openshell.internal') !== 'host.openshell.internal') throw new Error('host gateway was not allowed');
+let blocked = false;
+try { globalThis.assertHostnameAllowedWithPolicy('10.0.0.1'); } catch { blocked = true; }
+if (!blocked) throw new Error('private IP literal was not blocked');`,
         ],
         { encoding: "utf-8", env: { ...process.env, OPENSHELL_SANDBOX: "1" }, timeout: 5000 },
       );
@@ -638,6 +674,38 @@ if (globalThis.proxyChecks.length !== 0) throw new Error('sandbox proxy validati
         "Patch 2 target missing but proxy hostname validation references remain",
       );
       expect(patch.stderr).toContain("Patch 2 cannot safely skip");
+      expect(patch.stderr).toContain("OpenClaw 2026.6.1");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the host-gateway hostname validator target disappears but internal-host blocks remain", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fetch-guard-host-gateway-unknown-"));
+    const dist = path.join(tmp, "dist");
+    fs.mkdirSync(dist, { recursive: true });
+    fs.writeFileSync(
+      path.join(dist, "ssrf-host-gateway-unknown.js"),
+      [
+        "const withTrustedEnvProxyGuardedFetchMode = Symbol('trusted');",
+        "function isBlockedHostnameNormalized(normalized) {",
+        "  return normalized.endsWith('.internal');",
+        "}",
+        "async function fetchGuardedMediaResponse() {",
+        "  return fetchWithSsrFGuard(withTrustedEnvProxyGuardedFetchMode({}));",
+        "}",
+        "export { withTrustedEnvProxyGuardedFetchMode as a };",
+        "",
+      ].join("\n"),
+    );
+
+    try {
+      const patch = runFetchGuardPatchBlock(dist, tmp, "2026.6.1");
+      expect(patch.status).toBe(1);
+      expect(patch.stderr).toContain(
+        "Patch 2b target missing but internal-hostname SSRF blocks remain",
+      );
+      expect(patch.stderr).toContain("Patch 2b cannot safely skip");
       expect(patch.stderr).toContain("OpenClaw 2026.6.1");
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });

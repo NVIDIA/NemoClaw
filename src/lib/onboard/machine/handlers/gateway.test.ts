@@ -16,6 +16,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
     lifecycle: vi.fn(() => false),
     verifyContainer: vi.fn((_gatewayName: string): GatewayContainerState => "running"),
     waitHttp: vi.fn(async () => true),
+    recoverGateway: vi.fn(async () => true),
     stopDashboardForward: vi.fn(),
     destroy: vi.fn(() => true),
     destroyForReuse: vi.fn(() => "missing" as GatewayReuseState),
@@ -42,6 +43,7 @@ function createDeps(overrides: Partial<GatewayStateOptions<Gpu>["deps"]> = {}) {
       gatewayCliSupportsLifecycleCommands: calls.lifecycle,
       verifyGatewayContainerRunning: calls.verifyContainer,
       waitForGatewayHttpReady: calls.waitHttp,
+      recoverGatewayRuntime: calls.recoverGateway,
       getGatewayLocalEndpoint: () => "http://127.0.0.1:31818",
       stopDashboardForward: calls.stopDashboardForward,
       destroyGateway: calls.destroy,
@@ -159,6 +161,65 @@ describe("handleGatewayState", () => {
     expect(calls.startGateway).toHaveBeenCalled();
   });
 
+  it("recovers a stopped lifecycle gateway without destroying volumes (#4187)", async () => {
+    const recoverGateway = vi.fn(async () => true);
+    const { deps, calls } = createDeps({
+      gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
+      verifyGatewayContainerRunning: vi.fn(() => "stopped" as GatewayContainerState),
+      recoverGatewayRuntime: recoverGateway,
+    });
+
+    await handleGatewayState(baseOptions(deps, "healthy"));
+
+    expect(recoverGateway).toHaveBeenCalledOnce();
+    expect(calls.stopDashboardForward).not.toHaveBeenCalled();
+    expect(calls.destroyForReuse).not.toHaveBeenCalled();
+    expect(calls.exit).not.toHaveBeenCalled();
+    expect(calls.startGateway).not.toHaveBeenCalled();
+    expect(calls.skipped).toHaveBeenCalledWith("gateway", "running", "reuse");
+    expect(calls.complete).toHaveBeenCalledWith("gateway");
+  });
+
+  it("refuses to destroy volumes when stopped-container recovery fails (#4187)", async () => {
+    const recoverGateway = vi.fn(async () => false);
+    const { deps, calls } = createDeps({
+      gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
+      verifyGatewayContainerRunning: vi.fn(() => "stopped" as GatewayContainerState),
+      recoverGatewayRuntime: recoverGateway,
+    });
+
+    await expect(handleGatewayState(baseOptions(deps, "healthy"))).rejects.toThrow("exit 1");
+
+    expect(recoverGateway).toHaveBeenCalledOnce();
+    expect(calls.exit).toHaveBeenCalledWith(1);
+    expect(calls.destroyForReuse).not.toHaveBeenCalled();
+    expect(calls.stopDashboardForward).not.toHaveBeenCalled();
+  });
+
+  it("still recreates a recovered stopped gateway when image drift is detected (#4187)", async () => {
+    const recoverGateway = vi.fn(async () => true);
+    const { deps, calls } = createDeps({
+      gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
+      verifyGatewayContainerRunning: vi.fn(() => "stopped" as GatewayContainerState),
+      recoverGatewayRuntime: recoverGateway,
+      getGatewayClusterImageDrift: vi.fn(() => ({
+        currentVersion: "0.0.38",
+        expectedVersion: "0.0.39",
+      })),
+      destroyGatewayForReuse: vi.fn(() => "missing" as GatewayReuseState),
+    });
+
+    await handleGatewayState(baseOptions(deps, "healthy"));
+
+    expect(recoverGateway).toHaveBeenCalledOnce();
+    expect(calls.stopForwards).toHaveBeenCalledOnce();
+    expect(deps.destroyGatewayForReuse).toHaveBeenCalledWith(
+      deps.destroyGateway,
+      "  ✓ Previous gateway cleaned up",
+      "  ! Previous gateway cleanup failed; leaving registry state intact.",
+    );
+  });
+
   it("refuses to destroy an unknown container state when HTTP is also unavailable", async () => {
     const { deps, calls } = createDeps({
       gatewayCliSupportsLifecycleCommands: vi.fn(() => true),
@@ -221,5 +282,29 @@ describe("handleGatewayState", () => {
     expect(calls.retireLegacy).toHaveBeenCalledOnce();
     expect(calls.startGateway).toHaveBeenCalledOnce();
     expect(result.gatewayReuseState).toBe("missing");
+  });
+
+  it("emits the step [2/8] header before retiring the legacy Docker-driver gateway", async () => {
+    const order: string[] = [];
+    const { deps, calls } = createDeps({
+      isLinuxDockerDriverGatewayEnabled: vi.fn(() => true),
+      reconcileGatewayGpuReuseForGpuIntent: vi.fn(() => "stale" as GatewayReuseState),
+      startRecordedStep: vi.fn(async (step: string) => {
+        order.push(`startRecordedStep:${step}`);
+      }),
+      retireLegacyGatewayForDockerDriverUpgrade: vi.fn(() => {
+        order.push("retireLegacy");
+      }),
+      startGateway: vi.fn(async () => {
+        order.push("startGateway");
+      }),
+    });
+
+    await handleGatewayState(baseOptions(deps, "healthy"));
+
+    expect(order).toEqual(["startRecordedStep:gateway", "retireLegacy", "startGateway"]);
+    expect(calls.note).toHaveBeenCalledWith(
+      "  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.",
+    );
   });
 });

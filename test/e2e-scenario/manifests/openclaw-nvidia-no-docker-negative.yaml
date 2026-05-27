@@ -1,0 +1,25 @@
+apiVersion: nemoclaw.io/v1
+kind: NemoClawInstance
+metadata:
+  name: openclaw-nvidia-no-docker-negative
+spec:
+  setup:
+    install:
+      source: repo-current
+    runtime:
+      containerEngine: docker
+      containerDaemon: missing
+    platform:
+      os: ubuntu
+      executionTarget: local
+  onboarding:
+    agent: openclaw
+    provider: nvidia
+    modelRoute: inference-local
+    policyTier: balanced
+    messaging: []
+    lifecycle: preflight-negative
+  state:
+    workspaceRef: default
+    credentialRefs:
+      - NVIDIA_API_KEY

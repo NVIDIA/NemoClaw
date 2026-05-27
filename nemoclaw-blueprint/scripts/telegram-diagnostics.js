@@ -19,7 +19,9 @@
 
   var providerStarted = false;
   var readyLogged = false;
+  var startupProbeLogged = false;
   var inferenceLogged = false;
+  var credentialLogged = false;
   var inDiagnosticWrite = false;
 
   function sanitize(value) {
@@ -74,14 +76,76 @@
     return { hostname: hostname, path: path };
   }
 
-  function maybeLogTelegramReady(info, statusCode) {
-    if (readyLogged) return;
+  function isTelegramStartupProbe(info) {
     if (!info || info.hostname !== 'api.telegram.org') return;
-    if (!/\/(?:bot[^/]+\/)?(?:getUpdates|getMe|getWebhookInfo)(?:\?|$)/.test(info.path)) return;
-    if (Number(statusCode) < 200 || Number(statusCode) >= 300) return;
+    return /\/(?:bot[^/]+\/)?(?:getUpdates|getMe|getWebhookInfo)(?:\?|$)/.test(info.path);
+  }
+
+  function maybeLogTelegramStartupProbe(info, statusCode) {
+    if (!isTelegramStartupProbe(info)) return;
     providerStarted = true;
-    readyLogged = true;
-    emit('[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)');
+    var status = Number(statusCode);
+    if (status >= 200 && status < 300) {
+      if (readyLogged) return;
+      readyLogged = true;
+      emit('[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)');
+      return;
+    }
+    if (startupProbeLogged) return;
+    startupProbeLogged = true;
+    if (status === 401 || status === 404) {
+      emit('[telegram] [default] Bot API rejected startup probe with HTTP ' + status + '; token invalid or credential placeholder unresolved');
+      return;
+    }
+    if (status >= 300) {
+      emit('[telegram] [default] Bot API startup probe returned HTTP ' + status);
+    }
+  }
+
+  function maybeLogTelegramStartupError(info, error) {
+    if (!isTelegramStartupProbe(info) || startupProbeLogged) return;
+    providerStarted = true;
+    startupProbeLogged = true;
+    var detail = error && (error.code || error.message) ? (error.code || error.message) : error;
+    emit('[telegram] [default] Bot API startup probe failed: ' + sanitize(detail).slice(0, 300));
+  }
+
+  function readTelegramBotToken(config) {
+    if (!config || typeof config !== 'object') return '';
+    var channel = config.channels && config.channels.telegram;
+    if (!channel || typeof channel !== 'object') return '';
+    var accounts = channel.accounts;
+    if (!accounts || typeof accounts !== 'object') return '';
+    var account = accounts.default || accounts.main;
+    if (!account || typeof account !== 'object') {
+      var keys = Object.keys(accounts);
+      account = keys.length ? accounts[keys[0]] : null;
+    }
+    return account && typeof account.botToken === 'string' ? account.botToken : '';
+  }
+
+  function maybeLogCredentialPlaceholderDiagnostics() {
+    if (credentialLogged) return;
+    credentialLogged = true;
+    var prefix = 'openshell:resolve:env:';
+    var envToken = process.env.TELEGRAM_BOT_TOKEN || '';
+    var configPath = process.env.OPENCLAW_CONFIG_PATH || '/sandbox/.openclaw/openclaw.json';
+    var configToken = '';
+    try {
+      var fs = require('fs');
+      configToken = readTelegramBotToken(JSON.parse(fs.readFileSync(configPath, 'utf8')));
+    } catch (_e) {
+      return;
+    }
+    if (!configToken || configToken.indexOf(prefix) !== 0) return;
+    if (!envToken) {
+      emit('[telegram] [default] credential placeholder configured but TELEGRAM_BOT_TOKEN is missing from runtime env');
+      return;
+    }
+    if (envToken.indexOf(prefix) !== 0) return;
+    if (configToken !== envToken) {
+      emit('[telegram] [default] credential placeholder mismatch: openclaw.json botToken does not match runtime TELEGRAM_BOT_TOKEN placeholder');
+    }
   }
 
   function wrapHttp(mod, methodName) {
@@ -92,7 +156,10 @@
       var req = original.apply(this, arguments);
       if (info && info.hostname === 'api.telegram.org' && req && typeof req.once === 'function') {
         req.once('response', function (res) {
-          maybeLogTelegramReady(info, res && res.statusCode);
+          maybeLogTelegramStartupProbe(info, res && res.statusCode);
+        });
+        req.once('error', function (error) {
+          maybeLogTelegramStartupError(info, error);
         });
       }
       return req;
@@ -123,4 +190,5 @@
   wrapHttp(http, 'get');
   wrapHttp(https, 'request');
   wrapHttp(https, 'get');
+  process.nextTick(maybeLogCredentialPlaceholderDiagnostics);
 })();

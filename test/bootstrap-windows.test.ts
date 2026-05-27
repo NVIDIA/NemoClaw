@@ -57,64 +57,63 @@ function runPowerShellHarness(script: string) {
 }
 
 describe("Windows bootstrap WSL distro preflight", () => {
-  itPowerShell("installs Ubuntu 24.04 before continuing when WSL has no registered distro", () => {
+  itPowerShell("defers missing Ubuntu 24.04 install to a separate handoff window", () => {
     const result = runPowerShellHarness(`
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
-$script:getDistroCalls = 0
 $script:nativeCalls = @()
+$script:startProcessCalls = @()
 $script:statusMessages = @()
 
 function Resolve-WslExe { return 'wsl.exe' }
-function Get-WslDistros {
-  $script:getDistroCalls += 1
-  if ($script:getDistroCalls -eq 1) { return @() }
-  return @('Ubuntu-24.04')
-}
+function Get-WslDistros { return @() }
 function Invoke-NativeCommand {
   param([string]$FilePath, [string[]]$ArgumentList = @(), [switch]$SuppressOutput)
   $script:nativeCalls += ,@($FilePath, ($ArgumentList -join ' '))
   return 0
 }
-function Invoke-NativeCommandOutput {
-  param([string]$FilePath, [string[]]$ArgumentList = @(), [switch]$MergeError)
-  return [pscustomobject]@{ ExitCode = 0; Output = 'WSL_OK' }
+function Start-Process {
+  param([string]$FilePath, [string[]]$ArgumentList = @())
+  $script:startProcessCalls += ,@($FilePath, ($ArgumentList -join ' '))
+  return [pscustomobject]@{}
 }
-function Ensure-WslDistroVersion2 { param([string]$Name) }
 function Write-Status { param([string]$Message, [string]$Level = 'INFO') $script:statusMessages += $Message }
 
 Ensure-UbuntuWsl
+Open-UbuntuForInstaller
 
 [pscustomobject]@{
   nativeCalls = $script:nativeCalls
+  startProcessCalls = $script:startProcessCalls
   statusMessages = $script:statusMessages
+  installDistroAtHandoff = $script:InstallDistroAtHandoff
 } | ConvertTo-Json -Compress
 `);
 
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     const parsed = JSON.parse(result.stdout.trim());
-    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--install Ubuntu-24.04"]);
-    expect(parsed.nativeCalls).toContainEqual(["wsl.exe", "--set-default Ubuntu-24.04"]);
-    expect(parsed.statusMessages).toContain("WSL distro registered: Ubuntu-24.04");
+    expect(parsed.installDistroAtHandoff).toBe(true);
+    expect(parsed.nativeCalls).toEqual([]);
+    expect(parsed.startProcessCalls).toContainEqual(["wsl.exe", "--install -d Ubuntu-24.04"]);
+    expect(parsed.statusMessages).toContain(
+      "Ubuntu-24.04 is not registered yet. It will be installed during the final Ubuntu handoff.",
+    );
   });
 
-  itPowerShell("prints the issue 3974 guidance when Ubuntu 24.04 cannot be installed", () => {
+  itPowerShell("prints the issue 3974 guidance when the deferred Ubuntu launch fails", () => {
     const result = runPowerShellHarness(`
 $ErrorActionPreference = 'Stop'
 . ${JSON.stringify(BOOTSTRAP_WINDOWS)}
 
 function Resolve-WslExe { return 'wsl.exe' }
-function Get-WslDistros { return @() }
-function Invoke-NativeCommand {
-  param([string]$FilePath, [string[]]$ArgumentList = @(), [switch]$SuppressOutput)
-  return 42
-}
+function Start-Process { throw 'launch failed' }
 function Write-Status { param([string]$Message, [string]$Level = 'INFO') Write-Host $Message }
 
+$script:InstallDistroAtHandoff = $true
 try {
-  Ensure-UbuntuWsl
+  Open-UbuntuForInstaller
   Write-Host 'UNEXPECTED_SUCCESS'
   exit 3
 } catch {
@@ -125,8 +124,8 @@ try {
     expect(result.status).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toContain("NemoClaw on Windows ARM requires WSL2 Ubuntu 24.04.");
-    expect(result.stdout).toContain("Please run: wsl --install Ubuntu-24.04");
+    expect(result.stdout).toContain("Please run: wsl --install -d Ubuntu-24.04");
     expect(result.stdout).toContain("Then re-run this installer.");
-    expect(result.stdout).toContain("CAUGHT: Could not install WSL distro 'Ubuntu-24.04'.");
+    expect(result.stdout).toContain("CAUGHT: launch failed");
   });
 });

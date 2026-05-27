@@ -607,6 +607,15 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.tools?.toolSearch).toBe(true);
   });
 
+  it("enables keyless web_fetch through the trusted env proxy by default", () => {
+    const config = runConfigScript();
+    expect(config.tools?.web?.fetch).toEqual({
+      enabled: true,
+      useTrustedEnvProxy: true,
+    });
+    expect(config.tools?.web?.search).toBeUndefined();
+  });
+
   it("enables web search when env is '1'", () => {
     const config = runConfigScript({ NEMOCLAW_WEB_SEARCH_ENABLED: "1" });
     expect(config.tools?.toolSearch).toBe(true);
@@ -615,13 +624,16 @@ describe("generate-openclaw-config.py: config generation", () => {
       provider: "brave",
       apiKey: "openshell:resolve:env:BRAVE_API_KEY",
     });
-    expect(config.tools?.web?.fetch?.enabled).toBe(true);
+    expect(config.tools?.web?.fetch).toEqual({
+      enabled: true,
+      useTrustedEnvProxy: true,
+    });
   });
 
   it("omits web search when env is not set", () => {
     const config = runConfigScript();
     expect(config.tools?.toolSearch).toBe(true);
-    expect(config.tools?.web).toBeUndefined();
+    expect(config.tools?.web?.search).toBeUndefined();
   });
 
   it("propagates agent timeout", () => {
