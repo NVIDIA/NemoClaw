@@ -116,7 +116,7 @@ e2e_messaging_read_config_surface() {
   sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
   if [[ -n "${sandbox_name}" && "${path}" == /sandbox/* ]]; then
     local remote
-    remote="$(openshell sandbox exec --name "${sandbox_name}" -- cat "${path}" 2>/dev/null || true)"
+    remote="$(timeout 30 openshell sandbox exec --name "${sandbox_name}" -- cat "${path}" 2>/dev/null || true)"
     if [[ -n "${remote}" ]]; then
       printf '%s\n' "${remote}"
       return 0
