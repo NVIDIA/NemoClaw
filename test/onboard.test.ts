@@ -524,6 +524,8 @@ startGateway(null).catch(() => {});
     expect(isValidInferenceInputsOverride("image")).toBe(true);
     expect(isValidInferenceInputsOverride("text,image")).toBe(true);
     expect(isValidInferenceInputsOverride("image,text")).toBe(true);
+    expect(isValidInferenceInputsOverride("text,text")).toBe(false);
+    expect(isValidInferenceInputsOverride("image,image")).toBe(false);
     expect(isValidInferenceInputsOverride("text, image")).toBe(false);
     expect(isValidInferenceInputsOverride("audio")).toBe(false);
   });
