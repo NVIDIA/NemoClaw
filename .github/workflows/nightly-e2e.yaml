@@ -2342,7 +2342,7 @@ jobs:
         env:
           # To promote from preview to production, swap the right-hand
           # secret to `secrets.SLACK_WEBHOOK_URL`. Keep the left-hand name.
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL_PREVIEW }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           SCORECARD_DATA: ${{ steps.scorecard.outputs.scorecardData }}
         with:
           script: |
