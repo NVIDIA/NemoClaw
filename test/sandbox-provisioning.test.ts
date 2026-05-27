@@ -594,18 +594,42 @@ describe("sandbox provisioning: base runtime tools", () => {
 
   it("configures OpenSSH to use the NemoClaw proxy helper", () => {
     const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-base-ssh-"));
+    const sshHelper = path.join(tmp, "usr-local-bin", "nemoclaw-ssh");
+    const proxyHelper = path.join(tmp, "usr-local-bin", "nemoclaw-ssh-proxy");
+    const askpassHelper = path.join(tmp, "usr-local-bin", "nemoclaw-ssh-askpass");
+    const sshWrapper = path.join(tmp, "usr-local-bin", "ssh");
+    const sshConfigDir = path.join(tmp, "etc-ssh", "ssh_config.d");
+    fs.mkdirSync(path.dirname(sshHelper), { recursive: true });
+    fs.writeFileSync(sshHelper, "# fixture\n", { mode: 0o600 });
 
-    expect(dockerfile).toContain("COPY scripts/nemoclaw-ssh.sh /usr/local/bin/nemoclaw-ssh");
-    expect(dockerfile).toContain("ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/ssh");
-    expect(dockerfile).toContain(
-      "ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/nemoclaw-ssh-proxy",
-    );
-    expect(dockerfile).toContain(
-      "ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/nemoclaw-ssh-askpass",
-    );
-    expect(dockerfile).toContain("ProxyCommand /usr/local/bin/nemoclaw-ssh-proxy %h %p");
-    expect(dockerfile).toContain("chmod 555 /usr/local/bin/nemoclaw-ssh");
-    expect(dockerfile).toContain("chmod 444 /etc/ssh/ssh_config.d/nemoclaw-proxy.conf");
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "COPY scripts/nemoclaw-ssh.sh",
+      "# gosu for privilege separation",
+    )
+      .replaceAll("/usr/local/bin/nemoclaw-ssh-proxy", proxyHelper)
+      .replaceAll("/usr/local/bin/nemoclaw-ssh-askpass", askpassHelper)
+      .replaceAll("/usr/local/bin/nemoclaw-ssh", sshHelper)
+      .replaceAll("/usr/local/bin/ssh", sshWrapper)
+      .replaceAll("/etc/ssh/ssh_config.d", sshConfigDir);
+
+    try {
+      const { result } = runLoggedDockerShell(command, tmp);
+      expect(result.status, result.stderr).toBe(0);
+      expect((fs.statSync(sshHelper).mode & 0o777).toString(8)).toBe("555");
+      expect(fs.readlinkSync(sshWrapper)).toBe(sshHelper);
+      expect(fs.readlinkSync(proxyHelper)).toBe(sshHelper);
+      expect(fs.readlinkSync(askpassHelper)).toBe(sshHelper);
+
+      const proxyConfig = path.join(sshConfigDir, "nemoclaw-proxy.conf");
+      expect(fs.readFileSync(proxyConfig, "utf-8")).toContain(
+        `ProxyCommand ${proxyHelper} %h %p`,
+      );
+      expect((fs.statSync(proxyConfig).mode & 0o777).toString(8)).toBe("444");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("symlinks bare `python` to python3 so agent tool calls don't fail with command-not-found (#1452)", () => {
@@ -659,7 +683,6 @@ describe("sandbox provisioning: base runtime tools", () => {
     fs.mkdirSync(path.dirname(sshHelper), { recursive: true });
     fs.mkdirSync(path.dirname(realSsh), { recursive: true });
     fs.writeFileSync(sshHelper, "# fixture\n", { mode: 0o600 });
-    expect(dockerfile).toContain("COPY scripts/nemoclaw-ssh.sh /usr/local/bin/nemoclaw-ssh");
     const command = dockerRunCommandBetween(
       dockerfile,
       "# Harden: remove unnecessary build tools",

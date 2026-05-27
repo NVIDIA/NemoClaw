@@ -803,7 +803,7 @@ For new installs, the agent session index is refreshed so the agent discovers th
 Upgrade a sandbox to the current agent version while preserving workspace state.
 The command backs up workspace state, destroys the old sandbox (including its host-side Docker image), recreates it with the current image via `onboard --resume`, and restores workspace state into the new sandbox.
 Credentials are stripped from backups before storage.
-Built-in and custom policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
+NemoClaw reapplies built-in and custom policy presets from the old sandbox to the new one so your egress rules survive the rebuild.
 
 ```console
 $ nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v]

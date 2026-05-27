@@ -1823,9 +1823,13 @@ repair_installer_nvidia_cdi_spec() {
     node -e '
       const preflightPath = process.argv[1];
       try {
-        const { assessHost, getNvidiaCdiSpecPath } = require(preflightPath);
+        const { assessHost, getNvidiaCdiSpecPath, isWslDockerDesktopRuntime } = require(preflightPath);
         const host = assessHost();
-        if (host && host.cdiNvidiaGpuSpecMissing) {
+        if (
+          host &&
+          host.cdiNvidiaGpuSpecMissing &&
+          !isWslDockerDesktopRuntime(host)
+        ) {
           process.stdout.write(getNvidiaCdiSpecPath(host));
         }
       } catch {

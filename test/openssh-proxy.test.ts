@@ -34,7 +34,7 @@ function fakeNc(): { binDir: string; argsPath: string } {
 }
 
 function helperPath(fakeNcBinDir: string): string {
-  return [fakeNcBinDir, "/usr/bin", "/bin"].join(path.delimiter);
+  return [fakeNcBinDir, "/usr/bin", "/bin"].join(":");
 }
 
 describe("nemoclaw OpenSSH proxy helper", () => {
