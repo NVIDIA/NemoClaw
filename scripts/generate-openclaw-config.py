@@ -734,6 +734,13 @@ def build_config(env: dict | None = None) -> dict:
         if provider_key not in _provider_keys:
             plugin_entries[_plugin_id] = {"enabled": False}
 
+    # @openclaw/discord is installed at onboard time when the user enables the
+    # Discord channel; without an explicit plugins.entries entry the bridge
+    # stays unloaded at boot so channels.discord exists but the bot never
+    # connects. Mirrors the openclaw-weixin enablement in Dockerfile.base. (#4246)
+    if "discord" in _ch_cfg:
+        plugin_entries["discord"] = {"enabled": True}
+
     plugins = {"entries": plugin_entries}
     plugin_load_paths: list[str] = []
     for plugin in openclaw_plugins:

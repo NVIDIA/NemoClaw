@@ -1121,6 +1121,17 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.plugins.entries.xai.enabled).toBe(false);
   });
 
+  it("#4246: enables the discord plugin entry when Discord channel is configured", () => {
+    const channels = Buffer.from(JSON.stringify(["discord"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.plugins.entries.discord).toEqual({ enabled: true });
+  });
+
+  it("#4246: omits the discord plugin entry when Discord channel is not configured", () => {
+    const config = runConfigScript();
+    expect(config.plugins.entries.discord).toBeUndefined();
+  });
+
   it("creates file with 0600 permissions", () => {
     runConfigScript();
     const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
