@@ -202,7 +202,7 @@ Writable agent state such as plugins, skills, hooks, and workspace metadata live
 By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
 For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so config and writable state entry points cannot be changed by the sandbox user.
 
-- **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly. `shields status` cross-checks the locked posture against the sandbox filesystem and reports drift when a host-root tamper reverts these perms.
+- **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly. A reviewed host-side immutability workflow should compare the intended ownership and mode with the live sandbox filesystem before treating the config tree as locked.
 - **Config integrity hash.** The image includes a SHA256 hash of `openclaw.json`. In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash. When the hash is root-owned and read-only, startup enforces it and refuses to start if the hash does not match.
 - **Gateway token environment.** The gateway exports `OPENCLAW_GATEWAY_TOKEN` and writes it to `/tmp/nemoclaw-proxy-env.sh` for interactive sandbox sessions. Keep this in mind when deciding whether a workload should run with mutable config or an immutable config posture.
 
