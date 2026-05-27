@@ -32,6 +32,8 @@ type OnboardTestInternals = {
   getRequestedProviderHint: ShimFn<string | null>;
   getRequestedSandboxNameHint: ShimFn<string | null>;
   getResumeConfigConflicts: ShimFn<ResumeConflict[]>;
+  isValidInferenceInputsOverride: (value?: string) => boolean;
+  shouldPromptForInferenceInputCapability: (model?: string | null) => boolean;
   getResumeSandboxConflict: ShimFn<{
     requestedSandboxName: string;
     recordedSandboxName: string;
@@ -84,6 +86,8 @@ const {
   getRequestedProviderHint,
   getRequestedSandboxNameHint,
   getResumeConfigConflicts,
+  isValidInferenceInputsOverride,
+  shouldPromptForInferenceInputCapability,
   getResumeSandboxConflict,
   clearAgentScopedResumeState,
   SANDBOX_BASE_IMAGE,
@@ -503,6 +507,23 @@ startGateway(null).catch(() => {});
         process.env.NEMOCLAW_MODEL = previousModel;
       }
     }
+  });
+
+  it("prompts for input capability only on likely multimodal model names", () => {
+    expect(shouldPromptForInferenceInputCapability("nvidia/nemotron-3-nano-omni-30b-a3b")).toBe(
+      true,
+    );
+    expect(shouldPromptForInferenceInputCapability("qwen2.5-vl-72b")).toBe(true);
+    expect(shouldPromptForInferenceInputCapability("moonshotai/kimi-k2.6")).toBe(false);
+    expect(shouldPromptForInferenceInputCapability(null)).toBe(false);
+  });
+
+  it("accepts only supported inference input capability overrides", () => {
+    expect(isValidInferenceInputsOverride("text")).toBe(true);
+    expect(isValidInferenceInputsOverride("text,image")).toBe(true);
+    expect(isValidInferenceInputsOverride("image,text")).toBe(true);
+    expect(isValidInferenceInputsOverride("text, image")).toBe(false);
+    expect(isValidInferenceInputsOverride("audio")).toBe(false);
   });
 
   it("detects resume conflicts for explicit provider and model changes", () => {
