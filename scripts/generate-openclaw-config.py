@@ -813,6 +813,11 @@ def build_config(env: dict | None = None) -> dict:
             "loopbackMode": "proxy",
         }
 
+    # Keep keyless web_fetch available by default, but force it through the
+    # trusted env proxy. OpenShell's L7 policy remains the egress authority:
+    # without an approved host:port, the proxy denies the request. Remove this
+    # default only if OpenClaw gains a first-class least-privilege web_fetch
+    # policy that can preserve host-gateway fetch without bypassing OpenShell.
     tools_web = config.setdefault("tools", {}).setdefault("web", {})
     tools_web["fetch"] = {"enabled": True, "useTrustedEnvProxy": True}
 

@@ -4,6 +4,19 @@
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
+## v0.0.53
+
+NemoClaw v0.0.53 focuses on safer sandbox recreation, stricter onboarding preflight defaults, local inference reliability, policy coverage, and day-two repair workflows:
+
+- `nemoclaw onboard` backs up workspace state before deleting an existing sandbox during recreation, including sandboxes that are registered but not ready. If the backup is partial or fails, onboarding aborts before delete so workspace, skills, extensions, identity, memory, messaging state, and credentials are not silently dropped. Set `NEMOCLAW_RECREATE_WITHOUT_BACKUP=1` only when you intentionally want a fresh workspace.
+- Under-provisioned container-runtime warnings now default to abort in interactive onboarding. Pressing Enter at the warning stops the run so you can resize Docker Desktop or Colima before the sandbox build stalls. Non-interactive runs continue with a warning, and `NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1` still suppresses the check when you have already accepted the resource trade-off.
+- OpenClaw sandboxes can use the new `openclaw-pricing` policy preset for model-pricing reference fetches from LiteLLM and OpenRouter. NemoClaw suggests this preset during OpenClaw onboarding so session JSONL records can populate `usage.cost` without widening egress beyond the two read-only pricing endpoints.
+- Local Ollama onboarding is more accurate. NemoClaw validates the `/api/tags` response body through the authenticated proxy, honors accepted no-tools overrides through validation and proxy setup, and uses Ollama's reported runtime context length for `contextWindow` unless you set `NEMOCLAW_CONTEXT_WINDOW`.
+- Onboarding and gateway reuse recover from more host-runtime drift. NemoClaw recovers stopped gateways before preserving PVC-backed state, verifies gateway containers before reusing port-conflict state, defers Docker-driver gateway teardown until step `[2/8]`, records Docker-driver sandboxes on macOS, and uses Docker `--gpus` rather than CDI repair on WSL Docker Desktop.
+- The sandbox and integration paths handle more common failures cleanly, including Brave Search credential rewrite through OpenShell providers, Telegram placeholder repair, host-gateway `web_fetch` routing, read-only host targets for `share mount`, live gateway drift in `list`, host-alias Kubernetes invocations, Jetson bridge DNS preflight failures, and non-ready sandboxes during maintenance backups.
+- Hermes startup no longer treats a fresh root-entrypoint layout as locked state, which avoids false locked-layout detection during sandbox boot.
+- Maintainer tooling can export a signed skills catalog, detect untracked files during skills refresh diffs, and run the stale-issue verification workflow added for maintainers.
+
 ## v0.0.52
 
 NemoClaw v0.0.52 upgrades the bundled OpenClaw runtime, repairs Hermes sandbox startup, restores onboarding ready output, and hardens Slack onboarding, Windows bootstrap, and private-network handling:

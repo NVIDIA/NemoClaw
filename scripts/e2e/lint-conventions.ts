@@ -5,26 +5,10 @@
 /**
  * E2E convention lint.
  *
- * Enforces the migration-spec conventions on
- * `test/e2e/validation_suites/**` step scripts and the
- * `test/e2e/test-*.sh` legacy frontier:
- *
- *   - Suite step scripts MUST NOT re-export non-interactive env vars
- *     (use runtime/lib/env.sh::e2e_env_apply_noninteractive instead).
- *   - Suite step scripts MUST NOT register their own traps
- *     (runtime/lib/cleanup.sh owns teardown).
- *   - Suite step scripts MUST NOT call `section "..."` — filenames carry
- *     the phase label, and e2e_section is emitted by the runner.
- *   - Suite step scripts MUST NOT write to `/tmp/*.log` — use
- *     `$E2E_CONTEXT_DIR/logs/<scenario>/<suite>/<step>.log`.
- *   - Non-standard repo-root discovery (`git rev-parse --show-toplevel`)
- *     is rejected in suite step scripts; use
- *     `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"` and
- *     walk up.
- *
- * Invocation:
- *   tsx scripts/e2e/lint-conventions.ts [--root <repo-root>]
- * Exits 0 on success, 1 on violations, 2 on misuse.
+ * Enforces conventions for `test/e2e-scenario/validation_suites/**` step scripts and
+ * keeps the new typed scenario suite isolated under `test/e2e-scenario/**`.
+ * Existing top-level `test/e2e/test-*.sh` entrypoints remain valid until a
+ * separate migration explicitly retires them.
  */
 
 import fs from "node:fs";
@@ -48,7 +32,7 @@ const STEP_RULES: Rule[] = [
       ];
       for (const p of patterns) {
         if (p.test(body))
-          return `matched ${p.source}; use runtime/lib/env.sh::e2e_env_apply_noninteractive`;
+          return `matched ${p.source}; non-interactive setup belongs to shared runtime helpers`;
       }
       return null;
     },
@@ -57,53 +41,36 @@ const STEP_RULES: Rule[] = [
     id: "no-own-trap",
     describe: "suite step registers its own trap",
     test: (body) => {
-      // Ignore commented lines and ignore `trap` inside quoted strings by
-      // requiring a leading non-quote character.
-      const lines = body.split("\n");
-      for (const raw of lines) {
-        const line = raw.replace(/^\s+/, "");
+      for (const raw of body.split("\n")) {
+        const line = raw.trimStart();
         if (line.startsWith("#")) continue;
-        if (/^trap\s+[^#]/.test(line)) {
-          return "registered own trap; cleanup lives in runtime/lib/cleanup.sh";
-        }
+        if (/^trap\s+[^#]/.test(line))
+          return "registered own trap; cleanup belongs to orchestrators/shared helpers";
       }
       return null;
     },
   },
   {
-    id: "no-section-call",
-    describe: "suite step calls section/e2e_section",
-    test: (body) => {
-      const lines = body.split("\n");
-      for (const raw of lines) {
-        const line = raw.replace(/^\s+/, "");
-        if (line.startsWith("#")) continue;
-        if (/^section\s+["']/.test(line)) {
-          return "calls section; filename carries the phase label";
-        }
-      }
-      return null;
-    },
+    id: "no-section-helper",
+    describe: "suite step calls section helper directly",
+    test: (body) =>
+      /^\s*section\s+["']/m.test(body) || /^\s*section\s*\(/m.test(body)
+        ? "step calls section; plan/phase output owns sections"
+        : null,
   },
   {
     id: "no-tmp-log",
-    describe: "suite step writes to /tmp/*.log",
-    test: (body) => {
-      if (/>\s*\/tmp\/[^\s]*\.log/.test(body)) {
-        return "writes to /tmp/*.log; use $E2E_CONTEXT_DIR/logs/<scenario>/<suite>/<step>.log";
-      }
-      return null;
-    },
+    describe: "suite step writes logs under /tmp",
+    test: (body) =>
+      /\/tmp\/[^\s'\"]+\.log/.test(body) ? "write logs under E2E_CONTEXT_DIR, not /tmp" : null,
   },
   {
-    id: "no-git-rev-parse-repo-root",
-    describe: "suite step uses `git rev-parse --show-toplevel` for repo root",
-    test: (body) => {
-      if (/git\s+rev-parse\s+--show-toplevel/.test(body)) {
-        return 'use SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" instead';
-      }
-      return null;
-    },
+    id: "no-git-rev-parse-root",
+    describe: "suite step uses non-standard repo-root discovery",
+    test: (body) =>
+      /git\s+rev-parse\s+--show-toplevel/.test(body)
+        ? "avoid git rev-parse repo-root discovery in suite steps"
+        : null,
   },
 ];
 
@@ -113,80 +80,65 @@ interface LintFinding {
   message: string;
 }
 
-function walkShellScripts(root: string): string[] {
+function walk(dir: string): string[] {
+  if (!fs.existsSync(dir)) return [];
   const out: string[] = [];
-  const walk = (dir: string) => {
-    let entries: fs.Dirent[];
-    try {
-      entries = fs.readdirSync(dir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const ent of entries) {
-      const full = path.join(dir, ent.name);
-      if (ent.isDirectory()) {
-        walk(full);
-      } else if (ent.isFile() && ent.name.endsWith(".sh")) {
-        out.push(full);
-      }
-    }
-  };
-  walk(root);
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) out.push(...walk(full));
+    else out.push(full);
+  }
   return out;
 }
 
-function parseArgs(argv: string[]): { root: string } {
-  let root: string | undefined;
-  const args = argv.slice(2);
-  while (args.length > 0) {
-    const a = args.shift()!;
-    if (a === "--root") root = args.shift();
-    else if (a === "-h" || a === "--help") {
-      process.stdout.write("tsx scripts/e2e/lint-conventions.ts [--root <repo-root>]\n");
-      process.exit(0);
-    } else {
-      process.stderr.write(`lint-conventions: unexpected arg: ${a}\n`);
-      process.exit(2);
-    }
-  }
-  if (!root) {
-    const scriptDir = path.dirname(fileURLToPath(import.meta.url));
-    root = path.resolve(scriptDir, "..", "..");
-  }
-  return { root };
-}
-
 function lintSuiteSteps(root: string): LintFinding[] {
+  const suitesDir = path.join(root, "test/e2e-scenario/validation_suites");
   const findings: LintFinding[] = [];
-  const suitesRoot = path.join(root, "test/e2e/validation_suites");
-  if (!fs.existsSync(suitesRoot)) return findings;
-  for (const file of walkShellScripts(suitesRoot)) {
+  for (const file of walk(suitesDir).filter((entry) => entry.endsWith(".sh"))) {
+    const rel = path.relative(root, file);
     const body = fs.readFileSync(file, "utf8");
     for (const rule of STEP_RULES) {
-      const msg = rule.test(body);
-      if (msg) {
-        findings.push({
-          file: path.relative(root, file),
-          rule: rule.id,
-          message: msg,
-        });
-      }
+      const message = rule.test(body);
+      if (message) findings.push({ file: rel, rule: rule.id, message });
     }
   }
   return findings;
 }
 
-function main(): number {
-  const { root } = parseArgs(process.argv);
-  const findings = lintSuiteSteps(root);
-  if (findings.length === 0) {
-    return 0;
-  }
-  for (const f of findings) {
-    process.stderr.write(`${f.file}: [${f.rule}] ${f.message}\n`);
-  }
-  process.stderr.write(`\ne2e-convention-lint: ${findings.length} violation(s)\n`);
-  return 1;
+function lint(root: string): LintFinding[] {
+  return lintSuiteSteps(root);
 }
 
-process.exit(main());
+function parseArgs(argv: string[]): { root: string } {
+  let root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+  const args = argv.slice(2);
+  while (args.length > 0) {
+    const arg = args.shift();
+    if (arg === "--root") {
+      const value = args.shift();
+      if (!value) throw new Error("--root requires a value");
+      root = path.resolve(value);
+    } else if (arg === "--help" || arg === "-h") {
+      process.stdout.write("tsx scripts/e2e/lint-conventions.ts [--root <repo-root>]\n");
+      process.exit(0);
+    } else if (arg) {
+      throw new Error(`unexpected arg: ${arg}`);
+    }
+  }
+  return { root };
+}
+
+try {
+  const { root } = parseArgs(process.argv);
+  const findings = lint(root);
+  if (findings.length > 0) {
+    for (const finding of findings) {
+      process.stderr.write(`${finding.file}: ${finding.rule}: ${finding.message}\n`);
+    }
+    process.exit(1);
+  }
+  process.stdout.write("e2e convention lint passed\n");
+} catch (err) {
+  process.stderr.write(`lint-conventions: ${(err as Error).message}\n`);
+  process.exit(2);
+}

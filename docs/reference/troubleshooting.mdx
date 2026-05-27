@@ -409,6 +409,9 @@ Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headro
 On macOS Apple Silicon, the build can stall part-way through with no progress and no error, leaving the wizard waiting indefinitely.
 
 Preflight inspects `docker info` for `NCPU` and `MemTotal` and prints a warning when the runtime falls below 4 vCPU or 8 GiB.
+In interactive onboarding, the warning prompt defaults to abort, so pressing Enter stops the run before the sandbox build reaches the likely stall point.
+Type `y` only when you intentionally want to continue on the smaller runtime.
+Non-interactive onboarding prints the warning and continues.
 On Colima, raise the resources before re-running onboard:
 
 ```console
@@ -794,15 +797,14 @@ Older QA plans used that helper for a Dockerfile "Patch-4" test that corrupted t
 The old Patch-4 fail-closed test no longer applies because NemoClaw no longer patches OpenClaw's compiled `replaceConfigFile` source at image build time.
 
 Current sandboxes use a mutable-default config model instead.
-Before lockdown, `/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow.
-After lockdown, `nemoclaw <sandbox> shields up` intentionally locks the config tree as root-owned read-only state; runtime config mutations should fail cleanly or route users to the supported host-side NemoClaw command.
+Before a reviewed host-side lockdown, `/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow.
+After lockdown, runtime config mutations should fail cleanly or route users to the supported host-side NemoClaw command.
 
-To validate this area now, use the shields/config lifecycle tests instead of looking for `rcf_patch.py`:
+To validate this area now, use the config lifecycle tests instead of looking for `rcf_patch.py`:
 
 ```console
 $ npm run build:cli
 $ npm test -- test/repro-2681-group-writable.test.ts
-$ bash test/e2e/test-shields-config.sh
 ```
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox

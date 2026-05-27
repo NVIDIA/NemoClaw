@@ -33,7 +33,7 @@ If a row above conflicts with what you observe, the runtime source of truth insi
 
 The mutability table above is a consolidated index of information that lives in more detail on per-topic pages:
 
-- Manage Sandbox Lifecycle (use the `nemoclaw-user-manage-sandboxes` skill) — full rebuild / re-onboard / upgrade workflow.
+- [Manage Sandbox Lifecycle](../SKILL.md) — full rebuild / re-onboard / upgrade workflow.
 - Switch Inference Providers (use the `nemoclaw-user-configure-inference` skill) — the rebuild path for provider and model changes.
 - Customize Network Policy (use the `nemoclaw-user-manage-policy` skill) and Approve Network Requests (use the `nemoclaw-user-manage-policy` skill) — runtime policy editing and operator approval flow.
 - Security Best Practices (use the `nemoclaw-user-configure-security` skill) — the per-attack-surface posture table that this page complements.
