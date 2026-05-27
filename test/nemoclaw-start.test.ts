@@ -1704,6 +1704,68 @@ exit 2
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  it("bounds the openclaw CLI invocation so a wedged child cannot pin the watcher", () => {
+    // Regression for CodeRabbit feedback on PR #4292: the watcher's
+    // `run()` helper used to call `subprocess.run` with no timeout, so a
+    // hung `openclaw devices list` could hold the watcher past DEADLINE
+    // and past the fast→slow transition. The fix adds a per-invocation
+    // timeout (default 10s, overridable via env). This test uses a fake
+    // openclaw that sleeps longer than the per-invocation timeout but
+    // shorter than the watcher deadline, and verifies the watcher does
+    // not block on it.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-runto-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+# Sleep longer than the per-invocation timeout to simulate a wedged CLI.
+sleep 5
+echo '{"pending":[],"paired":[]}'
+exit 0
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      // Do NOT monkey-patch time.sleep here: we want real wall-clock
+      // semantics so subprocess.run(..., timeout=...) actually fires.
+      const watcherSrc = startScriptHeredoc(
+        fs.readFileSync(START_SCRIPT, "utf-8"),
+        "PYAUTOPAIR",
+      );
+      const start = Date.now();
+      const run = spawnSync("python3", ["-c", watcherSrc], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "600",
+          // Watcher must finish well before the test timeout. Per-call
+          // timeout 1s × ~3 polls + slow sleep = ~6s; the deadline
+          // bounds the whole loop at 4s.
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "4",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS: "1",
+        },
+        timeout: 20_000,
+      });
+      const elapsedMs = Date.now() - start;
+      expect(run.status).toBe(0);
+      // The watcher exited via DEADLINE, not via a wedged subprocess.
+      expect(run.stdout).toContain("watcher deadline reached approvals=0");
+      // Timeout log was emitted for at least one stuck `devices list`.
+      expect(run.stdout).toContain("[auto-pair] timeout calling devices list");
+      // Sanity: with timeout=1s and deadline=4s the watcher must finish
+      // in well under the 20s test cap. If the timeout didn't fire, the
+      // first `sleep 5` would already exceed 4s on its own and the
+      // watcher could still run for many seconds; cap at 12s.
+      expect(elapsedMs).toBeLessThan(12_000);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 describe("nemoclaw-start gateway launch signal handling", () => {

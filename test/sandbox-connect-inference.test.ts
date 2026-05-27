@@ -151,6 +151,19 @@ if (args[0] === "sandbox" && args[1] === "exec") {
   const command = args.join(" ");
   if (!command.includes("inference.local/v1/models")) {
     fs.writeFileSync(stateFile, JSON.stringify(state));
+    // Test hook (#4263 / CodeRabbit): when the connect-time auto-pair
+    // approval pass is specifically targeted, simulate the failure
+    // path the production code must tolerate. The approval-pass script
+    // is identifiable by its embedded \`openclaw devices approve\` call.
+    if (
+      process.env.NEMOCLAW_TEST_FAIL_APPROVAL_PASS === "1" &&
+      command.includes("openclaw") &&
+      command.includes("devices") &&
+      command.includes("approve")
+    ) {
+      process.stderr.write("simulated sandbox exec failure\\n");
+      process.exit(7);
+    }
     process.stdout.write("__NEMOCLAW_SANDBOX_EXEC_STARTED__\\nRUNNING\\n");
     process.exit(0);
   }
@@ -1216,13 +1229,26 @@ describe("sandbox connect auto-pair approval pass (#4263)", () => {
         "claude-sonnet-4-20250514",
       );
 
-      // The fake openshell records sandbox-exec and returns 0 immediately;
-      // this test guards against a regression that lets a failure inside
-      // the best-effort approval pass surface into the connect path.
-      const result = runConnect(tmpDir, sandboxName);
+      // Force the approval-pass sandbox-exec to fail with exit status 7
+      // (simulated via the NEMOCLAW_TEST_FAIL_APPROVAL_PASS hook in the
+      // fake openshell). The connect flow must still reach SSH handoff —
+      // the approval pass is best-effort and must not surface failures.
+      const result = runConnect(tmpDir, sandboxName, {
+        NEMOCLAW_TEST_FAIL_APPROVAL_PASS: "1",
+      });
       expect(result.status).toBe(0);
       const state = JSON.parse(fs.readFileSync(stateFile, "utf-8"));
-      // SSH handoff still happens.
+      // Approval-pass exec was attempted (and the fake openshell exited
+      // non-zero for it, per the hook above).
+      const approvalExec = (state.sandboxExecCalls as string[][]).find(
+        (call) =>
+          call.includes("--") &&
+          call.some((segment) => segment.includes("openclaw")) &&
+          call.some((segment) => segment.includes("devices")) &&
+          call.some((segment) => segment.includes("approve")),
+      );
+      expect(approvalExec).toBeDefined();
+      // Despite the approval-pass failure, SSH handoff still happens.
       expect(state.sandboxConnectCalls).toContainEqual([
         "sandbox",
         "connect",

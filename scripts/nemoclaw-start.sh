@@ -1393,9 +1393,24 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 ALLOWED_CLIENTS = {'openclaw-control-ui'}
 ALLOWED_MODES = {'webchat', 'cli'}
 
+RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
+
 def run(*args):
-    proc = subprocess.run(args, capture_output=True, text=True)
-    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    # Bound every openclaw CLI invocation so a wedged child cannot pin
+    # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
+    # no timeout would hold a hung `openclaw devices list/approve` past
+    # the fast→slow transition and the 8h deadline check.
+    try:
+        proc = subprocess.run(
+            args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS,
+        )
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    except subprocess.TimeoutExpired as exc:
+        # 124 matches GNU `timeout` exit status so log scrapers can spot it.
+        out = (exc.stdout or '') if isinstance(exc.stdout, str) else ''
+        err = (exc.stderr or '') if isinstance(exc.stderr, str) else ''
+        print(f'[auto-pair] timeout calling {args[1] if len(args) > 1 else "openclaw"} {args[2] if len(args) > 2 else ""}'.rstrip())
+        return 124, out.strip(), err.strip()
 
 while time.time() < DEADLINE:
     rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
