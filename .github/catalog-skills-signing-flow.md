@@ -3,7 +3,7 @@
 
 # NemoClaw catalog skills signing flow
 
-This diagram shows the required sequence for publishing NemoClaw user-facing skills into the NVIDIA Verified Skills catalog through the generated `skills/nemoclaw/` export.
+This diagram shows the required sequence for publishing NemoClaw user-facing skills into the NVIDIA Verified Skills catalog through the generated `skills/` export.
 
 ```mermaid
 sequenceDiagram
@@ -11,7 +11,7 @@ sequenceDiagram
     actor Maintainer as Human maintainer
     participant Source as NemoClaw source<br/>.agents/skills + .agents/catalog-skills.yaml
     participant Exporter as scripts/export-catalog-skills.py
-    participant Export as Generated export<br/>skills/nemoclaw
+    participant Export as Generated export<br/>skills
     participant PRCI as PR workflow<br/>CI / Pull Request
     participant Refresh as Skills / Catalog Refresh workflow
     participant PR as Same-repo refresh PR
@@ -25,7 +25,7 @@ sequenceDiagram
     Exporter->>Export: Copy allowlisted skills as real files<br/>write catalog-metadata.json<br/>preserve skill.oms.sig + skill-card.md if present
     Maintainer->>PRCI: Open implementation or content PR
     PRCI->>Exporter: python3 scripts/export-catalog-skills.py --check --allow-missing
-    Exporter-->>PRCI: Pass before first export exists;<br/>after refresh PR, fail if skills/nemoclaw is stale or hand-edited
+    Exporter-->>PRCI: Pass before first export exists;<br/>after refresh PR, fail if skills is stale or hand-edited
     Maintainer->>Main: Merge reviewed PR after checks pass
 
     Note over Refresh,PR: Post-merge refresh automation added by this PR
@@ -56,7 +56,7 @@ sequenceDiagram
 These are the manual review and approval points in the catalog signing flow.
 
 - Curate `.agents/catalog-skills.yaml` when public skill scope changes.
-- Review the generated `skills/nemoclaw/` diff in the same PR as the allowlist/source update.
+- Review the generated `skills/` diff in the same PR as the allowlist/source update.
 - Manually comment `/nvskills-ci` if the workflow bot cannot request signing.
 - Review and merge the signer-updated PR before expecting `NVIDIA/skills` to sync the signed skills.
 
@@ -75,5 +75,5 @@ These checks and workflow steps automate export freshness while keeping signing 
 
 - Review the exporter implementation in [`scripts/export-catalog-skills.py`](../scripts/export-catalog-skills.py).
 - Update the catalog allowlist in [`.agents/catalog-skills.yaml`](../.agents/catalog-skills.yaml) when public skill scope changes.
-- Review generated export diffs under `skills/nemoclaw/` in the refresh PR before requesting or accepting signing artifacts.
+- Review generated export diffs under `skills/` in the refresh PR before requesting or accepting signing artifacts.
 - Check the workflow definitions in [`.github/workflows/pr.yaml`](workflows/pr.yaml) and [`.github/workflows/catalog-skills-refresh.yaml`](workflows/catalog-skills-refresh.yaml).

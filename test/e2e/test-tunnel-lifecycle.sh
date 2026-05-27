@@ -26,6 +26,8 @@ SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 # shellcheck source=test/e2e/lib/install-path-refresh.sh
 source "${SCRIPT_DIR_TIMEOUT}/lib/install-path-refresh.sh"
+# shellcheck source=test/e2e/lib/cloudflared-version-resolver.sh
+source "${SCRIPT_DIR_TIMEOUT}/lib/cloudflared-version-resolver.sh"
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -124,29 +126,18 @@ preflight() {
     sudo apt-get update -qq
 
     local available_versions
-    available_versions="$(apt-cache madison cloudflared | awk '{print $3}' | sort -Vu)"
-    if [[ -z "$available_versions" ]]; then
-      log "ERROR: no cloudflared versions available in Cloudflare APT repo"
-      exit 1
-    fi
+    available_versions="$(apt-cache madison cloudflared | awk '{print $3}')"
 
-    local cf_version
+    local cf_version cf_min_version
+    cf_min_version="${CLOUDFLARED_MIN_VERSION:-$CLOUDFLARED_DEFAULT_MIN_VERSION}"
     if [[ -n "${CLOUDFLARED_VERSION:-}" ]]; then
-      cf_version="$CLOUDFLARED_VERSION"
+      cf_version="$(cloudflared_resolve_package_version "$available_versions" "$cf_min_version" "$CLOUDFLARED_VERSION")"
       log "Using explicit cloudflared version override: ${cf_version}"
     else
-      local cf_min_version="${CLOUDFLARED_MIN_VERSION:-2026.5.1}"
-      cf_version="$(
-        while IFS= read -r version; do
-          if dpkg --compare-versions "$version" ge "$cf_min_version"; then
-            printf '%s\n' "$version"
-          fi
-        done <<<"$available_versions" | sort -V | tail -n 1
-      )"
-      if [[ -z "$cf_version" ]]; then
-        log "ERROR: no cloudflared version in Cloudflare APT repo meets minimum ${cf_min_version}"
+      if ! cf_version="$(cloudflared_resolve_package_version "$available_versions" "$cf_min_version" 2>&1)"; then
+        log "$cf_version"
         log "Available versions:"
-        log "$available_versions"
+        log "${available_versions:-<none>}"
         exit 1
       fi
       log "Resolved cloudflared ${cf_version} from Cloudflare APT repo (minimum ${cf_min_version})"

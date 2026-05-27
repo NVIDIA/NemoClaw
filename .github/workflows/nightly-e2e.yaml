@@ -137,14 +137,6 @@ on:
 permissions:
   contents: read
 
-env:
-  # GitHub-hosted Linux runners retain dangerous bounding-set capabilities but
-  # do not grant CAP_SETPCAP to the sandbox entrypoint. Nightly functional E2E
-  # jobs opt in explicitly so #4264's fail-closed guard remains covered by the
-  # dedicated gateway-isolation security regression instead of breaking every
-  # sandbox use on these CI hosts.
-  NEMOCLAW_ALLOW_RESIDUAL_CAPS: "1"
-
 concurrency:
   group: nightly-e2e-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && format('{0}-{1}', github.ref, inputs.pr_number || 'manual') || 'schedule' }}
   cancel-in-progress: true
@@ -720,7 +712,7 @@ jobs:
       timeout_minutes: 60
       artifact_name: "openclaw-onboard-security-posture-install-log"
       artifact_path: "/tmp/nemoclaw-e2e-install.log"
-      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_ALLOW_RESIDUAL_CAPS":"1","NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST":"1","NEMOCLAW_E2E_SECURITY_POSTURE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-security-posture"}'
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST":"1","NEMOCLAW_E2E_SECURITY_POSTURE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-openclaw-security-posture"}'
       nvidia_api_key: true
       github_token: true
     secrets:
@@ -738,7 +730,7 @@ jobs:
       timeout_minutes: 60
       artifact_name: "hermes-onboard-security-posture-install-log"
       artifact_path: "/tmp/nemoclaw-e2e-hermes-install.log"
-      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_ALLOW_RESIDUAL_CAPS":"1","NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST":"1","NEMOCLAW_E2E_SECURITY_POSTURE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-security-posture"}'
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST":"1","NEMOCLAW_E2E_SECURITY_POSTURE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-security-posture"}'
       nvidia_api_key: true
       github_token: true
     secrets:
