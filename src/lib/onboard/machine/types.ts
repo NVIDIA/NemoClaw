@@ -9,39 +9,26 @@
  * probes, or policy application is out of scope for the initial FSM shell.
  */
 
-export const ONBOARD_MACHINE_STATES = [
-  "init",
-  "preflight",
-  "gateway",
-  "provider_selection",
-  "inference",
-  "sandbox",
-  "agent_setup",
-  "openclaw",
-  "policies",
-  "finalizing",
-  "post_verify",
-  "complete",
-  "failed",
-] as const;
+import {
+  ONBOARD_MACHINE_NON_TERMINAL_STATE_IDS,
+  ONBOARD_MACHINE_STATE_IDS,
+  ONBOARD_MACHINE_TERMINAL_STATE_IDS,
+  type OnboardMachineStateId,
+  type OnboardNonTerminalMachineStateId,
+  type OnboardTerminalMachineStateId,
+} from "./definition";
 
-export type OnboardMachineState = (typeof ONBOARD_MACHINE_STATES)[number];
+export const ONBOARD_MACHINE_STATES = ONBOARD_MACHINE_STATE_IDS;
 
-export const ONBOARD_TERMINAL_MACHINE_STATES = ["complete", "failed"] as const;
+export type OnboardMachineState = OnboardMachineStateId;
 
-export type OnboardTerminalMachineState =
-  (typeof ONBOARD_TERMINAL_MACHINE_STATES)[number];
+export const ONBOARD_TERMINAL_MACHINE_STATES = ONBOARD_MACHINE_TERMINAL_STATE_IDS;
 
-export type OnboardNonTerminalMachineState = Exclude<
-  OnboardMachineState,
-  OnboardTerminalMachineState
->;
+export type OnboardTerminalMachineState = OnboardTerminalMachineStateId;
 
-export const ONBOARD_NON_TERMINAL_MACHINE_STATES: readonly OnboardNonTerminalMachineState[] =
-  ONBOARD_MACHINE_STATES.filter(
-    (state): state is OnboardNonTerminalMachineState =>
-      !ONBOARD_TERMINAL_MACHINE_STATES.includes(state as OnboardTerminalMachineState),
-  );
+export type OnboardNonTerminalMachineState = OnboardNonTerminalMachineStateId;
+
+export const ONBOARD_NON_TERMINAL_MACHINE_STATES = ONBOARD_MACHINE_NON_TERMINAL_STATE_IDS;
 
 export const ONBOARD_MACHINE_EVENT_TYPES = [
   "onboard.started",
