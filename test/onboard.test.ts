@@ -1306,6 +1306,7 @@ localInference.validateLocalProvider = () => ({
 localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:11435/v1";
 localInference.getOllamaWarmupCommand = () => ["true"];
 localInference.validateOllamaModel = () => ({ ok: true });
+localInference.validateOllamaModelWithToolsOverride = () => ({ ok: true });
 proxy.ensureOllamaAuthProxy = () => {
   proxyCalls.push("ensure");
 };
