@@ -2259,7 +2259,47 @@ else
   fi
 fi
 
-# S2: Dump gateway.log for diagnostics (must use openshell exec — SSH user
+# S2: The running gateway must expose the Slack default account through
+# OpenClaw's status path. With fake tokens, a Slack auth rejection is the
+# expected startup outcome; the regression in #4189 was worse: Slack was absent
+# from channel startup/status entirely.
+sl_status_json=$(sandbox_exec "timeout 45 openclaw channels status --probe --channel slack --json --no-color --timeout 15000 2>/dev/null" 2>/dev/null || true)
+sl_status_state=$(echo "$sl_status_json" | python3 -c "
+import json, re, sys
+try:
+    d = json.load(sys.stdin)
+    accounts = d.get('channelAccounts', {}).get('slack', [])
+    account = next((a for a in accounts if a.get('accountId') == 'default'), accounts[0] if accounts else {})
+    configured = account.get('configured') is True
+    enabled = account.get('enabled') is True
+    running = account.get('running') is True or account.get('connected') is True
+    probe = account.get('probe') if isinstance(account.get('probe'), dict) else {}
+    text = ' '.join(
+        str(v or '')
+        for v in (
+            account.get('lastError'),
+            probe.get('error'),
+            probe.get('status'),
+        )
+    )
+    expected_auth_failure = bool(re.search(r'invalid_auth|not_authed|not_allowed_token_type|auth', text, re.I))
+    if configured and enabled and (running or expected_auth_failure):
+        print('yes running=%s expected_auth_failure=%s' % (running, expected_auth_failure))
+    else:
+        print(
+            'no configured=%s enabled=%s running=%s expected_auth_failure=%s accounts=%s'
+            % (configured, enabled, running, expected_auth_failure, accounts)
+        )
+except Exception as e:
+    print('error %s' % e)
+" 2>/dev/null || true)
+if echo "$sl_status_state" | grep -q "^yes "; then
+  pass "S2: OpenClaw status probe reports Slack default configured/enabled on the running gateway (${sl_status_state})"
+else
+  fail "S2: OpenClaw status probe did not report Slack default on the running gateway (${sl_status_state}; output=${sl_status_json:0:500})"
+fi
+
+# S3: Dump gateway.log for diagnostics (must use openshell exec — SSH user
 # cannot read the file because it's 600 gateway:gateway).
 gw_log=$(openshell sandbox exec --name "$SANDBOX_NAME" -- cat /tmp/gateway.log 2>/dev/null || true)
 if [ -z "$gw_log" ]; then
@@ -2273,14 +2313,14 @@ echo "$gw_log" | tail -30 | while IFS= read -r line; do
 done
 
 if echo "$gw_log" | grep -q "provider failed to start:.*gateway continues"; then
-  pass "S2: Gateway log shows Slack rejection was caught by channel guard"
+  pass "S3: Gateway log shows Slack rejection was caught by channel guard"
 elif echo "$gw_log" | grep -qi "slack"; then
   info "Slack-related lines: $(echo "$gw_log" | grep -i slack | head -5)"
-  skip "S2: Gateway log has Slack output but not the guard catch message"
+  skip "S3: Gateway log has Slack output but not the guard catch message"
 elif [ -z "$gw_log" ]; then
-  skip "S2: Could not read gateway log (container may have exited)"
+  skip "S3: Could not read gateway log (container may have exited)"
 else
-  skip "S2: No Slack-related output in gateway log"
+  skip "S3: No Slack-related output in gateway log"
 fi
 
 # ══════════════════════════════════════════════════════════════════

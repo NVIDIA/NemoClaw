@@ -721,6 +721,9 @@ def build_config(env: dict | None = None) -> dict:
         "openclaw-weixin": {"enabled": True},
     }
     if "slack" in _ch_cfg:
+        # OpenClaw treats external channel plugin activation as separate from
+        # channels.slack.enabled; keep this explicit until configured official
+        # channel plugins are auto-trusted by OpenClaw itself.
         plugin_entries["slack"] = {"enabled": True}
     _bundled_provider_plugins = {
         "amazon-bedrock": {"amazon-bedrock", "bedrock"},
