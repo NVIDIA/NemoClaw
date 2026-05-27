@@ -32,12 +32,14 @@ export type CredentialPromptIntent =
 // sync without a second hand-maintained copy.
 export const KNOWN_CREDENTIAL_ENV_KEYS: readonly string[] = [
   "NVIDIA_API_KEY",
+  "NVIDIA_INFERENCE_HUB_API_KEY",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "GEMINI_API_KEY",
   "COMPATIBLE_API_KEY",
   "COMPATIBLE_ANTHROPIC_API_KEY",
   "BRAVE_API_KEY",
+  "TAVILY_API_KEY",
   "GITHUB_TOKEN",
   "HF_TOKEN",
   "HUGGING_FACE_HUB_TOKEN",
@@ -189,6 +191,11 @@ export function getCredential(key: string): string | null {
  */
 export function resolveProviderCredential(envName: string): string | null {
   let value = getCredential(envName);
+  if (!value) {
+    const { stageSecretsEnvFile } = require("./secrets-env") as typeof import("./secrets-env");
+    stageSecretsEnvFile();
+    value = getCredential(envName);
+  }
   if (!value) {
     stageLegacyCredentialsToEnv();
     value = getCredential(envName);
@@ -664,32 +671,93 @@ export async function readCredentialPrompt(
   return getCredentialPromptIntent(await promptImpl(question, { secret: true }));
 }
 
+const {
+  NVIDIA_INTEGRATE_API_BASE_URL,
+  NVIDIA_INFERENCE_API_BASE_URL,
+  NVIDIA_INFERENCE_HUB_CHAT_COMPLETIONS_URL,
+  NVIDIA_BUILD_CREDENTIAL_ENV,
+  NVIDIA_INFERENCE_HUB_CREDENTIAL_ENV,
+} = require("../inference/config") as typeof import("../inference/config");
+
+function nvidiaEndpointCredentialPrompt(credentialEnv: string): {
+  title: string;
+  helpLines: string[];
+  promptLabel: string;
+  requiredPrefix: "nvapi-" | "sk-";
+  invalidMessage: string;
+} {
+  if (credentialEnv === NVIDIA_INFERENCE_HUB_CREDENTIAL_ENV) {
+    return {
+      title: "Inference Hub API key required (sk-*)",
+      helpLines: [
+        "  │  For models on inference-api.nvidia.com (sk-*)",
+        `  │  ${NVIDIA_INFERENCE_HUB_CHAT_COMPLETIONS_URL}`,
+        "  │  Export: NVIDIA_INFERENCE_HUB_API_KEY=sk-...",
+        `  │  (NVIDIA API key nvapi-* is for ${NVIDIA_INTEGRATE_API_BASE_URL})`,
+      ],
+      promptLabel: "  Inference Hub API key (sk-*): ",
+      requiredPrefix: "sk-",
+      invalidMessage: "  Invalid Inference Hub API key. NVIDIA_INFERENCE_HUB_API_KEY must start with sk-*",
+    };
+  }
+  return {
+    title: "NVIDIA API key required (nvapi-*)",
+    helpLines: [
+      `  │  For models on ${NVIDIA_INTEGRATE_API_BASE_URL} (nvapi-*)`,
+      "  │  https://build.nvidia.com/settings/api-keys",
+      "  │  Export: NVIDIA_API_KEY=nvapi-...",
+      `  │  (Inference Hub sk-* is for ${NVIDIA_INFERENCE_API_BASE_URL})`,
+    ],
+    promptLabel: "  NVIDIA API key (nvapi-*): ",
+    requiredPrefix: "nvapi-",
+    invalidMessage: "  Invalid NVIDIA API key. NVIDIA_API_KEY must start with nvapi-*",
+  };
+}
+
 /**
- * Ensure `NVIDIA_API_KEY` is staged for this process. Returns immediately
- * if it is already in env, otherwise prompts interactively (validating
- * the `nvapi-` prefix) and stages the result. Onboarding registers the
- * value with the OpenShell gateway later in the flow.
+ * Resolve a staged NVIDIA Endpoints key, including legacy `NVIDIA_API_KEY=sk-...`
+ * when the caller asked for Inference Hub.
  */
-export async function ensureApiKey(): Promise<CredentialPromptIntent> {
-  let key = getCredential("NVIDIA_API_KEY");
+export function resolveNvidiaEndpointCredential(credentialEnv: string): string | null {
+  const direct = resolveProviderCredential(credentialEnv);
+  if (direct) return direct;
+  if (credentialEnv !== NVIDIA_INFERENCE_HUB_CREDENTIAL_ENV) {
+    return null;
+  }
+  const legacyBuild = resolveProviderCredential(NVIDIA_BUILD_CREDENTIAL_ENV);
+  if (legacyBuild?.startsWith("sk-")) {
+    process.env[NVIDIA_INFERENCE_HUB_CREDENTIAL_ENV] = legacyBuild;
+    return legacyBuild;
+  }
+  return null;
+}
+
+/**
+ * Stage the NVIDIA Endpoints credential for `credentialEnv` (Build vs Inference Hub).
+ * Onboarding registers the value with the OpenShell gateway later in the flow.
+ */
+export async function ensureNvidiaEndpointCredential(
+  credentialEnv: string,
+): Promise<CredentialPromptIntent> {
+  let key = resolveNvidiaEndpointCredential(credentialEnv);
   if (key) {
-    process.env.NVIDIA_API_KEY = key;
+    process.env[credentialEnv] = key;
     return { kind: "credential", value: key };
   }
 
+  const spec = nvidiaEndpointCredentialPrompt(credentialEnv);
   console.log("");
   console.log("  ┌─────────────────────────────────────────────────────────────────┐");
-  console.log("  │  NVIDIA API Key required                                        │");
+  console.log(`  │  ${spec.title.padEnd(63)}│`);
   console.log("  │                                                                 │");
-  console.log("  │  1. Go to https://build.nvidia.com/settings/api-keys            │");
-  console.log("  │  2. Sign in with your NVIDIA account                            │");
-  console.log("  │  3. Click 'Generate API Key' button                             │");
-  console.log("  │  4. Paste the key below (starts with nvapi-)                    │");
+  for (const line of spec.helpLines) {
+    console.log(`${line.padEnd(67)}│`);
+  }
   console.log("  └─────────────────────────────────────────────────────────────────┘");
   console.log("");
 
   while (true) {
-    const input = getCredentialPromptIntent(await prompt("  NVIDIA API Key: ", { secret: true }));
+    const input = getCredentialPromptIntent(await prompt(spec.promptLabel, { secret: true }));
     if (input.kind === "help") {
       console.log("  Type back to choose a different provider, or exit to quit.");
       continue;
@@ -698,23 +766,50 @@ export async function ensureApiKey(): Promise<CredentialPromptIntent> {
     key = input.value;
 
     if (!key) {
-      console.error("  NVIDIA API Key is required.");
+      console.error(
+        credentialEnv === NVIDIA_INFERENCE_HUB_CREDENTIAL_ENV
+          ? "  Inference Hub API Key is required."
+          : "  NVIDIA API Key is required.",
+      );
       continue;
     }
 
-    if (!key.startsWith("nvapi-")) {
-      console.error("  Invalid NVIDIA API key. Must start with nvapi-");
+    if (!key.startsWith(spec.requiredPrefix)) {
+      if (
+        credentialEnv === NVIDIA_BUILD_CREDENTIAL_ENV &&
+        key.startsWith("sk-")
+      ) {
+        console.error(
+          `  That key is for ${NVIDIA_INFERENCE_API_BASE_URL} (sk-*). ` +
+            "Use NVIDIA_INFERENCE_HUB_API_KEY, not NVIDIA_API_KEY.",
+        );
+      } else if (
+        credentialEnv === NVIDIA_INFERENCE_HUB_CREDENTIAL_ENV &&
+        key.startsWith("nvapi-")
+      ) {
+        console.error(
+          `  That key is for ${NVIDIA_INTEGRATE_API_BASE_URL} (nvapi-*). ` +
+            "Use NVIDIA_API_KEY, not NVIDIA_INFERENCE_HUB_API_KEY.",
+        );
+      } else {
+        console.error(spec.invalidMessage);
+      }
       continue;
     }
 
     break;
   }
 
-  saveCredential("NVIDIA_API_KEY", key);
-  process.env.NVIDIA_API_KEY = key;
+  saveCredential(credentialEnv, key);
+  process.env[credentialEnv] = key;
   console.log("");
   console.log("  Key staged for the OpenShell gateway. It is held in process memory only;");
   console.log("  onboarding registers it with the gateway and nothing is written to disk.");
   console.log("");
   return { kind: "credential", value: key };
+}
+
+/** @deprecated Use `ensureNvidiaEndpointCredential("NVIDIA_API_KEY")` after model selection. */
+export async function ensureApiKey(): Promise<CredentialPromptIntent> {
+  return ensureNvidiaEndpointCredential(NVIDIA_BUILD_CREDENTIAL_ENV);
 }

@@ -363,7 +363,7 @@ const { configureWebSearch } = require(${onboardPath});
       });
       expect(result.status).toBe(0);
       const payload = JSON.parse(fs.readFileSync(outputPath, "utf-8"));
-      expect(payload.result).toEqual({ fetchEnabled: true });
+      expect(payload.result).toEqual({ fetchEnabled: true, provider: "brave" });
       expect(payload.braveKey).toBe("saved-brave-key");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
@@ -403,14 +403,14 @@ const { configureWebSearch } = require(${onboardPath});
 
     expect(exitCode).toBe(0);
     expect(payload.exitCalls).toEqual([]);
-    expect(payload.result).toEqual({ fetchEnabled: true });
+    expect(payload.result).toEqual({ fetchEnabled: true, provider: "brave" });
   });
 });
 
 describe("configureWebSearch (interactive)", () => {
-  it("returns to the Brave Search enable prompt when backing out of the API key prompt", () => {
+  it("returns to the web search enable prompt when backing out of provider and API key prompts", () => {
     const { exitCode, payload } = runInteractiveConfigureWebSearch({
-      answers: ["y", "back", "n"],
+      answers: ["y", "1", "back", "back", "n"],
     });
 
     expect(exitCode).toBe(0);
@@ -420,7 +420,7 @@ describe("configureWebSearch (interactive)", () => {
     expect(payload.errors).toEqual([]);
     expect(payload.saved.every((entry) => entry.value !== "back")).toBe(true);
     expect(
-      payload.prompts.filter((entry) => /Enable Brave Web Search\?/.test(entry.message)),
+      payload.prompts.filter((entry) => /Enable web search\?/.test(entry.message)),
     ).toHaveLength(2);
     expect(
       payload.prompts.some(
@@ -431,7 +431,7 @@ describe("configureWebSearch (interactive)", () => {
 
   it("exits from the Brave Search API key prompt", () => {
     const { exitCode, payload } = runInteractiveConfigureWebSearch({
-      answers: ["y", "exit"],
+      answers: ["y", "1", "exit"],
     });
 
     expect(exitCode).toBe(0);

@@ -6,7 +6,11 @@ import {
   type BackToSelection,
 } from "../navigation";
 import { isSafeModelId } from "../validation";
-import { CLOUD_MODEL_OPTIONS, HERMES_PROVIDER_MODEL_OPTIONS } from "./config";
+import {
+  CLOUD_MODEL_OPTIONS,
+  HERMES_PROVIDER_MODEL_OPTIONS,
+  resolveNvidiaCloudModelRoute,
+} from "./config";
 import { validateNvidiaEndpointModel } from "./provider-models";
 
 // credentials.ts still uses CommonJS-style exports.
@@ -43,7 +47,11 @@ export interface ModelPromptOptions {
   exitFn?: () => never;
   getNavigationChoiceFn?: (value?: string) => "back" | "exit" | null;
   getCredentialFn?: (envName: string) => string | null;
-  validateNvidiaEndpointModelFn?: (model: string, apiKey: string) => PromptValidationResult;
+  validateNvidiaEndpointModelFn?: (
+    model: string,
+    apiKey: string,
+    options?: { buildEndpointUrl?: string },
+  ) => PromptValidationResult;
   cloudModelOptions?: Array<{ id: string; label: string }>;
   remoteModelOptions?: Record<string, string[]>;
   backToSelection?: BackToSelection;
@@ -161,12 +169,6 @@ export async function promptCloudModel(options: ModelPromptOptions = {}): Promis
     return deps.cloudModelOptions[index].id;
   }
 
-  const nvidiaApiKey = deps.getCredentialFn("NVIDIA_API_KEY");
-  if (!nvidiaApiKey) {
-    deps.errorLine("  NVIDIA_API_KEY is required before validating a custom NVIDIA Endpoints model.");
-    return deps.backToSelection;
-  }
-
   // If default is a custom (non-curated) model ID, pre-fill it in the manual prompt
   const manualDefault = defaultCuratedIdx < 0 && defaultModelId && isSafeModelId(defaultModelId) ? defaultModelId : "";
   const manualLabel = manualDefault
@@ -175,7 +177,26 @@ export async function promptCloudModel(options: ModelPromptOptions = {}): Promis
   return promptManualModelId(
     manualLabel,
     "NVIDIA Endpoints",
-    (model) => deps.validateNvidiaEndpointModelFn(model, nvidiaApiKey),
+    (model) => {
+      const route = resolveNvidiaCloudModelRoute(model);
+      const nvidiaApiKey =
+        deps.getCredentialFn(route.credentialEnv) ||
+        (route.credentialEnv === "NVIDIA_INFERENCE_HUB_API_KEY" &&
+        deps.getCredentialFn("NVIDIA_API_KEY")?.startsWith("sk-")
+          ? deps.getCredentialFn("NVIDIA_API_KEY")
+          : null);
+      if (!nvidiaApiKey) {
+        deps.errorLine(
+          route.credentialEnv === "NVIDIA_INFERENCE_HUB_API_KEY"
+            ? "  NVIDIA_INFERENCE_HUB_API_KEY is required before validating this model."
+            : "  NVIDIA_API_KEY is required before validating this model.",
+        );
+        return { ok: false, message: "missing credential" };
+      }
+      return deps.validateNvidiaEndpointModelFn(model, nvidiaApiKey, {
+        buildEndpointUrl: route.apiBaseUrl,
+      });
+    },
     { ...deps, promptFn: async (q) => (await deps.promptFn(q)) || manualDefault },
   );
 }

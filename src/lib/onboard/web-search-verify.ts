@@ -5,6 +5,8 @@ export type WebSearchVerifyAgent = {
   name?: string | null;
 } | null | undefined;
 
+import { webSearchUsageMessage } from "../inference/web-search";
+
 export type WebSearchVerifyDeps = {
   runCaptureOpenshell: (args: string[], options: { ignoreError: true; timeout: number }) => string | null;
   cliName: () => string;
@@ -32,8 +34,6 @@ export function verifyWebSearchInsideSandbox(
   const agentName = agent?.name || "openclaw";
   try {
     if (agentName === "hermes") {
-      // `hermes dump` outputs config_overrides and active toolsets.
-      // Look for the web backend in its output.
       const dump = deps.runCaptureOpenshell(
         ["sandbox", "exec", "-n", sandboxName, "--", "hermes", "dump"],
         {
@@ -45,8 +45,6 @@ export function verifyWebSearchInsideSandbox(
         warn("  ⚠ Could not verify web search config inside sandbox (hermes dump failed).");
         return;
       }
-      // A working web backend shows as an explicit config override or active-toolset entry.
-      // Avoid broad /web.*search/ matching so warning text never looks like success.
       const hasWebBackend =
         /^\s*web\.backend:\s*\S+/m.test(dump) ||
         /^\s*active toolsets:\s*.*\bweb\b/im.test(dump) ||
@@ -59,7 +57,6 @@ export function verifyWebSearchInsideSandbox(
         log("  ✓ Web search is active inside sandbox");
       }
     } else if (agentName === "openclaw") {
-      // OpenClaw: verify tools.web.search block exists in the baked config.
       const configCheck = deps.runCaptureOpenshell(
         ["sandbox", "exec", "-n", sandboxName, "--", "cat", "/sandbox/.openclaw/openclaw.json"],
         { ignoreError: true, timeout: 10_000 },
@@ -72,6 +69,14 @@ export function verifyWebSearchInsideSandbox(
         const parsed = JSON.parse(configCheck);
         if (parsed?.tools?.web?.search?.enabled) {
           log("  ✓ Web search is active inside sandbox");
+          const provider = parsed?.tools?.web?.search?.provider;
+          const usageMsg = webSearchUsageMessage({
+            fetchEnabled: true,
+            provider: provider === "tavily" ? "tavily" : "brave",
+          });
+          if (usageMsg) {
+            log(`  ✓ ${usageMsg}`);
+          }
         } else {
           warn("  ⚠ Web search was configured but tools.web.search is not enabled in openclaw.json.");
         }
@@ -82,7 +87,6 @@ export function verifyWebSearchInsideSandbox(
       warn(`  ⚠ Web search verification is not implemented for agent '${agentName}'.`);
     }
   } catch {
-    // Best-effort — don't let probe failures derail onboarding.
     warn("  ⚠ Web search verification probe failed (non-fatal).");
   }
 }

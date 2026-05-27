@@ -269,8 +269,24 @@ describe("validateNvidiaApiKeyValue", () => {
     expect(validateNvidiaApiKeyValue("")).toBeTruthy();
   });
 
-  it("rejects key without nvapi- prefix", () => {
-    expect(validateNvidiaApiKeyValue("sk-abc123")).toBeTruthy();
+  it("rejects Inference Hub sk- keys on NVIDIA_API_KEY (Build only)", () => {
+    const error = validateNvidiaApiKeyValue("sk-abc123");
+    expect(error).toBeTruthy();
+    expect(error).toContain("NVIDIA_INFERENCE_HUB_API_KEY");
+  });
+
+  it("rejects nvapi- keys on NVIDIA_INFERENCE_HUB_API_KEY", () => {
+    const error = validateNvidiaApiKeyValue("nvapi-abc123", "NVIDIA_INFERENCE_HUB_API_KEY");
+    expect(error).toBeTruthy();
+    expect(error).toContain("NVIDIA_API_KEY");
+  });
+
+  it("accepts Inference Hub sk- keys on NVIDIA_INFERENCE_HUB_API_KEY", () => {
+    expect(validateNvidiaApiKeyValue("sk-abc123", "NVIDIA_INFERENCE_HUB_API_KEY")).toBeNull();
+  });
+
+  it("rejects keys without nvapi- prefix for NVIDIA_API_KEY", () => {
+    expect(validateNvidiaApiKeyValue("bad-key")).toBeTruthy();
   });
 
   it("accepts non-nvapi keys when credentialEnv is not NVIDIA_API_KEY", () => {

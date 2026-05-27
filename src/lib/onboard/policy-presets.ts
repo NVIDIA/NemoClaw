@@ -3,6 +3,7 @@
 
 import { getCredential } from "../credentials/store";
 import type { WebSearchConfig } from "../inference/web-search";
+import { resolveWebSearchProvider, webSearchPolicyPresetForProvider } from "../inference/web-search";
 
 const { LOCAL_INFERENCE_PROVIDERS } = require("./providers") as {
   LOCAL_INFERENCE_PROVIDERS: string[];
@@ -50,7 +51,10 @@ export function getSuggestedPolicyPresets({
   maybeSuggestMessagingPreset("wechat", "WECHAT_BOT_TOKEN");
   maybeSuggestMessagingPreset("whatsapp", null);
 
-  if (webSearchConfig) suggestions.push("brave");
+  const webSearchProvider = resolveWebSearchProvider(webSearchConfig);
+  if (webSearchProvider) {
+    suggestions.push(webSearchPolicyPresetForProvider(webSearchProvider));
+  }
 
   return suggestions;
 }

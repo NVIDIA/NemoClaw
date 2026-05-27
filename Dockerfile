@@ -363,9 +363,10 @@ RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
 
 # Build args for config that varies per deployment.
 # nemoclaw onboard passes these at image build time.
-ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b
+# Nemotron Ultra — inference-api.nvidia.com (see src/lib/inference/config.ts)
+ARG NEMOCLAW_MODEL=nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1
 ARG NEMOCLAW_PROVIDER_KEY=inference
-ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nemotron-3-super-120b-a12b
+ARG NEMOCLAW_PRIMARY_MODEL_REF=inference/nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1
 # Default dashboard port 18789 — override at runtime via NEMOCLAW_DASHBOARD_PORT.
 ARG CHAT_UI_URL=http://127.0.0.1:18789
 ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1
@@ -442,6 +443,7 @@ ARG NEMOCLAW_PROXY_PORT=3128
 # The actual API key is injected at runtime via openshell:resolve:env, never
 # baked into the image.
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
+ARG NEMOCLAW_WEB_SEARCH_PROVIDER=brave
 
 # SECURITY: Promote build-args to env vars so the Python script reads them
 # via os.environ, never via string interpolation into Python source code.
@@ -469,7 +471,8 @@ ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_DISABLE_DEVICE_AUTH=${NEMOCLAW_DISABLE_DEVICE_AUTH} \
     NEMOCLAW_PROXY_HOST=${NEMOCLAW_PROXY_HOST} \
     NEMOCLAW_PROXY_PORT=${NEMOCLAW_PROXY_PORT} \
-    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED}
+    NEMOCLAW_WEB_SEARCH_ENABLED=${NEMOCLAW_WEB_SEARCH_ENABLED} \
+    NEMOCLAW_WEB_SEARCH_PROVIDER=${NEMOCLAW_WEB_SEARCH_PROVIDER}
 
 WORKDIR /sandbox
 USER sandbox

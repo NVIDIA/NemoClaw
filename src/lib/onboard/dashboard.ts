@@ -6,6 +6,8 @@ import os from "node:os";
 import path from "node:path";
 
 import type { AgentDefinition } from "../agent/defs";
+import type { WebSearchConfig } from "../inference/web-search";
+import { webSearchUsageMessage } from "../inference/web-search";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
@@ -91,6 +93,7 @@ export interface OnboardDashboardHelpers {
     provider: string,
     nimContainer?: string | null,
     agent?: AgentDefinition | null,
+    webSearchConfig?: WebSearchConfig | null,
   ): void;
   stopAllDashboardForwards(): void;
 }
@@ -353,6 +356,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     provider: string,
     nimContainer: string | null = null,
     agent: AgentDefinition | null = null,
+    webSearchConfig: WebSearchConfig | null = null,
   ): void {
     const nimStatus = deps.nimStatus ?? nim.nimStatus;
     const nimStatusByName = deps.nimStatusByName ?? nim.nimStatusByName;
@@ -380,6 +384,10 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     console.log("");
     console.log(`  Sandbox:  ${sandboxName}`);
     console.log(`  Model:    ${model} (${providerLabel})`);
+    const webSearchLine = webSearchUsageMessage(webSearchConfig);
+    if (webSearchLine) {
+      console.log(`  Search:   ${webSearchLine}`);
+    }
     if (showNim) {
       console.log(`  NIM:      ${nimLabel}`);
     }

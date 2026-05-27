@@ -37,6 +37,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "flags": "<PROVIDER> [--yes|-y]"
     }
   ],
+  "credentials:init-secrets": [
+    {
+      "group": "Credentials",
+      "order": 37,
+      "description": "Create ~/.nemoclaw/secrets.env for API keys (outside git)"
+    }
+  ],
   "debug": [
     {
       "group": "Troubleshooting",

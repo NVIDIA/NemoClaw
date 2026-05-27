@@ -35,6 +35,7 @@ describe("onboard policy preset suggestions", () => {
     "huggingface",
     "brew",
     "brave",
+    "tavily",
     "slack",
     "discord",
     "telegram",
@@ -115,10 +116,21 @@ describe("onboard policy preset suggestions", () => {
     const suggestions = computeSetupPresetSuggestions("balanced", {
       enabledChannels: [],
       knownPresetNames: known,
-      webSearchConfig: { fetchEnabled: true },
+      webSearchConfig: { fetchEnabled: true, provider: "brave" },
       webSearchSupported: true,
     });
     expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "brave"]);
+  });
+
+  it("adds Tavily to tier suggestions when Tavily web search is configured", () => {
+    const suggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: known,
+      webSearchConfig: { fetchEnabled: true, provider: "tavily" },
+      webSearchSupported: true,
+    });
+    expect(suggestions).toEqual(["npm", "pypi", "huggingface", "brew", "tavily"]);
+    expect(suggestions).not.toContain("brave");
   });
 
   it("filters tier defaults to known presets for agent-specific onboarding", () => {
@@ -139,6 +151,7 @@ describe("onboard policy preset suggestions", () => {
     }).map((p) => p.name);
     expect(unsupportedPresets).not.toContain("brave");
     expect(supportedPresets).toContain("brave");
+    expect(supportedPresets).toContain("tavily");
   });
 
   it("drops Brave tier defaults when web search is unsupported", () => {
@@ -188,13 +201,13 @@ describe("onboard policy preset suggestions", () => {
   it("handles Brave web search config with support checks", () => {
     expect(
       computeSetupPresetSuggestions("restricted", {
-        webSearchConfig: { provider: "brave" },
+        webSearchConfig: { fetchEnabled: true, provider: "brave" },
         knownPresetNames: known,
       }),
     ).toContain("brave");
     expect(
       computeSetupPresetSuggestions("restricted", {
-        webSearchConfig: { provider: "brave" },
+        webSearchConfig: { fetchEnabled: true, provider: "brave" },
         knownPresetNames: known,
         webSearchSupported: false,
       }),

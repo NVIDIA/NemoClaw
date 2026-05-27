@@ -54,8 +54,10 @@ components:
       default:
         provider_type: "nvidia"
         provider_name: "nvidia-inference"
-        endpoint: "https://integrate.api.nvidia.com/v1"
-        model: "nvidia/nemotron-3-super-120b-a12b"
+        # Nemotron Ultra — inference-api.nvidia.com (see config.ts + scripts/examples/nemotron-ultra-inference.py)
+        endpoint: "https://inference-api.nvidia.com/v1"
+        model: "nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1"
+        credential_env: "NVIDIA_INFERENCE_HUB_API_KEY"
 
       ncp:
         provider_type: "nvidia"

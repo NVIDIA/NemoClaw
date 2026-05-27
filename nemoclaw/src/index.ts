@@ -209,7 +209,8 @@ export interface NemoClawConfig {
 
 // Gateway plugins run inside the sandbox, where OpenClaw keeps its active config here.
 const OPENCLAW_CONFIG_PATH = "/sandbox/.openclaw/openclaw.json";
-const DEFAULT_INFERENCE_MODEL = "nvidia/nemotron-3-super-120b-a12b";
+// inference-api.nvidia.com — see src/lib/inference/config.ts (curl reference)
+const DEFAULT_INFERENCE_MODEL = "nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1";
 
 function normalizeInferenceModel(value: string): string {
   const trimmed = value.trim();
@@ -241,14 +242,14 @@ function activeModelEntries(activeModel: string): ModelProviderEntry[] {
   if (!activeModel) {
     return [
       {
-        id: "nvidia/nemotron-3-super-120b-a12b",
-        label: "Nemotron 3 Super 120B (March 2026)",
+        id: "nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1",
+        label: "Nemotron Ultra 253B",
         contextWindow: 131072,
-        maxOutput: 8192,
+        maxOutput: 4096,
       },
       {
-        id: "nvidia/llama-3.1-nemotron-ultra-253b-v1",
-        label: "Nemotron Ultra 253B",
+        id: "nvidia/nemotron-3-super-120b-a12b",
+        label: "Nemotron 3 Super 120B (March 2026)",
         contextWindow: 131072,
         maxOutput: 4096,
       },
@@ -284,7 +285,9 @@ function registeredProviderForConfig(
   const authLabel =
     providerCredentialEnv === "NVIDIA_API_KEY"
       ? `NVIDIA API Key (${providerCredentialEnv})`
-      : `OpenAI API Key (${providerCredentialEnv})`;
+      : providerCredentialEnv === "NVIDIA_INFERENCE_HUB_API_KEY"
+        ? `Inference Hub API Key (${providerCredentialEnv})`
+        : `OpenAI API Key (${providerCredentialEnv})`;
 
   return {
     id: "inference",

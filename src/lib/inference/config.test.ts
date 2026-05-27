@@ -18,12 +18,38 @@ import {
   getOpenClawPrimaryModel,
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
+  NVIDIA_BUILD_CREDENTIAL_ENV,
+  NVIDIA_INFERENCE_API_BASE_URL,
+  NVIDIA_INFERENCE_HUB_CREDENTIAL_ENV,
+  NVIDIA_INTEGRATE_API_BASE_URL,
+  NVIDIA_NEMOTRON_ULTRA_MODEL,
+  NVIDIA_NEMOTRON_SUPER_MODEL,
   parseGatewayInference,
+  resolveNvidiaCloudModelRoute,
 } from "../../../dist/lib/inference/config";
 
 describe("inference selection config", () => {
+  it("routes Nemotron Ultra through Inference Hub with openai provider type", () => {
+    expect(resolveNvidiaCloudModelRoute(NVIDIA_NEMOTRON_ULTRA_MODEL)).toEqual({
+      apiBaseUrl: NVIDIA_INFERENCE_API_BASE_URL,
+      providerType: "openai",
+      keyHelpUrl: "https://inference.nvidia.com",
+      credentialEnv: NVIDIA_INFERENCE_HUB_CREDENTIAL_ENV,
+    });
+  });
+
+  it("routes Nemotron Super through NVIDIA Build with nvidia provider type", () => {
+    expect(resolveNvidiaCloudModelRoute(NVIDIA_NEMOTRON_SUPER_MODEL)).toEqual({
+      apiBaseUrl: NVIDIA_INTEGRATE_API_BASE_URL,
+      providerType: "nvidia",
+      keyHelpUrl: "https://build.nvidia.com/settings/api-keys",
+      credentialEnv: NVIDIA_BUILD_CREDENTIAL_ENV,
+    });
+  });
+
   it("exposes the curated cloud model picker options", () => {
     expect(CLOUD_MODEL_OPTIONS.map((option: { id: string }) => option.id)).toEqual([
+      "nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1",
       "nvidia/nemotron-3-super-120b-a12b",
       "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
       "z-ai/glm-5.1",

@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import type { WebSearchConfig } from "../../../inference/web-search";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 
 export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult> {
@@ -11,6 +12,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
   agent: Agent;
   hermesAuthMethod: string | null;
   hermesToolGateways: string[];
+  webSearchConfig?: WebSearchConfig | null;
   stagedLegacyKeys: readonly string[];
   migratedLegacyKeys: ReadonlySet<string>;
   deps: {
@@ -31,6 +33,7 @@ export interface FinalizationStateOptions<Agent, VerifyChain, VerificationResult
       provider: string,
       nimContainer: string | null,
       agent: Agent,
+      webSearchConfig?: WebSearchConfig | null,
     ): void;
     error(message?: string): void;
     log(message?: string): void;
@@ -51,6 +54,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   agent,
   hermesAuthMethod,
   hermesToolGateways,
+  webSearchConfig = null,
   stagedLegacyKeys,
   migratedLegacyKeys,
   deps,
@@ -84,7 +88,7 @@ export async function handleFinalizationState<Agent, VerifyChain, VerificationRe
   const verificationDiagnostics = deps.formatVerificationDiagnostics(verificationResult);
   for (const line of verificationDiagnostics) deps.log(line);
 
-  deps.printDashboard(sandboxName, model, provider, nimContainer, agent);
+  deps.printDashboard(sandboxName, model, provider, nimContainer, agent, webSearchConfig);
 
   const session = await deps.recordSessionComplete(
     deps.toSessionUpdates({ sandboxName, provider, model, hermesAuthMethod, hermesToolGateways }),

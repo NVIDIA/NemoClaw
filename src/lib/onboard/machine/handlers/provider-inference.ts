@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { resolveNvidiaCloudModelRoute } from "../../../inference/config";
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
@@ -180,6 +181,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       const recovery = await deps.ensureResumeProviderReady(provider, credentialEnv);
       forceInferenceSetup = recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
+      if (provider === "nvidia-prod" && model) {
+        const nvidiaRoute = resolveNvidiaCloudModelRoute(model);
+        credentialEnv = nvidiaRoute.credentialEnv;
+        endpointUrl = endpointUrl || nvidiaRoute.apiBaseUrl;
+      }
       deps.skippedStepMessage("provider_selection", `${provider} / ${model}`);
       await deps.recordStateSkipped("provider_selection", {
         reason: "resume",

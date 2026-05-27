@@ -618,6 +618,25 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.tools?.web?.fetch?.enabled).toBe(true);
   });
 
+  it("enables Tavily web search when provider env is tavily", () => {
+    const config = runConfigScript({
+      NEMOCLAW_WEB_SEARCH_ENABLED: "1",
+      NEMOCLAW_WEB_SEARCH_PROVIDER: "tavily",
+    });
+    expect(config.tools?.web?.search).toEqual({
+      enabled: true,
+      provider: "tavily",
+    });
+    expect(config.plugins?.entries?.tavily).toEqual({
+      enabled: true,
+      config: {
+        webSearch: {
+          apiKey: "openshell:resolve:env:TAVILY_API_KEY",
+        },
+      },
+    });
+  });
+
   it("omits web search when env is not set", () => {
     const config = runConfigScript();
     expect(config.tools?.toolSearch).toBe(true);

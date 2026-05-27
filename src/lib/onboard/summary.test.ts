@@ -13,7 +13,7 @@ describe("onboard summary helpers", () => {
       provider: "gemini-api",
       model: "gemini-2.5-flash",
       credentialEnv: "GEMINI_API_KEY",
-      webSearchConfig: { fetchEnabled: true },
+      webSearchConfig: { fetchEnabled: true, provider: "brave" },
       enabledChannels: ["telegram", "slack"],
       sandboxName: "my-assistant",
       notes: ["Sandbox build typically takes 5–15 minutes on this host."],
@@ -26,7 +26,7 @@ describe("onboard summary helpers", () => {
       summary.includes("configured for OpenShell gateway registration"),
       "summary shows API key staging state without printing env var names",
     );
-    assert.ok(summary.includes("enabled"), "summary includes web-search enabled");
+    assert.ok(summary.includes("enabled (brave)"), "summary includes web-search provider");
     assert.ok(summary.includes("telegram, slack"), "summary lists enabled channels");
     assert.ok(summary.includes("my-assistant"), "summary shows sandbox name");
     assert.ok(

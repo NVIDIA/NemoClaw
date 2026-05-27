@@ -38,6 +38,7 @@ Environment variables:
     NEMOCLAW_PROXY_PORT                 Egress proxy port (default: 3128)
     NEMOCLAW_OPENCLAW_MANAGED_PROXY     Set to "0" to defer OpenClaw managed proxy config
     NEMOCLAW_WEB_SEARCH_ENABLED         Set to "1" to enable web search tools
+    NEMOCLAW_WEB_SEARCH_PROVIDER        "brave" or "tavily" (default: brave)
 """
 
 from __future__ import annotations
@@ -717,6 +718,11 @@ def build_config(env: dict | None = None) -> dict:
         # registered an accountId under channels.openclaw-weixin.accounts.
         "openclaw-weixin": {"enabled": True},
     }
+    # OpenClaw 2026.5.x ships Telegram as an opt-in stock plugin. Baking
+    # channels.telegram without plugins.entries.telegram.enabled leaves the
+    # gateway with channel config but no polling provider (empty channels.status).
+    if "telegram" in msg_channels:
+        plugin_entries["telegram"] = {"enabled": True}
     _bundled_provider_plugins = {
         "amazon-bedrock": {"amazon-bedrock", "bedrock"},
         "amazon-bedrock-mantle": {"amazon-bedrock-mantle"},
@@ -814,16 +820,74 @@ def build_config(env: dict | None = None) -> dict:
         }
 
     if env.get("NEMOCLAW_WEB_SEARCH_ENABLED", "") == "1":
-        config.setdefault("tools", {})["web"] = {
-            "search": {
+        provider = (env.get("NEMOCLAW_WEB_SEARCH_PROVIDER") or "brave").strip().lower()
+        if provider not in ("brave", "tavily"):
+            provider = "brave"
+        search: dict = {"enabled": True, "provider": provider}
+        if provider == "tavily":
+            # OpenClaw 2026.5+ rejects legacy tools.web.search.tavily.* — key belongs
+            # on plugins.entries.tavily.config.webSearch (see openclaw doctor).
+            plugin_entries["tavily"] = {
                 "enabled": True,
-                "provider": "brave",
-                "apiKey": "openshell:resolve:env:BRAVE_API_KEY",
-            },
+                "config": {
+                    "webSearch": {
+                        "apiKey": "openshell:resolve:env:TAVILY_API_KEY",
+                    },
+                },
+            }
+        else:
+            search["apiKey"] = "openshell:resolve:env:BRAVE_API_KEY"
+        config.setdefault("tools", {})["web"] = {
+            "search": search,
             "fetch": {"enabled": True},
         }
 
+    _strip_legacy_web_search_provider_blocks(config)
     return config
+
+
+def _strip_legacy_web_search_provider_blocks(config: dict) -> None:
+    """Remove deprecated tools.web.search.<provider> blocks (OpenClaw 2026.5+)."""
+    tools = config.get("tools")
+    if not isinstance(tools, dict):
+        return
+    web = tools.get("web")
+    if not isinstance(web, dict):
+        return
+    search = web.get("search")
+    if not isinstance(search, dict):
+        return
+    for legacy_key in ("tavily", "brave", "perplexity", "firecrawl", "exa"):
+        search.pop(legacy_key, None)
+
+
+def _append_web_search_answer_instruction(config: dict) -> None:
+    """Tell the agent to announce which web search backend it used when answering."""
+    search = config.get("tools", {}).get("web", {}).get("search", {})
+    if not isinstance(search, dict) or not search.get("enabled"):
+        return
+    provider = search.get("provider", "brave")
+    usage_line = (
+        "Tavily Web Search is used"
+        if provider == "tavily"
+        else "Brave Web Search is used"
+    )
+    workspace = config.get("agents", {}).get("defaults", {}).get("workspace")
+    if not isinstance(workspace, str) or not workspace.strip():
+        workspace = os.path.expanduser("~/.openclaw/workspace")
+    agents_md = Path(workspace).expanduser() / "AGENTS.md"
+    snippet = (
+        "\n\n## Web search (NemoClaw)\n"
+        f"When you use web search to answer a question, tell the user clearly: "
+        f"**{usage_line}** before summarizing search results.\n"
+    )
+    agents_md.parent.mkdir(parents=True, exist_ok=True)
+    existing = ""
+    if agents_md.exists():
+        existing = agents_md.read_text(encoding="utf-8")
+        if usage_line in existing:
+            return
+    agents_md.write_text(existing + snippet, encoding="utf-8")
 
 
 def _preserve_existing_plugin_installs(config: dict, path: str) -> None:
@@ -938,12 +1002,26 @@ def _seed_wechat_accounts_if_available(config: dict) -> None:
 def main() -> None:
     """Generate openclaw.json from environment variables."""
     config = build_config()
+    _strip_legacy_web_search_provider_blocks(config)
+    search = config.get("tools", {}).get("web", {}).get("search", {})
+    if isinstance(search, dict) and search.get("provider") == "tavily":
+        if "tavily" in search:
+            raise SystemExit(
+                "Refusing to write legacy tools.web.search.tavily — use "
+                "plugins.entries.tavily.config.webSearch instead.",
+            )
+        tavily_entry = config.get("plugins", {}).get("entries", {}).get("tavily")
+        if not isinstance(tavily_entry, dict) or not tavily_entry.get("enabled"):
+            raise SystemExit(
+                "Tavily web search requires plugins.entries.tavily.enabled=true",
+            )
     path = os.path.expanduser("~/.openclaw/openclaw.json")
     _preserve_existing_plugin_installs(config, path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w") as f:
         json.dump(config, f, indent=2)
     os.chmod(path, 0o600)
+    _append_web_search_answer_instruction(config)
     _seed_wechat_accounts_if_available(config)
 
 

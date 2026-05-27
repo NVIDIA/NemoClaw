@@ -42,6 +42,7 @@ export interface SandboxStateOptions<Gpu, Agent, WebSearchConfig, MessagingChann
     removeSandboxFromRegistry(sandboxName: string): void;
     repairRecordedSandbox(sandboxName: string | null): void;
     ensureValidatedBraveSearchCredential(): Promise<unknown>;
+    ensureValidatedTavilySearchCredential(): Promise<unknown>;
     isBackToSelection(value: unknown): boolean;
     configureWebSearch(
       existingConfig: WebSearchConfig | null,
@@ -243,14 +244,25 @@ export async function handleSandboxState<Gpu, Agent, WebSearchConfig, MessagingC
 
     let nextWebSearchConfig = webSearchConfig;
     if (nextWebSearchConfig) {
-      deps.note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
-      const braveApiKey = await deps.ensureValidatedBraveSearchCredential();
-      if (deps.isBackToSelection(braveApiKey)) {
-        nextWebSearchConfig = null;
+      if ((nextWebSearchConfig as { provider?: string }).provider === "tavily") {
+        deps.note("  [resume] Revalidating Tavily Search configuration for sandbox recreation.");
+        const tavilyApiKey = await deps.ensureValidatedTavilySearchCredential();
+        if (deps.isBackToSelection(tavilyApiKey)) {
+          nextWebSearchConfig = null;
+        } else {
+          nextWebSearchConfig = tavilyApiKey ? webSearchConfig : null;
+        }
+        if (nextWebSearchConfig) deps.note("  [resume] Reusing Tavily Search configuration.");
       } else {
-        nextWebSearchConfig = braveApiKey ? webSearchConfig : null;
+        deps.note("  [resume] Revalidating Brave Search configuration for sandbox recreation.");
+        const braveApiKey = await deps.ensureValidatedBraveSearchCredential();
+        if (deps.isBackToSelection(braveApiKey)) {
+          nextWebSearchConfig = null;
+        } else {
+          nextWebSearchConfig = braveApiKey ? webSearchConfig : null;
+        }
+        if (nextWebSearchConfig) deps.note("  [resume] Reusing Brave Search configuration.");
       }
-      if (nextWebSearchConfig) deps.note("  [resume] Reusing Brave Search configuration.");
     } else {
       nextWebSearchConfig = await deps.configureWebSearch(null, agent, webSearchSupportProbePath);
     }

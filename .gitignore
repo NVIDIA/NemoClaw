@@ -43,6 +43,7 @@ vdr-notes/
 .npmrc
 .pypirc
 credentials.json
+secrets.env
 DRAFT-*.md
 key.json
 secrets.json

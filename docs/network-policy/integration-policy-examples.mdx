@@ -54,6 +54,7 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Workflow | Preset |
 |----------|--------|
 | Brave Search | `brave` |
+| Tavily Search | `tavily` |
 | Homebrew packages | `brew` |
 | Discord messaging | `discord` |
 | GitHub and GitHub API | `github` |
@@ -242,6 +243,22 @@ $ nemoclaw my-assistant policy-add brave --yes
 ```
 
 The Brave Search API key is still configured separately during onboarding or through the web search setup flow.
+
+## Tavily Search
+
+| Preset | Use when |
+|--------|----------|
+| `tavily` | Agent workflows call the Tavily Search API (`api.tavily.com`) |
+
+During `nemoclaw onboard`, answer **y** to **Enable web search?**, choose **2) Tavily Search**, then paste your API key.
+
+For an existing sandbox:
+
+```console
+$ ./scripts/setup-tavily-search.sh my-assistant
+```
+
+When the agent uses web search to answer a question, it is instructed to tell you **Tavily Web Search is used** (Brave uses **Brave Web Search is used**).
 
 ## Package and Model Tooling
 

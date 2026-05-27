@@ -8,7 +8,11 @@ import type { ModelCatalogFetchResult, ModelValidationResult } from "../onboard/
 // credentials.ts still uses CommonJS-style exports.
 const { normalizeCredentialValue } = require("../credentials/store");
 
-export const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
+import { NVIDIA_INFERENCE_API_BASE_URL } from "./config";
+
+// NVIDIA Inference API — see NVIDIA_INFERENCE_API_BASE_URL curl example in config.ts.
+// Previous integrate catalog: "https://integrate.api.nvidia.com/v1"
+export const BUILD_ENDPOINT_URL = NVIDIA_INFERENCE_API_BASE_URL;
 
 export interface ProviderModelOptions {
   runCurlProbeImpl?: (argv: string[]) => CurlProbeResult;

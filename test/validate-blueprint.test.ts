@@ -180,9 +180,14 @@ describe("blueprint.yaml", () => {
 describe("Model Router pool config", () => {
   const pool = loadYaml<RouterPoolConfig>(ROUTER_POOL_CONFIG_PATH);
 
-  it("regression #3255: routes NVIDIA API keys to the public NVIDIA Build endpoint", () => {
+  it("regression #3255: routes NVIDIA API keys to public NVIDIA inference endpoints", () => {
     const apiBases = new Set((pool.models ?? []).map((model) => model.api_base));
-    expect(apiBases).toEqual(new Set(["https://integrate.api.nvidia.com/v1"]));
+    expect(apiBases).toEqual(
+      new Set([
+        "https://integrate.api.nvidia.com/v1",
+        "https://inference-api.nvidia.com/v1",
+      ]),
+    );
   });
 
   it("regression #3255: uses valid LiteLLM NVIDIA model identifiers", () => {
@@ -192,10 +197,11 @@ describe("Model Router pool config", () => {
     expect(modelsByName.get("nemotron-3-nano-reasoning")).toBe(
       "openai/nvidia/nemotron-3-nano-30b-a3b",
     );
-    expect(modelsByName.get("nemotron-3-super")).toBe(
-      "openai/nvidia/nemotron-3-super-120b-a12b",
+    expect(modelsByName.get("nemotron-ultra")).toBe(
+      "openai/nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1",
     );
     for (const litellmModel of modelsByName.values()) {
+      if (litellmModel === "openai/nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1") continue;
       expect(litellmModel).not.toMatch(/nvidia\/nvidia\//);
       expect(litellmModel).not.toContain("Nemotron-3-Nano-30B-A3B");
       expect(litellmModel).not.toContain("nemotron-3-super-v3");

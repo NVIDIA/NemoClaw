@@ -212,6 +212,7 @@ const {
   DEFAULT_CLOUD_MODEL,
   getProviderSelectionConfig,
   parseGatewayInference,
+  resolveNvidiaCloudModelRoute,
 } = inferenceConfig;
 
 const onboardProviders = require("./onboard/providers");
@@ -294,6 +295,8 @@ const credentials: typeof import("./credentials/store") = require("./credentials
 const {
   prompt,
   ensureApiKey,
+  ensureNvidiaEndpointCredential,
+  resolveNvidiaEndpointCredential,
   getCredential,
   stageLegacyCredentialsToEnv,
   removeLegacyCredentialsFile,
@@ -956,6 +959,7 @@ const {
   promptBraveSearchRecovery,
   promptBraveSearchApiKey,
   ensureValidatedBraveSearchCredential,
+  ensureValidatedTavilySearchCredential,
   configureWebSearch,
   verifyWebSearchInsideSandbox,
 } = createWebSearchFlowHelpers({
@@ -3107,12 +3111,22 @@ async function createSandbox(
     .filter(({ envKey }) => !enabledEnvKeys || enabledEnvKeys.has(envKey))
     .filter(({ envKey }) => !disabledEnvKeys.has(envKey));
 
-  if (webSearchConfig) {
-    messagingTokenDefs.push({
-      name: `${sandboxName}-brave-search`,
-      envKey: webSearch.BRAVE_API_KEY_ENV,
-      token: getCredential(webSearch.BRAVE_API_KEY_ENV),
-    });
+  if (webSearchConfig?.fetchEnabled) {
+    const webSearchProvider =
+      webSearch.resolveWebSearchProvider(webSearchConfig) ?? "brave";
+    if (webSearchProvider === "tavily") {
+      messagingTokenDefs.push({
+        name: `${sandboxName}-tavily-search`,
+        envKey: webSearch.TAVILY_API_KEY_ENV,
+        token: getCredential(webSearch.TAVILY_API_KEY_ENV),
+      });
+    } else {
+      messagingTokenDefs.push({
+        name: `${sandboxName}-brave-search`,
+        envKey: webSearch.BRAVE_API_KEY_ENV,
+        token: getCredential(webSearch.BRAVE_API_KEY_ENV),
+      });
+    }
   }
   const previousProviderCredentialHashes =
     registry.getSandbox(sandboxName)?.providerCredentialHashes ?? {};
@@ -3541,12 +3555,24 @@ async function createSandbox(
     "openclaw-sandbox.yaml",
   );
   const basePolicyPath = (agent && agentOnboard.getAgentPolicyPath(agent)) || defaultPolicyPath;
-  if (webSearchConfig && !getCredential(webSearch.BRAVE_API_KEY_ENV)) {
-    console.error("  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.");
-    console.error(
-      "  Re-run with BRAVE_API_KEY set, or disable Brave Search before recreating the sandbox.",
-    );
-    process.exit(1);
+  if (webSearchConfig?.fetchEnabled) {
+    const webSearchProvider =
+      webSearch.resolveWebSearchProvider(webSearchConfig) ?? "brave";
+    if (webSearchProvider === "tavily") {
+      if (!getCredential(webSearch.TAVILY_API_KEY_ENV)) {
+        console.error("  Tavily Search is enabled, but TAVILY_API_KEY is not available in this process.");
+        console.error(
+          "  Re-run with TAVILY_API_KEY set, or disable Tavily Search before recreating the sandbox.",
+        );
+        process.exit(1);
+      }
+    } else if (!getCredential(webSearch.BRAVE_API_KEY_ENV)) {
+      console.error("  Brave Search is enabled, but BRAVE_API_KEY is not available in this process.");
+      console.error(
+        "  Re-run with BRAVE_API_KEY set, or disable Brave Search before recreating the sandbox.",
+      );
+      process.exit(1);
+    }
   }
   const tokensByEnvKey = Object.fromEntries(
     messagingTokenDefs.map(({ envKey, token }) => [envKey, token]),
@@ -3772,10 +3798,24 @@ async function createSandbox(
     envArgs.push(formatEnvAssignment("TOOL_GATEWAY_USER_TOKEN", hermesToolBrokerToken));
   }
   if (webSearchConfig?.fetchEnabled) {
-    const braveKey =
-      getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
-    if (braveKey) {
-      envArgs.push(formatEnvAssignment(webSearch.BRAVE_API_KEY_ENV, braveKey));
+    const webSearchProvider =
+      webSearch.resolveWebSearchProvider(webSearchConfig) ?? "brave";
+    envArgs.push(
+      formatEnvAssignment(webSearch.WEB_SEARCH_PROVIDER_ENV, webSearchProvider),
+    );
+    if (webSearchProvider === "tavily") {
+      const tavilyKey =
+        getCredential(webSearch.TAVILY_API_KEY_ENV) ||
+        process.env[webSearch.TAVILY_API_KEY_ENV];
+      if (tavilyKey) {
+        envArgs.push(formatEnvAssignment(webSearch.TAVILY_API_KEY_ENV, tavilyKey));
+      }
+    } else {
+      const braveKey =
+        getCredential(webSearch.BRAVE_API_KEY_ENV) || process.env[webSearch.BRAVE_API_KEY_ENV];
+      if (braveKey) {
+        envArgs.push(formatEnvAssignment(webSearch.BRAVE_API_KEY_ENV, braveKey));
+      }
     }
   }
   const sandboxReadyTimeoutSecs = getSandboxReadyTimeoutSecs(effectiveSandboxGpuConfig);
@@ -3949,6 +3989,10 @@ async function createSandbox(
   // recognizable signal. OpenClaw validates at config-generation time, but
   // this probe catches drift for all agents.
   if (webSearchConfig?.fetchEnabled) {
+    const usageMsg = webSearch.webSearchUsageMessage(webSearchConfig);
+    if (usageMsg) {
+      console.log(`  ${usageMsg}`);
+    }
     verifyWebSearchInsideSandbox(sandboxName, agent);
   }
 
@@ -4665,32 +4709,6 @@ async function setupNim(
         hydrateCredentialEnv(credentialEnv);
 
         if (selected.key === "build") {
-          // Allow NEMOCLAW_PROVIDER_KEY as a fallback for NVIDIA_API_KEY.
-          // Check raw process.env first — NEMOCLAW_PROVIDER_KEY is a user-facing
-          // override that should take precedence before resolving from credentials.json.
-          const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
-          // check-direct-credential-env-ignore -- intentional: checking if env is already set before applying NEMOCLAW_PROVIDER_KEY override
-          const existingNvidiaKey = normalizeCredentialValue(process.env.NVIDIA_API_KEY ?? "");
-          if (_nvProviderKey && !existingNvidiaKey) {
-            process.env.NVIDIA_API_KEY = _nvProviderKey;
-          }
-          if (isNonInteractive()) {
-            const resolvedNvidiaKey = resolveProviderCredential("NVIDIA_API_KEY");
-            if (!resolvedNvidiaKey) {
-              console.error(
-                "  NVIDIA_API_KEY (or NEMOCLAW_PROVIDER_KEY) is required for NVIDIA Endpoints in non-interactive mode.",
-              );
-              process.exit(1);
-            }
-            const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);
-            if (keyError) {
-              console.error(keyError);
-              console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
-              process.exit(1);
-            }
-          } else {
-            await ensureApiKey();
-          }
           const _envModel = (process.env.NEMOCLAW_MODEL || "").trim();
           model =
             requestedModel ||
@@ -4703,6 +4721,60 @@ async function setupNim(
             console.log("  Returning to provider selection.");
             console.log("");
             continue selectionLoop;
+          }
+          const nvidiaRoute = resolveNvidiaCloudModelRoute(model);
+          endpointUrl = nvidiaRoute.apiBaseUrl;
+          credentialEnv = nvidiaRoute.credentialEnv;
+
+          // NEMOCLAW_PROVIDER_KEY: route by prefix when the target env is unset.
+          const _nvProviderKey = (process.env.NEMOCLAW_PROVIDER_KEY || "").trim();
+          if (_nvProviderKey) {
+            const existingTarget = normalizeCredentialValue(process.env[credentialEnv] ?? "");
+            if (!existingTarget) {
+              if (_nvProviderKey.startsWith("sk-") && credentialEnv === "NVIDIA_INFERENCE_HUB_API_KEY") {
+                process.env.NVIDIA_INFERENCE_HUB_API_KEY = _nvProviderKey;
+              } else if (_nvProviderKey.startsWith("nvapi-") && credentialEnv === "NVIDIA_API_KEY") {
+                process.env.NVIDIA_API_KEY = _nvProviderKey;
+              } else {
+                process.env[credentialEnv] = _nvProviderKey;
+              }
+            }
+          }
+          hydrateCredentialEnv(credentialEnv);
+
+          if (isNonInteractive()) {
+            const resolvedNvidiaKey = resolveNvidiaEndpointCredential(credentialEnv);
+            if (!resolvedNvidiaKey) {
+              console.error(
+                credentialEnv === "NVIDIA_INFERENCE_HUB_API_KEY"
+                  ? "  NVIDIA_INFERENCE_HUB_API_KEY (sk-*, inference-api.nvidia.com) is required for this model."
+                  : "  NVIDIA_API_KEY (nvapi-*, integrate.api.nvidia.com/v1) is required for this model.",
+              );
+              console.error("  You can export both keys at once:");
+              console.error(
+                "    export NVIDIA_INFERENCE_HUB_API_KEY=sk-...   # inference-api.nvidia.com/v1",
+              );
+              console.error(
+                "    export NVIDIA_API_KEY=nvapi-...              # integrate.api.nvidia.com/v1",
+              );
+              process.exit(1);
+            }
+            const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey, credentialEnv);
+            if (keyError) {
+              console.error(keyError);
+              console.error(`  Get a key from ${nvidiaRoute.keyHelpUrl}`);
+              process.exit(1);
+            }
+          } else {
+            const keyIntent = await ensureNvidiaEndpointCredential(credentialEnv);
+            if (keyIntent.kind === "back") {
+              console.log("  Returning to provider selection.");
+              console.log("");
+              continue selectionLoop;
+            }
+            if (keyIntent.kind === "exit") {
+              exitOnboardFromPrompt();
+            }
           }
         } else {
           // NEMOCLAW_PROVIDER_KEY is a universal alias: if the specific credential env
@@ -5560,7 +5632,13 @@ async function setupInference(
     if (bedrockSetup.handled) return bedrockSetup.result;
     while (true) {
       const resolvedCredentialEnv = credentialEnv || (config && config.credentialEnv);
-      const resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
+      let resolvedEndpointUrl = endpointUrl || (config && config.endpointUrl);
+      let resolvedProviderType = config.providerType;
+      if (provider === "nvidia-prod" && model) {
+        const nvidiaRoute = resolveNvidiaCloudModelRoute(model);
+        resolvedEndpointUrl = endpointUrl || nvidiaRoute.apiBaseUrl;
+        resolvedProviderType = nvidiaRoute.providerType;
+      }
       const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
       const env =
         resolvedCredentialEnv && credentialValue
@@ -5568,7 +5646,7 @@ async function setupInference(
           : {};
       const providerResult = upsertProvider(
         provider,
-        config.providerType,
+        resolvedProviderType,
         resolvedCredentialEnv,
         resolvedEndpointUrl,
         env,
@@ -6772,6 +6850,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
   stagedLegacyValues.clear();
   migratedLegacyKeys.clear();
 
+  const { stageSecretsEnvFile } = require("./credentials/secrets-env") as typeof import("./credentials/secrets-env");
+  const stagedSecretsKeys = stageSecretsEnvFile();
+  if (stagedSecretsKeys.length > 0) {
+    console.error(
+      `  Loaded ${String(stagedSecretsKeys.length)} credential(s) from ~/.nemoclaw/secrets.env`,
+    );
+  }
+
   const stagedLegacyKeys = stageLegacyCredentialsToEnv();
   for (const key of stagedLegacyKeys) {
     const value = process.env[key];
@@ -7231,6 +7317,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         removeSandboxFromRegistry: registry.removeSandbox.bind(registry),
         repairRecordedSandbox,
         ensureValidatedBraveSearchCredential,
+        ensureValidatedTavilySearchCredential,
         isBackToSelection,
         configureWebSearch,
         startRecordedStep,
@@ -7343,6 +7430,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       agent,
       hermesAuthMethod,
       hermesToolGateways,
+      webSearchConfig,
       stagedLegacyKeys,
       migratedLegacyKeys,
       deps: {

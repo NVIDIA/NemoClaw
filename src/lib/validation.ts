@@ -94,12 +94,41 @@ export function validateNvidiaApiKeyValue(
   // The nvapi- prefix check is specific to NVIDIA keys; skip it for keys
   // from other providers (e.g. ANTHROPIC_API_KEY, OPENAI_API_KEY) so that
   // a valid Anthropic key is not rejected with an NVIDIA-specific error.
-  const isNvidia = credentialEnv === "NVIDIA_API_KEY";
+  const isNvidiaBuild = credentialEnv === "NVIDIA_API_KEY";
+  const isInferenceHub = credentialEnv === "NVIDIA_INFERENCE_HUB_API_KEY";
+  const isNvidia = isNvidiaBuild || isInferenceHub;
   if (!key) {
-    return isNvidia ? "  NVIDIA API Key is required." : "  API Key is required.";
+    if (isInferenceHub) {
+      return "  Inference Hub API key is required (export NVIDIA_INFERENCE_HUB_API_KEY=sk-...).";
+    }
+    if (isNvidiaBuild) {
+      return "  NVIDIA API key is required (export NVIDIA_API_KEY=nvapi-...).";
+    }
+    return "  API Key is required.";
   }
-  if (isNvidia && !key.startsWith("nvapi-")) {
-    return "  Invalid NVIDIA API key. Must start with nvapi-";
+  if (isNvidiaBuild && !key.startsWith("nvapi-")) {
+    if (key.startsWith("sk-")) {
+      return (
+        "  That key is for inference-api.nvidia.com (sk-*). " +
+        "Use NVIDIA_INFERENCE_HUB_API_KEY, not NVIDIA_API_KEY."
+      );
+    }
+    return (
+      "  Invalid NVIDIA API key. NVIDIA_API_KEY must start with nvapi-* " +
+      "(for integrate.api.nvidia.com/v1)."
+    );
+  }
+  if (isInferenceHub && !key.startsWith("sk-")) {
+    if (key.startsWith("nvapi-")) {
+      return (
+        "  That key is for integrate.api.nvidia.com/v1 (nvapi-*). " +
+        "Use NVIDIA_API_KEY, not NVIDIA_INFERENCE_HUB_API_KEY."
+      );
+    }
+    return (
+      "  Invalid Inference Hub API key. NVIDIA_INFERENCE_HUB_API_KEY must start with sk-* " +
+      "(for inference-api.nvidia.com/v1)."
+    );
   }
   return null;
 }

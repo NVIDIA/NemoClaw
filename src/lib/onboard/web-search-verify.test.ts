@@ -36,11 +36,25 @@ describe("verifyWebSearchInsideSandbox", () => {
   });
 
   it("reports active OpenClaw web search config", () => {
-    const d = deps(JSON.stringify({ tools: { web: { search: { enabled: true } } } }));
+    const d = deps(
+      JSON.stringify({ tools: { web: { search: { enabled: true, provider: "brave" } } } }),
+    );
 
     verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
 
     expect(d.log).toHaveBeenCalledWith("  ✓ Web search is active inside sandbox");
+    expect(d.log).toHaveBeenCalledWith("  ✓ Brave Web Search is used");
+  });
+
+  it("reports Tavily when OpenClaw config uses tavily provider", () => {
+    const d = deps(
+      JSON.stringify({ tools: { web: { search: { enabled: true, provider: "tavily" } } } }),
+    );
+
+    verifyWebSearchInsideSandbox("alpha", { name: "openclaw" }, d);
+
+    expect(d.log).toHaveBeenCalledWith("  ✓ Web search is active inside sandbox");
+    expect(d.log).toHaveBeenCalledWith("  ✓ Tavily Web Search is used");
   });
 
   it("warns when OpenClaw config is malformed or disabled", () => {

@@ -24,9 +24,10 @@ export function printCredentialsUsage(log: (message?: string) => void = console.
   log("  Subcommands:");
   log("    list                  List provider credentials registered with the OpenShell gateway");
   log("    reset <PROVIDER> [--yes]   Remove a provider credential so onboard re-prompts");
+  log("    init-secrets          Create ~/.nemoclaw/secrets.env for local API keys (not in git)");
   log("");
-  log("  Credentials live in the OpenShell gateway. Inspect with `openshell provider list`.");
-  log("  Nothing is persisted to host disk; deploy/non-onboard commands read from env vars.");
+  log("  Credentials live in the OpenShell gateway after onboard.");
+  log("  For local key storage outside git, use ~/.nemoclaw/secrets.env (see init-secrets).");
   log("");
 }
 

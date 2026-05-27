@@ -17,7 +17,9 @@ const { compactText } = require("../core/url-utils");
 
 // ── Constants ────────────────────────────────────────────────────
 
-const BUILD_ENDPOINT_URL = "https://integrate.api.nvidia.com/v1";
+const { NVIDIA_INFERENCE_API_BASE_URL } = require("../inference/config");
+// NVIDIA Inference API — matches Nemotron Ultra curl in config.ts
+const BUILD_ENDPOINT_URL = NVIDIA_INFERENCE_API_BASE_URL;
 const OPENAI_ENDPOINT_URL = "https://api.openai.com/v1";
 const ANTHROPIC_ENDPOINT_URL = "https://api.anthropic.com";
 const GEMINI_ENDPOINT_URL = "https://generativelanguage.googleapis.com/v1beta/openai/";

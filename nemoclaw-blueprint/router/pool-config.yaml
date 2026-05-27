@@ -28,9 +28,10 @@ models:
     cost_per_m_output_tokens: 0.20
     api_base: "https://integrate.api.nvidia.com/v1"
 
-  - name: nemotron-3-super
-    display_name: "Nemotron 3 Super 120B"
-    litellm_model: "openai/nvidia/nemotron-3-super-120b-a12b"
+  - name: nemotron-ultra
+    display_name: "Nemotron Ultra 253B"
+    # inference-api.nvidia.com — model id from curl in src/lib/inference/config.ts
+    litellm_model: "openai/nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1"
     cost_per_m_input_tokens: 0.10
     cost_per_m_output_tokens: 0.40
-    api_base: "https://integrate.api.nvidia.com/v1"
+    api_base: "https://inference-api.nvidia.com/v1"

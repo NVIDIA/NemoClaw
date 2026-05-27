@@ -142,7 +142,7 @@ describe("onboard provider helpers", () => {
       "inference",
       "openai",
       "NVIDIA_API_KEY",
-      "https://integrate.api.nvidia.com/v1",
+      "https://inference-api.nvidia.com/v1",
       {},
       (command) => {
         commands.push(command.join(" "));
@@ -154,7 +154,7 @@ describe("onboard provider helpers", () => {
     expect(commands).toHaveLength(2);
     expect(commands[0]).toMatch(/provider get/);
     expect(commands[1]).toMatch(/provider update/);
-    expect(commands[1]).toMatch(/--config OPENAI_BASE_URL=https:\/\/integrate\.api\.nvidia\.com\/v1/);
+    expect(commands[1]).toMatch(/--config OPENAI_BASE_URL=https:\/\/inference-api\.nvidia\.com\/v1/);
   });
 
   it("returns redacted error details when create or update fails", () => {
