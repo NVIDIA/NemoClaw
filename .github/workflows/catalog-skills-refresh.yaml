@@ -54,20 +54,20 @@ jobs:
           set -euo pipefail
           # If NVSkills CI has already pushed signing artifacts (skill.oms.sig,
           # skill-card.md) to the refresh branch, overlay that branch's
-          # skills/nemoclaw into the working tree before regenerating. The
+          # skills/ into the working tree before regenerating. The
           # exporter (scripts/export-catalog-skills.py) auto-preserves those
           # files when an existing export tree is present, so this overlay is
           # what keeps signer artifacts from being dropped on force-push.
           if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
-            echo "Existing $BRANCH found; overlaying skills/nemoclaw to preserve NVSkills artifacts"
+            echo "Existing $BRANCH found; overlaying skills/ to preserve NVSkills artifacts"
             git fetch --depth 1 origin "$BRANCH":"refs/remotes/origin/$BRANCH"
             # Use `git cat-file -e` instead of `git ls-tree -d`: the latter can
             # exit 0 with empty output when the tree exists but the path does
-            # not, which would otherwise wipe skills/nemoclaw and then fail at
+            # not, which would otherwise wipe skills/ and then fail at
             # checkout. cat-file -e fails when the object is absent.
-            if git cat-file -e "origin/$BRANCH:skills/nemoclaw" 2>/dev/null; then
-              rm -rf skills/nemoclaw
-              git checkout "origin/$BRANCH" -- skills/nemoclaw
+            if git cat-file -e "origin/$BRANCH:skills" 2>/dev/null; then
+              rm -rf skills
+              git checkout "origin/$BRANCH" -- skills
             fi
           else
             echo "No existing $BRANCH; running fresh export from main"
@@ -79,12 +79,17 @@ jobs:
       - name: Check for changes
         id: diff
         run: |
-          if git diff --quiet -- .agents/catalog-skills.yaml skills/nemoclaw; then
+          # Mark any new files under the export paths as intent-to-add so
+          # `git diff` reports them. Without this, an empty `skills/`
+          # tree on main causes a freshly-exported catalog to look unchanged
+          # and the workflow short-circuits without opening a PR.
+          git add --intent-to-add -- .agents/catalog-skills.yaml skills
+          if git diff --quiet -- .agents/catalog-skills.yaml skills; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             echo "No catalog skill export changes detected."
           else
             echo "changed=true" >> "$GITHUB_OUTPUT"
-            git diff --stat -- .agents/catalog-skills.yaml skills/nemoclaw
+            git diff --stat -- .agents/catalog-skills.yaml skills
           fi
 
       - name: Stop after dry run
@@ -111,7 +116,7 @@ jobs:
           gh auth setup-git
 
           git checkout -B "$BRANCH"
-          git add .agents/catalog-skills.yaml skills/nemoclaw
+          git add .agents/catalog-skills.yaml skills
           git commit -m "chore(skills): refresh catalog export"
           git push --force-with-lease origin "$BRANCH"
 
