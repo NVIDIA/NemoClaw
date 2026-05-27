@@ -8,6 +8,10 @@ function asString(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
+// Rebuild deletes the registry entry before recreating the sandbox. Custom
+// preset YAML only lives in registry.customPolicies, so snapshot the usable
+// entries up front and ignore malformed/stale data instead of letting one bad
+// entry block the rebuild.
 export function normalizeRebuildCustomPolicies(value: unknown): CustomPolicyEntry[] {
   if (!Array.isArray(value)) return [];
 
@@ -39,6 +43,9 @@ export function resolveRebuildPolicyPresetNames(
   customPolicies: readonly Pick<CustomPolicyEntry, "name">[],
   disabledChannels: readonly string[] | null | undefined,
 ): string[] {
+  // Older backup manifests only recorded built-in presets from
+  // registry.policies. Include custom policy names captured before registry
+  // deletion so both policy kinds are restored after recreate.
   const names: string[] = [];
   for (const name of policyPresets || []) {
     if (typeof name === "string" && name.length > 0 && !names.includes(name)) {
@@ -49,12 +56,16 @@ export function resolveRebuildPolicyPresetNames(
     if (entry.name && !names.includes(entry.name)) names.push(entry.name);
   }
 
+  // Preserve the existing messaging-channel invariant: when a channel is
+  // disabled for rebuild, its required policy preset must not be re-added.
   return pruneDisabledMessagingPolicyPresets(
     names,
     Array.isArray(disabledChannels) ? [...disabledChannels] : [],
   );
 }
 
+// During restore, a matching custom entry means the caller must apply the
+// persisted YAML content. Built-in presets still resolve by name from disk.
 export function getRebuildCustomPolicy(
   customPolicies: readonly CustomPolicyEntry[],
   presetName: string,
