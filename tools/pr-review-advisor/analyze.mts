@@ -248,9 +248,8 @@ async function main(): Promise<void> {
   const diff = getDiff(baseRef, headRef, 160000);
   const deterministic = await collectDeterministicContext({ baseRef, headRef, changedFiles, diff });
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
-  const securityReviewSkill = readTrustedSecurityReviewSkill();
-  const systemPrompt = buildSystemPrompt(securityReviewSkill);
-  const promptTurns = buildPromptTurns({ metadata, diff, securityReviewSkill, schema });
+  const systemPrompt = buildSystemPrompt();
+  const promptTurns = buildPromptTurns({ metadata, diff, schema });
   writePromptArtifacts({ outDir, systemPrompt, promptTurns });
 
   const writeFailure = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, true);
@@ -685,7 +684,8 @@ export function readTrustedSecurityReviewSkill(): string {
   }
 }
 
-export function buildSystemPrompt(securityReviewSkill = ""): string {
+export function buildSystemPrompt(): string {
+  const securityReviewSkill = readTrustedSecurityReviewSkill();
   return [
     "You are the NemoClaw PR Review Advisor for GitHub Actions.",
     "NemoClaw runs OpenClaw assistants inside OpenShell sandboxes. Security boundaries, workflows, credentials, network policy, SSRF validation, Dockerfiles, installers, and sandbox lifecycle code are high risk.",
@@ -716,12 +716,10 @@ export function buildSystemPrompt(securityReviewSkill = ""): string {
 export function buildPromptTurns({
   metadata,
   diff,
-  securityReviewSkill,
   schema,
 }: {
   metadata: ReviewMetadata;
   diff: string;
-  securityReviewSkill: string;
   schema: Record<string, unknown>;
 }): AdvisorPromptTurn[] {
   const metadataFields = exactMetadataFields(metadata);

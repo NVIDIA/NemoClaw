@@ -177,7 +177,7 @@ describe("PR review advisor", () => {
 
   it("loads the checked-in security review skill into the advisor prompt", () => {
     const skill = readTrustedSecurityReviewSkill();
-    const prompt = buildSystemPrompt(skill);
+    const prompt = buildSystemPrompt();
 
     expect(skill).toContain("# Security Code Review");
     expect(skill).toContain("Category 1: Secrets and Credentials");
@@ -197,7 +197,6 @@ describe("PR review advisor", () => {
     const turns = buildPromptTurns({
       metadata: metadata(),
       diff: "diff --git a/src/lib/example.ts b/src/lib/example.ts\n+export const value = 1;",
-      securityReviewSkill: "# Security Code Review",
       schema: loadAdvisorSchema(),
     });
 
@@ -219,7 +218,6 @@ describe("PR review advisor", () => {
     const turns = buildPromptTurns({
       metadata: metadata(),
       diff: "diff --git a/src/lib/example.ts b/src/lib/example.ts\n+export const value = 1;",
-      securityReviewSkill: "# Security Code Review",
       schema: loadAdvisorSchema(),
     });
 
