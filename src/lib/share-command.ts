@@ -123,7 +123,28 @@ export function checkLocalMountWritable(localMount: string): { writable: boolean
   try {
     fs.mkdirSync(localMount, { recursive: true });
   } catch (err: unknown) {
-    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    let code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === "ENOENT") {
+      let current = localMount;
+      while (current && current !== path.dirname(current)) {
+        if (fs.existsSync(current)) {
+          break;
+        }
+        current = path.dirname(current);
+      }
+      if (current && fs.existsSync(current)) {
+        try {
+          const tempPath = path.join(current, `.nemoclaw-ro-probe-${Math.random().toString(36).slice(2)}`);
+          fs.mkdirSync(tempPath);
+          fs.rmdirSync(tempPath);
+        } catch (probeErr: unknown) {
+          const probeCode = (probeErr as NodeJS.ErrnoException | undefined)?.code;
+          if (probeCode === "EROFS") {
+            code = "EROFS";
+          }
+        }
+      }
+    }
     if (code === "EROFS") return { writable: false, reason: "parent filesystem is read-only" };
     if (code === "EACCES") return { writable: false, reason: "permission denied creating the directory" };
     return { writable: false, reason: err instanceof Error ? err.message : String(err) };

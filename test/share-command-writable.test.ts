@@ -35,6 +35,30 @@ describe("checkLocalMountWritable (#3192)", () => {
     });
   });
 
+  it("reports a read-only filesystem when mkdirSync raises ENOENT but parent is read-only (Node 22 EROFS masking)", () => {
+    const err = new Error("ENOENT: no such file or directory, mkdir '/ro/mount/nested'") as NodeJS.ErrnoException;
+    err.code = "ENOENT";
+    vi.spyOn(fs, "mkdirSync").mockImplementation((path, options) => {
+      if (path === "/ro/mount/nested") {
+        throw err;
+      }
+      if (path.toString().includes(".nemoclaw-ro-probe-")) {
+        const erofsErr = new Error("EROFS: read-only file system, mkdir") as NodeJS.ErrnoException;
+        erofsErr.code = "EROFS";
+        throw erofsErr;
+      }
+      return undefined;
+    });
+    vi.spyOn(fs, "existsSync").mockImplementation((path) => {
+      return path === "/ro/mount";
+    });
+
+    expect(checkLocalMountWritable("/ro/mount/nested")).toEqual({
+      writable: false,
+      reason: "parent filesystem is read-only",
+    });
+  });
+
   it("reports permission denied when mkdirSync raises EACCES", () => {
     const err = new Error("EACCES: permission denied, mkdir '/restricted'") as NodeJS.ErrnoException;
     err.code = "EACCES";
