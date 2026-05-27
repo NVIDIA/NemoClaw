@@ -19,6 +19,11 @@ const { createSelectOnboardAgent }: typeof import("./onboard/agent-selection") =
 const {
   createInferenceSelectionValidationHelpers,
 }: typeof import("./onboard/inference-selection-validation") = require("./onboard/inference-selection-validation");
+const {
+  isValidInferenceInputsOverride,
+  shouldPromptForInferenceInputCapability,
+  maybePromptForInferenceInputCapability,
+}: typeof import("./onboard/inference-input-capability") = require("./onboard/inference-input-capability");
 const { cleanupTempDir }: typeof import("./onboard/temp-files") = require("./onboard/temp-files");
 const { abortNonInteractive }: typeof import("./onboard/non-interactive-abort") = require("./onboard/non-interactive-abort");
 const { stopStaleDashboardListenersForSandbox } = require("./onboard/stale-gateway-cleanup");
@@ -3952,40 +3957,6 @@ async function selectAndValidateOllamaModel(
   }
 }
 
-const VALID_INFERENCE_INPUTS_PATTERN = /^(text|image)(,(text|image))*$/;
-const MULTIMODAL_MODEL_HINT_PATTERN = /(^|[\/:_\-.])(omni|vision|vl|image|multimodal)([\/:_\-.]|$)/i;
-
-function isValidInferenceInputsOverride(value: string | undefined): boolean {
-  return !!value && VALID_INFERENCE_INPUTS_PATTERN.test(value);
-}
-
-function shouldPromptForInferenceInputCapability(model: string | null | undefined): boolean {
-  return !!model && MULTIMODAL_MODEL_HINT_PATTERN.test(model);
-}
-
-async function maybePromptForInferenceInputCapability(model: string | null): Promise<void> {
-  if (
-    isNonInteractive() ||
-    !shouldPromptForInferenceInputCapability(model) ||
-    isValidInferenceInputsOverride(process.env.NEMOCLAW_INFERENCE_INPUTS)
-  ) {
-    return;
-  }
-
-  console.log("");
-  console.log(`  Selected model: ${model}`);
-  console.log("");
-  console.log("  Input capability:");
-  console.log("    1) Text only");
-  console.log("    2) Text + Image");
-  console.log("");
-  const choice = await prompt("  Choose input capability [1]: ");
-  if ((choice || "1").trim() === "2") {
-    process.env.NEMOCLAW_INFERENCE_INPUTS = "text,image";
-    console.log("  ✓ Model input capability set to text + image.");
-  }
-}
-
 async function setupNim(
   gpu: ReturnType<typeof nim.detectGpu>,
   sandboxName: string | null = null,
@@ -5193,7 +5164,7 @@ async function setupNim(
   }
 
   const selectedModel = isBackToSelection(model) ? null : model;
-  await maybePromptForInferenceInputCapability(selectedModel);
+  await maybePromptForInferenceInputCapability(selectedModel, { isNonInteractive, prompt });
   return {
     model: selectedModel,
     provider,

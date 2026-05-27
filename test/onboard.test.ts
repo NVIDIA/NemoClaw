@@ -34,6 +34,14 @@ type OnboardTestInternals = {
   getResumeConfigConflicts: ShimFn<ResumeConflict[]>;
   isValidInferenceInputsOverride: (value?: string) => boolean;
   shouldPromptForInferenceInputCapability: (model?: string | null) => boolean;
+  maybePromptForInferenceInputCapability: (
+    model: string | null,
+    deps: {
+      env?: NodeJS.ProcessEnv;
+      isNonInteractive: () => boolean;
+      prompt: (message: string) => Promise<string>;
+    },
+  ) => Promise<void>;
   getResumeSandboxConflict: ShimFn<{
     requestedSandboxName: string;
     recordedSandboxName: string;
@@ -88,6 +96,7 @@ const {
   getResumeConfigConflicts,
   isValidInferenceInputsOverride,
   shouldPromptForInferenceInputCapability,
+  maybePromptForInferenceInputCapability,
   getResumeSandboxConflict,
   clearAgentScopedResumeState,
   SANDBOX_BASE_IMAGE,
@@ -520,10 +529,25 @@ startGateway(null).catch(() => {});
 
   it("accepts only supported inference input capability overrides", () => {
     expect(isValidInferenceInputsOverride("text")).toBe(true);
+    expect(isValidInferenceInputsOverride("image")).toBe(true);
     expect(isValidInferenceInputsOverride("text,image")).toBe(true);
     expect(isValidInferenceInputsOverride("image,text")).toBe(true);
     expect(isValidInferenceInputsOverride("text, image")).toBe(false);
     expect(isValidInferenceInputsOverride("audio")).toBe(false);
+  });
+
+  it("normalizes invalid inference input capability overrides when choosing text only", async () => {
+    const env = {
+      NEMOCLAW_INFERENCE_INPUTS: "audio",
+    } as NodeJS.ProcessEnv;
+
+    await maybePromptForInferenceInputCapability("nvidia/nemotron-3-nano-omni-30b-a3b", {
+      env,
+      isNonInteractive: () => false,
+      prompt: async () => "",
+    });
+
+    expect(env.NEMOCLAW_INFERENCE_INPUTS).toBe("text");
   });
 
   it("detects resume conflicts for explicit provider and model changes", () => {
