@@ -25,7 +25,7 @@ Use it before writing from scratch.
 The skill scans recent commits for user-facing changes and drafts doc updates.
 Run it after landing features, before a release, or to find doc gaps.
 For example, ask your agent to "catch up the docs for the changes I made in this PR".
-During release prep, run the skill first, make doc version bumps, regenerate user skills, then open the docs refresh PR.
+During release prep, run the skill first, regenerate user skills, then open the docs refresh PR.
 
 The skill lives in `.agents/skills/nemoclaw-contributor-update-docs/` and follows the style guide below automatically.
 
@@ -66,9 +66,8 @@ NemoClaw maintainers refresh the generated user skills once per release during r
 For daily release prep, the NemoClaw maintainers use this sequence:
 
 1. Run the `nemoclaw-contributor-update-docs` skill for the day's release prep.
-2. Make doc version bumps by updating `versions1.json` and `project.json` in the `docs/` directory.
-3. Run `python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
-4. Create the PR with both docs and generated user skills.
+2. Run `python scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
+3. Create the PR with both docs and generated user skills.
 
 To regenerate skills manually during release prep, run from the repo root:
 

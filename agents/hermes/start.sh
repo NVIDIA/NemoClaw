@@ -116,8 +116,9 @@ INTERNAL_PORT=18642
 HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 
 # Hermes resolves config and runtime state relative to HERMES_HOME. The config
-# root is mutable by the sandbox owner and readable by the gateway group, while
-# gateway-created top-level state is redirected to a scoped runtime directory.
+# root is mutable by the sandbox owner and readable by the gateway group. The
+# root directory is group-writable with sticky-bit protection so Hermes v0.14 can
+# create new top-level state while the gateway user cannot remove config files.
 # Immutability is opt-in via `shields up`.
 HERMES_DIR="/sandbox/.hermes"
 HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
@@ -216,6 +217,75 @@ remove_stale_gateway_file() {
   fi
 }
 
+hermes_config_root_is_locked() {
+  local owner mode
+
+  owner="$(stat -c '%U:%G' "$HERMES_DIR" 2>/dev/null || stat -f '%Su:%Sg' "$HERMES_DIR" 2>/dev/null || true)"
+  mode="$(stat -c '%a' "$HERMES_DIR" 2>/dev/null || stat -f '%Lp' "$HERMES_DIR" 2>/dev/null || true)"
+
+  case "${owner} ${mode}" in
+    "root:root 755" | "root:root 0755") return 0 ;;
+  esac
+  return 1
+}
+
+ensure_hermes_config_root_mode() {
+  if [ -L "$HERMES_DIR" ] || [ ! -d "$HERMES_DIR" ]; then
+    echo "[SECURITY] Refusing Hermes layout repair because ${HERMES_DIR} is not a safe directory" >&2
+    return 1
+  fi
+
+  if hermes_config_root_is_locked; then
+    echo "[gateway] Hermes config root is locked; preserving shields-up permissions" >&2
+    return 0
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    chown sandbox:sandbox "$HERMES_DIR"
+  fi
+  chmod 3770 "$HERMES_DIR"
+}
+
+ensure_hermes_state_dir() {
+  local dir="$1"
+  local mode="$2"
+
+  if [ -L "$dir" ]; then
+    echo "[SECURITY] Refusing Hermes layout repair because ${dir} is a symlink" >&2
+    return 1
+  fi
+  if [ -e "$dir" ] && [ ! -d "$dir" ]; then
+    echo "[SECURITY] Refusing Hermes layout repair because ${dir} is not a directory" >&2
+    return 1
+  fi
+
+  mkdir -p "$dir"
+
+  if [ -L "$dir" ] || [ ! -d "$dir" ]; then
+    echo "[SECURITY] Refusing Hermes layout repair because ${dir} did not resolve to a safe directory" >&2
+    return 1
+  fi
+
+  if [ "$(id -u)" -eq 0 ]; then
+    chown sandbox:sandbox "$dir"
+  fi
+  chmod "$mode" "$dir"
+}
+
+repair_hermes_startup_layout() {
+  if hermes_config_root_is_locked; then
+    echo "[gateway] Hermes layout repair skipped because config root is locked" >&2
+    return 0
+  fi
+
+  ensure_hermes_config_root_mode
+  ensure_hermes_state_dir "${HERMES_DIR}/logs" 770
+  ensure_hermes_state_dir "${HERMES_DIR}/logs/curator" 770
+  ensure_hermes_state_dir "${HERMES_DIR}/hooks" 770
+  ensure_hermes_state_dir "${HERMES_DIR}/image_cache" 770
+  ensure_hermes_state_dir "${HERMES_DIR}/audio_cache" 770
+}
+
 cleanup_stale_hermes_gateway_runtime() {
   local runtime_dir="${HERMES_DIR}/runtime"
 
@@ -224,12 +294,12 @@ cleanup_stale_hermes_gateway_runtime() {
     return 0
   fi
 
+  repair_hermes_startup_layout
+
   # Hermes can leave gateway.lock behind after Docker GPU recreation kills the
   # old process namespace. Clear it only after confirming no gateway is alive.
-  remove_stale_gateway_file "${runtime_dir}/gateway.pid" "PID file"
-  if [ ! -L "${HERMES_DIR}/gateway.pid" ]; then
-    remove_stale_gateway_file "${HERMES_DIR}/gateway.pid" "legacy PID file"
-  fi
+  remove_stale_gateway_file "${runtime_dir}/gateway.pid" "runtime PID file"
+  remove_stale_gateway_file "${HERMES_DIR}/gateway.pid" "legacy PID file"
   remove_stale_gateway_file "${runtime_dir}/gateway.lock" "lock file"
   cleanup_orphan_socat_forwarders
 }

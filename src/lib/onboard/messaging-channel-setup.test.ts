@@ -3,7 +3,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { prompt } from "../credentials/store";
+import { prompt, saveCredential } from "../credentials/store";
 import { KNOWN_CHANNELS } from "../sandbox/channels";
 import { setupSelectedMessagingChannels } from "./messaging-channel-setup";
 
@@ -54,9 +54,32 @@ describe("setupSelectedMessagingChannels", () => {
     expect(output).toContain("reply mode already set: @mentions only");
   });
 
+  it("#3715 re-prompts instead of accepting an invalid preconfigured Slack bot token", async () => {
+    process.env.SLACK_BOT_TOKEN = "abcd";
+    process.env.SLACK_APP_TOKEN = "xapp-existing";
+    vi.mocked(prompt).mockResolvedValueOnce("xoxb-valid-token").mockResolvedValueOnce("");
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((message = "") => {
+      logs.push(String(message));
+    });
+
+    await setupSelectedMessagingChannels(
+      ["slack"],
+      new Set(["slack"]),
+      [{ name: "slack", ...KNOWN_CHANNELS.slack }],
+    );
+
+    expect(prompt).toHaveBeenCalledWith("  Slack Bot Token: ", { secret: true });
+    expect(saveCredential).toHaveBeenCalledWith("SLACK_BOT_TOKEN", "xoxb-valid-token");
+    expect(process.env.SLACK_BOT_TOKEN).toBe("xoxb-valid-token");
+    const output = logs.join("\n");
+    expect(output).toContain("Invalid existing slack token ignored");
+    expect(output).not.toContain("slack — already configured");
+  });
+
   it("prompts for Slack channel IDs with channel-specific copy", async () => {
     process.env.SLACK_BOT_TOKEN = "xoxb-1234-test";
-    process.env.SLACK_APP_TOKEN = "xapp-1-A0000-12345-test";
+    process.env.SLACK_APP_TOKEN = ["xapp", "1", "A0000", "12345", "test"].join("-");
     process.env.SLACK_ALLOWED_USERS = "U01ABC2DEF3";
     vi.mocked(prompt).mockResolvedValueOnce("C012AB3CD,C987ZY6XW");
     const logs: string[] = [];

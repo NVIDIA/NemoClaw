@@ -24,6 +24,7 @@ const {
   runChatCompletionsStreamingProbe,
   runStreamingEventProbe,
 } = httpProbe;
+const trace = require("../trace");
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -232,16 +233,37 @@ function isCurlTimeout(result) {
 }
 
 function executeProbeWithHttpRetry(probe) {
-  let result = probe.execute();
-  for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
-    if (!shouldRetryHttpProbe(result)) break;
-    console.log(
-      `  ${probe.name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
-    );
-    sleepSync(delayMs);
-    result = probe.execute();
-  }
-  return result;
+  return trace.withTraceSpan(
+    "nemoclaw.inference.validation_probe",
+    { probe_name: probe.name, api: probe.api || null },
+    () => {
+      let attempt = 1;
+      let result = probe.execute();
+      trace.addTraceEvent("probe_result", {
+        attempt,
+        ok: result.ok,
+        http_status: result.httpStatus,
+        curl_status: result.curlStatus,
+      });
+      for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
+        if (!shouldRetryHttpProbe(result)) break;
+        console.log(
+          `  ${probe.name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
+        );
+        trace.addTraceEvent("probe_retry_sleep", { delay_ms: delayMs, http_status: result.httpStatus });
+        sleepSync(delayMs);
+        attempt += 1;
+        result = probe.execute();
+        trace.addTraceEvent("probe_result", {
+          attempt,
+          ok: result.ok,
+          http_status: result.httpStatus,
+          curl_status: result.curlStatus,
+        });
+      }
+      return result;
+    },
+  );
 }
 
 // ── Responses API probe ──────────────────────────────────────────

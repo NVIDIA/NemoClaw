@@ -16,6 +16,7 @@ import http2 from "node:http2";
 import { getGatewayHttpEndpoint } from "../core/gateway-address";
 import { GATEWAY_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
+import { addTraceEvent, withTraceSpan } from "../trace";
 import { envInt } from "./env";
 
 /**
@@ -74,6 +75,18 @@ export function isGatewayHttpReady(
   url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
   method: "GET" | "POST" = "GET",
 ): Promise<boolean> {
+  return withTraceSpan(
+    "nemoclaw.gateway.http_probe",
+    { timeout_ms: timeoutMs, url, method },
+    () => isGatewayHttpReadyImpl(timeoutMs, url, method),
+  );
+}
+
+function isGatewayHttpReadyImpl(
+  timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
+  url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/`,
+  method: "GET" | "POST" = "GET",
+): Promise<boolean> {
   const effectiveTimeout =
     Number.isFinite(timeoutMs) && timeoutMs > 0
       ? Math.round(timeoutMs)
@@ -101,6 +114,17 @@ export function isGatewayHttpReady(
 }
 
 export function isDockerDriverGatewayHttpReady(
+  timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
+  url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
+): Promise<boolean> {
+  return withTraceSpan(
+    "nemoclaw.gateway.docker_driver_http_probe",
+    { timeout_ms: timeoutMs, url },
+    () => isDockerDriverGatewayHttpReadyImpl(timeoutMs, url),
+  );
+}
+
+function isDockerDriverGatewayHttpReadyImpl(
   timeoutMs = ISGATEWAY_HTTP_READY_DEFAULT_TIMEOUT_MS,
   url = `${getGatewayHttpEndpoint(GATEWAY_PORT)}/openshell.v1.OpenShell/Health`,
 ): Promise<boolean> {
@@ -205,33 +229,43 @@ export function isDockerDriverGatewayHttpReady(
 export async function waitForGatewayHttpReady(
   opts: WaitForGatewayHttpReadyOpts = {},
 ): Promise<boolean> {
-  const probe = opts.probe ?? (() => isGatewayHttpReady());
-  const sleeper = opts.sleeper ?? sleepSeconds;
-  const config = getGatewayReuseHealthWaitConfig();
-  // Always probe at least once, even if the caller passed a non-positive
-  // maxAttempts. Non-finite (NaN, Infinity) values fall back to safe defaults
-  // — Math.max alone would let Infinity through and hang the loop, and NaN
-  // would propagate into sleeper().
-  const rawAttempts = opts.maxAttempts ?? config.count;
-  const maxAttempts = Number.isFinite(rawAttempts) ? Math.max(1, Math.round(rawAttempts)) : 1;
-  const rawInterval = opts.intervalSeconds ?? config.interval;
-  const intervalSeconds = Number.isFinite(rawInterval) ? Math.max(0, rawInterval) : 0;
+  return withTraceSpan("nemoclaw.gateway.http_readiness_wait", {}, async () => {
+    const probe = opts.probe ?? (() => isGatewayHttpReady());
+    const sleeper = opts.sleeper ?? sleepSeconds;
+    const config = getGatewayReuseHealthWaitConfig();
+    // Always probe at least once, even if the caller passed a non-positive
+    // maxAttempts. Non-finite (NaN, Infinity) values fall back to safe defaults
+    // — Math.max alone would let Infinity through and hang the loop, and NaN
+    // would propagate into sleeper().
+    const rawAttempts = opts.maxAttempts ?? config.count;
+    const maxAttempts = Number.isFinite(rawAttempts) ? Math.max(1, Math.round(rawAttempts)) : 1;
+    const rawInterval = opts.intervalSeconds ?? config.interval;
+    const intervalSeconds = Number.isFinite(rawInterval) ? Math.max(0, rawInterval) : 0;
+    addTraceEvent("wait_config", { max_attempts: maxAttempts, interval_seconds: intervalSeconds });
 
-  // The default probe (isGatewayHttpReady) never rejects, but injected probes
-  // can. Treat a rejection as "not ready this attempt" so we exhaust the
-  // budget instead of bailing on the first transient failure.
-  const safeProbe = async (): Promise<boolean> => {
-    try {
-      return await probe();
-    } catch {
-      return false;
+    // The default probe (isGatewayHttpReady) never rejects, but injected probes
+    // can. Treat a rejection as "not ready this attempt" so we exhaust the
+    // budget instead of bailing on the first transient failure.
+    const safeProbe = async (): Promise<boolean> => {
+      try {
+        return await probe();
+      } catch {
+        return false;
+      }
+    };
+
+    if (await safeProbe()) {
+      addTraceEvent("ready", { attempt: 1 });
+      return true;
     }
-  };
-
-  if (await safeProbe()) return true;
-  for (let attempt = 1; attempt < maxAttempts; attempt++) {
-    sleeper(intervalSeconds);
-    if (await safeProbe()) return true;
-  }
-  return false;
+    for (let attempt = 1; attempt < maxAttempts; attempt++) {
+      sleeper(intervalSeconds);
+      if (await safeProbe()) {
+        addTraceEvent("ready", { attempt: attempt + 1 });
+        return true;
+      }
+    }
+    addTraceEvent("not_ready", { attempts: maxAttempts });
+    return false;
+  });
 }

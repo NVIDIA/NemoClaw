@@ -50,7 +50,7 @@ git log -50 --oneline --no-merges
 
 Filter to commits that are likely to affect docs. Apply every rule below before proceeding. A commit excluded by any rule must not produce doc changes.
 
-1. **Commit type**: `feat`, `fix`, `refactor`, `perf` commits often change behavior. `docs` commits are already doc changes. `chore`, `ci`, `test` commits rarely need doc updates.
+1. **Commit type**: `feat`, `fix`, `refactor`, `perf` commits often change behavior. `docs` commits are already doc changes, but still need a review pass when they fall in the scanned range.
 2. **Files changed**: Changes to `nemoclaw/src/`, `nemoclaw-blueprint/`, `bin/`, `scripts/`, or policy-related code are high-signal.
 3. **Ignore**: Changes limited to `test/`, `.github/`, or internal-only modules.
 4. **Skip list**: Exclude any commit whose short hash appears in `skip-commits`, or whose commit message or changed file paths contain a `skip-features` substring. Report skipped commits in the final summary under a "Skipped (docs-skip)" heading.
@@ -79,6 +79,8 @@ For each relevant commit, determine which doc page(s) it affects. Use this mappi
 | Inference-related changes | `docs/inference/inference-options.mdx` |
 
 If a commit does not map to any existing page but introduces a user-visible concept, flag it as needing a new page.
+If a commit already changes files under `docs/`, include those pages in the target page list and run a docs review or edit pass against them using the style guidance in Step 5.
+Do not assume an existing doc change is complete, correctly placed, or style-compliant just because it landed with the source commit.
 
 ## Step 3: Read the Commit Details
 
@@ -98,6 +100,7 @@ Extract:
 ## Step 4: Read the Current Doc Page
 
 Before editing, read the full target doc page to understand its current content and structure.
+For target pages that were already changed by a scanned commit, compare the committed doc diff against the source behavior and the style guidance before deciding whether to edit further.
 
 Identify where the new content should go. Follow the page's existing structure.
 
@@ -161,9 +164,8 @@ Skip this step when the user only asked for ordinary doc catch-up and no release
 
 If the user invoked this skill for release prep, finish the release-specific doc work before verification:
 
-1. Make any requested doc version bumps in `versions1.json` and `project.json` in the `docs/` directory.
-2. Determine the release label from the release version. Release labels use `vX.Y.Z` format. For example, if `docs/project.json` has `"version": "0.0.37"`, the release label is `v0.0.37`. Use the version requested by the user if one was provided; otherwise use the version in `docs/project.json` after the bump.
-3. Refresh the NemoClaw user skills:
+1. Determine the release label from the release version requested by the user. Release labels use `vX.Y.Z` format. For example, release `0.0.37` uses label `v0.0.37`. If the user did not provide a release version, ask for it before opening the release-prep PR.
+2. Refresh the NemoClaw user skills:
 
    ```bash
    python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
@@ -174,7 +176,7 @@ If the user invoked this skill for release prep, finish the release-specific doc
 After making changes, build the docs locally:
 
 ```bash
-make docs
+npm run docs
 ```
 
 Check for:
@@ -213,10 +215,10 @@ User says: "Catch up the docs for everything merged since v0.1.0."
 3. Map each to a doc page.
 4. Read the commit diffs and current doc pages.
 5. Draft doc updates reflecting the source code changes in the commits following the style guide.
-6. **Release prep only:** Apply release-prep version bumps if the user requested release prep.
+6. **Release prep only:** Determine the release label from the user-requested release version.
 7. **Release prep only:** Run `python3 scripts/docs-to-skills.py docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx`.
 8. Present the summary.
-9. Build with `make docs` to verify.
+9. Build with `npm run docs` to verify.
 10. **Release prep only:** Commit changes and open a pull request with the `documentation` label and the corresponding `vX.Y.Z` release label. Include a concise summary of the doc updates and a source summary that links each identified merged PR to its matching doc page. Include the PR number, affected doc page, links, and description of the doc change in this shape:
 
    ```markdown
