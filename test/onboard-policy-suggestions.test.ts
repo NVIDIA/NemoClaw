@@ -14,6 +14,7 @@ const {
       enabledChannels?: string[] | null;
       knownPresetNames: string[];
       provider?: string | null;
+      agent?: string | null;
       webSearchConfig?: { fetchEnabled?: boolean; provider?: string | null } | null;
       webSearchSupported?: boolean | null;
     },
@@ -25,6 +26,7 @@ const {
   getSuggestedPolicyPresets: (options?: {
     enabledChannels?: string[] | null;
     provider?: string | null;
+    agent?: string | null;
   }) => string[];
 };
 
@@ -101,6 +103,47 @@ describe("onboard policy preset suggestions", () => {
     expect(getSuggestedPolicyPresets({ provider: "openai-api" })).not.toContain("local-inference");
     expect(getSuggestedPolicyPresets({ provider: null })).not.toContain("local-inference");
     expect(getSuggestedPolicyPresets({})).not.toContain("local-inference");
+  });
+
+  it("suggests openclaw-pricing preset only for the openclaw agent", () => {
+    expect(getSuggestedPolicyPresets({ agent: "openclaw" })).toContain("openclaw-pricing");
+    expect(getSuggestedPolicyPresets({ agent: "hermes" })).not.toContain("openclaw-pricing");
+    expect(getSuggestedPolicyPresets({ agent: null })).not.toContain("openclaw-pricing");
+    expect(getSuggestedPolicyPresets({})).not.toContain("openclaw-pricing");
+  });
+
+  it("adds openclaw-pricing to tier suggestions when agent is openclaw", () => {
+    const knownWithPricing = [...known, "openclaw-pricing"];
+    const openclawSuggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: knownWithPricing,
+      agent: "openclaw",
+    });
+    expect(openclawSuggestions).toContain("openclaw-pricing");
+
+    const hermesSuggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: knownWithPricing,
+      agent: "hermes",
+    });
+    expect(hermesSuggestions).not.toContain("openclaw-pricing");
+
+    // Defence-in-depth: the suggestion gate must not fire for raw null
+    // or omitted-agent cases either. The handler normalises null to
+    // "openclaw" upstream, but anything that bypasses that normalisation
+    // (third-party callers, tests) should default to safe-no-add.
+    const nullAgentSuggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: knownWithPricing,
+      agent: null,
+    });
+    expect(nullAgentSuggestions).not.toContain("openclaw-pricing");
+
+    const omittedAgentSuggestions = computeSetupPresetSuggestions("balanced", {
+      enabledChannels: [],
+      knownPresetNames: knownWithPricing,
+    });
+    expect(omittedAgentSuggestions).not.toContain("openclaw-pricing");
   });
 
   it("returns balanced tier defaults without messaging presets when no channels enabled", () => {
