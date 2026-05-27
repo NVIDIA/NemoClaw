@@ -3,9 +3,10 @@
 //
 // Private-network block list for SSRF validation. Loads the canonical
 // CIDR set from nemoclaw-blueprint/private-networks.yaml and builds a
-// node:net BlockList on first use, then memoises. The CLI has an
-// equivalent module at src/lib/private-networks.ts; the parity test at
-// test/ssrf-parity.test.ts verifies both produce identical results.
+// node:net BlockList on first use, then memoises until the YAML file
+// source or stats (mtime/size) change. The CLI has an equivalent module
+// at src/lib/private-networks.ts; the parity test at test/ssrf-parity.test.ts
+// verifies both produce identical results.
 //
 // Path resolution mirrors loadBlueprint() in runner.ts: honour
 // NEMOCLAW_BLUEPRINT_PATH when set, otherwise try the dev-checkout
@@ -14,7 +15,7 @@
 // exist, so NEMOCLAW_BLUEPRINT_PATH (set by the CLI launcher) or a
 // cwd-located blueprint is required at runtime.
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { BlockList, isIP } from "node:net";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -39,12 +40,28 @@ export interface NetworkDocument {
 }
 
 interface LoadedNetworks {
+  source: string;
+  mtimeMs: number;
+  size: number;
+  checkedAtMs: number;
   networks: NetworkDocument;
   blockList: BlockList;
   normalisedNames: string[];
 }
 
+// Keep hot SSRF checks in memory while still letting long-running plugin
+// processes pick up private-network updates without a restart.
+const STAT_CHECK_INTERVAL_MS = 1_000;
+
 let cached: LoadedNetworks | null = null;
+
+function missingPrivateNetworksError(source: string): Error {
+  return new Error(
+    `private-networks.yaml not found at ${source}. ` +
+      `Set NEMOCLAW_BLUEPRINT_PATH to the directory containing the blueprint, ` +
+      `or run from a checkout that includes nemoclaw-blueprint/.`,
+  );
+}
 
 function resolveBlueprintPath(): string {
   const fromEnv = process.env.NEMOCLAW_BLUEPRINT_PATH;
@@ -130,23 +147,51 @@ function parseDocument(raw: string, source: string): NetworkDocument {
   };
 }
 
-function load(): LoadedNetworks {
-  if (cached) return cached;
-  const source = join(resolveBlueprintPath(), "private-networks.yaml");
-  if (!existsSync(source)) {
-    throw new Error(
-      `private-networks.yaml not found at ${source}. ` +
-        `Set NEMOCLAW_BLUEPRINT_PATH to the directory containing the blueprint, ` +
-        `or run from a checkout that includes nemoclaw-blueprint/.`,
-    );
+function isNodeEnoent(err: unknown): boolean {
+  return err instanceof Error && "code" in err && err.code === "ENOENT";
+}
+
+function readPrivateNetworksFile(source: string): string {
+  try {
+    return readFileSync(source, "utf-8");
+  } catch (err) {
+    if (isNodeEnoent(err)) throw missingPrivateNetworksError(source);
+    throw err;
   }
-  const networks = parseDocument(readFileSync(source, "utf-8"), source);
+}
+
+function load(): LoadedNetworks {
+  const now = Date.now();
+  if (cached && now - cached.checkedAtMs < STAT_CHECK_INTERVAL_MS) return cached;
+
+  const source = join(resolveBlueprintPath(), "private-networks.yaml");
+  let mtimeMs: number;
+  let size: number;
+  try {
+    const stat = statSync(source);
+    mtimeMs = stat.mtimeMs;
+    size = stat.size;
+  } catch (err) {
+    if (isNodeEnoent(err)) throw missingPrivateNetworksError(source);
+    throw err;
+  }
+  if (cached && cached.source === source && cached.mtimeMs === mtimeMs && cached.size === size) {
+    cached.checkedAtMs = now;
+    return cached;
+  }
+  const networks = parseDocument(readPrivateNetworksFile(source), source);
   const blockList = new BlockList();
   for (const { address, prefix } of networks.ipv4) blockList.addSubnet(address, prefix, "ipv4");
   for (const { address, prefix } of networks.ipv6) blockList.addSubnet(address, prefix, "ipv6");
   const normalisedNames = networks.names.map((e) => e.name.replace(/\.$/, "").toLowerCase());
-  cached = { networks, blockList, normalisedNames };
+  cached = { source, mtimeMs, size, checkedAtMs: now, networks, blockList, normalisedNames };
   return cached;
+}
+
+function isPrivateIpInBlockList(address: string, blockList: BlockList): boolean {
+  const family = isIP(address);
+  if (family === 0) return false;
+  return blockList.check(address, family === 6 ? "ipv6" : "ipv4");
 }
 
 export function getPrivateNetworks(): BlockList {
@@ -178,9 +223,7 @@ export function resetCache(): void {
  * because BlockList does not extract embedded IPv4 from those forms.
  */
 export function isPrivateIp(address: string): boolean {
-  const family = isIP(address);
-  if (family === 0) return false;
-  return getPrivateNetworks().check(address, family === 6 ? "ipv6" : "ipv4");
+  return isPrivateIpInBlockList(address, getPrivateNetworks());
 }
 
 /**
@@ -202,9 +245,9 @@ export function isPrivateHostname(hostname: string): boolean {
   const stripped =
     hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
   const normalised = stripped.replace(/\.$/, "").toLowerCase();
-  const { normalisedNames } = load();
+  const { blockList, normalisedNames } = load();
   for (const reserved of normalisedNames) {
     if (normalised === reserved || normalised.endsWith(`.${reserved}`)) return true;
   }
-  return isPrivateIp(normalised);
+  return isPrivateIpInBlockList(normalised, blockList);
 }
