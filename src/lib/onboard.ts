@@ -3514,6 +3514,13 @@ async function createSandbox(
   // and passed EVERYTHING else — including GITHUB_TOKEN,
   // AWS_SECRET_ACCESS_KEY, SSH_AUTH_SOCK, KUBECONFIG, NPM_TOKEN, and
   // any CI/CD secrets that happened to be in the host environment.
+  // The allowlist inverts the default: only known-safe env vars are
+  // forwarded, everything else is dropped.
+  //
+  // For the sandbox specifically, we also strip KUBECONFIG and
+  // SSH_AUTH_SOCK — the generic allowlist includes these for host-side
+  // subprocesses (gateway start, openshell CLI) but the sandbox should
+  // never have access to the host's Kubernetes cluster or SSH agent.
   const envArgs = [formatEnvAssignment("CHAT_UI_URL", chatUiUrl)];
   // Always pass the effective dashboard port into the sandbox so
   // nemoclaw-start.sh starts the gateway on the correct port. When the
@@ -3539,12 +3546,6 @@ async function createSandbox(
   const sandboxProxyPort = process.env.NEMOCLAW_PROXY_PORT;
   if (sandboxProxyPort && isValidProxyPort(sandboxProxyPort)) {
     envArgs.push(formatEnvAssignment("NEMOCLAW_PROXY_PORT", sandboxProxyPort));
-  }
-  if (process.env.NEMOCLAW_ALLOW_RESIDUAL_CAPS === "1") {
-    // Runtime-only operator acknowledgement for hosts that cannot grant
-    // CAP_SETPCAP (for example Brev shadecloud). Do not bake this into image
-    // layers; pass it only to the sandbox entrypoint invocation.
-    envArgs.push(formatEnvAssignment("NEMOCLAW_ALLOW_RESIDUAL_CAPS", "1"));
   }
   if (hermesToolBrokerToken) {
     // Runtime-only: do not bake the per-sandbox broker token into image layers.
