@@ -86,7 +86,7 @@ function parseDockerBridgeCidr(value: string): { network: number; prefix: number
   if (!Number.isInteger(prefix) || prefix < 16 || prefix > 32) return null;
   const network = parseIpv4Address(address);
   if (network === null) return null;
-  const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
+  const mask = (0xffffffff << (32 - prefix)) >>> 0;
   if ((network & mask) >>> 0 !== network) return null;
   return { network, prefix, mask };
 }
