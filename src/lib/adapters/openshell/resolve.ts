@@ -3,6 +3,7 @@
 
 import { execSync } from "node:child_process";
 import { accessSync, constants } from "node:fs";
+import path from "node:path";
 
 export interface ResolveOpenshellOptions {
   /** Mock result for `command -v` (undefined = run real command). */
@@ -11,6 +12,14 @@ export interface ResolveOpenshellOptions {
   checkExecutable?: (path: string) => boolean;
   /** HOME directory override. */
   home?: string;
+}
+
+function isAbsolutePath(value: string): boolean {
+  return path.isAbsolute(value) || value.startsWith("/");
+}
+
+function homeLocalOpenshell(home: string): string {
+  return home.startsWith("/") ? `${home}/.local/bin/openshell` : path.join(home, ".local", "bin", "openshell");
 }
 
 /**
@@ -33,14 +42,17 @@ export function resolveOpenshell(opts: ResolveOpenshellOptions = {}): string | n
     });
 
   const override = process.env.NEMOCLAW_OPENSHELL_BIN;
-  if (override?.startsWith("/") && checkExecutable(override)) {
+  if (override && isAbsolutePath(override) && checkExecutable(override)) {
     return override;
   }
 
   // Step 1: command -v
   if (opts.commandVResult === undefined) {
     try {
-      const found = execSync("command -v openshell", { encoding: "utf-8" }).trim();
+      const found = execSync("command -v openshell", {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
       if (found.startsWith("/")) return found;
     } catch {
       /* ignored */
@@ -51,7 +63,7 @@ export function resolveOpenshell(opts: ResolveOpenshellOptions = {}): string | n
 
   // Step 2: fallback candidates
   const candidates = [
-    ...(home?.startsWith("/") ? [`${home}/.local/bin/openshell`] : []),
+    ...(home && isAbsolutePath(home) ? [homeLocalOpenshell(home)] : []),
     "/usr/local/bin/openshell",
     "/usr/bin/openshell",
   ];
