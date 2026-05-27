@@ -1400,9 +1400,31 @@ import subprocess
 import time
 
 OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
-DEADLINE = time.time() + 600
+
+
+def _env_seconds(name, default):
+    raw = os.environ.get(name, '').strip()
+    if not raw:
+        return default
+    try:
+        value = float(raw)
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+# Total runtime cap. After convergence the watcher polls at a slow cadence,
+# so it can stay alive for the typical sandbox session without saturating
+# the gateway. Late `openclaw agent` runs (NemoClaw#4263) request additional
+# scopes that the gateway holds as pending until something approves them; an
+# exited watcher leaves those upgrades stuck and the agent falls back to
+# embedded mode. Defaults: 8h total, 30s slow-mode cadence.
+FAST_DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS', 600)
+DEADLINE = time.time() + _env_seconds('NEMOCLAW_AUTO_PAIR_DEADLINE_SECS', 28800)
+SLOW_INTERVAL = _env_seconds('NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS', 30)
 QUIET_POLLS = 0
 APPROVED = 0
+SLOW_MODE = False
 HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 # SECURITY NOTE: clientId/clientMode are client-supplied and spoofable
 # (the gateway stores connectParams.client.id verbatim). This allowlist
@@ -1411,24 +1433,49 @@ HANDLED = set()  # Track rejected/approved requestIds to avoid reprocessing
 ALLOWED_CLIENTS = {'openclaw-control-ui'}
 ALLOWED_MODES = {'webchat', 'cli'}
 
+RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
+
 def run(*args):
-    proc = subprocess.run(args, capture_output=True, text=True)
-    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    # Bound every openclaw CLI invocation so a wedged child cannot pin
+    # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
+    # no timeout would hold a hung `openclaw devices list/approve` past
+    # the fast→slow transition and the 8h deadline check.
+    try:
+        proc = subprocess.run(
+            args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS,
+        )
+        return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+    except subprocess.TimeoutExpired as exc:
+        # 124 matches GNU `timeout` exit status so log scrapers can spot it.
+        out = (exc.stdout or '') if isinstance(exc.stdout, str) else ''
+        err = (exc.stderr or '') if isinstance(exc.stderr, str) else ''
+        print(f'[auto-pair] timeout calling {args[1] if len(args) > 1 else "openclaw"} {args[2] if len(args) > 2 else ""}'.rstrip())
+        return 124, out.strip(), err.strip()
 
 while time.time() < DEADLINE:
     rc, out, err = run(OPENCLAW, 'devices', 'list', '--json')
     if rc != 0 or not out:
-        time.sleep(1)
+        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
         continue
     try:
         data = json.loads(out)
     except Exception:
-        time.sleep(1)
+        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
         continue
 
     pending = data.get('pending') or []
     paired = data.get('paired') or []
     has_browser = any((d.get('clientId') == 'openclaw-control-ui') or (d.get('clientMode') == 'webchat') for d in paired if isinstance(d, dict))
+
+    # Fast-deadline transition is checked here, BEFORE the pending-branch
+    # `continue`, so that a sticky pending request (rejected unknown client
+    # added to HANDLED, or a permanent approve failure) cannot hold the
+    # watcher in 1s polling for the full DEADLINE window — that would
+    # re-create the NemoClaw#2484 connect-handler pile-up on a much longer
+    # timeline.
+    if not SLOW_MODE and time.time() >= FAST_DEADLINE:
+        SLOW_MODE = True
+        print(f'[auto-pair] fast-mode deadline reached; switching to slow-mode approvals={APPROVED}')
 
     if pending:
         QUIET_POLLS = 0
@@ -1445,45 +1492,61 @@ while time.time() < DEADLINE:
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
                 continue
             arc, aout, aerr = run(OPENCLAW, 'devices', 'approve', request_id, '--json')
+            # rc=124 is the timeout sentinel from run() — do NOT add the
+            # request to HANDLED on a transient timeout, so the next poll
+            # can retry (CodeRabbit #4292). Permanent failures (other
+            # non-zero rc) still get HANDLED so we don't spin on a stuck
+            # bad request.
+            if arc == 124:
+                continue
             HANDLED.add(request_id)
             if arc == 0:
                 APPROVED += 1
-                print(f'[auto-pair] approved request={request_id} client={client_id}')
+                print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
             elif aout or aerr:
                 print(f'[auto-pair] approve failed request={request_id}: {(aerr or aout)[:400]}')
-        time.sleep(1)
+        time.sleep(SLOW_INTERVAL if SLOW_MODE else 1)
         continue
 
     QUIET_POLLS += 1
-    # Exit-on-quiet conditions, checked in order of strength:
+    # Convergence conditions, checked in order of strength:
     #   1. Browser device paired — original control-UI workflow
     #   2. Any paired device — covers dangerouslyDisableDeviceAuth setups
     #      where the gateway auto-pairs CLI clients directly without the
     #      watcher running `openclaw devices approve` (so APPROVED stays
     #      0 forever in those configurations)
     #   3. We approved at least one device explicitly
-    # Without these, the watcher polled `openclaw devices list --json`
-    # every 1 second for 10 minutes whenever no browser device joined,
-    # saturating the gateway connect handler and starving concurrent
-    # `openclaw agent` connects (NemoClaw#2484: WS handshake-timeout).
-    if QUIET_POLLS >= 4:
+    # On convergence the watcher used to exit. That left late CLI scope
+    # upgrades pending forever (NemoClaw#4263). Now we transition to a slow
+    # polling cadence (default 30s) so late allowlisted scope upgrades for
+    # already-paired clients still get approved without saturating the
+    # gateway connect handler (NemoClaw#2484: WS handshake-timeout). The
+    # fast-deadline transition is now evaluated above (before the pending
+    # branch) so a stuck pending request cannot defer it.
+    if not SLOW_MODE and QUIET_POLLS >= 4:
         if has_browser:
-            print(f'[auto-pair] browser pairing converged approvals={APPROVED}')
-            break
-        if paired:
-            print(f'[auto-pair] devices paired ({len(paired)}); exiting approvals={APPROVED}')
-            break
-        if APPROVED > 0:
-            print(f'[auto-pair] non-browser pairing converged approvals={APPROVED}')
-            break
+            SLOW_MODE = True
+            print(f'[auto-pair] browser pairing converged; entering slow-mode approvals={APPROVED}')
+        elif paired:
+            SLOW_MODE = True
+            print(f'[auto-pair] devices paired ({len(paired)}); entering slow-mode approvals={APPROVED}')
+        elif APPROVED > 0:
+            SLOW_MODE = True
+            print(f'[auto-pair] non-browser pairing converged; entering slow-mode approvals={APPROVED}')
 
-    # Back off polling once anything is paired or approved: 1s when
-    # actively processing pending requests / waiting for first pairing,
-    # 5s thereafter. The 5s cadence avoids connect-handler pile-up under
-    # high gateway connect latency.
-    time.sleep(5 if (APPROVED > 0 or paired) else 1)
+    # Back off polling: 1s in fast mode while waiting for first pairing,
+    # 5s in fast mode once anything is paired/approved, and SLOW_INTERVAL
+    # (default 30s) after convergence. Slow-mode keepalive lets late CLI
+    # scope upgrades get approved through the rest of DEADLINE without
+    # hammering the gateway.
+    if SLOW_MODE:
+        time.sleep(SLOW_INTERVAL)
+    elif APPROVED > 0 or paired:
+        time.sleep(5)
+    else:
+        time.sleep(1)
 else:
-    print(f'[auto-pair] watcher timed out approvals={APPROVED}')
+    print(f'[auto-pair] watcher deadline reached approvals={APPROVED}')
 PYAUTOPAIR
   AUTO_PAIR_PID=$!
   echo "[gateway] auto-pair watcher launched (pid $AUTO_PAIR_PID)" >&2
