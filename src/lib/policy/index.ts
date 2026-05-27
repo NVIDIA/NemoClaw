@@ -61,7 +61,7 @@ function listPresets(): PresetInfo[] {
     .map((f: string) => {
       const content = fs.readFileSync(path.join(PRESETS_DIR, f), "utf-8");
       const nameMatch = content.match(/^\s*name:\s*(.+)$/m);
-      const descMatch = content.match(/^\s*description:\s*"?([^"]*)"?$/m);
+      const descMatch = content.match(/^\s*description:\s*"?([^\n"]*)"?$/m);
       return {
         file: f,
         name: nameMatch ? nameMatch[1].trim() : f.replace(".yaml", ""),
