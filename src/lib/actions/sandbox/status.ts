@@ -85,7 +85,6 @@ export interface SandboxStatusReport {
 interface SandboxStatusSnapshot {
   sb: registry.SandboxEntry | null;
   lookup: SandboxGatewayState;
-  liveResult: Awaited<ReturnType<typeof captureOpenshellForStatus>> | null;
   rpcIssue: ReturnType<typeof detectOpenShellStateRpcResultIssue>;
   currentModel: string;
   currentProvider: string;
@@ -117,6 +116,16 @@ async function collectSandboxStatusSnapshot(
     }
   }
   const rpcIssue = liveResult ? detectOpenShellStateRpcResultIssue(liveResult) : null;
+  if (rpcIssue) {
+    return {
+      sb,
+      lookup,
+      rpcIssue,
+      currentModel: "unknown",
+      currentProvider: "unknown",
+      inferenceHealth: null,
+    };
+  }
   const live =
     liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
@@ -126,8 +135,6 @@ async function collectSandboxStatusSnapshot(
     currentProvider,
     currentModel,
   );
-  // #3265 optional gateway-chain subprobe: from inside the sandbox so a
-  // broken hop the host-side probes can't see still surfaces.
   if (
     inferenceHealth &&
     lookup.state === "present" &&
@@ -147,7 +154,7 @@ async function collectSandboxStatusSnapshot(
       inferenceHealth.subprobes = [...(inferenceHealth.subprobes ?? []), gatewaySubprobe];
     }
   }
-  return { sb, lookup, liveResult, rpcIssue, currentModel, currentProvider, inferenceHealth };
+  return { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth };
 }
 
 export async function getSandboxStatusReport(

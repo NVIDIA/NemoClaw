@@ -1084,6 +1084,9 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(1);
     const parsed = JSON.parse(r.out);
     expect(parsed.rpcIssue).toEqual({ kind: "protobuf_mismatch" });
+    expect(parsed.inferenceHealth).toBeNull();
+    expect(parsed.model).toBe("unknown");
+    expect(parsed.provider).toBe("unknown");
   });
 
   it("sandbox status --help advertises --json flag", () => {
