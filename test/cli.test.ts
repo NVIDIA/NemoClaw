@@ -403,6 +403,9 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Configure inference endpoint and credentials");
     expect(r.out).toContain("nemoclaw onboard --from");
     expect(r.out).toContain("Use a custom Dockerfile for the sandbox image");
+    expect(r.out).toContain("nemoclaw tunnel start");
+    expect(r.out).toContain("nemoclaw tunnel status");
+    expect(r.out).toContain("nemoclaw tunnel stop");
   });
 
   it("--help exits 0", () => {
@@ -960,6 +963,40 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("tunnel start");
     expect(r.out).toContain("Start the cloudflared public-URL tunnel");
+  });
+
+  it("tunnel help exits 0 and shows tunnel subcommands", () => {
+    const r = run("tunnel --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("tunnel <start|status|stop>");
+    expect(r.out).toContain("Manage the cloudflared public-URL tunnel");
+  });
+
+  it("tunnel status --help exits 0 and shows tunnel status usage", () => {
+    const r = run("tunnel status --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("tunnel status");
+    expect(r.out).toContain("Show cloudflared tunnel status");
+  });
+
+  it("tunnel status exits 0 and reports stopped cloudflared state", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-tunnel-status-"));
+    const sandboxName = `tunnel-${process.pid}-${Date.now()}`;
+    const serviceDir = path.join("/tmp", `nemoclaw-services-${sandboxName}`);
+    fs.rmSync(serviceDir, { recursive: true, force: true });
+    try {
+      const r = runWithEnv("tunnel status", {
+        HOME: home,
+        NEMOCLAW_SANDBOX_NAME: sandboxName,
+      });
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("cloudflared");
+      expect(r.out).toContain("(stopped)");
+      expect(r.out).toContain("nemoclaw tunnel start");
+    } finally {
+      fs.rmSync(serviceDir, { recursive: true, force: true });
+      fs.rmSync(home, { recursive: true, force: true });
+    }
   });
 
   it("deprecated start --help exits 0 and shows alias usage", () => {

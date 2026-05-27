@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => {
     runStartCommand: vi.fn().mockResolvedValue(undefined),
     runStopCommand: vi.fn(),
     runUninstallCommand: vi.fn(),
+    showTunnelStatus: vi.fn(),
     showRootHelp: vi.fn(),
     showVersion: vi.fn(),
     spawnSync: vi.fn(),
@@ -72,8 +73,13 @@ vi.mock("../lib/actions/global", () => ({
 vi.mock("../lib/adapters/openshell/client", () => ({ captureOpenshellCommand: mocks.captureOpenshellCommand }));
 vi.mock("../lib/state/registry", () => ({ listSandboxes: mocks.listSandboxes }));
 vi.mock("../lib/adapters/openshell/resolve", () => ({ resolveOpenshell: mocks.resolveOpenshell }));
-vi.mock("../lib/tunnel/services", () => ({ startAll: mocks.startAll, stopAll: mocks.stopAll }));
+vi.mock("../lib/tunnel/services", () => ({
+  showStatus: mocks.showTunnelStatus,
+  startAll: mocks.startAll,
+  stopAll: mocks.stopAll,
+}));
 vi.mock("../lib/tunnel/service-command", () => ({
+  resolveDefaultSandboxName: vi.fn(() => undefined),
   runStartCommand: mocks.runStartCommand,
   runStopCommand: mocks.runStopCommand,
 }));
@@ -92,6 +98,7 @@ import DeprecatedStopCommand from "./stop";
 import RootHelpCommand from "./root/help";
 import VersionCommand from "./root/version";
 import TunnelStartCommand from "./tunnel/start";
+import TunnelStatusCommand from "./tunnel/status";
 import TunnelStopCommand from "./tunnel/stop";
 import UninstallCliCommand from "./uninstall";
 
@@ -216,11 +223,13 @@ describe("simple global oclif adapters", () => {
 
   it("maps tunnel and deprecated service commands to service actions", async () => {
     await TunnelStartCommand.run([], rootDir);
+    await TunnelStatusCommand.run([], rootDir);
     await TunnelStopCommand.run([], rootDir);
     await DeprecatedStartCommand.run([], rootDir);
     await DeprecatedStopCommand.run([], rootDir);
 
     expect(mocks.runStartCommand).toHaveBeenCalledTimes(2);
+    expect(mocks.showTunnelStatus).toHaveBeenCalledWith({ sandboxName: undefined });
     expect(mocks.runStopCommand).toHaveBeenCalledTimes(2);
     expect(mocks.runStartCommand).toHaveBeenCalledWith(
       expect.objectContaining({ listSandboxes: expect.any(Function), startAll: mocks.startAll }),

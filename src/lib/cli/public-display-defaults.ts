@@ -428,6 +428,12 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "order": 32
     }
   ],
+  "tunnel:status": [
+    {
+      "group": "Services",
+      "order": 32.5
+    }
+  ],
   "tunnel:stop": [
     {
       "group": "Services",
