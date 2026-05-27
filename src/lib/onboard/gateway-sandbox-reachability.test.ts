@@ -392,6 +392,20 @@ describe("formatSandboxBridgeUnreachableMessage", () => {
     expect(msg).not.toContain("continuing");
   });
 
+  it("emits the Docker Desktop WSL integration hint for WSL daemon access failures", () => {
+    const msg = formatSandboxBridgeUnreachableMessage(
+      {
+        ok: false,
+        reason: "docker_daemon_unreachable",
+        detail: "Cannot connect to the Docker daemon",
+      },
+      8787,
+      { isWsl: true },
+    );
+    expect(msg).toContain("Docker Desktop > Settings > Resources > WSL integration");
+    expect(msg).toContain("enable integration for this distro");
+  });
+
   it("uses cliDisplayName() and cliName() in fatal messages instead of hardcoded NemoClaw branding (#3630 CodeRabbit)", () => {
     const savedAgent = process.env.NEMOCLAW_AGENT;
     const savedInvoked = process.env.NEMOCLAW_INVOKED_AS;

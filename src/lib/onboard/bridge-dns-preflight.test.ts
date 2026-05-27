@@ -202,4 +202,26 @@ describe("printDockerBridgeContainerStartFailure", () => {
     expect(rerunLine).toContain("nemohermes onboard");
     expect(rerunLine).not.toMatch(/\bnemoclaw onboard\b/);
   });
+
+  it("prints the Docker Desktop WSL integration hint for WSL daemon access failures", () => {
+    const messages: string[] = [];
+    const errSpy = vi.spyOn(console, "error").mockImplementation((arg?: unknown) => {
+      messages.push(String(arg ?? ""));
+    });
+    printDockerBridgeContainerStartFailure(
+      {
+        ok: false,
+        reason: "docker_daemon_unreachable",
+        details: "Cannot connect to the Docker daemon",
+        timedOut: false,
+        exitCode: null,
+        signal: null,
+      },
+      { isWsl: true },
+    );
+    errSpy.mockRestore();
+    const blob = messages.join("\n");
+    expect(blob).toContain("Docker Desktop > Settings > Resources > WSL integration");
+    expect(blob).toContain("enable integration for this distro");
+  });
 });
