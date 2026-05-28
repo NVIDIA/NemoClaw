@@ -245,9 +245,10 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 # but a plain symlink there makes Homebrew infer /usr/local as its prefix. The
 # wrapper must execute the Linuxbrew prefix shim, not the repository script
 # directly, so Homebrew keeps /home/linuxbrew/.linuxbrew as its writable prefix.
-# Installed formulae are added to login-shell PATH via /etc/profile.d instead
-# of Docker ENV, because /home/linuxbrew is sandbox-writable and must not be
-# inherited by privileged startup code before nemoclaw-start locks PATH down.
+# Installed formulae are added to the sandbox user's login-shell PATH via
+# /etc/profile.d instead of Docker ENV, because /home/linuxbrew is
+# sandbox-writable and must not be inherited by privileged startup code before
+# nemoclaw-start locks PATH down.
 #
 # Companion change: /home/linuxbrew is added to filesystem_policy.read_write
 # in nemoclaw-blueprint/policies/openclaw-sandbox.yaml so brew can write
@@ -274,9 +275,13 @@ RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
     && chmod 755 /usr/local/bin/brew \
     && gosu sandbox /usr/local/bin/brew --prefix | grep -qx /home/linuxbrew/.linuxbrew \
     && gosu sandbox /usr/local/bin/brew --version
-RUN printf '%s\n' "export PATH=\"\${PATH}:/home/linuxbrew/.linuxbrew/bin\"" \
-        > /etc/profile.d/nemoclaw-linuxbrew.sh \
+RUN { \
+        printf '%s\n' "if [ \"\$(id -un 2>/dev/null || true)\" = sandbox ]; then"; \
+        printf '%s\n' "  export PATH=\"\${PATH}:/home/linuxbrew/.linuxbrew/bin\""; \
+        printf '%s\n' "fi"; \
+    } > /etc/profile.d/nemoclaw-linuxbrew.sh \
     && chmod 644 /etc/profile.d/nemoclaw-linuxbrew.sh \
+    && bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 1 ;; *) exit 0 ;; esac" \
     && gosu sandbox bash -lc 'command -v brew >/dev/null' \
     && gosu sandbox bash -lc 'command -v brew' | grep -qx /usr/local/bin/brew \
     && gosu sandbox bash -lc 'brew --prefix' | grep -qx /home/linuxbrew/.linuxbrew \

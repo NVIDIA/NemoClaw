@@ -18,6 +18,7 @@
 #   TC-NET-09: SSRF validation (dangerous IPs rejected)
 #   TC-NET-10: OpenClaw web_fetch can reach approved host gateway target,
 #              while OpenShell still denies unapproved host gateway ports
+#   TC-NET-11: Homebrew preset installs and runs a formula end-to-end
 #
 # Prerequisites:
 #   - Docker running
@@ -318,6 +319,33 @@ test_net_02_whitelist_access() {
     pass "TC-NET-02: PyPI reachable via pip (download started)"
   else
     fail "TC-NET-02: Whitelist" "pip could not reach PyPI: ${response:0:200}"
+  fi
+}
+
+# =============================================================================
+# TC-NET-11: Homebrew preset install/use path
+# =============================================================================
+test_net_11_brew_install_hello() {
+  log "=== TC-NET-11: Homebrew Preset Installs and Runs hello ==="
+
+  log "  Adding brew preset for Homebrew formula install test..."
+  if ! apply_preset "brew"; then
+    fail "TC-NET-11: Setup" "Could not apply brew preset"
+    return
+  fi
+
+  log "  Installing hello through the sandbox Homebrew wrapper..."
+  local response
+  response=$(sandbox_exec "bash -lc 'set -e; export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1; brew --prefix; brew install --quiet hello; command -v hello; hello'" 2>&1) || true
+
+  log "  Response: ${response:0:1000}"
+
+  if echo "$response" | grep -q "/home/linuxbrew/.linuxbrew" \
+    && echo "$response" | grep -q "/home/linuxbrew/.linuxbrew/bin/hello" \
+    && echo "$response" | grep -q "Hello, world!"; then
+    pass "TC-NET-11: brew preset installed hello and ran the formula command"
+  else
+    fail "TC-NET-11: Homebrew install" "brew install/use path failed: ${response:0:500}"
   fi
 }
 
@@ -982,6 +1010,7 @@ main() {
   test_net_07_inference_exemption
   test_net_09_ssrf_validation
   test_net_10_openclaw_web_fetch_host_gateway
+  test_net_11_brew_install_hello
   test_net_06_permissive_mode # last — opens all egress, affects subsequent tests
 
   trap - EXIT
