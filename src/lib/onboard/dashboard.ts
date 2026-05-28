@@ -239,13 +239,16 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const stopForwardForSandbox = (port: string | number) => {
       const portKey = String(port);
       if (stoppedPorts.has(portKey)) return null;
-      stoppedPorts.add(portKey);
-      return bestEffortForwardStopForSandbox(
+      const result = bestEffortForwardStopForSandbox(
         deps.runOpenshell,
         (args, opts) => (deps.runCaptureOpenshell(args, opts) ?? "") as string,
         port,
         sandboxName,
       );
+      if (result === "stopped" || result === "no-entry") {
+        stoppedPorts.add(portKey);
+      }
+      return result;
     };
     let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
