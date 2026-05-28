@@ -29,6 +29,10 @@ const PERMISSIVE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
 );
+const HERMES_POLICY_PATH = new URL(
+  "../agents/hermes/policy-additions.yaml",
+  import.meta.url,
+);
 const REQUIRED_PROFILE_FIELDS: ReadonlyArray<keyof BlueprintProfile> = [
   "provider_type",
   "endpoint",
@@ -507,6 +511,24 @@ describe("permissive sandbox policy", () => {
     // Matches the permissive-file convention used by every other block
     // (e.g. `nvidia`, `github`, `huggingface`, etc.).
     expect(binaries).toEqual(["/**"]);
+  });
+});
+
+describe("Hermes sandbox policy", () => {
+  const policy = loadYaml<SandboxPolicy>(HERMES_POLICY_PATH);
+
+  it("regression #4230: managed_inference allows Anthropic Messages API requests", () => {
+    const np = policy.network_policies ?? {};
+    const endpoints = np.managed_inference?.endpoints ?? [];
+    const inferenceEp = endpoints.find((ep) => ep.host === "inference.local");
+    expect(inferenceEp).toBeDefined();
+    expect(inferenceEp?.port).toBe(443);
+
+    const rules = inferenceEp?.rules ?? [];
+    const hasMessagesPost = rules.some(
+      (r) => r.allow?.method?.toUpperCase() === "POST" && r.allow?.path === "/v1/messages",
+    );
+    expect(hasMessagesPost).toBe(true);
   });
 });
 

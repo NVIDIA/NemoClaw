@@ -26,7 +26,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Calver tag v2026.5.16 = Hermes Agent v0.14.0.
 ARG HERMES_VERSION=v2026.5.16
 ARG HERMES_TARBALL_SHA256=c0a554050a50ee9a62f3fa5cd288a167ba5640c42d647d100cdea084b7294143
-ARG HERMES_UV_EXTRAS="messaging web"
+ARG HERMES_UV_EXTRAS="anthropic messaging web"
 ARG UV_VERSION=0.11.8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \

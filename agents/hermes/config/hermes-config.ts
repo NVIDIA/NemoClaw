@@ -26,15 +26,30 @@ const API_SERVER_TOOLSETS = [
   "audio",
 ];
 
+function hermesApiMode(inferenceApi: string): string | null {
+  switch (inferenceApi) {
+    case "anthropic-messages":
+      return "anthropic_messages";
+    case "openai-responses":
+      return "codex_responses";
+    default:
+      return null;
+  }
+}
+
 export function buildHermesConfig(settings: HermesBuildSettings): Record<string, unknown> {
   const apiServerToolsets = [...API_SERVER_TOOLSETS];
+  const modelConfig: Record<string, unknown> = {
+    default: settings.model,
+    provider: "custom",
+    base_url: settings.baseUrl,
+  };
+  const apiMode = hermesApiMode(settings.inferenceApi);
+  if (apiMode) modelConfig.api_mode = apiMode;
+
   const config: Record<string, unknown> = {
     _config_version: 12,
-    model: {
-      default: settings.model,
-      provider: "custom",
-      base_url: settings.baseUrl,
-    },
+    model: modelConfig,
     terminal: {
       backend: "local",
       timeout: 180,

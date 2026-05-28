@@ -857,6 +857,19 @@ describe("Hermes sandbox provisioning", () => {
     expect(result.stdout).toContain("hermes manifest version");
   });
 
+  it("regression #4230: passes the selected inference API into Hermes config generation", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+
+    expect(dockerfile).toMatch(/^ARG NEMOCLAW_INFERENCE_API=openai-completions$/m);
+    expect(dockerfile).toMatch(/NEMOCLAW_INFERENCE_API=\$\{NEMOCLAW_INFERENCE_API\}/);
+  });
+
+  it("regression #4230: installs Hermes' native Anthropic provider dependency", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+
+    expect(dockerfile).toMatch(/^ARG HERMES_UV_EXTRAS="[^"]*\banthropic\b[^"]*"$/m);
+  });
+
   it("final image rejects a hermes binary from a different PATH location", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-wrong-path-"));
     const wrongBin = path.join(tmp, "bin");
