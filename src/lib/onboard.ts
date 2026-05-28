@@ -520,7 +520,8 @@ import {
   resolveQrSelectedChannels,
 } from "./onboard/messaging-state";
 import { getValidatedMessagingToken, getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
-import { isOllamaProviderPinned, runOllamaStartupOrGate } from "./onboard/ollama-startup";
+import { handleOllamaProbeFailure } from "./onboard/ollama-probe-failure";
+import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import type {
   DockerDriverBinaryOverrides,
   OpenShellInstallDeps,
@@ -3933,36 +3934,8 @@ async function selectAndValidateOllamaModel(
     }
     const probe = await prepareOllamaModel(selectedModel, installedModels);
     if (!probe.ok) {
-      console.error(`  ${probe.message}`);
-      if (probe.daemonFailure) {
-        // The Ollama daemon / model runner itself is broken. Re-prompting for
-        // another model would loop on the same failure. Pinned-provider runs
-        // exit immediately; otherwise escape to the provider menu so the user
-        // can pick a non-Ollama provider. (#4365)
-        if (isOllamaProviderPinned()) {
-          console.error(
-            "  NEMOCLAW_PROVIDER=ollama is pinned but the Ollama model runner is unhealthy; refusing to loop on Ollama model selection.",
-          );
-          process.exit(1);
-        }
-        if (isNonInteractive()) {
-          abortNonInteractive(
-            `Ollama daemon is unhealthy for model '${selectedModel}'.`,
-            "Pick a non-Ollama provider, restart Ollama, or rerun with NEMOCLAW_PROVIDER set explicitly.",
-          );
-        }
-        console.log(
-          "  Ollama itself appears unavailable — selecting a different Ollama model would hit the same failure.",
-        );
-        console.log(
-          "  Returning to provider selection; choose a non-Ollama provider to continue. (#4365)",
-        );
-        console.log("");
-        return { outcome: "back-to-selection" };
-      }
-      if (isNonInteractive()) abortNonInteractive(`Ollama model '${selectedModel}' unavailable.`);
-      console.log("  Choose a different Ollama model or select Other.");
-      console.log("");
+      const action = handleOllamaProbeFailure(probe, selectedModel, isNonInteractive);
+      if (action === "back-to-selection") return { outcome: "back-to-selection" };
       continue;
     }
     const allowToolsIncompatible = probe.allowToolsIncompatible === true;
