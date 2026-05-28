@@ -12,7 +12,8 @@ NVSkills CI signing.
 ## Add a skill to the catalog
 
 ```bash
-cp -r .agents/skills/nemoclaw-user-<name> skills/
+mkdir -p skills
+cp -R .agents/skills/nemoclaw-user-<name> skills/
 git add skills/nemoclaw-user-<name>
 git commit -m "chore(skills): publish nemoclaw-user-<name>"
 ```
@@ -25,12 +26,15 @@ CI signs one at a time.
 
 ```bash
 rm -rf skills/nemoclaw-user-<name>
-cp -r .agents/skills/nemoclaw-user-<name> skills/
-git commit -am "chore(skills): refresh nemoclaw-user-<name>"
+cp -R .agents/skills/nemoclaw-user-<name> skills/
+git add -A skills/nemoclaw-user-<name>
+git commit -m "chore(skills): refresh nemoclaw-user-<name>"
 ```
 
 The `skill.oms.sig` from the previous signing is removed by the `rm -rf`,
-so NVSkills CI will re-sign on the next `/nvskills-ci` comment.
+so NVSkills CI will re-sign on the next `/nvskills-ci` comment. Use
+`git add -A` so newly added files in the refreshed skill are staged
+alongside removals tracked by `git commit -a`.
 
 ## Spot-checking for drift
 
