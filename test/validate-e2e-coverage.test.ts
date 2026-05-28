@@ -244,4 +244,46 @@ describe("nightly E2E workflow validation", () => {
         `Invalid jobs: ${invalid.join(", ")}`,
     ).toEqual([]);
   });
+
+  it("messaging providers nightly can receive optional live message secrets", () => {
+    const expectedSecretNames = [
+      "TELEGRAM_BOT_TOKEN_REAL",
+      "TELEGRAM_CHAT_ID_E2E",
+      "DISCORD_BOT_TOKEN_REAL",
+      "DISCORD_CHANNEL_ID_E2E",
+      "SLACK_BOT_TOKEN_REAL",
+      "SLACK_APP_TOKEN_REAL",
+      "SLACK_CHANNEL_ID_E2E",
+    ];
+
+    const reusableSecrets = (reusableRunner.on as Record<string, unknown>)
+      .workflow_call as Record<string, unknown>;
+    const reusableSecretDefs = reusableSecrets.secrets as Record<string, unknown>;
+    const runnerJobs = reusableRunner.jobs as Record<string, unknown>;
+    const runStepEnv = getStepEnv(runnerJobs.run, "Run E2E script") ?? {};
+    const jobs = workflow.jobs as Record<string, unknown>;
+    const messagingJob = jobs["messaging-providers-e2e"] as Record<string, unknown>;
+    const messagingSecrets = messagingJob.secrets as Record<string, unknown>;
+    const missing: string[] = [];
+
+    for (const name of expectedSecretNames) {
+      if (!reusableSecretDefs[name]) {
+        missing.push(`workflow_call.secrets.${name}`);
+      }
+      if (runStepEnv[name] !== `\${{ secrets.${name} }}`) {
+        missing.push(`e2e-script Run E2E script env.${name}`);
+      }
+      if (messagingSecrets[name] !== `\${{ secrets.${name} }}`) {
+        missing.push(`nightly messaging-providers-e2e secrets.${name}`);
+      }
+    }
+
+    expect(
+      missing,
+      `messaging-providers-e2e must pass optional live-message credentials and ` +
+        `targets through the reusable runner so Phase 6 can exercise ` +
+        `openclaw message send when repository secrets are configured. ` +
+        `Missing: ${missing.join(", ")}`,
+    ).toEqual([]);
+  });
 });

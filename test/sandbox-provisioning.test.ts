@@ -723,6 +723,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localBin, "nemoclaw-codex-acp"),
       path.join(localLib, "sandbox-init.sh"),
       path.join(localLib, "generate-openclaw-config.py"),
+      path.join(localLib, "openclaw-build-messaging-plugins.py"),
       path.join(localLib, "seed-wechat-accounts.py"),
       path.join(localLib, "ws-proxy-fix.js"),
       pluginFile,
@@ -752,11 +753,15 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       const generatorMode = (
         fs.statSync(path.join(localLib, "generate-openclaw-config.py")).mode & 0o777
       ).toString(8);
+      const messagingPluginMode = (
+        fs.statSync(path.join(localLib, "openclaw-build-messaging-plugins.py")).mode & 0o777
+      ).toString(8);
       const pluginDirMode = (fs.statSync(pluginDir).mode & 0o777).toString(8);
       const pluginMode = (fs.statSync(pluginFile).mode & 0o777).toString(8);
       const nestedPluginDirMode = (fs.statSync(nestedPluginDir).mode & 0o777).toString(8);
       const nestedPluginMode = (fs.statSync(nestedPluginFile).mode & 0o777).toString(8);
       expect(generatorMode).toBe("755");
+      expect(messagingPluginMode).toBe("755");
       expect(pluginDirMode).toBe("755");
       expect(pluginMode).toBe("644");
       expect(nestedPluginDirMode).toBe("755");

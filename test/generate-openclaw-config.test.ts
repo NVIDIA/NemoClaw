@@ -232,6 +232,8 @@ describe("generate-openclaw-config.py: config generation", () => {
     const channels = Buffer.from(JSON.stringify(["whatsapp"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     expect(config.channels.whatsapp).toBeDefined();
+    expect(config.channels.whatsapp.enabled).toBe(true);
+    expect(config.plugins.entries.whatsapp).toEqual({ enabled: true });
     const account = config.channels.whatsapp.accounts.default;
     expect(account.enabled).toBe(true);
     expect(account.healthMonitor).toEqual({ enabled: false });
@@ -243,9 +245,13 @@ describe("generate-openclaw-config.py: config generation", () => {
   it("keeps WhatsApp config alongside token-based channels in the same run", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "whatsapp"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.telegram.enabled).toBe(true);
+    expect(config.plugins.entries.telegram).toEqual({ enabled: true });
     expect(config.channels.telegram.accounts.default.botToken).toBe(
       "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     );
+    expect(config.channels.whatsapp.enabled).toBe(true);
+    expect(config.plugins.entries.whatsapp).toEqual({ enabled: true });
     expect(config.channels.whatsapp.accounts.default.enabled).toBe(true);
     expect(config.channels.whatsapp.accounts.default.botToken).toBeUndefined();
   });
@@ -461,6 +467,10 @@ describe("generate-openclaw-config.py: config generation", () => {
       proxyUrl: "http://10.200.0.1:3128",
       loopbackMode: "proxy",
     });
+    expect(config.channels.telegram.enabled).toBe(true);
+    expect(config.plugins.entries.telegram).toEqual({ enabled: true });
+    expect(config.channels.discord.enabled).toBe(true);
+    expect(config.plugins.entries.discord).toEqual({ enabled: true });
     expect(config.channels.telegram.accounts.default.botToken).toBe(
       "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     );
