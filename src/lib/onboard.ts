@@ -190,9 +190,11 @@ const {
   validateOllamaModel,
   validateLocalProvider,
 } = localInference;
-const { resolveOllamaInstallMenuEntry, assertOllamaUpgradeApplied } = require(
-  "./onboard/ollama-install-menu",
-);
+const {
+  resolveOllamaInstallMenuEntry,
+  resolveRunningOllamaMenuEntry,
+  assertOllamaUpgradeApplied,
+} = require("./onboard/ollama-install-menu");
 const {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
@@ -287,6 +289,7 @@ const platformUtils: typeof import("./platform") = require("./platform");
 const { isWsl, shouldPatchCoredns } = platformUtils;
 const {
   getContainerRuntime,
+  getWindowsHostOllamaDockerRequirement,
   repairLocalInferenceSystemdOverrideOrExit,
   shouldFrontOllamaWithProxy,
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
@@ -4006,6 +4009,9 @@ async function setupNim(
     vllmProfile &&
     docker.dockerCapture(["images", "-q", vllmProfile.image], { ignoreError: true }).trim()
   );
+  const windowsHostOllamaDockerRequirement = getWindowsHostOllamaDockerRequirement(
+    isWsl() ? getContainerRuntime() : null,
+  );
   // Probed even when WSL has its own Ollama: users may prefer the Windows
   // instance for GPU access and a unified model cache. See
   // src/lib/onboard/windows-host-ollama.ts for process/path fallback details.
@@ -4051,26 +4057,14 @@ async function setupNim(
   options.push({ key: "anthropic", label: "Anthropic" });
   options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
   options.push({ key: "gemini", label: "Google Gemini" });
-  if (hasOllama || ollamaRunning) {
-    let hostDisplay: string;
-    if (ollamaHost === "host.docker.internal") {
-      hostDisplay = `Windows host:${OLLAMA_PORT}`;
-    } else if (isWsl()) {
-      hostDisplay = `WSL:${OLLAMA_PORT}`;
-    } else {
-      hostDisplay = `localhost:${OLLAMA_PORT}`;
-    }
-    // On WSL the Windows-host entry (Use/Restart/Start, or Install) always
-    // carries the suggestion instead, since Windows-host is preferred.
-    const wslOllamaSuggested =
-      ollamaRunning && (ollamaHost === "host.docker.internal" || !isWsl());
-    options.push({
-      key: "ollama",
-      label:
-        `Local Ollama (${hostDisplay})${ollamaRunning ? " — running" : ""}` +
-        (wslOllamaSuggested ? " (suggested)" : ""),
-    });
-  }
+  const runningOllamaMenu = resolveRunningOllamaMenuEntry({
+    hasOllama,
+    ollamaRunning,
+    ollamaHost,
+    isWsl: isWsl(),
+    ollamaPort: OLLAMA_PORT,
+  });
+  if (runningOllamaMenu) options.push(runningOllamaMenu);
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
     options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
   }
@@ -4086,15 +4080,13 @@ async function setupNim(
   // Skipped when Windows-host already won the cache: the running entry
   // above already covers that case.
   if (hasWindowsOllama && ollamaHost !== "host.docker.internal") {
-    let windowsOllamaLabel: string;
-    if (windowsOllamaReachable) {
-      windowsOllamaLabel = "Use Ollama on Windows host - running (suggested)";
-    } else if (winOllamaLoopbackOnly) {
-      windowsOllamaLabel = "Restart Ollama on Windows host with 0.0.0.0 binding (suggested)";
-    } else {
-      windowsOllamaLabel = "Start Ollama on Windows host (suggested)";
-    }
-    options.push({ key: "start-windows-ollama", label: windowsOllamaLabel });
+    options.push({
+      key: "start-windows-ollama",
+      label: windowsHostOllamaDockerRequirement.startLabel({
+        reachable: windowsOllamaReachable,
+        loopbackOnly: winOllamaLoopbackOnly,
+      }),
+    });
   }
   // On WSL, always offer to install Ollama on the Windows host when not
   // already installed, regardless of WSL Ollama state — users may prefer the
@@ -4102,7 +4094,7 @@ async function setupNim(
   if (isWsl() && !hasWindowsOllama) {
     options.push({
       key: "install-windows-ollama",
-      label: "Install Ollama on Windows host (recommended)",
+      label: windowsHostOllamaDockerRequirement.installLabel,
     });
   }
   const ollamaInstallMenu = resolveOllamaInstallMenuEntry({
@@ -4901,10 +4893,17 @@ async function setupNim(
           preferredInferenceApi = "openai-completions";
         }
         break;
-      } else if (
-        selected.key === "start-windows-ollama" ||
-        selected.key === "install-windows-ollama"
-      ) {
+      } else if (["start-windows-ollama", "install-windows-ollama"].includes(selected.key)) {
+        if (
+          !windowsHostOllamaDockerRequirement.supported &&
+          windowsHostOllamaDockerRequirement.reject(
+            selected.key,
+            isNonInteractive,
+            abortNonInteractive,
+          )
+        ) {
+          continue selectionLoop;
+        }
         if (!checkOllamaPortsOrWarn()) continue selectionLoop;
         const isInstall = selected.key === "install-windows-ollama";
         const isSwitch = !isInstall && windowsOllamaReachable;

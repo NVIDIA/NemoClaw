@@ -38,6 +38,35 @@ function isLocalOllamaHost(host: string | null | undefined): boolean {
   return Boolean(host) && host !== OLLAMA_HOST_DOCKER_INTERNAL;
 }
 
+export interface RunningOllamaMenuInput {
+  hasOllama: boolean;
+  ollamaRunning: boolean;
+  isWsl: boolean;
+  ollamaPort: number;
+  ollamaHost?: string | null;
+}
+
+export function resolveRunningOllamaMenuEntry(
+  input: RunningOllamaMenuInput,
+): { key: "ollama"; label: string } | null {
+  if (!input.hasOllama && !input.ollamaRunning) return null;
+  let hostDisplay: string;
+  if (input.ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL) {
+    hostDisplay = `Windows host:${input.ollamaPort}`;
+  } else if (input.isWsl) {
+    hostDisplay = `WSL:${input.ollamaPort}`;
+  } else {
+    hostDisplay = `localhost:${input.ollamaPort}`;
+  }
+  const suggested = input.ollamaRunning && (input.ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL || !input.isWsl);
+  return {
+    key: "ollama",
+    label:
+      `Local Ollama (${hostDisplay})${input.ollamaRunning ? " — running" : ""}` +
+      (suggested ? " (suggested)" : ""),
+  };
+}
+
 export interface OllamaInstallMenuEntry {
   key: "install-ollama";
   label: string;
