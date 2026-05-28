@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
 import {
   createTarball,
+  dmesgRestrictedMessage,
   getDebugCompletionMessages,
   isDmesgPermissionDeniedOutput,
   isDmesgRestrictedForCurrentUser,
@@ -145,5 +146,19 @@ describe("isDmesgPermissionDeniedOutput", () => {
 
   it("does not treat unrelated permission errors as dmesg restrictions", () => {
     expect(isDmesgPermissionDeniedOutput("docker: Permission denied")).toBe(false);
+  });
+});
+
+describe("dmesgRestrictedMessage (#4366)", () => {
+  it("explains why kernel messages were skipped", () => {
+    const msg = dmesgRestrictedMessage("kernel.dmesg_restrict=1 prevents non-root access");
+    expect(msg).toContain("kernel messages skipped");
+    expect(msg).toContain("kernel.dmesg_restrict=1 prevents non-root access");
+  });
+
+  it("includes a 'sudo nemoclaw debug' hint so users can re-run with kernel logs", () => {
+    const msg = dmesgRestrictedMessage("some-reason");
+    expect(msg).toMatch(/sudo nemoclaw debug/);
+    expect(msg.toLowerCase()).toMatch(/re-?run/);
   });
 });

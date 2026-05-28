@@ -154,8 +154,11 @@ export function isDmesgPermissionDeniedOutput(output: string): boolean {
   return /\b(dmesg|kernel buffer|kernel logs?)\b/i.test(output);
 }
 
-function dmesgRestrictedMessage(reason: string): string {
-  return `  (kernel messages skipped: dmesg access is restricted for this user; ${reason})`;
+export function dmesgRestrictedMessage(reason: string): string {
+  return [
+    `  (kernel messages skipped: dmesg access is restricted for this user; ${reason}.`,
+    "   Re-run with `sudo nemoclaw debug` to include kernel logs in this report.)",
+  ].join("\n");
 }
 
 function collectDmesg(collectDir: string): void {
