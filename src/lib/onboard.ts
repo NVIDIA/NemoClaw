@@ -3111,10 +3111,11 @@ async function createSandbox(
               );
             }
             const reusedPort = ensureDashboardForward(sandboxName, chatUiUrl);
+            chatUiUrl = `http://127.0.0.1:${reusedPort}`;
+            process.env.CHAT_UI_URL = chatUiUrl;
             const reusedHermesDashboardState =
               hermesDashboardForwarding.resolveStateForPort(reusedPort);
             hermesDashboardForwarding.ensureForState(reusedHermesDashboardState, sandboxName);
-            process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort}`;
             updateReusedSandboxMetadata(
               sandboxName,
               agent,
@@ -3155,10 +3156,11 @@ async function createSandbox(
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
             upsertMessagingProviders(messagingTokenDefs);
             const reusedPort2 = ensureDashboardForward(sandboxName, chatUiUrl);
+            chatUiUrl = `http://127.0.0.1:${reusedPort2}`;
+            process.env.CHAT_UI_URL = chatUiUrl;
             const reusedHermesDashboardState2 =
               hermesDashboardForwarding.resolveStateForPort(reusedPort2);
             hermesDashboardForwarding.ensureForState(reusedHermesDashboardState2, sandboxName);
-            process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort2}`;
             updateReusedSandboxMetadata(
               sandboxName,
               agent,
