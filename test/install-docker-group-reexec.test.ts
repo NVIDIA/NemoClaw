@@ -31,7 +31,12 @@ function runEnsureDocker(env: Record<string, string>, installerArgs: string[]): 
     { mode: 0o755 },
   );
 
-  const argsArrayLiteral = installerArgs.map((a) => `"${a.replace(/"/g, '\\"')}"`).join(" ");
+  // Backslashes must be escaped before quotes — otherwise a literal `\` in
+  // an installer arg would slip through unescaped (CodeQL: incomplete string
+  // escaping).
+  const argsArrayLiteral = installerArgs
+    .map((a) => `"${a.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`)
+    .join(" ");
 
   const snippet = `
     set -e
@@ -114,6 +119,26 @@ describe("install.sh ensure_docker — #4414 non-interactive self re-exec", () =
     // In interactive mode the existing behavior — print instructions and
     // exit 0 — is still correct: a human can run `newgrp docker` themselves.
     const outcome = runEnsureDocker({}, []);
+    expect(outcome.sgArgs.length).toBe(0);
+    expect(outcome.status).toBe(0);
+  });
+
+  it("does not re-exec a second time when NEMOCLAW_DOCKER_GROUP_REACTIVATED=1 is already set (one-shot loop guard)", () => {
+    // Failure mode we are guarding against: sg(1) re-exec succeeded but
+    // /var/run/docker.sock is still unreachable (daemon down, AppArmor,
+    // unusual mount). Without the env-var guard, the re-entered installer
+    // would loop into another `exec sg docker -c …`, swallow stderr, and
+    // burn CPU. The guard must demote the second pass to the legacy
+    // "newgrp docker / re-curl" path with a clean exit 0 so the user sees
+    // an actionable instruction instead of a hang.
+    const outcome = runEnsureDocker(
+      {
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1",
+        NEMOCLAW_DOCKER_GROUP_REACTIVATED: "1",
+      },
+      ["--non-interactive", "--yes-i-accept-third-party-software"],
+    );
     expect(outcome.sgArgs.length).toBe(0);
     expect(outcome.status).toBe(0);
   });
