@@ -118,7 +118,7 @@ function removePath(target: string, deps: Required<Pick<UninstallRunDeps, "exist
 // `sandboxes.json` is the host-side sandbox registry. Full wipe still happens
 // when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 is set, or when the user answers
 // `y` to the interactive prompt.
-export const PRESERVED_USER_DATA_ENTRIES: readonly string[] = [
+const PRESERVED_USER_DATA_ENTRIES: readonly string[] = [
   "rebuild-backups",
   "backups",
   "sandboxes.json",
@@ -127,7 +127,8 @@ export const PRESERVED_USER_DATA_ENTRIES: readonly string[] = [
 function removePathExcept(
   target: string,
   preserve: readonly string[],
-  deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>,
+  deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">> &
+    Pick<UninstallRuntime, "warn">,
 ): void {
   if (!deps.existsSync(target)) return;
   if (preserve.length === 0) {
@@ -141,7 +142,12 @@ function removePathExcept(
   let stat: fs.Stats;
   try {
     stat = fs.lstatSync(target);
-  } catch {
+  } catch (err) {
+    // ENOENT — gone already, nothing to do. Any other error means we cannot
+    // safely decide whether to enumerate or remove; surface it so uninstall
+    // does not silently claim success while leaving state on disk.
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return;
+    deps.warn(`Failed to inspect ${target}: ${err instanceof Error ? err.message : String(err)}`);
     return;
   }
   if (!stat.isDirectory()) {

@@ -1198,7 +1198,7 @@ $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--gateway <na
 
 ##### User-data preservation under `~/.nemoclaw/`
 
-To avoid the data-loss case from [#4226](https://github.com/NVIDIA/NemoClaw/issues/4226), uninstall preserves the following entries under `~/.nemoclaw/` by default:
+To avoid uninstall destroying host-side user data, uninstall preserves the following entries under `~/.nemoclaw/` by default:
 
 | Entry | What it holds |
 |---|---|
@@ -1213,7 +1213,7 @@ Decision matrix:
 | Context | Behaviour |
 |---|---|
 | Interactive TTY, preserved entries present, no env override | Prompts `Also remove them? [y/N]`. Default `N` keeps the entries. |
-| Interactive TTY, user answers `y` | Removes everything under `~/.nemoclaw/`, matching the pre-#4226 behaviour. |
+| Interactive TTY, user answers `y` | Removes everything under `~/.nemoclaw/` (the previous full-removal behaviour). |
 | Non-interactive (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or non-TTY shell) | Preserves the entries and prints a one-line notice. |
 | Any context with `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` | Skips the prompt and removes everything under `~/.nemoclaw/`. |
 
