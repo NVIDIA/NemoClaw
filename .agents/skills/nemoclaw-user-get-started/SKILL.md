@@ -2,6 +2,16 @@
 name: "nemoclaw-user-get-started"
 description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time. Trigger keywords - nemoclaw quickstart, install nemoclaw openclaw sandbox, nemohermes quickstart, hermes agent nemoclaw, run hermes openshell sandbox, nemoclaw prerequisites, nemoclaw supported platforms, nemoclaw hardware software, nemoclaw windows wsl2 setup, nemoclaw install windows docker desktop."
 license: "Apache-2.0"
+metadata:
+  author: "Miyoung Choi <miyoungc@nvidia.com>"
+  tags:
+    - nemoclaw
+    - quickstart
+    - installation
+    - onboarding
+    - openclaw
+    - hermes
+    - wsl
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -14,6 +24,37 @@ Follow these steps to get started with NemoClaw and your first sandboxed OpenCla
 **Note:**
 
 Make sure you have completed reviewing the [Prerequisites](references/prerequisites.md) before following this guide.
+
+## Instructions
+
+Use this skill only for **first-time install and first-prompt** flows. Hand off to a sibling skill for ongoing operations.
+
+Follow this fixed sequence. Do not exceed the listed tool budget.
+
+1. **Identify the platform** in one question or by inspection: macOS, Linux, Windows + WSL 2, or remote GPU (Brev / DGX). Do not call any tools yet.
+2. **Load at most one reference.** Choose the single reference that matches the user's situation:
+   - Verifying hardware/OS support → `references/prerequisites.md`.
+   - Windows-specific setup → `references/windows-preparation.md`.
+   - Hermes-instead-of-OpenClaw → `references/quickstart-hermes.md`.
+   - Detailed wizard walkthrough → `references/quickstart-details.md`.
+   - Otherwise → use the inline steps below; do not load any reference.
+3. **Walk the user through three phases**, in order, scoped to their platform:
+   - **Install** with the installer one-liner from the inline steps.
+   - **Onboard** by responding to the wizard (provider, sandbox name, policy tier).
+   - **First prompt** via the dashboard URL or `nemoclaw <name> connect` then `openclaw tui`.
+4. **Verify and stop.** Point the user at `nemoclaw <name> status` to confirm the sandbox is healthy. For ongoing tasks (rebuild, channels, monitoring) recommend `nemoclaw-user-manage-sandboxes` or `nemoclaw-user-monitor-sandbox` and stop.
+
+Tool budget per invocation: at most **one** Read of a single `references/*.md` file. Do not chain into other references in the same response. If the user's question expands into policy editing, inference switching, or multi-sandbox operations, return the quickstart answer and suggest the appropriate sibling skill rather than calling more tools.
+
+## Examples
+
+**Example 1 — Fresh macOS install.** User says "I just got a new MacBook, how do I try NemoClaw?" Identify platform = macOS. Skip references (inline steps cover this). Provide the `curl ... | bash` installer, walk them through the wizard summary screen, and end with `http://127.0.0.1:18789/` plus `nemoclaw my-sandbox status`.
+
+**Example 2 — Windows user.** User says "Can I run NemoClaw on Windows 11?" Identify platform = Windows. Load `references/windows-preparation.md` exactly once. Cover WSL 2 + Ubuntu + Docker Desktop prep, then return them to the standard install one-liner inside WSL.
+
+**Example 3 — Hermes path.** User says "I want to run Hermes, not OpenClaw, in the sandbox." Identify intent = Hermes. Load `references/quickstart-hermes.md` exactly once. Provide Hermes-specific install + onboard + first-prompt steps. Do not load `quickstart-details.md` in the same turn.
+
+**Example 4 — Out-of-scope handoff.** User says "My sandbox is running but messaging isn't working." Do not load any reference here. Recommend `nemoclaw-user-manage-sandboxes` and stop.
 
 ## Install NemoClaw and Onboard OpenClaw Agent
 
