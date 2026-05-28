@@ -15,9 +15,7 @@ Personal fork of [NVIDIA/NemoClaw](https://github.com/NVIDIA/NemoClaw) with **Ta
 | Feature | Summary |
 |--------|---------|
 | **Tavily Web Search** | Choose Tavily during onboard; `tavily` network preset; OpenClaw `plugins.entries.tavily` + `tools.web.search.provider=tavily` |
-| **Nemotron Ultra** | First-class cloud model on **Inference Hub** (`inference-api.nvidia.com`, `sk-*` key) — not only “Other OpenAI-compatible endpoint” |
-| **Dual NVIDIA keys** | `NVIDIA_API_KEY` (`nvapi-*`, Build/integrate) vs `NVIDIA_INFERENCE_HUB_API_KEY` (`sk-*`, Inference Hub) |
-| **Secrets file** | Keys in `~/.nemoclaw/secrets.env` (gitignored), loaded on onboard |
+| **Nemotron Ultra** | First-class cloud model on **Inference Hub** 
 | **Telegram plugin fix** | Enables `plugins.entries.telegram` when Telegram is in messaging channels (OpenClaw 2026.5.x) |
 
 ---
@@ -50,14 +48,14 @@ node bin/nemoclaw.js credentials init-secrets
 
 | Variable | Format | Used for |
 |----------|--------|----------|
-| `NVIDIA_INFERENCE_HUB_API_KEY` | `sk-...` | **Nemotron Ultra** → `https://inference-api.nvidia.com/v1` |
+| `NVIDIA_INFERENCE_HUB_API_KEY` | `sk-...` | **Nemotron Ultra** |
 | `NVIDIA_API_KEY` | `nvapi-...` | Nemotron Super / Build models → `https://integrate.api.nvidia.com/v1` |
 | `TAVILY_API_KEY` | `tvly-...` | Tavily web search |
 | `TELEGRAM_BOT_TOKEN` | from @BotFather | Telegram bot |
 
 Get keys:
 
-- Inference Hub: https://inference.nvidia.com  
+- Inference Hub
 - NVIDIA Build: https://build.nvidia.com/settings/api-keys  
 - Tavily: https://tavily.com  
 - Telegram: [@BotFather](https://t.me/BotFather) → `/newbot`
