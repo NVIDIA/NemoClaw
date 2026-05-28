@@ -354,13 +354,19 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          ref: ${{ inputs.target_ref || github.ref }}
+          # This privileged proof mutates host firewall state and receives
+          # NVIDIA_API_KEY. Keep the runner script from the trusted workflow ref;
+          # the product under test is selected separately via
+          # NEMOCLAW_PUBLIC_INSTALL_REF.
+          ref: ${{ github.ref }}
 
       - name: Resolve public install ref
         id: public_install_ref
         shell: bash
+        env:
+          TARGET_REF: ${{ inputs.target_ref }}
         run: |
-          printf 'ref=%s\n' "$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          printf 'ref=%s\n' "${TARGET_REF:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
 
       - name: "Install issue #4434 test dependencies"
         shell: bash
