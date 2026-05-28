@@ -1,5 +1,5 @@
 {
-  "exportContentSha256": "76130705685498adb7e78123ea3edf06d05103a1486a638b2f7a91c73ab5bc04",
+  "exportContentSha256": "ba921378e08f1dd2b490c4728ec3e7d6de60d6066141c24d32e1f3b87bb1a329",
   "generatedBy": "scripts/export-catalog-skills.py",
   "metadata": {
     "minNemoClawVersion": "0.1.0",
@@ -20,6 +20,6 @@
     "nemoclaw-user-reference"
   ],
   "source": ".agents/skills",
-  "sourceCommit": "1daf081718489f514d8219d7e229f8ed712ce82d",
-  "sourceContentSha256": "76130705685498adb7e78123ea3edf06d05103a1486a638b2f7a91c73ab5bc04"
+  "sourceCommit": "2dc80f1812ac150fe06869c2825c9f66b5fe7869",
+  "sourceContentSha256": "ba921378e08f1dd2b490c4728ec3e7d6de60d6066141c24d32e1f3b87bb1a329"
 }
