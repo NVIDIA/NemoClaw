@@ -1,6 +1,7 @@
 ---
 name: "nemoclaw-user-manage-policy"
 description: "Adds, removes, or modifies allowed endpoints in the sandbox policy. Use when customizing network policy, changing egress rules, or configuring sandbox endpoint access. Trigger keywords - customize nemoclaw network policy, sandbox egress policy configuration, nemoclaw integration policy examples, post-install policy setup, openshell approval workflow, policy preset, nemoclaw approve network requests, sandbox egress approval tui."
+license: "Apache-2.0"
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -278,20 +279,13 @@ Fix the failing file and re-run the command to continue.
 Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress to arbitrary destinations.
 Review every host in a custom preset before applying it, especially when the file originates outside your team.
 
-### Remove a Custom Preset
-
-Custom presets applied with `--from-file` or `--from-dir` are recorded in the NemoClaw sandbox registry alongside their full YAML content, so they can be removed by name — the original file does not need to be kept on disk:
-
-```console
-$ nemoclaw my-assistant policy-remove my-internal-api --yes
-```
-
-`policy-remove` accepts both built-in and custom preset names. Run `nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
+Load [references/customize-network-policy-details.md](references/customize-network-policy-details.md) for detailed steps on Remove a Custom Preset.
 
 ## References
 
 - **[references/integration-policy-examples.md](references/integration-policy-examples.md)** — Guides users through common post-install integration policy setup for maintained NemoClaw policy presets, including Outlook, messaging channels, GitHub, Jira, Brave Search, package managers, Hugging Face, local inference, and OpenShell approval workflows.
 - **Load [references/approve-network-requests.md](references/approve-network-requests.md)** when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI. Reviews and approves blocked agent network requests in the TUI.
+- **Load [references/customize-network-policy-details.md](references/customize-network-policy-details.md)** when you need detailed steps for Remove a Custom Preset.
 
 ## Related Skills
 

@@ -49,6 +49,30 @@ python3 scripts/export-catalog-skills.py --check
 """
 
 PRESERVED_SIGNING_FILES = {"skill.oms.sig", "skill-card.md"}
+MARKDOWN_EXTENSIONS = {".md", ".mdx"}
+
+
+def strip_markdown_spdx_preamble(text: str) -> str:
+    """Remove generated SPDX comments from catalog Markdown exports."""
+    lines = text.splitlines(keepends=True)
+    idx = 0
+    prefix: list[str] = []
+    if lines and lines[0].strip() == "---":
+        idx = 1
+        while idx < len(lines):
+            idx += 1
+            if lines[idx - 1].strip() == "---":
+                break
+        prefix = lines[:idx]
+        if idx < len(lines) and not lines[idx].strip():
+            idx += 1
+    while idx < len(lines) and lines[idx].startswith("<!-- SPDX-"):
+        idx += 1
+    if not prefix and idx == 0:
+        return text
+    if idx < len(lines) and not lines[idx].strip():
+        idx += 1
+    return "".join(prefix + lines[idx:])
 
 
 @dataclass(frozen=True)
@@ -211,7 +235,14 @@ def copy_skill(source_dir: Path, target_dir: Path) -> None:
             src = Path(root) / filename
             dst = target_dir / rel_root / filename
             dst.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(src, dst)
+            if src.suffix.lower() in MARKDOWN_EXTENSIONS:
+                # Source skills keep SPDX headers for repo policy. The catalog
+                # export strips boilerplate so semantic dedupe only sees content.
+                content = strip_markdown_spdx_preamble(src.read_text(encoding="utf-8"))
+                dst.write_text(content, encoding="utf-8")
+                shutil.copymode(src, dst)
+            else:
+                shutil.copy2(src, dst)
 
 
 def hash_file(path: Path, base: Path, digest: hashlib._Hash) -> None:
@@ -317,6 +348,24 @@ def render_export(config: CatalogConfig, target_root: Path, preserve_from: Path 
     write_manifest(target_root, config, source_root)
 
 
+def files_match_for_export_check(left_file: Path, right_file: Path, rel_path: str) -> bool:
+    if rel_path != "catalog-metadata.json":
+        return filecmp.cmp(left_file, right_file, shallow=False)
+
+    try:
+        left_metadata = json.loads(left_file.read_text(encoding="utf-8"))
+        right_metadata = json.loads(right_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    # This field records the commit that generated the export. A fresh commit
+    # changes HEAD after files are written, so freshness checks compare content
+    # hashes and ignore this bookkeeping-only value.
+    left_metadata["sourceCommit"] = "<ignored>"
+    right_metadata["sourceCommit"] = "<ignored>"
+    return left_metadata == right_metadata
+
+
 def dircmp_diff(left: Path, right: Path) -> list[str]:
     messages: list[str] = []
 
@@ -326,7 +375,11 @@ def dircmp_diff(left: Path, right: Path) -> list[str]:
         for name in sorted(cmp.right_only):
             messages.append(f"missing: {(Path(cmp.right) / name).relative_to(right).as_posix()}")
         for name in sorted(cmp.diff_files):
-            messages.append(f"stale: {(Path(cmp.left) / name).relative_to(left).as_posix()}")
+            left_file = Path(cmp.left) / name
+            rel_path = left_file.relative_to(left).as_posix()
+            if files_match_for_export_check(left_file, Path(cmp.right) / name, rel_path):
+                continue
+            messages.append(f"stale: {rel_path}")
         for subdir in sorted(cmp.subdirs):
             visit(cmp.subdirs[subdir])
 
