@@ -396,6 +396,8 @@ Use that line to distinguish a healthy backend from a broken proxy path that the
 
 For cloud-only providers, the output omits the NIM status line unless a NIM container is registered or an unexpected NIM container is running.
 
+When the sandbox's recorded driver is `docker` and the host Docker daemon is not reachable, the command prints `Failure layer: docker_unreachable — Docker daemon is not reachable.` as the first line of stdout, suppresses the host-side `Inference` probe (which otherwise hits the remote provider directly and is misleading when the local stack is down), and exits with a non-zero status.
+
 If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state.
 Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.
 

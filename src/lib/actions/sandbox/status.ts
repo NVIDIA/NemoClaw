@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 
-import { dockerInfo } from "../../adapters/docker/info";
 import {
   detectOpenShellStateRpcResultIssue,
   printOpenShellStateRpcIssue,
@@ -34,7 +33,11 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { getSandboxDockerHealth } from "./docker-health";
-import { classifyGatewayFailure, getLayerHeader } from "./gateway-failure-classifier";
+import {
+  classifyGatewayFailure,
+  getLayerHeader,
+  isDockerDaemonReachable,
+} from "./gateway-failure-classifier";
 import type { SandboxGatewayState } from "./gateway-state";
 import {
   getReconciledSandboxGatewayState,
@@ -107,21 +110,22 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
   }
 }
 
-async function printGatewayFailureLayerHeader(sandboxName: string): Promise<void> {
+async function printGatewayFailureLayerHeader(
+  sandboxName: string,
+  alreadyPrintedDockerUnreachable = false,
+): Promise<void> {
   const failure = await classifyGatewayFailure(sandboxName);
+  if (alreadyPrintedDockerUnreachable && failure.layer === "docker_unreachable") {
+    return;
+  }
   console.log(`  ${getLayerHeader(failure.layer)}`);
 }
 
-const DOCKER_INFO_PROBE_TIMEOUT_MS = 3000;
-
 type DockerInfoProbe = () => boolean;
-
-const defaultDockerInfoProbe: DockerInfoProbe = () =>
-  dockerInfo({ ignoreError: true, timeout: DOCKER_INFO_PROBE_TIMEOUT_MS }).length > 0;
 
 export function isDockerDaemonUnreachableForStatus(
   sb: registry.SandboxEntry | null,
-  probe: DockerInfoProbe = defaultDockerInfoProbe,
+  probe: DockerInfoProbe = isDockerDaemonReachable,
 ): boolean {
   if (!sb || sb.openshellDriver !== "docker") return false;
   return !probe();
@@ -131,12 +135,17 @@ export function isDockerDaemonUnreachableForStatus(
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   const sb = registry.getSandbox(sandboxName);
   maybeEnsureHermesToolGatewayBroker(sb);
-  // #4313: surface docker_unreachable header upfront when the host Docker
-  // daemon is stopped on a docker-driver sandbox. Without this, the cached
-  // sandbox metadata renders as a "healthy" report even though the local
-  // container stack is down, and the Inference probe hits the remote provider
-  // directly so it falsely shows healthy too.
+  // When the host Docker daemon is stopped on a docker-driver sandbox, the
+  // cached sandbox metadata renders as a "healthy" report even though the
+  // local container stack is down, and the host-side Inference probe hits the
+  // remote provider directly so it falsely shows healthy too. Probe the
+  // daemon once upfront so the failure-layer header is the first thing the
+  // user sees and the misleading probe is suppressed.
   const dockerUnreachable = isDockerDaemonUnreachableForStatus(sb);
+  if (dockerUnreachable) {
+    console.log(getLayerHeader("docker_unreachable"));
+    process.exitCode = 1;
+  }
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
   // hanging when its container is stopped and the published port is held by a
   // foreign listener) suppress the sandbox header. The downstream switch
@@ -211,10 +220,6 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   }
   if (sb) {
     console.log("");
-    if (dockerUnreachable) {
-      console.log(`  ${getLayerHeader("docker_unreachable")}`);
-      process.exitCode = 1;
-    }
     console.log(`  Sandbox: ${sb.name}`);
     console.log(`    Model:    ${currentModel}`);
     console.log(`    Provider: ${currentProvider}`);
@@ -326,7 +331,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       if (guard.state === "connected_other") {
         printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.log);
       } else {
-        await printGatewayFailureLayerHeader(sandboxName);
+        await printGatewayFailureLayerHeader(sandboxName, dockerUnreachable);
         printGatewayLifecycleHint(guard.status || "", sandboxName, console.log);
       }
     } else {
@@ -360,7 +365,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     process.exit(1);
   } else if (lookup.state === "gateway_unreachable_after_restart") {
     console.log("");
-    await printGatewayFailureLayerHeader(sandboxName);
+    await printGatewayFailureLayerHeader(sandboxName, dockerUnreachable);
     console.log(
       `  Sandbox '${sandboxName}' may still exist, but the selected ${CLI_DISPLAY_NAME} gateway is still refusing connections after restart.`,
     );
@@ -376,7 +381,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     process.exit(1);
   } else if (lookup.state === "gateway_missing_after_restart") {
     console.log("");
-    await printGatewayFailureLayerHeader(sandboxName);
+    await printGatewayFailureLayerHeader(sandboxName, dockerUnreachable);
     console.log(
       `  Sandbox '${sandboxName}' may still exist locally, but the ${CLI_DISPLAY_NAME} gateway is no longer configured after restart/rebuild.`,
     );
@@ -396,7 +401,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     if (lookup.output) {
       console.log(lookup.output);
     }
-    await printGatewayFailureLayerHeader(sandboxName);
+    await printGatewayFailureLayerHeader(sandboxName, dockerUnreachable);
     printGatewayLifecycleHint(lookup.output, sandboxName, console.log);
     process.exit(1);
   }

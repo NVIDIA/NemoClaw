@@ -34,6 +34,10 @@ function defaultDockerInfo(): boolean {
   return dockerInfo({ ignoreError: true, timeout: DOCKER_TIMEOUT_MS }).length > 0;
 }
 
+export function isDockerDaemonReachable(): boolean {
+  return defaultDockerInfo();
+}
+
 function dockerContainerListed(container: string, allFlag: boolean): boolean {
   const args = ["ps"];
   if (allFlag) args.push("-a");

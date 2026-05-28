@@ -990,17 +990,20 @@ describe("CLI dispatch", () => {
     });
 
     expect(r.code).toBe(1);
-    expect(r.out).toContain(
+    expect(r.out.startsWith(
       "Failure layer: docker_unreachable — Docker daemon is not reachable.",
-    );
+    )).toBe(true);
     expect(r.out).not.toContain("Inference: healthy");
     const headerIdx = r.out.indexOf("Failure layer: docker_unreachable");
     const sandboxIdx = r.out.indexOf("Sandbox: alpha");
     expect(headerIdx).toBeGreaterThanOrEqual(0);
     expect(sandboxIdx).toBeGreaterThan(headerIdx);
+    expect(
+      (r.out.match(/Failure layer: docker_unreachable/g) || []).length,
+    ).toBe(1);
   });
 
-  it("sandbox <name> status preserves Inference probe when openshellDriver is not docker", () => {
+  it("sandbox <name> status preserves Inference probe and exits 0 when openshellDriver is not docker", () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-non-docker-driver-"),
     );
@@ -1046,9 +1049,12 @@ describe("CLI dispatch", () => {
       PATH: `${localBin}:${process.env.PATH || ""}`,
     });
 
-    expect(r.out).not.toContain(
-      "Failure layer: docker_unreachable",
-    );
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("Failure layer: docker_unreachable");
+    expect(r.out).toContain("Sandbox: alpha");
+    expect(r.out).toContain("Provider: openai-api");
+    expect(r.out).toContain("Model:    gpt-4o-mini");
+    expect(r.out).toMatch(/Inference:/);
   });
 
   it("status rejects unknown flags through current dispatch path", () => {
