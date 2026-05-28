@@ -9,6 +9,7 @@ import {
   emitOnboardMachineEvent,
   type OnboardMachineEvent,
 } from "./events";
+import type { OnboardStateResult } from "./result";
 import {
   assertValidOnboardMachineTransition,
   canTransitionOnboardMachineState,
@@ -195,6 +196,33 @@ export class OnboardRuntime {
     this.emit("state.entered", updated, { state: "complete" });
     this.emit("onboard.completed", updated, { state: "complete" });
     return updated;
+  }
+
+  async applyResult(result: OnboardStateResult): Promise<Session> {
+    if (result.type === "complete") {
+      return this.complete(result.updates ?? {});
+    }
+    if (result.type === "failed") {
+      return this.fail(result.error, {
+        step: result.step,
+        metadata: result.metadata,
+      });
+    }
+
+    const current = this.ensureSession();
+    const transition = assertValidOnboardMachineTransition(current.machine.state, result.next);
+    if (result.transitionKind && transition.kind !== result.transitionKind) {
+      throw new Error(
+        `Invalid onboarding machine transition kind: ${current.machine.state} -> ${result.next} expected ${result.transitionKind}, got ${transition.kind}`,
+      );
+    }
+    if (result.updates && Object.keys(this.deps.filterSafeUpdates(result.updates)).length > 0) {
+      await this.updateContext(result.updates, {
+        state: current.machine.state,
+        metadata: result.metadata,
+      });
+    }
+    return this.transition(result.next, { metadata: result.metadata });
   }
 
   async fail(message: string | null, options: OnboardRuntimeFailureOptions = {}): Promise<Session> {
