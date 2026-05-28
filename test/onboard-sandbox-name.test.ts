@@ -93,7 +93,7 @@ describe("onboard sandbox naming helpers", () => {
   });
 
   describe("suggestNameSlug", () => {
-    it("lowercases mixed-case input (T5987921 spec: 'MyAssistant' -> 'myassistant')", () => {
+    it("lowercases mixed-case input", () => {
       expect(suggestNameSlug("MyAssistant")).toBe("myassistant");
     });
 
