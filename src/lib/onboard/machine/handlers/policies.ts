@@ -3,6 +3,14 @@
 
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
 
+// Inlined to avoid pulling sandbox-agent's transitive runner.ts deps into
+// the generic state handler. Matches normalizeSandboxAgentName: trim,
+// default null/blank/"openclaw" to "openclaw".
+function normalizeAgentName(name: string | null | undefined): string {
+  const trimmed = typeof name === "string" ? name.trim() : "";
+  return trimmed && trimmed !== "openclaw" ? trimmed : "openclaw";
+}
+
 export interface PolicyPresetEntry {
   name: string;
   [key: string]: unknown;
@@ -75,6 +83,7 @@ export interface PoliciesStateOptions<Agent, WebSearchConfig> {
         disabledChannels?: string[] | null;
         webSearchConfig: WebSearchConfig | null;
         provider: string;
+        agent?: string | null;
         webSearchSupported: boolean;
         hermesToolGateways: string[];
         onSelection: (policyPresets: string[]) => void;
@@ -177,6 +186,11 @@ export async function handlePoliciesState<Agent, WebSearchConfig>({
       disabledChannels: activeSandbox?.disabledChannels,
       webSearchConfig,
       provider,
+      // selectOnboardAgent returns null for the default OpenClaw path (no
+      // --agent flag, no recorded agent). Normalise null/blank/whitespace
+      // to "openclaw" so the auto-suggest gate still fires; explicit
+      // Hermes runs keep their own name.
+      agent: normalizeAgentName((agent as { name?: string } | null)?.name),
       webSearchSupported,
       hermesToolGateways,
       onSelection: (policyPresets) => {

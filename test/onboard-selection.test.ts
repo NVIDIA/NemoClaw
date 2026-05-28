@@ -648,6 +648,178 @@ const { setupNim } = require(${onboardPath});
     assert.doesNotMatch(result.stderr, /INSTALL_VLLM_CALLED/);
   });
 
+  it("surfaces managed vLLM by default on DGX Spark and Station only", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-vllm-platform-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "vllm-platform-menu-check.js");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const credentialsPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "credentials", "store.js"),
+    );
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const dockerRunPath = JSON.stringify(
+      path.join(repoRoot, "dist", "lib", "adapters", "docker", "run.js"),
+    );
+    type VllmPlatformScenario =
+      | {
+          name: string;
+          gpu: { type: string; platform: string };
+          vllmExpected: true;
+          platformLabel: string;
+        }
+      | {
+          name: string;
+          gpu: { type: string; platform: string };
+          vllmExpected: false;
+        };
+    const scenarios: VllmPlatformScenario[] = [
+      {
+        name: "spark",
+        gpu: { type: "nvidia", platform: "spark" },
+        vllmExpected: true,
+        platformLabel: "DGX Spark",
+      },
+      {
+        name: "station",
+        gpu: { type: "nvidia", platform: "station" },
+        vllmExpected: true,
+        platformLabel: "DGX Station",
+      },
+      {
+        name: "linux",
+        gpu: { type: "nvidia", platform: "linux" },
+        vllmExpected: false,
+      },
+    ];
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(fakeBin, "curl"),
+      `#!/usr/bin/env bash
+body='{"id":"ok"}'
+status="200"
+outfile=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+printf '%s' "$body" > "$outfile"
+printf '%s' "$status"
+`,
+      { mode: 0o755 },
+    );
+
+    const script = String.raw`
+const credentials = require(${credentialsPath});
+const runner = require(${runnerPath});
+const dockerRun = require(${dockerRunPath});
+
+process.env.NEMOCLAW_NON_INTERACTIVE = "";
+process.env.NEMOCLAW_EXPERIMENTAL = "";
+process.env.NEMOCLAW_PROVIDER = "";
+process.env.NEMOCLAW_MODEL = "";
+
+credentials.ensureApiKey = async () => {
+  process.env.NVIDIA_API_KEY = "nvapi-good";
+};
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : command;
+  if (cmd.includes("command -v ollama")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/tags")) return "";
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("docker images")) return "";
+  return "";
+};
+dockerRun.dockerCapture = () => "";
+
+const scenarios = ${JSON.stringify(scenarios)};
+
+async function runScenario(scenario) {
+  const messages = [];
+  const lines = [];
+  credentials.prompt = async (message) => {
+    messages.push(message);
+    if (/Choose \[/.test(message)) return "1";
+    return "";
+  };
+  process.env.NEMOCLAW_PROVIDER = "";
+  process.env.NEMOCLAW_MODEL = "";
+  process.env.NVIDIA_API_KEY = "";
+  delete require.cache[require.resolve(${onboardPath})];
+  const { setupNim } = require(${onboardPath});
+  const originalLog = console.log;
+  console.log = (...args) => lines.push(args.join(" "));
+  try {
+    const result = await setupNim(scenario.gpu, null);
+    return { name: scenario.name, result, messages, lines };
+  } finally {
+    console.log = originalLog;
+  }
+}
+
+(async () => {
+  const results = [];
+  // These scenarios intentionally run serially in one process. The regression
+  // varies only the gpu.platform argument passed into setupNim(), while the
+  // expensive module graph and mocks are shared to keep this integration test
+  // lightweight.
+  for (const scenario of scenarios) {
+    results.push(await runScenario(scenario));
+  }
+  console.log(JSON.stringify({ results }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "",
+        NEMOCLAW_EXPERIMENTAL: "",
+        NEMOCLAW_PROVIDER: "",
+        NEMOCLAW_MODEL: "",
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.notEqual(result.stdout.trim(), "");
+    const payload = JSON.parse(result.stdout.trim());
+
+    for (const scenario of scenarios) {
+      const scenarioResult = payload.results.find(
+        (entry: { name: string }) => entry.name === scenario.name,
+      );
+      assert.ok(scenarioResult, scenario.name);
+      const menuOutput = scenarioResult.lines.join("\n");
+      assert.ok(
+        scenarioResult.messages.some((message: string) => /Choose \[/.test(message)),
+        scenario.name,
+      );
+      assert.ok(menuOutput.length > 0, `${scenario.name}: empty menu output`);
+
+      if (scenario.vllmExpected) {
+        assert.ok(
+          menuOutput.includes(`Install vLLM (${scenario.platformLabel})`) ||
+            menuOutput.includes(`Start vLLM (${scenario.platformLabel})`),
+          scenario.name,
+        );
+      } else {
+        assert.doesNotMatch(menuOutput, /Install vLLM \(/);
+        assert.doesNotMatch(menuOutput, /Start vLLM \(/);
+      }
+    }
+  });
+
   it("surfaces a precise error when NEMOCLAW_PROVIDER=install-vllm but no vLLM profile is detected (#3765)", () => {
     const repoRoot = path.join(import.meta.dirname, "..");
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-install-vllm-no-profile-"));
@@ -1312,6 +1484,11 @@ runner.runCapture = (command) => {
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
   if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/ps")) {
+    return JSON.stringify({
+      models: [{ name: "nemotron-3-nano:30b", context_length: 262144 }],
+    });
+  }
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
   return "";
@@ -1327,7 +1504,15 @@ const { setupNim } = require(${onboardPath});
   console.error = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines, commands }));
+    originalLog(
+      JSON.stringify({
+        result,
+        messages,
+        lines,
+        commands,
+        contextWindow: process.env.NEMOCLAW_CONTEXT_WINDOW,
+      }),
+    );
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -1346,6 +1531,7 @@ const { setupNim } = require(${onboardPath});
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_CONTEXT_WINDOW: "",
       },
     });
 
@@ -1378,6 +1564,91 @@ const { setupNim } = require(${onboardPath});
         command.includes("http://127.0.0.1:11434/api/generate"),
       ),
     );
+    assert.equal(payload.contextWindow, "262144");
+  });
+
+  it("re-resolves auto-detected Ollama context windows across model selections", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-context-"));
+    const scriptPath = path.join(tmpDir, "ollama-context-check.js");
+    const localInferencePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+
+let models = [];
+runner.runCapture = (command) => {
+  const rendered = Array.isArray(command) ? command.join(" ") : command;
+  if (rendered.includes("/api/ps")) {
+    return JSON.stringify({ models });
+  }
+  return "";
+};
+
+const {
+  applyOllamaRuntimeContextWindow,
+  resetOllamaRuntimeContextWindowAutoState,
+} = require(${localInferencePath});
+
+const result = {};
+const originalWarn = console.warn;
+const originalLog = console.log;
+console.warn = () => {};
+console.log = () => {};
+try {
+  resetOllamaRuntimeContextWindowAutoState();
+  delete process.env.NEMOCLAW_CONTEXT_WINDOW;
+
+  models = [{ name: "qwen3.6:35b", context_length: 262144 }];
+  applyOllamaRuntimeContextWindow("qwen3.6:35b");
+  result.initial = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
+
+  models = [{ name: "qwen2.5:7b", context_length: 32768 }];
+  applyOllamaRuntimeContextWindow("qwen2.5:7b");
+  result.updated = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
+
+  models = [];
+  applyOllamaRuntimeContextWindow("qwen2.5:7b");
+  result.cleared = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
+
+  resetOllamaRuntimeContextWindowAutoState();
+  process.env.NEMOCLAW_CONTEXT_WINDOW = "262144";
+  models = [{ name: "qwen2.5:7b", context_length: 32768 }];
+  applyOllamaRuntimeContextWindow("qwen2.5:7b");
+  result.userOverride = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
+
+  resetOllamaRuntimeContextWindowAutoState();
+  process.env.NEMOCLAW_CONTEXT_WINDOW = "bogus";
+  models = [{ name: "qwen2.5:7b", context_length: 32768 }];
+  applyOllamaRuntimeContextWindow("qwen2.5:7b");
+  result.invalidOverride = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
+} finally {
+  console.warn = originalWarn;
+  console.log = originalLog;
+}
+
+console.log(JSON.stringify(result));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), {
+      initial: "262144",
+      updated: "32768",
+      cleared: null,
+      userOverride: "262144",
+      invalidOverride: "bogus",
+    });
   });
 
   it("starts managed Ollama on loopback before exposing the auth proxy", () => {

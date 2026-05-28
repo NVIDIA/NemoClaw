@@ -905,8 +905,16 @@ describe("Hermes sandbox provisioning", () => {
       for (const run of runs) {
         expect(run.result.status).toBe(0);
         const hermesDir = path.join(run.sandboxRoot, ".hermes");
-        expect((fs.statSync(hermesDir).mode & 0o777).toString(8)).toBe("750");
-        for (const dir of ["logs", "cache", "platforms"]) {
+        expect((fs.statSync(hermesDir).mode & 0o7777).toString(8)).toBe("3770");
+        for (const dir of [
+          "logs",
+          "logs/curator",
+          "cache",
+          "hooks",
+          "image_cache",
+          "audio_cache",
+          "platforms",
+        ]) {
           expect((fs.statSync(path.join(hermesDir, dir)).mode & 0o777).toString(8)).toBe("770");
         }
         expect((fs.statSync(path.join(hermesDir, "platforms")).mode & 0o7777).toString(8)).toBe(
@@ -920,6 +928,7 @@ describe("Hermes sandbox provisioning", () => {
         expect(fs.readlinkSync(path.join(hermesDir, "gateway_state.json"))).toBe(
           "runtime/gateway_state.json",
         );
+        expect(() => fs.lstatSync(path.join(hermesDir, "gateway.pid"))).toThrow();
         expect(run.calls).toContain(`chown gateway:sandbox ${path.join(hermesDir, "runtime")}`);
       }
     } finally {

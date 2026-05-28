@@ -60,10 +60,16 @@ import ast
 import json
 import os
 import re
+import shutil
 import sys
 import textwrap
 from dataclasses import dataclass, field
 from pathlib import Path
+
+# Image asset extensions that the rewriter copies alongside the
+# generated skill file. Local copies keep skills self-contained so they
+# render even when the docs site is offline or unpublished.
+IMAGE_EXTENSIONS = frozenset({".png", ".jpg", ".jpeg", ".svg", ".gif", ".webp"})
 
 
 def load_html_baseurl(docs_dir: Path) -> str | None:
@@ -740,9 +746,10 @@ def rewrite_doc_paths(
     source_page: DocPage,
     docs_dir: Path,
     doc_to_skill: dict[str, str],
+    local_doc_links: dict[str, str] | None = None,
     html_baseurl: str | None = None,
     doc_platform: str = "myst-md",
-) -> str:
+) -> tuple[str, list[tuple[Path, str]]]:
     """Resolve relative doc paths to skill cross-refs or published URLs.
 
     Skill files are meant to be self-contained, so the rewriter never
@@ -752,22 +759,37 @@ def rewrite_doc_paths(
     1. If the target is an external URL, an anchor, or a ``mailto:``
        reference, or the target is not a recognized doc link for the selected
        platform, leave it untouched.
-    2. If the target resolves to a doc that has a generated skill,
+    2. If the target is an image asset that exists under ``docs/``,
+       record a copy task and rewrite the link to ``images/<basename>``.
+       The caller is responsible for copying the recorded files into the
+       skill output directory after writing the markdown body.
+    3. If the target resolves to a doc emitted in the current skill
+       directory, rewrite the link to that local file.
+    4. If the target resolves to a doc that has a generated skill,
        replace the whole link with ``text (use the `<skill>` skill)``.
-    3. If the target is a page inside ``docs/``, emit
+    5. If the target is a page inside ``docs/``, emit
        ``[text](<html_baseurl><page>.html)`` using the base URL read
        from ``conf.py``.
-    4. Otherwise (target outside ``docs/``, or no base URL available),
+    6. Otherwise (target outside ``docs/``, or no base URL available),
        strip the hyperlink and keep the link text. Self-containment wins
        over navigability in the fallback.
 
     Include placeholders that referenced ``docs/``-relative paths are
     rewritten the same way: published URL if available, else dropped.
+
+    Returns the rewritten text plus the list of ``(source_path, basename)``
+    image-copy tasks recorded during rewriting.
     """
     repo_root = docs_dir.parent
     source_dir = source_page.path.parent
 
     doc_extension = DOC_EXTENSIONS.get(doc_platform, ".md")
+    image_copies: list[tuple[Path, str]] = []
+
+    def _record_image_copy(resolved: Path) -> str:
+        """Record an image-copy task and return the link target for it."""
+        image_copies.append((resolved, resolved.name))
+        return f"images/{resolved.name}"
 
     def _to_html_url(resolved: Path, frag: str) -> str | None:
         """Published URL for a doc under ``docs/``; ``None`` otherwise."""
@@ -829,6 +851,30 @@ def rewrite_doc_paths(
         if not candidates:
             return match.group(0)
 
+        # Image assets that exist under docs/ are copied alongside the
+        # skill file so the rendered link works offline. Fragments are
+        # meaningless on local images, so they are dropped.
+        for resolved in candidates:
+            if resolved.suffix.lower() not in IMAGE_EXTENSIONS:
+                continue
+            try:
+                resolved.relative_to(docs_dir)
+            except ValueError:
+                continue
+            if not resolved.is_file():
+                continue
+            return f"[{link_text}]({_record_image_copy(resolved)})"
+
+        # Prefer same-skill reference files over self-referential skill hints.
+        for resolved in candidates:
+            try:
+                rel_to_repo = resolved.relative_to(repo_root)
+            except ValueError:
+                continue
+            rel_str = rel_to_repo.as_posix()
+            if local_doc_links and rel_str in local_doc_links:
+                return f"[{link_text}]({local_doc_links[rel_str]}{frag})"
+
         # Check if target doc maps to a generated skill
         for resolved in candidates:
             try:
@@ -869,7 +915,7 @@ def rewrite_doc_paths(
         text,
     )
 
-    return text
+    return text, image_copies
 
 
 def extract_related_skills(text: str) -> tuple[str, list[str]]:
@@ -1460,30 +1506,66 @@ def generate_skill(
     inter-doc links are rewritten to either skill cross-references or
     absolute HTTPS URLs (see :func:`rewrite_doc_paths`), the emitted
     content is independent of where it is written and can safely be
-    mirrored across multiple output roots.
+    mirrored across multiple output roots. Image assets referenced by
+    the source pages are copied alongside the file that links them so
+    the rendered skill works without network access.
 
     Returns a summary dict for reporting.
     """
-    def _clean(text: str, source: DocPage) -> str:
+    skill_md_images: list[tuple[Path, str]] = []
+    ref_images: dict[str, list[tuple[Path, str]]] = {}
+
+    def _clean(
+        text: str,
+        source: DocPage,
+        image_acc: list[tuple[Path, str]],
+        local_doc_links: dict[str, str] | None = None,
+    ) -> str:
         """Apply directive cleanup and path rewriting for a source page."""
         if doc_platform == "fern-mdx":
             result = clean_fern_mdx(text)
         else:
             result = clean_myst_directives(text)
         if docs_dir and doc_to_skill is not None:
-            result = rewrite_doc_paths(
+            result, copies = rewrite_doc_paths(
                 result,
                 source,
                 docs_dir,
                 doc_to_skill,
+                local_doc_links=local_doc_links,
                 html_baseurl=html_baseurl,
                 doc_platform=doc_platform,
             )
+            image_acc.extend(copies)
         return result
 
     procedures, deferred_procedures, context_pages, reference_pages = (
         partition_skill_pages(pages)
     )
+    ref_section_pages = deferred_procedures + context_pages + reference_pages
+
+    def _page_rel(page: DocPage) -> str | None:
+        if docs_dir is None:
+            return None
+        try:
+            return page.path.resolve().relative_to(docs_dir.parent).as_posix()
+        except ValueError:
+            return None
+
+    skill_md_local_links: dict[str, str] = {}
+    reference_local_links: dict[str, str] = {}
+    for page in ref_section_pages:
+        rel = _page_rel(page)
+        if rel is None:
+            continue
+        ref_name = page.path.stem + ".md"
+        skill_md_local_links[rel] = f"references/{ref_name}"
+        reference_local_links[rel] = ref_name
+    for page in procedures:
+        rel = _page_rel(page)
+        if rel is not None:
+            reference_local_links[rel] = "../SKILL.md"
+
     description_pages = (
         procedures + deferred_procedures + context_pages + reference_pages
         if procedures
@@ -1532,7 +1614,9 @@ def generate_skill(
     for pp in procedures:
         for heading, content in pp.sections:
             if heading.lower() in ("prerequisites", "before you begin"):
-                cleaned = _clean(content, pp)
+                cleaned = _clean(
+                    content, pp, skill_md_images, skill_md_local_links
+                )
                 for item_line in cleaned.split("\n"):
                     stripped = item_line.strip()
                     if stripped.startswith("- "):
@@ -1566,17 +1650,21 @@ def generate_skill(
             if heading.lower() in skip_sections:
                 continue
             if heading.lower() in related_sections:
-                collected_related.append(_clean(content, pp))
+                collected_related.append(
+                    _clean(content, pp, skill_md_images, skill_md_local_links)
+                )
                 continue
             if not heading:
-                cleaned = _clean(content, pp)
+                cleaned = _clean(content, pp, skill_md_images, skill_md_local_links)
                 cleaned = re.sub(r"^#\s+.+\n+", "", cleaned)
                 if cleaned.strip():
                     lines.append(cleaned)
                     lines.append("")
                 continue
 
-            cleaned_content = _clean(content, pp)
+            cleaned_content = _clean(
+                content, pp, skill_md_images, skill_md_local_links
+            )
             lines.append(f"## {heading}")
             lines.append("")
             lines.append(cleaned_content)
@@ -1610,7 +1698,6 @@ def generate_skill(
     # trigger from description.agent (the "Use when ..." clause) so the
     # agent can decide on-sight whether to load the file, which is how
     # progressive disclosure is supposed to work.
-    ref_section_pages = deferred_procedures + context_pages + reference_pages
     if ref_section_pages:
         lines.append("")
         lines.append("## References")
@@ -1643,13 +1730,15 @@ def generate_skill(
     ref_files: dict[str, str] = {}
     for rp in deferred_procedures + reference_pages + context_pages:
         ref_name = rp.path.stem + ".md"
-        body = _clean(rp.body, rp)
+        ref_image_acc: list[tuple[Path, str]] = []
+        body = _clean(rp.body, rp, ref_image_acc, reference_local_links)
         if doc_platform == "myst-md" and rp.title:
             body = canonicalize_leading_h1(body, rp.title)
         elif doc_platform == "fern-mdx" and rp.title and not body.startswith("# "):
             body = f"# {rp.title}\n\n{body}".rstrip()
         body = normalize_heading_levels(body)
         ref_files[ref_name] = body
+        ref_images[ref_name] = ref_image_acc
 
     # --- Write output ---
     summary = {
@@ -1670,6 +1759,7 @@ def generate_skill(
         (skill_dir / "SKILL.md").write_text(
             skill_md.rstrip("\n") + "\n", encoding="utf-8"
         )
+        _copy_skill_images(skill_dir, skill_md_images)
 
         spdx_ref = markdown_spdx_header()
 
@@ -1681,8 +1771,36 @@ def generate_skill(
                 (refs_dir / fname).write_text(
                     spdx_ref + content.rstrip("\n") + "\n", encoding="utf-8"
                 )
+                _copy_skill_images(refs_dir, ref_images.get(fname, []))
 
     return summary
+
+
+def _copy_skill_images(target_dir: Path, copies: list[tuple[Path, str]]) -> None:
+    """Copy recorded image assets next to the skill file that references them.
+
+    ``target_dir`` is the directory containing the markdown file that
+    references the images (e.g. the skill root for ``SKILL.md`` or the
+    ``references/`` directory for sibling reference files). Images land
+    in ``target_dir / "images" / basename`` so the rewritten link
+    ``images/<basename>`` resolves correctly.
+    """
+    if not copies:
+        return
+    images_dir = target_dir / "images"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    seen: set[str] = set()
+    for src, basename in copies:
+        if basename in seen:
+            continue
+        seen.add(basename)
+        dest = images_dir / basename
+        try:
+            if dest.exists() and dest.read_bytes() == src.read_bytes():
+                continue
+            shutil.copyfile(src, dest)
+        except OSError as exc:
+            print(f"  warning: failed to copy {src} -> {dest}: {exc}", file=sys.stderr)
 
 
 # ---------------------------------------------------------------------------
@@ -1938,17 +2056,20 @@ def main():
                 pass
 
     # Published-URL fallback for inter-doc links that do not map to a
-    # generated skill. Read from Sphinx's conf.py so the script stays
-    # project-agnostic — any docs tree with an html_baseurl assignment
-    # will just work.
-    html_baseurl = load_html_baseurl(docs_dir_resolved)
-    if html_baseurl is None:
-        print(
-            f"  warning: no html_baseurl found in {docs_dir_resolved}/conf.py; "
-            "inter-doc links without a skill mapping will be stripped to plain "
-            "text to keep skills self-contained.",
-            file=sys.stderr,
-        )
+    # generated skill. Only the legacy MyST/Sphinx path uses ``conf.py``
+    # for ``html_baseurl``; Fern docs copy assets locally instead and
+    # have no equivalent base URL to load.
+    if args.doc_platform == "myst-md":
+        html_baseurl = load_html_baseurl(docs_dir_resolved)
+        if html_baseurl is None:
+            print(
+                f"  warning: no html_baseurl found in {docs_dir_resolved}/conf.py; "
+                "inter-doc links without a skill mapping will be stripped to plain "
+                "text to keep skills self-contained.",
+                file=sys.stderr,
+            )
+    else:
+        html_baseurl = None
 
     # Generate skills
     dirs_str = ", ".join(str(d) for d in args.output_dirs)
