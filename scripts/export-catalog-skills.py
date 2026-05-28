@@ -348,6 +348,24 @@ def render_export(config: CatalogConfig, target_root: Path, preserve_from: Path 
     write_manifest(target_root, config, source_root)
 
 
+def files_match_for_export_check(left_file: Path, right_file: Path, rel_path: str) -> bool:
+    if rel_path != "catalog-metadata.json":
+        return filecmp.cmp(left_file, right_file, shallow=False)
+
+    try:
+        left_metadata = json.loads(left_file.read_text(encoding="utf-8"))
+        right_metadata = json.loads(right_file.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return False
+
+    # This field records the commit that generated the export. A fresh commit
+    # changes HEAD after files are written, so freshness checks compare content
+    # hashes and ignore this bookkeeping-only value.
+    left_metadata["sourceCommit"] = "<ignored>"
+    right_metadata["sourceCommit"] = "<ignored>"
+    return left_metadata == right_metadata
+
+
 def dircmp_diff(left: Path, right: Path) -> list[str]:
     messages: list[str] = []
 
@@ -357,7 +375,11 @@ def dircmp_diff(left: Path, right: Path) -> list[str]:
         for name in sorted(cmp.right_only):
             messages.append(f"missing: {(Path(cmp.right) / name).relative_to(right).as_posix()}")
         for name in sorted(cmp.diff_files):
-            messages.append(f"stale: {(Path(cmp.left) / name).relative_to(left).as_posix()}")
+            left_file = Path(cmp.left) / name
+            rel_path = left_file.relative_to(left).as_posix()
+            if files_match_for_export_check(left_file, Path(cmp.right) / name, rel_path):
+                continue
+            messages.append(f"stale: {rel_path}")
         for subdir in sorted(cmp.subdirs):
             visit(cmp.subdirs[subdir])
 
