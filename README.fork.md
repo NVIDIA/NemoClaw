@@ -134,8 +134,8 @@ node bin/nemoclaw.js my-assistant channels add telegram
 6. **Resume repair** — `provider-inference.ts` fixes `credentialEnv` / `endpointUrl` for `nvidia-prod` from selected model.  
 7. **Reference client** — `scripts/examples/nemotron-ultra-inference.py` (uses `NVIDIA_INFERENCE_HUB_API_KEY`).
 
+<img width="2170" height="1760" alt="Screenshot 2026-05-27 at 2 53 05 PM" src="https://github.com/user-attachments/assets/24f801e2-27f4-458a-8781-1b467b8877ec" />
 
-<img width="2186" height="1716" alt="Screenshot 2026-05-27 at 2 53 37 PM" src="https://github.com/user-attachments/assets/3ad8a05d-4f5a-4443-aff3-24d8feadfe1f" />
 
 
 ---
