@@ -116,6 +116,8 @@ node bin/nemoclaw.js my-assistant channels add telegram
 ```bash
 ./scripts/setup-tavily-search.sh my-assistant
 ```
+<img width="2186" height="1716" alt="Screenshot 2026-05-27 at 2 53 37 PM" src="https://github.com/user-attachments/assets/0f99486c-fd26-43ab-9a72-d827d627667d" />
+
 
 ---
 
@@ -132,15 +134,9 @@ node bin/nemoclaw.js my-assistant channels add telegram
 6. **Resume repair** — `provider-inference.ts` fixes `credentialEnv` / `endpointUrl` for `nvidia-prod` from selected model.  
 7. **Reference client** — `scripts/examples/nemotron-ultra-inference.py` (uses `NVIDIA_INFERENCE_HUB_API_KEY`).
 
-**Verify Inference Hub key:**
 
-```bash
-set -a && source ~/.nemoclaw/secrets.env && set +a
-curl -sS "https://inference-api.nvidia.com/v1/models" \
-  -H "Authorization: Bearer $NVIDIA_INFERENCE_HUB_API_KEY" | head
-```
+<img width="2186" height="1716" alt="Screenshot 2026-05-27 at 2 53 37 PM" src="https://github.com/user-attachments/assets/3ad8a05d-4f5a-4443-aff3-24d8feadfe1f" />
 
-**Model ID:** `nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1`
 
 ---
 
@@ -170,7 +166,11 @@ Confirms inference works end-to-end.
 - `What is 17 × 23? Show the answer only.`
 - `In one paragraph, what is NVIDIA Nemotron?`
 
+
 ### 2. Tavily / web search
+
+<img width="1642" height="732" alt="Screenshot 2026-05-27 at 5 41 04 PM" src="https://github.com/user-attachments/assets/277409c2-fc2f-4712-a27b-617d2547a05d" />
+
 
 Ask for **current** or **live** info so the agent should call Tavily.
 
