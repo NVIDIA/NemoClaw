@@ -49,7 +49,7 @@ You can use this variable in both interactive and non-interactive mode.
 If you already onboarded and the sandbox is failing at runtime, re-run
 `nemoclaw onboard` to re-probe the endpoint and bake the correct API path
 into the image.
-Refer to [Switch Inference Models](references/switch-inference-providers.md) for details.
+Refer to [Switch Inference Models](switch-inference-providers.md) for details.
 
 ## Anthropic-Compatible Server
 
@@ -140,7 +140,7 @@ If `Inference` is healthy but `Inference (auth proxy)` is not, rerun onboarding 
 ## Switch Models at Runtime
 
 You can change the model without re-running onboard.
-Refer to [Switch Inference Models](references/switch-inference-providers.md) for the full procedure.
+Refer to [Switch Inference Models](switch-inference-providers.md) for the full procedure.
 
 For compatible endpoints, the command is:
 

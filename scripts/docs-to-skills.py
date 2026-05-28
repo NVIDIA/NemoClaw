@@ -1786,6 +1786,10 @@ def generate_skill(
         block = content.strip()
         if not block:
             return ref_name
+        # Overflow content was cleaned for SKILL.md first, where same-skill
+        # reference targets live under references/. Once moved into a generated
+        # reference file, those targets are siblings.
+        block = re.sub(r"\]\(references/([^)]+)\)", r"](\1)", block)
         if not block.startswith("#"):
             block = f"## {section_heading}\n\n{block}"
         generated_ref_sections[ref_name].append(block)

@@ -38,11 +38,14 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^skills/[^/]+/skill\.oms\.sig$
         priority: 0
       - id: end-of-file-fixer
+        exclude: ^skills/[^/]+/skill\.oms\.sig$
         priority: 0
       - id: mixed-line-ending
         args: ["--fix=lf"]
+        exclude: ^skills/[^/]+/skill\.oms\.sig$
         priority: 0
 
   # ── Priority 0: reject force-added ignored files ───────────────────────────
