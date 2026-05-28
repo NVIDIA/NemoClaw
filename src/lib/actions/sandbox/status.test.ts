@@ -4,7 +4,10 @@
 import { describe, expect, it } from "vitest";
 
 import type { ProviderHealthProbeOptions } from "../../../../dist/lib/inference/health";
-import { getSandboxStatusInferenceHealth } from "../../../../dist/lib/actions/sandbox/status";
+import {
+  getSandboxStatusInferenceHealth,
+  isDockerDaemonUnreachableForStatus,
+} from "../../../../dist/lib/actions/sandbox/status";
 
 describe("sandbox status inference health", () => {
   it("passes the current model with the current provider", () => {
@@ -48,5 +51,38 @@ describe("sandbox status inference health", () => {
 
     expect(result).toBeNull();
     expect(called).toBe(false);
+  });
+});
+
+describe("isDockerDaemonUnreachableForStatus", () => {
+  it("returns false when sandbox entry is null", () => {
+    expect(isDockerDaemonUnreachableForStatus(null, () => false)).toBe(false);
+  });
+
+  it("returns false when the openshell driver is not docker", () => {
+    expect(
+      isDockerDaemonUnreachableForStatus(
+        { name: "alpha", openshellDriver: "vm" } as never,
+        () => false,
+      ),
+    ).toBe(false);
+  });
+
+  it("returns true when driver is docker and the probe reports unreachable", () => {
+    expect(
+      isDockerDaemonUnreachableForStatus(
+        { name: "alpha", openshellDriver: "docker" } as never,
+        () => false,
+      ),
+    ).toBe(true);
+  });
+
+  it("returns false when driver is docker and the probe reports reachable", () => {
+    expect(
+      isDockerDaemonUnreachableForStatus(
+        { name: "alpha", openshellDriver: "docker" } as never,
+        () => true,
+      ),
+    ).toBe(false);
   });
 });
