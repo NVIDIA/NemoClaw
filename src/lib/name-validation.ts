@@ -6,7 +6,7 @@ export const NAME_ALLOWED_FORMAT =
   `1-${NAME_MAX_LENGTH} characters, lowercase, starts with a letter, ` +
   "letters/numbers/internal hyphens only, ends with letter/number";
 
-const NAME_VALID_PATTERN = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
+export const NAME_VALID_PATTERN = /^[a-z]([a-z0-9-]*[a-z0-9])?$/;
 
 function validationSubject(label: string): string {
   const normalized = label.trim().toLowerCase();

@@ -4745,10 +4745,14 @@ const { setupNim, __setNonInteractive } = onboardModule.exports;
         ),
       ),
     );
-    assert.ok(
-      payload.lines.some((line: string) =>
-        line.includes("Set with: export NVIDIA_API_KEY=nvapi-..."),
-      ),
+    const setWithIndex = payload.lines.findIndex(
+      (line: string) => line.trim() === "Set with:",
+    );
+    assert.ok(setWithIndex >= 0, "expected a standalone 'Set with:' line");
+    assert.equal(
+      payload.lines[setWithIndex + 1].trim(),
+      "export NVIDIA_API_KEY=nvapi-...",
+      "expected the export command on its own line so it can be copy-pasted",
     );
     assert.ok(
       payload.lines.some((line: string) =>
