@@ -277,41 +277,49 @@ jobs:
 
       - name: Run typed scenarios in WSL
         if: contains(inputs.scenarios || github.event.inputs.scenarios, 'wsl-repo-cloud-openclaw')
-        shell: bash
+        shell: powershell
         env:
           NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
           SCENARIOS: ${{ inputs.scenarios || github.event.inputs.scenarios }}
         run: |
-          set -euo pipefail
-          if [[ ! "${SCENARIOS}" =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]]; then
-            echo "::error::Invalid scenario input: ${SCENARIOS}" >&2
+          if ($env:SCENARIOS -notmatch '^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$') {
+            Write-Error "Invalid scenario input: $env:SCENARIOS"
             exit 1
+          }
+          $workdir = $env:WSL_WORKDIR
+          $checkout = $env:WSL_CHECKOUT_DIR
+          $scenarios = $env:SCENARIOS
+          $script = @"
+          set -euo pipefail
+          workdir='$workdir'
+          checkout_dir='$checkout'
+          scenarios='$scenarios'
+          mkdir -p "`$workdir"
+          cd "`$workdir"
+          export E2E_CONTEXT_DIR="`$workdir"
+          npm ci --ignore-scripts
+          set +e
+          npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "`$scenarios" --dry-run
+          status=`$?
+          if [ -d "`$workdir/.e2e" ]; then
+            rm -rf "`$checkout_dir/.e2e"
+            cp -a "`$workdir/.e2e" "`$checkout_dir/.e2e"
           fi
-          wsl -d "${WSL_DISTRO}" -- env \
-            NVIDIA_API_KEY="${NVIDIA_API_KEY:-}" \
-            bash -lc '
-              set -euo pipefail
-              workdir="$1"
-              checkout_dir="$2"
-              scenarios="$3"
-              mkdir -p "${workdir}"
-              cd "${workdir}"
-              export E2E_CONTEXT_DIR="${workdir}"
-              npm ci --ignore-scripts
-              set +e
-              npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${scenarios}" --dry-run
-              status=$?
-              if [ -d "${workdir}/.e2e" ]; then
-                rm -rf "${checkout_dir}/.e2e"
-                cp -a "${workdir}/.e2e" "${checkout_dir}/.e2e"
-              fi
-              if [ -d "${workdir}/test/e2e/logs" ]; then
-                mkdir -p "${checkout_dir}/test/e2e"
-                rm -rf "${checkout_dir}/test/e2e/logs"
-                cp -a "${workdir}/test/e2e/logs" "${checkout_dir}/test/e2e/logs"
-              fi
-              exit "$status"
-            ' bash "${WSL_WORKDIR}" "${WSL_CHECKOUT_DIR}" "${SCENARIOS}"
+          if [ -d "`$workdir/test/e2e/logs" ]; then
+            mkdir -p "`$checkout_dir/test/e2e"
+            rm -rf "`$checkout_dir/test/e2e/logs"
+            cp -a "`$workdir/test/e2e/logs" "`$checkout_dir/test/e2e/logs"
+          fi
+          exit "`$status"
+          "@
+          $tmp = "$env:RUNNER_TEMP\wsl-step.sh"
+          [IO.File]::WriteAllText($tmp, ($script -replace "`r",""), (New-Object System.Text.UTF8Encoding $false))
+          $wslTmp = wsl -d $env:WSL_DISTRO -- wslpath -u ($tmp -replace '\\','/')
+          $apiKeyArg = "NVIDIA_API_KEY=$env:NVIDIA_API_KEY"
+          wsl -d $env:WSL_DISTRO -- env $apiKeyArg bash -l $wslTmp
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
 
       - name: Append plan summary
         if: always()
