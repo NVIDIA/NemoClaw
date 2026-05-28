@@ -6,6 +6,7 @@ import type { GatewayReuseState } from "../../../state/gateway";
 import type { Session } from "../../../state/onboard-session";
 import type { GatewayContainerState } from "../../gateway-container-running";
 import { withGatewayTrace } from "../../tracing";
+import { advanceTo, type OnboardStateTransitionResult } from "../result";
 
 export interface GatewayStateOptions<Gpu> {
   resume: boolean;
@@ -68,6 +69,7 @@ export interface GatewayStateOptions<Gpu> {
 export interface GatewayStateResult {
   gatewayReuseState: GatewayReuseState;
   session: Session | null;
+  stateResult: OnboardStateTransitionResult;
 }
 
 export async function handleGatewayState<Gpu>({
@@ -213,5 +215,11 @@ export async function handleGatewayState<Gpu>({
     session = await deps.recordStepComplete("gateway");
   }
 
-  return { gatewayReuseState, session };
+  return {
+    gatewayReuseState,
+    session,
+    stateResult: advanceTo("provider_selection", {
+      metadata: { state: "gateway", gatewayReuseState },
+    }),
+  };
 }

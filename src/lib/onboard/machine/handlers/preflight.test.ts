@@ -104,6 +104,13 @@ describe("handlePreflightState", () => {
       sandboxGpuDevice: "GPU-0",
     });
     expect(result.gpuPassthrough).toBe(true);
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "gateway",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "preflight", gpuPassthrough: true },
+    });
   });
 
   it("skips full preflight on resume but re-detects GPU and revalidates CDI/sandbox GPU", async () => {
