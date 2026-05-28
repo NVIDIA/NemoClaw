@@ -129,12 +129,12 @@ function removePathExcept(
   preserve: readonly string[],
   deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">> &
     Pick<UninstallRuntime, "warn">,
-): void {
-  if (!deps.existsSync(target)) return;
+): boolean {
+  if (!deps.existsSync(target)) return true;
   if (preserve.length === 0) {
     deps.rmSync(target, { force: true, recursive: true });
     deps.log(`Removed ${target}`);
-    return;
+    return true;
   }
   // Only enumerate when `target` is a real directory. A symlink or non-dir
   // would make readdirSync follow into / fail noisily; treat those as
@@ -144,16 +144,17 @@ function removePathExcept(
     stat = fs.lstatSync(target);
   } catch (err) {
     // ENOENT — gone already, nothing to do. Any other error means we cannot
-    // safely decide whether to enumerate or remove; surface it so uninstall
-    // does not silently claim success while leaving state on disk.
-    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return;
+    // safely decide whether to enumerate or remove; surface it and report
+    // failure so uninstall returns a non-zero exit instead of silently
+    // claiming success while leaving state on disk.
+    if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return true;
     deps.warn(`Failed to inspect ${target}: ${err instanceof Error ? err.message : String(err)}`);
-    return;
+    return false;
   }
   if (!stat.isDirectory()) {
     deps.rmSync(target, { force: true, recursive: true });
     deps.log(`Removed ${target}`);
-    return;
+    return true;
   }
   const preserveSet = new Set(preserve);
   const children = fs.readdirSync(target);
@@ -168,9 +169,10 @@ function removePathExcept(
   if (preserved.length === 0) {
     deps.rmSync(target, { force: true, recursive: true });
     deps.log(`Removed ${target}`);
-    return;
+    return true;
   }
   deps.log(`Removed contents of ${target} (preserved: ${preserved.join(", ")})`);
+  return true;
 }
 
 function removeFileWithOptionalSudo(target: string, deps: UninstallRuntime): void {
@@ -677,7 +679,8 @@ function executePlan(
   options: UninstallRunOptions,
   runtime: UninstallRuntime,
   preserveUnderStateDir: readonly string[],
-): void {
+): { ok: boolean } {
+  let ok = true;
   const branding = runtimeBranding(runtime);
   for (const [index, step] of plan.steps.entries()) {
     runtime.log(`[${index + 1}/${plan.steps.length}] ${planStepDisplayName(step.name, branding)}`);
@@ -713,12 +716,13 @@ function executePlan(
       for (const pattern of paths.runtimeTempGlobs) removeGlob(pattern, runtime);
       if (options.keepOpenShell) runtime.log("Keeping OpenShell binaries as requested.");
       else for (const target of paths.openshellInstallPaths) removeFileWithOptionalSudo(target, runtime);
-      removePathExcept(paths.nemoclawStateDir, preserveUnderStateDir, runtime);
+      if (!removePathExcept(paths.nemoclawStateDir, preserveUnderStateDir, runtime)) ok = false;
       removePath(paths.gatewayLocalStateDir, runtime);
       removePath(paths.openshellConfigDir, runtime);
       removePath(paths.nemoclawConfigDir, runtime);
     }
   }
+  return { ok };
 }
 
 export function buildRunPlan(options: UninstallRunOptions, deps: UninstallRunDeps = {}): { paths: UninstallPaths; plan: UninstallPlan } {
@@ -745,7 +749,7 @@ export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRu
   printBanner(runtime);
   if (!confirm(options, runtime)) return { exitCode: 0, plan };
   const preserveUnderStateDir = resolvePreserveSet(paths, options, runtime);
-  executePlan(plan, paths, options, runtime, preserveUnderStateDir);
+  const { ok } = executePlan(plan, paths, options, runtime, preserveUnderStateDir);
   printBye(runtime);
-  return { exitCode: 0, plan };
+  return { exitCode: ok ? 0 : 1, plan };
 }

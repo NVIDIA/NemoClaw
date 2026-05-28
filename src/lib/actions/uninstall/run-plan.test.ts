@@ -636,7 +636,7 @@ describe("uninstall run plan", () => {
       return (target: string) => target.startsWith(tmpHome) && fs.existsSync(target);
     }
 
-    it("preserves rebuild-backups/ and sandboxes.json by default in non-interactive runs (#4226)", () => {
+    it("preserves rebuild-backups/, backups/, and sandboxes.json by default in non-interactive runs", () => {
       const { tmpHome, stateDir } = setupStateDir();
       try {
         const logs: string[] = [];
@@ -749,6 +749,43 @@ describe("uninstall run plan", () => {
         expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(true);
         expect(logs).toContain("Keeping user data.");
       } finally {
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
+    });
+
+    it("exits non-zero and warns when lstat on ~/.nemoclaw fails with a non-ENOENT error", () => {
+      const { tmpHome, stateDir } = setupStateDir();
+      const realLstat = fs.lstatSync;
+      const lstatSpy = vi.spyOn(fs, "lstatSync").mockImplementation((p: fs.PathLike) => {
+        if (String(p) === stateDir) {
+          const err = new Error("permission denied") as NodeJS.ErrnoException;
+          err.code = "EACCES";
+          throw err;
+        }
+        return realLstat(p);
+      });
+      try {
+        const logs: string[] = [];
+        const warnings: string[] = [];
+        const result = runUninstallPlan(
+          { assumeYes: true, deleteModels: false, keepOpenShell: true },
+          {
+            commandExists: () => false,
+            env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+            error: (line) => warnings.push(line),
+            existsSync: tempScopedExistsSync(tmpHome),
+            isTty: false,
+            log: (line) => logs.push(line),
+            run: vi.fn(() => ok()),
+            runDocker: () => ok(""),
+          },
+        );
+
+        expect(result.exitCode).toBe(1);
+        expect(warnings.some((line) => line.startsWith(`Failed to inspect ${stateDir}: `))).toBe(true);
+        expect(fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"))).toBe(true);
+      } finally {
+        lstatSpy.mockRestore();
         fs.rmSync(tmpHome, { recursive: true, force: true });
       }
     });
