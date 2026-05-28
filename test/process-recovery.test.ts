@@ -177,7 +177,8 @@ beta  127.0.0.1  18789  12345  running`;
       dashboardPort: 18789,
     });
     vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(false);
-    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation((args: string[]) => {
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation((rawArgs: unknown) => {
+      const args = Array.isArray(rawArgs) ? rawArgs : [];
       expect(args).toEqual(["forward", "list"]);
       forwardListCalls += 1;
       return {
