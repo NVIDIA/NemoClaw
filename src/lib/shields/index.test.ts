@@ -753,6 +753,109 @@ describe("shields — unit logic", () => {
       expect(errorSpy).not.toHaveBeenCalled();
     });
 
+    it("passes the persisted fileHashes seal to the verifier when present (#4243)", async () => {
+      const sandboxName = "openclaw";
+      const fileHashes = {
+        "/sandbox/.openclaw/openclaw.json":
+          "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+      };
+      fs.mkdirSync(stateDir(), { recursive: true });
+      fs.writeFileSync(
+        path.join(stateDir(), `shields-${sandboxName}.json`),
+        JSON.stringify(
+          {
+            shieldsDown: false,
+            chattrApplied: true,
+            fileHashes,
+            updatedAt: new Date().toISOString(),
+          },
+          null,
+          2,
+        ),
+        { mode: 0o600 },
+      );
+      let receivedExpectedHashes:
+        | { [path: string]: string }
+        | undefined;
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+
+      const { shieldsStatus } = await loadShieldsModule();
+      shieldsStatus(sandboxName, true, {
+        verifyLockState: (
+          _name: string,
+          _target: unknown,
+          options: { expectedHashes?: { [path: string]: string } },
+        ) => {
+          receivedExpectedHashes = options.expectedHashes;
+          return { ok: true, issues: [] };
+        },
+        resolveConfig: () => ({
+          agentName: "openclaw",
+          configPath: "/sandbox/.openclaw/openclaw.json",
+          configDir: "/sandbox/.openclaw",
+        }),
+      });
+
+      expect(receivedExpectedHashes).toEqual(fileHashes);
+      // No legacy-state notice when a seal is recorded.
+      expect(
+        logSpy.mock.calls.map((args) => args[0]).join("\n"),
+      ).not.toContain("no content seal recorded");
+      expect(errorSpy).not.toHaveBeenCalled();
+    });
+
+    it("logs a legacy-state notice when locked but no fileHashes seal is recorded", async () => {
+      const sandboxName = "openclaw";
+      writeLockedState(sandboxName);
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      const { shieldsStatus } = await loadShieldsModule();
+      shieldsStatus(sandboxName, true, {
+        verifyLockState: () => ({ ok: true, issues: [] }),
+        resolveConfig: () => ({
+          agentName: "openclaw",
+          configPath: "/sandbox/.openclaw/openclaw.json",
+          configDir: "/sandbox/.openclaw",
+        }),
+      });
+
+      const lines = logSpy.mock.calls.map((args) => args[0]).join("\n");
+      expect(lines).toContain(
+        `Notice: no content seal recorded; re-run \`nemoclaw ${sandboxName} shields up\` to capture one for drift detection.`,
+      );
+    });
+
+    it("surfaces content-drift entries from the verifier without re-locking (#4243)", async () => {
+      const sandboxName = "openclaw";
+      writeLockedState(sandboxName);
+      const driftIssues = [
+        "/sandbox/.openclaw/openclaw.json content drifted (sha256 fff... != sealed 012...)",
+      ];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((code?: string | number | null) => {
+          throw new Error(`exit ${String(code)}`);
+        });
+
+      const { shieldsStatus } = await loadShieldsModule();
+      expect(() =>
+        shieldsStatus(sandboxName, true, {
+          verifyLockState: () => ({ ok: false, issues: driftIssues }),
+          resolveConfig: () => ({
+            agentName: "openclaw",
+            configPath: "/sandbox/.openclaw/openclaw.json",
+            configDir: "/sandbox/.openclaw",
+          }),
+        }),
+      ).toThrow("exit 2");
+
+      const allErrors = errorSpy.mock.calls.map((args) => args[0]).join("\n");
+      expect(allErrors).toContain("content drifted");
+      expect(exitSpy).toHaveBeenCalledWith(2);
+    });
+
     it("treats a resolveConfig throw as drift so the locked status cannot mask a setup gap", async () => {
       const sandboxName = "openclaw";
       writeLockedState(sandboxName);
