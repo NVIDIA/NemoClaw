@@ -65,8 +65,8 @@ function runHermesPortValidation(opts: {
       extractShellFunctionFromSource(src, "validate_port_configuration"),
       `PUBLIC_PORT=${opts.publicPort ?? 8642}`,
       `INTERNAL_PORT=${opts.internalPort ?? 18642}`,
-      `HERMES_DASHBOARD_PUBLIC_PORT=${opts.dashboardPublicPort ?? 9119}`,
-      `HERMES_DASHBOARD_INTERNAL_PORT=${opts.dashboardInternalPort ?? 19119}`,
+      `DASHBOARD_PUBLIC_PORT=${opts.dashboardPublicPort ?? 18789}`,
+      `DASHBOARD_INTERNAL_PORT=${opts.dashboardInternalPort ?? 19119}`,
       "validate_port_configuration",
     ].join("\n"),
     { mode: 0o700 },
@@ -284,7 +284,7 @@ function runHermesGatewayRuntimeCleanup(opts: {
   if (opts.orphanDashboardSocat) {
     writeFakeProcCmdline(procRoot, 789, [
       "socat",
-      "TCP-LISTEN:9119,bind=0.0.0.0,fork,reuseaddr",
+      "TCP-LISTEN:18789,bind=0.0.0.0,fork,reuseaddr",
       "TCP:127.0.0.1:19119",
     ]);
   }
@@ -314,8 +314,8 @@ function runHermesGatewayRuntimeCleanup(opts: {
       opts.lockedConfigRoot || opts.rootOwnedConfigRoot ? LOCKED_HERMES_CONFIG_STAT_MOCK : "",
       "PUBLIC_PORT=8642",
       "INTERNAL_PORT=18642",
-      "HERMES_DASHBOARD_PUBLIC_PORT=9119",
-      "HERMES_DASHBOARD_INTERNAL_PORT=19119",
+      "DASHBOARD_PUBLIC_PORT=18789",
+      "DASHBOARD_INTERNAL_PORT=19119",
       "cleanup_stale_hermes_gateway_runtime",
     ].join("\n"),
     { mode: 0o700 },
@@ -474,7 +474,7 @@ describe("agents/hermes/start.sh port validation", () => {
     });
     expect(dashboardPublicOnApiInternal.status).toBe(1);
     expect(dashboardPublicOnApiInternal.stderr).toContain(
-      "HERMES_DASHBOARD_PUBLIC_PORT must not equal INTERNAL_PORT",
+      "DASHBOARD_PUBLIC_PORT must not equal INTERNAL_PORT",
     );
 
     const dashboardInternalOnApiPublic = runHermesPortValidation({
@@ -482,7 +482,7 @@ describe("agents/hermes/start.sh port validation", () => {
     });
     expect(dashboardInternalOnApiPublic.status).toBe(1);
     expect(dashboardInternalOnApiPublic.stderr).toContain(
-      "HERMES_DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT",
+      "DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT",
     );
   });
 });

@@ -72,19 +72,16 @@ describe("agent definitions", () => {
     });
     expect(hermes.inferenceProviderOptions).toEqual(["hermesProvider"]);
     expect(hermes.healthProbe.url).toBe("http://localhost:8642/health");
+    expect(hermes.forwardPort).toBe(18789);
+    expect(hermes.forward_ports).toEqual([18789, 8642]);
     expect(hermes.dashboard).toEqual({
-      kind: "api",
-      label: "OpenAI-compatible API",
-      path: "/v1",
-    });
-    expect(hermes.dashboardUi).toEqual({
-      label: "Web dashboard",
-      port: 9119,
+      kind: "ui",
+      label: "Dashboard",
       path: "/",
-      enableEnv: "NEMOCLAW_HERMES_DASHBOARD",
-      portEnv: "NEMOCLAW_HERMES_DASHBOARD_PORT",
-      tuiEnv: "NEMOCLAW_HERMES_DASHBOARD_TUI",
+      healthPath: "/api/status",
+      auth: "session",
     });
+    expect(hermes.dashboardUi).toBeNull();
     expect(hermes.messagingPlatforms).toEqual([
       "telegram",
       "discord",
