@@ -132,13 +132,16 @@ forward_list_has_running_port() {
   local forward_list="$3"
   FORWARD_LIST_TEXT="$forward_list" python3 - "$sandbox" "$port" <<'PY'
 import os
+import re
 import sys
 
+ANSI_RE = re.compile(r"\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])")
 sandbox = sys.argv[1]
 port = sys.argv[2]
-for line in os.environ.get("FORWARD_LIST_TEXT", "").splitlines():
+for raw_line in os.environ.get("FORWARD_LIST_TEXT", "").splitlines():
+    line = ANSI_RE.sub("", raw_line)
     parts = line.split()
-    if len(parts) >= 5 and parts[0] == sandbox and parts[2] == port and parts[-1].lower() == "running":
+    if len(parts) >= 5 and parts[0] == sandbox and parts[2] == port and parts[-1].lower() in {"running", "active"}:
         sys.exit(0)
 sys.exit(1)
 PY
