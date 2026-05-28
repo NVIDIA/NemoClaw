@@ -65,6 +65,15 @@ import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShi
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
  */
+export function rebuildShouldOptOutGpu(
+  sb: { sandboxGpuEnabled?: boolean; gpuEnabled?: boolean } | null | undefined,
+): boolean {
+  if (!sb) return false;
+  if (sb.sandboxGpuEnabled === false) return true;
+  if (sb.sandboxGpuEnabled === undefined && sb.gpuEnabled === false) return true;
+  return false;
+}
+
 function _rebuildLog(msg: string) {
   console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${redact(msg)}${R}`);
 }
@@ -676,6 +685,14 @@ export async function rebuildSandbox(
     throw err;
   }) as typeof process.exit;
 
+  // Propagate the original sandbox's no-GPU intent into the recreate path so
+  // the inner `onboard --resume` does not enforce a Docker CDI GPU preflight
+  // on hosts without an NVIDIA GPU. Without this, a `--no-gpu` sandbox on a
+  // non-NVIDIA host (e.g. Snapdragon ARM WSL2) is destroyed and the recreate
+  // fails at preflight because the registry entry has already been removed
+  // and the cached session's gpuPassthrough is not enough to bypass the CDI
+  // check on every code path.
+  const sbHadNoGpu = rebuildShouldOptOutGpu(sb);
   try {
     await onboard({
       resume: true,
@@ -689,6 +706,7 @@ export async function rebuildSandbox(
       // non-interactive onboard does not abort after the old sandbox has
       // been deleted (#2639 follow-up).
       autoYes: skipConfirm || rebuildConfirmed,
+      ...(sbHadNoGpu ? { noGpu: true } : {}),
     });
     log("onboard() returned successfully");
   } catch (err) {
