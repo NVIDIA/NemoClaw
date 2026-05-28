@@ -7,11 +7,17 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
+import { execTimeout, testTimeoutOptions } from "./helpers/timeouts";
+
 const BOOTSTRAP_WINDOWS = path.join(
   import.meta.dirname,
   "..",
   "scripts",
   "bootstrap-windows.ps1",
+);
+const POWERSHELL_EXEC_TIMEOUT_MS = execTimeout(20_000);
+const POWERSHELL_TEST_TIMEOUT = testTimeoutOptions(
+  Math.max(30_000, POWERSHELL_EXEC_TIMEOUT_MS + 5_000),
 );
 
 function resolvePowerShell() {
@@ -27,7 +33,8 @@ function resolvePowerShell() {
 }
 
 const POWERSHELL = resolvePowerShell();
-const itPowerShell = POWERSHELL ? it : it.skip;
+const itPowerShell = (name: string, fn: () => void) =>
+  (POWERSHELL ? it : it.skip)(name, POWERSHELL_TEST_TIMEOUT, fn);
 
 function runPowerShellHarness(script: string) {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-bootstrap-windows-"));
@@ -39,6 +46,7 @@ function runPowerShellHarness(script: string) {
       ["-NoLogo", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", harness],
       {
         encoding: "utf8",
+        timeout: POWERSHELL_EXEC_TIMEOUT_MS,
         env: {
           ...process.env,
           TEMP: process.env.TEMP ?? process.env.TMPDIR ?? os.tmpdir(),
