@@ -948,6 +948,113 @@ describe("Hermes sandbox provisioning", () => {
     }
   });
 
+  it("Hermes base configures OpenSSH to use the NemoClaw proxy helper", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE_BASE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-base-ssh-"));
+    const sshHelper = path.join(tmp, "usr-local-bin", "nemoclaw-ssh");
+    const proxyHelper = path.join(tmp, "usr-local-bin", "nemoclaw-ssh-proxy");
+    const askpassHelper = path.join(tmp, "usr-local-bin", "nemoclaw-ssh-askpass");
+    const sshWrapper = path.join(tmp, "usr-local-bin", "ssh");
+    const sshConfigDir = path.join(tmp, "etc-ssh", "ssh_config.d");
+    fs.mkdirSync(path.dirname(sshHelper), { recursive: true });
+    fs.writeFileSync(sshHelper, "# fixture\n", { mode: 0o600 });
+
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "COPY scripts/nemoclaw-ssh.sh",
+      "# gosu for privilege separation",
+    )
+      .replaceAll("/usr/local/bin/nemoclaw-ssh-proxy", proxyHelper)
+      .replaceAll("/usr/local/bin/nemoclaw-ssh-askpass", askpassHelper)
+      .replaceAll("/usr/local/bin/nemoclaw-ssh", sshHelper)
+      .replaceAll("/usr/local/bin/ssh", sshWrapper)
+      .replaceAll("/etc/ssh/ssh_config.d", sshConfigDir);
+
+    try {
+      const { result } = runLoggedDockerShell(command, tmp);
+      expect(result.status, result.stderr).toBe(0);
+      expect((fs.statSync(sshHelper).mode & 0o777).toString(8)).toBe("555");
+      expect(fs.readlinkSync(sshWrapper)).toBe(sshHelper);
+      expect(fs.readlinkSync(proxyHelper)).toBe(sshHelper);
+      expect(fs.readlinkSync(askpassHelper)).toBe(sshHelper);
+
+      const proxyConfig = path.join(sshConfigDir, "nemoclaw-proxy.conf");
+      expect(fs.readFileSync(proxyConfig, "utf-8")).toContain(
+        `ProxyCommand ${proxyHelper} %h %p`,
+      );
+      expect((fs.statSync(proxyConfig).mode & 0o777).toString(8)).toBe("444");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("Hermes runtime hardening preserves OpenSSH client and netcat for stale bases", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-runtime-ssh-"));
+    const log = path.join(tmp, "calls.log");
+    const sshMarker = path.join(tmp, "ssh-installed");
+    const ncMarker = path.join(tmp, "nc-installed");
+    const realSsh = path.join(tmp, "usr-bin", "ssh");
+    const sshHelper = path.join(tmp, "usr-local-bin", "nemoclaw-ssh");
+    const proxyHelper = path.join(tmp, "usr-local-bin", "nemoclaw-ssh-proxy");
+    const askpassHelper = path.join(tmp, "usr-local-bin", "nemoclaw-ssh-askpass");
+    const sshWrapper = path.join(tmp, "usr-local-bin", "ssh");
+    const sshConfigDir = path.join(tmp, "etc-ssh", "ssh_config.d");
+    const lists = path.join(tmp, "apt-lists");
+    fs.mkdirSync(lists);
+    fs.mkdirSync(path.dirname(sshHelper), { recursive: true });
+    fs.mkdirSync(path.dirname(realSsh), { recursive: true });
+    fs.writeFileSync(sshHelper, "# fixture\n", { mode: 0o600 });
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "# Harden: remove unnecessary build tools",
+      "# Hermes' WeChat adapter",
+    )
+      .replaceAll("/var/lib/apt/lists", lists)
+      .replaceAll("/usr/bin/ssh", realSsh)
+      .replaceAll("/usr/local/bin/nemoclaw-ssh-proxy", proxyHelper)
+      .replaceAll("/usr/local/bin/nemoclaw-ssh-askpass", askpassHelper)
+      .replaceAll("/usr/local/bin/nemoclaw-ssh", sshHelper)
+      .replaceAll("/usr/local/bin/ssh", sshWrapper)
+      .replaceAll("/etc/ssh/ssh_config.d", sshConfigDir);
+    const script = [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      `call_log=${JSON.stringify(log)}`,
+      `ssh_marker=${JSON.stringify(sshMarker)}`,
+      `nc_marker=${JSON.stringify(ncMarker)}`,
+      'apt-mark() { printf "apt-mark %s\\n" "$*" >> "$call_log"; }',
+      `real_ssh=${JSON.stringify(realSsh)}`,
+      'apt-get() { printf "apt-get %s\\n" "$*" >> "$call_log"; if [[ "$*" == *"install"* && "$*" == *"openssh-client=1:10.0p1-7+deb13u4"* ]]; then touch "$ssh_marker"; mkdir -p "$(dirname "$real_ssh")"; printf "#!/bin/sh\\n" > "$real_ssh"; chmod 755 "$real_ssh"; fi; if [[ "$*" == *"install"* && "$*" == *"netcat-openbsd=1.229-1"* ]]; then touch "$nc_marker"; fi; }',
+      'command() { if [ "${1:-}" = "-v" ] && [ "${2:-}" = "ssh" ]; then [ -f "$ssh_marker" ]; elif [ "${1:-}" = "-v" ] && [ "${2:-}" = "nc" ]; then [ -f "$nc_marker" ]; else builtin command "$@"; fi; }',
+      command,
+    ].join("\n");
+    const scriptPath = path.join(tmp, "run.sh");
+    try {
+      fs.writeFileSync(scriptPath, script, { mode: 0o700 });
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, result.stderr).toBe(0);
+      const calls = fs.readFileSync(log, "utf-8");
+      expect(calls).toContain("apt-mark manual openssh-client netcat-openbsd");
+      expect(calls).toContain("apt-get autoremove --purge -y");
+      expect(calls).not.toContain("netcat-openbsd netcat-traditional ncat");
+      expect(calls).toContain("apt-get update");
+      expect(calls).toContain(
+        "apt-get install -y --no-install-recommends openssh-client=1:10.0p1-7+deb13u4",
+      );
+      expect(calls).toContain("apt-get install -y --no-install-recommends netcat-openbsd=1.229-1");
+      expect((fs.statSync(sshHelper).mode & 0o777).toString(8)).toBe("555");
+      expect(fs.readlinkSync(proxyHelper)).toBe(sshHelper);
+      expect(fs.readlinkSync(askpassHelper)).toBe(sshHelper);
+      expect(fs.readlinkSync(sshWrapper)).toBe(sshHelper);
+      expect(
+        fs.readFileSync(path.join(sshConfigDir, "nemoclaw-proxy.conf"), "utf-8"),
+      ).toContain("ProxyCommand");
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
   it("adds root to the Hermes sandbox group during base user setup", () => {
     const { result, calls, tmp, sandboxRoot } = runHermesUserSetupBlock();
     try {

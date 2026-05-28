@@ -42,12 +42,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcap2-bin=1:2.75-10+deb13u1+b1 \
         procps=2:4.0.4-9 \
         e2fsprogs=1.47.2-3+b11 \
+        openssh-client=1:10.0p1-7+deb13u4 \
+        netcat-openbsd=1.229-1 \
         openssh-sftp-server=1:10.0p1-7+deb13u4 \
         socat=1.8.0.3-1 \
         "dos2unix=7.5.2-1*" \
         jq=1.7.1-6+deb13u2 \
         vim-tiny=2:9.1.1230-2 \
     && rm -rf /var/lib/apt/lists/*
+
+COPY scripts/nemoclaw-ssh.sh /usr/local/bin/nemoclaw-ssh
+RUN chmod 555 /usr/local/bin/nemoclaw-ssh \
+    && ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/ssh \
+    && ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/nemoclaw-ssh-proxy \
+    && ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/nemoclaw-ssh-askpass \
+    && mkdir -p /etc/ssh/ssh_config.d \
+    && printf '%s\n' \
+        'Host *' \
+        '  ProxyCommand /usr/local/bin/nemoclaw-ssh-proxy %h %p' \
+        > /etc/ssh/ssh_config.d/nemoclaw-proxy.conf \
+    && chmod 444 /etc/ssh/ssh_config.d/nemoclaw-proxy.conf
 
 # gosu for privilege separation (gateway vs sandbox user).
 # Identical to OpenClaw base — pinned to 1.19 with checksum.

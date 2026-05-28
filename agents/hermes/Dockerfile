@@ -22,11 +22,43 @@ RUN set -eu; \
     test -x /usr/local/bin/hermes; \
     /usr/local/bin/hermes --version
 
+COPY scripts/nemoclaw-ssh.sh /usr/local/bin/nemoclaw-ssh
+
 # Harden: remove unnecessary build tools and network probes
-RUN (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
-        netcat-openbsd netcat-traditional ncat 2>/dev/null || true) \
-    && apt-get autoremove --purge -y \
-    && rm -rf /var/lib/apt/lists/*
+# Protect OpenSSH runtime tools before autoremove. Published Hermes bases can
+# lag Dockerfile.base, so this block also repairs stale images missing ssh/nc.
+# hadolint ignore=DL3001
+RUN set -eu; \
+    apt-mark manual openssh-client netcat-openbsd 2>/dev/null || true; \
+    (apt-get remove --purge -y gcc gcc-12 g++ g++-12 cpp cpp-12 make \
+        netcat-traditional ncat 2>/dev/null || true); \
+    apt-get autoremove --purge -y; \
+    needs_ssh=0; \
+    needs_nc=0; \
+    if [ ! -x /usr/bin/ssh ]; then needs_ssh=1; fi; \
+    if ! command -v nc >/dev/null 2>&1; then needs_nc=1; fi; \
+    if [ "$needs_ssh" = "1" ] || [ "$needs_nc" = "1" ]; then \
+        apt-get update; \
+        if [ "$needs_ssh" = "1" ]; then \
+            apt-get install -y --no-install-recommends openssh-client=1:10.0p1-7+deb13u4; \
+        fi; \
+        if [ "$needs_nc" = "1" ]; then \
+            apt-get install -y --no-install-recommends netcat-openbsd=1.229-1; \
+        fi; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*; \
+    [ -x /usr/bin/ssh ]; \
+    command -v nc >/dev/null; \
+    chmod 555 /usr/local/bin/nemoclaw-ssh; \
+    ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/ssh; \
+    ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/nemoclaw-ssh-proxy; \
+    ln -sf /usr/local/bin/nemoclaw-ssh /usr/local/bin/nemoclaw-ssh-askpass; \
+    mkdir -p /etc/ssh/ssh_config.d; \
+    printf '%s\n' \
+        'Host *' \
+        '  ProxyCommand /usr/local/bin/nemoclaw-ssh-proxy %h %p' \
+        > /etc/ssh/ssh_config.d/nemoclaw-proxy.conf; \
+    chmod 444 /etc/ssh/ssh_config.d/nemoclaw-proxy.conf
 
 # Hermes' WeChat adapter (gateway/platforms/weixin.py:_make_ssl_connector)
 # builds aiohttp with ssl.create_default_context(cafile=certifi.where()),
