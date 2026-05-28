@@ -10,11 +10,14 @@ export type RebuildGpuOptOutEntry = {
 };
 
 // Modern source of truth is the persisted `sandboxGpuMode` string ("0" / "1" /
-// "auto"). The legacy `gpuEnabled` fallback fires when `normalizeSandboxGpuMode`
-// returns null — that covers older registry entries written before
-// `sandboxGpuMode` landed and tolerates malformed mode values (treating them
-// as "no recorded intent") rather than locking the rebuild into the wrong
-// branch on corrupted state.
+// "auto"). The legacy `gpuEnabled` fallback only runs for older entries with
+// no recorded mode field — a malformed but present `sandboxGpuMode` value is
+// treated as "do nothing" rather than silently routed through the legacy
+// path, so corrupted state cannot flip a sandbox into a permanent opt-out.
+function hasRecordedGpuMode(value: unknown): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 export function rebuildShouldOptOutGpu(
   sb: RebuildGpuOptOutEntry | null | undefined,
 ): boolean {
@@ -22,6 +25,7 @@ export function rebuildShouldOptOutGpu(
   const mode = normalizeSandboxGpuMode(sb.sandboxGpuMode);
   if (mode === "0") return true;
   if (mode === "1" || mode === "auto") return false;
+  if (hasRecordedGpuMode(sb.sandboxGpuMode)) return false;
   if (sb.sandboxGpuEnabled === true) return false;
   return sb.gpuEnabled === false;
 }
