@@ -283,7 +283,7 @@ If the patch fails, onboarding keeps diagnostics and prints a manual cleanup com
 
 Prerequisites:
 
-- NVIDIA GPU drivers installed and working (`nvidia-smi` must succeed).
+- NVIDIA GPU drivers installed and working. On generic NVIDIA hosts this means `nvidia-smi` must succeed; on Jetson/Tegra hosts shipping without `nvidia-smi`, the devicetree firmware fallback substitutes.
 - NVIDIA Container Toolkit configured for Docker.
 
 When GPU passthrough is enabled and a gateway already exists without it, onboarding first checks whether replacing the CPU-only gateway is safe.

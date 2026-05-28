@@ -208,13 +208,15 @@ describe("nim", () => {
       }
     }
 
-    function withProcessArch(arch: NodeJS.Architecture, fn: () => void): void {
-      withProcessProperty("arch", arch, fn);
-    }
-
     function withLinuxArm64(fn: () => void): void {
       withProcessProperty("platform", "linux", () => {
         withProcessProperty("arch", "arm64", fn);
+      });
+    }
+
+    function withLinuxX64(fn: () => void): void {
+      withProcessProperty("platform", "linux", () => {
+        withProcessProperty("arch", "x64", fn);
       });
     }
 
@@ -369,15 +371,12 @@ describe("nim", () => {
       }
     });
 
-    // Regression #3988: WSL2 d3d12 shims (e.g. Snapdragon X "nvidia-smi.exe")
-    // return a generic name like "JMJWOA-Generic-GPU" for non-NVIDIA hardware.
-    // The primary path used to accept any name from nvidia-smi, which made the
-    // preflight report "NVIDIA GPU detected" on hosts with no NVIDIA hardware.
-    //
-    // The widened denylist must reject the full `JMJWOA-Generic-*` family, not
-    // just the GPU suffix observed in the wild today. NPU and a hypothetical
-    // future suffix should also be rejected without a code change so the gate
-    // does not silently regress when the shim emits a new placeholder variant.
+    // The observed Snapdragon X WSL2 nvidia-smi shim returns a generic name
+    // like "JMJWOA-Generic-GPU" for non-NVIDIA hardware. The widened denylist
+    // must reject the full `JMJWOA-Generic-*` family, not just the GPU suffix
+    // observed in the wild today. NPU and any future suffix should also be
+    // rejected without a code change so the gate does not silently regress
+    // when the shim emits a new placeholder variant.
     it.each([
       "JMJWOA-Generic-GPU",
       "JMJWOA-Generic-NPU",
@@ -385,7 +384,7 @@ describe("nim", () => {
       "NVIDIA JMJWOA-Generic-GPU",
       "NVIDIA JMJWOA-Generic-NPU",
       "NVIDIA JMJWOA-Generic-Future",
-    ])("rejects denylisted placeholder name %s on generic firmware (#3988)", (placeholder) => {
+    ])("rejects denylisted placeholder name %s on generic firmware", (placeholder) => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
@@ -411,7 +410,7 @@ describe("nim", () => {
     // must reject the entire probe. Partial-trust filtering would surface the
     // normal row as if it were a real GPU, which is exactly what the Snapdragon
     // X shim could exploit if the kernel-interface gate were ever bypassed.
-    it("rejects the whole probe when any row is denylisted on generic firmware (#3988)", () => {
+    it("rejects the whole probe when any row is denylisted on generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
@@ -439,7 +438,7 @@ describe("nim", () => {
     // NVIDIA name. The shim was QA-confirmed to emit format-valid
     // `uuid`/`compute_cap`/`vbios_version` triples but never populates the
     // kernel-driver path.
-    it("rejects when /proc/driver/nvidia/ is absent on ARM64 generic firmware (#3988)", () => {
+    it("rejects when /proc/driver/nvidia/ is absent on ARM64 generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
@@ -468,7 +467,7 @@ describe("nim", () => {
     // Counter-test: ARM64 Linux with `/proc/driver/nvidia/` present is a real
     // kernel-driver-bound host (e.g. legitimate N1X with a real GB20y dGPU
     // and the NVIDIA driver loaded) — the gate must trust it.
-    it("accepts known NVIDIA names when /proc/driver/nvidia/ is present on ARM64 (#3988)", () => {
+    it("accepts known NVIDIA names when /proc/driver/nvidia/ is present on ARM64", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
@@ -499,14 +498,14 @@ describe("nim", () => {
       }
     });
 
-    // The d3d12/WDDM shim ships on Windows-on-ARM only — Microsoft's WoA is
-    // ARM-only by spec, so an x86_64 Linux host that exposes `nvidia-smi`
-    // cannot be the shim. The trust-tier gate must therefore trust x86_64
-    // hosts whose `/proc/driver/nvidia/` is missing rather than false-reject
-    // them, eliminating a potential regression on real x86_64 WSL2 NVIDIA
-    // hosts where the driver revision may not populate the kernel-driver
-    // path identically to native Linux.
-    it("trusts x86_64 generic firmware even when /proc/driver/nvidia/ is absent (#3988)", () => {
+    // The observed Snapdragon X WSL2 nvidia-smi shim is Windows-on-ARM only —
+    // Microsoft's WoA is ARM-only by spec, so an x86_64 Linux host that
+    // exposes `nvidia-smi` cannot be that shim. The trust-tier gate must
+    // therefore trust x86_64 hosts whose `/proc/driver/nvidia/` is missing
+    // rather than false-reject them, eliminating a potential regression on
+    // real x86_64 WSL2 NVIDIA hosts where the driver revision may not
+    // populate the kernel-driver path identically to native Linux.
+    it("trusts x86_64 generic firmware even when /proc/driver/nvidia/ is absent", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
@@ -521,7 +520,7 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          withProcessArch("x64", () => {
+          withLinuxX64(() => {
             withNvidiaKernelInterface(false, () => {
               expect(nimModule.detectGpu()).toMatchObject({
                 type: "nvidia",
@@ -541,7 +540,7 @@ describe("nim", () => {
     // architecture: an x86_64 Linux/WSL2 host whose name field still matches
     // the shim placeholder family must be rejected even though the trust-tier
     // gate would otherwise pass on x86_64.
-    it("rejects denylisted names on x86_64 generic firmware (#3988)", () => {
+    it("rejects denylisted names on x86_64 generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
@@ -556,7 +555,7 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          withProcessArch("x64", () => {
+          withLinuxX64(() => {
             expect(nimModule.detectGpu()).toBeNull();
           });
         });
@@ -567,10 +566,10 @@ describe("nim", () => {
 
     // Spark/Station/Jetson firmware vouches for the device unconditionally —
     // the trust-tier and denylist gates must NOT apply when the host
-    // identifies as one of those NVIDIA platforms. Otherwise pre-release Spark
-    // firmware (#3510) would regress when /proc/driver/nvidia/ is missing on
-    // ARM64 Spark hosts.
-    it("bypasses gates on Spark firmware even when /proc/driver/nvidia/ is absent on ARM64 (#3510)", () => {
+    // identifies as one of those NVIDIA platforms. Otherwise pre-release
+    // Spark firmware would regress on ARM64 Spark hosts when
+    // /proc/driver/nvidia/ is missing.
+    it("bypasses gates on Spark firmware even when /proc/driver/nvidia/ is absent on ARM64", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
@@ -770,7 +769,7 @@ describe("nim", () => {
     // where firmware does not vouch for an NVIDIA platform. Otherwise a
     // d3d12/WDDM shim emitting `JMJWOA-Generic-*` on the names-only fallback
     // would slip past the primary-path gate.
-    it("unified-memory fallback rejects denylisted names on generic firmware (#3988)", () => {
+    it("unified-memory fallback rejects denylisted names on generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd.some((a: string) => a.includes("memory.total"))) return "";
@@ -797,7 +796,7 @@ describe("nim", () => {
     // generic firmware. A tagged name like "NVIDIA Jetson AGX Orin" on an
     // ARM64 host with no `/proc/driver/nvidia/` cannot be trusted; only
     // firmware-vouched platforms (Spark/Jetson) bypass the gate on this path.
-    it("unified-memory fallback rejects tagged names without kernel interface on ARM64 generic firmware (#3988)", () => {
+    it("unified-memory fallback rejects tagged names without kernel interface on ARM64 generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd.some((a: string) => a.includes("memory.total"))) return "";
