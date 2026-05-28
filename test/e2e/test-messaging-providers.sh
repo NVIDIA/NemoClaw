@@ -906,7 +906,7 @@ else:
   case "$tg_state" in
     enabled) pass "M6a: channels.telegram.enabled is true (bridge loadable per #4314/#4390)" ;;
     missing) fail "M6a: channels.telegram present but enabled flag missing — bridge will silently no-op" ;;
-    *)       skip "M6a: Telegram channel block not in openclaw.json (expected in non-root sandbox)" ;;
+    *) skip "M6a: Telegram channel block not in openclaw.json (expected in non-root sandbox)" ;;
   esac
 
   dc_state=$(echo "$channel_json" | python3 -c "
@@ -923,7 +923,7 @@ else:
   case "$dc_state" in
     enabled) pass "M6b: channels.discord.enabled is true (bridge loadable)" ;;
     missing) fail "M6b: channels.discord present but enabled flag missing — bridge will silently no-op" ;;
-    *)       skip "M6b: Discord channel block not in openclaw.json (expected in non-root sandbox)" ;;
+    *) skip "M6b: Discord channel block not in openclaw.json (expected in non-root sandbox)" ;;
   esac
 
   # M7: Telegram token is NOT the real/fake host token

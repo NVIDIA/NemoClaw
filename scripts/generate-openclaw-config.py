@@ -611,14 +611,7 @@ def build_config(env: dict | None = None) -> dict:
                 channel_id: dict(slack_channel_config)
                 for channel_id in _slack_allowed_channels
             }
-        # Bake `channels.<channel>.enabled: true` for every credential-backed
-        # messaging channel. OpenClaw 2026.5.22+ no longer auto-starts a
-        # channel bridge from an account-level `enabled` flag alone — the
-        # channel must also be marked enabled at the top level for the
-        # bridge module to load. NemoClaw#4189 fixed this for Slack; the
-        # same gap silently produces "no Telegram process / no logs" on
-        # Telegram (#4314, #4390) and the equivalent symptom on Discord.
-        _ch_cfg[ch] = {"enabled": True, "accounts": {"default": account}}
+        _ch_cfg[ch] = {"enabled": True, "accounts": {"default": account}}  # top-level enabled required by OpenClaw 2026.5.22+ (#4189/#4314/#4390)
 
     # WeChat (openclaw-weixin) is NOT added to channels.* here in build
     # contexts where the plugin has not been installed yet — writing it upfront
