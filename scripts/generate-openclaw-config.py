@@ -611,7 +611,7 @@ def build_config(env: dict | None = None) -> dict:
                 channel_id: dict(slack_channel_config)
                 for channel_id in _slack_allowed_channels
             }
-        _ch_cfg[ch] = {"accounts": {"default": account}}
+        _ch_cfg[ch] = {**({"enabled": True} if ch == "slack" else {}), "accounts": {"default": account}}
 
     # WeChat (openclaw-weixin) is NOT added to channels.* here in build
     # contexts where the plugin has not been installed yet — writing it upfront
@@ -630,7 +630,6 @@ def build_config(env: dict | None = None) -> dict:
     # framework allowFrom file at credentials/openclaw-weixin-{accountId}-
     # allowFrom.json — not the openclaw.json accounts.<id>.allowFrom mechanism
     # that telegram/discord/slack use.
-
     if "discord" in _ch_cfg and _discord_guilds:
         _ch_cfg["discord"].update(
             {"groupPolicy": "allowlist", "guilds": _discord_guilds}
@@ -717,6 +716,7 @@ def build_config(env: dict | None = None) -> dict:
         # registered an accountId under channels.openclaw-weixin.accounts.
         "openclaw-weixin": {"enabled": True},
     }
+    plugin_entries.update({"slack": {"enabled": True}} if "slack" in _ch_cfg else {})
     _bundled_provider_plugins = {
         "amazon-bedrock": {"amazon-bedrock", "bedrock"},
         "amazon-bedrock-mantle": {"amazon-bedrock-mantle"},
