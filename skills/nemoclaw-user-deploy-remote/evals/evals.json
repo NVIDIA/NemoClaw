@@ -1,0 +1,170 @@
+[
+  {
+    "id": "docs-deployment-deploy-to-remote-gpu-001",
+    "question": "I'm deploying NemoClaw to a remote GPU instance. Help me move the sandboxed assistant off my local machine so I can support persistent or GPU-backed operation.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user move the sandboxed assistant off my local machine and gives enough concrete guidance, decision criteria, verification steps, or risk framing to support persistent or GPU-backed operation.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: deploying NemoClaw to a remote GPU instance.",
+      "The AI coding assistant loads the expected_skill and SKILL.md",
+      "The output helps the user move the sandboxed assistant off my local machine with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to support persistent or GPU-backed operation.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the SKILL.md file."
+    ]
+  },
+  {
+    "id": "docs-deployment-deploy-to-remote-gpu-002",
+    "question": "I'm using the legacy Brev compatibility flow. Help me understand what the flow still does and where it is deprecated so I can avoid depending on an outdated path blindly.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand what the flow still does and where it is deprecated and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid depending on an outdated path blindly.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: using the legacy Brev compatibility flow.",
+      "The AI coding assistant loads the expected_skill and SKILL.md",
+      "The output helps the user understand what the flow still does and where it is deprecated with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to avoid depending on an outdated path blindly.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the SKILL.md file."
+    ]
+  },
+  {
+    "id": "docs-deployment-deploy-to-remote-gpu-003",
+    "question": "I'm after remote deployment succeeds. Help me find the connection, operation, and recovery details so I can operate the sandbox after initial setup.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user find the connection, operation, and recovery details and gives enough concrete guidance, decision criteria, verification steps, or risk framing to operate the sandbox after initial setup.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: after remote deployment succeeds.",
+      "The AI coding assistant loads the expected_skill and SKILL.md",
+      "The output helps the user find the connection, operation, and recovery details with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to operate the sandbox after initial setup.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the SKILL.md file."
+    ]
+  },
+  {
+    "id": "docs-deployment-brev-web-ui-001",
+    "question": "I'm launching NemoClaw from the Brev web UI. Help me avoid local CLI setup and local GPU requirements so I can start a hosted sandbox quickly.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user avoid local CLI setup and local GPU requirements and gives enough concrete guidance, decision criteria, verification steps, or risk framing to start a hosted sandbox quickly.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: launching NemoClaw from the Brev web UI.",
+      "The AI coding assistant loads the expected_skill and references/brev-web-ui.md",
+      "The output helps the user avoid local CLI setup and local GPU requirements with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to start a hosted sandbox quickly.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/brev-web-ui.md file."
+    ]
+  },
+  {
+    "id": "docs-deployment-brev-web-ui-002",
+    "question": "I'm reviewing hosted launch choices. Help me understand each web UI option before creating the instance so I can choose settings that match my expected sandbox workflow.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand each web UI option before creating the instance and gives enough concrete guidance, decision criteria, verification steps, or risk framing to choose settings that match my expected sandbox workflow.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: reviewing hosted launch choices.",
+      "The AI coding assistant loads the expected_skill and references/brev-web-ui.md",
+      "The output helps the user understand each web UI option before creating the instance with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to choose settings that match my expected sandbox workflow.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/brev-web-ui.md file."
+    ]
+  },
+  {
+    "id": "docs-deployment-brev-web-ui-003",
+    "question": "I'm the hosted sandbox is created. Help me confirm where to connect and how to start using it so I can move from provisioning to actual agent work.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user confirm where to connect and how to start using it and gives enough concrete guidance, decision criteria, verification steps, or risk framing to move from provisioning to actual agent work.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: the hosted sandbox is created.",
+      "The AI coding assistant loads the expected_skill and references/brev-web-ui.md",
+      "The output helps the user confirm where to connect and how to start using it with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to move from provisioning to actual agent work.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/brev-web-ui.md file."
+    ]
+  },
+  {
+    "id": "docs-deployment-install-openclaw-plugins-001",
+    "question": "I'm installing an OpenClaw plugin in a NemoClaw-managed sandbox. Help me add a new agent capability inside the sandbox so I can extend the assistant without weakening the host boundary.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user add a new agent capability inside the sandbox and gives enough concrete guidance, decision criteria, verification steps, or risk framing to extend the assistant without weakening the host boundary.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: installing an OpenClaw plugin in a NemoClaw-managed sandbox.",
+      "The AI coding assistant loads the expected_skill and references/install-openclaw-plugins.md",
+      "The output helps the user add a new agent capability inside the sandbox with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to extend the assistant without weakening the host boundary.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/install-openclaw-plugins.md file."
+    ]
+  },
+  {
+    "id": "docs-deployment-install-openclaw-plugins-002",
+    "question": "I'm deciding where to install a plugin. Help me distinguish host environment changes from sandbox environment changes so I can modify the right filesystem and runtime.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user distinguish host environment changes from sandbox environment changes and gives enough concrete guidance, decision criteria, verification steps, or risk framing to modify the right filesystem and runtime.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: deciding where to install a plugin.",
+      "The AI coding assistant loads the expected_skill and references/install-openclaw-plugins.md",
+      "The output helps the user distinguish host environment changes from sandbox environment changes with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to modify the right filesystem and runtime.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/install-openclaw-plugins.md file."
+    ]
+  },
+  {
+    "id": "docs-deployment-install-openclaw-plugins-003",
+    "question": "I'm verifying a plugin installation. Help me confirm the agent can discover and use the plugin so I can trust that the capability works inside NemoClaw's security model.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user confirm the agent can discover and use the plugin and gives enough concrete guidance, decision criteria, verification steps, or risk framing to trust that the capability works inside NemoClaw's security model.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: verifying a plugin installation.",
+      "The AI coding assistant loads the expected_skill and references/install-openclaw-plugins.md",
+      "The output helps the user confirm the agent can discover and use the plugin with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to trust that the capability works inside NemoClaw's security model.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/install-openclaw-plugins.md file."
+    ]
+  },
+  {
+    "id": "docs-deployment-sandbox-hardening-001",
+    "question": "I'm reviewing sandbox image hardening. Help me understand which container risks NemoClaw reduces so I can decide whether unattended agents are acceptable in my environment.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand which container risks NemoClaw reduces and gives enough concrete guidance, decision criteria, verification steps, or risk framing to decide whether unattended agents are acceptable in my environment.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: reviewing sandbox image hardening.",
+      "The AI coding assistant loads the expected_skill and references/sandbox-hardening.md",
+      "The output helps the user understand which container risks NemoClaw reduces with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to decide whether unattended agents are acceptable in my environment.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/sandbox-hardening.md file."
+    ]
+  },
+  {
+    "id": "docs-deployment-sandbox-hardening-002",
+    "question": "I'm mapping NemoClaw to an organizational security baseline. Help me identify capability drops, least privilege, and runtime protections so I can document how the sandbox meets or misses required controls.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user identify capability drops, least privilege, and runtime protections and gives enough concrete guidance, decision criteria, verification steps, or risk framing to document how the sandbox meets or misses required controls.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: mapping NemoClaw to an organizational security baseline.",
+      "The AI coding assistant loads the expected_skill and references/sandbox-hardening.md",
+      "The output helps the user identify capability drops, least privilege, and runtime protections with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to document how the sandbox meets or misses required controls.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/sandbox-hardening.md file."
+    ]
+  },
+  {
+    "id": "docs-deployment-sandbox-hardening-003",
+    "question": "I'm considering production use. Help me see the limitations and residual risks of the hardened image so I can avoid overstating what container hardening guarantees.",
+    "expected_skill": "nemoclaw-user-deploy-remote",
+    "ground_truth": "A NemoClaw-specific answer that helps the user see the limitations and residual risks of the hardened image and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid overstating what container hardening guarantees.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: considering production use.",
+      "The AI coding assistant loads the expected_skill and references/sandbox-hardening.md",
+      "The output helps the user see the limitations and residual risks of the hardened image with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to avoid overstating what container hardening guarantees.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/sandbox-hardening.md file."
+    ]
+  }
+]
