@@ -30,11 +30,18 @@ NemoClaw creates a fresh OpenClaw instance inside the sandbox during the onboard
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-The piped installer prompts through your terminal. In headless scripts or CI,
-pass explicit acceptance to the `bash` side of the pipe:
+The piped installer prompts through your terminal.
+Piping `curl` into `bash` strips the TTY, so in headless scripts or CI you must pass explicit acceptance of the third-party software notice or the installer exits before installing anything.
+Either pass the env vars to the `bash` side of the pipe:
 
 ```console
 $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```
+
+or pass the flag form via `bash -s --`:
+
+```console
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
 ```
 
 If you use nvm or fnm to manage Node.js, the installer might not update your current shell's PATH.
