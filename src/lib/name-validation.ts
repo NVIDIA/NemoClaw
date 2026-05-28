@@ -17,13 +17,15 @@ function validationSubject(label: string): string {
 }
 
 // Derive a copy-paste-ready RFC 1123 label from arbitrary user input. Returns
-// null when no recoverable slug exists (empty, all-symbol input, or the input
-// is already valid). The transform mirrors what a user would do by hand:
-// lowercase, replace illegal chars with `-`, collapse runs of `-`, trim
-// terminal `-`, prefix a leading non-letter with `s-`, and truncate to the
-// max length without leaving a dangling hyphen.
+// null when no recoverable slug exists (empty, all-symbol input) or when the
+// input is already a valid name (no canonicalisation is performed against
+// inputs the validator would accept). The transform mirrors what a user would
+// do by hand: lowercase, replace illegal chars with `-`, collapse runs of `-`,
+// trim terminal `-`, prefix a leading non-letter with `s-`, and truncate to
+// the max length without leaving a dangling hyphen.
 export function suggestNameSlug(value: string): string | null {
   if (typeof value !== "string") return null;
+  if (value.length <= NAME_MAX_LENGTH && NAME_VALID_PATTERN.test(value)) return null;
   let slug = value.toLowerCase().replace(/[^a-z0-9-]+/g, "-").replace(/-+/g, "-");
   slug = slug.replace(/^-+|-+$/g, "");
   if (!slug) return null;
