@@ -370,41 +370,44 @@ describe("showSandboxChannelStatus (whatsapp)", () => {
       .mockImplementation(((code?: number) => {
         throw new Error(`process.exit(${code})`);
       }) as never);
-    const { deps: depsNoMatch, out_lines: linesNoMatch } = makeDeps({
-      exec: () => ({ status: 0, stdout: stdoutNoMatch, stderr: "" }),
-    });
     try {
-      await showSandboxChannelStatus("alpha", { deps: depsNoMatch });
-    } catch {
-      /* expected exit(1) for stale-heartbeat + no bridge */
-    }
-    const dumpNoMatch = linesNoMatch.join("\n");
-    expect(dumpNoMatch).toMatch(/Bridge process: no WhatsApp bridge process observed/);
-    expect(dumpNoMatch).toMatch(/Verdict:.*idle/);
+      const { deps: depsNoMatch, out_lines: linesNoMatch } = makeDeps({
+        exec: () => ({ status: 0, stdout: stdoutNoMatch, stderr: "" }),
+      });
+      try {
+        await showSandboxChannelStatus("alpha", { deps: depsNoMatch });
+      } catch {
+        /* expected exit(1) for stale-heartbeat + no bridge */
+      }
+      const dumpNoMatch = linesNoMatch.join("\n");
+      expect(dumpNoMatch).toMatch(/Bridge process: no WhatsApp bridge process observed/);
+      expect(dumpNoMatch).toMatch(/Verdict:.*idle/);
 
-    const stdoutTimeout = [
-      "NEMOCLAW_WA_DIAG_OK",
-      "DIR /sandbox/.openclaw/whatsapp POPULATED",
-      "NEMOCLAW_WA_HEARTBEAT_BEGIN",
-      JSON.stringify({
-        lastInboundAt: "2026-05-28T03:59:30.000Z",
-        messagesHandled: 1,
-        connectionState: "open",
-      }),
-      "NEMOCLAW_WA_HEARTBEAT_END",
-      "NEMOCLAW_WA_LOG_BEGIN",
-      "NEMOCLAW_WA_LOG_END",
-      // No PROC_DONE — simulating a probe that aborted before reaching
-      // the pgrep stage.
-    ].join("\n");
-    const { deps: depsTimeout, out_lines: linesTimeout } = makeDeps({
-      exec: () => ({ status: 0, stdout: stdoutTimeout, stderr: "" }),
-    });
-    await showSandboxChannelStatus("alpha", { deps: depsTimeout });
-    const dumpTimeout = linesTimeout.join("\n");
-    expect(dumpTimeout).toMatch(/Bridge process: could not enumerate sandbox processes/);
-    expect(dumpTimeout).toMatch(/Verdict:.*healthy/);
-    exitSpy.mockRestore();
+      const stdoutTimeout = [
+        "NEMOCLAW_WA_DIAG_OK",
+        "DIR /sandbox/.openclaw/whatsapp POPULATED",
+        "NEMOCLAW_WA_HEARTBEAT_BEGIN",
+        JSON.stringify({
+          lastInboundAt: "2026-05-28T03:59:30.000Z",
+          messagesHandled: 1,
+          connectionState: "open",
+        }),
+        "NEMOCLAW_WA_HEARTBEAT_END",
+        "NEMOCLAW_WA_LOG_BEGIN",
+        "NEMOCLAW_WA_LOG_END",
+        // No PROC_DONE — simulating a probe that aborted before reaching
+        // the pgrep stage.
+      ].join("\n");
+      const { deps: depsTimeout, out_lines: linesTimeout } = makeDeps({
+        exec: () => ({ status: 0, stdout: stdoutTimeout, stderr: "" }),
+      });
+      await showSandboxChannelStatus("alpha", { deps: depsTimeout });
+      const dumpTimeout = linesTimeout.join("\n");
+      expect(dumpTimeout).toMatch(/Bridge process: could not enumerate sandbox processes/);
+      expect(dumpTimeout).toMatch(/Verdict:.*healthy/);
+    } finally {
+      exitSpy.mockRestore();
+    }
   });
 
   it("captures the probe script as a syntactically valid /bin/sh program", async () => {
