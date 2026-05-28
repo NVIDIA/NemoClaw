@@ -21,11 +21,11 @@
 _SANDBOX_INIT_LOADED=1
 
 # ── /tmp trust boundary map ──────────────────────────────────────
-# Files in /tmp that cross user boundaries. Every file sourced by
-# .bashrc/.profile MUST be root-owned 444 in root mode.
+# Files in /tmp that cross user boundaries. Every file sourced by system-wide
+# shell hooks MUST be root-owned 444 in root mode.
 #
 # File                         Owner      Mode  Writer   Reader    Sourced?
-# /tmp/nemoclaw-proxy-env.sh   root       444   root     sandbox   YES (.bashrc/.profile)
+# /tmp/nemoclaw-proxy-env.sh   root       444   root     sandbox   YES (/etc shell hooks)
 # /tmp/gateway.log             gateway    644   gateway  all       no (world-readable for diagnostics)
 # /tmp/auto-pair.log           sandbox    600   sandbox  sandbox   no
 # /tmp/.npm-cache/             sandbox    755   sandbox  sandbox   no (tool data)
@@ -453,7 +453,35 @@ lock_rc_files() {
       continue
     fi
     if [ -f "$rc_file" ]; then
-      if ! chmod 444 "$rc_file" 2>/dev/null; then
+      if ! python3 - "$rc_file" "$(id -u)" <<'PY' 2>/dev/null; then
+import errno
+import os
+import stat
+import sys
+
+path, uid_text = sys.argv[1:3]
+uid = int(uid_text)
+flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+try:
+    fd = os.open(path, flags)
+except OSError as exc:
+    if exc.errno == errno.ELOOP:
+        print(f"[SECURITY] Refusing to lock symlinked rc file: {path}", file=sys.stderr)
+    else:
+        print(f"[SECURITY] Could not open rc file for locking: {path}: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+try:
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode):
+        print(f"[SECURITY] Refusing to lock non-regular rc file: {path}", file=sys.stderr)
+        sys.exit(1)
+    if uid == 0:
+        os.fchown(fd, 0, 0)
+    os.fchmod(fd, 0o444)
+finally:
+    os.close(fd)
+PY
         echo "[SECURITY] Could not lock ${rc_file} to 444 — continuing (best-effort, Landlock may enforce)" >&2
       fi
     fi

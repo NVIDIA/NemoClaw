@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawn, type SpawnOptions } from "node:child_process";
+import { type SpawnOptions, spawn } from "node:child_process";
 
 import { ROOT } from "../state/paths";
 
@@ -19,6 +19,7 @@ export interface StreamSandboxCreateOptions {
   heartbeatIntervalMs?: number;
   silentPhaseMs?: number;
   logLine?: (line: string) => void;
+  traceEvent?: (name: string, attributes?: Record<string, unknown>) => void;
   // Optional guard for the early-ready escape hatch. When set, readyCheck()
   // alone cannot detach the create stream until at least one streamed output
   // line matches a configured pattern.
@@ -97,6 +98,7 @@ const VISIBLE_PROGRESS_PATTERNS: readonly RegExp[] = [
 
 const VM_READY_DETACH_OUTPUT_PATTERNS: readonly RegExp[] = [/Setting up NemoClaw/];
 const CLASSIC_DOCKER_STEP_RE = /^\s*Step (\d+)\/(\d+) : (.+)$/;
+const BUILDKIT_STEP_RE = /^#(\d+)\s+(.+)$/;
 
 function matchesAny(line: string, patterns: readonly RegExp[]) {
   return patterns.some((pattern) => pattern.test(line));
@@ -133,6 +135,7 @@ export function streamSandboxCreate(
   });
 
   const logLine = options.logLine ?? console.log;
+  const traceEvent = options.traceEvent ?? (() => {});
   const lines: string[] = [];
   let pending = "";
   let lastPrintedLine = "";
@@ -198,6 +201,10 @@ export function streamSandboxCreate(
     printProgressLine(line);
   }
 
+  function emitTraceEvent(name: string, attributes: Record<string, unknown> = {}) {
+    traceEvent(name, attributes);
+  }
+
   function markBuildStarted(nowMs: number = timingNow()) {
     if (buildStartedAtMs === null) {
       buildStartedAtMs = nowMs;
@@ -206,11 +213,18 @@ export function streamSandboxCreate(
 
   function finishActiveBuildStep(status: "completed" | "stopped", nowMs: number = timingNow()) {
     if (!activeBuildStep) return;
+    const elapsedMs = nowMs - activeBuildStep.startedAtMs;
     const phrase = status === "completed" ? "completed in" : "stopped after";
-    const elapsed = formatDuration(nowMs - activeBuildStep.startedAtMs);
+    const elapsed = formatDuration(elapsedMs);
     appendTimingLine(
       `  ${activeBuildStep.label} ${phrase} ${elapsed} (${activeBuildStep.instruction})`,
     );
+    emitTraceEvent("docker_build_step_end", {
+      status,
+      step: activeBuildStep.label,
+      instruction: activeBuildStep.instruction,
+      duration_ms: elapsedMs,
+    });
     activeBuildStep = null;
   }
 
@@ -218,10 +232,15 @@ export function streamSandboxCreate(
     if (buildTimingFinished) return;
     finishActiveBuildStep(status, nowMs);
     if (buildStartedAtMs !== null) {
+      const elapsedMs = nowMs - buildStartedAtMs;
       const phrase = status === "completed" ? "completed in" : "stopped after";
       appendTimingLine(
-        `  Sandbox image build ${phrase} ${formatDuration(nowMs - buildStartedAtMs)}`,
+        `  Sandbox image build ${phrase} ${formatDuration(elapsedMs)}`,
       );
+      emitTraceEvent("docker_build_end", {
+        status,
+        duration_ms: elapsedMs,
+      });
     }
     buildTimingFinished = true;
   }
@@ -237,6 +256,24 @@ export function streamSandboxCreate(
       instruction: match[3].trim().replace(/\s+/g, " "),
       startedAtMs: nowMs,
     };
+    emitTraceEvent("docker_build_step_start", {
+      step: activeBuildStep.label,
+      index: Number(match[1]),
+      total: Number(match[2]),
+      instruction: activeBuildStep.instruction,
+    });
+  }
+
+  function maybeRecordBuildKitStep(line: string) {
+    const match = line.match(BUILDKIT_STEP_RE);
+    if (!match) return;
+    if (!matchesAny(line, BUILD_PROGRESS_PATTERNS) && !matchesAny(line, PULL_PROGRESS_PATTERNS)) {
+      return;
+    }
+    emitTraceEvent("docker_buildkit_progress", {
+      step: Number(match[1]),
+      detail: match[2].trim().replace(/\s+/g, " "),
+    });
   }
 
   function elapsedSeconds() {
@@ -260,6 +297,10 @@ export function streamSandboxCreate(
               : nextPhase === "ready"
                 ? "  Waiting for sandbox to become ready..."
                 : null;
+    emitTraceEvent("sandbox_create_phase", {
+      phase: nextPhase,
+      elapsed_seconds: elapsedSeconds(),
+    });
     if (phaseLine) printProgressLine(phaseLine);
   }
 
@@ -275,6 +316,7 @@ export function streamSandboxCreate(
       markBuildStarted();
     }
     maybeStartClassicBuildStep(line);
+    maybeRecordBuildKitStep(line);
     if (/^(?:Successfully built | {2}Built image )/.test(line)) {
       finishBuildTiming("completed");
     }

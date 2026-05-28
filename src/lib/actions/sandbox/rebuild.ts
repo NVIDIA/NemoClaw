@@ -34,13 +34,18 @@ import {
   printOpenShellStateRpcIssue,
 } from "../../adapters/openshell/gateway-drift";
 import { resolveOpenshell } from "../../adapters/openshell/resolve";
-import { captureOpenshell, runOpenshell } from "../../adapters/openshell/runtime";
+import { runOpenshell } from "../../adapters/openshell/runtime";
 import { loadAgent } from "../../agent/defs";
-import * as agentRuntime from "../../agent/runtime";
 import { ensureAgentBaseImage } from "../../agent/onboard";
+import * as agentRuntime from "../../agent/runtime";
 import { RD as _RD, B, D, G, R, YW } from "../../cli/terminal-style";
 import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as nim from "../../inference/nim";
+import { pruneDisabledMessagingPolicyPresets } from "../../onboard/messaging-policy-presets";
+import {
+  captureSandboxListWithGatewayRecovery,
+  printSandboxListFailureWithRecoveryContext,
+} from "../../openshell-sandbox-list";
 import * as policies from "../../policy";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
@@ -55,6 +60,7 @@ import {
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
+import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
 
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
@@ -387,7 +393,8 @@ export async function rebuildSandbox(
 
   // Step 1: Ensure sandbox is live for backup
   log("Checking sandbox liveness: openshell sandbox list");
-  const isLive = captureOpenshell(["sandbox", "list"]);
+  const liveRecovery = await captureSandboxListWithGatewayRecovery();
+  const isLive = liveRecovery.result;
   log(
     `openshell sandbox list exit=${isLive.status}, output=${(isLive.output || "").substring(0, 200)}`,
   );
@@ -401,8 +408,7 @@ export async function rebuildSandbox(
     return;
   }
   if (isLive.status !== 0) {
-    console.error("  Failed to query running sandboxes from OpenShell.");
-    console.error("  Ensure OpenShell is running: openshell status");
+    printSandboxListFailureWithRecoveryContext(liveRecovery);
     bail("Failed to query running sandboxes from OpenShell.", isLive.status || 1);
     return;
   }
@@ -433,6 +439,20 @@ export async function rebuildSandbox(
     }
   }
 
+  const rebuildShieldsWindow = openRebuildShieldsWindow(sandboxName, CLI_NAME);
+  if (!rebuildShieldsWindow) return bail("Failed to auto-unlock shields.");
+
+  const relockShieldsIfNeeded = (sandboxStillExists: boolean): boolean =>
+    relockRebuildShieldsWindow(
+      sandboxName,
+      rebuildShieldsWindow,
+      sandboxStillExists,
+      CLI_NAME,
+    );
+
+  let sandboxStillExists = true;
+
+  try {
   // Step 2: Backup
   console.log("  Backing up sandbox state...");
   log(`Agent type: ${sb.agent || "openclaw"}, stateDirs from manifest`);
@@ -451,6 +471,7 @@ export async function rebuildSandbox(
       console.error(`  Failed files: ${backup.failedFiles.join(", ")}`);
     }
     console.error("  Aborting rebuild to prevent data loss.");
+    relockShieldsIfNeeded(true);
     bail("Failed to back up sandbox state.");
     return;
   }
@@ -458,6 +479,7 @@ export async function rebuildSandbox(
   if (!backupManifest) {
     console.error("  Failed to record backup metadata.");
     console.error("  Aborting rebuild to prevent data loss.");
+    relockShieldsIfNeeded(true);
     bail("Failed to record backup metadata.");
     return;
   }
@@ -510,9 +532,11 @@ export async function rebuildSandbox(
   if (deleteResult.status !== 0 && !alreadyGone) {
     console.error("  Failed to delete sandbox. Aborting rebuild.");
     console.error("  State backup is preserved at: " + backupManifest.backupPath);
+    relockShieldsIfNeeded(true);
     bail("Failed to delete sandbox.", deleteResult.status || 1);
     return;
   }
+  sandboxStillExists = false;
   removeSandboxRegistryEntry(sandboxName);
   log(
     `Registry after remove: ${JSON.stringify(registry.listSandboxes().sandboxes.map((s: { name: string }) => s.name))}`,
@@ -678,6 +702,10 @@ export async function rebuildSandbox(
     process.exit = _savedExit;
   }
 
+  if (!onboardFailed) {
+    sandboxStillExists = true;
+  }
+
   if (onboardFailed) {
     // Clean up onboard's internal state that normally runs in
     // process.once("exit") listeners — those never fire because we
@@ -710,7 +738,9 @@ export async function rebuildSandbox(
     console.error(
       `       ${CLI_NAME} ${sandboxName} snapshot restore "${backupManifest.timestamp}"`,
     );
+    printRebuildShieldsRecovery(sandboxName, rebuildShieldsWindow, CLI_NAME);
     console.error("");
+    relockShieldsIfNeeded(false);
     bail(
       `Recreate failed (sandbox destroyed). Backup: ${backupManifest.backupPath}`,
       onboardExitCode,
@@ -756,7 +786,10 @@ export async function rebuildSandbox(
   // Policy presets live in the gateway policy engine, not the sandbox filesystem.
   // They are lost when the sandbox is destroyed and recreated. Re-apply any
   // presets that were captured in the backup manifest.
-  const savedPresets = backupManifest.policyPresets || [];
+  const savedPresets = pruneDisabledMessagingPolicyPresets(
+    backupManifest.policyPresets || [],
+    rebuildDisabledChannels,
+  );
   if (savedPresets.length > 0) {
     console.log("");
     console.log("  Restoring policy presets...");
@@ -847,6 +880,8 @@ export async function rebuildSandbox(
   });
   log(`Registry updated: agentVersion=${agentDef.expectedVersion}`);
 
+  if (!relockShieldsIfNeeded(true)) return bail("Failed to re-apply shields lockdown.");
+
   console.log("");
   if (restore.success) {
     console.log(`  ${G}\u2713${R} Sandbox '${sandboxName}' rebuilt successfully`);
@@ -858,5 +893,10 @@ export async function rebuildSandbox(
       `  ${YW}\u26a0${R} Sandbox '${sandboxName}' rebuilt but state restore was incomplete`,
     );
     console.log(`    Backup available at: ${backupManifest.backupPath}`);
+  }
+  } finally {
+    if (!rebuildShieldsWindow.relocked) {
+      relockShieldsIfNeeded(sandboxStillExists);
+    }
   }
 }

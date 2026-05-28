@@ -23,6 +23,20 @@ import {
   prepareInitialSandboxCreatePolicy,
 } from "./initial-policy";
 
+const BASE_POLICY_FIXTURE = `
+version: 1
+filesystem_policy:
+  read_only:
+    - /usr
+    - /proc
+  read_write:
+    - /tmp
+network_policies:
+  managed_inference:
+    name: managed_inference
+    endpoints: []
+`;
+
 const tmpRoots: string[] = [];
 
 function tmpPolicy(content: string): string {
@@ -41,12 +55,8 @@ afterEach(() => {
 
 describe("initial sandbox policy helpers", () => {
   it("removes /proc from direct GPU create policy so OpenShell can own GPU enrichment", () => {
-    const basePolicy = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "..", "..", "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-      "utf-8",
-    );
-    const gpuPolicy = buildDirectGpuPolicyYaml(basePolicy);
-    const baseDoc = YAML.parse(basePolicy);
+    const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE);
+    const baseDoc = YAML.parse(BASE_POLICY_FIXTURE);
     const gpuDoc = YAML.parse(gpuPolicy);
 
     // /proc is added at runtime by OpenShell's GPU enrichment;
@@ -58,11 +68,7 @@ describe("initial sandbox policy helpers", () => {
   });
 
   it("adds /proc read-write when Docker GPU patch must own GPU enrichment", () => {
-    const basePolicy = fs.readFileSync(
-      path.join(import.meta.dirname, "..", "..", "..", "nemoclaw-blueprint", "policies", "openclaw-sandbox.yaml"),
-      "utf-8",
-    );
-    const gpuPolicy = buildDirectGpuPolicyYaml(basePolicy, { procReadWrite: true });
+    const gpuPolicy = buildDirectGpuPolicyYaml(BASE_POLICY_FIXTURE, { procReadWrite: true });
     const gpuDoc = YAML.parse(gpuPolicy);
 
     expect(gpuDoc.filesystem_policy.read_only).not.toContain("/proc");

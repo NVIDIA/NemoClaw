@@ -1,0 +1,170 @@
+[
+  {
+    "id": "docs-get-started-prerequisites-001",
+    "question": "I'm checking prerequisites before installation. Help me verify my host has the required hardware, software, and platform support so I can avoid a failed first setup.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user verify my host has the required hardware, software, and platform support and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid a failed first setup.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: checking prerequisites before installation.",
+      "The AI coding assistant loads the expected_skill and references/prerequisites.md",
+      "The output helps the user verify my host has the required hardware, software, and platform support with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to avoid a failed first setup.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/prerequisites.md file."
+    ]
+  },
+  {
+    "id": "docs-get-started-prerequisites-002",
+    "question": "I'm using a machine with limited CPU, memory, disk, or Docker capacity. Help me understand the practical minimums and known bottlenecks so I can prepare the machine before onboarding starts.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand the practical minimums and known bottlenecks and gives enough concrete guidance, decision criteria, verification steps, or risk framing to prepare the machine before onboarding starts.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: using a machine with limited CPU, memory, disk, or Docker capacity.",
+      "The AI coding assistant loads the expected_skill and references/prerequisites.md",
+      "The output helps the user understand the practical minimums and known bottlenecks with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to prepare the machine before onboarding starts.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/prerequisites.md file."
+    ]
+  },
+  {
+    "id": "docs-get-started-prerequisites-003",
+    "question": "I'm choosing between local, Windows WSL, and remote GPU setup. Help me compare supported platform paths so I can start with the environment most likely to work.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user compare supported platform paths and gives enough concrete guidance, decision criteria, verification steps, or risk framing to start with the environment most likely to work.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: choosing between local, Windows WSL, and remote GPU setup.",
+      "The AI coding assistant loads the expected_skill and references/prerequisites.md",
+      "The output helps the user compare supported platform paths with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to start with the environment most likely to work.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/prerequisites.md file."
+    ]
+  },
+  {
+    "id": "docs-get-started-windows-preparation-001",
+    "question": "I'm preparing a Windows machine for NemoClaw. Help me enable WSL 2, Ubuntu, and Docker Desktop correctly so I can enter the standard quickstart from a working Linux environment.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user enable WSL 2, Ubuntu, and Docker Desktop correctly and gives enough concrete guidance, decision criteria, verification steps, or risk framing to enter the standard quickstart from a working Linux environment.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: preparing a Windows machine for NemoClaw.",
+      "The AI coding assistant loads the expected_skill and references/windows-preparation.md",
+      "The output helps the user enable WSL 2, Ubuntu, and Docker Desktop correctly with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to enter the standard quickstart from a working Linux environment.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/windows-preparation.md file."
+    ]
+  },
+  {
+    "id": "docs-get-started-windows-preparation-002",
+    "question": "I'm unsure whether Windows-specific setup is complete. Help me check the WSL and Docker integration steps that commonly block installs so I can fix host issues before running the NemoClaw installer.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user check the WSL and Docker integration steps that commonly block installs and gives enough concrete guidance, decision criteria, verification steps, or risk framing to fix host issues before running the NemoClaw installer.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: unsure whether Windows-specific setup is complete.",
+      "The AI coding assistant loads the expected_skill and references/windows-preparation.md",
+      "The output helps the user check the WSL and Docker integration steps that commonly block installs with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to fix host issues before running the NemoClaw installer.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/windows-preparation.md file."
+    ]
+  },
+  {
+    "id": "docs-get-started-windows-preparation-003",
+    "question": "I'm ready to leave the Windows preparation guide. Help me confirm the Ubuntu shell can run the required commands so I can follow the quickstart without mixing Windows and Linux instructions.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user confirm the Ubuntu shell can run the required commands and gives enough concrete guidance, decision criteria, verification steps, or risk framing to follow the quickstart without mixing Windows and Linux instructions.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: ready to leave the Windows preparation guide.",
+      "The AI coding assistant loads the expected_skill and references/windows-preparation.md",
+      "The output helps the user confirm the Ubuntu shell can run the required commands with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to follow the quickstart without mixing Windows and Linux instructions.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/windows-preparation.md file."
+    ]
+  },
+  {
+    "id": "docs-get-started-quickstart-001",
+    "question": "I'm running the OpenClaw quickstart. Help me install NemoClaw and create my first sandboxed agent so I can send a prompt to a working OpenClaw assistant.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user install NemoClaw and create my first sandboxed agent and gives enough concrete guidance, decision criteria, verification steps, or risk framing to send a prompt to a working OpenClaw assistant.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: running the OpenClaw quickstart.",
+      "The AI coding assistant loads the expected_skill and SKILL.md",
+      "The output helps the user install NemoClaw and create my first sandboxed agent with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to send a prompt to a working OpenClaw assistant.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the SKILL.md file."
+    ]
+  },
+  {
+    "id": "docs-get-started-quickstart-002",
+    "question": "I'm encountering installer prompts or host preflight checks. Help me understand what the installer is asking for and why so I can continue setup without granting unnecessary access.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand what the installer is asking for and why and gives enough concrete guidance, decision criteria, verification steps, or risk framing to continue setup without granting unnecessary access.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: encountering installer prompts or host preflight checks.",
+      "The AI coding assistant loads the expected_skill and SKILL.md",
+      "The output helps the user understand what the installer is asking for and why with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to continue setup without granting unnecessary access.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the SKILL.md file."
+    ]
+  },
+  {
+    "id": "docs-get-started-quickstart-003",
+    "question": "I'm finishing onboarding. Help me verify the sandbox, inference route, and OpenClaw agent are connected so I can know the setup succeeded end to end.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user verify the sandbox, inference route, and OpenClaw agent are connected and gives enough concrete guidance, decision criteria, verification steps, or risk framing to know the setup succeeded end to end.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: finishing onboarding.",
+      "The AI coding assistant loads the expected_skill and SKILL.md",
+      "The output helps the user verify the sandbox, inference route, and OpenClaw agent are connected with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to know the setup succeeded end to end.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the SKILL.md file."
+    ]
+  },
+  {
+    "id": "docs-get-started-quickstart-hermes-001",
+    "question": "I'm choosing Hermes instead of OpenClaw. Help me launch a sandboxed Hermes API endpoint so I can serve the agent workflow my downstream clients expect.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user launch a sandboxed Hermes API endpoint and gives enough concrete guidance, decision criteria, verification steps, or risk framing to serve the agent workflow my downstream clients expect.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: choosing Hermes instead of OpenClaw.",
+      "The AI coding assistant loads the expected_skill and references/quickstart-hermes.md",
+      "The output helps the user launch a sandboxed Hermes API endpoint with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to serve the agent workflow my downstream clients expect.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/quickstart-hermes.md file."
+    ]
+  },
+  {
+    "id": "docs-get-started-quickstart-hermes-002",
+    "question": "I'm moving through onboarding for Hermes. Help me confirm NemoClaw selected Hermes-specific setup and configuration so I can avoid accidentally creating the default OpenClaw environment.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user confirm NemoClaw selected Hermes-specific setup and configuration and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid accidentally creating the default OpenClaw environment.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: moving through onboarding for Hermes.",
+      "The AI coding assistant loads the expected_skill and references/quickstart-hermes.md",
+      "The output helps the user confirm NemoClaw selected Hermes-specific setup and configuration with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to avoid accidentally creating the default OpenClaw environment.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/quickstart-hermes.md file."
+    ]
+  },
+  {
+    "id": "docs-get-started-quickstart-hermes-003",
+    "question": "I'm checking the sandboxed Hermes endpoint. Help me run a small request that proves the endpoint is live so I can hand it to clients or tests with confidence.",
+    "expected_skill": "nemoclaw-user-get-started",
+    "ground_truth": "A NemoClaw-specific answer that helps the user run a small request that proves the endpoint is live and gives enough concrete guidance, decision criteria, verification steps, or risk framing to hand it to clients or tests with confidence.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: checking the sandboxed Hermes endpoint.",
+      "The AI coding assistant loads the expected_skill and references/quickstart-hermes.md",
+      "The output helps the user run a small request that proves the endpoint is live with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to hand it to clients or tests with confidence.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/quickstart-hermes.md file."
+    ]
+  }
+]

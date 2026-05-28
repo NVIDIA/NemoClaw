@@ -88,7 +88,7 @@ Workspace files are removed from the sandbox unless you created a snapshot or ba
 **Warning:**
 
 Back up your workspace files before running `nemoclaw <name> destroy`.
-See Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill) for instructions.
+See [Backup and Restore](backup-restore.md) for instructions.
 
 ## Editing Workspace Files
 
@@ -101,5 +101,5 @@ You can edit them in two ways:
 ## Next Steps
 
 - Set Up Task-Specific Sub-Agents (use the `nemoclaw-user-configure-inference` skill)
-- Backup and Restore workspace files (use the `nemoclaw-user-manage-sandboxes` skill)
+- [Backup and Restore workspace files](backup-restore.md)
 - Commands reference (use the `nemoclaw-user-reference` skill)

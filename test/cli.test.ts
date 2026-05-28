@@ -451,6 +451,36 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Unknown command")).toBeTruthy();
   });
 
+  it("points OpenShell-only commands at openshell instead of sandbox connect (#3388)", () => {
+    const term = run("term");
+    expect(term.code).toBe(1);
+    expect(term.out).toContain("Unknown nemoclaw command: term");
+    expect(term.out).toContain("Run: openshell term");
+    expect(term.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
+
+    const policy = run("policy set");
+    expect(policy.code).toBe(1);
+    expect(policy.out).toContain("Unknown nemoclaw command: policy set");
+    expect(policy.out).toContain("Run: openshell policy set --policy <policy-file> <sandbox-name>");
+    expect(policy.out).toContain("nemoclaw <sandbox-name> policy-add <preset>");
+    expect(policy.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
+
+    const gateway = run("gateway stop");
+    expect(gateway.code).toBe(1);
+    expect(gateway.out).toContain("Unknown nemoclaw command: gateway stop");
+    expect(gateway.out).toContain("Run: openshell gateway stop -g nemoclaw");
+    expect(gateway.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
+  });
+
+  it("prints oclif validation failures without stack traces", () => {
+    const r = run("inference set 2>&1");
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("Missing required flag model");
+    expect(r.out).toContain("Missing required flag provider");
+    expect(r.out).not.toContain("FailedFlagValidationError");
+    expect(r.out).not.toContain("node_modules/@oclif/core");
+  });
+
   it("suggests list for a mistyped list command", () => {
     // Isolate from any real openshell gateway on the host so recovery
     // doesn't intercept the typo suggestion.
@@ -1410,8 +1440,8 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("Done")).toBeTruthy();
   });
 
-  it(
-    "debug --quick explains restricted dmesg instead of printing raw stderr",
+  it.skipIf(os.platform() !== "linux")(
+    "debug --quick explains restricted dmesg instead of printing raw stderr on Linux",
     testTimeoutOptions(30_000),
     () => {
       const env = createDebugCommandTestEnv("nemoclaw-cli-debug-dmesg-");
@@ -1811,6 +1841,10 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Added host alias searxng.local -> 192.168.1.105");
     const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
+    // The docker invocation must start with the `exec` subcommand. Without
+    // it, docker parses kubectl's `-n` as a docker flag and exits 125
+    // ("unknown shorthand flag: 'n' in -n").
+    expect(log[0]).toBe("exec");
     expect(log).toContain("patch");
     expect(log).toContain("--type=json");
     const patch = JSON.parse(log[log.indexOf("-p") + 1]);
@@ -1832,12 +1866,15 @@ describe("CLI dispatch", () => {
   it("lists host aliases from the sandbox resource", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-hosts-list-"));
     const localBin = path.join(home, "bin");
+    const dockerLog = path.join(home, "docker.log");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home);
     fs.writeFileSync(
       path.join(localBin, "docker"),
       [
         "#!/usr/bin/env bash",
+        `log_file=${JSON.stringify(dockerLog)}`,
+        'printf "%s\\n" "$@" >> "$log_file"',
         'printf "%s\\n" \'{"metadata":{"resourceVersion":"123"},"spec":{"podTemplate":{"spec":{"hostAliases":[{"ip":"192.168.1.105","hostnames":["searxng.local","search.lan"]}]}}}}\'',
       ].join("\n"),
       { mode: 0o755 },
@@ -1851,6 +1888,10 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Host aliases for 'alpha'");
     expect(r.out).toContain("192.168.1.105  searxng.local, search.lan");
+    const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
+    expect(log[0]).toBe("exec");
+    expect(log).toContain("kubectl");
+    expect(log).toContain("get");
   });
 
   it("removes host aliases with a sandbox json patch", () => {
@@ -1872,6 +1913,7 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Removed host alias searxng.local");
     const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
+    expect(log[0]).toBe("exec");
     expect(log).toContain("patch");
     const patch = JSON.parse(log[log.lastIndexOf("-p") + 1]);
     expect(patch[0]).toEqual({
@@ -5634,8 +5676,10 @@ describe("list shows live gateway inference", () => {
     expect(r.out).not.toContain(
       "agent: openclaw  model: configured-model  provider: configured-provider  sandbox GPU  policies: pypi, npm",
     );
-    // Onboarded values appear in the drift annotation.
-    expect(r.out).toContain("(onboarded: model=configured-model, provider=configured-provider)");
+    // Onboarded values appear in an explicit live-gateway drift annotation.
+    expect(r.out).toContain(
+      "(live OpenShell gateway differs from onboarded: model=configured-model, provider=configured-provider)",
+    );
   });
 
   it("falls back to registry values when openshell inference get fails", () => {

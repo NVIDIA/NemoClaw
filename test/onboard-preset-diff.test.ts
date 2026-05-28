@@ -20,11 +20,23 @@ function runScript(scriptBody: string): SpawnSyncReturns<string> {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-preset-diff-"));
   const scriptPath = path.join(tmpDir, "script.js");
   fs.writeFileSync(scriptPath, scriptBody);
+  const env = { ...process.env };
+  for (const key of Object.keys(env)) {
+    if (
+      key.startsWith("DISCORD_") ||
+      key.startsWith("SLACK_") ||
+      key.startsWith("TELEGRAM_") ||
+      key.startsWith("WECHAT_") ||
+      key.startsWith("WHATSAPP_")
+    ) {
+      delete env[key];
+    }
+  }
   const result = spawnSync(process.execPath, [scriptPath], {
     cwd: repoRoot,
     encoding: "utf-8",
     env: {
-      ...process.env,
+      ...env,
       HOME: tmpDir,
       NEMOCLAW_NON_INTERACTIVE: "1",
     },
@@ -319,6 +331,142 @@ console.log = () => {};
     assert.deepEqual(payload.chosen, ["npm"]);
     assert.deepEqual(payload.removedCalls, ["brave"]);
     assert.deepEqual(payload.finalApplied, ["npm"]);
+  });
+
+  it("resume selection preserves the Slack policy required by a recorded Slack channel", () => {
+    const script =
+      buildPreamble({
+        policyMode: "suggested",
+        policyPresets: "",
+        alreadyApplied: ["slack"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      selectedPresets: ["npm", "pypi"],
+      enabledChannels: ["slack"],
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.deepEqual(payload.chosen.slice().sort(), ["npm", "pypi", "slack"]);
+    assert.deepEqual(
+      payload.removedCalls,
+      [],
+      `Slack must remain targeted while the slack channel is enabled; got removals ${JSON.stringify(payload.removedCalls)}`,
+    );
+    assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "slack"]);
+  });
+
+  it("custom non-interactive selection preserves the Slack policy required by Slack messaging", () => {
+    const script =
+      buildPreamble({
+        policyMode: "custom",
+        policyPresets: "npm,pypi",
+        alreadyApplied: ["slack"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      enabledChannels: ["slack"],
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.deepEqual(payload.chosen.slice().sort(), ["npm", "pypi", "slack"]);
+    assert.deepEqual(
+      payload.removedCalls,
+      [],
+      `Slack must not be removed while Slack messaging is enabled; got removals ${JSON.stringify(payload.removedCalls)}`,
+    );
+    assert.deepEqual(payload.finalApplied.slice().sort(), ["npm", "pypi", "slack"]);
+  });
+
+  it("custom non-interactive selection removes disabled Slack while honoring the explicit preset list", () => {
+    const script =
+      buildPreamble({
+        policyMode: "custom",
+        policyPresets: "npm",
+        alreadyApplied: ["npm", "pypi", "slack"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      disabledChannels: ["slack"],
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.deepEqual(payload.chosen, ["npm"]);
+    assert.deepEqual(payload.removedCalls.slice().sort(), ["pypi", "slack"]);
+    assert.deepEqual(payload.finalApplied, ["npm"]);
+  });
+
+  it("suggested non-interactive selection removes disabled Slack from tier defaults", () => {
+    const script =
+      buildPreamble({
+        tierEnv: "open",
+        policyMode: "suggested",
+        policyPresets: "",
+        alreadyApplied: ["slack"],
+      }) +
+      String.raw`
+console.log = () => {};
+(async () => {
+  try {
+    const chosen = await setupPoliciesWithSelection("test-sb", {
+      disabledChannels: ["slack"],
+    });
+    process.stdout.write(JSON.stringify({ chosen, appliedCalls, removedCalls, finalApplied: appliedState }) + "\n");
+  } catch (err) {
+    process.stdout.write(JSON.stringify({ error: err.message }) + "\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, result.stderr);
+    const payload = JSON.parse(result.stdout.trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}`);
+
+    assert.ok(
+      !payload.chosen.includes("slack"),
+      `expected chosen to drop disabled Slack, got ${JSON.stringify(payload.chosen)}`,
+    );
+    assert.deepEqual(payload.removedCalls, ["slack"]);
+    assert.ok(
+      !payload.finalApplied.includes("slack"),
+      `final applied presets should not include Slack, got ${JSON.stringify(payload.finalApplied)}`,
+    );
   });
 
   // Widening the selection (user re-enables a preset they'd previously dropped)

@@ -1,9 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { readFileSync, readdirSync, statSync } from "node:fs";
-import path from "node:path";
-
 import { describe, expect, it } from "vitest";
 
 import type {
@@ -257,22 +254,6 @@ function findFunctionPaths(value: unknown, prefix = "$"): string[] {
   return [];
 }
 
-function collectProductionFiles(dir: string): string[] {
-  return readdirSync(dir).flatMap((entry) => {
-    const absolute = path.join(dir, entry);
-    const stats = statSync(absolute);
-    if (stats.isDirectory()) return collectProductionFiles(absolute);
-    if (absolute.endsWith(".ts") && !absolute.endsWith(".test.ts")) return [absolute];
-    return [];
-  });
-}
-
-function collectModuleSpecifiers(source: string): string[] {
-  const pattern =
-    /(?:import|export)\s+(?:type\s+)?(?:[^"']*?\s+from\s+)?["']([^"']+)["']/g;
-  return [...source.matchAll(pattern)].map((match) => match[1] ?? "");
-}
-
 describe("messaging manifest type contracts", () => {
   it("serializes representative manifests without losing required fields", () => {
     const parsedTelegram = jsonRoundTrip(telegramManifest);
@@ -311,30 +292,7 @@ describe("messaging manifest type contracts", () => {
     expect(wechatHookManifest.hooks[0]?.handler).toBe("wechat.ilinkLogin");
   });
 
-  it("keeps the new production module isolated from side-effect layers", () => {
-    const moduleRoot = path.join(import.meta.dirname, "..");
-    const files = collectProductionFiles(moduleRoot);
-    const forbiddenFragments = [
-      "gateway",
-      "state/registry",
-      "credentials",
-      "node:fs",
-      "node:child_process",
-      "child_process",
-      "adapters/openshell",
-      "src/commands",
-      "lib/actions",
-    ];
-
-    for (const file of files) {
-      const source = readFileSync(file, "utf8");
-      const specifiers = collectModuleSpecifiers(source);
-      for (const fragment of forbiddenFragments) {
-        expect(
-          specifiers.some((specifier) => specifier.includes(fragment)),
-          `${path.relative(moduleRoot, file)} imports ${fragment}`,
-        ).toBe(false);
-      }
-    }
-  });
+  // Import-layer isolation for the production manifest modules is enforced by
+  // scripts/checks/layer-import-boundaries.ts. Keep this unit test focused on
+  // manifest serialization and type contracts rather than walking source files.
 });

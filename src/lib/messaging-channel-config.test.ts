@@ -20,6 +20,7 @@ describe("messaging channel config", () => {
       "DISCORD_REQUIRE_MENTION",
       "WECHAT_ALLOWED_IDS",
       "SLACK_ALLOWED_USERS",
+      "SLACK_ALLOWED_CHANNELS",
     ]);
   });
 
@@ -31,6 +32,7 @@ describe("messaging channel config", () => {
         DISCORD_SERVER_ID: "1491590992753590594",
         DISCORD_REQUIRE_MENTION: "0",
         SLACK_ALLOWED_USERS: "  U01ABC2DEF3, U04GHI5JKL6  ",
+        SLACK_ALLOWED_CHANNELS: "  C012AB3CD, C987ZY6XW  ",
         NVIDIA_API_KEY: "not-channel-config",
       }),
     ).toEqual({
@@ -38,6 +40,7 @@ describe("messaging channel config", () => {
       DISCORD_SERVER_ID: "1491590992753590594",
       DISCORD_REQUIRE_MENTION: "0",
       SLACK_ALLOWED_USERS: "U01ABC2DEF3, U04GHI5JKL6",
+      SLACK_ALLOWED_CHANNELS: "C012AB3CD, C987ZY6XW",
     });
   });
 

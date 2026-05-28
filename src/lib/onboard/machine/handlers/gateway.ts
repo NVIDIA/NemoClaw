@@ -2,9 +2,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { NvidiaPlatform } from "../../../inference/nim";
-import type { GatewayContainerState } from "../../gateway-container-running";
-import type { Session } from "../../../state/onboard-session";
 import type { GatewayReuseState } from "../../../state/gateway";
+import type { Session } from "../../../state/onboard-session";
+import type { GatewayContainerState } from "../../gateway-container-running";
+import { withGatewayTrace } from "../../tracing";
 
 export interface GatewayStateOptions<Gpu> {
   resume: boolean;
@@ -21,6 +22,7 @@ export interface GatewayStateOptions<Gpu> {
     gatewayCliSupportsLifecycleCommands(): boolean;
     verifyGatewayContainerRunning(gatewayName: string): GatewayContainerState;
     waitForGatewayHttpReady(): Promise<boolean>;
+    recoverGatewayRuntime(): Promise<boolean>;
     getGatewayLocalEndpoint(): string;
     stopDashboardForward(): void;
     destroyGateway(
@@ -54,6 +56,7 @@ export interface GatewayStateOptions<Gpu> {
       detail?: string | null,
       reason?: "resume" | "reuse",
     ): void;
+    recordStateSkipped(state: "gateway", metadata?: Record<string, unknown> | null): Promise<Session>;
     note(message: string): void;
     startRecordedStep(stepName: string): Promise<void>;
     startGateway(gpu: Gpu, options: { gpuPassthrough: boolean }): Promise<void>;
@@ -84,6 +87,7 @@ export async function handleGatewayState<Gpu>({
 
   if (gatewayReuseState === "healthy" && supportsLifecycleCommands) {
     const containerState = deps.verifyGatewayContainerRunning(gatewayName);
+    let checkImageDrift = false;
     if (containerState === "missing") {
       console.log("  Gateway metadata is stale (container not running). Cleaning up...");
       deps.stopDashboardForward();
@@ -92,6 +96,30 @@ export async function handleGatewayState<Gpu>({
         "  ✓ Stale gateway metadata cleaned up",
         "  ! Stale gateway metadata cleanup failed; leaving registry state intact.",
       );
+    } else if (containerState === "stopped") {
+      // #4187: a stopped legacy `openshell-cluster-*` container after a host
+      // VM stop/start still holds the PVC volume. Attempt non-destructive
+      // recovery (openshell gateway start) before any destructive path so we
+      // never delete the k3s local-path PVC backing data.
+      console.log(
+        "  Gateway container is stopped (likely host or Docker restart). Attempting non-destructive recovery...",
+      );
+      const recovered = await deps.recoverGatewayRuntime();
+      if (recovered) {
+        console.log("  ✓ Gateway recovered without removing volumes; existing sandbox PVC preserved.");
+        checkImageDrift = true;
+      } else {
+        console.log(
+          `  Could not start the stopped NemoClaw gateway and ${deps.getGatewayLocalEndpoint()}/ is not responding.`,
+        );
+        console.log(
+          "  Refusing to delete openshell-cluster-* volumes — they may hold the existing PVC/workspace data.",
+        );
+        console.log(
+          "  Restart Docker, free the gateway port if held by another process, and re-run `nemoclaw onboard`. See #4187.",
+        );
+        deps.exitProcess(1);
+      }
     } else if (containerState === "unknown") {
       if (await deps.waitForGatewayHttpReady()) {
         console.log(
@@ -117,6 +145,10 @@ export async function handleGatewayState<Gpu>({
         "  ! Stale gateway cleanup failed; leaving registry state intact.",
       );
     } else {
+      checkImageDrift = true;
+    }
+
+    if (checkImageDrift) {
       const imageDrift = deps.getGatewayClusterImageDrift();
       if (imageDrift) {
         console.log(
@@ -150,9 +182,11 @@ export async function handleGatewayState<Gpu>({
   const resumeGateway = resume && session?.steps?.gateway?.status === "complete" && canReuseHealthyGateway;
   if (resumeGateway) {
     deps.skippedStepMessage("gateway", "running");
+    await deps.recordStateSkipped("gateway", { reason: "resume", reuseState: gatewayReuseState });
     session = await deps.recordStepComplete("gateway");
   } else if (!resume && canReuseHealthyGateway) {
     deps.skippedStepMessage("gateway", "running", "reuse");
+    await deps.recordStateSkipped("gateway", { reason: "reuse", reuseState: gatewayReuseState });
     deps.note("  Reusing healthy NemoClaw gateway.");
     session = await deps.recordStepComplete("gateway");
   } else {
@@ -167,13 +201,15 @@ export async function handleGatewayState<Gpu>({
         deps.note("  [resume] Recorded gateway state is unavailable; recreating it.");
       }
     }
+    await deps.startRecordedStep("gateway");
     if (deps.isLinuxDockerDriverGatewayEnabled() && gatewayReuseState !== "missing") {
       deps.note("  Replacing legacy OpenShell gateway metadata with Docker-driver gateway.");
       deps.retireLegacyGatewayForDockerDriverUpgrade();
       gatewayReuseState = "missing";
     }
-    await deps.startRecordedStep("gateway");
-    await deps.startGateway(gpu, { gpuPassthrough });
+    await withGatewayTrace(gatewayReuseState, gpuPassthrough, () =>
+      deps.startGateway(gpu, { gpuPassthrough }),
+    );
     session = await deps.recordStepComplete("gateway");
   }
 

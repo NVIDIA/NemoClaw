@@ -20,6 +20,10 @@ Interfaces, defaults, and supported features may change without notice, and it i
 </Warning>
 
 Review the [Prerequisites](/get-started/prerequisites) before starting.
+Docker must be installed, running, and reachable from the current shell before Hermes onboarding can build the sandbox image.
+On Linux, the installer can install Docker, start the service, and add your user to the `docker` group.
+If it changes group membership, run the printed `newgrp docker` recovery command before rerunning the installer.
+On macOS, start Docker Desktop or Colima before you run the installer.
 The first Hermes build can take several minutes because NemoClaw builds the Hermes sandbox base image if it is not already cached.
 
 ## Install and Onboard
@@ -32,6 +36,20 @@ $ export NEMOCLAW_AGENT=hermes
 $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
+If a headless host needs to expose the Hermes API through a remote URL or tunnel, set `CHAT_UI_URL` before onboarding.
+Use the externally reachable origin for port `8642`, without the `/v1` path.
+NemoClaw derives the forwarded port from this value, binds the forward for remote access when the origin is non-loopback, and prints the final OpenAI-compatible base URL with `/v1` in the ready summary.
+
+```console
+$ export NEMOCLAW_AGENT=hermes
+$ export CHAT_UI_URL="https://hermes.example.com:8642"
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+For SSH local port forwarding to `127.0.0.1:8642`, leave `CHAT_UI_URL` unset.
+Do not append an OpenClaw `#token=` fragment to the Hermes URL.
+Hermes API clients authenticate with the bearer token from the generated Hermes environment instead of an OpenClaw dashboard URL token.
+
 If NemoClaw is already installed, start Hermes onboarding directly.
 
 ```console
@@ -40,7 +58,8 @@ $ nemohermes onboard
 
 ## Respond to the Wizard
 
-The onboard wizard asks for a sandbox name, inference provider, model, credentials, and network policy preset.
+The onboard wizard asks for an inference provider, model, any required credential, and sandbox name before it prints the review summary.
+After you confirm, NemoClaw registers inference, prompts for supported messaging channels, builds and starts the sandbox, sets up Hermes, then applies the selected network policy tier and presets.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 
 The default Hermes sandbox name is `hermes`.
@@ -56,7 +75,7 @@ The provider options and credential environment variables are the same as the st
 For provider-specific prompts, refer to the [Respond to the Onboard Wizard](/get-started/quickstart#respond-to-the-onboard-wizard) section and the [Inference Options](/inference/inference-options) page.
 The Hermes wizard does not ask for Brave Web Search because Hermes does not use NemoClaw's OpenClaw web-search configuration.
 
-After provider and policy selection, review the summary and confirm the build.
+After provider and model selection, review the summary and confirm the build.
 NemoClaw writes Hermes configuration into `/sandbox/.hermes`, routes model traffic through `inference.local`, and starts the Hermes gateway inside the sandbox.
 The Hermes image includes runtime dependencies for the supported NemoClaw messaging integrations, API service, and health endpoint.
 The base image does not include unsupported Hermes integrations.

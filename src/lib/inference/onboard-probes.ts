@@ -9,6 +9,10 @@ const { getCredential, normalizeCredentialValue, resolveProviderCredential } = r
 const { isWsl } = require("../platform");
 const httpProbe = require("../adapters/http/probe");
 const {
+  getHostDockerInternalProbeFailure,
+  isHijackedDockerInternalUrl,
+} = require("./onboard-host-docker-internal");
+const {
   isNvcfFunctionNotFoundForAccount,
   nvcfFunctionNotFoundMessage,
   shouldForceCompletionsApi,
@@ -20,6 +24,7 @@ const {
   runChatCompletionsStreamingProbe,
   runStreamingEventProbe,
 } = httpProbe;
+const trace = require("../trace");
 
 // ── Helpers ──────────────────────────────────────────────────────
 
@@ -28,7 +33,7 @@ const {
 // so host-side validation cannot prove reachability for that URL. For ordinary
 // verification we still skip these endpoints, but strict tool-call validation
 // must fail closed unless the host is probeable from the onboard process.
-const SANDBOX_INTERNAL_HOSTS = ["host.openshell.internal", "host.docker.internal"];
+const SANDBOX_INTERNAL_HOSTS = ["host.openshell.internal"];
 
 function isSandboxInternalUrl(url) {
   try {
@@ -228,16 +233,37 @@ function isCurlTimeout(result) {
 }
 
 function executeProbeWithHttpRetry(probe) {
-  let result = probe.execute();
-  for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
-    if (!shouldRetryHttpProbe(result)) break;
-    console.log(
-      `  ${probe.name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
-    );
-    sleepSync(delayMs);
-    result = probe.execute();
-  }
-  return result;
+  return trace.withTraceSpan(
+    "nemoclaw.inference.validation_probe",
+    { probe_name: probe.name, api: probe.api || null },
+    () => {
+      let attempt = 1;
+      let result = probe.execute();
+      trace.addTraceEvent("probe_result", {
+        attempt,
+        ok: result.ok,
+        http_status: result.httpStatus,
+        curl_status: result.curlStatus,
+      });
+      for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
+        if (!shouldRetryHttpProbe(result)) break;
+        console.log(
+          `  ${probe.name} validation returned HTTP ${result.httpStatus}; retrying in ${Math.round(delayMs / 1000)}s...`,
+        );
+        trace.addTraceEvent("probe_retry_sleep", { delay_ms: delayMs, http_status: result.httpStatus });
+        sleepSync(delayMs);
+        attempt += 1;
+        result = probe.execute();
+        trace.addTraceEvent("probe_result", {
+          attempt,
+          ok: result.ok,
+          http_status: result.httpStatus,
+          curl_status: result.curlStatus,
+        });
+      }
+      return result;
+    },
+  );
 }
 
 // ── Responses API probe ──────────────────────────────────────────
@@ -484,6 +510,10 @@ function runChatCompletionsProbe({ authHeader, model, url, isWsl: isWslOverride 
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
+  if (isHijackedDockerInternalUrl(endpointUrl) && options.allowHostDockerInternal !== true) {
+    return getHostDockerInternalProbeFailure();
+  }
+
   if (isSandboxInternalUrl(endpointUrl)) {
     const { hostname } = new URL(String(endpointUrl));
     if (options.requireChatCompletionsToolCalling !== true) {
@@ -494,21 +524,19 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
         note: `${hostname} only resolves inside the sandbox — validation skipped. If the endpoint is unreachable at runtime, re-run onboard with a routable URL.`,
       };
     }
-    if (hostname !== "host.docker.internal") {
-      return {
-        ok: false,
-        message: `${hostname} only resolves inside the sandbox and cannot be validated for required structured Chat Completions tool calls from the host. Use a routable endpoint URL and retry onboard.`,
-        failures: [
-          {
-            name: "Chat Completions API with tool calling",
-            httpStatus: 0,
-            curlStatus: 0,
-            message: "sandbox-internal endpoint cannot be strictly validated from host",
-            body: "",
-          },
-        ],
-      };
-    }
+    return {
+      ok: false,
+      message: `${hostname} only resolves inside the sandbox and cannot be validated for required structured Chat Completions tool calls from the host. Use a routable endpoint URL and retry onboard.`,
+      failures: [
+        {
+          name: "Chat Completions API with tool calling",
+          httpStatus: 0,
+          curlStatus: 0,
+          message: "sandbox-internal endpoint cannot be strictly validated from host",
+          body: "",
+        },
+      ],
+    };
   }
 
   const useQueryParam = options.authMode === "query-param";
@@ -787,6 +815,7 @@ function probeAnthropicEndpoint(endpointUrl, model, apiKey) {
 
 module.exports = {
   isSandboxInternalUrl,
+  isHijackedDockerInternalUrl,
   parseJsonObject,
   hasResponsesToolCall,
   hasChatCompletionsToolCall,

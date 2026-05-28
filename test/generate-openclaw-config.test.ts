@@ -232,6 +232,8 @@ describe("generate-openclaw-config.py: config generation", () => {
     const channels = Buffer.from(JSON.stringify(["whatsapp"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     expect(config.channels.whatsapp).toBeDefined();
+    expect(config.channels.whatsapp.enabled).toBe(true);
+    expect(config.plugins.entries.whatsapp).toEqual({ enabled: true });
     const account = config.channels.whatsapp.accounts.default;
     expect(account.enabled).toBe(true);
     expect(account.healthMonitor).toEqual({ enabled: false });
@@ -243,9 +245,13 @@ describe("generate-openclaw-config.py: config generation", () => {
   it("keeps WhatsApp config alongside token-based channels in the same run", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "whatsapp"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.telegram.enabled).toBe(true);
+    expect(config.plugins.entries.telegram).toEqual({ enabled: true });
     expect(config.channels.telegram.accounts.default.botToken).toBe(
       "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     );
+    expect(config.channels.whatsapp.enabled).toBe(true);
+    expect(config.plugins.entries.whatsapp).toEqual({ enabled: true });
     expect(config.channels.whatsapp.accounts.default.enabled).toBe(true);
     expect(config.channels.whatsapp.accounts.default.botToken).toBeUndefined();
   });
@@ -461,6 +467,10 @@ describe("generate-openclaw-config.py: config generation", () => {
       proxyUrl: "http://10.200.0.1:3128",
       loopbackMode: "proxy",
     });
+    expect(config.channels.telegram.enabled).toBe(true);
+    expect(config.plugins.entries.telegram).toEqual({ enabled: true });
+    expect(config.channels.discord.enabled).toBe(true);
+    expect(config.plugins.entries.discord).toEqual({ enabled: true });
     expect(config.channels.telegram.accounts.default.botToken).toBe(
       "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     );
@@ -541,6 +551,8 @@ describe("generate-openclaw-config.py: config generation", () => {
   it("emits Bolt-shape placeholders for Slack so the SDK's prefix regex passes", () => {
     const channels = Buffer.from(JSON.stringify(["slack"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.slack.enabled).toBe(true);
+    expect(config.plugins.entries.slack).toEqual({ enabled: true });
     const slack = config.channels.slack.accounts.default;
     // Bolt validates ^xoxb-[A-Za-z0-9_-]+$ / ^xapp-…$ at App construction.
     // OpenShell resolves these provider-shaped aliases at the egress boundary.
@@ -548,6 +560,21 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(slack.appToken).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
     expect(slack.botToken).toMatch(/^xoxb-[A-Za-z0-9_-]+$/);
     expect(slack.appToken).toMatch(/^xapp-[A-Za-z0-9_-]+$/);
+  });
+
+  it("marks Telegram and Discord channels enabled so OpenClaw loads the bridges (#4314, #4390)", () => {
+    // Regression: OpenClaw 2026.5.22 no longer auto-starts a channel bridge
+    // from the account-level enabled flag alone. The Slack mitigation in
+    // PR #4222 added `channels.slack.enabled: true`; #4314 / #4390 reported
+    // the same silent failure for Telegram, and the symptom matches Discord
+    // too. Bake the top-level enabled marker for every credential-backed
+    // messaging channel.
+    const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.telegram.enabled).toBe(true);
+    expect(config.channels.discord.enabled).toBe(true);
+    expect(config.channels.telegram.accounts.default.enabled).toBe(true);
+    expect(config.channels.discord.accounts.default.enabled).toBe(true);
   });
 
   it("uses Slack allowed IDs for DMs and channel mention allowlisting (#3729)", () => {
@@ -560,6 +587,8 @@ describe("generate-openclaw-config.py: config generation", () => {
     });
     const slack = config.channels.slack.accounts.default;
 
+    expect(config.channels.slack.enabled).toBe(true);
+    expect(config.plugins.entries.slack).toEqual({ enabled: true });
     expect(slack.dmPolicy).toBe("allowlist");
     expect(slack.allowFrom).toEqual(allowedUsers);
     expect(slack.groupPolicy).toBe("allowlist");
@@ -572,14 +601,68 @@ describe("generate-openclaw-config.py: config generation", () => {
     });
   });
 
+  it("uses Slack allowed channels to scope channel @mentions", () => {
+    const allowedUsers = ["U01ABC2DEF3", "U04GHI5JKL6"];
+    const allowedChannels = ["C012AB3CD", "C987ZY6XW"];
+    const channels = Buffer.from(JSON.stringify(["slack"])).toString("base64");
+    const allowedIds = Buffer.from(JSON.stringify({ slack: allowedUsers })).toString("base64");
+    const slackConfig = Buffer.from(JSON.stringify({ allowedChannels })).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: allowedIds,
+      NEMOCLAW_SLACK_CONFIG_B64: slackConfig,
+    });
+    const slack = config.channels.slack.accounts.default;
+
+    expect(slack.dmPolicy).toBe("allowlist");
+    expect(slack.allowFrom).toEqual(allowedUsers);
+    expect(slack.groupPolicy).toBe("allowlist");
+    expect(slack.channels).toEqual({
+      C012AB3CD: {
+        enabled: true,
+        requireMention: true,
+        users: allowedUsers,
+      },
+      C987ZY6XW: {
+        enabled: true,
+        requireMention: true,
+        users: allowedUsers,
+      },
+    });
+  });
+
+  it("enables native OpenClaw Tool Search by default", () => {
+    const config = runConfigScript();
+    expect(config.tools?.toolSearch).toBe(true);
+  });
+
+  it("enables keyless web_fetch through the trusted env proxy by default", () => {
+    const config = runConfigScript();
+    expect(config.tools?.web?.fetch).toEqual({
+      enabled: true,
+      useTrustedEnvProxy: true,
+    });
+    expect(config.tools?.web?.search).toBeUndefined();
+  });
+
   it("enables web search when env is '1'", () => {
     const config = runConfigScript({ NEMOCLAW_WEB_SEARCH_ENABLED: "1" });
-    expect(config.tools?.web?.search?.enabled).toBe(true);
+    expect(config.tools?.toolSearch).toBe(true);
+    expect(config.tools?.web?.search).toEqual({
+      enabled: true,
+      provider: "brave",
+      apiKey: "openshell:resolve:env:BRAVE_API_KEY",
+    });
+    expect(config.tools?.web?.fetch).toEqual({
+      enabled: true,
+      useTrustedEnvProxy: true,
+    });
   });
 
   it("omits web search when env is not set", () => {
     const config = runConfigScript();
-    expect(config.tools?.web).toBeUndefined();
+    expect(config.tools?.toolSearch).toBe(true);
+    expect(config.tools?.web?.search).toBeUndefined();
   });
 
   it("propagates agent timeout", () => {
@@ -678,6 +761,7 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.plugins.load.paths).toEqual([
       "/usr/local/share/nemoclaw/openclaw-plugins/kimi-inference-compat",
     ]);
+    expect(config.tools?.toolSearch).toBe(false);
   });
 
   it("adds registry compat when the incoming compat blob is null", () => {
@@ -786,8 +870,9 @@ describe("generate-openclaw-config.py: config generation", () => {
       expect(providerConfig.models[0].compat).toEqual({ supportsStore: false });
       expect(config.plugins.entries["nemoclaw-kimi-inference-compat"]).toBeUndefined();
       expect(config.plugins.load).toBeUndefined();
+      expect(config.tools?.toolSearch).toBe(true);
     }
-  });
+  }, 20_000);
 
   it("rejects model-specific setup manifests without a known agent", () => {
     const blueprintDir = path.join(tmpDir, "fixture-blueprint");
@@ -828,7 +913,7 @@ describe("generate-openclaw-config.py: config generation", () => {
 
     expect(unknownResult.status).not.toBe(0);
     expect(unknownResult.stderr).toContain("unknown agent 'sidecar'");
-  });
+  }, 20_000);
 
   it("rejects empty match objects and invalid explicit registry overrides", () => {
     const missingRegistry = path.join(tmpDir, "missing-registry");
@@ -912,6 +997,26 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(missingPluginResult.stderr).toContain("path does not exist");
 
     fs.rmSync(path.join(blueprintDir, "model-specific-setup", "openclaw", "missing-plugin.json"));
+    const badToolRegistryDir = writeRegistryManifest(
+      blueprintDir,
+      "openclaw/bad-tool-effect.json",
+      {
+        id: "bad-tool-effect",
+        agent: "openclaw",
+        description: "Invalid tool override",
+        match: { modelIds: ["test-model"] },
+        effects: { openclawTools: { toolSearch: "false" } },
+      },
+    );
+
+    const badToolResult = runConfigScriptRaw({
+      NEMOCLAW_MODEL_SPECIFIC_SETUP_DIR: badToolRegistryDir,
+    });
+
+    expect(badToolResult.status).not.toBe(0);
+    expect(badToolResult.stderr).toContain("effects.openclawTools.toolSearch must be a boolean");
+
+    fs.rmSync(path.join(blueprintDir, "model-specific-setup", "openclaw", "bad-tool-effect.json"));
     fs.mkdirSync(path.join(blueprintDir, "openclaw-plugins", "fixture"), { recursive: true });
     const badLoadPathRegistryDir = writeRegistryManifest(
       blueprintDir,

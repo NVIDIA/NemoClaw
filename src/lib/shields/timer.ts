@@ -10,15 +10,13 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
+import { isRecord, type UnknownRecord } from "../core/json-types";
 import { buildPolicySetCommand } from "../policy";
 import { run } from "../runner";
 import { DEFAULT_AGENT_CONFIG, resolveAgentConfig } from "../sandbox/config";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
 import { lockAgentConfig } from "./index";
-
-type UnknownRecord = { [key: string]: unknown };
 
 interface ShieldsStatePatch {
   shieldsDown?: boolean;
@@ -42,10 +40,6 @@ interface TimerArgs {
 }
 
 const STATE_DIR = resolveNemoclawStateDir();
-
-function isRecord(value: unknown): value is UnknownRecord {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
 
 function parseTimerArgs(argv: string[]): TimerArgs | null {
   const [sandboxName, snapshotPath, restoreAtIso, configPath, configDir, processToken] = argv;

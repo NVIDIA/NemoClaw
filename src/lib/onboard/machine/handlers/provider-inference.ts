@@ -3,6 +3,7 @@
 
 import type { WebSearchConfig } from "../../../inference/web-search";
 import type { Session, SessionUpdates } from "../../../state/onboard-session";
+import { withInferenceTrace, withProviderSelectionTrace } from "../../tracing";
 
 export type ProviderInferenceRetry = { retry: "selection" } | { ok: true; retry?: undefined };
 
@@ -15,6 +16,7 @@ export interface ProviderSelectionResult {
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   nimContainer: string | null;
+  allowToolsIncompatible?: boolean;
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
@@ -53,6 +55,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       credentialEnv: string | null,
       hermesAuthMethod: string | null,
       hermesToolGateways: string[],
+      options?: { allowToolsIncompatible?: boolean },
     ): Promise<ProviderInferenceRetry>;
     startRecordedStep(
       stepName: string,
@@ -65,6 +68,14 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       provider: string | null | undefined,
       credentialEnv: string | null | undefined,
     ): Promise<{ forceInferenceSetup: boolean; credentialEnv: string | null }>;
+    recordStateSkipped(
+      state: "provider_selection" | "inference",
+      metadata?: Record<string, unknown> | null,
+    ): Promise<Session>;
+    recordRepairEvent(
+      type: "state.repair.started" | "state.repair.completed" | "state.repair.failed",
+      options?: { state?: "provider_selection" | "inference"; error?: string | null; metadata?: Record<string, unknown> | null },
+    ): Promise<Session>;
     hydrateCredentialEnv(credentialEnv: string | null): void;
     repairLocalInferenceSystemdOverrideOrExit(provider: string | null, isNonInteractive: () => boolean): void;
     isNonInteractive(): boolean;
@@ -157,6 +168,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
+  let allowToolsIncompatible = false;
 
   while (true) {
     let forceInferenceSetup = false;
@@ -172,11 +184,42 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       forceInferenceSetup = recovery.forceInferenceSetup;
       credentialEnv = recovery.credentialEnv;
       deps.skippedStepMessage("provider_selection", `${provider} / ${model}`);
+      await deps.recordStateSkipped("provider_selection", {
+        reason: "resume",
+        provider,
+        model,
+      });
       deps.hydrateCredentialEnv(credentialEnv);
-      deps.repairLocalInferenceSystemdOverrideOrExit(provider, deps.isNonInteractive);
+      if (provider === "ollama-local") {
+        const repairMetadata = { repair: "ollama-systemd-loopback" };
+        await deps.recordRepairEvent("state.repair.started", {
+          state: "provider_selection",
+          metadata: repairMetadata,
+        });
+        try {
+          deps.repairLocalInferenceSystemdOverrideOrExit(provider, deps.isNonInteractive);
+        } catch (err) {
+          await deps.recordRepairEvent("state.repair.failed", {
+            state: "provider_selection",
+            error: err instanceof Error ? err.message : String(err),
+            metadata: repairMetadata,
+          });
+          throw err;
+        }
+        await deps.recordRepairEvent("state.repair.completed", {
+          state: "provider_selection",
+          metadata: repairMetadata,
+        });
+      } else {
+        deps.repairLocalInferenceSystemdOverrideOrExit(provider, deps.isNonInteractive);
+      }
     } else {
       await deps.startRecordedStep("provider_selection");
-      const selection = await deps.setupNim(gpu, sandboxName, agent);
+      const selection = await withProviderSelectionTrace(
+        sandboxName,
+        (agent as { name?: string } | null)?.name,
+        () => deps.setupNim(gpu, sandboxName, agent),
+      );
       model = selection.model;
       provider = selection.provider;
       endpointUrl = selection.endpointUrl;
@@ -185,12 +228,15 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       hermesToolGateways = selection.hermesToolGateways;
       preferredInferenceApi = selection.preferredInferenceApi;
       nimContainer = selection.nimContainer;
+      allowToolsIncompatible = selection.allowToolsIncompatible === true;
       shouldRecordProviderSelection = true;
     }
 
     const selected = requireSelection(provider, model, deps);
-    provider = selected.provider;
-    model = selected.model;
+    const selectedProvider = selected.provider;
+    const selectedModel = selected.model;
+    provider = selectedProvider;
+    model = selectedModel;
     if (shouldRecordProviderSelection) {
       session = await deps.recordStepComplete(
         "provider_selection",
@@ -219,15 +265,24 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         let inferenceResult: ProviderInferenceRetry;
         try {
           if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
+          const confirmedSandboxName = sandboxName;
           await deps.startRecordedStep("inference", { provider, model });
-          inferenceResult = await deps.setupInference(
-            sandboxName,
-            model,
-            provider,
-            endpointUrl,
+          inferenceResult = await withInferenceTrace(
+            confirmedSandboxName,
+            selectedProvider,
+            selectedModel,
             credentialEnv,
-            hermesAuthMethod,
-            hermesToolGateways,
+            () =>
+              deps.setupInference(
+                confirmedSandboxName,
+                selectedModel,
+                selectedProvider,
+                endpointUrl,
+                credentialEnv,
+                hermesAuthMethod,
+                hermesToolGateways,
+                { allowToolsIncompatible },
+              ),
           );
         } finally {
           clearStagedCredentialEnv(deps, credentialEnv);
@@ -251,6 +306,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         }
       }
       deps.skippedStepMessage("inference", `${provider} / ${model}`);
+      await deps.recordStateSkipped("inference", {
+        reason: "resume",
+        provider,
+        model,
+      });
       if (nimContainer && sandboxName) deps.registryUpdateSandbox(sandboxName, { nimContainer });
       session = await deps.recordStepComplete(
         "inference",
@@ -262,6 +322,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     let inferenceResult: ProviderInferenceRetry;
     try {
       if (!sandboxName) sandboxName = await deps.promptValidatedSandboxName(agent);
+      const confirmedSandboxName = sandboxName;
       const buildEstimateNote =
         env.NEMOCLAW_IGNORE_RUNTIME_RESOURCES === "1"
           ? null
@@ -275,7 +336,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           webSearchConfig,
           hermesToolGateways,
           enabledChannels: selectedMessagingChannels.length > 0 ? selectedMessagingChannels : null,
-          sandboxName,
+          sandboxName: confirmedSandboxName,
           notes: buildEstimateNote ? [buildEstimateNote] : [],
         }),
       );
@@ -290,14 +351,22 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       }
 
       await deps.startRecordedStep("inference", { provider, model });
-      inferenceResult = await deps.setupInference(
-        sandboxName,
-        model,
-        provider,
-        endpointUrl,
+      inferenceResult = await withInferenceTrace(
+        confirmedSandboxName,
+        selectedProvider,
+        selectedModel,
         credentialEnv,
-        hermesAuthMethod,
-        hermesToolGateways,
+        () =>
+          deps.setupInference(
+            confirmedSandboxName,
+            selectedModel,
+            selectedProvider,
+            endpointUrl,
+            credentialEnv,
+            hermesAuthMethod,
+            hermesToolGateways,
+            { allowToolsIncompatible },
+          ),
       );
     } finally {
       clearStagedCredentialEnv(deps, credentialEnv);

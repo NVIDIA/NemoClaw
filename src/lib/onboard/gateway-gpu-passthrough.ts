@@ -134,18 +134,12 @@ export function reconcileGatewayGpuReuseForGpuIntent({
   gpuPassthrough,
   gatewayName,
   currentSandboxName,
-  hostGpuPlatform = null,
   recreateSandbox,
   confirmedDockerDriverGateway,
   stopDashboardForwards,
   retireLegacyGatewayForDockerDriverUpgrade,
   destroyGatewayRuntimeForGpuReuse,
 }: GatewayGpuReuseReconcileOptions): GatewayReuseState {
-  if (gpuPassthrough && hostGpuPlatform === "jetson") {
-    reportGpuPassthroughRecovery(console.error, () => [], { unsupportedPlatform: "jetson" });
-    process.exit(1);
-  }
-
   if (!shouldInspectLegacyGatewayGpuPassthrough(
     gatewayReuseState,
     gpuPassthrough,

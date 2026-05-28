@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
 import {
   createTarball,
   getDebugCompletionMessages,
   isDmesgPermissionDeniedOutput,
+  isDmesgRestrictedForCurrentUser,
   redact,
 } from "../../../dist/lib/diagnostics/debug";
 
@@ -92,6 +93,31 @@ describe("createTarball", () => {
     expect(ok).toBe(true);
     expect(process.exitCode).toBeUndefined();
     expect(existsSync(output)).toBe(true);
+  });
+});
+
+describe("dmesg restriction detection", () => {
+  let tempDir: string;
+
+  afterEach(() => {
+    if (tempDir) rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("detects restricted dmesg for non-root users", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-dmesg-test-"));
+    const restrictPath = join(tempDir, "dmesg_restrict");
+    writeFileSync(restrictPath, "1\n");
+
+    expect(isDmesgRestrictedForCurrentUser(restrictPath, 1000)).toBe(true);
+  });
+
+  it("does not skip dmesg for root or unreadable restriction state", () => {
+    tempDir = mkdtempSync(join(tmpdir(), "debug-dmesg-test-"));
+    const restrictPath = join(tempDir, "dmesg_restrict");
+    writeFileSync(restrictPath, "1\n");
+
+    expect(isDmesgRestrictedForCurrentUser(restrictPath, 0)).toBe(false);
+    expect(isDmesgRestrictedForCurrentUser(join(tempDir, "missing"), 1000)).toBe(false);
   });
 });
 

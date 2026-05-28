@@ -14,13 +14,9 @@
  */
 
 import * as registry from "../state/registry";
-import {
-  JETSON_SANDBOX_GPU_UNSUPPORTED_MESSAGE,
-  JETSON_SANDBOX_GPU_WORKAROUND_MESSAGE,
-} from "./sandbox-gpu-mode";
 
 export type GpuPassthroughRecoveryOptions = {
-  unsupportedPlatform?: "jetson" | null;
+  missingRuntimePlatform?: "jetson" | null;
 };
 
 /**
@@ -41,10 +37,10 @@ export function gpuPassthroughRecoveryLines(
   names: readonly string[] | null,
   options: GpuPassthroughRecoveryOptions = {},
 ): string[] {
-  if (options.unsupportedPlatform === "jetson") {
+  if (options.missingRuntimePlatform === "jetson") {
     return [
-      `  ${JETSON_SANDBOX_GPU_UNSUPPORTED_MESSAGE}`,
-      `  ${JETSON_SANDBOX_GPU_WORKAROUND_MESSAGE}`,
+      "  Jetson/Tegra sandbox GPU requires Docker NVIDIA runtime support.",
+      "  Destroying/recreating the sandbox or gateway will not repair a missing NVIDIA runtime.",
       "  Use CPU sandbox mode instead:",
       "    nemoclaw onboard --no-gpu",
     ];
@@ -112,6 +108,6 @@ export function reportGpuPassthroughRecovery(
   loadNames: () => string[] = getRegisteredSandboxNamesForGpuRecovery,
   options: GpuPassthroughRecoveryOptions = {},
 ): void {
-  const names = options.unsupportedPlatform === "jetson" ? [] : loadNames();
+  const names = options.missingRuntimePlatform === "jetson" ? [] : loadNames();
   for (const line of gpuPassthroughRecoveryLines(names, options)) emit(line);
 }

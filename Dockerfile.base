@@ -74,6 +74,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # gosu for privilege separation (gateway vs sandbox user).
 # Install from GitHub release with checksum verification instead of
 # Debian's packaged gosu can lag upstream. Pinned to 1.19 (2025-09).
+# Binary release asset downloads can be slower than hash fetches; keep
+# longer bounded transfer timeouts while preserving checksum verification.
 # hadolint ignore=DL4006
 RUN arch="$(dpkg --print-architecture)" \
     && case "$arch" in \
@@ -81,7 +83,9 @@ RUN arch="$(dpkg --print-architecture)" \
         arm64) gosu_asset="gosu-arm64"; gosu_sha256="3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44" ;; \
         *) echo "Unsupported architecture for gosu: $arch" >&2; exit 1 ;; \
     esac \
-    && curl -fsSL -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
+    && curl --proto '=https' --tlsv1.2 -fsSL \
+        --retry 5 --retry-all-errors --retry-delay 2 --connect-timeout 15 --max-time 120 \
+        -o /usr/local/bin/gosu "https://github.com/tianon/gosu/releases/download/1.19/${gosu_asset}" \
     && echo "${gosu_sha256}  /usr/local/bin/gosu" | sha256sum -c - \
     && chmod +x /usr/local/bin/gosu \
     && gosu --version
@@ -127,19 +131,15 @@ RUN mkdir -p /sandbox/.openclaw/agents/main/agent \
     && chmod -R g+w /sandbox/.openclaw \
     && find /sandbox/.openclaw -type d -exec chmod g+s {} +
 
-# Pre-create shell init files for the sandbox user.
-# Runtime proxy config is written by the entrypoint to /tmp/nemoclaw-proxy-env.sh
-# (root-owned, mode 444, sticky-bit protected) and sourced from here on every
-# interactive session.
-# Ref: #2181 — the file must not be writable by the sandbox user.
+# Pre-create shell init files for the sandbox user. Runtime environment hooks
+# are installed system-wide below; user rc files stay clean and locked so
+# per-user startup files are not part of the trust boundary.
 # hadolint ignore=SC2028
 RUN printf '%s\n' \
-        '# Source runtime proxy config' \
-        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        '# NemoClaw sandbox shell init' \
         > /sandbox/.bashrc \
     && printf '%s\n' \
-        '# Source runtime proxy config' \
-        '[ -f /tmp/nemoclaw-proxy-env.sh ] && . /tmp/nemoclaw-proxy-env.sh' \
+        '# NemoClaw sandbox login init' \
         > /sandbox/.profile \
     && chown root:root /sandbox/.bashrc /sandbox/.profile \
     && chmod 444 /sandbox/.bashrc /sandbox/.profile
@@ -178,7 +178,8 @@ RUN printf '%s\n' \
 # OpenClaw version: change the OPENCLAW_VERSION ARG default so CI rebuilds
 # the base image on push to main, or use workflow_dispatch on base-image.yaml
 # with the openclaw_version input for a one-off build without editing this file.
-ARG OPENCLAW_VERSION=2026.5.18
+ARG OPENCLAW_VERSION=2026.5.22
+ARG OPENCLAW_2026_5_22_INTEGRITY=sha512-m+zgBELGbCHjWB1IWF5WSWNPr480cMKOMff2OF72c8A0AMD4hC/9+qwYtzjYmGkETcffnB711JymlVsQnh2Tow==
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -198,6 +199,16 @@ RUN --mount=type=bind,source=nemoclaw-blueprint/blueprint.yaml,target=/tmp/bluep
     if ! npm view openclaw@${OPENCLAW_VERSION} version > /dev/null 2>&1; then \
         echo "Error: OpenClaw version ${OPENCLAW_VERSION} not found on npm registry"; \
         echo "Hint: Check available versions with: npm view openclaw versions"; exit 1; \
+    fi; \
+    EXPECTED_INTEGRITY=""; \
+    if [ "$OPENCLAW_VERSION" = "2026.5.22" ]; then EXPECTED_INTEGRITY="$OPENCLAW_2026_5_22_INTEGRITY"; fi; \
+    if [ -n "$EXPECTED_INTEGRITY" ]; then \
+        REGISTRY_INTEGRITY=$(npm view "openclaw@${OPENCLAW_VERSION}" dist.integrity); \
+        if [ "$REGISTRY_INTEGRITY" != "$EXPECTED_INTEGRITY" ]; then \
+            echo "Error: OpenClaw ${OPENCLAW_VERSION} npm integrity mismatch"; \
+            echo "Expected: ${EXPECTED_INTEGRITY}"; \
+            echo "Actual:   ${REGISTRY_INTEGRITY}"; exit 1; \
+        fi; \
     fi; \
     npm install -g "openclaw@${OPENCLAW_VERSION}" \
     && pip3 install --no-cache-dir --break-system-packages "pyyaml==6.0.3"

@@ -134,15 +134,14 @@ function writeCollectedMessage(collectDir: string, label: string, message: strin
   console.log(message);
 }
 
-function isRootUser(): boolean {
-  return typeof process.getuid === "function" && process.getuid() === 0;
-}
-
-function isDmesgRestrictedForCurrentUser(): boolean {
-  if (isRootUser()) return false;
+export function isDmesgRestrictedForCurrentUser(
+  restrictPath = DMESG_RESTRICT_PATH,
+  euid = process.geteuid?.() ?? process.getuid?.() ?? 0,
+): boolean {
+  if (euid === 0) return false;
 
   try {
-    return readFileSync(DMESG_RESTRICT_PATH, "utf-8").trim() === "1";
+    return readFileSync(restrictPath, "utf-8").trim() === "1";
   } catch {
     return false;
   }
