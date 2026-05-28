@@ -38,6 +38,8 @@ source "${SCRIPT_DIR_TIMEOUT}/lib/install-path-refresh.sh"
 # ── Config ───────────────────────────────────────────────────────────────────
 SANDBOX_NAME="e2e-net-policy"
 LOG_FILE="test-network-policy-$(date +%Y%m%d-%H%M%S).log"
+SANDBOX_EXEC_TIMEOUT_SECONDS=120
+PACKAGE_MANAGER_SANDBOX_TIMEOUT_SECONDS=300
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -175,6 +177,7 @@ EOF
 # Execute a command inside the sandbox via SSH.
 sandbox_exec() {
   local cmd="$1"
+  local timeout_seconds="${2:-$SANDBOX_EXEC_TIMEOUT_SECONDS}"
   local ssh_cfg
   ssh_cfg="$(mktemp)"
   if ! openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_cfg" 2>/dev/null; then
@@ -184,7 +187,7 @@ sandbox_exec() {
     return 1
   fi
   local result ssh_exit=0
-  result=$(run_with_timeout 120 ssh -F "$ssh_cfg" \
+  result=$(run_with_timeout "$timeout_seconds" ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" "$cmd" 2>&1) || ssh_exit=$?
@@ -336,7 +339,7 @@ test_net_11_brew_install_hello() {
 
   log "  Installing hello through the sandbox Homebrew wrapper..."
   local response
-  response=$(sandbox_exec "bash -lc 'set -e; export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1; command -v brew; brew --prefix; brew install --quiet hello; command -v hello; hello'" 2>&1) || true
+  response=$(sandbox_exec "bash -lc 'set -e; export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1; command -v brew; brew --prefix; brew install --quiet hello; command -v hello; hello'" "$PACKAGE_MANAGER_SANDBOX_TIMEOUT_SECONDS" 2>&1) || true
 
   log "  Response: ${response:0:1000}"
 
