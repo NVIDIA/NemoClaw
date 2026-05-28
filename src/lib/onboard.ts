@@ -419,6 +419,7 @@ const { handlePoliciesState }: typeof import("./onboard/machine/handlers/policie
 const { handlePreflightState }: typeof import("./onboard/machine/handlers/preflight") = require("./onboard/machine/handlers/preflight");
 const { handleProviderInferenceState }: typeof import("./onboard/machine/handlers/provider-inference") = require("./onboard/machine/handlers/provider-inference");
 const { handleSandboxState }: typeof import("./onboard/machine/handlers/sandbox") = require("./onboard/machine/handlers/sandbox");
+const { advanceTo }: typeof import("./onboard/machine/result") = require("./onboard/machine/result");
 const { getOnboardProgressStep }: typeof import("./onboard/machine/progress") = require("./onboard/machine/progress");
 const policies: typeof import("./policy") = require("./policy");
 const tiers: typeof import("./policy/tiers") = require("./policy/tiers");
@@ -6380,6 +6381,7 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   toSessionUpdates: (updates: Record<string, unknown>) =>
     toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
   maybeForceE2eStepFailure,
+  stepMutationOptions: { updateMachine: false },
 });
 
 const recordOnboardStarted = onboardRuntimeBoundary.recordOnboardStarted.bind(onboardRuntimeBoundary);
@@ -6680,6 +6682,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     }
 
     await recordOnboardStarted(resume);
+    await recordStateResultWithStepCompatibility(
+      advanceTo("preflight", { metadata: { state: "init" } }),
+    );
 
     // Backstop for the resume path: a session may exist (so the early guard
     // skipped because resume === true) but never have recorded a sandboxName
@@ -6946,7 +6951,9 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         },
       },
     });
-    await recordStateResultWithStepCompatibility(providerInferenceResult.stateResult);
+    for (const stateResult of providerInferenceResult.stateResults) {
+      await recordStateResultWithStepCompatibility(stateResult);
+    }
     session = providerInferenceResult.session;
     sandboxName = providerInferenceResult.sandboxName;
     const {
