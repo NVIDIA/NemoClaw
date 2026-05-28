@@ -100,12 +100,15 @@ describe("checkTelegramReachability", () => {
     const exitSpy = vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
       throw new Error(`__test_exit_${code ?? 0}__`);
     }) as never);
-    const deps = makeDeps({
-      isNonInteractive: vi.fn(() => false),
-      promptYesNoOrDefault: vi.fn(async () => false),
-    });
-    await expect(checkTelegramReachability("123:abc", deps)).rejects.toThrow("__test_exit_1__");
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    exitSpy.mockRestore();
+    try {
+      const deps = makeDeps({
+        isNonInteractive: vi.fn(() => false),
+        promptYesNoOrDefault: vi.fn(async () => false),
+      });
+      await expect(checkTelegramReachability("123:abc", deps)).rejects.toThrow("__test_exit_1__");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    } finally {
+      exitSpy.mockRestore();
+    }
   });
 });
