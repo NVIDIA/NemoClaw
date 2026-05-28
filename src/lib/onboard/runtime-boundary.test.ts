@@ -91,4 +91,25 @@ describe("OnboardRuntimeBoundary", () => {
     expect(harness.events[0]).toMatchObject({ state: "init" });
     expect(harness.events[1]).toMatchObject({ state: "init" });
   });
+
+  it("records resume conflict diagnostics through the runtime", async () => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordResumeConflict({
+      field: "sandbox",
+      recorded: "old-sandbox",
+      requested: "new-sandbox",
+    });
+
+    expect(harness.events).toHaveLength(1);
+    expect(harness.events[0]).toMatchObject({
+      type: "resume.conflict",
+      metadata: { field: "sandbox", recorded: "old-sandbox", requested: "new-sandbox" },
+    });
+  });
 });

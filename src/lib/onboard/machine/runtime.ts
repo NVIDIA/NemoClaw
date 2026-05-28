@@ -243,6 +243,25 @@ export class OnboardRuntime {
     return session;
   }
 
+  async emitResumeConflict(options: {
+    field: string;
+    recorded?: unknown;
+    requested?: unknown;
+    metadata?: Record<string, unknown> | null;
+  }): Promise<Session> {
+    const session = this.ensureSession();
+    this.emit("resume.conflict", session, {
+      state: session.machine.state,
+      metadata: {
+        ...eventMetadata(options.metadata),
+        field: options.field,
+        recorded: options.recorded ?? null,
+        requested: options.requested ?? null,
+      },
+    });
+    return session;
+  }
+
   async emitRepairEvent(
     type: Extract<
       OnboardMachineEventType,

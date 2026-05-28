@@ -37,6 +37,7 @@ export class OnboardRuntimeBoundary {
       recordStepSkipped: this.recordStepSkipped.bind(this),
       recordStateSkipped: this.recordStateSkipped.bind(this),
       recordRepairEvent: this.recordRepairEvent.bind(this),
+      recordResumeConflict: this.recordResumeConflict.bind(this),
       recordStepFailed: this.recordStepFailed.bind(this),
       recordPostVerifyStarted: this.recordPostVerifyStarted.bind(this),
       recordSessionComplete: this.recordSessionComplete.bind(this),
@@ -81,6 +82,15 @@ export class OnboardRuntimeBoundary {
     metadata: Record<string, unknown> | null = null,
   ): Promise<Session> {
     return this.getRuntime().markSkipped(state, metadata);
+  }
+
+  async recordResumeConflict(conflict: {
+    field: string;
+    recorded?: unknown;
+    requested?: unknown;
+    metadata?: Record<string, unknown> | null;
+  }): Promise<Session> {
+    return this.getRuntime().emitResumeConflict(conflict);
   }
 
   async recordRepairEvent(

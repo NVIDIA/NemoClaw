@@ -209,6 +209,24 @@ describe("OnboardRuntime", () => {
     expect(events[1]).toMatchObject({ state: "post_verify" });
   });
 
+  it("emits redacted resume conflict events without mutating durable state", async () => {
+    const { runtime, events, getSession } = createHarness(sessionInState("provider_selection"));
+
+    await runtime.emitResumeConflict({
+      field: "fromDockerfile",
+      recorded: "/workspace/Dockerfile",
+      requested: "/tmp/Dockerfile",
+      metadata: { endpoint: "https://alice:secret@example.com/v1?token=super-secret" },
+    });
+
+    expect(getSession().machine.state).toBe("provider_selection");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ type: "resume.conflict", state: "provider_selection" });
+    expect(events[0].metadata.field).toBe("fromDockerfile");
+    expect(JSON.stringify(events)).not.toContain("super-secret");
+    expect(JSON.stringify(events)).not.toContain("alice:secret");
+  });
+
   it("emits skipped and repair events without mutating durable state", async () => {
     const { runtime, events, getSession } = createHarness(sessionInState("provider_selection"));
 

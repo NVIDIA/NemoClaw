@@ -6389,6 +6389,7 @@ const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardR
 const recordStepFailed = onboardRuntimeBoundary.recordStepFailed.bind(onboardRuntimeBoundary);
 const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboardRuntimeBoundary);
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
+const recordResumeConflict = onboardRuntimeBoundary.recordResumeConflict.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted = onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 const recordSessionComplete = onboardRuntimeBoundary.recordSessionComplete.bind(onboardRuntimeBoundary);
 
@@ -6598,6 +6599,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       });
       if (resumeConflicts.length > 0) {
         for (const conflict of resumeConflicts) {
+          await recordResumeConflict(conflict);
           if (conflict.field === "sandbox") {
             console.error(
               `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`,
