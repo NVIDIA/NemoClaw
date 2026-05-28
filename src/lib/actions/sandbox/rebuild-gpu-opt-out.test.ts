@@ -60,7 +60,7 @@ describe("rebuildShouldOptOutGpu", () => {
     expect(rebuildShouldOptOutGpu({ gpuEnabled: true })).toBe(false);
   });
 
-  it("treats unrecognized sandboxGpuMode values as no explicit intent", () => {
+  it("falls through to the legacy gpuEnabled check when sandboxGpuMode is not 0/1/auto", () => {
     expect(
       rebuildShouldOptOutGpu({
         sandboxGpuMode: "bogus" as unknown as string,
@@ -71,6 +71,31 @@ describe("rebuildShouldOptOutGpu", () => {
       rebuildShouldOptOutGpu({
         sandboxGpuMode: "bogus" as unknown as string,
         sandboxGpuEnabled: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("normalises mixed-case mode 'AUTO' and aliases like 'off' through normalizeSandboxGpuMode", () => {
+    expect(
+      rebuildShouldOptOutGpu({
+        sandboxGpuMode: "AUTO" as unknown as string,
+        sandboxGpuEnabled: false,
+      }),
+    ).toBe(false);
+    expect(
+      rebuildShouldOptOutGpu({
+        sandboxGpuMode: "off" as unknown as string,
+      }),
+    ).toBe(true);
+    expect(
+      rebuildShouldOptOutGpu({
+        sandboxGpuMode: "false" as unknown as string,
+      }),
+    ).toBe(true);
+    expect(
+      rebuildShouldOptOutGpu({
+        sandboxGpuMode: "TRUE" as unknown as string,
+        sandboxGpuEnabled: false,
       }),
     ).toBe(false);
   });

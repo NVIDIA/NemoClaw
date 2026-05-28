@@ -61,10 +61,8 @@ import {
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
 import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
+import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
 
-/**
- * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
- */
 export function rebuildShouldOptOutGpu(
   sb:
     | {
@@ -76,17 +74,16 @@ export function rebuildShouldOptOutGpu(
     | undefined,
 ): boolean {
   if (!sb) return false;
-  const mode = sb.sandboxGpuMode;
+  const mode = normalizeSandboxGpuMode(sb.sandboxGpuMode);
   if (mode === "0") return true;
   if (mode === "1" || mode === "auto") return false;
-  // Legacy entries without sandboxGpuMode fall back to gpuEnabled. Treat the
-  // missing mode field as "no explicit intent recorded" and only opt out
-  // when the explicit-opt-out signal (`gpuEnabled === false`) is set with no
-  // counter-signal from `sandboxGpuEnabled`.
   if (sb.sandboxGpuEnabled === true) return false;
   return sb.gpuEnabled === false;
 }
 
+/**
+ * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
+ */
 function _rebuildLog(msg: string) {
   console.error(`  ${D}[rebuild ${new Date().toISOString()}] ${redact(msg)}${R}`);
 }
@@ -700,11 +697,7 @@ export async function rebuildSandbox(
 
   // Propagate the original sandbox's no-GPU intent into the recreate path so
   // the inner `onboard --resume` does not enforce a Docker CDI GPU preflight
-  // on hosts without an NVIDIA GPU. Without this, a `--no-gpu` sandbox on a
-  // non-NVIDIA host (e.g. Snapdragon ARM WSL2) is destroyed and the recreate
-  // fails at preflight because the registry entry has already been removed
-  // and the cached session's gpuPassthrough is not enough to bypass the CDI
-  // check on every code path.
+  // on hosts without an NVIDIA GPU.
   const sbHadNoGpu = rebuildShouldOptOutGpu(sb);
   try {
     await onboard({
