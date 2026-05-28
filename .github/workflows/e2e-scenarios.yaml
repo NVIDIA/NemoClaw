@@ -288,30 +288,30 @@ jobs:
             exit 1
           fi
           wsl -d "${WSL_DISTRO}" -- env \
-            NVIDIA_API_KEY="${NVIDIA_API_KEY}" \
-            SCENARIOS="${SCENARIOS}" \
-            WSL_CHECKOUT_DIR="${WSL_CHECKOUT_DIR}" \
-            WSL_WORKDIR="${WSL_WORKDIR}" \
+            NVIDIA_API_KEY="${NVIDIA_API_KEY:-}" \
             bash -lc '
               set -euo pipefail
-              cd "${WSL_WORKDIR}"
-              mkdir -p "${WSL_WORKDIR}"
-              export E2E_CONTEXT_DIR="${WSL_WORKDIR}"
+              workdir="$1"
+              checkout_dir="$2"
+              scenarios="$3"
+              mkdir -p "${workdir}"
+              cd "${workdir}"
+              export E2E_CONTEXT_DIR="${workdir}"
               npm ci --ignore-scripts
               set +e
-              npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${SCENARIOS}" --dry-run
+              npx tsx test/e2e-scenario/scenarios/run.ts --scenarios "${scenarios}" --dry-run
               status=$?
-              if [ -d "${WSL_WORKDIR}/.e2e" ]; then
-                rm -rf "${WSL_CHECKOUT_DIR}/.e2e"
-                cp -a "${WSL_WORKDIR}/.e2e" "${WSL_CHECKOUT_DIR}/.e2e"
+              if [ -d "${workdir}/.e2e" ]; then
+                rm -rf "${checkout_dir}/.e2e"
+                cp -a "${workdir}/.e2e" "${checkout_dir}/.e2e"
               fi
-              if [ -d "${WSL_WORKDIR}/test/e2e/logs" ]; then
-                mkdir -p "${WSL_CHECKOUT_DIR}/test/e2e"
-                rm -rf "${WSL_CHECKOUT_DIR}/test/e2e/logs"
-                cp -a "${WSL_WORKDIR}/test/e2e/logs" "${WSL_CHECKOUT_DIR}/test/e2e/logs"
+              if [ -d "${workdir}/test/e2e/logs" ]; then
+                mkdir -p "${checkout_dir}/test/e2e"
+                rm -rf "${checkout_dir}/test/e2e/logs"
+                cp -a "${workdir}/test/e2e/logs" "${checkout_dir}/test/e2e/logs"
               fi
               exit "$status"
-            '
+            ' bash "${WSL_WORKDIR}" "${WSL_CHECKOUT_DIR}" "${SCENARIOS}"
 
       - name: Append plan summary
         if: always()

@@ -114,7 +114,8 @@ export function validateE2eScenariosWorkflowBoundary(
   requireRunContains(errors, wslRun, "npx tsx test/e2e-scenario/scenarios/run.ts");
   requireRunContains(errors, wslRun, "--scenarios");
   requireRunContains(errors, wslRun, "--dry-run");
-  requireRunContains(errors, wslRun, 'cd "${WSL_WORKDIR}"');
+  requireRunContains(errors, wslRun, 'workdir="$1"');
+  requireRunContains(errors, wslRun, 'cd "${workdir}"');
 
   const upload = requireStep(errors, steps, "Upload scenario artifacts");
   const uploadWith = asRecord(upload?.with);
