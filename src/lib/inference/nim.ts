@@ -24,35 +24,34 @@ import { VLLM_PORT } from "../core/ports";
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
 
-// On Windows-on-ARM (Snapdragon X) WSL2 hosts, a d3d12/WDDM shim publishes a
-// `nvidia-smi.exe` that returns a placeholder name (e.g. "JMJWOA-Generic-GPU")
-// even though the system has no NVIDIA hardware. Real DGX Spark legitimately
-// reports the same string (see #3510), distinguished by the firmware platform.
-// Accept a name as NVIDIA when it either advertises the vendor explicitly or
-// matches a known NVIDIA product family; otherwise the caller must cross-check
-// against `detectNvidiaPlatform()` before trusting the nvidia-smi output.
+// Accept a name as NVIDIA when it advertises the vendor explicitly or matches
+// a known NVIDIA product family. The caller must still cross-check against
+// `detectNvidiaPlatform()` and the trust-tier gate below before trusting the
+// nvidia-smi output — the name alone is insufficient because both real DGX
+// Spark and the observed Snapdragon X WSL2 nvidia-smi shim publish placeholder
+// names like "JMJWOA-Generic-GPU".
 const NVIDIA_GPU_NAME_PATTERN =
   /\bNVIDIA\b|\b(GeForce|Tesla|Quadro|RTX|GTX|TITAN|H100|H200|A100|A40|A10|L40|L4|GB1\d|GB200|GB300|Grace[\s_-]+Hopper)\b/i;
 
-// Names that have been observed both on legitimate NVIDIA unified-memory
-// hardware (DGX Spark — #3510) and on Windows-on-ARM WSL2 d3d12 shims with no
-// NVIDIA silicon. The prefix match catches the GPU and NPU placeholder
-// variants the shim emits, plus any future suffix without a code change. Even
-// with an `NVIDIA ` vendor prefix the name alone is not sufficient — the
-// caller must cross-check `detectNvidiaPlatform()`.
+// Placeholder names observed on the Snapdragon X WSL2 nvidia-smi shim AND on
+// legitimate NVIDIA unified-memory hardware. The prefix match catches the GPU
+// and NPU placeholder variants the shim emits, plus any future suffix without
+// a code change. Even with an `NVIDIA ` vendor prefix the name alone is not
+// sufficient — the caller must cross-check `detectNvidiaPlatform()`.
 const NVIDIA_GPU_NAME_DENYLIST_PATTERN = /\bJMJWOA-Generic-/i;
 
 // Trust-tier check used after the name denylist on hosts whose firmware does
 // not vouch for an NVIDIA platform. A host is considered genuine when ANY of:
-//   - the platform is not Linux (the only place a userland shim is known to
-//     publish an `nvidia-smi` impersonator inside the same kernel namespace);
-//   - the architecture is not `arm64` (the d3d12/WDDM shim ships on
-//     Windows-on-ARM only — Microsoft's WoA is ARM-only by spec, so a Linux
-//     x86_64 host that exposes `nvidia-smi` cannot be the shim);
-//   - `/proc/driver/nvidia/` exists on Linux (real NVIDIA kernel driver bound;
-//     the shim never creates this path).
+//   - the platform is not Linux (no userland `nvidia-smi` impersonator is
+//     known to ship inside the Linux kernel namespace on other platforms);
+//   - the architecture is not `arm64` (the observed Snapdragon X WSL2
+//     nvidia-smi shim is Windows-on-ARM only — Microsoft's WoA is ARM-only
+//     by spec, so a Linux x86_64 host that exposes `nvidia-smi` cannot be
+//     this shim);
+//   - `/proc/driver/nvidia/` exists on Linux (real NVIDIA kernel driver
+//     bound; the observed shim never creates this path).
 // The remaining case (ARM64 Linux with no `/proc/driver/nvidia/` populated) is
-// the Snapdragon X N1X shim profile and is rejected by the caller.
+// the Snapdragon X shim profile and is rejected by the caller.
 const NVIDIA_DRIVER_PROC_PATH = "/proc/driver/nvidia";
 
 function nvidiaHostLooksGenuine(): boolean {
@@ -397,15 +396,14 @@ export function detectGpu(): GpuDetection | null {
       }
       if (parsed.length > 0) {
         const platform = detectNvidiaPlatform();
-        // Off Spark/Station/Jetson firmware, layer a denylist check and a
-        // kernel-interface check before trusting the nvidia-smi probe. The
-        // Snapdragon X WSL2 d3d12/WDDM shim emits a `JMJWOA-Generic-*`
-        // placeholder name AND ships no `/proc/driver/nvidia/` directory,
-        // so either signal alone is sufficient to reject. We treat any
-        // denylisted row as a poisoned probe and reject the whole result —
-        // partial filtering would let a mixed-row spoof surface a non-
-        // placeholder row as a real GPU. Firmware-vouched platforms keep
-        // the #3510 path working.
+        // Off Spark/Station/Jetson firmware, layer a denylist check and the
+        // trust-tier gate before trusting the nvidia-smi probe. The observed
+        // Snapdragon X WSL2 nvidia-smi shim emits a `JMJWOA-Generic-*`
+        // placeholder name AND ships no `/proc/driver/nvidia/` directory, so
+        // either signal alone is sufficient to reject. Treat any denylisted
+        // row as a poisoned probe and reject the whole result — partial
+        // filtering would let a mixed-row spoof surface a non-placeholder
+        // row as a real GPU.
         const firmwareConfirmsNvidia =
           platform === "spark" || platform === "station" || platform === "jetson";
         let trusted: ParsedGpu[];
@@ -484,8 +482,8 @@ export function detectGpu(): GpuDetection | null {
       UNIFIED_MEMORY_GPU_TAGS.some((tag) => new RegExp(tag, "i").test(name)),
     );
     // Tagged-name acceptance on non-firmware-vouched hosts must additionally
-    // pass the kernel-interface gate so the doc claim ("real kernel driver
-    // bound") holds on the unified-memory fallback as well.
+    // pass the trust-tier gate so the same checks the primary path applies
+    // also hold on the unified-memory fallback.
     const allowTaggedOnGenericFirmware = nvidiaHostLooksGenuine();
     const unifiedGpuNames =
       taggedNames.length > 0

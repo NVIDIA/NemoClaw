@@ -184,14 +184,18 @@ describe("nim", () => {
       }
     }
 
-    // The trust-tier gate is ARM64-Linux-only; CI runners are typically x64,
-    // so the gate is naturally inactive there. Tests that exercise the gate
-    // override `process.arch` to "arm64" via this helper to make the gate
-    // active for the duration of the test body.
-    function withProcessArch(arch: NodeJS.Architecture, fn: () => void): void {
-      const origDesc = Object.getOwnPropertyDescriptor(process, "arch");
-      Object.defineProperty(process, "arch", {
-        value: arch,
+    // The trust-tier gate is ARM64-Linux-only. CI runners may be x64 or
+    // macOS, so tests that exercise the gate must pin BOTH `process.arch`
+    // and `process.platform`; otherwise on macOS the gate exits early on
+    // the platform check and the kernel-interface stub is never consulted.
+    function withProcessProperty<K extends "arch" | "platform">(
+      key: K,
+      value: K extends "arch" ? NodeJS.Architecture : NodeJS.Platform,
+      fn: () => void,
+    ): void {
+      const origDesc = Object.getOwnPropertyDescriptor(process, key);
+      Object.defineProperty(process, key, {
+        value,
         configurable: true,
         writable: true,
       });
@@ -199,9 +203,19 @@ describe("nim", () => {
         fn();
       } finally {
         if (origDesc) {
-          Object.defineProperty(process, "arch", origDesc);
+          Object.defineProperty(process, key, origDesc);
         }
       }
+    }
+
+    function withProcessArch(arch: NodeJS.Architecture, fn: () => void): void {
+      withProcessProperty("arch", arch, fn);
+    }
+
+    function withLinuxArm64(fn: () => void): void {
+      withProcessProperty("platform", "linux", () => {
+        withProcessProperty("arch", "arm64", fn);
+      });
     }
 
     it("returns object or null", () => {
@@ -440,7 +454,7 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          withProcessArch("arm64", () => {
+          withLinuxArm64(() => {
             withNvidiaKernelInterface(false, () => {
               expect(nimModule.detectGpu()).toBeNull();
             });
@@ -469,7 +483,7 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          withProcessArch("arm64", () => {
+          withLinuxArm64(() => {
             withNvidiaKernelInterface(true, () => {
               expect(nimModule.detectGpu()).toMatchObject({
                 type: "nvidia",
@@ -571,7 +585,7 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("NVIDIA DGX Spark", () => {
-          withProcessArch("arm64", () => {
+          withLinuxArm64(() => {
             withNvidiaKernelInterface(false, () => {
               expect(nimModule.detectGpu()).toMatchObject({
                 type: "nvidia",
@@ -799,7 +813,7 @@ describe("nim", () => {
 
       try {
         withGenericLinuxFirmware(() => {
-          withProcessArch("arm64", () => {
+          withLinuxArm64(() => {
             withNvidiaKernelInterface(false, () => {
               expect(nimModule.detectGpu()).toBeNull();
             });
