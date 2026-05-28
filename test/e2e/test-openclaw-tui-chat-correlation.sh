@@ -46,7 +46,7 @@ openclaw_version="$(
   openshell sandbox exec --name "$SANDBOX_NAME" -- openclaw --version 2>&1 || true
 )"
 echo "Sandbox OpenClaw version: ${openclaw_version}"
-if ! grep -q "2026.5.27" <<<"$openclaw_version"; then
+if ! grep -Fq "2026.5.27" <<<"$openclaw_version"; then
   echo "Expected fresh sandbox to run OpenClaw 2026.5.27" >&2
   exit 1
 fi

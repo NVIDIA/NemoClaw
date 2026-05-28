@@ -360,6 +360,7 @@ jobs:
           # NEMOCLAW_PUBLIC_INSTALL_REF.
           ref: ${{ github.ref }}
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Resolve trusted public install ref
         id: public_install_ref
