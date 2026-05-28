@@ -256,15 +256,24 @@ describe("nightly E2E workflow validation", () => {
       "SLACK_CHANNEL_ID_E2E",
     ];
 
-    const reusableSecrets = (reusableRunner.on as Record<string, unknown>)
-      .workflow_call as Record<string, unknown>;
-    const reusableSecretDefs = reusableSecrets.secrets as Record<string, unknown>;
-    const runnerJobs = reusableRunner.jobs as Record<string, unknown>;
-    const runStepEnv = getStepEnv(runnerJobs.run, "Run E2E script") ?? {};
-    const jobs = workflow.jobs as Record<string, unknown>;
-    const messagingJob = jobs["messaging-providers-e2e"] as Record<string, unknown>;
-    const messagingSecrets = messagingJob.secrets as Record<string, unknown>;
     const missing: string[] = [];
+    const reusableSecrets =
+      ((reusableRunner.on as Record<string, unknown> | undefined)?.workflow_call as
+        | Record<string, unknown>
+        | undefined) ?? {};
+    const reusableSecretDefs =
+      (reusableSecrets.secrets as Record<string, unknown> | undefined) ?? {};
+    const runnerJobs = (reusableRunner.jobs as Record<string, unknown> | undefined) ?? {};
+    const runStepEnv = getStepEnv(runnerJobs.run, "Run E2E script") ?? {};
+    const jobs = (workflow.jobs as Record<string, unknown> | undefined) ?? {};
+    const messagingJob = jobs["messaging-providers-e2e"] as
+      | Record<string, unknown>
+      | undefined;
+    if (!messagingJob) {
+      missing.push("nightly job messaging-providers-e2e");
+    }
+    const messagingSecrets =
+      (messagingJob?.secrets as Record<string, unknown> | undefined) ?? {};
 
     for (const name of expectedSecretNames) {
       if (!reusableSecretDefs[name]) {

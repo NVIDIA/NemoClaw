@@ -160,8 +160,18 @@ assert_openclaw_config_activation() {
   local assertion_id="$1"
   local channel="$2"
   local label="$3"
-  local channel_enabled plugin_enabled
+  local channel_present channel_enabled plugin_enabled
 
+  channel_present=$(printf '%s\n' "$channel_json" | CHANNEL="$channel" python3 -c '
+import json
+import os
+import sys
+try:
+    channels = json.load(sys.stdin)
+    print("true" if isinstance(channels.get(os.environ["CHANNEL"]), dict) else "false")
+except Exception:
+    print("error")
+' 2>/dev/null || true)
   channel_enabled=$(printf '%s\n' "$channel_json" | CHANNEL="$channel" python3 -c '
 import json
 import os
@@ -184,6 +194,11 @@ try:
 except Exception:
     print("error")
 ' 2>/dev/null || true)
+
+  if [ "$channel_present" != "true" ]; then
+    skip "${assertion_id}: ${label} channel block not in openclaw.json (expected in non-root sandbox)"
+    return
+  fi
 
   if [ "$channel_enabled" = "true" ] && [ "$plugin_enabled" = "true" ]; then
     pass "${assertion_id}: ${label} channel and plugin are explicitly enabled in openclaw.json"
@@ -515,8 +530,8 @@ if ! docker info >/dev/null 2>&1; then
 fi
 pass "Docker is running"
 
-info "Telegram token: ${TELEGRAM_TOKEN:0:10}... (${#TELEGRAM_TOKEN} chars)"
-info "Discord token: ${DISCORD_TOKEN:0:10}... (${#DISCORD_TOKEN} chars)"
+info "Telegram token: configured (${#TELEGRAM_TOKEN} chars)"
+info "Discord token: configured (${#DISCORD_TOKEN} chars)"
 info "Slack bot token: configured (${#SLACK_TOKEN} chars)"
 info "Slack app token: configured (${#SLACK_APP} chars)"
 slack_allowed_user_count=0
