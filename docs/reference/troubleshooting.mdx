@@ -367,7 +367,8 @@ Run `nemoclaw status` for a broader gateway health report.
 ### Invalid sandbox name
 
 Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
-Uppercase letters are automatically lowercased.
+Names that do not match these rules are rejected; the wizard prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input.
+For example, passing `--name MyAssistant` rejects the upper-cased input and prints `Try: myassistant` so you can rerun with the suggested slug.
 
 Names that collide with global CLI commands are also rejected.
 Reserved names include `onboard`, `list`, `deploy`, `setup`, `start`, `stop`, `status`, `debug`, `uninstall`, `credentials`, and `help`.
