@@ -464,6 +464,42 @@ describe("nim", () => {
       }
     });
 
+    // Fail-closed contract: the trust-tier helper wraps the `fs.existsSync`
+    // probe in a try/catch so a hardened sandbox or seccomp policy that
+    // refuses the syscall cannot mask the gate. When the probe throws on
+    // ARM64 generic firmware, the host must be rejected — never trusted.
+    it("rejects when /proc/driver/nvidia/ probe throws on ARM64 generic firmware", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+      const origExistsSync = fs.existsSync;
+      fs.existsSync = (p: string) => {
+        if (p === "/proc/driver/nvidia") {
+          throw new Error("EPERM: operation not permitted");
+        }
+        return origExistsSync(p);
+      };
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          withLinuxArm64(() => {
+            expect(nimModule.detectGpu()).toBeNull();
+          });
+        });
+      } finally {
+        fs.existsSync = origExistsSync;
+        restore();
+      }
+    });
+
     // Counter-test: ARM64 Linux with `/proc/driver/nvidia/` present is a real
     // kernel-driver-bound host (e.g. legitimate N1X with a real GB20y dGPU
     // and the NVIDIA driver loaded) — the gate must trust it.
