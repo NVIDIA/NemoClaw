@@ -66,6 +66,17 @@ Use this command for new installs and for recreating a sandbox after changes to 
 $ nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
+#### `--resume` and `--fresh`
+
+NemoClaw records onboarding progress so interrupted runs can continue.
+Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, and custom Dockerfile path recorded by the original run.
+If the recorded session conflicts with flags you pass on the recovery run, NemoClaw exits and tells you to either rerun with the original settings or start over.
+
+Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning.
+This clears stale or failed session state before NemoClaw creates a new session record.
+The installer also accepts `--fresh` and forwards it to `nemoclaw onboard`, which skips automatic resume detection.
+`--resume` and `--fresh` are mutually exclusive.
+
 <Warning>
 For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
 Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
@@ -88,7 +99,8 @@ Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, 
 Credentials are registered with the OpenShell gateway and never persisted to host disk. See [Credential Storage](/security/credential-storage) for details on inspection, rotation, and migration from earlier releases.
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 
-After provider selection, the wizard prompts for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
+After provider selection, the wizard reviews the provider, model, credential state, and sandbox name before registering inference.
+It then prompts for optional web search and messaging channels, builds and starts the sandbox, and asks for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
 Three tiers are available:
 
 | Tier | Description |
