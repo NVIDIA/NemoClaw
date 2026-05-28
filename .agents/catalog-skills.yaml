@@ -8,8 +8,6 @@ version: 1
 source: .agents/skills
 export: skills
 include:
-  - skill: nemoclaw-skills-guide
-    rationale: Public index for user-facing NemoClaw skills.
   - skill: nemoclaw-user-agent-skills
     rationale: Public user documentation skill.
   - skill: nemoclaw-user-configure-inference
