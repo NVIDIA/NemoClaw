@@ -36,6 +36,18 @@ const ADVISOR_MODEL = DEFAULT_ADVISOR_MODEL;
 const ADVISOR_CREDENTIAL_ENV = ["E2E", "ADVISOR", "API", "KEY"].join("_");
 const SCENARIO_WORKFLOW = "e2e-scenarios.yaml";
 const SCENARIO_ALL_WORKFLOW = "e2e-scenarios-all.yaml";
+const ALLOWED_WORKFLOWS = new Set<string>([SCENARIO_WORKFLOW, SCENARIO_ALL_WORKFLOW]);
+// Scenario IDs are embedded into the dispatch command we hand to users; restrict
+// to a strict kebab-case allowlist so a hallucinated id can never inject shell
+// metacharacters or non-canonical tokens into the dispatch line.
+const SCENARIO_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
+
+export function canonicalDispatchCommand(workflow: string, id: string): string {
+  if (workflow === SCENARIO_ALL_WORKFLOW) {
+    return `gh workflow run ${SCENARIO_ALL_WORKFLOW} --ref <pr-head-ref>`;
+  }
+  return `gh workflow run ${SCENARIO_WORKFLOW} --ref <pr-head-ref> --field scenarios=${id}`;
+}
 
 type ArtifactPaths = AdvisorArtifactPaths;
 type AdvisorSchema = Record<string, unknown>;
@@ -303,12 +315,20 @@ function sanitizeRecommendations(value: unknown, requiredFlag: boolean): Scenari
     const id = stringOrUndefined(item.id);
     const reason = stringOrUndefined(item.reason);
     const workflow = stringOrUndefined(item.workflow);
-    const dispatchCommand = stringOrUndefined(item.dispatchCommand);
-    if (!id || !reason || !workflow || !dispatchCommand) continue;
+    if (!id || !reason || !workflow) continue;
+    // Allowlist: only the two scenario workflows may be dispatched, and only
+    // kebab-case ids are accepted. Reject everything else; we do not trust
+    // the model to author shell-safe dispatch commands.
+    if (!ALLOWED_WORKFLOWS.has(workflow)) continue;
+    if (!SCENARIO_ID_PATTERN.test(id)) continue;
     if (seen.has(id)) continue;
     seen.add(id);
     const scenario = stringOrUndefined(item.scenario);
     const suiteFilter = stringOrUndefined(item.suiteFilter);
+    // Build dispatchCommand server-side. The model's value is intentionally
+    // discarded so prompt drift can never leak a non-canonical dispatch into
+    // the sticky comment.
+    const dispatchCommand = canonicalDispatchCommand(workflow, id);
     output.push(
       dropUndefinedValues({
         id,
