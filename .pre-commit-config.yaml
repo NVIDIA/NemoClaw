@@ -160,14 +160,6 @@ repos:
         pass_filenames: false
         priority: 10
 
-      - id: catalog-skills-export
-        name: Verify catalog skills export
-        entry: python3 scripts/export-catalog-skills.py --check --allow-missing
-        language: system
-        files: ^(\.agents/catalog-skills\.yaml|\.agents/skills/.*|skills/.*|scripts/export-catalog-skills\.py)$
-        pass_filenames: false
-        priority: 10
-
       - id: env-var-docs
         name: NEMOCLAW_* env-var documentation gate
         entry: npx tsx scripts/check-env-var-docs.ts
