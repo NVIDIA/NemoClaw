@@ -45,7 +45,7 @@ describe("handleOllamaProbeFailure (#4365)", () => {
       const errLines = errSpy.mock.calls.map((c) => String(c[0]));
       expect(
         errLines.some((l) =>
-          l.includes("NEMOCLAW_PROVIDER=ollama is pinned but the Ollama model runner is unhealthy"),
+          l.includes("NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy"),
         ),
       ).toBe(true);
     } finally {

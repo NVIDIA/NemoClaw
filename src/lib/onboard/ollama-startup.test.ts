@@ -98,7 +98,7 @@ describe("runOllamaStartupOrGate (#4365 steer hint)", () => {
       const errLines = errSpy.mock.calls.map((c) => String(c[0]));
       expect(
         errLines.some((l) =>
-          l.includes("NEMOCLAW_PROVIDER=ollama is pinned but Ollama is unreachable"),
+          l.includes("NEMOCLAW_PROVIDER pins onboarding to Ollama but Ollama is unreachable"),
         ),
       ).toBe(true);
       // The steer hint targets a re-prompt menu that never appears here.

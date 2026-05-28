@@ -34,7 +34,7 @@ export function handleOllamaProbeFailure(
   if (probe.daemonFailure) {
     if (isOllamaProviderPinned()) {
       console.error(
-        "  NEMOCLAW_PROVIDER=ollama is pinned but the Ollama model runner is unhealthy; refusing to loop on Ollama model selection.",
+        "  NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy; refusing to loop on Ollama model selection.",
       );
       process.exit(1);
     }

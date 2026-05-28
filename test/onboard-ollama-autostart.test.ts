@@ -564,7 +564,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
       assert.ok(
         payload.lines.some((line) =>
           line.includes(
-            "NEMOCLAW_PROVIDER=ollama is pinned but the Ollama model runner is unhealthy",
+            "NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy",
           ),
         ),
         `expected the pinned-provider runner-crash abort message; lines:\n${payload.lines.join("\n")}`,
@@ -598,7 +598,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
       assert.ok(
         payload.lines.some((line) =>
           line.includes(
-            "NEMOCLAW_PROVIDER=ollama is pinned but the Ollama model runner is unhealthy",
+            "NEMOCLAW_PROVIDER pins onboarding to Ollama but the Ollama model runner is unhealthy",
           ),
         ),
         `expected the pinned-provider runner-crash abort even with a casing variant; lines:\n${payload.lines.join("\n")}`,
@@ -632,7 +632,7 @@ describe("nemoclaw onboard --no-ollama-autostart (issue #3751)", () => {
       );
       assert.ok(
         payload.lines.some((line) =>
-          line.includes("NEMOCLAW_PROVIDER=ollama is pinned but Ollama is unreachable"),
+          line.includes("NEMOCLAW_PROVIDER pins onboarding to Ollama but Ollama is unreachable"),
         ),
         `expected pinned-provider abort message; lines:\n${payload.lines.join("\n")}`,
       );

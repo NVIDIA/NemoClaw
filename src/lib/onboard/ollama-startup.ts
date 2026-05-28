@@ -91,7 +91,7 @@ export function runOllamaStartupOrGate(args: {
     if (isNonInteractive() || providerPinned) {
       if (providerPinned) {
         console.error(
-          "  NEMOCLAW_PROVIDER=ollama is pinned but Ollama is unreachable; refusing to loop on provider selection.",
+          "  NEMOCLAW_PROVIDER pins onboarding to Ollama but Ollama is unreachable; refusing to loop on provider selection.",
         );
       }
       process.exit(1);
