@@ -233,6 +233,10 @@ function buildFailureContext(
 ): DockerGpuPatchFailureContext {
   return {
     sandboxName,
+    // `oldContainerId` is retained alongside `newContainerId` so the
+    // before/after pair lands in `patched-container-state.json` and
+    // `docker-network-summary.txt`, matching the supervisor-reconnect path.
+    oldContainerId: result?.oldContainerId ?? null,
     newContainerId: result?.newContainerId ?? null,
     backupContainerName: result?.backupContainerName ?? null,
     selectedMode: result?.mode ?? null,
