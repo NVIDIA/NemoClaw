@@ -321,6 +321,12 @@ function sanitizeRecommendations(value: unknown, requiredFlag: boolean): Scenari
     // the model to author shell-safe dispatch commands.
     if (!ALLOWED_WORKFLOWS.has(workflow)) continue;
     if (!SCENARIO_ID_PATTERN.test(id)) continue;
+    // Workflow/id pairing invariant: e2e-scenarios-all.yaml fan-out is the
+    // only valid pairing for the synthetic id "e2e-scenarios-all", and that
+    // id is meaningless on the single-scenario workflow. Reject mismatches
+    // rather than render a misleading dispatch line.
+    if (workflow === SCENARIO_ALL_WORKFLOW && id !== "e2e-scenarios-all") continue;
+    if (workflow === SCENARIO_WORKFLOW && id === "e2e-scenarios-all") continue;
     if (seen.has(id)) continue;
     seen.add(id);
     const scenario = stringOrUndefined(item.scenario);
@@ -335,7 +341,10 @@ function sanitizeRecommendations(value: unknown, requiredFlag: boolean): Scenari
         workflow,
         scenario,
         suiteFilter,
-        required: typeof item.required === "boolean" ? item.required : requiredFlag,
+        // Authority is the array position, not the model. Items in required[]
+        // are required; items in optional[] are optional. The model's
+        // per-item `required` boolean is ignored.
+        required: requiredFlag,
         reason,
         dispatchCommand,
       }) as ScenarioRecommendation,

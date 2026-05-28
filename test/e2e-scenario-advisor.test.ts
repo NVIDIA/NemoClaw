@@ -120,6 +120,74 @@ describe("E2E scenario advisor — normalization contract", () => {
     expect(normalized.required).toHaveLength(0);
   });
 
+  it("rejects workflow/id pairing mismatches for the fan-out workflow", () => {
+    const normalized = normalizeScenarioAdvisorResult(
+      {
+        required: [
+          {
+            // Fan-out workflow with a single-scenario id is incoherent: the
+            // sticky-comment dispatch line would falsely suggest you can
+            // narrow the fan-out to one scenario via this command.
+            id: "ubuntu-repo-cloud-openclaw",
+            workflow: "e2e-scenarios-all.yaml",
+            reason: "mismatched workflow/id",
+            dispatchCommand: "gh ...",
+          },
+          {
+            // Inverse: synthetic fan-out id on the single-scenario workflow
+            // would render "--field scenarios=e2e-scenarios-all", which is
+            // not a real scenario in ROUTES.
+            id: "e2e-scenarios-all",
+            workflow: "e2e-scenarios.yaml",
+            reason: "synthetic id on single-scenario workflow",
+            dispatchCommand: "gh ...",
+          },
+          {
+            id: "e2e-scenarios-all",
+            workflow: "e2e-scenarios-all.yaml",
+            reason: "valid pairing",
+            dispatchCommand: "gh ...",
+          },
+        ],
+        optional: [],
+        confidence: "medium",
+      },
+      metadata(),
+    );
+    expect(normalized.required.map((item) => item.id)).toEqual(["e2e-scenarios-all"]);
+  });
+
+  it("forces the required flag from the array position, ignoring the model's value", () => {
+    const normalized = normalizeScenarioAdvisorResult(
+      {
+        required: [
+          {
+            id: "ubuntu-repo-cloud-openclaw",
+            workflow: "e2e-scenarios.yaml",
+            // Model claims this required item is actually optional.
+            required: false,
+            reason: "in required[] but model marked optional",
+            dispatchCommand: "gh ...",
+          },
+        ],
+        optional: [
+          {
+            id: "ubuntu-repo-cloud-hermes",
+            workflow: "e2e-scenarios.yaml",
+            // Model claims this optional item is actually required.
+            required: true,
+            reason: "in optional[] but model marked required",
+            dispatchCommand: "gh ...",
+          },
+        ],
+        confidence: "medium",
+      },
+      metadata(),
+    );
+    expect(normalized.required[0]?.required).toBe(true);
+    expect(normalized.optional[0]?.required).toBe(false);
+  });
+
   it("rejects ids that contain shell metacharacters or non-kebab tokens", () => {
     const normalized = normalizeScenarioAdvisorResult(
       {
