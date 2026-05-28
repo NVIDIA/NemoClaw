@@ -438,22 +438,6 @@ Use `--json` for machine-readable output.
 $ nemoclaw my-assistant doctor [--json]
 ```
 
-### `nemoclaw <name> exec`
-
-Run a command non-interactively inside a running sandbox through the OpenShell exec endpoint.
-The command runs as the sandbox user with `HOME=/sandbox` and exits with the remote command's exit code.
-Use `--` to separate `exec` options from the command you want to run inside the sandbox.
-
-```console
-$ nemoclaw my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] -- <cmd> [args...]
-```
-
-| Flag | Description |
-|------|-------------|
-| `--workdir <dir>` | Set the working directory inside the sandbox |
-| `--tty`, `--no-tty` | Allocate or disable a pseudo-terminal; defaults to auto-detection |
-| `--timeout <s>` | Timeout in seconds. Use `0` for no timeout |
-
 ### `nemoclaw <name> logs`
 
 View sandbox logs.

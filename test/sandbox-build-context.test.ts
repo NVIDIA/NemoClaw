@@ -74,6 +74,7 @@ describe("sandbox build context staging", () => {
     writeFixture(path.join("scripts", "codex-acp-wrapper.sh"));
     writeFixture(path.join("scripts", "lib", "sandbox-init.sh"));
     writeFixture(path.join("scripts", "generate-openclaw-config.py"));
+    writeFixture(path.join("scripts", "openclaw-build-messaging-plugins.py"));
     writeFixture(path.join("scripts", "seed-wechat-accounts.py"));
     writeFixture(path.join("scripts", "patch-openclaw-tool-catalog.js"));
     writeFixture(path.join("scripts", "patch-openclaw-chat-send.js"));
@@ -246,6 +247,9 @@ describe("sandbox build context staging", () => {
       expect(fs.existsSync(path.join(buildCtx, "scripts", "generate-openclaw-config.py"))).toBe(
         true,
       );
+      expect(
+        fs.existsSync(path.join(buildCtx, "scripts", "openclaw-build-messaging-plugins.py")),
+      ).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "seed-wechat-accounts.py"))).toBe(true);
       expect(fs.existsSync(path.join(buildCtx, "scripts", "patch-openclaw-tool-catalog.js"))).toBe(
         true,
