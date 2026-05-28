@@ -1,6 +1,7 @@
 ---
 name: "nemoclaw-user-monitor-sandbox"
 description: "Inspects sandbox health, traces agent behavior, and diagnoses problems. Use when monitoring a running sandbox, debugging agent issues, or checking sandbox logs. Trigger keywords - monitor nemoclaw sandbox, debug nemoclaw agent issues."
+license: "Apache-2.0"
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
