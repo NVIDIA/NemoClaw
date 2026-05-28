@@ -135,8 +135,8 @@ on:
         default: ""
       post_to_slack:
         description: >-
-          Force the scorecard Slack notification on this manual dispatch.
-          Schedule runs always post; dispatch runs opt in via this flag.
+          Post the scorecard to a preview Slack channel on selective
+          dispatches (schedule and full runs always post).
         required: false
         type: boolean
         default: false
@@ -2332,31 +2332,55 @@ jobs:
             }));
 
       # ── Slack notification ────────────────────────────
-      # Schedule runs always post. Manual dispatches must opt in via the
-      # `post_to_slack` input to avoid spamming the channel while testing.
+      # Production routes (always post; runMode is computed by the generate step):
+      #   "Scheduled full nightly" → #nemoclaw-situation-room (SLACK_WEBHOOK_URL_SITUATION_ROOM)
+      #   "Manual full run"        → #nemoclaw-ci             (SLACK_WEBHOOK_URL_CI)
+      #
+      # Selective dispatch is skipped by default. Devs may opt into the
+      # preview channel via post_to_slack=true (SLACK_WEBHOOK_URL_PREVIEW).
       - name: Post scorecard to Slack
-        if: >-
-          ${{ steps.scorecard.outputs.scorecardData != ''
-            && (github.event_name == 'schedule'
-              || (github.event_name == 'workflow_dispatch' && inputs.post_to_slack)) }}
+        if: ${{ steps.scorecard.outputs.scorecardData != '' }}
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL_SITUATION_ROOM: ${{ secrets.SLACK_WEBHOOK_URL_SITUATION_ROOM }}
+          SLACK_WEBHOOK_URL_CI: ${{ secrets.SLACK_WEBHOOK_URL_CI }}
+          SLACK_WEBHOOK_URL_PREVIEW: ${{ secrets.SLACK_WEBHOOK_URL_PREVIEW }}
           SCORECARD_DATA: ${{ steps.scorecard.outputs.scorecardData }}
+          POST_TO_SLACK: ${{ inputs.post_to_slack }}
         with:
           script: |
-            const webhookUrl = process.env.SLACK_WEBHOOK_URL;
-            if (!webhookUrl) {
-              core.info('SLACK_WEBHOOK_URL not configured — skipping Slack notification');
-              return;
-            }
-
             const path = require('path');
-            const { buildBlocks, buildFallbackText, getStatusColor } = require(
+            const {
+              buildBlocks,
+              buildFallbackText,
+              getStatusColor,
+              getSlackChannel,
+            } = require(
               path.join(process.env.GITHUB_WORKSPACE, 'scripts/scorecard/build-slack-blocks.js'),
             );
 
             const data = JSON.parse(process.env.SCORECARD_DATA);
+            const channel = getSlackChannel(data);
+
+            // Selective dispatches only post when the user explicitly opts in.
+            // Schedule + Manual full run always post.
+            if (channel === 'preview' && process.env.POST_TO_SLACK !== 'true') {
+              core.info('Selective dispatch without post_to_slack — skipping');
+              return;
+            }
+
+            const envByChannel = {
+              'situation-room': 'SLACK_WEBHOOK_URL_SITUATION_ROOM',
+              'ci': 'SLACK_WEBHOOK_URL_CI',
+              'preview': 'SLACK_WEBHOOK_URL_PREVIEW',
+            };
+            const webhookUrl = process.env[envByChannel[channel]];
+
+            if (!webhookUrl) {
+              core.info(`Slack webhook for "${channel}" not configured — skipping`);
+              return;
+            }
+
             // Legacy attachment wrapper enables the coloured left-edge bar.
             const payload = {
               text: buildFallbackText(data),
@@ -2375,7 +2399,7 @@ jobs:
             });
 
             if (!resp.ok) {
-              core.warning(`Slack webhook returned ${resp.status}: ${await resp.text()}`);
+              core.warning(`Slack webhook (${channel}) returned ${resp.status}: ${await resp.text()}`);
             } else {
-              core.info('Scorecard posted to Slack');
+              core.info(`Scorecard posted to Slack (${channel})`);
             }

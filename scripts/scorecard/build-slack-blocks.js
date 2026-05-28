@@ -42,6 +42,7 @@ function buildBlocks(data) {
   blocks.push({ type: "context", elements: contextElements });
 
   const statsLine = [
+    `*Total ran:* ${data.ran}/${data.total}`,
     `:white_check_mark: *Passed:* ${data.success}`,
     `:x: *Failed:* ${data.failure}`,
     `:no_entry_sign: *Cancelled:* ${data.cancelled}`,
@@ -126,4 +127,28 @@ function getStatusColor(data) {
   return "warning";
 }
 
-module.exports = { buildBlocks, buildFallbackText, getStatusColor };
+/**
+ * Routes the Slack post to a channel based on run mode. Production runs
+ * always land in one of the first two channels:
+ *   "Scheduled full nightly" → "situation-room" (daily ops alerts)
+ *   "Manual full run"        → "ci"             (team-wide CI channel)
+ *
+ * Selective dispatch returns "preview", reserved for dev testing only.
+ *
+ * The caller maps the returned tag to a webhook URL secret.
+ *
+ * @param {ScorecardData} data
+ * @returns {"situation-room" | "ci" | "preview"}
+ */
+function getSlackChannel(data) {
+  if (data.runMode === "Scheduled full nightly") return "situation-room";
+  if (data.runMode === "Manual full run") return "ci";
+  return "preview";
+}
+
+module.exports = {
+  buildBlocks,
+  buildFallbackText,
+  getStatusColor,
+  getSlackChannel,
+};

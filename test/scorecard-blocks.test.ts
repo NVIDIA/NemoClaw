@@ -9,6 +9,7 @@ const {
   buildBlocks,
   buildFallbackText,
   getStatusColor,
+  getSlackChannel,
 } = require("../scripts/scorecard/build-slack-blocks.js");
 
 type ScorecardData = {
@@ -60,6 +61,14 @@ describe("buildBlocks — perfect scheduled run", () => {
 
   it("does not include a header block inside the attachment", () => {
     expect(blocks.some((b: { type: string }) => b.type === "header")).toBe(false);
+  });
+
+  it("leads the stats line with 'Total ran: <ran>/<total>'", () => {
+    const statsSection = blocks.find(
+      (b: { type: string; text?: { text: string } }) =>
+        b.type === "section" && b.text?.text?.startsWith("*Total ran:*"),
+    );
+    expect(statsSection.text.text).toContain("*Total ran:* 50/51");
   });
 
   it("includes the perfect-run banner instead of a failed-jobs list", () => {
@@ -211,5 +220,29 @@ describe("getStatusColor", () => {
     expect(
       getStatusColor(makeData({ perfect: true, failure: 1 })),
     ).toBe("danger");
+  });
+});
+
+describe("getSlackChannel", () => {
+  it("routes scheduled nightly runs to the situation-room channel", () => {
+    expect(getSlackChannel(makeData())).toBe("situation-room");
+  });
+
+  it("routes manual full runs (workflow_dispatch, empty jobs) to the ci channel", () => {
+    expect(
+      getSlackChannel(makeData({ runMode: "Manual full run" })),
+    ).toBe("ci");
+  });
+
+  it("routes selective dispatches to the preview channel", () => {
+    expect(
+      getSlackChannel(
+        makeData({
+          runMode: "Selective dispatch",
+          isSelectiveDispatch: true,
+          requestedJobs: ["cloud-e2e"],
+        }),
+      ),
+    ).toBe("preview");
   });
 });
