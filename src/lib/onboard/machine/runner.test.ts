@@ -1,0 +1,158 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  createSession,
+  filterSafeUpdates,
+  normalizeSession,
+  sanitizeFailure,
+  type Session,
+  type SessionUpdates,
+} from "../../state/onboard-session";
+import { advanceTo, branchTo, completeOnboardMachine, failOnboardMachine, retryTo } from "./result";
+import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
+import {
+  MissingOnboardStateHandlerError,
+  runOnboardMachine,
+  type OnboardStateHandlers,
+} from "./runner";
+
+interface RunnerContext {
+  attempts: number;
+  visited: string[];
+}
+
+function cloneSession(session: Session): Session {
+  return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
+}
+
+function createRuntime(initialSession: Session = createSession()) {
+  let session = cloneSession(initialSession);
+  const updateSession = (mutator: (value: Session) => Session | void): Session => {
+    const next = mutator(cloneSession(session)) ?? session;
+    session = cloneSession(next);
+    return cloneSession(session);
+  };
+  const deps: OnboardRuntimeDeps = {
+    loadSession: () => cloneSession(session),
+    createSession,
+    saveSession: (next) => {
+      session = cloneSession(next);
+      return cloneSession(session);
+    },
+    updateSession,
+    markStepStarted: () => cloneSession(session),
+    markStepComplete: (_stepName, updates: SessionUpdates = {}) =>
+      updateSession((current) => {
+        Object.assign(current, filterSafeUpdates(updates));
+        return current;
+      }),
+    markStepSkipped: () => cloneSession(session),
+    markStepFailed: (_stepName, message) =>
+      updateSession((current) => {
+        current.status = "failed";
+        current.failure = sanitizeFailure({ step: _stepName, message, recordedAt: "now" });
+        return current;
+      }),
+    completeSession: (updates: SessionUpdates = {}) =>
+      updateSession((current) => {
+        Object.assign(current, filterSafeUpdates(updates));
+        current.status = "complete";
+        current.resumable = false;
+        return current;
+      }),
+    filterSafeUpdates,
+    emitEvent: () => undefined,
+    now: () => "2026-05-28T00:00:00.000Z",
+  };
+  return new OnboardRuntime(deps);
+}
+
+describe("runOnboardMachine", () => {
+  it("runs handlers until completion while applying retry and branch transitions", async () => {
+    const runtime = createRuntime();
+    const calls: string[] = [];
+    const handlers: OnboardStateHandlers<RunnerContext> = {
+      init: () => advanceTo("preflight"),
+      preflight: () => advanceTo("gateway"),
+      gateway: () => advanceTo("provider_selection"),
+      provider_selection: () => advanceTo("inference"),
+      inference: (context) => {
+        calls.push(`inference:${context.attempts}`);
+        return context.attempts === 0 ? retryTo("provider_selection") : advanceTo("sandbox");
+      },
+      sandbox: () => branchTo("openclaw"),
+      openclaw: () => advanceTo("policies"),
+      policies: () => advanceTo("finalizing"),
+      finalizing: () => advanceTo("post_verify"),
+      post_verify: () => completeOnboardMachine({ sandboxName: "my-assistant" }),
+    };
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      handlers,
+      updateContext: ({ context, state }) => ({
+        attempts: state === "inference" ? context.attempts + 1 : context.attempts,
+        visited: [...context.visited, state],
+      }),
+    });
+
+    expect(result.session).toMatchObject({
+      status: "complete",
+      sandboxName: "my-assistant",
+      machine: { state: "complete" },
+    });
+    expect(calls).toEqual(["inference:0", "inference:1"]);
+    expect(result.context.visited).toEqual([
+      "init",
+      "preflight",
+      "gateway",
+      "provider_selection",
+      "inference",
+      "provider_selection",
+      "inference",
+      "sandbox",
+      "openclaw",
+      "policies",
+      "finalizing",
+      "post_verify",
+    ]);
+  });
+
+  it("stops on failed terminal results", async () => {
+    const runtime = createRuntime();
+    const policies = vi.fn(() => advanceTo("finalizing"));
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      handlers: {
+        init: () => advanceTo("preflight"),
+        preflight: () => failOnboardMachine("preflight failed", { step: "preflight" }),
+        policies,
+      },
+    });
+
+    expect(result.session).toMatchObject({
+      status: "failed",
+      failure: { step: "preflight", message: "preflight failed" },
+      machine: { state: "failed" },
+    });
+    expect(policies).not.toHaveBeenCalled();
+  });
+
+  it("throws when a non-terminal state has no handler", async () => {
+    const runtime = createRuntime();
+
+    await expect(
+      runOnboardMachine({
+        context: { attempts: 0, visited: [] } as RunnerContext,
+        runtime,
+        handlers: {},
+      }),
+    ).rejects.toThrow(MissingOnboardStateHandlerError);
+  });
+});
