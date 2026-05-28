@@ -18,54 +18,14 @@ on:
   push:
 
 jobs:
-  gate:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-    outputs:
-      should_request: ${{ steps.evaluate.outputs.should_request }}
-    steps:
-      - id: evaluate
-        uses: actions/github-script@v7
-        env:
-          NVSKILLS_SIGNATURE_PUSH_ACTOR: ${{ vars.NVSKILLS_SIGNATURE_PUSH_ACTOR || 'nv-skills-ci[bot]' }}
-          NVSKILLS_SIGNATURE_COMMIT_TITLE: ${{ vars.NVSKILLS_SIGNATURE_COMMIT_TITLE || 'Attach NVSkills validation signatures' }}
-        with:
-          script: |
-            const isRequestComment =
-              context.eventName === "issue_comment" &&
-              Boolean(context.payload.issue?.pull_request) &&
-              context.payload.comment?.body?.startsWith("/nvskills-ci");
-
-            let isSignaturePush = false;
-            if (context.eventName === "push") {
-              const message = context.payload.head_commit?.message ?? "";
-              const expectedTitle = process.env.NVSKILLS_SIGNATURE_COMMIT_TITLE;
-              const expectedActor = process.env.NVSKILLS_SIGNATURE_PUSH_ACTOR;
-              if (message.startsWith(expectedTitle)) {
-                if (context.actor === expectedActor) {
-                  isSignaturePush = true;
-                } else {
-                  const { owner, repo } = context.repo;
-                  try {
-                    const { data } = await github.rest.repos.getCollaboratorPermissionLevel({
-                      owner,
-                      repo,
-                      username: context.actor,
-                    });
-                    isSignaturePush = ["admin", "maintain"].includes(data.permission);
-                  } catch (error) {
-                    core.info(`Could not read collaborator permission for ${context.actor}: ${error.message}`);
-                  }
-                }
-              }
-            }
-
-            core.setOutput("should_request", String(isRequestComment || isSignaturePush));
-
   request:
-    needs: gate
-    if: needs.gate.outputs.should_request == 'true'
+    if: >
+      (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        startsWith(github.event.comment.body, '/nvskills-ci')) ||
+      (github.event_name == 'push' &&
+        github.actor == (vars.NVSKILLS_SIGNATURE_PUSH_ACTOR || 'nv-skills-ci[bot]') &&
+        startsWith(github.event.head_commit.message, vars.NVSKILLS_SIGNATURE_COMMIT_TITLE || 'Attach NVSkills validation signatures'))
     permissions:
       contents: read
       pull-requests: read
