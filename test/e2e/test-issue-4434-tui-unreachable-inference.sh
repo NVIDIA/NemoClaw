@@ -130,7 +130,7 @@ if [ "$block_probe_rc" -eq 0 ]; then
 fi
 info "sandbox endpoint block verified (probe exit ${block_probe_rc})"
 
-info "launching openclaw tui through nemoclaw ${SANDBOX_NAME} connect"
+info "launching openclaw tui through direct OpenShell sandbox connect"
 set +e
 env \
   NEMOCLAW_ISSUE_4434_SANDBOX="$SANDBOX_NAME" \
@@ -141,7 +141,7 @@ set timeout $env(NEMOCLAW_ISSUE_4434_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_ISSUE_4434_SANDBOX)
 set capture $env(NEMOCLAW_ISSUE_4434_CAPTURE)
 log_file -a $capture
-spawn nemoclaw $sandbox connect
+spawn openshell sandbox connect $sandbox
 expect {
   -re {[$#>] $} {
     send "export TERM=xterm-256color\r"
