@@ -1,0 +1,212 @@
+[
+  {
+    "id": "docs-reference-architecture-001",
+    "question": "I'm using the architecture reference. Help me verify implementation and operations details so I can make changes or debug behavior from the right mental model.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user verify implementation and operations details and gives enough concrete guidance, decision criteria, verification steps, or risk framing to make changes or debug behavior from the right mental model.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: using the architecture reference.",
+      "The AI coding assistant loads the expected_skill and references/architecture.md",
+      "The output helps the user verify implementation and operations details with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to make changes or debug behavior from the right mental model.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/architecture.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-architecture-002",
+    "question": "I'm locating the right layer for a change. Help me connect structure, lifecycle, and ownership so I can edit the plugin, blueprint, or sandbox layer intentionally.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user connect structure, lifecycle, and ownership and gives enough concrete guidance, decision criteria, verification steps, or risk framing to edit the plugin, blueprint, or sandbox layer intentionally.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: locating the right layer for a change.",
+      "The AI coding assistant loads the expected_skill and references/architecture.md",
+      "The output helps the user connect structure, lifecycle, and ownership with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to edit the plugin, blueprint, or sandbox layer intentionally.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/architecture.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-architecture-003",
+    "question": "I'm modifying architecture-sensitive files. Help me understand the invariants that must remain true so I can avoid breaking sandbox creation or operation.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand the invariants that must remain true and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid breaking sandbox creation or operation.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: modifying architecture-sensitive files.",
+      "The AI coding assistant loads the expected_skill and references/architecture.md",
+      "The output helps the user understand the invariants that must remain true with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to avoid breaking sandbox creation or operation.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/architecture.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-cli-selection-guide-001",
+    "question": "I'm choosing between `nemoclaw` and `openshell`. Help me pick the command surface that owns my operation so I can complete the task without breaking NemoClaw management.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user pick the command surface that owns my operation and gives enough concrete guidance, decision criteria, verification steps, or risk framing to complete the task without breaking NemoClaw management.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: choosing between `nemoclaw` and `openshell`.",
+      "The AI coding assistant loads the expected_skill and references/cli-selection-guide.md",
+      "The output helps the user pick the command surface that owns my operation with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to complete the task without breaking NemoClaw management.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/cli-selection-guide.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-cli-selection-guide-002",
+    "question": "I'm tempted to run a low-level OpenShell command. Help me understand when it bypasses NemoClaw lifecycle expectations so I can avoid unsupported or confusing states.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand when it bypasses NemoClaw lifecycle expectations and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid unsupported or confusing states.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: tempted to run a low-level OpenShell command.",
+      "The AI coding assistant loads the expected_skill and references/cli-selection-guide.md",
+      "The output helps the user understand when it bypasses NemoClaw lifecycle expectations with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to avoid unsupported or confusing states.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/cli-selection-guide.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-cli-selection-guide-003",
+    "question": "I'm doing onboarding, policy, debugging, or low-level sandbox work. Help me apply a simple CLI selection rule so I can move quickly without memorizing every command boundary.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user apply a simple CLI selection rule and gives enough concrete guidance, decision criteria, verification steps, or risk framing to move quickly without memorizing every command boundary.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: doing onboarding, policy, debugging, or low-level sandbox work.",
+      "The AI coding assistant loads the expected_skill and references/cli-selection-guide.md",
+      "The output helps the user apply a simple CLI selection rule with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to move quickly without memorizing every command boundary.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/cli-selection-guide.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-commands-001",
+    "question": "I'm opening the CLI command reference. Help me find the exact action, flag, or recovery path I need so I can run the right command without scanning source code.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user find the exact action, flag, or recovery path I need and gives enough concrete guidance, decision criteria, verification steps, or risk framing to run the right command without scanning source code.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: opening the CLI command reference.",
+      "The AI coding assistant loads the expected_skill and references/commands.md",
+      "The output helps the user find the exact action, flag, or recovery path I need with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to run the right command without scanning source code.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/commands.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-commands-002",
+    "question": "I'm choosing among setup, lifecycle, policy, inference, and diagnostic commands. Help me see command groups and examples clearly so I can locate the right command faster.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user see command groups and examples clearly and gives enough concrete guidance, decision criteria, verification steps, or risk framing to locate the right command faster.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: choosing among setup, lifecycle, policy, inference, and diagnostic commands.",
+      "The AI coding assistant loads the expected_skill and references/commands.md",
+      "The output helps the user see command groups and examples clearly with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to locate the right command faster.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/commands.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-commands-003",
+    "question": "I'm using `nemoclaw` in scripts or CI. Help me understand example output and exit behavior so I can automate safely and handle failures correctly.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand example output and exit behavior and gives enough concrete guidance, decision criteria, verification steps, or risk framing to automate safely and handle failures correctly.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: using `nemoclaw` in scripts or CI.",
+      "The AI coding assistant loads the expected_skill and references/commands.md",
+      "The output helps the user understand example output and exit behavior with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to automate safely and handle failures correctly.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/commands.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-network-policies-001",
+    "question": "I'm reading the network policy reference. Help me understand baseline access decisions so I can assess the sandbox's default exposure.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand baseline access decisions and gives enough concrete guidance, decision criteria, verification steps, or risk framing to assess the sandbox's default exposure.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: reading the network policy reference.",
+      "The AI coding assistant loads the expected_skill and references/network-policies.md",
+      "The output helps the user understand baseline access decisions with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to assess the sandbox's default exposure.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/network-policies.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-network-policies-002",
+    "question": "I'm reviewing default rules and filesystem constraints. Help me know what is allowed before any customization so I can decide what needs to change for my environment.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user know what is allowed before any customization and gives enough concrete guidance, decision criteria, verification steps, or risk framing to decide what needs to change for my environment.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: reviewing default rules and filesystem constraints.",
+      "The AI coding assistant loads the expected_skill and references/network-policies.md",
+      "The output helps the user know what is allowed before any customization with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to decide what needs to change for my environment.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/network-policies.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-network-policies-003",
+    "question": "I'm tracing a denied request. Help me understand how operator approval turns into policy so I can audit and reason about egress changes.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand how operator approval turns into policy and gives enough concrete guidance, decision criteria, verification steps, or risk framing to audit and reason about egress changes.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: tracing a denied request.",
+      "The AI coding assistant loads the expected_skill and references/network-policies.md",
+      "The output helps the user understand how operator approval turns into policy with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to audit and reason about egress changes.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/network-policies.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-troubleshooting-001",
+    "question": "I'm troubleshooting a NemoClaw problem. Help me map my symptom to the fastest safe recovery step so I can get unstuck without making the environment worse.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user map my symptom to the fastest safe recovery step and gives enough concrete guidance, decision criteria, verification steps, or risk framing to get unstuck without making the environment worse.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: troubleshooting a NemoClaw problem.",
+      "The AI coding assistant loads the expected_skill and references/troubleshooting.md",
+      "The output helps the user map my symptom to the fastest safe recovery step with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to get unstuck without making the environment worse.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/troubleshooting.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-troubleshooting-002",
+    "question": "I'm uncertain which subsystem failed. Help me run diagnostics that separate install, onboarding, runtime, policy, and inference issues so I can focus on the likely cause.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user run diagnostics that separate install, onboarding, runtime, policy, and inference issues and gives enough concrete guidance, decision criteria, verification steps, or risk framing to focus on the likely cause.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: uncertain which subsystem failed.",
+      "The AI coding assistant loads the expected_skill and references/troubleshooting.md",
+      "The output helps the user run diagnostics that separate install, onboarding, runtime, policy, and inference issues with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to focus on the likely cause.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/troubleshooting.md file."
+    ]
+  },
+  {
+    "id": "docs-reference-troubleshooting-003",
+    "question": "I'm asking the community or filing an issue. Help me collect the right logs, versions, and error details so I can give maintainers enough information to help.",
+    "expected_skill": "nemoclaw-user-reference",
+    "ground_truth": "A NemoClaw-specific answer that helps the user collect the right logs, versions, and error details and gives enough concrete guidance, decision criteria, verification steps, or risk framing to give maintainers enough information to help.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: asking the community or filing an issue.",
+      "The AI coding assistant loads the expected_skill and references/troubleshooting.md",
+      "The output helps the user collect the right logs, versions, and error details with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to give maintainers enough information to help.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/troubleshooting.md file."
+    ]
+  }
+]
