@@ -178,7 +178,7 @@ describe("nim", () => {
       const rows: string[] = [];
       for (let i = 0; i < count; i += 1) {
         const tail = (i + 1).toString(16).padStart(12, "0");
-        rows.push(`GPU-aaaa1111-bbbb-2222-cccc-${tail}, 9.0, 95.04.3c.80.bc`);
+        rows.push(`GPU-aaaa1111-bbbb-2222-cccc-${tail}, 9.0, aa.bb.cc.dd.ee`);
       }
       return `${rows.join("\n")}\n`;
     }
@@ -460,9 +460,10 @@ describe("nim", () => {
       },
     );
 
-    // Genuine NVIDIA WSL2 path (e.g. RTX 4090 Laptop GPU, Ada compute_cap 8.9)
-    // must continue to pass the strict-identity gate. Sample data captured
-    // from a Windows-on-x86 laptop with a real Ada Lovelace GPU.
+    // Genuine NVIDIA WSL2 path: a real card publishes a kernel-issued UUID, a
+    // valid SM compute capability, and a 5-tuple VBIOS version, all of which
+    // pass the strict-identity gate even when firmware does not vouch for
+    // Spark/Station/Jetson.
     it("accepts genuine WSL2 NVIDIA GPUs that pass the strict-identity probe (#3988)", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
@@ -473,7 +474,7 @@ describe("nim", () => {
           return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
         }
         if (isStrictNvidiaIdentityProbe(cmd)) {
-          return "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553, 8.9, 95.04.3c.80.bc\n";
+          return "GPU-12345678-90ab-cdef-1234-567890abcdef, 8.9, aa.bb.cc.dd.ee\n";
         }
         return "";
       });
@@ -507,7 +508,7 @@ describe("nim", () => {
           return "NVIDIA H100 80GB HBM3, 81920, 80000\nNVIDIA H100 80GB HBM3, 81920, 80000\n";
         }
         if (isStrictNvidiaIdentityProbe(cmd)) {
-          return "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553, 9.0, 95.04.3c.80.bc\n";
+          return "GPU-12345678-90ab-cdef-1234-567890abcdef, 9.0, aa.bb.cc.dd.ee\n";
         }
         return "";
       });
@@ -905,12 +906,12 @@ describe("nim", () => {
   });
 
   describe("hasStrictNvidiaIdentity", () => {
-    it("accepts a real-world Ada-class WSL2 sample (#3988)", () => {
+    it("accepts a strict-identity triple shaped like a real NVIDIA card publishes (#3988)", () => {
       expect(
         nim.hasStrictNvidiaIdentity(
-          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "GPU-12345678-90ab-cdef-1234-567890abcdef",
           "8.9",
-          "95.04.3c.80.bc",
+          "aa.bb.cc.dd.ee",
         ),
       ).toBe(true);
     });
@@ -918,9 +919,9 @@ describe("nim", () => {
     it("accepts when fields have surrounding whitespace", () => {
       expect(
         nim.hasStrictNvidiaIdentity(
-          " GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553 ",
+          " GPU-12345678-90ab-cdef-1234-567890abcdef ",
           " 8.9 ",
-          " 95.04.3c.80.bc ",
+          " aa.bb.cc.dd.ee ",
         ),
       ).toBe(true);
     });
@@ -939,9 +940,9 @@ describe("nim", () => {
     it("rejects malformed uuid that lacks the kernel-issued GPU- prefix", () => {
       expect(
         nim.hasStrictNvidiaIdentity(
-          "fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "12345678-90ab-cdef-1234-567890abcdef",
           "8.9",
-          "95.04.3c.80.bc",
+          "aa.bb.cc.dd.ee",
         ),
       ).toBe(false);
     });
@@ -949,9 +950,9 @@ describe("nim", () => {
     it("rejects uuid with wrong segment lengths", () => {
       expect(
         nim.hasStrictNvidiaIdentity(
-          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf",
+          "GPU-12345678-90ab-cdef-1234-567890abcd",
           "8.9",
-          "95.04.3c.80.bc",
+          "aa.bb.cc.dd.ee",
         ),
       ).toBe(false);
     });
@@ -959,16 +960,16 @@ describe("nim", () => {
     it("rejects compute_cap outside the realistic SM range", () => {
       expect(
         nim.hasStrictNvidiaIdentity(
-          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "GPU-12345678-90ab-cdef-1234-567890abcdef",
           "1.0",
-          "95.04.3c.80.bc",
+          "aa.bb.cc.dd.ee",
         ),
       ).toBe(false);
       expect(
         nim.hasStrictNvidiaIdentity(
-          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "GPU-12345678-90ab-cdef-1234-567890abcdef",
           "99.9",
-          "95.04.3c.80.bc",
+          "aa.bb.cc.dd.ee",
         ),
       ).toBe(false);
     });
@@ -976,9 +977,9 @@ describe("nim", () => {
     it("rejects non-numeric compute_cap", () => {
       expect(
         nim.hasStrictNvidiaIdentity(
-          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "GPU-12345678-90ab-cdef-1234-567890abcdef",
           "ada",
-          "95.04.3c.80.bc",
+          "aa.bb.cc.dd.ee",
         ),
       ).toBe(false);
     });
@@ -986,16 +987,16 @@ describe("nim", () => {
     it("rejects vbios_version that is not a 5-tuple of hex bytes", () => {
       expect(
         nim.hasStrictNvidiaIdentity(
-          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "GPU-12345678-90ab-cdef-1234-567890abcdef",
           "8.9",
-          "95.04.3c.80",
+          "aa.bb.cc.dd",
         ),
       ).toBe(false);
       expect(
         nim.hasStrictNvidiaIdentity(
-          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "GPU-12345678-90ab-cdef-1234-567890abcdef",
           "8.9",
-          "95-04-3c-80-bc",
+          "aa-bb-cc-dd-ee",
         ),
       ).toBe(false);
     });
