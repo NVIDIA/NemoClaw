@@ -336,11 +336,12 @@ test_net_11_brew_install_hello() {
 
   log "  Installing hello through the sandbox Homebrew wrapper..."
   local response
-  response=$(sandbox_exec "bash -lc 'set -e; export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1; brew --prefix; brew install --quiet hello; command -v hello; hello'" 2>&1) || true
+  response=$(sandbox_exec "bash -lc 'set -e; export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_ENV_HINTS=1; command -v brew; brew --prefix; brew install --quiet hello; command -v hello; hello'" 2>&1) || true
 
   log "  Response: ${response:0:1000}"
 
-  if echo "$response" | grep -q "/home/linuxbrew/.linuxbrew" \
+  if echo "$response" | grep -q "/usr/local/bin/brew" \
+    && echo "$response" | grep -q "/home/linuxbrew/.linuxbrew" \
     && echo "$response" | grep -q "/home/linuxbrew/.linuxbrew/bin/hello" \
     && echo "$response" | grep -q "Hello, world!"; then
     pass "TC-NET-11: brew preset installed hello and ran the formula command"
