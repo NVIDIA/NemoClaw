@@ -3,7 +3,7 @@
 
 import { createRequire } from "module";
 import type { Mock } from "vitest";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 // Import from compiled dist/ for coverage attribution.
 import * as nim from "../../../dist/lib/inference/nim";
@@ -219,6 +219,27 @@ describe("nim", () => {
         withProcessProperty("arch", "x64", fn);
       });
     }
+
+    // Default `/proc/driver/nvidia/` to present so non-gate tests stay
+    // environment-agnostic — they would otherwise depend on whether the
+    // runtime CI host (ARM64 Linux runner, generic Linux without an NVIDIA
+    // driver, etc.) happens to populate the path. Gate-active tests opt out
+    // explicitly with `withNvidiaKernelInterface(false, …)` and the
+    // associated arch/platform pinning helpers.
+    let __origDetectGpuExistsSync: typeof fs.existsSync | undefined;
+    beforeEach(() => {
+      __origDetectGpuExistsSync = fs.existsSync;
+      fs.existsSync = (p: string) => {
+        if (p === "/proc/driver/nvidia") return true;
+        return (__origDetectGpuExistsSync as typeof fs.existsSync)(p);
+      };
+    });
+    afterEach(() => {
+      if (__origDetectGpuExistsSync) {
+        fs.existsSync = __origDetectGpuExistsSync;
+        __origDetectGpuExistsSync = undefined;
+      }
+    });
 
     it("returns object or null", () => {
       const gpu = nim.detectGpu();
