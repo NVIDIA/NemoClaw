@@ -122,6 +122,7 @@ export interface ProviderInferenceStateResult {
   webSearchConfig: WebSearchConfig | null;
   session: Session | null;
   stateResult: OnboardStateTransitionResult;
+  stateResults: OnboardStateTransitionResult[];
   retryStateResults: OnboardStateTransitionResult[];
 }
 
@@ -172,6 +173,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
   let allowToolsIncompatible = false;
+  const stateResults: OnboardStateTransitionResult[] = [];
   const retryStateResults: OnboardStateTransitionResult[] = [];
 
   while (true) {
@@ -256,6 +258,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
         }),
       );
     }
+    stateResults.push(
+      advanceTo("inference", {
+        metadata: { state: "provider_selection", provider, model },
+      }),
+    );
     env.NEMOCLAW_OPENSHELL_BIN = deps.getOpenshellBinary();
     const needsBedrockRuntimeAdapter = deps.needsBedrockRuntimeAdapter(provider, endpointUrl);
     const resumeInference =
@@ -292,11 +299,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
           clearStagedCredentialEnv(deps, credentialEnv);
         }
         if (inferenceResult?.retry === "selection") {
-          retryStateResults.push(
-            retryTo("provider_selection", {
-              metadata: { state: "inference", provider, model, reason: "selection_retry" },
-            }),
-          );
+          const retryStateResult = retryTo("provider_selection", {
+            metadata: { state: "inference", provider, model, reason: "selection_retry" },
+          });
+          retryStateResults.push(retryStateResult);
+          stateResults.push(retryStateResult);
           forceProviderSelection = true;
           continue;
         }
@@ -381,11 +388,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       clearStagedCredentialEnv(deps, credentialEnv);
     }
     if (inferenceResult?.retry === "selection") {
-      retryStateResults.push(
-        retryTo("provider_selection", {
-          metadata: { state: "inference", provider, model, reason: "selection_retry" },
-        }),
-      );
+      const retryStateResult = retryTo("provider_selection", {
+        metadata: { state: "inference", provider, model, reason: "selection_retry" },
+      });
+      retryStateResults.push(retryStateResult);
+      stateResults.push(retryStateResult);
       forceProviderSelection = true;
       continue;
     }
@@ -396,6 +403,11 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     );
     break;
   }
+
+  const stateResult = advanceTo("sandbox", {
+    metadata: { state: "inference", provider, model },
+  });
+  stateResults.push(stateResult);
 
   return {
     sandboxName,
@@ -409,9 +421,8 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
     nimContainer,
     webSearchConfig,
     session,
-    stateResult: advanceTo("sandbox", {
-      metadata: { state: "inference", provider, model },
-    }),
+    stateResult,
+    stateResults,
     retryStateResults,
   };
 }
