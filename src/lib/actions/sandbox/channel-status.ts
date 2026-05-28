@@ -96,6 +96,7 @@ const HEARTBEAT_BEGIN = "NEMOCLAW_WA_HEARTBEAT_BEGIN";
 const HEARTBEAT_END = "NEMOCLAW_WA_HEARTBEAT_END";
 const LOG_BEGIN = "NEMOCLAW_WA_LOG_BEGIN";
 const LOG_END = "NEMOCLAW_WA_LOG_END";
+const PROC_DONE = "NEMOCLAW_WA_PROC_DONE";
 
 function severityLabel(severity: DiagnosticSeverity): string {
   switch (severity) {
@@ -211,7 +212,19 @@ function buildProbeScript(stateDirs: readonly string[]): string {
     `done`,
     `printf '%s\\n' ${quotePath(LOG_END)}`,
     `__nemoclaw_wa_self_pid=$$`,
-    `pgrep -fa 'whatsapp|baileys' 2>/dev/null | awk -v self="$__nemoclaw_wa_self_pid" '$1 != self && $0 !~ /pgrep -fa/ && $0 !~ /NEMOCLAW_WA_DIAG_OK/ { print "PROC " $0 }' | head -n 5`,
+    // Match both process-name-with-whatsapp and processes whose argv
+    // mentions the WhatsApp state directory or known plugin paths. A
+    // bridge that runs inside the parent agent process (e.g. an OpenClaw
+    // plugin loaded via a generic `node` entry point) usually carries the
+    // platforms/whatsapp path on its command line via `--state-dir` or
+    // similar.
+    `pgrep -fa 'whatsapp|baileys|platforms/whatsapp|openclaw-whatsapp|hermes.*whatsapp' 2>/dev/null | awk -v self="$__nemoclaw_wa_self_pid" '$1 != self && $0 !~ /pgrep -fa/ && $0 !~ /NEMOCLAW_WA_DIAG_OK/ { print "PROC " $0 }' | head -n 5`,
+    // Always emit PROC_DONE after the pgrep pipeline so the parser can tell
+    // apart "pgrep completed with no matches" (the bridge runs under a
+    // process name that does not contain `whatsapp` or `baileys`, or has
+    // crashed) from "the probe never reached pgrep" (script aborted
+    // mid-flight). Without this marker both cases collapse to `null`.
+    `printf '%s\\n' ${quotePath(PROC_DONE)}`,
   ].join("\n");
 }
 
@@ -242,7 +255,8 @@ function parseProbeOutput(stdout: string): ParsedProbe {
   const heartbeatBuf: string[] = [];
   const logLines: string[] = [];
   let bridgeProcessAlive = false;
-  let sawProcSection = false;
+  let sawProcMatch = false;
+  let sawProcDone = false;
 
   for (const line of lines) {
     if (line === HEARTBEAT_BEGIN) {
@@ -278,24 +292,37 @@ function parseProbeOutput(stdout: string): ParsedProbe {
       continue;
     }
     if (line.startsWith("PROC ")) {
-      sawProcSection = true;
+      sawProcMatch = true;
       bridgeProcessAlive = true;
       continue;
     }
+    if (line === PROC_DONE) {
+      sawProcDone = true;
+      continue;
+    }
+  }
+  // Three states:
+  //   true  → pgrep printed at least one matching process
+  //   false → pgrep completed with no matches; either the bridge is dead
+  //           OR it runs inside the parent agent process under a name that
+  //           does not contain `whatsapp`/`baileys`. The evaluator resolves
+  //           that ambiguity using heartbeat freshness.
+  //   null  → the probe aborted before reaching pgrep (timeout, exec
+  //           failure); we cannot infer anything about the bridge state.
+  let bridgeProcessAliveOut: boolean | null;
+  if (sawProcMatch) {
+    bridgeProcessAliveOut = true;
+  } else if (sawProcDone) {
+    bridgeProcessAliveOut = false;
+  } else {
+    bridgeProcessAliveOut = null;
   }
   return {
     reachable: true,
     stateDirPopulated: sawAnyDir ? stateDirPopulated : null,
     heartbeatRaw,
     logLines,
-    // pgrep with `whatsapp|baileys` can fail to match a bridge that runs
-    // inside the parent agent process (e.g. an embedded OpenClaw module
-    // with no whatsapp/baileys substring in its argv). Treating a
-    // no-match as "not running" used to downgrade healthy heartbeats to
-    // idle. Surface the result only when a PROC line is observed; absence
-    // is reported as `null` so the evaluator marks the signal as info
-    // rather than fail.
-    bridgeProcessAlive: sawProcSection ? bridgeProcessAlive : null,
+    bridgeProcessAlive: bridgeProcessAliveOut,
   };
 }
 

@@ -343,6 +343,34 @@ describe("parseWhatsappHeartbeat", () => {
     ).toBe(true);
   });
 
+  it("rejects loose Date.parse-compatible timestamps that are not strict ISO 8601", () => {
+    // Regression guard: `Date.parse` accepts values like a bare integer or
+    // `Date.toString()` output with parenthesized text. Treating those as
+    // valid timestamps would (a) leak the raw string into the JSON report
+    // and (b) mark malformed heartbeat text as healthy inbound evidence.
+    for (const bad of [
+      "42",
+      "Wed May 28 2026 04:00:00 GMT+0000 (Coordinated Universal Time)",
+      "2026/05/28 04:00:00",
+      "not a date",
+    ]) {
+      const result = parseWhatsappHeartbeat(JSON.stringify({ lastInboundAt: bad }));
+      expect(
+        "heartbeat" in result && result.heartbeat.lastInboundAt,
+        `expected ${JSON.stringify(bad)} to be rejected`,
+      ).toBeNull();
+    }
+  });
+
+  it("normalizes accepted timestamps to canonical ISO form", () => {
+    const result = parseWhatsappHeartbeat(
+      JSON.stringify({ lastInboundAt: "2026-05-28T03:59:30+00:00" }),
+    );
+    expect(
+      "heartbeat" in result && result.heartbeat.lastInboundAt,
+    ).toBe("2026-05-28T03:59:30.000Z");
+  });
+
   it("returns parseError when the heartbeat is not an object", () => {
     const result = parseWhatsappHeartbeat("[]");
     expect(result).toEqual({ parseError: "heartbeat JSON must be an object" });

@@ -331,6 +331,9 @@ function logSignals(input: WhatsappProbeInput): DiagnosticSignal | null {
 
 function bridgeProcessSignal(input: WhatsappProbeInput): DiagnosticSignal {
   if (input.bridgeProcessAlive === null) {
+    // pgrep never ran or its output never reached the parser — almost
+    // always a probe timeout. Treat as info so a non-bridge probe failure
+    // does not gate the verdict on this signal.
     return {
       label: "Bridge process",
       severity: "info",
@@ -338,6 +341,11 @@ function bridgeProcessSignal(input: WhatsappProbeInput): DiagnosticSignal {
     };
   }
   if (input.bridgeProcessAlive === false) {
+    // pgrep completed and matched neither `whatsapp`, `baileys`, nor any
+    // WhatsApp state-dir path. Either the bridge crashed after leaving a
+    // heartbeat behind, or it runs under a process name the pattern
+    // cannot catch. Fail loud either way — a recent heartbeat on disk is
+    // not, on its own, proof the bridge is still running.
     return {
       label: "Bridge process",
       severity: "fail",
@@ -515,12 +523,21 @@ function categorizeNote(value: string | null): string | null {
 }
 
 // Heartbeat files are written by code outside NemoClaw's control. Drop any
-// `lastInboundAt` value that is not an ISO-8601-ish timestamp so the host
-// diagnostic never echoes free-form text back through `channels status
-// --json`.
+// `lastInboundAt` value that is not strict ISO 8601 — `Date.parse` accepts
+// loose values such as a bare integer or `Date.toString()` output with
+// parenthesized text, which the diagnostic would later echo through
+// `channels status --json` despite the redaction guarantee. Re-emit the
+// canonical `toISOString()` form so the rendered output is deterministic
+// regardless of the bridge's exact serialization.
+const STRICT_ISO_8601 =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?$/;
+
 function sanitizeTimestamp(value: string | null): string | null {
   if (value === null) return null;
-  return Number.isFinite(Date.parse(value)) ? value : null;
+  if (!STRICT_ISO_8601.test(value)) return null;
+  const ms = Date.parse(value);
+  if (!Number.isFinite(ms)) return null;
+  return new Date(ms).toISOString();
 }
 
 export function parseWhatsappHeartbeat(
