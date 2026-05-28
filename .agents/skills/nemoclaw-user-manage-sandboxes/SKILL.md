@@ -187,12 +187,10 @@ Re-run the installer.
 Before it onboards anything, the installer calls `nemoclaw backup-all` (use the `nemoclaw-user-reference` skill) automatically, storing a snapshot of each running sandbox in `~/.nemoclaw/rebuild-backups/` as a safety net.
 If your existing gateway is from OpenShell earlier than `0.0.37`, the installer prompts before it runs the new automatic gateway upgrade path.
 The automatic path is offered only when the existing `nemoclaw` CLI supports `backup-all`; older installs must preserve sandbox state manually before retiring the gateway.
-For unattended installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1`, or manually run `nemoclaw backup-all` and `openshell gateway destroy -g nemoclaw || openshell gateway destroy` before rerunning the installer as `curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh`, inspect `nemoclaw.sh`, then run `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash nemoclaw.sh`.
+For unattended installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1`, or manually run `nemoclaw backup-all` and `openshell gateway destroy -g nemoclaw || openshell gateway destroy` before rerunning the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
 
 ```console
-$ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-$ less nemoclaw.sh
-$ bash nemoclaw.sh
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ### Upgrade Sandboxes with Stale Agent and Runtime Versions
@@ -208,7 +206,7 @@ $ nemoclaw upgrade-sandboxes --check                            # verify or list
 $ nemoclaw upgrade-sandboxes                                    # manually rebuild remaining stale running sandboxes
 ```
 
-`nemoclaw update` is the CLI wrapper around the same installer path as `curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh`, inspect `nemoclaw.sh`, then run `bash nemoclaw.sh`.
+`nemoclaw update` is the CLI wrapper around the same installer path as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`.
 Use `nemoclaw update --check` when you only want to inspect version state and see the maintained update command.
 
 For scripted manual rebuilds, use `nemoclaw upgrade-sandboxes --auto` to skip the confirmation prompt.
@@ -224,7 +222,33 @@ Load [references/lifecycle-details.md](references/lifecycle-details.md) for deta
 
 ## Uninstall
 
-Load [references/lifecycle-details.md](references/lifecycle-details.md) for detailed steps.
+To remove NemoClaw and all resources created during setup, run the CLI's built-in uninstall command:
+
+```bash
+nemoclaw uninstall
+```
+
+| Flag               | Effect                                               |
+|--------------------|------------------------------------------------------|
+| `--yes`            | Skip the confirmation prompt.                        |
+| `--keep-openshell` | Leave OpenShell binaries installed.                  |
+| `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
+
+`nemoclaw uninstall` runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
+
+If the `nemoclaw` CLI is missing or broken, fall back to the hosted script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
+```
+
+The same `--yes`, `--keep-openshell`, and `--delete-models` flags listed above also apply to the hosted script. Pass them after `bash -s --`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes --delete-models
+```
+
+For a full comparison of the two forms, including what they fetch, what they trust, and when to prefer each, see `nemoclaw uninstall` vs. the hosted `uninstall.sh` (use the `nemoclaw-user-reference` skill).
 
 ## References
 
@@ -232,7 +256,7 @@ Load [references/lifecycle-details.md](references/lifecycle-details.md) for deta
 - **Load [references/backup-restore.md](references/backup-restore.md)** when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds. Backs up and restores OpenClaw workspace files before destructive operations such as sandbox rebuilds.
 - **Load [references/messaging-channels.md](references/messaging-channels.md)** when setting up messaging channels, chat interfaces, or integrations without relying on nemoclaw tunnel start for bridges. Explains how Telegram, Discord, Slack, WeChat, and WhatsApp reach sandboxed OpenClaw and Hermes agents through OpenShell-managed processes and NemoClaw channel commands.
 - **Load [references/workspace-files.md](references/workspace-files.md)** when users ask about `SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, or other workspace files, or when preparing to back up or restore workspace state. Explains what workspace personality and configuration files are, where they live, and how they persist across sandbox restarts.
-- **Load [references/lifecycle-details.md](references/lifecycle-details.md)** when you need detailed steps for What Changes During a Rebuild, Uninstall.
+- **Load [references/lifecycle-details.md](references/lifecycle-details.md)** when you need detailed steps for What Changes During a Rebuild.
 
 ## Related Skills
 

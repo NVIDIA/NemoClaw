@@ -25,18 +25,14 @@ The script installs Node.js if it is not already present, then runs the guided o
 NemoClaw creates a fresh OpenClaw instance inside the sandbox during the onboarding process.
 
 ```bash
-curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-less nemoclaw.sh
-bash nemoclaw.sh
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-The downloaded installer prompts through your terminal. In headless scripts or CI,
-pass explicit acceptance when running `bash nemoclaw.sh`:
+The piped installer prompts through your terminal. In headless scripts or CI,
+pass explicit acceptance to the `bash` side of the pipe:
 
 ```console
-$ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-$ less nemoclaw.sh
-$ NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash nemoclaw.sh
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
 ```
 
 If you use nvm or fnm to manage Node.js, the installer might not update your current shell's PATH.
@@ -50,9 +46,7 @@ On macOS, the installer uses the Docker-driver OpenShell gateway path with Docke
 
 ```console
 $ newgrp docker
-$ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-$ less nemoclaw.sh
-$ bash nemoclaw.sh
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 On DGX Spark, DGX Station, and Windows WSL, an interactive installer offers express install after you accept the third-party software notice.

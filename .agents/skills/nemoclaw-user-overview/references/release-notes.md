@@ -214,21 +214,17 @@ NemoClaw v0.0.38 improves several day-two workflows:
 
 ## v0.0.34
 
-Starting with NemoClaw v0.0.34, the `curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh`, inspect `nemoclaw.sh`, then run `bash nemoclaw.sh` installer flow no longer auto-accepts the third-party software notice when stdin is piped and `/dev/tty` is unavailable (for example, deeply detached SSH sessions or some container shells).
+Starting with NemoClaw v0.0.34, the `curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash` installer pipeline no longer auto-accepts the third-party software notice when stdin is piped and `/dev/tty` is unavailable (for example, deeply detached SSH sessions or some container shells).
 In environments without a TTY, accept upfront in the pipe:
 
 ```console
-$ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-$ less nemoclaw.sh
-$ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash nemoclaw.sh
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
 ```
 
 Or pass the flag through to the installer:
 
 ```console
-$ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-$ less nemoclaw.sh
-$ bash nemoclaw.sh --yes-i-accept-third-party-software
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
 ```
 
 Or re-run from a terminal with a controlling TTY:

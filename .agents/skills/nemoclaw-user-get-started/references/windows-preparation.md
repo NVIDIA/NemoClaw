@@ -42,9 +42,7 @@ The bootstrap script does not install NemoClaw itself.
 When Windows preparation is complete, it opens Ubuntu and prints the standard installer command to run inside Ubuntu:
 
 ```bash
-curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-less nemoclaw.sh
-bash nemoclaw.sh
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 If the bootstrap script reports that Docker is not reachable from Ubuntu, open Docker Desktop Settings and confirm that WSL integration is enabled for Ubuntu (Settings > Resources > WSL integration), then rerun the script.
@@ -122,9 +120,7 @@ If you plan to select Ollama as your inference provider during onboarding, use o
 You can install Ollama inside WSL yourself:
 
 ```bash
-curl -fsSLo install.sh https://ollama.com/install.sh
-less install.sh
-sh bash install.sh
+curl -fsSL https://ollama.com/install.sh | sh
 ```
 
 If Ollama is installed but not already running in WSL, the onboarding process starts it for you.

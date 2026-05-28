@@ -3,7 +3,7 @@
 # NemoClaw CLI Commands Reference
 
 The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes.
-It is installed automatically by the installer (`curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh`, inspect `nemoclaw.sh`, then run `bash nemoclaw.sh`).
+It is installed automatically by the installer (`curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash`).
 For guidance on when to use `nemoclaw` versus the underlying `openshell` CLI, see [CLI Selection Guide](cli-selection-guide.md).
 
 ## `/nemoclaw` Slash Command
@@ -68,15 +68,13 @@ The installer detects existing sandbox sessions before onboarding and prints a w
 To make the installer abort instead of continuing, set `NEMOCLAW_SINGLE_SESSION=1`:
 
 ```console
-$ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-$ less nemoclaw.sh
-$ NEMOCLAW_SINGLE_SESSION=1 bash nemoclaw.sh
+$ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 When existing sandboxes were created with OpenShell earlier than `0.0.37`, the installer prompts before running the new automatic gateway upgrade path.
 For scripted installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the installer to back up registered sandbox state, retire the old gateway, install the current supported OpenShell release, and restore state during onboarding.
 The automatic path is disabled if the existing `nemoclaw` CLI does not advertise `backup-all`; preserve sandbox state manually before retiring the old gateway in that case.
-To perform those steps manually, run `nemoclaw backup-all`, retire the old gateway with `openshell gateway destroy -g nemoclaw || openshell gateway destroy`, then rerun the installer as `curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh`, inspect `nemoclaw.sh`, then run `NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash nemoclaw.sh`.
+To perform those steps manually, run `nemoclaw backup-all`, retire the old gateway with `openshell gateway destroy -g nemoclaw || openshell gateway destroy`, then rerun the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
 
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
@@ -131,12 +129,10 @@ or:
 $ NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 nemoclaw onboard --non-interactive
 ```
 
-For scripted installer runs, pass explicit acceptance when running `bash nemoclaw.sh`:
+For scripted installer runs, pass explicit acceptance to the `bash` side of the installer pipe:
 
 ```console
-$ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-$ less nemoclaw.sh
-$ NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash nemoclaw.sh
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
 ```
 
 If the installer cannot prompt for the notice in a terminal and no explicit acceptance is set, it exits before installing Node.js or the NemoClaw CLI.
@@ -791,9 +787,7 @@ Check for a NemoClaw CLI update and, when requested, run the maintained installe
 This command is a discoverable CLI wrapper around the supported installer path:
 
 ```console
-$ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-$ less nemoclaw.sh
-$ bash nemoclaw.sh
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ```console
@@ -1183,13 +1177,13 @@ $ nemoclaw uninstall [--yes] [--keep-openshell] [--delete-models] [--gateway <na
 
 Both forms execute the same `uninstall.sh` with the same flags, but differ in where the script comes from and how much they trust the network.
 Use `nemoclaw uninstall` by default.
-Use the hosted download-inspect-run fallback form only when the CLI is broken or already partially removed.
+Use the hosted `curl … | bash` form only when the CLI is broken or already partially removed.
 
-|  | `nemoclaw uninstall` | download-inspect-run fallback (Quickstart) |
+|  | `nemoclaw uninstall` | `curl … \| bash` (Quickstart) |
 |---|---|---|
 | **Source of the script** | Local `uninstall.sh` shipped with the installed npm package. | Pulled live from `refs/heads/main` on GitHub. |
 | **Version pinning** | Pinned to the version of NemoClaw you installed. | Whatever is on `main` right now; may be newer than your installed CLI. |
-| **Network trust** | No network fetch at uninstall time; runs a vetted local file via `bash`. | Downloads a remote script for inspection before running it with `bash`. |
+| **Network trust** | No network fetch at uninstall time; runs a vetted local file via `bash`. | Pipes a remote script straight to `bash` with no review step. |
 | **Robustness** | Requires the npm package to be discoverable so the CLI can find the local script. | Works even if the `nemoclaw` CLI is missing, broken, or partially uninstalled. |
 | **Recommended for** | Routine uninstalls. | Recovery when the CLI is unavailable. |
 

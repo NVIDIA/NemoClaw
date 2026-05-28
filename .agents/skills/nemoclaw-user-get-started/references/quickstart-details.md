@@ -30,7 +30,7 @@ The Model Router option appears when the blueprint router profile is enabled.
 **Tip:**
 
 Export the API key before launching the installer so the wizard does not have to ask for it.
-For example, run `export NVIDIA_API_KEY=<your-key>` before `bash nemoclaw.sh`.
+For example, run `export NVIDIA_API_KEY=<your-key>` before `curl ... | bash`.
 If you entered a key incorrectly, refer to Reset a Stored Credential (use the `nemoclaw-user-manage-sandboxes` skill) to clear and re-enter it.
 
 **Option 1: NVIDIA Endpoints:**

@@ -20,9 +20,7 @@ The installer installs the CLI, selects the `nemohermes` alias, and runs the gui
 
 ```console
 $ export NEMOCLAW_AGENT=hermes
-$ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-$ less nemoclaw.sh
-$ bash nemoclaw.sh
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 If NemoClaw is already installed, start Hermes onboarding directly.
@@ -69,9 +67,7 @@ $ export NEMOCLAW_NON_INTERACTIVE=1
 $ export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1
 $ export NEMOCLAW_SANDBOX_NAME=my-hermes
 $ export NVIDIA_API_KEY=<your-key>
-$ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-$ less nemoclaw.sh
-$ bash nemoclaw.sh
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 Use the provider variables from Inference Options (use the `nemoclaw-user-configure-inference` skill) when you choose a different provider.

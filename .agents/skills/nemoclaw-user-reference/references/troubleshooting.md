@@ -87,9 +87,7 @@ If the installer stopped after printing `newgrp docker`, run that command and th
 
 ```console
 $ newgrp docker
-$ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-$ less nemoclaw.sh
-$ bash nemoclaw.sh
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 ### macOS first-run failures
@@ -475,24 +473,20 @@ Silent retry would loop on the same failure if your original choice, such as an 
 
 - In an interactive terminal, the installer prompts whether to resume the failed session or start fresh.
   Press `R` (or Enter) to retry the same session, or `f` to discard it and make fresh choices.
-- In non-interactive mode (download-inspect-run installer with `NEMOCLAW_NON_INTERACTIVE=1`, CI, scripts), the installer refuses and exits with a non-zero status so a scripted re-run cannot loop.
+- In non-interactive mode (piped `curl | bash` with `NEMOCLAW_NON_INTERACTIVE=1`, CI, scripts), the installer refuses and exits with a non-zero status so a scripted re-run cannot loop.
   You must opt in to one of two paths explicitly:
 
   Start over with new choices (discards the recorded session and provider/model selection):
 
   ```console
-  $ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-  $ less nemoclaw.sh
-  $ bash nemoclaw.sh --fresh
+  $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --fresh
   ```
 
   Or equivalently, via env var.
-  The variable must be set on the `bash nemoclaw.sh` command, not on the `curl` download command, since only the right-hand process inherits it:
+  The variable must be set on the `bash` side of the pipe, not on `curl`, since only the right-hand process inherits it:
 
   ```console
-  $ curl -fsSLo nemoclaw.sh https://www.nvidia.com/nemoclaw.sh
-  $ less nemoclaw.sh
-  $ NEMOCLAW_FRESH=1 bash nemoclaw.sh
+  $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_FRESH=1 bash
   ```
 
   Retry the same session without re-prompting.

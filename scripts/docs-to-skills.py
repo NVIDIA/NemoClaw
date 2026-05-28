@@ -1436,7 +1436,6 @@ CONTENT_TYPE_ROLE = {
 }
 SKILL_FRONTMATTER_LICENSE = "Apache-2.0"
 MAX_SKILL_MD_CHARS = 11_500
-NEMOCLAW_INSTALLER_URL = "https://www.nvidia.com/nemoclaw.sh"
 
 
 def markdown_spdx_header() -> str:
@@ -1448,115 +1447,6 @@ def markdown_spdx_header() -> str:
             "",
         ]
     )
-
-
-def _build_installer_run_command(
-    pre_env: str, post_pipe: str, script_name: str = "nemoclaw.sh"
-) -> str:
-    """Convert the right side of an installer pipe into a script invocation."""
-    env_parts = [pre_env.strip()] if pre_env.strip() else []
-    post = post_pipe.strip()
-    args = ""
-
-    if " bash -s --" in post:
-        env_part, _, args = post.partition(" bash -s --")
-        if env_part.strip():
-            env_parts.append(env_part.strip())
-    elif post.startswith("bash -s --"):
-        args = post[len("bash -s --") :].strip()
-    elif post.endswith(" bash"):
-        env_part = post[: -len(" bash")].strip()
-        if env_part:
-            env_parts.append(env_part)
-    elif post != "bash" and post:
-        env_parts.append(post)
-
-    prefix = " ".join(part for part in env_parts if part)
-    command = f"{prefix} bash {script_name}".strip()
-    if args.strip():
-        command = f"{command} {args.strip()}"
-    return command
-
-
-_INSTALLER_PIPE_LINE_RE = re.compile(
-    rf"^(?P<indent>\s*)(?P<prompt>\$\s*)?"
-    rf"(?P<before>(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*)"
-    rf"curl\s+-fsSL\s+{re.escape(NEMOCLAW_INSTALLER_URL)}\s*\|\s*"
-    rf"(?P<post>[^\n]+)$",
-    re.MULTILINE,
-)
-
-_INSTALLER_PIPE_INLINE_RE = re.compile(
-    rf"`([^`\n]*?curl\s+-fsSL\s+{re.escape(NEMOCLAW_INSTALLER_URL)}\s*\|\s*[^`\n]+)`"
-)
-
-_SHELL_SCRIPT_PIPE_LINE_RE = re.compile(
-    r"^(?P<indent>\s*)(?P<prompt>\$\s*)?"
-    r"(?P<before>(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*)"
-    r"curl\s+-fsSL\s+(?P<url>https?://[^\s|]+/(?P<script>[A-Za-z0-9._-]+\.sh))"
-    r"\s*\|\s*(?P<post>[^\n]+)$",
-    re.MULTILINE,
-)
-
-
-def rewrite_installer_pipes(text: str) -> str:
-    """Rewrite generated ``curl | bash`` installer examples to inspect first."""
-
-    def _replace_line(match: re.Match, *, script_name: str = "nemoclaw.sh") -> str:
-        indent = match.group("indent") or ""
-        prompt = match.group("prompt") or ""
-        run_command = _build_installer_run_command(
-            match.group("before") or "",
-            match.group("post") or "bash",
-            script_name=script_name,
-        )
-        prefix = f"{indent}{prompt}"
-        url = (
-            match.group("url")
-            if "url" in match.groupdict()
-            else NEMOCLAW_INSTALLER_URL
-        )
-        return "\n".join(
-            [
-                f"{prefix}curl -fsSLo {script_name} {url}",
-                f"{prefix}less {script_name}",
-                f"{prefix}{run_command}",
-            ]
-        )
-
-    def _replace_script_line(match: re.Match) -> str:
-        return _replace_line(match, script_name=match.group("script"))
-
-    def _replace_inline(match: re.Match) -> str:
-        command = match.group(1)
-        line_match = _INSTALLER_PIPE_LINE_RE.match(command)
-        if not line_match:
-            return match.group(0)
-        run_command = _build_installer_run_command(
-            line_match.group("before") or "", line_match.group("post") or "bash"
-        )
-        return (
-            f"`curl -fsSLo nemoclaw.sh {NEMOCLAW_INSTALLER_URL}`, "
-            f"inspect `nemoclaw.sh`, then run `{run_command}`"
-        )
-
-    text = _INSTALLER_PIPE_LINE_RE.sub(_replace_line, text)
-    text = _SHELL_SCRIPT_PIPE_LINE_RE.sub(_replace_script_line, text)
-    text = _INSTALLER_PIPE_INLINE_RE.sub(_replace_inline, text)
-    for old, new in {
-        "The piped installer prompts": "The downloaded installer prompts",
-        "pass explicit acceptance to the `bash` side of the pipe": "pass explicit acceptance when running `bash nemoclaw.sh`",
-        "pass explicit acceptance to the `bash` side of the installer pipe": "pass explicit acceptance when running `bash nemoclaw.sh`",
-        "piped `curl | bash`": "download-inspect-run installer",
-        "`curl ... | bash`": "`bash nemoclaw.sh`",
-        "`curl \u2026 | bash`": "download-inspect-run fallback",
-        "`curl \u2026 \\| bash`": "download-inspect-run fallback",
-        "installer pipeline": "installer flow",
-        "Pipes a remote script straight to `bash` with no review step.": "Downloads a remote script for inspection before running it with `bash`.",
-        "set on the `bash` side of the pipe, not on `curl`": "set on the `bash nemoclaw.sh` command, not on the `curl` download command",
-    }.items():
-        text = text.replace(old, new)
-    return text
 
 
 def split_markdown_h3_sections(content: str) -> tuple[str, list[tuple[str, str]]]:
@@ -1713,7 +1603,7 @@ def generate_skill(
                 doc_platform=doc_platform,
             )
             image_acc.extend(copies)
-        return rewrite_installer_pipes(result)
+        return result
 
     procedures, deferred_procedures, context_pages, reference_pages = (
         partition_skill_pages(pages)

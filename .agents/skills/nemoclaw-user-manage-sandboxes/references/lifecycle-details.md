@@ -24,37 +24,3 @@ If you have switched providers since onboarding, for example from a remote API t
 To recover, re-run `nemoclaw onboard` and select your current provider.
 This refreshes the session metadata.
 Your existing container keeps serving traffic until the new image is ready.
-
-## Uninstall
-
-To remove NemoClaw and all resources created during setup, run the CLI's built-in uninstall command:
-
-```bash
-nemoclaw uninstall
-```
-
-| Flag               | Effect                                               |
-|--------------------|------------------------------------------------------|
-| `--yes`            | Skip the confirmation prompt.                        |
-| `--keep-openshell` | Leave OpenShell binaries installed.                  |
-| `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
-
-`nemoclaw uninstall` runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
-
-If the `nemoclaw` CLI is missing or broken, fall back to the hosted script:
-
-```bash
-curl -fsSLo uninstall.sh https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh
-less uninstall.sh
-bash uninstall.sh
-```
-
-The same `--yes`, `--keep-openshell`, and `--delete-models` flags listed above also apply to the hosted script. Pass them after `bash -s --`.
-
-```bash
-curl -fsSLo uninstall.sh https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh
-less uninstall.sh
-bash uninstall.sh --yes --delete-models
-```
-
-For a full comparison of the two forms, including what they fetch, what they trust, and when to prefer each, see `nemoclaw uninstall` vs. the hosted `uninstall.sh` (use the `nemoclaw-user-reference` skill).
