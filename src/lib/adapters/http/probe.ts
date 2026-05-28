@@ -73,18 +73,24 @@ export function getCurlTimingArgs(): string[] {
 }
 
 function getCurlMaxTimeSeconds(argv: string[]): number | null {
+  let maxTimeSeconds: number | null = null;
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === "--max-time") {
       const value = Number(argv[index + 1]);
-      return Number.isFinite(value) && value > 0 ? value : null;
+      if (Number.isFinite(value) && value > 0) {
+        maxTimeSeconds = value;
+      }
+      continue;
     }
     if (arg.startsWith("--max-time=")) {
       const value = Number(arg.slice("--max-time=".length));
-      return Number.isFinite(value) && value > 0 ? value : null;
+      if (Number.isFinite(value) && value > 0) {
+        maxTimeSeconds = value;
+      }
     }
   }
-  return null;
+  return maxTimeSeconds;
 }
 
 function resolveCurlProcessTimeoutMs(argv: string[], opts: CurlProbeOptions): number {

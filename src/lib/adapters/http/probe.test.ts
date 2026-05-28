@@ -115,6 +115,32 @@ describe("http-probe helpers", () => {
     expect(timeout).toBe(65_000);
   });
 
+  it("uses the last curl --max-time when the flag is repeated", () => {
+    let timeout: number | undefined;
+    runCurlProbe(
+      ["-sS", "--max-time", "15", "--max-time", "120", "https://example.test/models"],
+      {
+        spawnSyncImpl: (_command, args, options) => {
+          timeout = options.timeout;
+          const outputPath = args[args.indexOf("-o") + 1];
+          if (typeof outputPath === "string") {
+            fs.writeFileSync(outputPath, "{}");
+          }
+          return {
+            pid: 1,
+            output: [],
+            stdout: "200",
+            stderr: "",
+            status: 0,
+            signal: null,
+          };
+        },
+      },
+    );
+
+    expect(timeout).toBe(125_000);
+  });
+
   it("honors an explicit process timeout over inferred curl --max-time", () => {
     let timeout: number | undefined;
     runCurlProbe(["-sS", "--max-time", "60", "https://example.test/models"], {
