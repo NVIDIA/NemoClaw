@@ -245,6 +245,8 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 # but a plain symlink there makes Homebrew infer /usr/local as its prefix. The
 # wrapper must execute the Linuxbrew prefix shim, not the repository script
 # directly, so Homebrew keeps /home/linuxbrew/.linuxbrew as its writable prefix.
+# The wrapper also defaults Homebrew's temp extraction to /tmp, because the
+# sandbox policy permits /tmp writes while /var/tmp stays outside the write set.
 # Installed formulae are added to the sandbox user's login-shell PATH via
 # /etc/profile.d instead of Docker ENV, because /home/linuxbrew is
 # sandbox-writable and must not be inherited by privileged startup code before
@@ -270,6 +272,8 @@ RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
         /home/linuxbrew/.linuxbrew/bin/brew \
     && { \
         printf '%s\n' '#!/bin/sh'; \
+        printf '%s\n' "export HOMEBREW_TEMP=\"\${HOMEBREW_TEMP:-/tmp}\""; \
+        printf '%s\n' "export TMPDIR=\"\${TMPDIR:-/tmp}\""; \
         printf '%s\n' 'exec /home/linuxbrew/.linuxbrew/bin/brew "$@"'; \
     } > /usr/local/bin/brew \
     && chmod 755 /usr/local/bin/brew \
