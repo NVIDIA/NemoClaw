@@ -113,7 +113,6 @@ describe("catalog skills export", () => {
         fs.readFileSync(path.join(signedSkill, "skill-card.md"), "utf8"),
       ).toBe("# Signed card\n");
       expect(listSkillDirs(tempSkills)).toEqual([
-        "nemoclaw-skills-guide",
         "nemoclaw-user-agent-skills",
         "nemoclaw-user-configure-inference",
         "nemoclaw-user-configure-security",
