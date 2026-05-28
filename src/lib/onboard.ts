@@ -3655,9 +3655,15 @@ async function createSandbox(
       sandboxName,
       { backupPath: restoreBackupPath },
     );
+    const failurePhase = gatewayState.getSandboxFailurePhase(
+      runCaptureOpenshell(["sandbox", "list"], { ignoreError: true }),
+      sandboxName,
+    );
     console.error("");
     console.error(
-      `  Sandbox '${sandboxName}' was created but did not become ready within ${sandboxReadyTimeoutSecs}s.`,
+      failurePhase
+        ? `  Sandbox '${sandboxName}' entered ${failurePhase} phase before it became ready (waited up to ${sandboxReadyTimeoutSecs}s).`
+        : `  Sandbox '${sandboxName}' was created but did not become ready within ${sandboxReadyTimeoutSecs}s.`,
     );
     if (diagnostics) {
       console.error(`  Diagnostics saved: ${diagnostics.dir}`);

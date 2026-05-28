@@ -862,6 +862,105 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
     expect(sleep).toHaveBeenCalledTimes(1);
   });
 
+  it("prefers `sandbox list` phase over `sandbox get` when both are present (stale get)", () => {
+    // Regression guard for #4316 CodeRabbit feedback: when `sandbox get`
+    // returns a stale Phase (e.g. Provisioning while the gateway has already
+    // transitioned the row to Error), the list-derived phase must take
+    // precedence so the classifier doesn't act on stale data.
+    const runCaptureOpenshell = vi.fn((args: readonly string[]) => {
+      if (args[0] === "sandbox" && args[1] === "get") {
+        return "Name: alpha\nPhase: Provisioning\n";
+      }
+      if (args[0] === "sandbox" && args[1] === "list") {
+        return "alpha   Error   2s ago\n";
+      }
+      return "";
+    });
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      { patchedContainerId: null },
+      { runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Error");
+    expect(snapshot.sandboxListLine).toContain("Error");
+  });
+
+  it("keeps a terminal get phase when list still reports a stale live phase", () => {
+    // Inverse-staleness guard: when `sandbox get` already reports Error but
+    // `sandbox list` is still showing the row as Ready (gateway list cache
+    // lagging behind the per-sandbox endpoint), the terminal `get` phase
+    // must win so the classifier still surfaces sandbox_error_phase.
+    const runCaptureOpenshell = vi.fn((args: readonly string[]) => {
+      if (args[0] === "sandbox" && args[1] === "get") {
+        return "Name: alpha\nPhase: Error\nReason: ContainerCannotRun\n";
+      }
+      if (args[0] === "sandbox" && args[1] === "list") {
+        return "alpha   Ready   1m ago\n";
+      }
+      return "";
+    });
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      { patchedContainerId: null },
+      { runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Error");
+    // The list row is still captured even when its phase is demoted.
+    expect(snapshot.sandboxListLine).toContain("Ready");
+  });
+
+  it("keeps a live get phase when list is still reporting an older intermediate phase", () => {
+    // Symmetric staleness guard: when `sandbox get` reports Ready but
+    // `sandbox list` is still serving an older Provisioning row, the live
+    // get phase must win. Otherwise a subsequent GPU proof error would
+    // be misclassified as supervisor_unreachable instead of proof_failure.
+    const runCaptureOpenshell = vi.fn((args: readonly string[]) => {
+      if (args[0] === "sandbox" && args[1] === "get") {
+        return "Name: alpha\nPhase: Ready\n";
+      }
+      if (args[0] === "sandbox" && args[1] === "list") {
+        return "alpha   Provisioning   2s ago\n";
+      }
+      return "";
+    });
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      { patchedContainerId: null },
+      { runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Ready");
+  });
+
+  it("keeps the get-derived phase when the sandbox row is absent from list output", () => {
+    // Complement to the precedence test: if `sandbox list` has no row for
+    // the named sandbox (e.g. the gateway lost track of it), the get-derived
+    // phase is the only signal we have — don't drop it.
+    const runCaptureOpenshell = vi.fn((args: readonly string[]) => {
+      if (args[0] === "sandbox" && args[1] === "get") {
+        return "Name: alpha\nPhase: Terminated\n";
+      }
+      if (args[0] === "sandbox" && args[1] === "list") {
+        return "other-box   Ready   2s ago\n";
+      }
+      return "";
+    });
+
+    const snapshot = captureDockerGpuPatchSandboxSnapshot(
+      "alpha",
+      { patchedContainerId: null },
+      { runCaptureOpenshell },
+    );
+
+    expect(snapshot.sandboxPhase).toBe("Terminated");
+    expect(snapshot.sandboxListLine).toBeNull();
+  });
+
   it("captures sandbox phase and patched container State via the snapshot helper", () => {
     const runCaptureOpenshell = vi.fn((args: readonly string[]) => {
       if (args[0] === "sandbox" && args[1] === "get") {

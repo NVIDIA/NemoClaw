@@ -1314,6 +1314,20 @@ function isFailurePhase(phase: string | null | undefined): boolean {
   return typeof phase === "string" && SANDBOX_FAILURE_PHASE_TOKENS.has(phase);
 }
 
+/**
+ * Rank a sandbox phase by how decisive it is for failure classification:
+ * terminal failure phases beat live phases beat intermediate/unknown phases.
+ * Used by `captureDockerGpuPatchSandboxSnapshot` to reconcile divergent
+ * `sandbox list` and `sandbox get` outputs without letting either side's
+ * staleness mask the actual state.
+ */
+function phaseRank(phase: string | null | undefined): number {
+  if (!phase) return 0;
+  if (SANDBOX_FAILURE_PHASE_TOKENS.has(phase)) return 3;
+  if (SANDBOX_LIVE_PHASE_TOKENS.has(phase)) return 2;
+  return 1;
+}
+
 function parseDockerContainerState(json: string): DockerContainerState | null {
   if (!json.trim()) return null;
   try {
@@ -1373,7 +1387,20 @@ export function captureDockerGpuPatchSandboxSnapshot(
         timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
       });
       sandboxListLine = findSandboxListLine(listOutput, sandboxName);
-      if (!sandboxPhase) sandboxPhase = parseSandboxPhaseFromListOutput(listOutput, sandboxName);
+      // `openshell sandbox list` and `openshell sandbox get` can both lag
+      // behind the gateway's true sandbox state. Reconcile by taking the
+      // more "decisive" phase — terminal > live > intermediate/unknown —
+      // so neither a stale live `list` row demotes a real `get`-reported
+      // failure, nor a stale intermediate `list` row demotes a live
+      // `get`-reported Ready/Running. Ties (e.g. both terminal) prefer
+      // the list value, which reflects the broader gateway view. #4316
+      // CodeRabbit + Codex feedback.
+      if (sandboxListLine) {
+        const listPhase = parseSandboxPhaseFromListOutput(listOutput, sandboxName);
+        if (listPhase && phaseRank(listPhase) >= phaseRank(sandboxPhase)) {
+          sandboxPhase = listPhase;
+        }
+      }
     } catch {
       /* best effort */
     }
