@@ -23,6 +23,7 @@ PLAIN_CAPTURE_FILE="${CAPTURE_DIR}/openclaw-tui-capture.plain.log"
 TUI_TIMEOUT_SEC="${NEMOCLAW_ISSUE_4434_TUI_TIMEOUT_SEC:-210}"
 VISIBLE_ERROR_RE="error|failed|timeout|timed out|unavailable|fetch failed|ETIMEDOUT|ECONN|upstream"
 SPINNER_CONNECTED_RE="flibbertigibbeting|[0-9]+m[[:space:]][0-9]+s[[:space:]]*\\|[[:space:]]*connected"
+STATUS_LINE_RE="(connecting|gateway connected|connected|sending|running|flibbertigibbeting).*\\|[[:space:]]*(connected|error)"
 BLOCKED_IPS=("75.2.113.119" "99.83.136.103")
 INSERTED_IPS=()
 CLEANUP_SANDBOX=0
@@ -169,7 +170,8 @@ EXPECT
 expect_rc=$?
 set -e
 
-perl -pe 's/\x1b\[[0-9;?]*[ -\/]*[@-~]//g' "$CAPTURE_FILE" >"$PLAIN_CAPTURE_FILE"
+perl -pe 's/\x1b\][^\a]*(?:\a|\x1b\\)//g; s/\x1b\[[0-9;?]*[ -\/]*[@-~]//g; s/\r/\n/g' \
+  "$CAPTURE_FILE" >"$PLAIN_CAPTURE_FILE"
 
 if ! grep -Eiq "$VISIBLE_ERROR_RE" "$PLAIN_CAPTURE_FILE"; then
   if grep -Eiq "$SPINNER_CONNECTED_RE" "$PLAIN_CAPTURE_FILE"; then
@@ -180,8 +182,15 @@ fi
 if [ "$expect_rc" -ne 0 ]; then
   fail "expect harness exited ${expect_rc} even though an error-looking capture was found"
 fi
-if tail -40 "$PLAIN_CAPTURE_FILE" | grep -Eiq "$SPINNER_CONNECTED_RE"; then
-  fail "TUI capture still ends with active connected spinner after the visible error"
+last_status_line="$(grep -E "$STATUS_LINE_RE" "$PLAIN_CAPTURE_FILE" | tail -1 || true)"
+if [ -z "$last_status_line" ]; then
+  fail "TUI capture did not include a recognizable final status line"
+fi
+if ! grep -Eiq "\\|[[:space:]]*error\\b" <<<"$last_status_line"; then
+  if grep -Eiq "$SPINNER_CONNECTED_RE" <<<"$last_status_line"; then
+    fail "TUI capture still ends with active connected spinner after the visible error"
+  fi
+  fail "TUI capture did not end with a visible error status after the failed run"
 fi
 
 info "PASS: openclaw tui surfaced a visible unreachable-inference error and stopped the spinner"
