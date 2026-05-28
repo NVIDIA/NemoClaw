@@ -378,6 +378,20 @@ function messagingDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorChec
   const pausedSuffix =
     pausedChannels.length > 0 ? `; paused channels skipped: ${pausedChannels.join(", ")}` : "";
   if (degraded.length === 0) {
+    // WhatsApp's inbound delivery cannot be inferred from the conflict-signature
+    // heuristic — issue #4386 showed a paired channel with a live Noise
+    // WebSocket that never delivered inbound events, while this check rendered
+    // "ok". Downgrade to "info" with a pointer to `channels status` so doctor
+    // never claims WhatsApp is healthy without running the deep probe.
+    if (channels.includes("whatsapp")) {
+      return {
+        group: "Messaging",
+        label: "Channels",
+        status: "info",
+        detail: `${channels.join(", ")} enabled; whatsapp inbound delivery is not inferred from conflict signatures${pausedSuffix}`,
+        hint: `run \`${CLI_NAME} ${sandboxName} channels status --channel whatsapp\` to probe inbound delivery`,
+      };
+    }
     return {
       group: "Messaging",
       label: "Channels",
