@@ -1,7 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { OLLAMA_HOST_DOCKER_INTERNAL } from "../inference/local";
+import {
+  OLLAMA_HOST_DOCKER_INTERNAL,
+  validateOllamaPortConfiguration,
+} from "../inference/local";
 import { OLLAMA_PORT } from "../core/ports";
 import {
   getInstalledOllamaVersion,
@@ -44,6 +47,21 @@ export interface RunningOllamaMenuInput {
   isWsl: boolean;
   ollamaPort: number;
   ollamaHost?: string | null;
+  windowsHostLabelSuffix?: string;
+}
+
+export function checkOllamaPortsOrWarn(input: { isNonInteractive: () => boolean }): boolean {
+  const portValidation = validateOllamaPortConfiguration();
+  if (!portValidation.ok) {
+    console.error(`  ${portValidation.message}`);
+    if (input.isNonInteractive()) {
+      process.exit(1);
+    }
+    console.log("  Choose a different local inference provider or fix the port settings.");
+    console.log("");
+    return false;
+  }
+  return true;
 }
 
 export function resolveRunningOllamaMenuEntry(
@@ -58,12 +76,16 @@ export function resolveRunningOllamaMenuEntry(
   } else {
     hostDisplay = `localhost:${input.ollamaPort}`;
   }
-  const suggested = input.ollamaRunning && (input.ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL || !input.isWsl);
+  const windowsHostSuffix =
+    input.ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL ? input.windowsHostLabelSuffix || "" : "";
+  const suggested =
+    input.ollamaRunning &&
+    (input.ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL ? !windowsHostSuffix : !input.isWsl);
+  const runningSuffix = input.ollamaRunning ? " — running" : "";
+  const suggestionSuffix = suggested ? " (suggested)" : "";
   return {
     key: "ollama",
-    label:
-      `Local Ollama (${hostDisplay})${input.ollamaRunning ? " — running" : ""}` +
-      (suggested ? " (suggested)" : ""),
+    label: `Local Ollama (${hostDisplay})${runningSuffix}${windowsHostSuffix}${suggestionSuffix}`,
   };
 }
 

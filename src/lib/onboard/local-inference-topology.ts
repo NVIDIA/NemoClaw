@@ -130,6 +130,17 @@ export function getWindowsHostOllamaDockerRequirement(
   };
 }
 
+export function rejectUnsupportedWindowsHostOllama(
+  requirement: WindowsHostOllamaDockerRequirement,
+  providerKey: string,
+  isWindowsHostOllama: boolean,
+  isNonInteractive: () => boolean,
+  abortNonInteractive: (reason: string, hint?: string) => never,
+): boolean {
+  if (!isWindowsHostOllama || requirement.supported) return false;
+  return requirement.reject(providerKey, isNonInteractive, abortNonInteractive);
+}
+
 // True when the sandbox container needs the local Ollama auth proxy in front
 // of raw Ollama. False only under Docker Desktop on WSL, where the docker-
 // desktop VM publishes the host's 127.0.0.1 back into containers through
