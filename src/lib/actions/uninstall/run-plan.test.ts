@@ -624,6 +624,8 @@ describe("uninstall run plan", () => {
       const stateDir = path.join(tmpHome, ".nemoclaw");
       fs.mkdirSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101"), { recursive: true });
       fs.writeFileSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"), "{}");
+      fs.mkdirSync(path.join(stateDir, "backups", "20260320-120000"), { recursive: true });
+      fs.writeFileSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"), "hello");
       fs.writeFileSync(path.join(stateDir, "sandboxes.json"), "[]");
       fs.writeFileSync(path.join(stateDir, "ollama-auth-proxy.pid"), "1234");
       fs.mkdirSync(path.join(stateDir, "source"));
@@ -653,11 +655,12 @@ describe("uninstall run plan", () => {
 
         expect(result.exitCode).toBe(0);
         expect(fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"))).toBe(true);
+        expect(fs.existsSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"))).toBe(true);
         expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(true);
         expect(fs.existsSync(path.join(stateDir, "ollama-auth-proxy.pid"))).toBe(false);
         expect(fs.existsSync(path.join(stateDir, "source"))).toBe(false);
-        expect(logs).toContain(`Preserving rebuild-backups, sandboxes.json under ${stateDir}.`);
-        expect(logs.some((line) => line.includes("preserved: rebuild-backups, sandboxes.json"))).toBe(true);
+        expect(logs).toContain(`Preserving rebuild-backups, backups, sandboxes.json under ${stateDir}.`);
+        expect(logs.some((line) => line.includes("preserved: rebuild-backups, backups, sandboxes.json"))).toBe(true);
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
       }
@@ -742,10 +745,45 @@ describe("uninstall run plan", () => {
 
         expect(result.exitCode).toBe(0);
         expect(fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"))).toBe(true);
+        expect(fs.existsSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"))).toBe(true);
         expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(true);
         expect(logs).toContain("Keeping user data.");
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
+    });
+
+    it("removes ~/.nemoclaw wholesale when it is a symlink rather than a real directory", () => {
+      const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-"));
+      const realTarget = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-uninstall-preserve-target-"));
+      const stateDir = path.join(tmpHome, ".nemoclaw");
+      fs.symlinkSync(realTarget, stateDir);
+      // Symlink target intentionally non-empty so that following it would
+      // tempt the selective-wipe path; lstat must short-circuit that.
+      fs.writeFileSync(path.join(realTarget, "rebuild-backups"), "should not be followed");
+      try {
+        const logs: string[] = [];
+        const result = runUninstallPlan(
+          { assumeYes: true, deleteModels: false, keepOpenShell: true },
+          {
+            commandExists: () => false,
+            env: { HOME: tmpHome } as NodeJS.ProcessEnv,
+            existsSync: (target: string) =>
+              target.startsWith(tmpHome) && fs.existsSync(target),
+            isTty: false,
+            log: (line) => logs.push(line),
+            run: vi.fn(() => ok()),
+            runDocker: () => ok(""),
+          },
+        );
+
+        expect(result.exitCode).toBe(0);
+        expect(fs.existsSync(stateDir)).toBe(false);
+        expect(fs.existsSync(realTarget)).toBe(true);
+        expect(logs).toContain(`Removed ${stateDir}`);
+      } finally {
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+        fs.rmSync(realTarget, { recursive: true, force: true });
       }
     });
 

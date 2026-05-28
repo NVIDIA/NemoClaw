@@ -1203,6 +1203,7 @@ To avoid the data-loss case from [#4226](https://github.com/NVIDIA/NemoClaw/issu
 | Entry | What it holds |
 |---|---|
 | `rebuild-backups/` | Host-side snapshots produced by `nemoclaw <name> snapshot create` and `nemoclaw backup-all`. Required by `nemoclaw <name> snapshot restore` after reinstalling. |
+| `backups/` | Host-side workspace backups produced by `scripts/backup-workspace.sh` (see [Backup and Restore](/manage-sandboxes/backup-restore)). |
 | `sandboxes.json` | Host-side sandbox registry. Used by NemoClaw to map sandbox names back to their persistence directories on reinstall. |
 
 Every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.) is removed.

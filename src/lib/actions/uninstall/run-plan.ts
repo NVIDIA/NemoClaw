@@ -112,13 +112,17 @@ function removePath(target: string, deps: Required<Pick<UninstallRunDeps, "exist
 }
 
 // Entries under `nemoclawStateDir` (~/.nemoclaw/) that survive uninstall by
-// default. `rebuild-backups/` holds the host-side snapshots created by
-// `nemoclaw <name> snapshot create` and `nemoclaw backup-all`; `sandboxes.json`
-// is the host-side sandbox registry. Both are user data — losing them on
-// uninstall is the issue tracked in #4226. The full wipe still happens when
-// NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 is set, or when the user answers `y`
-// to the interactive prompt.
-export const PRESERVED_USER_DATA_ENTRIES: readonly string[] = ["rebuild-backups", "sandboxes.json"];
+// default. `rebuild-backups/` holds host-side snapshots from
+// `nemoclaw <name> snapshot create` and `nemoclaw backup-all`; `backups/`
+// holds host-side workspace backups from `scripts/backup-workspace.sh`;
+// `sandboxes.json` is the host-side sandbox registry. Full wipe still happens
+// when NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 is set, or when the user answers
+// `y` to the interactive prompt.
+export const PRESERVED_USER_DATA_ENTRIES: readonly string[] = [
+  "rebuild-backups",
+  "backups",
+  "sandboxes.json",
+];
 
 function removePathExcept(
   target: string,
@@ -131,16 +135,31 @@ function removePathExcept(
     deps.log(`Removed ${target}`);
     return;
   }
+  // Only enumerate when `target` is a real directory. A symlink or non-dir at
+  // ~/.nemoclaw would make readdirSync follow into / fail noisily; treat those
+  // as wholesale removal, matching the pre-#4226 behaviour for the unusual
+  // shapes.
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch {
+    return;
+  }
+  if (!stat.isDirectory()) {
+    deps.rmSync(target, { force: true, recursive: true });
+    deps.log(`Removed ${target}`);
+    return;
+  }
   const preserveSet = new Set(preserve);
   const children = fs.readdirSync(target);
-  const preserved: string[] = [];
   for (const entry of children) {
-    if (preserveSet.has(entry)) {
-      preserved.push(entry);
-      continue;
-    }
+    if (preserveSet.has(entry)) continue;
     deps.rmSync(path.join(target, entry), { force: true, recursive: true });
   }
+  // Track preserved order against the declared allowlist so the log line is
+  // stable across filesystems with non-deterministic readdir ordering.
+  const childSet = new Set(children);
+  const preserved = preserve.filter((name) => childSet.has(name));
   if (preserved.length === 0) {
     deps.rmSync(target, { force: true, recursive: true });
     deps.log(`Removed ${target}`);
