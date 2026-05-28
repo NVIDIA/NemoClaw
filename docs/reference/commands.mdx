@@ -1202,9 +1202,9 @@ To avoid uninstall destroying host-side user data, uninstall preserves the follo
 
 | Entry | What it holds |
 |---|---|
-| `rebuild-backups/` | Host-side snapshots that `nemoclaw <name> snapshot create` and `nemoclaw backup-all` write, and that `nemoclaw <name> snapshot restore` reads back after you reinstall. |
+| `rebuild-backups/` | Host-side snapshots that `nemoclaw <name> snapshot create` and `nemoclaw backup-all` write. `nemoclaw <name> snapshot restore` reads them back after you reinstall. |
 | `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes (see [Backup and Restore](/manage-sandboxes/backup-restore)). |
-| `sandboxes.json` | Host-side sandbox registry that maps sandbox names back to their persistence directories when you reinstall. |
+| `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
 Uninstall removes every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.).
 
@@ -1214,8 +1214,8 @@ Decision matrix:
 |---|---|
 | Interactive TTY, preserved entries present, no env override | Prompts `Also remove them? [y/N]`. Default `N` keeps the entries. |
 | Interactive TTY, user answers `y` | Removes everything under `~/.nemoclaw/` (the previous full-removal behaviour). |
-| Non-interactive (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or non-TTY shell) | Preserves the entries and prints a short notice. |
-| Any context with `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` | Skips the preserved-data prompt and removes everything under `~/.nemoclaw/`. |
+| Non-interactive (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or non-TTY shell) | Preserves the entries and prints a one-line notice. |
+| Any context with `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` | Skips the prompt and removes everything under `~/.nemoclaw/`. |
 
 The preserved entries survive uninstall as inert files on disk.
 Reinstall NemoClaw and re-onboard the sandbox before `nemoclaw <name> snapshot restore` can use them.

@@ -782,11 +782,11 @@ describe("uninstall run plan", () => {
         expect(fs.existsSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"))).toBe(true);
         expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(true);
         expect(logs).toContain(`Preserving rebuild-backups, backups, sandboxes.json under ${stateDir}.`);
-        // Both prompts must be skipped: top-level `Proceed? [y/N]` (treats the
-        // env var as implicit --yes) and the preserved-data `Also remove them?`.
-        expect(logs.every((line) => line !== "Proceed? [y/N]")).toBe(true);
+        // Interactive y/N prompt must not fire when NEMOCLAW_NON_INTERACTIVE is set.
         expect(logs.every((line) => line !== "Also remove them? [y/N]")).toBe(true);
-        expect(readLine).not.toHaveBeenCalled();
+        // The earlier generic confirm() prompt still consumes one readLine for "Proceed? [y/N]";
+        // resolvePreserveSet must not consume another.
+        expect(readLine).toHaveBeenCalledTimes(1);
       } finally {
         fs.rmSync(tmpHome, { recursive: true, force: true });
       }

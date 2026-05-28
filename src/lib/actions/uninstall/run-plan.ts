@@ -257,11 +257,7 @@ function printBye(runtime: UninstallRuntime): void {
 
 function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boolean {
   const branding = runtimeBranding(runtime);
-  // `NEMOCLAW_NON_INTERACTIVE=1` is the codebase-wide convention for skipping
-  // confirmation prompts (see e.g. policy-channel.ts, destroy.ts, update.ts);
-  // treat it as an implicit `--yes` here so the top-level uninstall prompt
-  // does not block scripted runs.
-  if (options.assumeYes || runtime.env.NEMOCLAW_NON_INTERACTIVE === "1") return true;
+  if (options.assumeYes) return true;
   runtime.log("What will be removed:");
   runtime.log(`  · All OpenShell sandboxes, gateway, and ${branding.display} providers`);
   runtime.log("  · Related Docker containers, images, and volumes");
@@ -656,9 +652,8 @@ function resolvePreserveSet(
   // preserve set so a later snapshot-create still survives if the user re-runs.
   if (preservable.length === 0) return PRESERVED_USER_DATA_ENTRIES;
   // Non-interactive (no TTY, --yes, or NEMOCLAW_NON_INTERACTIVE=1) → preserve
-  // silently and print a short notice naming the preserved entries plus the
-  // ack env var. Default behaviour is safe; users who want a destructive
-  // uninstall in CI must set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1.
+  // silently with a one-line notice. Default behaviour is safe; users who want
+  // a destructive uninstall in CI must set the env var.
   const nonInteractive =
     !runtime.isTty || options.assumeYes || runtime.env.NEMOCLAW_NON_INTERACTIVE === "1";
   if (nonInteractive) {
