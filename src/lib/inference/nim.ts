@@ -42,17 +42,22 @@ const NVIDIA_GPU_NAME_PATTERN =
 // caller must cross-check `detectNvidiaPlatform()`.
 const NVIDIA_GPU_NAME_DENYLIST_PATTERN = /\bJMJWOA-Generic-/i;
 
-// `/proc/driver/nvidia/` is populated by the real NVIDIA kernel driver on
-// Linux/WSL2. The Snapdragon X d3d12/WDDM shim ships a userland `nvidia-smi`
-// binary but no kernel module, so this interface is absent — a cheap and
-// definitive signal that no genuine NVIDIA driver is bound. Used as a last
-// guard after the name denylist; on non-Linux platforms (macOS, Windows
-// native) the path does not apply and the helper returns `true` so the
-// caller falls back to the denylist alone.
+// Trust-tier check used after the name denylist on hosts whose firmware does
+// not vouch for an NVIDIA platform. A host is considered genuine when ANY of:
+//   - the platform is not Linux (the only place a userland shim is known to
+//     publish an `nvidia-smi` impersonator inside the same kernel namespace);
+//   - the architecture is not `arm64` (the d3d12/WDDM shim ships on
+//     Windows-on-ARM only — Microsoft's WoA is ARM-only by spec, so a Linux
+//     x86_64 host that exposes `nvidia-smi` cannot be the shim);
+//   - `/proc/driver/nvidia/` exists on Linux (real NVIDIA kernel driver bound;
+//     the shim never creates this path).
+// The remaining case (ARM64 Linux with no `/proc/driver/nvidia/` populated) is
+// the Snapdragon X N1X shim profile and is rejected by the caller.
 const NVIDIA_DRIVER_PROC_PATH = "/proc/driver/nvidia";
 
-function nvidiaKernelInterfaceExists(): boolean {
+function nvidiaHostLooksGenuine(): boolean {
   if (process.platform !== "linux") return true;
+  if (process.arch !== "arm64") return true;
   try {
     return fs.existsSync(NVIDIA_DRIVER_PROC_PATH);
   } catch {
@@ -410,7 +415,7 @@ export function detectGpu(): GpuDetection | null {
           if (parsed.some((p: ParsedGpu) => NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(p.name))) {
             return null;
           }
-          if (!nvidiaKernelInterfaceExists()) {
+          if (!nvidiaHostLooksGenuine()) {
             return null;
           }
           trusted = parsed.filter((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
@@ -481,7 +486,7 @@ export function detectGpu(): GpuDetection | null {
     // Tagged-name acceptance on non-firmware-vouched hosts must additionally
     // pass the kernel-interface gate so the doc claim ("real kernel driver
     // bound") holds on the unified-memory fallback as well.
-    const allowTaggedOnGenericFirmware = nvidiaKernelInterfaceExists();
+    const allowTaggedOnGenericFirmware = nvidiaHostLooksGenuine();
     const unifiedGpuNames =
       taggedNames.length > 0
         ? firmwareIsUnifiedMemory || allowTaggedOnGenericFirmware

@@ -3,7 +3,7 @@
 
 import { createRequire } from "module";
 import type { Mock } from "vitest";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 // Import from compiled dist/ for coverage attribution.
 import * as nim from "../../../dist/lib/inference/nim";
@@ -184,24 +184,25 @@ describe("nim", () => {
       }
     }
 
-    // Default the kernel-interface signal to present so existing primary-path
-    // tests that don't care about the gate keep passing on CI hosts where the
-    // real `/proc/driver/nvidia/` is not populated. Tests that exercise the
-    // gate itself wrap their body with `withNvidiaKernelInterface(false, …)`.
-    let __origDetectGpuExistsSync: typeof fs.existsSync | undefined;
-    beforeEach(() => {
-      __origDetectGpuExistsSync = fs.existsSync;
-      fs.existsSync = (p: string) => {
-        if (p === "/proc/driver/nvidia") return true;
-        return (__origDetectGpuExistsSync as typeof fs.existsSync)(p);
-      };
-    });
-    afterEach(() => {
-      if (__origDetectGpuExistsSync) {
-        fs.existsSync = __origDetectGpuExistsSync;
-        __origDetectGpuExistsSync = undefined;
+    // The trust-tier gate is ARM64-Linux-only; CI runners are typically x64,
+    // so the gate is naturally inactive there. Tests that exercise the gate
+    // override `process.arch` to "arm64" via this helper to make the gate
+    // active for the duration of the test body.
+    function withProcessArch(arch: NodeJS.Architecture, fn: () => void): void {
+      const origDesc = Object.getOwnPropertyDescriptor(process, "arch");
+      Object.defineProperty(process, "arch", {
+        value: arch,
+        configurable: true,
+        writable: true,
+      });
+      try {
+        fn();
+      } finally {
+        if (origDesc) {
+          Object.defineProperty(process, "arch", origDesc);
+        }
       }
-    });
+    }
 
     it("returns object or null", () => {
       const gpu = nim.detectGpu();
@@ -418,14 +419,13 @@ describe("nim", () => {
       }
     });
 
-    // Secondary gate: when no real NVIDIA kernel driver is bound,
-    // `/proc/driver/nvidia/` is absent. Even if the nvidia-smi probe returns a
-    // plausible-looking NVIDIA name, the absence of the kernel interface is a
-    // definitive "no real driver" signal and the host must be rejected.
-    // Covers QA-confirmed Snapdragon X N1X WSL2 hosts where the shim emits
-    // format-valid `uuid`/`compute_cap`/`vbios_version` triples but no
-    // `/proc/driver/nvidia/` directory.
-    it("rejects when /proc/driver/nvidia/ is absent on generic firmware (#3988)", () => {
+    // Trust-tier gate: on ARM64 Linux with generic firmware, the absence of
+    // `/proc/driver/nvidia/` is the Snapdragon X N1X shim profile and must be
+    // rejected even when the nvidia-smi probe returns a plausible-looking
+    // NVIDIA name. The shim was QA-confirmed to emit format-valid
+    // `uuid`/`compute_cap`/`vbios_version` triples but never populates the
+    // kernel-driver path.
+    it("rejects when /proc/driver/nvidia/ is absent on ARM64 generic firmware (#3988)", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
@@ -440,40 +440,9 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          withNvidiaKernelInterface(false, () => {
-            expect(nimModule.detectGpu()).toBeNull();
-          });
-        });
-      } finally {
-        restore();
-      }
-    });
-
-    // Counter-test: when `/proc/driver/nvidia/` is present (real kernel driver
-    // bound) and the name is a known NVIDIA family, the primary path must
-    // surface the device — the kernel-interface gate is a reject filter, not
-    // a stricter allowlist on top of the existing name check.
-    it("accepts known NVIDIA names when /proc/driver/nvidia/ is present (#3988)", () => {
-      const runCapture = vi.fn((cmd: string | string[]) => {
-        if (!Array.isArray(cmd)) throw new Error("expected argv array");
-        if (
-          cmd[0] === "nvidia-smi" &&
-          cmd.some((a: string) => a.includes("name,memory.total"))
-        ) {
-          return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
-        }
-        return "";
-      });
-      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
-
-      try {
-        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
-          withNvidiaKernelInterface(true, () => {
-            expect(nimModule.detectGpu()).toMatchObject({
-              type: "nvidia",
-              name: "NVIDIA GeForce RTX 4090 Laptop GPU",
-              count: 1,
-              totalMemoryMB: 16376,
+          withProcessArch("arm64", () => {
+            withNvidiaKernelInterface(false, () => {
+              expect(nimModule.detectGpu()).toBeNull();
             });
           });
         });
@@ -482,11 +451,112 @@ describe("nim", () => {
       }
     });
 
+    // Counter-test: ARM64 Linux with `/proc/driver/nvidia/` present is a real
+    // kernel-driver-bound host (e.g. legitimate N1X with a real GB20y dGPU
+    // and the NVIDIA driver loaded) — the gate must trust it.
+    it("accepts known NVIDIA names when /proc/driver/nvidia/ is present on ARM64 (#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          withProcessArch("arm64", () => {
+            withNvidiaKernelInterface(true, () => {
+              expect(nimModule.detectGpu()).toMatchObject({
+                type: "nvidia",
+                name: "NVIDIA GeForce RTX 4090 Laptop GPU",
+                count: 1,
+                totalMemoryMB: 16376,
+              });
+            });
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // The d3d12/WDDM shim ships on Windows-on-ARM only — Microsoft's WoA is
+    // ARM-only by spec, so an x86_64 Linux host that exposes `nvidia-smi`
+    // cannot be the shim. The trust-tier gate must therefore trust x86_64
+    // hosts whose `/proc/driver/nvidia/` is missing rather than false-reject
+    // them, eliminating a potential regression on real x86_64 WSL2 NVIDIA
+    // hosts where the driver revision may not populate the kernel-driver
+    // path identically to native Linux.
+    it("trusts x86_64 generic firmware even when /proc/driver/nvidia/ is absent (#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          withProcessArch("x64", () => {
+            withNvidiaKernelInterface(false, () => {
+              expect(nimModule.detectGpu()).toMatchObject({
+                type: "nvidia",
+                name: "NVIDIA GeForce RTX 4090 Laptop GPU",
+                count: 1,
+                totalMemoryMB: 16376,
+              });
+            });
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // The denylist remains a universal first-line reject regardless of
+    // architecture: an x86_64 Linux/WSL2 host whose name field still matches
+    // the shim placeholder family must be rejected even though the trust-tier
+    // gate would otherwise pass on x86_64.
+    it("rejects denylisted names on x86_64 generic firmware (#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "JMJWOA-Generic-GPU, 65471, 65000\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          withProcessArch("x64", () => {
+            expect(nimModule.detectGpu()).toBeNull();
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
     // Spark/Station/Jetson firmware vouches for the device unconditionally —
-    // the kernel-interface and denylist gates must NOT apply when the host
+    // the trust-tier and denylist gates must NOT apply when the host
     // identifies as one of those NVIDIA platforms. Otherwise pre-release Spark
-    // firmware (#3510) would regress when /proc/driver/nvidia/ is missing.
-    it("bypasses gates on Spark firmware even when /proc/driver/nvidia/ is absent (#3510)", () => {
+    // firmware (#3510) would regress when /proc/driver/nvidia/ is missing on
+    // ARM64 Spark hosts.
+    it("bypasses gates on Spark firmware even when /proc/driver/nvidia/ is absent on ARM64 (#3510)", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
@@ -501,11 +571,13 @@ describe("nim", () => {
 
       try {
         withFirmwareModel("NVIDIA DGX Spark", () => {
-          withNvidiaKernelInterface(false, () => {
-            expect(nimModule.detectGpu()).toMatchObject({
-              type: "nvidia",
-              name: "JMJWOA-Generic-GPU",
-              platform: "spark",
+          withProcessArch("arm64", () => {
+            withNvidiaKernelInterface(false, () => {
+              expect(nimModule.detectGpu()).toMatchObject({
+                type: "nvidia",
+                name: "JMJWOA-Generic-GPU",
+                platform: "spark",
+              });
             });
           });
         });
@@ -707,11 +779,11 @@ describe("nim", () => {
       }
     });
 
-    // Unified-memory fallback must also enforce the kernel-interface gate on
-    // generic firmware. A tagged name like "NVIDIA Jetson AGX Orin" on a host
-    // with no `/proc/driver/nvidia/` cannot be trusted; only firmware-vouched
-    // platforms (Spark/Jetson) bypass the gate on this path.
-    it("unified-memory fallback rejects tagged names without kernel interface on generic firmware (#3988)", () => {
+    // Unified-memory fallback must also enforce the trust-tier gate on
+    // generic firmware. A tagged name like "NVIDIA Jetson AGX Orin" on an
+    // ARM64 host with no `/proc/driver/nvidia/` cannot be trusted; only
+    // firmware-vouched platforms (Spark/Jetson) bypass the gate on this path.
+    it("unified-memory fallback rejects tagged names without kernel interface on ARM64 generic firmware (#3988)", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (cmd.some((a: string) => a.includes("memory.total"))) return "";
@@ -727,8 +799,10 @@ describe("nim", () => {
 
       try {
         withGenericLinuxFirmware(() => {
-          withNvidiaKernelInterface(false, () => {
-            expect(nimModule.detectGpu()).toBeNull();
+          withProcessArch("arm64", () => {
+            withNvidiaKernelInterface(false, () => {
+              expect(nimModule.detectGpu()).toBeNull();
+            });
           });
         });
       } finally {
