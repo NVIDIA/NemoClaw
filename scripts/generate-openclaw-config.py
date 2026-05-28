@@ -630,7 +630,6 @@ def build_config(env: dict | None = None) -> dict:
     # framework allowFrom file at credentials/openclaw-weixin-{accountId}-
     # allowFrom.json — not the openclaw.json accounts.<id>.allowFrom mechanism
     # that telegram/discord/slack use.
-
     if "discord" in _ch_cfg and _discord_guilds:
         _ch_cfg["discord"].update(
             {"groupPolicy": "allowlist", "guilds": _discord_guilds}
@@ -733,14 +732,7 @@ def build_config(env: dict | None = None) -> dict:
     for _plugin_id, _provider_keys in _bundled_provider_plugins.items():
         if provider_key not in _provider_keys:
             plugin_entries[_plugin_id] = {"enabled": False}
-
-    # @openclaw/discord is installed at onboard time when the user enables the
-    # Discord channel; without an explicit plugins.entries entry the bridge
-    # stays unloaded at boot so channels.discord exists but the bot never
-    # connects. Mirrors the openclaw-weixin enablement in Dockerfile.base. (#4246)
-    if "discord" in _ch_cfg:
-        plugin_entries["discord"] = {"enabled": True}
-
+    if "discord" in _ch_cfg: plugin_entries["discord"] = {"enabled": True}
     plugins = {"entries": plugin_entries}
     plugin_load_paths: list[str] = []
     for plugin in openclaw_plugins:
