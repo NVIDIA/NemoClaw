@@ -164,6 +164,10 @@ describe("nightly E2E workflow validation", () => {
     const publicInstallerJobs: Array<[string, string]> = [
       ["cloud-onboard-e2e", "Run cloud onboard E2E test"],
       ["openclaw-tui-chat-correlation-e2e", "Run OpenClaw TUI chat correlation E2E test"],
+      [
+        "issue-4434-tui-unreachable-inference-e2e",
+        "Run issue #4434 TUI unreachable inference E2E test",
+      ],
     ];
     const invalid: string[] = [];
 

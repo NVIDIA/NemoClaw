@@ -65,7 +65,7 @@ fi
 if [ "$(uname -s)" != "Linux" ]; then
   fail "Linux host required for DOCKER-USER iptables repro"
 fi
-for command in docker sudo expect curl openshell timeout perl; do
+for command in docker sudo expect curl timeout perl; do
   command -v "$command" >/dev/null 2>&1 || fail "missing required command: $command"
 done
 docker info >/dev/null 2>&1 || fail "Docker is not running"
@@ -94,6 +94,9 @@ bash "${SCRIPT_DIR}/test-cloud-onboard-e2e.sh"
 nemoclaw_refresh_install_env
 nemoclaw_ensure_local_bin_on_path
 export PATH="/usr/local/bin:${HOME}/.local/bin:${PATH}"
+for command in nemoclaw openshell; do
+  command -v "$command" >/dev/null 2>&1 || fail "missing installed command after onboard: $command"
+done
 
 openclaw_version="$(openshell sandbox exec --name "$SANDBOX_NAME" -- openclaw --version 2>&1 || true)"
 info "sandbox OpenClaw version: ${openclaw_version}"
