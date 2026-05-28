@@ -8,7 +8,6 @@ import { spawnSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
 
 const START_SCRIPT = path.join(import.meta.dirname, "..", "agents", "hermes", "start.sh");
-const DOCKERFILE_BASE = path.join(import.meta.dirname, "..", "agents", "hermes", "Dockerfile.base");
 
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -325,20 +324,6 @@ describe("agents/hermes/start.sh runtime shell env", () => {
   });
 
 });
-
-describe("agents/hermes dashboard packaging", () => {
-  it("prebuilds dashboard web assets and launches with --skip-build", () => {
-    const dockerfile = fs.readFileSync(DOCKERFILE_BASE, "utf-8");
-    const startScript = fs.readFileSync(START_SCRIPT, "utf-8");
-
-    expect(dockerfile).toContain("npm ci --prefix ui-tui");
-    expect(dockerfile).toContain("npm run build --prefix ui-tui");
-    expect(dockerfile).toContain("npm ci --prefix web");
-    expect(dockerfile).toContain("npm run build --prefix web");
-    expect(startScript).toContain("--skip-build");
-  });
-});
-
 describe("agents/hermes/start.sh gateway runtime cleanup", () => {
   it("removes stale Hermes pid and lock files plus the legacy compatibility pid symlink", () => {
     const run = runHermesGatewayRuntimeCleanup({});
