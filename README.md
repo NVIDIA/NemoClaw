@@ -3,6 +3,8 @@
   SPDX-License-Identifier: Apache-2.0
 -->
 
+> **Fork ([maggiezha/NemoClaw](https://github.com/maggiezha/NemoClaw), branch `2026-05-27-0hlj`):** Tavily web search, Nemotron Ultra (Inference Hub), and Telegram setup notes are in **[README.fork.md](README.fork.md)**.
+
 # 🦞 NVIDIA NemoClaw: Reference Stack for Running OpenClaw in OpenShell
 
 <!-- start-badges -->
