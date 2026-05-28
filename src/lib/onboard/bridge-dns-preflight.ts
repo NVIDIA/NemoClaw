@@ -77,6 +77,7 @@ function printDaemonJsonDnsPatch(opts: DaemonJsonDnsPatchOpts): void {
 }
 import {
   BUSYBOX_PROBE_IMAGE,
+  DOCKER_DESKTOP_WSL_INTEGRATION_HINT,
   type DockerBridgeContainerStartProbeResult,
   getDockerBridgeGatewayIp,
   type HostAssessment,
@@ -89,6 +90,7 @@ type Host = HostAssessment;
 
 export function printDockerBridgeContainerStartFailure(
   result: DockerBridgeContainerStartProbeResult,
+  host?: Pick<Host, "isWsl">,
 ): void {
   console.error("  ✗ Docker could not start a bridge-network test container.");
   if (result.details) {
@@ -113,6 +115,9 @@ export function printDockerBridgeContainerStartFailure(
     console.error("  Restart Docker and check for stuck container/network operations before retrying.");
   } else if (result.reason === "docker_daemon_unreachable") {
     console.error("  The Docker CLI cannot reach the Docker daemon (dockerd is down or wedged).");
+    if (host?.isWsl) {
+      console.error(`  ${DOCKER_DESKTOP_WSL_INTEGRATION_HINT}`);
+    }
     console.error(
       "  Restart the Docker daemon (`sudo systemctl restart docker`, or restart Docker Desktop/Colima)",
     );
@@ -157,7 +162,7 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host): void {
     bridgeStart.reason === "killed" ||
     bridgeStart.reason === "docker_daemon_unreachable"
   ) {
-    printDockerBridgeContainerStartFailure(bridgeStart);
+    printDockerBridgeContainerStartFailure(bridgeStart, host);
     process.exit(1);
   } else {
     console.warn(
@@ -204,25 +209,31 @@ export function assertDockerBridgeAndContainerDnsHealthy(host: Host): void {
   }
 
   if (dns.reason === "veth_unsupported") {
-    printDockerBridgeContainerStartFailure({
-      ok: false,
-      reason: "veth_unsupported",
-      details: dns.details,
-      timedOut: dns.timedOut,
-      exitCode: dns.exitCode,
-      signal: dns.signal,
-    });
+    printDockerBridgeContainerStartFailure(
+      {
+        ok: false,
+        reason: "veth_unsupported",
+        details: dns.details,
+        timedOut: dns.timedOut,
+        exitCode: dns.exitCode,
+        signal: dns.signal,
+      },
+      host,
+    );
     process.exit(1);
   }
   if (dns.reason === "docker_daemon_unreachable") {
-    printDockerBridgeContainerStartFailure({
-      ok: false,
-      reason: "docker_daemon_unreachable",
-      details: dns.details,
-      timedOut: dns.timedOut,
-      exitCode: dns.exitCode,
-      signal: dns.signal,
-    });
+    printDockerBridgeContainerStartFailure(
+      {
+        ok: false,
+        reason: "docker_daemon_unreachable",
+        details: dns.details,
+        timedOut: dns.timedOut,
+        exitCode: dns.exitCode,
+        signal: dns.signal,
+      },
+      host,
+    );
     process.exit(1);
   }
   if (dns.reason === "timeout" || dns.reason === "killed") {

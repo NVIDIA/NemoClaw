@@ -94,10 +94,29 @@ export function validateE2eScenariosWorkflowBoundary(
   requireRunContains(errors, normalRun, "--scenarios");
   requireRunContains(errors, normalRun, "--dry-run");
 
+  const wslInstall = requireStep(errors, steps, "Ensure Ubuntu WSL exists");
+  requireRunContains(errors, wslInstall, "wsl --install");
+  requireRunContains(errors, wslInstall, "wsl --set-default");
+
+  const wslDeps = requireStep(errors, steps, "Install Ubuntu dependencies");
+  requireRunContains(errors, wslDeps, "apt-get install");
+  requireRunContains(errors, wslDeps, "rsync");
+
+  const wslNode = requireStep(errors, steps, "Install Node.js 22 in WSL");
+  requireRunContains(errors, wslNode, "setup_22.x");
+  requireRunContains(errors, wslNode, "npm --version");
+
+  const wslWorkspace = requireStep(errors, steps, "Copy checkout into WSL ext4 workspace");
+  requireRunContains(errors, wslWorkspace, "rsync -a");
+  requireRunContains(errors, wslWorkspace, "WSL ext4 workspace ready");
+
   const wslRun = requireStep(errors, steps, "Run typed scenarios in WSL");
   requireRunContains(errors, wslRun, "npx tsx test/e2e-scenario/scenarios/run.ts");
   requireRunContains(errors, wslRun, "--scenarios");
   requireRunContains(errors, wslRun, "--dry-run");
+  requireRunContains(errors, wslRun, "$env:WSL_WORKDIR");
+  requireRunContains(errors, wslRun, "WriteAllText");
+  requireRunContains(errors, wslRun, "bash -l $wslTmp");
 
   const upload = requireStep(errors, steps, "Upload scenario artifacts");
   const uploadWith = asRecord(upload?.with);
