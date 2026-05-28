@@ -19,7 +19,7 @@ import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
 } from "../openshell-sandbox-list";
-import { parseLiveSandboxNames } from "../runtime-recovery";
+import { parseReadySandboxNames } from "../runtime-recovery";
 import * as registry from "../state/registry";
 import { saveBackupToHost } from "../state/save-host";
 import * as sandboxState from "../state/sandbox";
@@ -67,13 +67,13 @@ export async function backupAll(options: BackupAllOptions = {}): Promise<void> {
     printSandboxListFailureWithRecoveryContext(liveListRecovery);
     process.exit(liveList.status || 1);
   }
-  const liveNames = parseLiveSandboxNames(liveList.output || "");
+  const readyNames = parseReadySandboxNames(liveList.output || "");
 
   let backed = 0;
   let failed = 0;
   let skipped = 0;
   for (const sb of sandboxes) {
-    if (!liveNames.has(sb.name)) {
+    if (!readyNames.has(sb.name)) {
       console.log(`  ${D}Skipping '${sb.name}' (not running)${R}`);
       skipped++;
       continue;

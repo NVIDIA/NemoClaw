@@ -605,6 +605,105 @@ function ensureSandboxInferenceRouteOrExit(
   return result.sandbox;
 }
 
+// One-shot, defense-in-depth approval pass for late OpenClaw CLI/webchat
+// scope upgrades (NemoClaw#4263). The in-sandbox auto-pair watcher keeps
+// approving allowlisted requests in slow-mode for hours after startup; this
+// pass covers the case where the watcher has exited or is otherwise stuck
+// when the user runs `nemoclaw <sandbox> connect`. The script sources
+// `/tmp/nemoclaw-proxy-env.sh` (written by `nemoclaw-start.sh`) so the
+// in-sandbox `openclaw devices list/approve` invocations target the
+// running gateway with its token, and applies the same allowlist as the
+// startup watcher — `openclaw-control-ui` clients plus `webchat`/`cli`
+// modes. Unknown clients are ignored, not approved.
+//
+// Failure modes (timeout, sandbox-exec errors, missing openclaw, gateway
+// unreachable) are swallowed: the connect flow must not be blocked by a
+// best-effort approval. Internal timeouts (2s list + 1s × MAX_APPROVALS)
+// fit within the outer spawnSync cap, so a partial-completion mid-loop
+// kill cannot strand allowlisted requests within a normal batch.
+const CONNECT_AUTO_PAIR_MAX_APPROVALS = 8;
+const CONNECT_AUTO_PAIR_TIMEOUT_MS = 12_000;
+
+function runConnectAutoPairApprovalPass(sandboxName: string): void {
+  const script = `
+PROXY_ENV=/tmp/nemoclaw-proxy-env.sh
+[ -r "$PROXY_ENV" ] && . "$PROXY_ENV"
+command -v openclaw >/dev/null 2>&1 || exit 0
+command -v python3 >/dev/null 2>&1 || exit 0
+OPENCLAW_BIN="$(command -v openclaw)" python3 - <<'PYAPPROVE'
+import json
+import os
+import subprocess
+import sys
+
+OPENCLAW = os.environ.get('OPENCLAW_BIN', 'openclaw')
+ALLOWED_CLIENTS = {'openclaw-control-ui'}
+ALLOWED_MODES = {'webchat', 'cli'}
+MAX_APPROVALS = ${CONNECT_AUTO_PAIR_MAX_APPROVALS}
+
+try:
+    proc = subprocess.run(
+        [OPENCLAW, 'devices', 'list', '--json'],
+        capture_output=True, text=True, timeout=2,
+    )
+except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+    sys.exit(0)
+if proc.returncode != 0 or not proc.stdout.strip():
+    sys.exit(0)
+try:
+    data = json.loads(proc.stdout)
+except ValueError:
+    sys.exit(0)
+if not isinstance(data, dict):
+    sys.exit(0)
+pending = data.get('pending')
+if not isinstance(pending, list):
+    sys.exit(0)
+approved_count = 0
+seen_request_ids = set()
+for device in pending:
+    if approved_count >= MAX_APPROVALS:
+        break
+    if not isinstance(device, dict):
+        continue
+    request_id = device.get('requestId')
+    if not request_id or request_id in seen_request_ids:
+        continue
+    client_id = device.get('clientId', '')
+    client_mode = device.get('clientMode', '')
+    if client_id not in ALLOWED_CLIENTS and client_mode not in ALLOWED_MODES:
+        continue
+    seen_request_ids.add(request_id)
+    try:
+        subprocess.run(
+            [OPENCLAW, 'devices', 'approve', request_id, '--json'],
+            capture_output=True, text=True, timeout=1,
+        )
+        approved_count += 1
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        continue
+PYAPPROVE
+exit 0
+`;
+  try {
+    // Best-effort: discard stdout/stderr. Outer cap is sized to cover the
+    // internal budget (2s list + 1s × MAX_APPROVALS plus shell/python
+    // startup slack) so a wedged sandbox can never block the connect flow.
+    spawnSync(
+      getOpenshellBinary(),
+      ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
+      {
+        cwd: ROOT,
+        env: process.env,
+        stdio: ["ignore", "ignore", "ignore"],
+        timeout: CONNECT_AUTO_PAIR_TIMEOUT_MS,
+      },
+    );
+  } catch {
+    /* defense-in-depth — never throw from the connect path */
+  }
+}
+
 function maybeEnsureHermesToolGatewayBroker(sb: SandboxEntry | null): void {
   if (
     !sb ||
@@ -795,6 +894,14 @@ export async function connectSandbox(
   // After the sandbox is Ready, verify and recover the route before SSH.
   sb = ensureSandboxInferenceRouteOrExit(sandboxName);
   maybeEnsureHermesToolGatewayBroker(sb);
+
+  // ── Auto-pair late scope-upgrade approval (#4263) ───────────────
+  // Defense in depth: even with the in-sandbox watcher running in
+  // slow-mode keepalive, a brief approval pass before opening SSH
+  // catches any pending allowlisted CLI/webchat scope upgrades that
+  // piled up between startup and now (e.g., watcher crashed, watcher
+  // deadline exhausted, multi-sandbox gateway contention).
+  runConnectAutoPairApprovalPass(sandboxName);
 
   // Print a one-shot hint before dropping the user into the sandbox
   // shell so a fresh user knows the first thing to type. Without this,

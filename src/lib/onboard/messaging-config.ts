@@ -10,6 +10,28 @@ import type { Session } from "../state/onboard-session";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 
+type EnvLike = Record<string, string | undefined>;
+
+type MessagingBuildChannel = {
+  name: string;
+  userIdEnvKey?: string;
+};
+
+export type MessagingBuildConfig = {
+  messagingAllowedIds: Record<string, string[]>;
+  discordGuilds: Record<string, { requireMention: boolean; users?: string[] }>;
+  slackConfig: Record<string, string[]>;
+};
+
+export type CollectMessagingBuildConfigOptions = {
+  channels: MessagingBuildChannel[];
+  activeChannelNames: ReadonlySet<string>;
+  enabledTokenEnvKeys: ReadonlySet<string>;
+  env?: EnvLike;
+  discordSnowflakeRe: RegExp;
+  warn?: (message: string) => void;
+};
+
 // Read TELEGRAM_REQUIRE_MENTION (set either by the interactive mention prompt
 // or by the user's shell) and map it to a boolean, or null when the env var
 // is unset / invalid. Used at build time to bake groupPolicy into
@@ -20,6 +42,61 @@ export function computeTelegramRequireMention(): boolean | null {
   if (raw === "1") return true;
   if (raw === "0") return false;
   return null;
+}
+
+export function parseMessagingConfigList(value: unknown): string[] {
+  return String(value ?? "")
+    .split(",")
+    .map((s) => s.replace(/[\r\n]/g, "").trim())
+    .filter(Boolean);
+}
+
+export function collectMessagingBuildConfig({
+  channels,
+  activeChannelNames,
+  enabledTokenEnvKeys,
+  env = process.env,
+  discordSnowflakeRe,
+  warn = console.warn,
+}: CollectMessagingBuildConfigOptions): MessagingBuildConfig {
+  const messagingAllowedIds: Record<string, string[]> = {};
+  for (const ch of channels) {
+    if (activeChannelNames.has(ch.name) && ch.userIdEnvKey && env[ch.userIdEnvKey]) {
+      const ids = parseMessagingConfigList(env[ch.userIdEnvKey]);
+      if (ids.length > 0) messagingAllowedIds[ch.name] = ids;
+    }
+  }
+
+  const slackConfig: Record<string, string[]> = {};
+  if (activeChannelNames.has("slack") && env.SLACK_ALLOWED_CHANNELS) {
+    const allowedChannels = parseMessagingConfigList(env.SLACK_ALLOWED_CHANNELS);
+    if (allowedChannels.length > 0) slackConfig.allowedChannels = allowedChannels;
+  }
+
+  const discordGuilds: Record<string, { requireMention: boolean; users?: string[] }> = {};
+  if (enabledTokenEnvKeys.has("DISCORD_BOT_TOKEN")) {
+    const serverIds = parseMessagingConfigList(env.DISCORD_SERVER_IDS || env.DISCORD_SERVER_ID);
+    const userIds = parseMessagingConfigList(env.DISCORD_ALLOWED_IDS || env.DISCORD_USER_ID);
+    for (const serverId of serverIds) {
+      if (!discordSnowflakeRe.test(serverId)) {
+        warn("  Warning: configured Discord server ID does not look like a snowflake.");
+      }
+    }
+    for (const userId of userIds) {
+      if (!discordSnowflakeRe.test(userId)) {
+        warn("  Warning: configured Discord user ID does not look like a snowflake.");
+      }
+    }
+    const requireMention = env.DISCORD_REQUIRE_MENTION !== "0";
+    for (const serverId of serverIds) {
+      discordGuilds[serverId] = {
+        requireMention,
+        ...(userIds.length > 0 ? { users: userIds } : {}),
+      };
+    }
+  }
+
+  return { messagingAllowedIds, discordGuilds, slackConfig };
 }
 
 export function getStoredMessagingChannelConfig(

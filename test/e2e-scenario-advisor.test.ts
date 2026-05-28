@@ -37,23 +37,28 @@ describe("E2E scenario advisor", () => {
 
   it("requires targeted scenario E2E when a validation suite changes", () => {
     const result = analyze([
-      "test/e2e/validation_suites/messaging/telegram/00-telegram-injection-safety.sh",
+      "test/e2e-scenario/validation_suites/messaging/telegram/00-telegram-injection-safety.sh",
     ]);
 
     expect(result.required).toContainEqual(
       expect.objectContaining({
-        id: "ubuntu-repo-docker__cloud-nvidia-openclaw-telegram:messaging-telegram",
+        id: "ubuntu-repo-cloud-openclaw-telegram:messaging-telegram",
         workflow: "e2e-scenarios.yaml",
-        scenario: "ubuntu-repo-docker__cloud-nvidia-openclaw-telegram",
+        scenario: "ubuntu-repo-cloud-openclaw-telegram",
         suiteFilter: "messaging-telegram",
+        // Dispatch must match e2e-scenarios.yaml workflow_dispatch contract
+        // (single `scenarios` input). suiteFilter stays as analytical metadata
+        // on the recommendation but must not leak into the dispatch command.
+        dispatchCommand:
+          "gh workflow run e2e-scenarios.yaml --ref <pr-head-ref> --field scenarios=ubuntu-repo-cloud-openclaw-telegram",
       }),
     );
   });
 
   it("requires all scenario E2E and targeted follow-up when suite metadata changes", () => {
     const result = analyze([
-      "test/e2e/validation_suites/suites.yaml",
-      "test/e2e/validation_suites/messaging/telegram/00-telegram-injection-safety.sh",
+      "test/e2e-scenario/validation_suites/suites.yaml",
+      "test/e2e-scenario/validation_suites/messaging/telegram/00-telegram-injection-safety.sh",
     ]);
 
     expect(result.required).toContainEqual(
@@ -61,8 +66,8 @@ describe("E2E scenario advisor", () => {
     );
     expect(result.required).toContainEqual(
       expect.objectContaining({
-        id: "ubuntu-repo-docker__cloud-nvidia-openclaw-telegram:messaging-telegram",
-        scenario: "ubuntu-repo-docker__cloud-nvidia-openclaw-telegram",
+        id: "ubuntu-repo-cloud-openclaw-telegram:messaging-telegram",
+        scenario: "ubuntu-repo-cloud-openclaw-telegram",
         suiteFilter: "messaging-telegram",
       }),
     );

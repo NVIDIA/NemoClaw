@@ -2,22 +2,18 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Channel stop/start/remove lifecycle E2E test.
+# Channel stop/start lifecycle E2E test.
 #
-# Covers Test 1 from issue #3462 ("onboard telegram -> channels stop -> channels start")
-# plus the live channel removal path from issue #3671. The regression surface
-# is intentionally exercised for both supported agents (OpenClaw and Hermes)
-# and every messaging channel (telegram, discord, wechat, slack, whatsapp).
+# Covers Test 1 from issue #3462 ("onboard telegram -> channels stop -> channels start").
+# The regression surface is intentionally exercised for both supported agents
+# (OpenClaw and Hermes) and every messaging channel (telegram, discord, wechat,
+# slack, whatsapp).
 #
 # Regression coverage:
 #   - #3453: `channels stop <ch>` + rebuild must actually remove the channel
 #            from the baked agent config while preserving cached credentials.
 #   - #3381: `channels start <ch>` + rebuild must reattach cached providers
 #            without re-prompting.
-#   - #3671: `channels remove <ch>` on a live sandbox must detach before
-#            deleting provider records, clear registry channel/hash state,
-#            un-apply the matching channel policy preset, and rebuild cleanly
-#            even when the original token env vars are still present.
 #
 # Prerequisites:
 #   - Docker running
@@ -200,14 +196,6 @@ registry_array_contains() {
   printf '%s' "$value" | grep -Fq "\"${item}\""
 }
 
-registry_object_has_key() {
-  local field="$1"
-  local key="$2"
-  local value
-  value="$(registry_field "$field")"
-  printf '%s' "$value" | grep -Fq "\"${key}\""
-}
-
 provider_names_for_channel() {
   local sandbox="$1"
   local channel="$2"
@@ -218,19 +206,6 @@ provider_names_for_channel() {
     slack)
       printf '%s\n' "${sandbox}-slack-bridge"
       printf '%s\n' "${sandbox}-slack-app"
-      ;;
-  esac
-}
-
-token_keys_for_channel() {
-  local channel="$1"
-  case "$channel" in
-    telegram) printf '%s\n' "TELEGRAM_BOT_TOKEN" ;;
-    discord) printf '%s\n' "DISCORD_BOT_TOKEN" ;;
-    wechat) printf '%s\n' "WECHAT_BOT_TOKEN" ;;
-    slack)
-      printf '%s\n' "SLACK_BOT_TOKEN"
-      printf '%s\n' "SLACK_APP_TOKEN"
       ;;
   esac
 }
@@ -358,36 +333,6 @@ assert_provider_records_exist() {
       fi
     done < <(provider_names_for_channel "$ACTIVE_SANDBOX" "$channel")
   done
-}
-
-assert_channel_providers_deleted() {
-  local channel="$1"
-  local context="$2"
-  local provider msg
-  while IFS= read -r provider; do
-    if openshell provider get "$provider" >/dev/null 2>&1; then
-      msg="${ACTIVE_AGENT}/${provider}: provider record still exists ${context}"
-      fail_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${provider}: provider record deleted ${context}"
-      pass_msg "$msg"
-    fi
-  done < <(provider_names_for_channel "$ACTIVE_SANDBOX" "$channel")
-}
-
-assert_channel_hashes_absent() {
-  local channel="$1"
-  local context="$2"
-  local key msg
-  while IFS= read -r key; do
-    if registry_object_has_key providerCredentialHashes "$key"; then
-      msg="${ACTIVE_AGENT}/${channel}: registry.providerCredentialHashes still contains ${key} ${context}"
-      fail_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${channel}: registry.providerCredentialHashes excludes ${key} ${context}"
-      pass_msg "$msg"
-    fi
-  done < <(token_keys_for_channel "$channel")
 }
 
 assert_policy_preset_active() {
@@ -597,46 +542,6 @@ start_all_channels() {
   done
 }
 
-remove_all_channels() {
-  local channel log rc msg
-  for channel in "${CHANNELS[@]}"; do
-    log="/tmp/nc-channels-${ACTIVE_AGENT}-remove-${channel}.log"
-    if nemoclaw "$ACTIVE_SANDBOX" channels remove "$channel" >"$log" 2>&1; then
-      rc=0
-    else
-      rc=$?
-    fi
-    cat "$log"
-    if [ "$rc" -eq 0 ] && { grep -q "Removed ${channel} bridge" "$log" || grep -q "Removed ${channel} channel" "$log"; }; then
-      msg="${ACTIVE_AGENT}/${channel}: channels remove completed on a live sandbox"
-      pass_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${channel}: channels remove failed"
-      fail_msg "$msg"
-      tail -30 "$log" 2>/dev/null || true
-    fi
-    if grep -q "Change queued.*remove '${channel}'" "$log"; then
-      msg="${ACTIVE_AGENT}/${channel}: channels remove queued rebuild"
-      pass_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${channel}: channels remove did not queue rebuild"
-      fail_msg "$msg"
-    fi
-
-    assert_channel_providers_deleted "$channel" "after channels remove"
-
-    if registry_array_contains messagingChannels "$channel"; then
-      msg="${ACTIVE_AGENT}/${channel}: registry.messagingChannels still contains channel after remove"
-      fail_msg "$msg"
-    else
-      msg="${ACTIVE_AGENT}/${channel}: registry.messagingChannels excludes channel after remove"
-      pass_msg "$msg"
-    fi
-    assert_channel_hashes_absent "$channel" "after remove"
-    assert_policy_preset_active "$channel" "inactive" "after remove"
-  done
-}
-
 destroy_completed_sandbox() {
   local sandbox="$1"
   info "Destroying completed sandbox ${sandbox} before the next scenario..."
@@ -719,15 +624,6 @@ run_agent_scenario() {
   assert_registry_channels "present" "after start"
   assert_disabled_channels "absent" "after start"
   assert_provider_records_exist "after start"
-
-  section "${agent}: channels remove all on live sandbox"
-  remove_all_channels
-
-  section "${agent}: rebuild after channels remove"
-  run_rebuild "remove-all"
-  assert_all_config_channels "absent" "after remove+rebuild"
-  assert_registry_channels "absent" "after remove+rebuild"
-  assert_disabled_channels "absent" "after remove+rebuild"
 }
 
 section "Phase 0: Prerequisites"

@@ -8,7 +8,7 @@ This flow provisions a remote VM, configures inference, starts OpenClaw inside a
 **Note:**
 
 Use this guide when you want to try NemoClaw without installing the CLI or using a local GPU.
-If you want to manage the remote host from a terminal, see Deploy to a Remote GPU Instance (use the `nemoclaw-user-deploy-remote` skill).
+If you want to manage the remote host from a terminal, see [Deploy to a Remote GPU Instance](../SKILL.md).
 
 ## What This Flow Creates
 
@@ -151,5 +151,5 @@ After your agent is running, explore these related tasks:
 - Set Up Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) to learn how to connect Telegram, Slack, or Discord.
 - Switch Inference Providers (use the `nemoclaw-user-configure-inference` skill) to learn how to change the model provider after setup.
 - Monitor Sandbox Activity (use the `nemoclaw-user-monitor-sandbox` skill) to learn how to inspect sandbox health and logs.
-- Deploy to a Remote GPU Instance (use the `nemoclaw-user-deploy-remote` skill) to learn how to deploy NemoClaw to a remote GPU instance using the CLI.
+- [Deploy to a Remote GPU Instance](../SKILL.md) to learn how to deploy NemoClaw to a remote GPU instance using the CLI.
 - Troubleshooting (use the `nemoclaw-user-reference` skill) to learn how to fix common setup and runtime issues.

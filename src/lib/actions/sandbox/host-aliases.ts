@@ -69,10 +69,13 @@ function normalizeHostAliasHostname(hostname: string): string {
 }
 
 function runKubectlInClusterRaw(args: string[]): string {
-  return dockerExecFileSync([K3S_CONTAINER, "kubectl", "-n", "openshell", ...args], {
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: HOST_ALIAS_KUBECTL_TIMEOUT_MS,
-  });
+  return dockerExecFileSync(
+    ["exec", K3S_CONTAINER, "kubectl", "-n", "openshell", ...args],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: HOST_ALIAS_KUBECTL_TIMEOUT_MS,
+    },
+  );
 }
 
 function throwKubectlError(action: string, error: unknown): never {

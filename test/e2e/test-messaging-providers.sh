@@ -19,10 +19,11 @@
 #   3. Credential isolation — real tokens never appear in sandbox env,
 #      process list, or filesystem
 #   4. Config patching — openclaw.json channels use placeholder values
-#   5. Network reachability — Node.js can reach messaging APIs through proxy
-#   6. Native Discord gateway path — WebSocket L7 path is tested hermetically
-#   7. L7 proxy rewriting — placeholder is rewritten to real token at egress
-#   8. WhatsApp QR-only parity — channel add/rebuild applies policy, bakes
+#   5. Telegram diagnostics — startup/credential breadcrumbs stay sanitized
+#   6. Network reachability — Node.js can reach messaging APIs through proxy
+#   7. Native Discord gateway path — WebSocket L7 path is tested hermetically
+#   8. L7 proxy rewriting — placeholder is rewritten to real token at egress
+#   9. WhatsApp QR-only parity — channel add/rebuild applies policy, bakes
 #      openclaw.json, creates no providers, and leaks no token placeholders
 #
 # Uses fake tokens by default (no external accounts needed). With fake tokens,
@@ -891,6 +892,185 @@ print(account.get('botToken', ''))
     fail "M7: Telegram botToken matches host-side token — credential leaked into config!"
   else
     skip "M7: No Telegram botToken to check"
+  fi
+
+  # M7b: OpenShell can scope provider placeholders by credential revision
+  # (openshell:resolve:env:v*_TELEGRAM_BOT_TOKEN). OpenClaw must receive that
+  # runtime-scoped placeholder in openclaw.json; leaving the canonical
+  # openshell:resolve:env:TELEGRAM_BOT_TOKEN value in the account config makes
+  # the Telegram bridge start with an unresolved/invalid token.
+  if [ -n "$tg_token" ] && [ -n "$TELEGRAM_PLACEHOLDER" ]; then
+    if [ "$tg_token" = "$TELEGRAM_PLACEHOLDER" ]; then
+      pass "M7b: Telegram botToken matches the OpenShell runtime placeholder"
+    elif [ "$tg_token" = "openshell:resolve:env:TELEGRAM_BOT_TOKEN" ]; then
+      fail "M7b: Telegram botToken stayed canonical instead of using runtime placeholder"
+    else
+      fail "M7b: Telegram botToken placeholder mismatch (config='${tg_token:0:40}...', env='${TELEGRAM_PLACEHOLDER:0:40}...')"
+    fi
+  elif [ -n "$tg_token" ]; then
+    skip "M7b: No Telegram runtime placeholder env to compare"
+  else
+    skip "M7b: No Telegram botToken to compare"
+  fi
+
+  # M7c-M7f: The Telegram preload diagnostics are installed by nemoclaw-start.sh.
+  # Exercise them in-process with a mocked Bot API response so the assertions
+  # are hermetic while still covering the real sandbox-side preload script.
+  if [ -n "$tg_token" ]; then
+    telegram_diag_output=$(sandbox_exec "cat > /tmp/nemoclaw-telegram-diagnostics-e2e.js <<'NODE'
+const fs = require('fs');
+const http = require('http');
+const https = require('https');
+const { EventEmitter } = require('events');
+
+const diagnosticsPath = '/tmp/nemoclaw-telegram-diagnostics.js';
+const sourceConfigPath = '/sandbox/.openclaw/openclaw.json';
+const prefix = 'openshell:resolve:env:';
+const canonicalPlaceholder = prefix + 'TELEGRAM_BOT_TOKEN';
+const diagnosticPlaceholder = prefix + 'vdiagnostic_TELEGRAM_BOT_TOKEN';
+const invalidProbeToken = '000000:telegram-diagnostics-invalid-e2e';
+
+function readTelegramBotToken(config) {
+  const telegram = config?.channels?.telegram;
+  const accounts = telegram?.accounts || {};
+  const account = accounts.default || accounts.main || accounts[Object.keys(accounts)[0]];
+  return typeof account?.botToken === 'string' ? account.botToken : '';
+}
+
+function writeScenarioConfig(token, scenario) {
+  const config = JSON.parse(fs.readFileSync(sourceConfigPath, 'utf8'));
+  const accounts = config.channels.telegram.accounts;
+  const accountName = accounts.default ? 'default' : accounts.main ? 'main' : Object.keys(accounts)[0];
+  accounts[accountName].botToken = token;
+  const configPath = '/tmp/nemoclaw-telegram-diagnostics-' + scenario + '.json';
+  fs.writeFileSync(configPath, JSON.stringify(config));
+  return configPath;
+}
+
+function installFakeTelegramHttp(statusCode) {
+  function makeFakeRequest(callback) {
+    const req = new EventEmitter();
+    req.end = () => {
+      setImmediate(() => {
+        const res = new EventEmitter();
+        res.statusCode = statusCode;
+        if (typeof callback === 'function') callback(res);
+        req.emit('response', res);
+        res.emit('data', Buffer.from('{}'));
+        res.emit('end');
+      });
+      return req;
+    };
+    req.write = () => true;
+    req.setTimeout = () => req;
+    req.abort = () => {};
+    req.destroy = () => {};
+    return req;
+  }
+
+  for (const mod of [http, https]) {
+    mod.request = function request(...args) {
+      const callback = args.find((arg) => typeof arg === 'function');
+      return makeFakeRequest(callback);
+    };
+    mod.get = function get(...args) {
+      const callback = args.find((arg) => typeof arg === 'function');
+      const req = makeFakeRequest(callback);
+      req.end();
+      return req;
+    };
+  }
+}
+
+async function main() {
+  const scenario = process.argv[2] || '';
+  if (!fs.existsSync(diagnosticsPath)) {
+    console.log('E2E_FAIL_MISSING_DIAGNOSTICS_PRELOAD');
+    process.exit(2);
+  }
+
+  const currentConfig = JSON.parse(fs.readFileSync(sourceConfigPath, 'utf8'));
+  const currentToken = readTelegramBotToken(currentConfig);
+  if (!currentToken) {
+    console.log('E2E_SKIP_NO_TELEGRAM_BOTTOKEN');
+    return;
+  }
+
+  if (scenario === 'missing-env') {
+    process.env.OPENCLAW_CONFIG_PATH = writeScenarioConfig(canonicalPlaceholder, scenario);
+    delete process.env.TELEGRAM_BOT_TOKEN;
+  } else if (scenario === 'placeholder-mismatch') {
+    process.env.OPENCLAW_CONFIG_PATH = writeScenarioConfig(canonicalPlaceholder, scenario);
+    process.env.TELEGRAM_BOT_TOKEN = currentToken.startsWith(prefix) && currentToken !== canonicalPlaceholder
+      ? currentToken
+      : diagnosticPlaceholder;
+  } else if (scenario === 'startup-401') {
+    const runtimeToken = currentToken.startsWith(prefix) ? currentToken : diagnosticPlaceholder;
+    process.env.OPENCLAW_CONFIG_PATH = writeScenarioConfig(runtimeToken, scenario);
+    process.env.TELEGRAM_BOT_TOKEN = runtimeToken;
+    installFakeTelegramHttp(401);
+  } else {
+    console.log('E2E_FAIL_UNKNOWN_SCENARIO');
+    process.exit(2);
+  }
+
+  require(diagnosticsPath);
+
+  if (scenario === 'startup-401') {
+    https.request('https://api.telegram.org/bot' + invalidProbeToken + '/getMe').end();
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 50));
+}
+
+main().catch((error) => {
+  console.log('E2E_FAIL_DIAGNOSTICS_EXCEPTION: ' + (error && error.stack ? error.stack : error));
+  process.exit(2);
+});
+NODE
+NODE_OPTIONS= node /tmp/nemoclaw-telegram-diagnostics-e2e.js missing-env 2>&1
+NODE_OPTIONS= node /tmp/nemoclaw-telegram-diagnostics-e2e.js placeholder-mismatch 2>&1
+NODE_OPTIONS= node /tmp/nemoclaw-telegram-diagnostics-e2e.js startup-401 2>&1
+")
+
+    if echo "$telegram_diag_output" | grep -q 'E2E_FAIL_'; then
+      diag_fail_codes=$(printf '%s\n' "$telegram_diag_output" | grep -o 'E2E_FAIL_[A-Z0-9_]*' | sort -u | tr '\n' ' ')
+      fail "M7c: Telegram diagnostics E2E probe failed (${diag_fail_codes:-E2E_FAIL})"
+    elif echo "$telegram_diag_output" | grep -q 'E2E_SKIP_NO_TELEGRAM_BOTTOKEN'; then
+      skip "M7c: Telegram diagnostics skipped because openclaw.json has no botToken"
+      skip "M7d: Telegram diagnostics skipped because openclaw.json has no botToken"
+      skip "M7e: Telegram diagnostics skipped because openclaw.json has no botToken"
+      skip "M7f: Telegram diagnostics skipped because openclaw.json has no botToken"
+    else
+      if echo "$telegram_diag_output" | grep -qF '[telegram] [default] credential placeholder configured but TELEGRAM_BOT_TOKEN is missing from runtime env'; then
+        pass "M7c: Telegram diagnostics report missing runtime placeholder env"
+      else
+        fail "M7c: Telegram diagnostics missing-env breadcrumb absent"
+      fi
+
+      if echo "$telegram_diag_output" | grep -qF '[telegram] [default] credential placeholder mismatch: openclaw.json botToken does not match runtime TELEGRAM_BOT_TOKEN placeholder'; then
+        pass "M7d: Telegram diagnostics report scoped placeholder mismatch"
+      else
+        fail "M7d: Telegram diagnostics placeholder-mismatch breadcrumb absent"
+      fi
+
+      if echo "$telegram_diag_output" | grep -qF '[telegram] [default] Bot API rejected startup probe with HTTP 401; token invalid or credential placeholder unresolved'; then
+        pass "M7e: Telegram diagnostics report sanitized startup probe rejection"
+      else
+        fail "M7e: Telegram diagnostics startup-probe breadcrumb absent"
+      fi
+
+      if echo "$telegram_diag_output" | grep -qE 'telegram-diagnostics-invalid-e2e|openshell:resolve:env:'; then
+        fail "M7f: Telegram diagnostics leaked raw token or credential placeholder"
+      else
+        pass "M7f: Telegram diagnostics breadcrumbs are sanitized"
+      fi
+    fi
+  else
+    skip "M7c: No Telegram botToken for diagnostics probe"
+    skip "M7d: No Telegram botToken for diagnostics probe"
+    skip "M7e: No Telegram botToken for diagnostics probe"
+    skip "M7f: No Telegram botToken for diagnostics probe"
   fi
 
   # M8: Discord channel exists with a token

@@ -1484,6 +1484,11 @@ runner.runCapture = (command) => {
   if (cmd.includes("127.0.0.1:11434/api/tags")) return JSON.stringify({ models: [{ name: "nemotron-3-nano:30b" }] });
   if (cmd.includes("ollama list")) return "nemotron-3-nano:30b  abc  24 GB  now";
   if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  if (cmd.includes("127.0.0.1:11434/api/ps")) {
+    return JSON.stringify({
+      models: [{ name: "nemotron-3-nano:30b", context_length: 262144 }],
+    });
+  }
   if (cmd.includes("api/generate")) return '{"response":"hello"}';
   if (cmd.includes("-o args=")) return "node ollama-auth-proxy.js";
   return "";
@@ -1499,7 +1504,15 @@ const { setupNim } = require(${onboardPath});
   console.error = (...args) => lines.push(args.join(" "));
   try {
     const result = await setupNim(null);
-    originalLog(JSON.stringify({ result, messages, lines, commands }));
+    originalLog(
+      JSON.stringify({
+        result,
+        messages,
+        lines,
+        commands,
+        contextWindow: process.env.NEMOCLAW_CONTEXT_WINDOW,
+      }),
+    );
   } finally {
     console.log = originalLog;
     console.error = originalError;
@@ -1518,6 +1531,7 @@ const { setupNim } = require(${onboardPath});
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_CONTEXT_WINDOW: "",
       },
     });
 
@@ -1550,6 +1564,91 @@ const { setupNim } = require(${onboardPath});
         command.includes("http://127.0.0.1:11434/api/generate"),
       ),
     );
+    assert.equal(payload.contextWindow, "262144");
+  });
+
+  it("re-resolves auto-detected Ollama context windows across model selections", () => {
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-ollama-context-"));
+    const scriptPath = path.join(tmpDir, "ollama-context-check.js");
+    const localInferencePath = JSON.stringify(path.join(repoRoot, "dist", "lib", "inference", "local.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+
+    const script = String.raw`
+const runner = require(${runnerPath});
+
+let models = [];
+runner.runCapture = (command) => {
+  const rendered = Array.isArray(command) ? command.join(" ") : command;
+  if (rendered.includes("/api/ps")) {
+    return JSON.stringify({ models });
+  }
+  return "";
+};
+
+const {
+  applyOllamaRuntimeContextWindow,
+  resetOllamaRuntimeContextWindowAutoState,
+} = require(${localInferencePath});
+
+const result = {};
+const originalWarn = console.warn;
+const originalLog = console.log;
+console.warn = () => {};
+console.log = () => {};
+try {
+  resetOllamaRuntimeContextWindowAutoState();
+  delete process.env.NEMOCLAW_CONTEXT_WINDOW;
+
+  models = [{ name: "qwen3.6:35b", context_length: 262144 }];
+  applyOllamaRuntimeContextWindow("qwen3.6:35b");
+  result.initial = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
+
+  models = [{ name: "qwen2.5:7b", context_length: 32768 }];
+  applyOllamaRuntimeContextWindow("qwen2.5:7b");
+  result.updated = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
+
+  models = [];
+  applyOllamaRuntimeContextWindow("qwen2.5:7b");
+  result.cleared = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
+
+  resetOllamaRuntimeContextWindowAutoState();
+  process.env.NEMOCLAW_CONTEXT_WINDOW = "262144";
+  models = [{ name: "qwen2.5:7b", context_length: 32768 }];
+  applyOllamaRuntimeContextWindow("qwen2.5:7b");
+  result.userOverride = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
+
+  resetOllamaRuntimeContextWindowAutoState();
+  process.env.NEMOCLAW_CONTEXT_WINDOW = "bogus";
+  models = [{ name: "qwen2.5:7b", context_length: 32768 }];
+  applyOllamaRuntimeContextWindow("qwen2.5:7b");
+  result.invalidOverride = process.env.NEMOCLAW_CONTEXT_WINDOW || null;
+} finally {
+  console.warn = originalWarn;
+  console.log = originalLog;
+}
+
+console.log(JSON.stringify(result));
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+      },
+    });
+
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(JSON.parse(result.stdout.trim()), {
+      initial: "262144",
+      updated: "32768",
+      cleared: null,
+      userOverride: "262144",
+      invalidOverride: "bogus",
+    });
   });
 
   it("starts managed Ollama on loopback before exposing the auth proxy", () => {
