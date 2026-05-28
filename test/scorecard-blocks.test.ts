@@ -24,7 +24,7 @@ type ScorecardData = {
   cancelled: number;
   skipped: number;
   perfect: boolean;
-  failedJobs: string[];
+  failedJobs: { name: string; url: string | null }[];
   trendLine: string;
   runUrl: string;
 };
@@ -110,23 +110,34 @@ describe("buildBlocks — run with failures", () => {
       failure: 3,
       perfect: false,
       failedJobs: [
-        "cloud-e2e",
-        "issue-2478-crash-loop-recovery-e2e",
-        "sandbox-operations-e2e",
+        {
+          name: "cloud-e2e",
+          url: "https://github.com/NVIDIA/NemoClaw/actions/runs/12345678/job/100",
+        },
+        {
+          name: "issue-2478-crash-loop-recovery-e2e",
+          url: "https://github.com/NVIDIA/NemoClaw/actions/runs/12345678/job/101",
+        },
+        // url=null exercises the fallback rendering (no API result for this job)
+        { name: "sandbox-operations-e2e", url: null },
       ],
       trendLine:
         "Trend: ↘️ Degrading (yesterday perfect → today has failures)",
     }),
   );
 
-  it("renders a failed-jobs section listing each job", () => {
+  it("renders a failed-jobs section with Slack hyperlinks where URLs are available", () => {
     const failedSection = blocks.find(
       (b: { type: string; text?: { text: string } }) =>
         b.type === "section" && b.text?.text?.includes("Failed jobs"),
     );
     expect(failedSection).toBeDefined();
     expect(failedSection.text.text).toContain("Failed jobs (3)");
-    expect(failedSection.text.text).toContain("`cloud-e2e`");
+    // Hyperlinked entries use Slack mrkdwn `<url|text>` format.
+    expect(failedSection.text.text).toContain(
+      "<https://github.com/NVIDIA/NemoClaw/actions/runs/12345678/job/100|cloud-e2e>",
+    );
+    // Fallback: when url is null, render as code-formatted name.
     expect(failedSection.text.text).toContain("`sandbox-operations-e2e`");
   });
 

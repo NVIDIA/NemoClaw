@@ -20,7 +20,7 @@
  * @property {number} cancelled
  * @property {number} skipped
  * @property {boolean} perfect          ran > 0 && failure === 0 && cancelled === 0.
- * @property {string[]} failedJobs      Sorted list of failed job names.
+ * @property {Array<{name: string, url: string|null}>} failedJobs  Sorted failed jobs with optional html_url.
  * @property {string} trendLine         Pre-rendered trend line, prefixed with "Trend: ".
  * @property {string} runUrl            Direct link to the current run.
  */
@@ -59,7 +59,11 @@ function buildBlocks(data) {
       text: { type: "mrkdwn", text: ":tada: *All jobs passed!*" },
     });
   } else if (data.failedJobs.length > 0) {
-    const list = data.failedJobs.map((name) => `• \`${name}\``).join("\n");
+    // Slack mrkdwn hyperlink: <url|text>. Bare name as link text (Slack
+    // doesn't render backticks-inside-link, so plain underlined text wins).
+    const list = data.failedJobs
+      .map((job) => (job.url ? `• <${job.url}|${job.name}>` : `• \`${job.name}\``))
+      .join("\n");
     blocks.push({
       type: "section",
       text: {

@@ -2209,11 +2209,31 @@ jobs:
             const ran = total - skipped;
             const perfect = failure === 0 && cancelled === 0 && ran > 0;
 
-            // ── Identify failed jobs ────────────────────────────────
-            const failedJobs = entries
+            // ── Identify failed jobs (with html_url for clickable links) ──
+            const failedNames = entries
               .filter(([, { result }]) => result === 'failure')
               .map(([name]) => name)
               .sort();
+
+            let urlByName = new Map();
+            if (failedNames.length > 0) {
+              try {
+                const { data: jobsData } = await github.rest.actions.listJobsForWorkflowRun({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  run_id: context.runId,
+                  per_page: 100,
+                });
+                urlByName = new Map(jobsData.jobs.map((j) => [j.name, j.html_url]));
+              } catch (e) {
+                core.warning(`Could not fetch job URLs for failed-jobs hyperlinks: ${e.message}`);
+              }
+            }
+
+            const failedJobs = failedNames.map((name) => ({
+              name,
+              url: urlByName.get(name) || null,
+            }));
 
             // ── Fetch prior-day run for trend comparison ────────────
             let trendLine = '';
@@ -2292,8 +2312,8 @@ jobs:
             if (failedJobs.length > 0) {
               lines.push('');
               lines.push('**Failed jobs:**');
-              for (const name of failedJobs) {
-                lines.push(`  - \`${name}\``);
+              for (const job of failedJobs) {
+                lines.push(job.url ? `  - [${job.name}](${job.url})` : `  - \`${job.name}\``);
               }
             }
 
