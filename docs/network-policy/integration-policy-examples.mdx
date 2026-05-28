@@ -60,6 +60,7 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Hugging Face Hub and Inference API | `huggingface` |
 | Jira and Atlassian Cloud | `jira` |
 | Local Ollama or vLLM through the host gateway | `local-inference` |
+| OpenClaw model-pricing reference fetch | `openclaw-pricing` |
 | npm and Yarn packages | `npm` |
 | Microsoft 365, Outlook, and Graph API | `outlook` |
 | Python Package Index | `pypi` |
@@ -283,6 +284,23 @@ $ nemoclaw my-assistant exec -- brew install <formula>
 ```
 
 You do not need to bootstrap Homebrew, install build dependencies, or source `brew shellenv` inside the sandbox.
+
+## Model Pricing
+
+OpenClaw's gateway fetches reference pricing from LiteLLM and OpenRouter on every start so it can populate `usage.cost` in session JSONL records.
+The default-strict egress policy denies both hosts.
+The fetch fails closed, the gateway logs `[gateway/model-pricing] LiteLLM pricing fetch failed: TypeError: fetch failed` (and the matching OpenRouter line) on every startup, and every session record records `usage.cost = 0` even though the input and output token counts populate correctly.
+Tools that read the session log to display per-turn cost (audit dashboards, compliance review surfaces) cannot distinguish a real free run from this silent failure.
+
+Apply the `openclaw-pricing` preset to allow both pricing endpoints.
+The preset pins each host to a single read-only path so it does not widen egress beyond the pricing fetch:
+
+```console
+$ nemoclaw my-assistant policy-add openclaw-pricing --dry-run
+$ nemoclaw my-assistant policy-add openclaw-pricing --yes
+```
+
+After the next gateway restart the WARN entries stop and `usage.cost` populates from the fetched pricing tables.
 
 ## Local Inference
 

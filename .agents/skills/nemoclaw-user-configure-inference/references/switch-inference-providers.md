@@ -123,6 +123,7 @@ To change these values, set the corresponding environment variables before runni
 | `NEMOCLAW_AGENT_HEARTBEAT_EVERY` | Go-style duration (`30m`, `1h`, `0m` to disable) | `unset` (OpenClaw default) |
 
 Invalid values are ignored, and the default bakes into the image.
+For Local Ollama, onboarding loads the selected model first and uses Ollama's reported runtime context length when `NEMOCLAW_CONTEXT_WINDOW` is unset.
 Use `NEMOCLAW_INFERENCE_INPUTS=text,image` only for a model that accepts image input through the selected provider.
 
 ```console
@@ -203,4 +204,4 @@ The status output includes the active provider, model, and endpoint with the res
 
 ## Related Topics
 
-- Inference Options (use the `nemoclaw-user-configure-inference` skill) for the full list of providers available during onboarding.
+- [Inference Options](inference-options.md) for the full list of providers available during onboarding.

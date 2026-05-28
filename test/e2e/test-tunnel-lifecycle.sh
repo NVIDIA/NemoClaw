@@ -26,6 +26,8 @@ SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
 # shellcheck source=test/e2e/lib/install-path-refresh.sh
 source "${SCRIPT_DIR_TIMEOUT}/lib/install-path-refresh.sh"
+# shellcheck source=test/e2e/lib/cloudflared-version-resolver.sh
+source "${SCRIPT_DIR_TIMEOUT}/lib/cloudflared-version-resolver.sh"
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -116,17 +118,37 @@ preflight() {
   if ! command -v cloudflared >/dev/null 2>&1; then
     # Install via Cloudflare's GPG-signed APT repo — trust anchor for secret-bearing
     # CI; APT verifies GPG-signed Release → package SHA256 (no per-version SHA pin).
-    local cf_version="${CLOUDFLARED_VERSION:-2026.5.1}"
-    log "Installing cloudflared ${cf_version} via Cloudflare APT repo..."
     sudo mkdir -p --mode=0755 /usr/share/keyrings
     curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
       | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
     echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared $(lsb_release -cs) main" \
       | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null
     sudo apt-get update -qq
-    sudo apt-get install -y "cloudflared=${cf_version}*" \
+
+    local available_versions
+    available_versions="$(apt-cache madison cloudflared | awk '{print $3}')"
+
+    local cf_version cf_min_version
+    cf_min_version="${CLOUDFLARED_MIN_VERSION:-$CLOUDFLARED_DEFAULT_MIN_VERSION}"
+    if [[ -n "${CLOUDFLARED_VERSION:-}" ]]; then
+      cf_version="$(cloudflared_resolve_package_version "$available_versions" "$cf_min_version" "$CLOUDFLARED_VERSION")"
+      log "Using explicit cloudflared version override: ${cf_version}"
+    else
+      if ! cf_version="$(cloudflared_resolve_package_version "$available_versions" "$cf_min_version" 2>&1)"; then
+        log "$cf_version"
+        log "Available versions:"
+        log "${available_versions:-<none>}"
+        exit 1
+      fi
+      log "Resolved cloudflared ${cf_version} from Cloudflare APT repo (minimum ${cf_min_version})"
+    fi
+
+    log "Installing cloudflared ${cf_version} via Cloudflare APT repo..."
+    sudo apt-get install -y "cloudflared=${cf_version}" \
       || {
         log "ERROR: cloudflared ${cf_version} not available in Cloudflare APT repo"
+        log "Available versions:"
+        log "$available_versions"
         exit 1
       }
     log "cloudflared ${cf_version} installed (GPG verified via Cloudflare APT repo)"
