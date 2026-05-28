@@ -66,7 +66,9 @@ function runEnsureDocker(env: Record<string, string>, installerArgs: string[]): 
         *) ;;
       esac
     }
-    info() { :; }
+    # Surface info() output on stdout so tests can pin the user-facing
+    # guidance text emitted by the legacy fallback path.
+    info() { printf '%s\n' "$*"; }
     warn() { :; }
     error() { return 1; }
     is_wsl_host() { return 1; }
@@ -141,5 +143,12 @@ describe("install.sh ensure_docker — #4414 non-interactive self re-exec", () =
     );
     expect(outcome.sgArgs.length).toBe(0);
     expect(outcome.status).toBe(0);
+    // The user-facing fallback instructions are the actionable signal a
+    // human gets when the automated re-exec didn't restore docker access.
+    // Pin them here so a future copy-edit can't silently drop them.
+    expect(outcome.stdout).toContain("Run: newgrp docker");
+    expect(outcome.stdout).toContain(
+      "Re-run: curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash",
+    );
   });
 });
