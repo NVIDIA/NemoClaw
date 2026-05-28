@@ -170,6 +170,26 @@ describe("nim", () => {
       }
     }
 
+    // Build a strict-identity CSV string (one row per GPU) that passes the
+    // `hasStrictNvidiaIdentity` gate. Tests that exercise the primary
+    // detection path on generic firmware mock this alongside the
+    // name/memory probe so the gate trusts the parsed result.
+    function strictNvidiaIdentitiesCsv(count: number): string {
+      const rows: string[] = [];
+      for (let i = 0; i < count; i += 1) {
+        const tail = (i + 1).toString(16).padStart(12, "0");
+        rows.push(`GPU-aaaa1111-bbbb-2222-cccc-${tail}, 9.0, 95.04.3c.80.bc`);
+      }
+      return `${rows.join("\n")}\n`;
+    }
+
+    function isStrictNvidiaIdentityProbe(cmd: string[]): boolean {
+      return (
+        cmd[0] === "nvidia-smi" &&
+        cmd.some((a: string) => a.includes("uuid,compute_cap,vbios_version"))
+      );
+    }
+
     it("returns object or null", () => {
       const gpu = nim.detectGpu();
       if (gpu !== null) {
@@ -209,18 +229,23 @@ describe("nim", () => {
         ) {
           return "NVIDIA GB300, 284208, 280000\n";
         }
+        if (isStrictNvidiaIdentityProbe(cmd)) {
+          return strictNvidiaIdentitiesCsv(1);
+        }
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
       try {
-        expect(nimModule.detectGpu()).toMatchObject({
-          type: "nvidia",
-          name: "NVIDIA GB300",
-          count: 1,
-          totalMemoryMB: 284208,
-          availableMemoryMB: 280000,
-          perGpuMB: 284208,
+        withGenericLinuxFirmware(() => {
+          expect(nimModule.detectGpu()).toMatchObject({
+            type: "nvidia",
+            name: "NVIDIA GB300",
+            count: 1,
+            totalMemoryMB: 284208,
+            availableMemoryMB: 280000,
+            perGpuMB: 284208,
+          });
         });
       } finally {
         restore();
@@ -236,21 +261,26 @@ describe("nim", () => {
         ) {
           return "NVIDIA H100 80GB HBM3, 81920, 81000\nNVIDIA H100 80GB HBM3, 81920, 60000\n";
         }
+        if (isStrictNvidiaIdentityProbe(cmd)) {
+          return strictNvidiaIdentitiesCsv(2);
+        }
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
       try {
-        expect(nimModule.detectGpu()).toMatchObject({
-          type: "nvidia",
-          name: "NVIDIA H100 80GB HBM3",
-          count: 2,
-          totalMemoryMB: 163840,
-          perGpuMB: 81920,
-          gpus: [
-            { name: "NVIDIA H100 80GB HBM3", memoryMB: 81920 },
-            { name: "NVIDIA H100 80GB HBM3", memoryMB: 81920 },
-          ],
+        withGenericLinuxFirmware(() => {
+          expect(nimModule.detectGpu()).toMatchObject({
+            type: "nvidia",
+            name: "NVIDIA H100 80GB HBM3",
+            count: 2,
+            totalMemoryMB: 163840,
+            perGpuMB: 81920,
+            gpus: [
+              { name: "NVIDIA H100 80GB HBM3", memoryMB: 81920 },
+              { name: "NVIDIA H100 80GB HBM3", memoryMB: 81920 },
+            ],
+          });
         });
       } finally {
         restore();
@@ -270,17 +300,22 @@ describe("nim", () => {
         ) {
           return "NVIDIA RTX A,B, 81920, 80000\n";
         }
+        if (isStrictNvidiaIdentityProbe(cmd)) {
+          return strictNvidiaIdentitiesCsv(1);
+        }
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
       try {
-        expect(nimModule.detectGpu()).toMatchObject({
-          type: "nvidia",
-          name: "NVIDIA RTX A,B",
-          count: 1,
-          totalMemoryMB: 81920,
-          perGpuMB: 81920,
+        withGenericLinuxFirmware(() => {
+          expect(nimModule.detectGpu()).toMatchObject({
+            type: "nvidia",
+            name: "NVIDIA RTX A,B",
+            count: 1,
+            totalMemoryMB: 81920,
+            perGpuMB: 81920,
+          });
         });
       } finally {
         restore();
@@ -300,22 +335,27 @@ describe("nim", () => {
         ) {
           return "NVIDIA RTX PRO 6000 Blackwell Max-Q, 97887, 90000\nNVIDIA GB300, 256703, 250000\n";
         }
+        if (isStrictNvidiaIdentityProbe(cmd)) {
+          return strictNvidiaIdentitiesCsv(2);
+        }
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
       try {
-        const result = nimModule.detectGpu();
-        expect(result).toMatchObject({
-          type: "nvidia",
-          count: 2,
-          totalMemoryMB: 354590,
+        withGenericLinuxFirmware(() => {
+          const result = nimModule.detectGpu();
+          expect(result).toMatchObject({
+            type: "nvidia",
+            count: 2,
+            totalMemoryMB: 354590,
+          });
+          expect(result?.name).toBeUndefined();
+          expect(result?.gpus).toEqual([
+            { name: "NVIDIA RTX PRO 6000 Blackwell Max-Q", memoryMB: 97887 },
+            { name: "NVIDIA GB300", memoryMB: 256703 },
+          ]);
         });
-        expect(result?.name).toBeUndefined();
-        expect(result?.gpus).toEqual([
-          { name: "NVIDIA RTX PRO 6000 Blackwell Max-Q", memoryMB: 97887 },
-          { name: "NVIDIA GB300", memoryMB: 256703 },
-        ]);
       } finally {
         restore();
       }
@@ -323,9 +363,12 @@ describe("nim", () => {
 
     // Regression #3988: WSL2 d3d12 shims (e.g. Snapdragon X "nvidia-smi.exe")
     // return a generic name like "JMJWOA-Generic-GPU" for non-NVIDIA hardware.
-    // The primary path used to accept any name from nvidia-smi, which made the
-    // preflight report "NVIDIA GPU detected" on hosts with no NVIDIA hardware.
-    it("rejects WDDM placeholder names on hosts without NVIDIA firmware (#3988)", () => {
+    // The strict-identity gate (`hasStrictNvidiaIdentity`) rejects the device
+    // when nvidia-smi cannot produce a kernel-issued uuid + valid compute_cap
+    // + valid vbios_version. The shim cannot fill these fields convincingly:
+    // either the strict probe fails outright or returns `[Not Supported]` /
+    // blank / malformed values for each.
+    it("rejects WDDM placeholder names when the strict-identity probe returns nothing (#3988)", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
@@ -350,12 +393,12 @@ describe("nim", () => {
       }
     });
 
-    // Even when the WDDM shim returns the placeholder with an `NVIDIA ` prefix
-    // (e.g. "NVIDIA JMJWOA-Generic-GPU"), `\bNVIDIA\b` alone is not enough to
-    // vouch for the device on generic Linux firmware — the placeholder family
-    // must keep requiring a firmware platform vouch. Regression guard for the
-    // CodeRabbit review comment on #4062.
-    it("rejects vendor-prefixed WDDM placeholders on generic firmware (#3988)", () => {
+    // The shim publishes a strict-identity row but every field is the
+    // `[Not Supported]` sentinel — the gate must reject because the placeholder
+    // strings fail every validator (uuid format, compute_cap regex,
+    // vbios_version 5-tuple). Vendor-prefixed name confirms the gate doesn't
+    // accidentally trust an `NVIDIA `-shaped name shortcut.
+    it("rejects vendor-prefixed WDDM placeholders when strict probe returns [Not Supported] (#3988)", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
         if (
@@ -363,6 +406,108 @@ describe("nim", () => {
           cmd.some((a: string) => a.includes("name,memory.total"))
         ) {
           return "NVIDIA JMJWOA-Generic-GPU, 65471, 65000\n";
+        }
+        if (isStrictNvidiaIdentityProbe(cmd)) {
+          return "[Not Supported], [Not Supported], [Not Supported]\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu()).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Belt-and-braces denylist still rejects any `JMJWOA-Generic-*` name even
+    // if a hypothetical future shim manages to forge a strict-identity row.
+    // The pattern matches the full Snapdragon X family prefix so the GPU and
+    // NPU variants observed by QA (#3988) — plus any unseen future suffix —
+    // are all caught without a code change.
+    it.each([
+      "JMJWOA-Generic-GPU",
+      "JMJWOA-Generic-NPU",
+      "JMJWOA-Generic-Future",
+    ])(
+      "denylist rejects %s even when strict probe somehow validates (#3988)",
+      (placeholderName: string) => {
+        const runCapture = vi.fn((cmd: string | string[]) => {
+          if (!Array.isArray(cmd)) throw new Error("expected argv array");
+          if (
+            cmd[0] === "nvidia-smi" &&
+            cmd.some((a: string) => a.includes("name,memory.total"))
+          ) {
+            return `${placeholderName}, 65471, 65000\n`;
+          }
+          if (isStrictNvidiaIdentityProbe(cmd)) {
+            return strictNvidiaIdentitiesCsv(1);
+          }
+          return "";
+        });
+        const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+        try {
+          withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+            expect(nimModule.detectGpu()).toBeNull();
+          });
+        } finally {
+          restore();
+        }
+      },
+    );
+
+    // Genuine NVIDIA WSL2 path (e.g. RTX 4090 Laptop GPU, Ada compute_cap 8.9)
+    // must continue to pass the strict-identity gate. Sample data captured
+    // from a Windows-on-x86 laptop with a real Ada Lovelace GPU.
+    it("accepts genuine WSL2 NVIDIA GPUs that pass the strict-identity probe (#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
+        }
+        if (isStrictNvidiaIdentityProbe(cmd)) {
+          return "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553, 8.9, 95.04.3c.80.bc\n";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu()).toMatchObject({
+            type: "nvidia",
+            name: "NVIDIA GeForce RTX 4090 Laptop GPU",
+            count: 1,
+            totalMemoryMB: 16376,
+            availableMemoryMB: 15000,
+            perGpuMB: 16376,
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Defensive: if the strict probe returns fewer rows than the primary probe
+    // (race window or partial shim spoof), trust nothing and return null.
+    it("rejects when strict probe row count does not match the primary probe (#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "NVIDIA H100 80GB HBM3, 81920, 80000\nNVIDIA H100 80GB HBM3, 81920, 80000\n";
+        }
+        if (isStrictNvidiaIdentityProbe(cmd)) {
+          return "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553, 9.0, 95.04.3c.80.bc\n";
         }
         return "";
       });
@@ -598,18 +743,23 @@ describe("nim", () => {
         ) {
           return "NVIDIA H100 80GB HBM3, 81920, [N/A]\n";
         }
+        if (isStrictNvidiaIdentityProbe(cmd)) {
+          return strictNvidiaIdentitiesCsv(1);
+        }
         return "";
       });
       const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
 
       try {
-        const result = nimModule.detectGpu();
-        expect(result).toMatchObject({
-          type: "nvidia",
-          name: "NVIDIA H100 80GB HBM3",
-          totalMemoryMB: 81920,
+        withGenericLinuxFirmware(() => {
+          const result = nimModule.detectGpu();
+          expect(result).toMatchObject({
+            type: "nvidia",
+            name: "NVIDIA H100 80GB HBM3",
+            totalMemoryMB: 81920,
+          });
+          expect(result?.availableMemoryMB).toBeUndefined();
         });
-        expect(result?.availableMemoryMB).toBeUndefined();
       } finally {
         restore();
       }
@@ -751,6 +901,103 @@ describe("nim", () => {
         }
         restore();
       }
+    });
+  });
+
+  describe("hasStrictNvidiaIdentity", () => {
+    it("accepts a real-world Ada-class WSL2 sample (#3988)", () => {
+      expect(
+        nim.hasStrictNvidiaIdentity(
+          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "8.9",
+          "95.04.3c.80.bc",
+        ),
+      ).toBe(true);
+    });
+
+    it("accepts when fields have surrounding whitespace", () => {
+      expect(
+        nim.hasStrictNvidiaIdentity(
+          " GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553 ",
+          " 8.9 ",
+          " 95.04.3c.80.bc ",
+        ),
+      ).toBe(true);
+    });
+
+    it("rejects the [Not Supported] placeholder a userland shim is likely to emit", () => {
+      expect(
+        nim.hasStrictNvidiaIdentity("[Not Supported]", "[Not Supported]", "[Not Supported]"),
+      ).toBe(false);
+    });
+
+    it("rejects blank fields", () => {
+      expect(nim.hasStrictNvidiaIdentity("", "", "")).toBe(false);
+      expect(nim.hasStrictNvidiaIdentity("   ", "   ", "   ")).toBe(false);
+    });
+
+    it("rejects malformed uuid that lacks the kernel-issued GPU- prefix", () => {
+      expect(
+        nim.hasStrictNvidiaIdentity(
+          "fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "8.9",
+          "95.04.3c.80.bc",
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects uuid with wrong segment lengths", () => {
+      expect(
+        nim.hasStrictNvidiaIdentity(
+          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf",
+          "8.9",
+          "95.04.3c.80.bc",
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects compute_cap outside the realistic SM range", () => {
+      expect(
+        nim.hasStrictNvidiaIdentity(
+          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "1.0",
+          "95.04.3c.80.bc",
+        ),
+      ).toBe(false);
+      expect(
+        nim.hasStrictNvidiaIdentity(
+          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "99.9",
+          "95.04.3c.80.bc",
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects non-numeric compute_cap", () => {
+      expect(
+        nim.hasStrictNvidiaIdentity(
+          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "ada",
+          "95.04.3c.80.bc",
+        ),
+      ).toBe(false);
+    });
+
+    it("rejects vbios_version that is not a 5-tuple of hex bytes", () => {
+      expect(
+        nim.hasStrictNvidiaIdentity(
+          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "8.9",
+          "95.04.3c.80",
+        ),
+      ).toBe(false);
+      expect(
+        nim.hasStrictNvidiaIdentity(
+          "GPU-fa60a1d5-1f90-0366-6479-df9d20aaf553",
+          "8.9",
+          "95-04-3c-80-bc",
+        ),
+      ).toBe(false);
     });
   });
 
