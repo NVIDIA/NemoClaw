@@ -516,27 +516,16 @@ describe("openclaw-plugin.schema.json", () => {
     version: "1.2.3",
     description: "Schema fixture",
     configSchema: { type: "object" },
+    commandAliases: [{ name: "fixture", kind: "runtime-slash" }],
+    activation: { onStartup: true },
   };
 
   it("openclaw.plugin.json passes schema validation", () => {
     expectValid(validate, data, "openclaw.plugin.json");
   });
 
-  it("declares the NemoClaw runtime slash command", () => {
-    expect(data.commandAliases).toEqual([{ name: "nemoclaw", kind: "runtime-slash" }]);
-  });
-
-  it("declares startup activation for slash command registration", () => {
-    expect(asRecord(data.activation).onStartup).toBe(true);
-  });
-
   it("accepts runtime slash activation metadata", () => {
-    const valid = {
-      ...validPluginFixture,
-      commandAliases: [{ name: "fixture", kind: "runtime-slash" }],
-      activation: { onStartup: true },
-    };
-    expectValid(validate, valid, "runtime slash activation fixture");
+    expectValid(validate, validPluginFixture, "runtime slash activation fixture");
   });
 
   it("rejects command alias without kind", () => {

@@ -4,7 +4,15 @@
   "title": "NemoClaw OpenClaw Plugin Manifest",
   "description": "Schema for nemoclaw/openclaw.plugin.json — the OpenClaw plugin manifest that declares the plugin identity and its configuration schema.",
   "type": "object",
-  "required": ["id", "name", "version", "description", "configSchema"],
+  "required": [
+    "id",
+    "name",
+    "version",
+    "description",
+    "commandAliases",
+    "activation",
+    "configSchema"
+  ],
   "additionalProperties": false,
   "properties": {
     "id": {
