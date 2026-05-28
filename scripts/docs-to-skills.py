@@ -1480,21 +1480,19 @@ def _build_installer_run_command(
 
 _INSTALLER_PIPE_LINE_RE = re.compile(
     rf"^(?P<indent>\s*)(?P<prompt>\$\s*)?"
-    rf"(?P<pre>(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S+)\s+)*)"
+    rf"(?P<before>(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*)"
     rf"curl\s+-fsSL\s+{re.escape(NEMOCLAW_INSTALLER_URL)}\s*\|\s*"
     rf"(?P<post>[^\n]+)$",
     re.MULTILINE,
 )
 
 _INSTALLER_PIPE_INLINE_RE = re.compile(
-    rf"`((?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S+)\s+)*"
-    rf"curl\s+-fsSL\s+{re.escape(NEMOCLAW_INSTALLER_URL)}\s*\|\s*"
-    rf"[^`]+)`"
+    rf"`([^`\n]*?curl\s+-fsSL\s+{re.escape(NEMOCLAW_INSTALLER_URL)}\s*\|\s*[^`\n]+)`"
 )
 
 _SHELL_SCRIPT_PIPE_LINE_RE = re.compile(
     r"^(?P<indent>\s*)(?P<prompt>\$\s*)?"
-    r"(?P<pre>(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S+)\s+)*)"
+    r"(?P<before>(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*)"
     r"curl\s+-fsSL\s+(?P<url>https?://[^\s|]+/(?P<script>[A-Za-z0-9._-]+\.sh))"
     r"\s*\|\s*(?P<post>[^\n]+)$",
     re.MULTILINE,
@@ -1508,7 +1506,7 @@ def rewrite_installer_pipes(text: str) -> str:
         indent = match.group("indent") or ""
         prompt = match.group("prompt") or ""
         run_command = _build_installer_run_command(
-            match.group("pre") or "",
+            match.group("before") or "",
             match.group("post") or "bash",
             script_name=script_name,
         )
@@ -1535,7 +1533,7 @@ def rewrite_installer_pipes(text: str) -> str:
         if not line_match:
             return match.group(0)
         run_command = _build_installer_run_command(
-            line_match.group("pre") or "", line_match.group("post") or "bash"
+            line_match.group("before") or "", line_match.group("post") or "bash"
         )
         return (
             f"`curl -fsSLo nemoclaw.sh {NEMOCLAW_INSTALLER_URL}`, "
