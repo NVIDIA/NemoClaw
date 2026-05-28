@@ -240,11 +240,13 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
 # /home/linuxbrew/.linuxbrew/bin/* is then dead code.
 #
 # Image-build runs as root, so we create the prefix, chown it to the
-# sandbox user, clone Homebrew core under it as the sandbox user, and
-# symlink the brew entry point into the Homebrew prefix and /usr/local/bin.
-# /usr/local/bin is already on the locked sandbox PATH, so users can run
-# `brew` without adding the sandbox-writable Homebrew prefix to privileged
-# startup PATH.
+# sandbox user, clone Homebrew core under it as the sandbox user, and expose a
+# /usr/local/bin wrapper. /usr/local/bin is already on the locked sandbox PATH,
+# but a plain symlink there makes Homebrew infer /usr/local as its prefix. The
+# wrapper must execute the Linuxbrew prefix shim, not the repository script
+# directly, so Homebrew keeps /home/linuxbrew/.linuxbrew as its writable prefix.
+# The Linuxbrew bin directory is appended to PATH so installed formulae are
+# runnable while system binaries still win name resolution.
 #
 # Companion change: /home/linuxbrew is added to filesystem_policy.read_write
 # in nemoclaw-blueprint/policies/openclaw-sandbox.yaml so brew can write
@@ -264,6 +266,14 @@ RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
         /home/linuxbrew/.linuxbrew/Homebrew \
     && ln -s /home/linuxbrew/.linuxbrew/Homebrew/bin/brew \
         /home/linuxbrew/.linuxbrew/bin/brew \
-    && ln -s /home/linuxbrew/.linuxbrew/Homebrew/bin/brew \
-        /usr/local/bin/brew \
-    && gosu sandbox brew --version
+    && { \
+        printf '%s\n' '#!/bin/sh'; \
+        printf '%s\n' 'exec /home/linuxbrew/.linuxbrew/bin/brew "$@"'; \
+    } > /usr/local/bin/brew \
+    && chmod 755 /usr/local/bin/brew \
+    && gosu sandbox /usr/local/bin/brew --prefix | grep -qx /home/linuxbrew/.linuxbrew \
+    && gosu sandbox /usr/local/bin/brew --version
+ENV PATH="${PATH}:/home/linuxbrew/.linuxbrew/bin"
+RUN printf '%s\n' "export PATH=\"\${PATH}:/home/linuxbrew/.linuxbrew/bin\"" \
+        > /etc/profile.d/nemoclaw-linuxbrew.sh \
+    && chmod 644 /etc/profile.d/nemoclaw-linuxbrew.sh
