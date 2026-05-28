@@ -112,6 +112,11 @@ if ! grep -Eiq "inference.*healthy|healthy.*inference" "$status_log"; then
   fail "pre-block status did not report healthy inference"
 fi
 
+connect_probe_log="${CAPTURE_DIR}/nemoclaw-connect-probe-before-block.log"
+if ! nemoclaw "$SANDBOX_NAME" connect --probe-only >"$connect_probe_log" 2>&1; then
+  fail "nemoclaw ${SANDBOX_NAME} connect --probe-only failed before firewall block"
+fi
+
 info "installing DOCKER-USER DROP rules for NVIDIA endpoint IPs"
 for ip in "${BLOCKED_IPS[@]}"; do
   sudo iptables -I DOCKER-USER -d "$ip" -j DROP
@@ -130,7 +135,7 @@ if [ "$block_probe_rc" -eq 0 ]; then
 fi
 info "sandbox endpoint block verified (probe exit ${block_probe_rc})"
 
-info "launching openclaw tui through direct OpenShell sandbox connect"
+info "launching openclaw tui through OpenShell sandbox exec --tty"
 set +e
 env \
   NEMOCLAW_ISSUE_4434_SANDBOX="$SANDBOX_NAME" \
@@ -141,18 +146,9 @@ set timeout $env(NEMOCLAW_ISSUE_4434_TUI_TIMEOUT)
 set sandbox $env(NEMOCLAW_ISSUE_4434_SANDBOX)
 set capture $env(NEMOCLAW_ISSUE_4434_CAPTURE)
 log_file -a $capture
-spawn openshell sandbox connect $sandbox
-expect {
-  -re {[$#>] $} {
-    send "export TERM=xterm-256color\r"
-    expect -re {[$#>] $}
-    send "openclaw tui\r"
-    sleep 8
-    send -- "hello\r"
-  }
-  timeout { puts "Timed out waiting for sandbox shell prompt."; exit 10 }
-  eof { exit 11 }
-}
+spawn openshell sandbox exec --name $sandbox --tty -- sh -lc {export TERM=xterm-256color; cd /sandbox; openclaw tui}
+sleep 10
+send -- "hello\r"
 expect {
   -nocase -re {(error|failed|timeout|timed out|unavailable|fetch failed|ETIMEDOUT|ECONN|upstream)} {
     sleep 5
