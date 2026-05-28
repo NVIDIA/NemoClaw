@@ -15,7 +15,6 @@ import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { isGatewayHealthy } from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
-import { saveBackupToHost } from "../../state/save-host";
 import * as sandboxState from "../../state/sandbox";
 import { cleanupShieldsDestroyArtifacts, removeSandboxRegistryEntry } from "./destroy";
 
@@ -31,7 +30,7 @@ const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 
 export type SnapshotRequest =
   | { kind: "help" }
-  | { kind: "create"; name?: string; saveHost?: string }
+  | { kind: "create"; name?: string }
   | { kind: "list" }
   | {
       kind: "restore";
@@ -347,15 +346,6 @@ export async function runSandboxSnapshot(
           `  ${G}\u2713${R} Snapshot ${v}${nameSuffix} created (${itemSummary})`,
         );
         console.log(`    ${manifest.backupPath}`);
-        if (request.saveHost) {
-          const save = saveBackupToHost(manifest.backupPath, request.saveHost);
-          if (save.ok) {
-            console.log(`    Saved to host: ${save.destination}`);
-          } else {
-            console.error(`  Failed to copy snapshot to ${request.saveHost}: ${save.message ?? ""}`);
-            snapshotExit(1);
-          }
-        }
       } else {
         if (result.error) {
           console.error(`  ${result.error}`);

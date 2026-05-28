@@ -253,12 +253,17 @@ nemoclaw uninstall
 
 | Flag               | Effect                                               |
 |--------------------|------------------------------------------------------|
-| `--yes`            | Skip the generic confirmation prompt. Does **not** bypass the workspace-data gate; if the gate detects host snapshots or registered sandboxes, uninstall still exits with status 1. |
+| `--yes`            | Skip the confirmation prompt.                        |
 | `--keep-openshell` | Leave OpenShell binaries installed.                  |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
 
-To acknowledge the data-loss gate in non-interactive runs, set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1`.
-Refer to [`nemoclaw uninstall`](/reference/commands#nemoclaw-uninstall) for the full behaviour matrix.
+<Note>
+`nemoclaw uninstall` preserves `~/.nemoclaw/rebuild-backups/` (host-side snapshots created by `nemoclaw <name> snapshot create` and `nemoclaw backup-all`) and `~/.nemoclaw/sandboxes.json` (the sandbox registry) by default.
+Every other entry under `~/.nemoclaw/` is removed.
+Interactive runs prompt before destructive removal of the preserved entries; the default answer is to keep them.
+For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and purge the preserved entries as well.
+See [`nemoclaw uninstall`](/reference/commands#nemoclaw-uninstall) for the full preservation contract.
+</Note>
 
 `nemoclaw uninstall` runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
 

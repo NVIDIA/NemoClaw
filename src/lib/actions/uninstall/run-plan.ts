@@ -35,9 +35,7 @@ export interface UninstallRunDeps {
   fs?: FileSystemDeps;
   isTty?: boolean;
   kill?: (pid: number, signal?: NodeJS.Signals | number) => boolean;
-  listRegisteredSandboxes?: () => string[];
   log?: (message: string) => void;
-  readdirSync?: (target: string) => string[];
   readLine?: () => string | null;
   rmSync?: typeof fs.rmSync;
   run?: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -113,6 +111,44 @@ function removePath(target: string, deps: Required<Pick<UninstallRunDeps, "exist
   deps.log(`Removed ${target}`);
 }
 
+// Entries under `nemoclawStateDir` (~/.nemoclaw/) that survive uninstall by
+// default. `rebuild-backups/` holds the host-side snapshots created by
+// `nemoclaw <name> snapshot create` and `nemoclaw backup-all`; `sandboxes.json`
+// is the host-side sandbox registry. Both are user data — losing them on
+// uninstall is the issue tracked in #4226. The full wipe still happens when
+// NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 is set, or when the user answers `y`
+// to the interactive prompt.
+export const PRESERVED_USER_DATA_ENTRIES: readonly string[] = ["rebuild-backups", "sandboxes.json"];
+
+function removePathExcept(
+  target: string,
+  preserve: readonly string[],
+  deps: Required<Pick<UninstallRunDeps, "existsSync" | "log" | "rmSync">>,
+): void {
+  if (!deps.existsSync(target)) return;
+  if (preserve.length === 0) {
+    deps.rmSync(target, { force: true, recursive: true });
+    deps.log(`Removed ${target}`);
+    return;
+  }
+  const preserveSet = new Set(preserve);
+  const children = fs.readdirSync(target);
+  const preserved: string[] = [];
+  for (const entry of children) {
+    if (preserveSet.has(entry)) {
+      preserved.push(entry);
+      continue;
+    }
+    deps.rmSync(path.join(target, entry), { force: true, recursive: true });
+  }
+  if (preserved.length === 0) {
+    deps.rmSync(target, { force: true, recursive: true });
+    deps.log(`Removed ${target}`);
+    return;
+  }
+  deps.log(`Removed contents of ${target} (preserved: ${preserved.join(", ")})`);
+}
+
 function removeFileWithOptionalSudo(target: string, deps: UninstallRuntime): void {
   if (!deps.existsSync(target)) return;
   const parent = path.dirname(target);
@@ -138,9 +174,7 @@ interface UninstallRuntime {
   existsSync: (target: string) => boolean;
   isTty: boolean;
   kill: (pid: number, signal?: NodeJS.Signals | number) => boolean;
-  listRegisteredSandboxes: () => string[];
   log: (message: string) => void;
-  readdirSync: (target: string) => string[];
   readLine: () => string | null;
   rmSync: typeof fs.rmSync;
   run: (command: string, args: string[], options?: SpawnSyncOptions) => RunResult;
@@ -166,43 +200,7 @@ function buildRuntime(deps: UninstallRunDeps): UninstallRuntime {
           return false;
         }
       }),
-    listRegisteredSandboxes:
-      deps.listRegisteredSandboxes ??
-      (() => {
-        const home = env.HOME;
-        if (!home) return [];
-        const registryFile = path.join(home, ".nemoclaw", "sandboxes.json");
-        let raw: string;
-        try {
-          raw = fs.readFileSync(registryFile, "utf-8");
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return [];
-          const message = err instanceof Error ? err.message : String(err);
-          throw new Error(
-            `Unable to read sandbox registry at ${registryFile}: ${message}`,
-          );
-        }
-        try {
-          const data = JSON.parse(raw) as { sandboxes?: Record<string, unknown> };
-          return Object.keys(data.sandboxes ?? {});
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          throw new Error(
-            `Unable to parse sandbox registry at ${registryFile}: ${message}`,
-          );
-        }
-      }),
     log: deps.log ?? ((message) => console.log(message)),
-    readdirSync:
-      deps.readdirSync ??
-      ((target) => {
-        try {
-          return fs.readdirSync(target);
-        } catch (err) {
-          if ((err as NodeJS.ErrnoException)?.code === "ENOENT") return [];
-          throw err;
-        }
-      }),
     readLine: deps.readLine ?? (() => defaultReadLine(env)),
     rmSync: deps.rmSync ?? fs.rmSync,
     run: deps.run ?? defaultRun,
@@ -238,94 +236,12 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   runtime.log(`  · All OpenShell sandboxes, gateway, and ${branding.display} providers`);
   runtime.log("  · Related Docker containers, images, and volumes");
   runtime.log("  · ~/.nemoclaw  ~/.config/openshell  ~/.config/nemoclaw");
-  runtime.log("    (includes snapshots and rebuild backups under ~/.nemoclaw/rebuild-backups)");
   runtime.log(`  · Global ${branding.display} CLI (npm package: nemoclaw)`);
   runtime.log(options.deleteModels ? `  · Ollama models: ${NEMOCLAW_OLLAMA_MODELS.join(" ")}` : "  · Ollama models: kept");
   runtime.log("Proceed? [y/N]");
   const reply = runtime.readLine();
   if (reply && /^(y|yes)$/i.test(reply.trim())) return true;
   runtime.log("Aborted.");
-  return false;
-}
-
-const PROTECTED_USER_DATA_DIRS: readonly string[] = ["rebuild-backups"];
-
-interface ProtectedDirEntry {
-  name: string;
-  path: string;
-  entries: string[];
-}
-
-interface UserDataInventory {
-  protectedDirs: ProtectedDirEntry[];
-  registeredSandboxes: string[];
-  hasUserData: boolean;
-}
-
-function detectUserData(paths: UninstallPaths, runtime: UninstallRuntime): UserDataInventory {
-  const protectedDirs: ProtectedDirEntry[] = PROTECTED_USER_DATA_DIRS.map((name) => {
-    const dirPath = path.join(paths.nemoclawStateDir, name);
-    const entries = runtime.existsSync(dirPath)
-      ? runtime.readdirSync(dirPath).filter((entry) => !entry.startsWith("."))
-      : [];
-    return { name, path: dirPath, entries };
-  }).filter((entry) => entry.entries.length > 0);
-  const registeredSandboxes = runtime.listRegisteredSandboxes();
-  return {
-    protectedDirs,
-    registeredSandboxes,
-    hasUserData: protectedDirs.length > 0 || registeredSandboxes.length > 0,
-  };
-}
-
-function confirmDestroyUserData(
-  options: UninstallRunOptions,
-  runtime: UninstallRuntime,
-  data: UserDataInventory,
-): boolean {
-  if (!data.hasUserData) return true;
-  const branding = runtimeBranding(runtime);
-  runtime.log("");
-  runtime.log(`  ${branding.display} detected workspace state on disk:`);
-  if (data.registeredSandboxes.length > 0) {
-    const sandboxLabel = data.registeredSandboxes.length === 1 ? "sandbox" : "sandboxes";
-    runtime.log(
-      `    ${data.registeredSandboxes.length} registered ${sandboxLabel}: ${data.registeredSandboxes.join(", ")}`,
-    );
-  }
-  for (const dir of data.protectedDirs) {
-    const sandboxLabel = dir.entries.length === 1 ? "sandbox" : "sandboxes";
-    runtime.log(`    ${dir.path}`);
-    runtime.log(`      (${dir.entries.length} ${sandboxLabel}: ${dir.entries.join(", ")})`);
-  }
-  runtime.log("  Uninstall removes these along with the rest of ~/.nemoclaw/.");
-  runtime.log("  Sandbox container workspace files (`/sandbox/.openclaw/workspace/`) are");
-  runtime.log("  removed with the Docker container and cannot be preserved automatically.");
-  runtime.log("");
-  runtime.log("  To preserve workspace state, run before re-attempting uninstall:");
-  runtime.log("    nemoclaw backup-all --save-host <safe-path-outside-nemoclaw>");
-  runtime.log("");
-  if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
-    runtime.log("  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding with destructive uninstall.");
-    return true;
-  }
-  if (options.assumeYes || !runtime.isTty) {
-    runtime.log(
-      "  Set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge and proceed with the destructive uninstall.",
-    );
-    runtime.log("  Aborted.");
-    return false;
-  }
-  runtime.log(
-    "  Set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to skip this prompt in non-interactive runs.",
-  );
-  runtime.log("  Destroy this workspace state now? [y/N]");
-  const reply = runtime.readLine();
-  if (reply && /^(y|yes)$/i.test(reply.trim())) {
-    runtime.log("  Confirmed; proceeding with destructive uninstall.");
-    return true;
-  }
-  runtime.log("  Aborted.");
   return false;
 }
 
@@ -687,7 +603,56 @@ function removeManagedSwap(paths: UninstallPaths, runtime: UninstallRuntime): vo
   else runtime.warn("Failed to remove /swapfile.");
 }
 
-function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: UninstallRunOptions, runtime: UninstallRuntime): void {
+function detectPreservableEntries(paths: UninstallPaths, runtime: UninstallRuntime): string[] {
+  if (!runtime.existsSync(paths.nemoclawStateDir)) return [];
+  return PRESERVED_USER_DATA_ENTRIES.filter((name) =>
+    runtime.existsSync(path.join(paths.nemoclawStateDir, name)),
+  );
+}
+
+function resolvePreserveSet(
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+): readonly string[] {
+  // Explicit acknowledgement env var → full purge, matches today's behaviour.
+  if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
+    runtime.log("NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; purging user data under ~/.nemoclaw/.");
+    return [];
+  }
+  const preservable = detectPreservableEntries(paths, runtime);
+  // Nothing on disk worth preserving → no message, no prompt; treat as default
+  // preserve set so a later snapshot-create still survives if the user re-runs.
+  if (preservable.length === 0) return PRESERVED_USER_DATA_ENTRIES;
+  // Non-interactive (no TTY, --yes, or NEMOCLAW_NON_INTERACTIVE=1) → preserve
+  // silently with a one-line notice. Default behaviour is safe; users who want
+  // a destructive uninstall in CI must set the env var.
+  const nonInteractive =
+    !runtime.isTty || options.assumeYes || runtime.env.NEMOCLAW_NON_INTERACTIVE === "1";
+  if (nonInteractive) {
+    runtime.log(`Preserving ${preservable.join(", ")} under ${paths.nemoclawStateDir}.`);
+    runtime.log("  Set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to purge user data on uninstall.");
+    return PRESERVED_USER_DATA_ENTRIES;
+  }
+  runtime.log(`The following user data under ${paths.nemoclawStateDir} is preserved by default:`);
+  for (const name of preservable) runtime.log(`  · ${name}`);
+  runtime.log("Also remove them? [y/N]");
+  const reply = runtime.readLine();
+  if (reply && /^(y|yes)$/i.test(reply.trim())) {
+    runtime.log("Acknowledged; purging user data.");
+    return [];
+  }
+  runtime.log("Keeping user data.");
+  return PRESERVED_USER_DATA_ENTRIES;
+}
+
+function executePlan(
+  plan: UninstallPlan,
+  paths: UninstallPaths,
+  options: UninstallRunOptions,
+  runtime: UninstallRuntime,
+  preserveUnderStateDir: readonly string[],
+): void {
   const branding = runtimeBranding(runtime);
   for (const [index, step] of plan.steps.entries()) {
     runtime.log(`[${index + 1}/${plan.steps.length}] ${planStepDisplayName(step.name, branding)}`);
@@ -723,7 +688,7 @@ function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: Uninst
       for (const pattern of paths.runtimeTempGlobs) removeGlob(pattern, runtime);
       if (options.keepOpenShell) runtime.log("Keeping OpenShell binaries as requested.");
       else for (const target of paths.openshellInstallPaths) removeFileWithOptionalSudo(target, runtime);
-      removePath(paths.nemoclawStateDir, runtime);
+      removePathExcept(paths.nemoclawStateDir, preserveUnderStateDir, runtime);
       removePath(paths.gatewayLocalStateDir, runtime);
       removePath(paths.openshellConfigDir, runtime);
       removePath(paths.nemoclawConfigDir, runtime);
@@ -753,31 +718,9 @@ export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRu
   const runtime = buildRuntime(deps);
   const { paths, plan } = buildRunPlan(options, { ...deps, env: runtime.env });
   printBanner(runtime);
-  let userData: UserDataInventory;
-  try {
-    userData = detectUserData(paths, runtime);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    if (runtime.env.NEMOCLAW_UNINSTALL_DESTROY_USER_DATA === "1") {
-      runtime.warn(`  ${message}`);
-      runtime.log(
-        "  NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 set; proceeding despite unreadable registry.",
-      );
-      userData = { protectedDirs: [], registeredSandboxes: [], hasUserData: false };
-    } else {
-      runtime.error(`  ${message}`);
-      runtime.error(
-        "  Refusing to proceed: cannot confirm whether registered sandboxes exist.",
-      );
-      runtime.error(
-        "  Repair or remove the registry file, or set NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1 to acknowledge the loss and proceed.",
-      );
-      return { exitCode: 1, plan };
-    }
-  }
-  if (!confirmDestroyUserData(options, runtime, userData)) return { exitCode: 1, plan };
   if (!confirm(options, runtime)) return { exitCode: 0, plan };
-  executePlan(plan, paths, options, runtime);
+  const preserveUnderStateDir = resolvePreserveSet(paths, options, runtime);
+  executePlan(plan, paths, options, runtime, preserveUnderStateDir);
   printBye(runtime);
   return { exitCode: 0, plan };
 }
