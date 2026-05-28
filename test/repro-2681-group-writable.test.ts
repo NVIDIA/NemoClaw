@@ -50,7 +50,17 @@ function withMockedDockerExecFileSync<T>(calls: string[][], run: () => T): T {
   };
   const originalDockerExecFileSync = dockerExecModule.dockerExecFileSync;
   const shieldsModulePath = require.resolve("../dist/lib/shields/index.js");
+  const privilegedExecPath = require.resolve("../dist/lib/sandbox/privileged-exec.js");
+  const priorPrivilegedExec = require.cache[privilegedExecPath];
   delete require.cache[shieldsModulePath];
+  require.cache[privilegedExecPath] = {
+    id: privilegedExecPath,
+    filename: privilegedExecPath,
+    loaded: true,
+    exports: {
+      privilegedSandboxExecArgv: (_sandboxName: string, cmd: readonly string[]) => [...cmd],
+    },
+  } as any;
 
   dockerExecModule.dockerExecFileSync = vi.fn((args: readonly string[]) => {
     const separator = args.indexOf("--");
@@ -76,6 +86,8 @@ function withMockedDockerExecFileSync<T>(calls: string[][], run: () => T): T {
   } finally {
     dockerExecModule.dockerExecFileSync = originalDockerExecFileSync;
     delete require.cache[shieldsModulePath];
+    if (priorPrivilegedExec) require.cache[privilegedExecPath] = priorPrivilegedExec;
+    else delete require.cache[privilegedExecPath];
   }
 }
 
@@ -224,6 +236,13 @@ Module._load = function patchedLoad(request, parent, isMain) {
           return "----i----------------- " + command.at(-1) + "\n";
         }
         return "";
+      },
+    };
+  }
+  if (request === "../sandbox/privileged-exec") {
+    return {
+      privilegedSandboxExecArgv(_sandboxName, cmd) {
+        return [...cmd];
       },
     };
   }

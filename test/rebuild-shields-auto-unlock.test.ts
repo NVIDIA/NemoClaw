@@ -89,6 +89,7 @@ function createFixture(opts: { shieldsLocked: boolean }) {
           gpuEnabled: false,
           policies: [],
           agent: null,
+          openshellDriver: "vm",
           messagingChannels: null,
         },
       },
@@ -197,12 +198,30 @@ function writeLockState(state) {
 if (a[0]==="build")  { process.exit(0); }
 if (a[0]==="image" && a[1]==="inspect") { process.exit(0); }
 if (a[0]==="inspect") { process.stdout.write("true\\n"); process.exit(0); }
-if (a[0]==="ps")     { process.exit(0); }
-// kubectl exec proxy via "docker exec <k3s> kubectl exec -n openshell <sb> -c agent -- <cmd...>"
+if (a[0]==="ps")     { process.stdout.write("openshell-${sandboxName}-abc123\\n"); process.exit(0); }
+// Supports both direct exec ("docker exec --user root <container> <cmd...>")
+// and legacy kubectl proxying ("docker exec <k3s> kubectl exec ... -- <cmd...>").
 if (a[0]==="exec") {
-  // Find the kubectl '--' delimiter; everything after is the actual command.
   const dashDash = a.indexOf("--");
-  const cmd = dashDash >= 0 ? a.slice(dashDash + 1) : [];
+  let cmd = [];
+  if (dashDash >= 0) {
+    cmd = a.slice(dashDash + 1);
+  } else {
+    let index = 1;
+    while (index < a.length) {
+      if (a[index] === "-i") {
+        index++;
+        continue;
+      }
+      if (a[index] === "--user") {
+        index += 2;
+        continue;
+      }
+      break;
+    }
+    index++; // container name
+    cmd = a.slice(index);
+  }
   // Verification reads:
   //   stat -c '%a %U:%G' <path>      → expect "660 sandbox:sandbox" or "2770 sandbox:sandbox"
   //   lsattr -d <path>               → "----i------" (locked) or no immutable bit (unlocked)

@@ -59,7 +59,7 @@ export default defineConfig({
         test: {
           name: "e2e-scenario-framework",
           testTimeout: testTimeout(),
-          include: ["test/e2e/scenario-framework-tests/**/*.test.ts"],
+          include: ["test/e2e-scenario/framework-tests/**/*.test.ts"],
         },
       },
       {
