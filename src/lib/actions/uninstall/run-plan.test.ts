@@ -753,6 +753,45 @@ describe("uninstall run plan", () => {
       }
     });
 
+    it("preserves entries on a TTY when NEMOCLAW_NON_INTERACTIVE=1 is set instead of --yes", () => {
+      const { tmpHome, stateDir } = setupStateDir();
+      const readLine = vi.fn(() => "yes");
+      try {
+        const logs: string[] = [];
+        const result = runUninstallPlan(
+          { assumeYes: false, deleteModels: false, keepOpenShell: true },
+          {
+            commandExists: () => false,
+            env: {
+              HOME: tmpHome,
+              NEMOCLAW_NON_INTERACTIVE: "1",
+            } as NodeJS.ProcessEnv,
+            existsSync: tempScopedExistsSync(tmpHome),
+            // Simulate a TTY so we exercise the env-var-only branch (the prior
+            // tests reach the silent-preserve branch via !isTty or assumeYes).
+            isTty: true,
+            log: (line) => logs.push(line),
+            readLine,
+            run: vi.fn(() => ok()),
+            runDocker: () => ok(""),
+          },
+        );
+
+        expect(result.exitCode).toBe(0);
+        expect(fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"))).toBe(true);
+        expect(fs.existsSync(path.join(stateDir, "backups", "20260320-120000", "USER.md"))).toBe(true);
+        expect(fs.existsSync(path.join(stateDir, "sandboxes.json"))).toBe(true);
+        expect(logs).toContain(`Preserving rebuild-backups, backups, sandboxes.json under ${stateDir}.`);
+        // Interactive y/N prompt must not fire when NEMOCLAW_NON_INTERACTIVE is set.
+        expect(logs.every((line) => line !== "Also remove them? [y/N]")).toBe(true);
+        // The earlier generic confirm() prompt still consumes one readLine for "Proceed? [y/N]";
+        // resolvePreserveSet must not consume another.
+        expect(readLine).toHaveBeenCalledTimes(1);
+      } finally {
+        fs.rmSync(tmpHome, { recursive: true, force: true });
+      }
+    });
+
     it("exits non-zero and warns when lstat on ~/.nemoclaw fails with a non-ENOENT error", () => {
       const { tmpHome, stateDir } = setupStateDir();
       const realLstat = fs.lstatSync;
@@ -783,6 +822,10 @@ describe("uninstall run plan", () => {
 
         expect(result.exitCode).toBe(1);
         expect(warnings.some((line) => line.startsWith(`Failed to inspect ${stateDir}: `))).toBe(true);
+        expect(warnings).toContain(
+          "Uninstall completed with errors. Some state may remain on disk; see warnings above.",
+        );
+        expect(logs).not.toContain("Claws retracted. Until next time.");
         expect(fs.existsSync(path.join(stateDir, "rebuild-backups", "sb1", "20260101", "manifest.json"))).toBe(true);
       } finally {
         lstatSpy.mockRestore();

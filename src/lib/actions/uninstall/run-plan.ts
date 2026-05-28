@@ -750,6 +750,10 @@ export function runUninstallPlan(options: UninstallRunOptions, deps: UninstallRu
   if (!confirm(options, runtime)) return { exitCode: 0, plan };
   const preserveUnderStateDir = resolvePreserveSet(paths, options, runtime);
   const { ok } = executePlan(plan, paths, options, runtime, preserveUnderStateDir);
-  printBye(runtime);
+  if (ok) {
+    printBye(runtime);
+  } else {
+    runtime.error("Uninstall completed with errors. Some state may remain on disk; see warnings above.");
+  }
   return { exitCode: ok ? 0 : 1, plan };
 }

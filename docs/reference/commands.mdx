@@ -1202,11 +1202,11 @@ To avoid uninstall destroying host-side user data, uninstall preserves the follo
 
 | Entry | What it holds |
 |---|---|
-| `rebuild-backups/` | Host-side snapshots produced by `nemoclaw <name> snapshot create` and `nemoclaw backup-all`. Required by `nemoclaw <name> snapshot restore` after reinstalling. |
-| `backups/` | Host-side workspace backups produced by `scripts/backup-workspace.sh` (see [Backup and Restore](/manage-sandboxes/backup-restore)). |
-| `sandboxes.json` | Host-side sandbox registry. Used by NemoClaw to map sandbox names back to their persistence directories on reinstall. |
+| `rebuild-backups/` | Host-side snapshots that `nemoclaw <name> snapshot create` and `nemoclaw backup-all` write. `nemoclaw <name> snapshot restore` reads them back after you reinstall. |
+| `backups/` | Host-side workspace backups that `scripts/backup-workspace.sh` writes (see [Backup and Restore](/manage-sandboxes/backup-restore)). |
+| `sandboxes.json` | Host-side sandbox registry. NemoClaw uses it to map sandbox names back to their persistence directories when you reinstall. |
 
-Every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.) is removed.
+Uninstall removes every other entry under `~/.nemoclaw/` (gateway source, runtime state, the Ollama auth proxy PID file, etc.).
 
 Decision matrix:
 
@@ -1218,7 +1218,7 @@ Decision matrix:
 | Any context with `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` | Skips the prompt and removes everything under `~/.nemoclaw/`. |
 
 The preserved entries survive uninstall as inert files on disk.
-Reinstalling NemoClaw and re-onboarding the sandbox is still required before `nemoclaw <name> snapshot restore` can use them.
+Reinstall NemoClaw and re-onboard the sandbox before `nemoclaw <name> snapshot restore` can use them.
 
 #### `nemoclaw uninstall` vs. the hosted `uninstall.sh`
 
