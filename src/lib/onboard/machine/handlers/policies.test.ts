@@ -91,7 +91,7 @@ describe("handlePoliciesState", () => {
   it("runs compatible endpoint smoke before policy selection", async () => {
     const { deps, calls } = createDeps();
 
-    await handlePoliciesState(baseOptions(deps));
+    const result = await handlePoliciesState(baseOptions(deps));
 
     expect(calls.smoke).toHaveBeenCalledWith({
       sandboxName: "my-assistant",
@@ -121,6 +121,13 @@ describe("handlePoliciesState", () => {
       "policies",
       expect.objectContaining({ policyPresets: ["npm"] }),
     );
+    expect(result.stateResult).toEqual({
+      type: "transition",
+      next: "finalizing",
+      transitionKind: "advance",
+      updates: undefined,
+      metadata: { state: "policies", policyPresets: ["npm"] },
+    });
   });
 
   it("uses recorded messaging channels when no active selection exists", async () => {
@@ -158,6 +165,11 @@ describe("handlePoliciesState", () => {
       expect.objectContaining({ policyPresets: ["npm"] }),
     );
     expect(result.appliedPolicyPresets).toEqual(["npm"]);
+    expect(result.stateResult).toMatchObject({
+      next: "finalizing",
+      transitionKind: "advance",
+      metadata: { policyPresets: ["npm"] },
+    });
   });
 
   it("reconciles unsupported recorded presets before interactive setup", async () => {
