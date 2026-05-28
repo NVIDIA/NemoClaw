@@ -6,8 +6,8 @@ import {
   HERMES_DASHBOARD_INTERNAL_PORT_ENV,
   HERMES_DASHBOARD_PORT_ENV,
   HERMES_DASHBOARD_TUI_ENV,
-  readHermesDashboardConfig,
   type HermesDashboardConfig,
+  readHermesDashboardConfig,
 } from "../hermes-dashboard";
 import type { SandboxEntry } from "../state/registry";
 
@@ -15,6 +15,8 @@ export interface HermesDashboardOnboardState {
   config: HermesDashboardConfig | null;
   enabled: boolean;
 }
+
+type RunOpenshell = (args: string[], options: { ignoreError: true }) => unknown;
 
 export function resolveHermesDashboardOnboardState({
   agentName,
@@ -152,4 +154,56 @@ export function createHermesDashboardForwardEnsurer({
     if (rollback) rollbackSandbox(sandboxName);
     fail(formatHermesDashboardForwardFailure(state));
   };
+}
+
+export function createHermesDashboardOnboardForwarding({
+  agentName,
+  env,
+  ensureForward,
+  note,
+  runOpenshell,
+  getApiForwardPort,
+  fail,
+}: {
+  agentName: string | null | undefined;
+  env: NodeJS.ProcessEnv;
+  ensureForward: (sandboxName: string, port: number, label: string) => boolean;
+  note: (message: string) => void;
+  runOpenshell: RunOpenshell;
+  getApiForwardPort: () => string;
+  fail?: (message: string) => never;
+}) {
+  const failWithMessage =
+    fail ??
+    ((message: string): never => {
+      console.error(`  ${message}`);
+      process.exit(1);
+    });
+  const resolveStateForPort = (effectivePort: number) =>
+    resolveHermesDashboardOnboardState({ agentName, effectivePort, env, fail: failWithMessage });
+
+  const ensureForState = (
+    state: HermesDashboardOnboardState,
+    sandboxName: string,
+    rollback = false,
+  ) =>
+    createHermesDashboardForwardEnsurer({
+      state,
+      ensureForward,
+      note,
+      rollbackSandbox: (targetSandbox) => {
+        runOpenshell(["forward", "stop", getApiForwardPort(), targetSandbox], {
+          ignoreError: true,
+        });
+        if (state.config) {
+          runOpenshell(["forward", "stop", String(state.config.port), targetSandbox], {
+            ignoreError: true,
+          });
+        }
+        runOpenshell(["sandbox", "delete", targetSandbox], { ignoreError: true });
+      },
+      fail: failWithMessage,
+    })(sandboxName, rollback);
+
+  return { resolveStateForPort, ensureForState };
 }

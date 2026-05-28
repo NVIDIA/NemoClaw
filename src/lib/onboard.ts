@@ -2817,40 +2817,15 @@ async function createSandbox(
   } else {
     chatUiUrl = `http://127.0.0.1:${effectivePort}`;
   }
-  const resolveHermesDashboardStateForPort = (port: number) =>
-    onboardHermesDashboard.resolveHermesDashboardOnboardState({
-      agentName: agent?.name,
-      effectivePort: port,
-      env: process.env,
-      fail: (message: string): never => {
-        console.error(`  ${message}`);
-        process.exit(1);
-      },
-    });
-  const createHermesDashboardForwardEnsurer = (
-    state: ReturnType<typeof onboardHermesDashboard.resolveHermesDashboardOnboardState>,
-  ) =>
-    onboardHermesDashboard.createHermesDashboardForwardEnsurer({
-      state,
-      ensureForward: ensureAgentFixedForward,
-      note,
-      rollbackSandbox: (targetSandbox) => {
-        runOpenshell(["forward", "stop", getDashboardForwardPort(chatUiUrl), targetSandbox], {
-          ignoreError: true,
-        });
-        if (state.config) {
-          runOpenshell(["forward", "stop", String(state.config.port), targetSandbox], {
-            ignoreError: true,
-          });
-        }
-        runOpenshell(["sandbox", "delete", targetSandbox], { ignoreError: true });
-      },
-      fail: (message: string): never => {
-        console.error(`  ${message}`);
-        process.exit(1);
-      },
-    });
-  const hermesDashboardState = resolveHermesDashboardStateForPort(effectivePort);
+  const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding({
+    agentName: agent?.name,
+    env: process.env,
+    ensureForward: ensureAgentFixedForward,
+    note,
+    runOpenshell,
+    getApiForwardPort: () => getDashboardForwardPort(chatUiUrl),
+  });
+  const hermesDashboardState = hermesDashboardForwarding.resolveStateForPort(effectivePort);
 
   // Check whether messaging providers will be needed — this must happen before
   // the sandbox reuse decision so we can detect stale sandboxes that were created
@@ -3136,8 +3111,9 @@ async function createSandbox(
               );
             }
             const reusedPort = ensureDashboardForward(sandboxName, chatUiUrl);
-            const reusedHermesDashboardState = resolveHermesDashboardStateForPort(reusedPort);
-            createHermesDashboardForwardEnsurer(reusedHermesDashboardState)(sandboxName);
+            const reusedHermesDashboardState =
+              hermesDashboardForwarding.resolveStateForPort(reusedPort);
+            hermesDashboardForwarding.ensureForState(reusedHermesDashboardState, sandboxName);
             process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort}`;
             updateReusedSandboxMetadata(
               sandboxName,
@@ -3179,8 +3155,9 @@ async function createSandbox(
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
             upsertMessagingProviders(messagingTokenDefs);
             const reusedPort2 = ensureDashboardForward(sandboxName, chatUiUrl);
-            const reusedHermesDashboardState2 = resolveHermesDashboardStateForPort(reusedPort2);
-            createHermesDashboardForwardEnsurer(reusedHermesDashboardState2)(sandboxName);
+            const reusedHermesDashboardState2 =
+              hermesDashboardForwarding.resolveStateForPort(reusedPort2);
+            hermesDashboardForwarding.ensureForState(reusedHermesDashboardState2, sandboxName);
             process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort2}`;
             updateReusedSandboxMetadata(
               sandboxName,
@@ -3789,8 +3766,9 @@ async function createSandbox(
     chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;
   }
   process.env.CHAT_UI_URL = chatUiUrl;
-  const finalHermesDashboardState = resolveHermesDashboardStateForPort(actualDashboardPort);
-  createHermesDashboardForwardEnsurer(finalHermesDashboardState)(sandboxName, true);
+  const finalHermesDashboardState =
+    hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
+  hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
 
   // Register only after confirmed ready — prevents phantom entries
   const providerCredentialHashes: Record<string, string> = {};
