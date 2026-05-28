@@ -11,6 +11,7 @@ import {
   type SessionUpdates,
 } from "../state/onboard-session";
 import type { OnboardMachineEvent } from "./machine/events";
+import { advanceTo } from "./machine/result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./machine/runtime";
 import { OnboardRuntimeBoundary } from "./runtime-boundary";
 
@@ -90,6 +91,41 @@ describe("OnboardRuntimeBoundary", () => {
     ]);
     expect(harness.events[0]).toMatchObject({ state: "init" });
     expect(harness.events[1]).toMatchObject({ state: "init" });
+  });
+
+  it("applies state results unless legacy step helpers already advanced the machine", async () => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordStateResultWithStepCompatibility(advanceTo("preflight", { metadata: { state: "init" } }));
+    await boundary.recordStateResultWithStepCompatibility(advanceTo("preflight", { metadata: { state: "init" } }));
+    await boundary.recordStateResultWithStepCompatibility(advanceTo("gateway", { metadata: { state: "preflight" } }));
+
+    expect(harness.events.map((event) => event.type)).toEqual([
+      "state.exited",
+      "state.entered",
+      "state.exited",
+      "state.entered",
+    ]);
+    expect(harness.events[1]).toMatchObject({ state: "preflight" });
+    expect(harness.events[3]).toMatchObject({ state: "gateway" });
+  });
+
+  it("ignores stale compatible state results when legacy tests leave the machine behind", async () => {
+    const harness = createRuntimeHarness();
+    const boundary = new OnboardRuntimeBoundary({
+      toSessionUpdates: (updates) => filterSafeUpdates(updates as SessionUpdates) as SessionUpdates,
+      maybeForceE2eStepFailure: () => undefined,
+      createRuntime: harness.createRuntime,
+    });
+
+    await boundary.recordStateResultWithStepCompatibility(advanceTo("gateway", { metadata: { state: "preflight" } }));
+
+    expect(harness.events).toEqual([]);
   });
 
   it("records resume conflict diagnostics through the runtime", async () => {

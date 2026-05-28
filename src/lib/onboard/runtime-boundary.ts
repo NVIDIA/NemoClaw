@@ -40,6 +40,7 @@ export class OnboardRuntimeBoundary {
       recordRepairEvent: this.recordRepairEvent.bind(this),
       recordResumeConflict: this.recordResumeConflict.bind(this),
       recordStateResult: this.recordStateResult.bind(this),
+      recordStateResultWithStepCompatibility: this.recordStateResultWithStepCompatibility.bind(this),
       recordStepFailed: this.recordStepFailed.bind(this),
       recordPostVerifyStarted: this.recordPostVerifyStarted.bind(this),
       recordSessionComplete: this.recordSessionComplete.bind(this),
@@ -88,6 +89,20 @@ export class OnboardRuntimeBoundary {
 
   async recordStateResult(result: OnboardStateResult): Promise<Session> {
     return this.getRuntime().applyResult(result);
+  }
+
+  async recordStateResultWithStepCompatibility(result: OnboardStateResult): Promise<Session> {
+    const runtime = this.getRuntime();
+    const current = await runtime.session();
+    if (result.type !== "transition") return runtime.applyResult(result);
+
+    if (current.machine.state === result.next) return current;
+
+    const sourceState =
+      result.metadata && typeof result.metadata.state === "string" ? result.metadata.state : null;
+    if (sourceState && current.machine.state !== sourceState) return current;
+
+    return runtime.applyResult(result);
   }
 
   async recordResumeConflict(conflict: {

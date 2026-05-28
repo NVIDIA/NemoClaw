@@ -6391,6 +6391,7 @@ const recordStateSkipped = onboardRuntimeBoundary.recordStateSkipped.bind(onboar
 const recordRepairEvent = onboardRuntimeBoundary.recordRepairEvent.bind(onboardRuntimeBoundary);
 const recordResumeConflict = onboardRuntimeBoundary.recordResumeConflict.bind(onboardRuntimeBoundary);
 const recordStateResult = onboardRuntimeBoundary.recordStateResult.bind(onboardRuntimeBoundary);
+const recordStateResultWithStepCompatibility = onboardRuntimeBoundary.recordStateResultWithStepCompatibility.bind(onboardRuntimeBoundary);
 const recordPostVerifyStarted = onboardRuntimeBoundary.recordPostVerifyStarted.bind(onboardRuntimeBoundary);
 
 function skippedStepMessage(
@@ -6790,6 +6791,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       },
     });
     if (resume && _preflightDashboardPort === null) preflightDashboardPortRangeAvailability(); // #3953 — resume must mirror preflight()'s fail-fast
+    await recordStateResultWithStepCompatibility(preflightResult.stateResult);
     session = preflightResult.session;
     const {
       sandboxGpuConfig,
@@ -6862,6 +6864,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     });
+    await recordStateResultWithStepCompatibility(gatewayResult.stateResult);
     session = gatewayResult.session;
 
     // #2753: prefer requestedSandboxName over an unconfirmed session name.
@@ -6943,6 +6946,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         },
       },
     });
+    await recordStateResultWithStepCompatibility(providerInferenceResult.stateResult);
     session = providerInferenceResult.session;
     sandboxName = providerInferenceResult.sandboxName;
     const {
@@ -7019,6 +7023,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         exitProcess: (code) => process.exit(code),
       },
     });
+    await recordStateResultWithStepCompatibility(sandboxStateResult.stateResult);
     session = sandboxStateResult.session;
     sandboxName = sandboxStateResult.sandboxName;
     webSearchConfig = sandboxStateResult.webSearchConfig ?? null;
@@ -7061,6 +7066,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
     });
+    await recordStateResultWithStepCompatibility(agentSetupResult.stateResult);
     session = agentSetupResult.session;
 
     const policiesResult = await handlePoliciesState({
@@ -7097,9 +7103,11 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
       },
     });
+    await recordStateResultWithStepCompatibility(policiesResult.stateResult);
     session = policiesResult.session;
 
     const finalizationResult = await handleFinalizationState({
+
       sandboxName,
       model,
       provider,
