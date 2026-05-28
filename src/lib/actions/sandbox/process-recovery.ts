@@ -274,7 +274,9 @@ export async function probeSandboxInferenceGatewayHealth(
 function recoverSandboxProcesses(sandboxName: string): boolean {
   const agent = agentRuntime.getSessionAgent(sandboxName);
   const dashboardPort = resolveSandboxDashboardPort(sandboxName);
-  const agentScript = agentRuntime.buildRecoveryScript(agent, dashboardPort);
+  const agentScript = agentRuntime.buildRecoveryScript(agent, dashboardPort, {
+    hermesDashboard: getHermesDashboardRecoveryConfig(sandboxName),
+  });
   const hasRecoveryMarker = (result: SandboxCommandResult | null) =>
     !!(
       result &&
@@ -388,18 +390,41 @@ function ensureSandboxPortForwardForPort(sandboxName: string, port: number): boo
   return isSandboxPortForwardHealthy(sandboxName, port) === true;
 }
 
-function getHermesDashboardPort(sandboxName: string): number | null {
+function getHermesDashboardRecoveryConfig(
+  sandboxName: string,
+): agentRuntime.HermesDashboardRecoveryConfig | null {
   const sandbox = registry.getSandbox(sandboxName);
   if (sandbox?.agent !== "hermes" || sandbox.hermesDashboardEnabled !== true) return null;
-  return isValidPort(sandbox.hermesDashboardPort) ? sandbox.hermesDashboardPort : null;
+  if (!isValidPort(sandbox.hermesDashboardPort)) return null;
+  if (!isValidPort(sandbox.hermesDashboardInternalPort)) return null;
+  return {
+    publicPort: sandbox.hermesDashboardPort,
+    internalPort: sandbox.hermesDashboardInternalPort,
+    tuiEnabled: sandbox.hermesDashboardTui === true,
+  };
 }
 
 function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean | null {
-  const dashboardPort = getHermesDashboardPort(sandboxName);
-  if (dashboardPort === null) return null;
-  const forwardHealth = isSandboxPortForwardHealthy(sandboxName, dashboardPort);
+  const dashboard = getHermesDashboardRecoveryConfig(sandboxName);
+  if (dashboard === null) return null;
+  const forwardHealth = isSandboxPortForwardHealthy(sandboxName, dashboard.publicPort);
   if (forwardHealth === true || forwardHealth === "occupied") return false;
-  return ensureSandboxPortForwardForPort(sandboxName, dashboardPort);
+  return ensureSandboxPortForwardForPort(sandboxName, dashboard.publicPort);
+}
+
+function recoverHermesDashboardProcessIfEnabled(sandboxName: string): boolean | null {
+  const dashboard = getHermesDashboardRecoveryConfig(sandboxName);
+  if (dashboard === null) return null;
+  const result = executeSandboxCommand(
+    sandboxName,
+    agentRuntime.buildHermesDashboardProcessRecoveryScript(dashboard),
+  );
+  return !!(
+    result &&
+    result.status === 0 &&
+    (result.stdout.includes("DASHBOARD_PID=") ||
+      result.stdout.includes("DASHBOARD_ALREADY_RUNNING"))
+  );
 }
 
 export function classifySandboxForwardHealth(
@@ -478,6 +503,7 @@ export function checkAndRecoverSandboxProcesses(
     // Gateway is alive but the host-side forward can still be dead or
     // owned by another sandbox. Probe and re-establish only when
     // necessary so the live-and-healthy path stays a no-op.
+    const dashboardProcessRecovered = recoverHermesDashboardProcessIfEnabled(sandboxName);
     const forwardHealthy = isSandboxForwardHealthy(sandboxName);
     if (forwardHealthy === false) {
       if (!quiet) {
@@ -501,7 +527,10 @@ export function checkAndRecoverSandboxProcesses(
         checked: true,
         wasRunning: true,
         recovered: false,
-        forwardRecovered: forwardRecovered || dashboardForwardRecovered === true,
+        forwardRecovered:
+          forwardRecovered ||
+          dashboardForwardRecovered === true ||
+          dashboardProcessRecovered === true,
       };
     }
     if (forwardHealthy === "occupied") {
@@ -517,7 +546,8 @@ export function checkAndRecoverSandboxProcesses(
       checked: true,
       wasRunning: true,
       recovered: false,
-      forwardRecovered: dashboardForwardRecovered === true,
+      forwardRecovered:
+        dashboardForwardRecovered === true || dashboardProcessRecovered === true,
     };
   }
 

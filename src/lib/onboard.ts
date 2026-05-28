@@ -218,8 +218,9 @@ const {
 const onboardProviders = require("./onboard/providers");
 const { ensureResumeProviderReady } = require("./onboard/resume-provider-shim");
 const hermesProviderAuth = require("./hermes-provider-auth");
-const hermesDashboard: typeof import("./hermes-dashboard") = require("./hermes-dashboard");
+const onboardHermesDashboard: typeof import("./onboard/hermes-dashboard") = require("./onboard/hermes-dashboard");
 const hermesAuth: typeof import("./onboard/hermes-auth") = require("./onboard/hermes-auth");
+const { warnIfLandlockUnsupported } = require("./onboard/landlock-warning");
 const {
   HERMES_AUTH_METHOD_API_KEY,
   HERMES_AUTH_METHOD_OAUTH,
@@ -231,8 +232,6 @@ const {
 } = hermesAuth;
 
 type HermesAuthMethod = import("./onboard/hermes-auth").HermesAuthMethod;
-type HermesDashboardConfig = import("./hermes-dashboard").HermesDashboardConfig;
-
 function getHermesToolGatewayBroker(): any {
   return require("./hermes-tool-gateway-broker");
 }
@@ -2818,60 +2817,27 @@ async function createSandbox(
   } else {
     chatUiUrl = `http://127.0.0.1:${effectivePort}`;
   }
-  let hermesDashboardConfig: HermesDashboardConfig | null = null;
-  if (agent?.name === "hermes") {
-    try {
-      hermesDashboardConfig = hermesDashboard.readHermesDashboardConfig(process.env);
-    } catch (error) {
-      console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+  const hermesDashboardState = onboardHermesDashboard.resolveHermesDashboardOnboardState({
+    agentName: agent?.name,
+    effectivePort,
+    env: process.env,
+    fail: (message: string): never => {
+      console.error(`  ${message}`);
       process.exit(1);
-    }
-  }
-  const hermesDashboardEnabled = hermesDashboardConfig?.enabled === true;
-  if (hermesDashboardConfig && hermesDashboardEnabled) {
-    if (hermesDashboardConfig.port === effectivePort) {
-      console.error(
-        `  ${hermesDashboard.HERMES_DASHBOARD_PORT_ENV} must not equal the Hermes API port (${effectivePort}).`,
-      );
-      process.exit(1);
-    }
-    if (hermesDashboardConfig.port === hermesDashboardConfig.internalPort) {
-      console.error(
-        `  ${hermesDashboard.HERMES_DASHBOARD_PORT_ENV} must not equal ${hermesDashboard.HERMES_DASHBOARD_INTERNAL_PORT_ENV}.`,
-      );
-      process.exit(1);
-    }
-  }
-  const hermesDashboardRegistryFields = (): Partial<SandboxEntry> => {
-    if (!hermesDashboardConfig || !hermesDashboardEnabled) {
-      return {
-        hermesDashboardEnabled: undefined,
-        hermesDashboardPort: undefined,
-        hermesDashboardInternalPort: undefined,
-        hermesDashboardTui: undefined,
-      };
-    }
-    return {
-      hermesDashboardEnabled: true,
-      hermesDashboardPort: hermesDashboardConfig.port,
-      hermesDashboardInternalPort: hermesDashboardConfig.internalPort,
-      hermesDashboardTui: hermesDashboardConfig.tuiEnabled ? true : undefined,
-    };
-  };
-  const ensureHermesDashboardForwardIfEnabled = (targetSandbox: string): void => {
-    if (!hermesDashboardConfig || !hermesDashboardEnabled) return;
-    if (
-      ensureAgentFixedForward(
-        targetSandbox,
-        hermesDashboardConfig.port,
-        "Hermes dashboard",
-      )
-    ) {
-      note(
-        `  ✓ Hermes dashboard forwarded at http://127.0.0.1:${hermesDashboardConfig.port}/`,
-      );
-    }
-  };
+    },
+  });
+  const ensureHermesDashboardForwardIfEnabled =
+    onboardHermesDashboard.createHermesDashboardForwardEnsurer({
+      state: hermesDashboardState,
+      ensureForward: ensureAgentFixedForward,
+      note,
+      rollbackSandbox: (targetSandbox) =>
+        runOpenshell(["sandbox", "delete", targetSandbox], { ignoreError: true }),
+      fail: (message: string): never => {
+        console.error(`  ${message}`);
+        process.exit(1);
+      },
+    });
 
   // Check whether messaging providers will be needed — this must happen before
   // the sandbox reuse decision so we can detect stale sandboxes that were created
@@ -3093,17 +3059,11 @@ async function createSandbox(
       existingSandboxEntry?.hermesToolGateways,
     );
     const hermesToolGatewayDrift = !stringSetsEqual(recordedHermesToolGateways, hermesToolGateways);
-    const recordedHermesDashboardEnabled = existingSandboxEntry?.hermesDashboardEnabled === true;
-    const hermesDashboardDrift =
-      agent?.name === "hermes" &&
-      (recordedHermesDashboardEnabled !== hermesDashboardEnabled ||
-        (hermesDashboardEnabled &&
-          hermesDashboardConfig !== null &&
-          (existingSandboxEntry?.hermesDashboardPort !== hermesDashboardConfig.port ||
-            existingSandboxEntry?.hermesDashboardInternalPort !==
-              hermesDashboardConfig.internalPort ||
-            (existingSandboxEntry?.hermesDashboardTui === true) !==
-              hermesDashboardConfig.tuiEnabled)));
+    const hermesDashboardDrift = onboardHermesDashboard.hasHermesDashboardDrift({
+      agentName: agent?.name,
+      existing: existingSandboxEntry,
+      state: hermesDashboardState,
+    });
 
     // Detect whether any messaging credential has been rotated since the
     // sandbox was created. Provider credentials are resolved once at sandbox
@@ -3599,24 +3559,11 @@ async function createSandbox(
   // 18789 and the gateway listens on the wrong port. (#2267, #1925)
   const effectiveDashboardPort = getDashboardForwardPort(chatUiUrl);
   envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
-  if (hermesDashboardConfig && hermesDashboardEnabled) {
-    envArgs.push(formatEnvAssignment(hermesDashboard.HERMES_DASHBOARD_ENABLE_ENV, "1"));
-    envArgs.push(
-      formatEnvAssignment(
-        hermesDashboard.HERMES_DASHBOARD_PORT_ENV,
-        String(hermesDashboardConfig.port),
-      ),
-    );
-    envArgs.push(
-      formatEnvAssignment(
-        hermesDashboard.HERMES_DASHBOARD_INTERNAL_PORT_ENV,
-        String(hermesDashboardConfig.internalPort),
-      ),
-    );
-    if (hermesDashboardConfig.tuiEnabled) {
-      envArgs.push(formatEnvAssignment(hermesDashboard.HERMES_DASHBOARD_TUI_ENV, "1"));
-    }
-  }
+  onboardHermesDashboard.appendHermesDashboardEnvArgs(
+    envArgs,
+    hermesDashboardState,
+    formatEnvAssignment,
+  );
   // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to the runtime
   // sandbox container. patchStagedDockerfile() already substitutes them
   // into the build-time Dockerfile ARG/ENV, but `openshell sandbox create
@@ -3813,7 +3760,7 @@ async function createSandbox(
   const actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
     rollbackSandboxOnFailure: true,
   });
-  ensureHermesDashboardForwardIfEnabled(sandboxName);
+  ensureHermesDashboardForwardIfEnabled(sandboxName, true);
   // Update chatUiUrl and CHAT_UI_URL env so printDashboard / getDashboardAccessInfo
   // see the final port (they re-read process.env.CHAT_UI_URL independently).
   if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
@@ -3859,7 +3806,7 @@ async function createSandbox(
     messagingChannelConfig: messagingChannelConfig || undefined,
     disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,
     hermesToolGateways: hermesToolGateways.length > 0 ? [...hermesToolGateways] : undefined,
-    ...hermesDashboardRegistryFields(),
+    ...onboardHermesDashboard.getHermesDashboardRegistryFields(hermesDashboardState),
     dashboardPort: actualDashboardPort,
   });
   registry.setDefault(sandboxName);
@@ -3905,39 +3852,7 @@ async function createSandbox(
 
   console.log(`  ✓ Sandbox '${sandboxName}' created`);
 
-  try {
-    if (process.platform === "darwin") {
-      const vmKernel = dockerInfoFormat("{{.KernelVersion}}", {
-        ignoreError: true,
-      }).trim();
-      if (vmKernel) {
-        const parts = vmKernel.split(".");
-        const major = parseInt(parts[0], 10);
-        const minor = parseInt(parts[1], 10);
-        if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
-          console.warn(
-            `  ⚠ Landlock: Docker VM kernel ${vmKernel} does not support Landlock (requires ≥5.13).`,
-          );
-          console.warn(
-            "    Sandbox filesystem restrictions will silently degrade (best_effort mode).",
-          );
-        }
-      }
-    } else if (process.platform === "linux") {
-      const uname = runCapture(["uname", "-r"], { ignoreError: true }).trim();
-      if (uname) {
-        const parts = uname.split(".");
-        const major = parseInt(parts[0], 10);
-        const minor = parseInt(parts[1], 10);
-        if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
-          console.warn(`  ⚠ Landlock: Kernel ${uname} does not support Landlock (requires ≥5.13).`);
-          console.warn(
-            "    Sandbox filesystem restrictions will silently degrade (best_effort mode).",
-          );
-        }
-      }
-    }
-  } catch {}
+  warnIfLandlockUnsupported({ dockerInfoFormat, runCapture });
 
   return sandboxName;
 }
@@ -3945,13 +3860,6 @@ async function createSandbox(
 // ── Step 3: Inference selection ──────────────────────────────────
 
 type ProviderChoice = { key: string; label: string };
-
-function providerNameToOptionKey(
-  name: string | null | undefined,
-  opts: { hasNimContainer?: boolean } = {},
-): string | null {
-  return providerRecovery.providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, name, opts);
-}
 
 const { readLiveInference, readRecordedProvider, readRecordedNimContainer, readRecordedModel } =
   providerRecovery.createProviderRecoveryHelpers({
@@ -4247,7 +4155,7 @@ async function setupNim(
         if (!providerKey) {
           const recordedProvider = readRecordedProvider(sandboxName);
           const hasNimContainer = !!readRecordedNimContainer(sandboxName);
-          const recoveredKey = providerNameToOptionKey(recordedProvider, { hasNimContainer });
+          const recoveredKey = providerRecovery.providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, recordedProvider, { hasNimContainer });
           if (recoveredKey) {
             // Refuse to silently switch providers behind the user's back; if
             // the previously-recorded one is gone, surface the recorded value
@@ -6403,16 +6311,10 @@ async function presetsCheckboxSelector(
   });
 }
 
-function computeSetupPresetSuggestions(
+const computeSetupPresetSuggestions = (
   tierName: string,
   options: SetupPresetSuggestionOptions = {},
-): string[] {
-  return computeSetupPresetSuggestionsImpl(
-    { policies, tiers, localInferenceProviders: LOCAL_INFERENCE_PROVIDERS },
-    tierName,
-    options,
-  );
-}
+): string[] => computeSetupPresetSuggestionsImpl({ policies, tiers, localInferenceProviders: LOCAL_INFERENCE_PROVIDERS }, tierName, options);
 
 async function setupPoliciesWithSelection(
   sandboxName: string,
@@ -7349,7 +7251,7 @@ module.exports = {
   MESSAGING_CHANNELS,
   selectOnboardAgent,
   setupNim,
-  providerNameToOptionKey,
+  providerNameToOptionKey: (name: string | null | undefined, opts: { hasNimContainer?: boolean } = {}) => providerRecovery.providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, name, opts),
   readRecordedProvider,
   readRecordedModel,
   readRecordedNimContainer,

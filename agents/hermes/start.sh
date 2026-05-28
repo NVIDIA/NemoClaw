@@ -422,6 +422,7 @@ build_hermes_dashboard_args() {
     127.0.0.1
     --port
     "$HERMES_DASHBOARD_INTERNAL_PORT"
+    --skip-build
     --no-open
   )
   if hermes_dashboard_tui_enabled; then
