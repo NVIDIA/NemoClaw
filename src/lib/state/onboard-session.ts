@@ -1005,7 +1005,20 @@ export function updateSession(mutator: (session: Session) => Session | void): Se
   return saveSession(next);
 }
 
-export function markStepStarted(stepName: string): Session {
+export interface StepMutationOptions {
+  /**
+   * Transitional FSM migration escape hatch. The legacy step helpers own the
+   * durable machine snapshot by default; new runtime-driven paths can set this
+   * false so step status is recorded without advancing the machine.
+   */
+  updateMachine?: boolean;
+}
+
+function shouldUpdateMachine(options: StepMutationOptions | undefined): boolean {
+  return options?.updateMachine !== false;
+}
+
+export function markStepStarted(stepName: string, options: StepMutationOptions = {}): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1019,7 +1032,7 @@ export function markStepStarted(stepName: string): Session {
     session.failure = null;
     session.status = "in_progress";
     const state = machineStateFromOnboardSessionStep(stepName);
-    if (state) transitionMachineSnapshot(session, state, now);
+    if (state && shouldUpdateMachine(options)) transitionMachineSnapshot(session, state, now);
     shouldEmit = true;
     return session;
   });
@@ -1031,7 +1044,11 @@ export function markStepStarted(stepName: string): Session {
   return updatedSession;
 }
 
-export function markStepComplete(stepName: string, updates: SessionUpdates = {}): Session {
+export function markStepComplete(
+  stepName: string,
+  updates: SessionUpdates = {},
+  options: StepMutationOptions = {},
+): Session {
   const safeUpdates = filterSafeUpdates(updates);
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
@@ -1045,7 +1062,7 @@ export function markStepComplete(stepName: string, updates: SessionUpdates = {})
     session.failure = null;
     Object.assign(session, safeUpdates);
     const nextState = nextMachineStateAfterCompletedStep(stepName, session);
-    if (nextState) transitionMachineSnapshot(session, nextState, now);
+    if (nextState && shouldUpdateMachine(options)) transitionMachineSnapshot(session, nextState, now);
     shouldEmit = true;
     return session;
   });
@@ -1088,7 +1105,11 @@ export function markStepSkipped(stepName: string): Session {
   return updatedSession;
 }
 
-export function markStepFailed(stepName: string, message: string | null = null): Session {
+export function markStepFailed(
+  stepName: string,
+  message: string | null = null,
+  options: StepMutationOptions = {},
+): Session {
   let shouldEmit = false;
   const updatedSession = updateSession((session) => {
     const step = session.steps[stepName];
@@ -1103,7 +1124,7 @@ export function markStepFailed(stepName: string, message: string | null = null):
       recordedAt: now,
     });
     session.status = "failed";
-    transitionMachineSnapshot(session, "failed", now);
+    if (shouldUpdateMachine(options)) transitionMachineSnapshot(session, "failed", now);
     shouldEmit = true;
     return session;
   });
