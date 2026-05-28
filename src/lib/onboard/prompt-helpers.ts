@@ -49,7 +49,12 @@ export async function promptOrDefault(
     deps.note(`  [non-interactive] ${question.trim()} → ${result}`);
     return result;
   }
-  return deps.prompt(question);
+  // The prompt label advertises the default in brackets (e.g. `Choose [6]:`),
+  // so an empty/whitespace reply must resolve to that default. Without this,
+  // every interactive caller had to re-implement the empty-reply fallback,
+  // and any that forgot hard-rejected the displayed default (#4387).
+  const reply = await deps.prompt(question);
+  return reply.trim() === "" ? defaultValue : reply;
 }
 
 // Yes/no prompt with a typed default. The `[Y/n]` / `[y/N]` indicator and
