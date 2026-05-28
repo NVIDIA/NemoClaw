@@ -83,8 +83,8 @@ Use the provider variables from [Inference Options](/inference/inference-options
 
 ## Connect to Hermes
 
-When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle commands, and Hermes API endpoint.
-Hermes exposes an OpenAI-compatible API on port `8642`, not a browser dashboard.
+When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle commands, and Hermes dashboard URL.
+NemoClaw also forwards the Hermes OpenAI-compatible API on port `8642` for local clients.
 
 ```text
 ──────────────────────────────────────────────────
@@ -95,9 +95,9 @@ Model:    nvidia/nemotron-3-super-120b-a12b (NVIDIA Endpoints)
 
 Access
 
-  Hermes Agent OpenAI-compatible API
-  Port 8642 must be forwarded before connecting.
-  http://127.0.0.1:8642/v1
+  Hermes Agent Dashboard
+  Port 18789 must be forwarded before opening this URL.
+  http://127.0.0.1:18789/
 
 Terminal:
   nemohermes my-hermes connect
@@ -126,9 +126,21 @@ To chat with the agent from a terminal, follow these steps:
    $ hermes
    ```
 
+## Open the Dashboard
+
+The onboard flow starts the dashboard port forward automatically.
+Open the dashboard from the host:
+
+```console
+$ nemohermes my-hermes dashboard-url --quiet
+http://127.0.0.1:18789/
+```
+
+Hermes handles dashboard sessions itself, so this URL does not include an OpenClaw `#token=` fragment.
+
 ## Check the API Endpoint
 
-The onboard flow starts the port forward automatically.
+The onboard flow also starts the API port forward automatically.
 Check the health endpoint from the host to confirm that the Hermes API is reachable.
 
 ```console

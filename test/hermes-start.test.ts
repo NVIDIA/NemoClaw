@@ -239,6 +239,7 @@ function runRuntimeShellEnvBootstrap() {
       `_NO_PROXY_VAL=${shellQuote("localhost,127.0.0.1,::1,10.200.0.1")}`,
       `HERMES_DIR=${shellQuote(hermesHome)}`,
       `SSL_CERT_FILE=${shellQuote(caFile)}`,
+      "HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist",
       "CURL_CA_BUNDLE=",
       "REQUESTS_CA_BUNDLE=",
       "GIT_SSL_CAINFO=",
@@ -287,6 +288,9 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     expect(run.envFileMode).toBe("444");
     expect(run.envFileContent).toContain(`export HERMES_HOME="${run.hermesHome}"`);
     expect(run.envFileContent).toContain(`export SSL_CERT_FILE=${escapedCaFile}`);
+    expect(run.envFileContent).toContain(
+      "export HERMES_WEB_DIST=/opt/hermes/hermes_cli/web_dist",
+    );
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard begin");
     expect(run.envFileContent).toContain("hermes() {");
     expect(run.envFileContent).toContain("# nemoclaw-configure-guard end");
@@ -299,6 +303,20 @@ describe("agents/hermes/start.sh runtime shell env", () => {
     );
   });
 
+});
+
+describe("agents/hermes/start.sh dashboard launch", () => {
+  it("passes --tui as a global Hermes option for older dashboard parsers", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+    expect(src).toContain('nohup "$HERMES" --tui dashboard --host 127.0.0.1');
+    expect(src).toContain(
+      'sh "$HERMES" --tui dashboard --host 127.0.0.1 --port "$DASHBOARD_INTERNAL_PORT"',
+    );
+    expect(src).not.toContain('"$HERMES" dashboard --host 127.0.0.1');
+    expect(src).not.toContain('sh "$HERMES" dashboard --host 127.0.0.1');
+    expect(src).not.toContain("--no-open --tui");
+  });
 });
 
 describe("agents/hermes/start.sh gateway runtime cleanup", () => {

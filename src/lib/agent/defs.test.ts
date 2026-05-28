@@ -72,6 +72,15 @@ describe("agent definitions", () => {
     });
     expect(hermes.inferenceProviderOptions).toEqual(["hermesProvider"]);
     expect(hermes.healthProbe.url).toBe("http://localhost:8642/health");
+    expect(hermes.forwardPort).toBe(18789);
+    expect(hermes.forward_ports).toEqual([18789, 8642]);
+    expect(hermes.dashboard).toEqual({
+      kind: "ui",
+      label: "Dashboard",
+      path: "/",
+      healthPath: "/api/status",
+      auth: "session",
+    });
     expect(hermes.messagingPlatforms).toEqual([
       "telegram",
       "discord",

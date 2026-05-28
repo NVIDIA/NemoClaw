@@ -46,7 +46,10 @@ function frontmatterFor(sourcePath, metadata, body) {
   const sidebarTitle = metadata.title?.nav ?? metadata["sidebar-title"];
   const description = metadata.description?.main ?? metadata.description ?? "";
   const descriptionAgent =
-    metadata.description?.agent ?? metadata["description-agent"] ?? metadata.description_agent ?? "";
+    metadata.description?.agent ??
+    metadata["description-agent"] ??
+    metadata.description_agent ??
+    "";
   const keywords = metadata.keywords;
   const contentType = metadata.content?.type ?? "";
   const skillPriority = metadata.skill?.priority ?? metadata.skill_priority ?? "";

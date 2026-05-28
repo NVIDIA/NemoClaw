@@ -536,7 +536,7 @@ export function printDashboardUi(
   },
 ): void {
   const info = getAgentDashboardInfo(agent);
-  const { kind, label, path } = agent.dashboard;
+  const { auth, kind, label, path } = agent.dashboard;
   const cliName = getAgentBranding(agent.name).cli;
 
   if (kind === "api") {
@@ -548,6 +548,15 @@ export function printDashboardUi(
       const url = path && path !== "/" ? `${withoutHash}${path}` : `${withoutHash}/`;
       if (seen.has(url)) continue;
       seen.add(url);
+      console.log(`  ${dashboardUrlForDisplay(url)}`);
+    }
+    return;
+  }
+
+  if (auth !== "url_token") {
+    console.log(`  ${info.displayName} ${label}`);
+    console.log(`  Port ${info.port} must be forwarded before opening this URL.`);
+    for (const url of deps.buildControlUiUrls(null, info.port)) {
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
     return;

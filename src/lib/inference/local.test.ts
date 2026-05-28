@@ -654,6 +654,7 @@ describe("local inference helpers", () => {
         null,
         { type: "nvidia", totalMemoryMB: 131_072, availableMemoryMB: 131_072 },
         log,
+        () => "",
       ),
     ).toBe(QWEN3_6_OLLAMA_MODEL);
   });
@@ -686,6 +687,7 @@ describe("local inference helpers", () => {
         null,
         { type: "nvidia", totalMemoryMB: 16_384, availableMemoryMB: 4_000 },
         log,
+        () => "",
       ),
     ).toBe("qwen2.5:7b");
     expect(messages.some((m) => m.includes("No known Ollama bootstrap model fits"))).toBe(true);

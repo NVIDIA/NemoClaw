@@ -2,9 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 /**
- * `nemoclaw <name> dashboard-url` -- print the authenticated OpenClaw
- * dashboard URL. This keeps the first-run UX from teaching users to handle
- * the raw gateway token directly.
+ * `nemoclaw <name> dashboard-url` -- print the browser-facing dashboard URL.
+ * OpenClaw sandboxes still receive an authenticated token fragment, while
+ * session-auth agent dashboards can return the plain URL.
  */
 
 import { DASHBOARD_PORT } from "./core/ports";
@@ -67,6 +67,10 @@ export function buildDashboardUrl(
   return `${normalizedBaseUrl}#token=${encodeURIComponent(token)}`;
 }
 
+function buildPlainDashboardUrl(port = DASHBOARD_PORT, baseUrl = `http://127.0.0.1:${port}/`): string {
+  return baseUrl.trim().endsWith("/") ? baseUrl.trim() : `${baseUrl.trim()}/`;
+}
+
 export function runDashboardUrlCommand(
   sandboxName: string,
   options: DashboardUrlCommandOptions,
@@ -86,9 +90,16 @@ export function runDashboardUrlCommand(
 
   const agent = sandbox?.agent ?? null;
   if (agent && agent !== "openclaw") {
-    dashboardUrlFail(
-      `  dashboard-url is not applicable for sandbox '${sandboxName}': it uses the '${agent}' agent, which does not expose an OpenClaw dashboard URL.`,
-    );
+    const port = resolveDashboardPort(sandbox);
+    const accessUrl = deps.getAccessUrl?.(port) ?? null;
+    const url = buildPlainDashboardUrl(port, accessUrl ?? undefined);
+    if (options.quiet) {
+      log(url);
+      return;
+    }
+    log("  Dashboard URL:");
+    log(`  ${url}`);
+    return;
   }
 
   let token: string | null;

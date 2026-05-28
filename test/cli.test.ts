@@ -2824,7 +2824,7 @@ describe("CLI dispatch", () => {
     expect(openshellOutput).toContain(
       process.platform === "linux" ? "gateway remove nemoclaw" : "gateway destroy -g nemoclaw",
     );
-  });
+  }, 10_000);
 
   it("keeps the gateway runtime when other sandboxes still exist", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-destroy-shared-"));

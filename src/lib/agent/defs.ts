@@ -45,6 +45,8 @@ export interface AgentDashboard {
   kind: AgentDashboardKind;
   label: string;
   path: string;
+  healthPath: string;
+  auth: "url_token" | "session" | "none";
 }
 
 export interface AgentInference {
@@ -387,11 +389,26 @@ export function loadAgent(name: string): AgentDefinition {
       const defaultLabel = kind === "api" ? "API" : "UI";
       const normalizedLabel = typeof d.label === "string" ? d.label.trim() : "";
       const rawPath = typeof d.path === "string" ? d.path.trim() : "";
+      const rawHealthPath = typeof d.health_path === "string" ? d.health_path.trim() : "";
+      const rawAuth = typeof d.auth === "string" ? d.auth.trim() : "";
       const path = rawPath ? (rawPath.startsWith("/") ? rawPath : `/${rawPath}`) : "/";
+      const healthPath = rawHealthPath
+        ? rawHealthPath.startsWith("/")
+          ? rawHealthPath
+          : `/${rawHealthPath}`
+        : "/health";
+      const auth =
+        rawAuth === "session" || rawAuth === "none"
+          ? rawAuth
+          : kind === "api"
+            ? "none"
+            : "url_token";
       return {
         kind,
         label: normalizedLabel || defaultLabel,
         path,
+        healthPath,
+        auth,
       };
     },
 

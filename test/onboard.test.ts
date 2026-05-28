@@ -2213,7 +2213,7 @@ agentOnboard.createAgentSandbox = () => {
       "ARG NEMOCLAW_MODEL=nvidia/nemotron-3-super-120b-a12b",
       "ARG NEMOCLAW_PROVIDER_KEY=custom",
       "ARG NEMOCLAW_PRIMARY_MODEL_REF=nvidia/nemotron-3-super-120b-a12b",
-      "ARG CHAT_UI_URL=http://127.0.0.1:8642",
+      "ARG CHAT_UI_URL=http://127.0.0.1:18789",
       "ARG NEMOCLAW_INFERENCE_BASE_URL=https://inference.local/v1",
       "ARG NEMOCLAW_INFERENCE_API=openai-completions",
       "ARG NEMOCLAW_INFERENCE_COMPAT_B64=e30=",
@@ -2247,7 +2247,7 @@ runner.runCapture = (command) => {
     const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command);
     if (sandboxExecCurl !== null) return sandboxExecCurl;
   }
-  if (_n(command).includes("forward list")) return "hermes-sandbox 127.0.0.1 8642 12345 running";
+  if (_n(command).includes("forward list")) return "hermes-sandbox 127.0.0.1 18789 12345 running\nhermes-sandbox 127.0.0.1 8642 12346 running";
   return "";
 };
 registry.registerSandbox = () => true;
@@ -2279,7 +2279,10 @@ const { createSandbox } = require(${onboardPath});
   const agent = {
     name: "hermes",
     displayName: "Hermes Agent",
-    forwardPort: 8642,
+    forwardPort: 18789,
+    forward_ports: [18789, 8642],
+    healthProbe: { url: "http://127.0.0.1:8642/health", port: 8642, timeout_seconds: 90 },
+    dashboard: { kind: "ui", label: "Dashboard", path: "/", healthPath: "/api/status", auth: "session" },
     expectedVersion: "2026.4.23",
     policyAdditionsPath: null,
   };

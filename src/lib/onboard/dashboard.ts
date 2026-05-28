@@ -67,11 +67,15 @@ export interface OnboardDashboardHelpers {
   ensureDashboardForward(
     sandboxName: string,
     chatUiUrl?: string,
-    options?: { rollbackSandboxOnFailure?: boolean },
+    options?: {
+      rollbackSandboxOnFailure?: boolean;
+      preserveSandboxPorts?: Array<number | string>;
+      allowPortReallocation?: boolean;
+    },
   ): number;
   ensureAgentDashboardForward(
     sandboxName: string,
-    agent: { forwardPort?: number | null },
+    agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
   getDashboardForwardPort(
@@ -218,17 +222,31 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   function ensureDashboardForward(
     sandboxName: string,
     chatUiUrl = `http://127.0.0.1:${CONTROL_UI_PORT}`,
-    options: { rollbackSandboxOnFailure?: boolean } = {},
+    options: {
+      rollbackSandboxOnFailure?: boolean;
+      preserveSandboxPorts?: Array<number | string>;
+      allowPortReallocation?: boolean;
+    } = {},
   ): number {
-    const { rollbackSandboxOnFailure = false } = options;
+    const {
+      rollbackSandboxOnFailure = false,
+      preserveSandboxPorts = [],
+      allowPortReallocation = true,
+    } = options;
+    const preservedPorts = new Set(preserveSandboxPorts.map((port) => String(port)));
     const preferredPort = Number(getDashboardForwardPort(chatUiUrl));
-    const stopForwardForSandbox = (port: string | number) =>
-      bestEffortForwardStopForSandbox(
+    const stoppedPorts = new Set<string>();
+    const stopForwardForSandbox = (port: string | number) => {
+      const portKey = String(port);
+      if (stoppedPorts.has(portKey)) return null;
+      stoppedPorts.add(portKey);
+      return bestEffortForwardStopForSandbox(
         deps.runOpenshell,
         (args, opts) => (deps.runCaptureOpenshell(args, opts) ?? "") as string,
         port,
         sandboxName,
       );
+    };
     let existingForwards = deps.runCaptureOpenshell(["forward", "list"], { ignoreError: true });
     const preferredEntry = findForwardEntry(existingForwards, String(preferredPort));
     if (
@@ -247,6 +265,11 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     }
 
     if (actualPort !== preferredPort) {
+      if (!allowPortReallocation) {
+        throw new Error(
+          `Port ${preferredPort} is not available for '${sandboxName}' and cannot be reallocated.`,
+        );
+      }
       if (rollbackSandboxOnFailure) {
         const err = new Error(
           `Dashboard port ${preferredPort} became host-bound during sandbox build; ` +
@@ -261,7 +284,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
     const occupied = getOccupiedPorts(existingForwards);
     for (const [port, owner] of occupied.entries()) {
-      if (owner === sandboxName && Number(port) !== actualPort) {
+      if (owner === sandboxName && Number(port) !== actualPort && !preservedPorts.has(port)) {
         stopForwardForSandbox(port);
       }
     }
@@ -313,12 +336,33 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
 
   function ensureAgentDashboardForward(
     sandboxName: string,
-    agent: { forwardPort?: number | null },
+    agent: { forwardPort?: number | null; forward_ports?: number[] | null },
   ): number {
     const agentDashboardPort = agent.forwardPort ?? CONTROL_UI_PORT;
     const agentDashboardUrl = `http://127.0.0.1:${agentDashboardPort}`;
-    const actualAgentDashboardPort = ensureDashboardForward(sandboxName, agentDashboardUrl);
+    const declaredPorts = Array.isArray(agent.forward_ports) ? agent.forward_ports : [];
+    const preservePorts = [...new Set([agentDashboardPort, ...declaredPorts])]
+      .filter((port) => Number.isInteger(port) && port >= 1 && port <= 65535);
+    const actualAgentDashboardPort = ensureDashboardForward(sandboxName, agentDashboardUrl, {
+      preserveSandboxPorts: preservePorts,
+    });
     process.env.CHAT_UI_URL = `http://127.0.0.1:${actualAgentDashboardPort}`;
+    const portsToPreserve = [...new Set([...preservePorts, actualAgentDashboardPort])];
+    for (const port of preservePorts) {
+      if (port === agentDashboardPort) continue;
+      try {
+        ensureDashboardForward(sandboxName, `http://127.0.0.1:${port}`, {
+          preserveSandboxPorts: portsToPreserve,
+          allowPortReallocation: false,
+        });
+      } catch (err) {
+        console.warn(
+          `  ! Could not start optional agent port forward ${port}: ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+      }
+    }
     return actualAgentDashboardPort;
   }
 
@@ -361,7 +405,8 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     const showNim = shouldShowNimLine(nimContainer, nimStat.running);
     const nimLabel = nimStat.running ? "running" : "not running";
     const providerLabel = deps.getProviderLabel(provider);
-    const token = fetchGatewayAuthTokenFromSandbox(sandboxName);
+    const needsOpenClawToken = !agent || agent.dashboard.auth === "url_token";
+    const token = needsOpenClawToken ? fetchGatewayAuthTokenFromSandbox(sandboxName) : null;
     const chatUiUrl = process.env.CHAT_UI_URL || `http://127.0.0.1:${CONTROL_UI_PORT}`;
     const chain = buildChain({
       chatUiUrl,

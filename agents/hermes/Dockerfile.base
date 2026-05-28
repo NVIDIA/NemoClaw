@@ -175,10 +175,14 @@ RUN set -eu; \
     done; \
     uv sync --frozen --no-dev "$@" --no-cache \
     && npm ci --prefer-offline --no-audit --no-fund \
+    && npm ci --prefix web --prefer-offline --no-audit --no-fund \
+    && npm run build --prefix web \
+    && rm -rf web/node_modules \
     && rm -rf /tmp/camoufox-* \
     && ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
     && ln -sf /opt/hermes/.venv/bin/hermes-acp /usr/local/bin/hermes-acp
 
 ENV PATH="/usr/local/bin:/opt/hermes/.venv/bin:${PATH}"
+ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"
 RUN /usr/local/bin/hermes --version

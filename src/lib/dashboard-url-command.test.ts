@@ -92,25 +92,24 @@ describe("dashboard-url command helpers", () => {
     expect(sinks.err.join("\n")).toContain("Treat this URL like a password");
   });
 
-  it("fails for non-OpenClaw agents without fetching a token", () => {
+  it("prints a plain dashboard URL for non-OpenClaw agents without fetching a token", () => {
     const sinks = makeSinks();
     const fetchToken = vi.fn(() => "should-not-fetch");
 
-    expect(() =>
-      runDashboardUrlCommand(
-        "hermes",
-        { quiet: true },
-        {
-          fetchToken,
-          getSandbox: () => ({ agent: "hermes", dashboardPort: 8642 }),
-          log: sinks.log,
-          error: sinks.error,
-        },
-      ),
-    ).toThrow(DashboardUrlCommandError);
+    runDashboardUrlCommand(
+      "hermes",
+      { quiet: true },
+      {
+        fetchToken,
+        getSandbox: () => ({ agent: "hermes", dashboardPort: 18789 }),
+        log: sinks.log,
+        error: sinks.error,
+      },
+    );
 
     expect(fetchToken).not.toHaveBeenCalled();
-    expect(sinks.out).toEqual([]);
+    expect(sinks.out).toEqual(["http://127.0.0.1:18789/"]);
+    expect(sinks.err).toEqual([]);
   });
 
   it("fails when the token cannot be retrieved", () => {

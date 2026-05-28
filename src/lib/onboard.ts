@@ -6613,6 +6613,16 @@ async function setupPoliciesWithSelection(
 
 // ── Dashboard ────────────────────────────────────────────────────
 
+function endpointPathFromUrl(rawUrl: string | undefined, fallback: string): string {
+  if (!rawUrl) return fallback;
+  try {
+    const path = new URL(rawUrl).pathname;
+    return path && path !== "/" ? path : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 const {
   buildChain,
   buildControlUiUrls,
@@ -7379,7 +7389,14 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         },
         getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
         buildVerifyChain: (chatUiUrl) =>
-          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress() }),
+          buildChain({
+            chatUiUrl,
+            isWsl: isWsl(),
+            wslHostAddress: getWslHostAddress(),
+            dashboardHealthEndpoint: agent?.dashboard.healthPath,
+            gatewayPort: agent?.healthProbe.port,
+            gatewayHealthEndpoint: endpointPathFromUrl(agent?.healthProbe.url, "/health"),
+          }),
         verifyDeployment: async (name, chain) => {
           const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
           return verifyDeploymentModule.verifyDeployment(name, chain, {

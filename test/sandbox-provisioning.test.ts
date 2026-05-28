@@ -873,6 +873,21 @@ describe("Hermes sandbox provisioning", () => {
     }
   });
 
+  it("prebuilds the Hermes dashboard bundle in final images built from stale bases", () => {
+    const dockerfile = fs.readFileSync(HERMES_DOCKERFILE, "utf-8");
+    const command = dockerRunCommandBetween(
+      dockerfile,
+      "# Published base images can lag Dockerfile.base",
+      "# Harden: remove unnecessary build tools",
+    );
+
+    expect(command).toContain("hermes_web_dist=/opt/hermes/hermes_cli/web_dist");
+    expect(command).toContain('npm ci --prefix "$hermes_web_dir"');
+    expect(command).toContain('npm run build --prefix "$hermes_web_dir"');
+    expect(command).toContain('test -d "$hermes_web_dist"');
+    expect(dockerfile).toContain('ENV HERMES_WEB_DIST="/opt/hermes/hermes_cli/web_dist"');
+  });
+
   it("adds root to the Hermes sandbox group during base user setup", () => {
     const { result, calls, tmp, sandboxRoot } = runHermesUserSetupBlock();
     try {

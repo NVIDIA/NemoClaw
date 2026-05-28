@@ -18,7 +18,7 @@ function makeAgent(overrides: Partial<AgentDefinition> = {}): AgentDefinition {
     displayName: "Hermes Agent",
     healthProbe: { url: "http://127.0.0.1:8642/health", port: 8642, timeout_seconds: 90 },
     forwardPort: 8642,
-    dashboard: { kind: "api", label: "OpenAI-compatible API", path: "/v1" },
+    dashboard: { kind: "api", label: "OpenAI-compatible API", path: "/v1", healthPath: "/health", auth: "none" },
     configPaths: {
       dir: "/sandbox/.hermes",
       configFile: "config.yaml",

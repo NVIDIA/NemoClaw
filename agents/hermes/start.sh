@@ -8,7 +8,8 @@
 # start` instead of `openclaw gateway run`. Key differences:
 #   - No device-pairing auto-pair watcher (Hermes has no browser pairing)
 #   - Config is YAML (config.yaml + .env) not JSON (openclaw.json)
-#   - Gateway listens on internal port 18642, socat forwards to 8642
+#   - Gateway listens on internal port 18642, socat forwards the API to 8642
+#   - Dashboard listens on a private loopback port, socat forwards it to 18789
 #
 # SECURITY: The gateway runs as a separate user so the sandboxed agent cannot
 # kill it or restart it with a tampered config. Config hash is verified at
@@ -38,6 +39,10 @@ fi
 
 # SECURITY: Lock down PATH
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+if [ -d /opt/hermes/hermes_cli/web_dist ]; then
+  export HERMES_WEB_DIST="${HERMES_WEB_DIST:-/opt/hermes/hermes_cli/web_dist}"
+fi
 
 # ── Early stderr/stdout capture ──────────────────────────────────
 # Capture all entrypoint output to /tmp/nemoclaw-start.log so startup
@@ -108,11 +113,69 @@ case "${1:-}" in
   nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac
 NEMOCLAW_CMD=("$@")
-CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:8642}"
+
+_chat_ui_url_port() {
+  [ -n "${CHAT_UI_URL:-}" ] || return 1
+  python3 - "$CHAT_UI_URL" <<'PYPORT'
+import re
+import sys
+from urllib.parse import urlparse
+
+raw_url = sys.argv[1]
+if raw_url and not re.match(r"^[a-z][a-z0-9+.-]*://", raw_url, re.IGNORECASE):
+    raw_url = f"http://{raw_url}"
+try:
+    port = urlparse(raw_url).port
+except ValueError:
+    sys.exit(1)
+if port is None or port < 1024 or port > 65535:
+    sys.exit(1)
+print(port)
+PYPORT
+}
+
+_dashboard_port_raw="${NEMOCLAW_DASHBOARD_PORT:-}"
+if [ -z "$_dashboard_port_raw" ]; then
+  if _chat_ui_port="$(_chat_ui_url_port)"; then
+    _dashboard_port="$_chat_ui_port"
+  else
+    _dashboard_port=18789
+  fi
+else
+  _dashboard_port="$(printf '%s' "$_dashboard_port_raw" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+  _dashboard_port_valid=1
+  case "$_dashboard_port" in
+    *[!0-9]* | '') _dashboard_port_valid=0 ;;
+  esac
+  if [ "$_dashboard_port_valid" -eq 1 ] && { [ "$_dashboard_port" -lt 1024 ] || [ "$_dashboard_port" -gt 65535 ]; }; then
+    _dashboard_port_valid=0
+  fi
+  if [ "$_dashboard_port_valid" -ne 1 ]; then
+    echo "[SECURITY] Invalid NEMOCLAW_DASHBOARD_PORT='${NEMOCLAW_DASHBOARD_PORT}' - must be an integer between 1024 and 65535" >&2
+    exit 1
+  fi
+fi
+
+if [ "$_dashboard_port" -eq 8642 ]; then
+  echo "[SECURITY] Invalid Hermes dashboard port 8642 - reserved for the Hermes OpenAI-compatible API" >&2
+  exit 1
+fi
+
+if [ -n "${NEMOCLAW_DASHBOARD_PORT:-}" ]; then
+  CHAT_UI_URL="http://127.0.0.1:${_dashboard_port}"
+else
+  CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:${_dashboard_port}}"
+fi
+
 PUBLIC_PORT=8642
-# Hermes binds to 127.0.0.1 regardless of config (upstream bug).
-# Run it on an internal port and use socat to expose on PUBLIC_PORT.
+# Hermes binds the API server to 127.0.0.1. Run it on an internal port and
+# use socat to expose the OpenAI-compatible API on PUBLIC_PORT.
 INTERNAL_PORT=18642
+DASHBOARD_PUBLIC_PORT="$_dashboard_port"
+DASHBOARD_INTERNAL_PORT=19119
+if [ "$DASHBOARD_PUBLIC_PORT" -eq "$DASHBOARD_INTERNAL_PORT" ]; then
+  DASHBOARD_INTERNAL_PORT=19120
+fi
 HERMES="$(command -v hermes)" # Resolve once, use absolute path everywhere
 
 # Hermes resolves config and runtime state relative to HERMES_HOME. The config
@@ -128,16 +191,23 @@ HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
 # configure_messaging_channels is provided by sandbox-init.sh (shared).
 
 print_dashboard_urls() {
-  local local_url
-  local_url="http://127.0.0.1:${PUBLIC_PORT}/v1"
-  echo "[gateway] Hermes API: ${local_url}" >&2
-  echo "[gateway] Health:     ${local_url%/v1}/health" >&2
+  local api_url dashboard_url
+  api_url="http://127.0.0.1:${PUBLIC_PORT}/v1"
+  dashboard_url="http://127.0.0.1:${DASHBOARD_PUBLIC_PORT}/"
+  echo "[gateway] Hermes Dashboard: ${dashboard_url}" >&2
+  echo "[gateway] Hermes API:       ${api_url}" >&2
+  echo "[gateway] Health:           ${api_url%/v1}/health" >&2
   echo "[gateway] Connect any OpenAI-compatible frontend to this endpoint." >&2
 }
 
 start_gateway_log_stream() {
   { tail -n +1 -F /tmp/gateway.log 2>/dev/null | sed -u 's/^/[gateway-log:] /' >&2; } &
   GATEWAY_LOG_TAIL_PID=$!
+}
+
+start_dashboard_log_stream() {
+  { tail -n +1 -F /tmp/dashboard.log 2>/dev/null | sed -u 's/^/[dashboard-log:] /' >&2; } &
+  DASHBOARD_LOG_TAIL_PID=$!
 }
 
 retry_tirith_marker_if_needed() {
@@ -188,6 +258,8 @@ has_live_hermes_gateway() {
 cleanup_orphan_socat_forwarders() {
   local proc_root="${NEMOCLAW_PROC_ROOT:-/proc}"
   local cmdline_file pid cmdline
+  local dashboard_public_port="${DASHBOARD_PUBLIC_PORT:-}"
+  local dashboard_internal_port="${DASHBOARD_INTERNAL_PORT:-}"
 
   for cmdline_file in "${proc_root}"/[0-9]*/cmdline; do
     [ -r "$cmdline_file" ] || continue
@@ -196,6 +268,11 @@ cleanup_orphan_socat_forwarders() {
     case "$cmdline" in
       *socat*"TCP-LISTEN:${PUBLIC_PORT}"*"TCP:127.0.0.1:${INTERNAL_PORT}"*)
         echo "[gateway] Removing orphaned socat forwarder for ${PUBLIC_PORT}->${INTERNAL_PORT} (pid ${pid})" >&2
+        kill "$pid" 2>/dev/null || true
+        ;;
+      *socat*"TCP-LISTEN:${dashboard_public_port}"*"TCP:127.0.0.1:${dashboard_internal_port}"*)
+        [ -n "$dashboard_public_port" ] && [ -n "$dashboard_internal_port" ] || continue
+        echo "[gateway] Removing orphaned dashboard socat forwarder for ${dashboard_public_port}->${dashboard_internal_port} (pid ${pid})" >&2
         kill "$pid" 2>/dev/null || true
         ;;
     esac
@@ -304,28 +381,36 @@ cleanup_stale_hermes_gateway_runtime() {
   cleanup_orphan_socat_forwarders
 }
 
-# ── socat forwarder ──────────────────────────────────────────────
-# Hermes API server binds to 127.0.0.1 regardless of config (upstream bug).
+# ── socat forwarders ─────────────────────────────────────────────
+# Hermes services bind to 127.0.0.1 for safety.
 # OpenShell needs the port accessible on 0.0.0.0 for port forwarding.
-# socat bridges 0.0.0.0:PUBLIC_PORT → 127.0.0.1:INTERNAL_PORT.
+# socat bridges 0.0.0.0:<public> to 127.0.0.1:<internal>.
 SOCAT_PID=""
+DASHBOARD_SOCAT_PID=""
 start_socat_forwarder() {
+  local public_port="$1"
+  local internal_port="$2"
+  local label="$3"
+  local pid_var="${4:-SOCAT_PID}"
+  local _socat_pid
+
   if ! command -v socat >/dev/null 2>&1; then
-    echo "[gateway] socat not available — port forwarding from host may not work" >&2
+    echo "[gateway] socat not available - ${label} port forwarding from host may not work" >&2
     return
   fi
   local attempts=0
   while [ "$attempts" -lt 30 ]; do
-    if ss -tln 2>/dev/null | grep -q "127.0.0.1:${INTERNAL_PORT}"; then
+    if ss -tln 2>/dev/null | grep -q "127.0.0.1:${internal_port}"; then
       break
     fi
     sleep 1
     attempts=$((attempts + 1))
   done
-  nohup socat TCP-LISTEN:"${PUBLIC_PORT}",bind=0.0.0.0,fork,reuseaddr \
-    TCP:127.0.0.1:"${INTERNAL_PORT}" >/dev/null 2>&1 &
-  SOCAT_PID=$!
-  echo "[gateway] socat forwarder 0.0.0.0:${PUBLIC_PORT} → 127.0.0.1:${INTERNAL_PORT} (pid $SOCAT_PID)" >&2
+  nohup socat TCP-LISTEN:"${public_port}",bind=0.0.0.0,fork,reuseaddr \
+    TCP:127.0.0.1:"${internal_port}" >/dev/null 2>&1 &
+  _socat_pid=$!
+  printf -v "$pid_var" '%s' "$_socat_pid"
+  echo "[gateway] ${label} socat forwarder 0.0.0.0:${public_port} -> 127.0.0.1:${internal_port} (pid ${_socat_pid})" >&2
 }
 
 # ── Messaging egress ─────────────────────────────────────────────
@@ -387,6 +472,9 @@ export https_proxy="$_PROXY_URL"
 export no_proxy="$_NO_PROXY_VAL"
 export HERMES_HOME="${HERMES_DIR}"
 PROXYEOF
+    if [ -n "${HERMES_WEB_DIST:-}" ]; then
+      printf 'export HERMES_WEB_DIST=%q\n' "$HERMES_WEB_DIST"
+    fi
     for _ca_env_name in SSL_CERT_FILE CURL_CA_BUNDLE REQUESTS_CA_BUNDLE GIT_SSL_CAINFO; do
       _ca_env_value="${!_ca_env_name:-}"
       if [ -n "$_ca_env_value" ]; then
@@ -705,6 +793,7 @@ if [ "$(id -u)" -ne 0 ]; then
   cleanup_stale_hermes_gateway_runtime
 
   prepare_restricted_log /tmp/gateway.log "" 600
+  prepare_restricted_log /tmp/dashboard.log "" 600
 
   # Defence-in-depth: verify /tmp file permissions before launching services.
   # shellcheck disable=SC2119
@@ -717,16 +806,26 @@ if [ "$(id -u)" -ne 0 ]; then
   GATEWAY_PID=$!
   echo "[gateway] hermes gateway launched (pid $GATEWAY_PID)" >&2
   start_gateway_log_stream
+  HERMES_HOME="${HERMES_DIR}" \
+    GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
+    HERMES_DASHBOARD_TUI="${HERMES_DASHBOARD_TUI:-1}" \
+    nohup "$HERMES" --tui dashboard --host 127.0.0.1 --port "${DASHBOARD_INTERNAL_PORT}" --no-open >/tmp/dashboard.log 2>&1 &
+  DASHBOARD_PID=$!
+  echo "[gateway] hermes dashboard launched (pid $DASHBOARD_PID)" >&2
+  start_dashboard_log_stream
   # NOTE: PIDs are collected after launch; a signal arriving between trap
   # registration and the final append is a small race window (same as before
   # the shared-library refactor). Acceptable for entrypoint-level cleanup.
-  SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
+  SANDBOX_CHILD_PIDS=("$GATEWAY_PID" "$DASHBOARD_PID")
   [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
+  [ -n "${DASHBOARD_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DASHBOARD_LOG_TAIL_PID")
   # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
   SANDBOX_WAIT_PID="$GATEWAY_PID"
   trap cleanup_on_signal SIGTERM SIGINT
-  start_socat_forwarder
+  start_socat_forwarder "$PUBLIC_PORT" "$INTERNAL_PORT" "API" SOCAT_PID
+  start_socat_forwarder "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID
   [ -n "${SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$SOCAT_PID")
+  [ -n "${DASHBOARD_SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DASHBOARD_SOCAT_PID")
   print_dashboard_urls
 
   wait "$GATEWAY_PID"
@@ -750,6 +849,7 @@ cleanup_stale_hermes_gateway_runtime
 
 # SECURITY: Protect gateway log from sandbox user tampering
 prepare_restricted_log /tmp/gateway.log gateway:gateway 600
+prepare_restricted_log /tmp/dashboard.log sandbox:sandbox 600
 
 # Defence-in-depth: verify /tmp file permissions before launching services.
 # shellcheck disable=SC2119
@@ -761,16 +861,26 @@ HERMES_HOME="${HERMES_DIR}" \
 GATEWAY_PID=$!
 echo "[gateway] hermes gateway launched as 'gateway' user (pid $GATEWAY_PID)" >&2
 start_gateway_log_stream
+HERMES_HOME="${HERMES_DIR}" \
+  GATEWAY_HEALTH_URL="http://127.0.0.1:${INTERNAL_PORT}" \
+  HERMES_DASHBOARD_TUI="${HERMES_DASHBOARD_TUI:-1}" \
+  nohup "${STEP_DOWN_PREFIX_SANDBOX[@]}" sh -c 'umask 0007; exec "$@" >/tmp/dashboard.log 2>&1' sh "$HERMES" --tui dashboard --host 127.0.0.1 --port "$DASHBOARD_INTERNAL_PORT" --no-open &
+DASHBOARD_PID=$!
+echo "[gateway] hermes dashboard launched as 'sandbox' user (pid $DASHBOARD_PID)" >&2
+start_dashboard_log_stream
 # NOTE: PIDs are collected after launch; a signal arriving between trap
 # registration and the final append is a small race window (same as before
 # the shared-library refactor). Acceptable for entrypoint-level cleanup.
-SANDBOX_CHILD_PIDS=("$GATEWAY_PID")
+SANDBOX_CHILD_PIDS=("$GATEWAY_PID" "$DASHBOARD_PID")
 [ -n "${GATEWAY_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$GATEWAY_LOG_TAIL_PID")
+[ -n "${DASHBOARD_LOG_TAIL_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DASHBOARD_LOG_TAIL_PID")
 # shellcheck disable=SC2034  # read by cleanup_on_signal from sandbox-init.sh
 SANDBOX_WAIT_PID="$GATEWAY_PID"
 trap cleanup_on_signal SIGTERM SIGINT
-start_socat_forwarder
+start_socat_forwarder "$PUBLIC_PORT" "$INTERNAL_PORT" "API" SOCAT_PID
+start_socat_forwarder "$DASHBOARD_PUBLIC_PORT" "$DASHBOARD_INTERNAL_PORT" "dashboard" DASHBOARD_SOCAT_PID
 [ -n "${SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$SOCAT_PID")
+[ -n "${DASHBOARD_SOCAT_PID:-}" ] && SANDBOX_CHILD_PIDS+=("$DASHBOARD_SOCAT_PID")
 print_dashboard_urls
 
 # Keep container running by waiting on the gateway process.

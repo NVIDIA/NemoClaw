@@ -468,7 +468,9 @@ $ nemoclaw my-assistant logs [--follow] [--tail <lines>|-n <lines>] [--since <du
 
 ### `nemoclaw <name> dashboard-url`
 
-Print the authenticated OpenClaw dashboard URL for a running sandbox.
+Print the browser dashboard URL for a running sandbox.
+For OpenClaw sandboxes this includes the authenticated URL fragment.
+For agent dashboards that manage their own session, such as Hermes Agent, this prints the plain dashboard URL.
 Use this when you are on a remote machine, using an SSH or reverse tunnel, or need a complete URL for a browser session.
 
 ```console
@@ -486,6 +488,7 @@ $ URL=$(nemoclaw my-assistant dashboard-url --quiet)
 <Warning>
 Treat the authenticated dashboard URL like a password.
 Do not log it, share it, or commit it to version control.
+This warning applies when the command prints an OpenClaw tokenized URL.
 </Warning>
 
 ### `nemoclaw <name> gateway-token`
