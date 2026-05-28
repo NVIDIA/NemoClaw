@@ -114,6 +114,7 @@ function lstatIfPresent(entry: string): fs.Stats | null {
 function runHermesGatewayRuntimeCleanup(opts: {
   liveGateway?: boolean;
   orphanSocat?: boolean;
+  orphanDashboardSocat?: boolean;
   staleLock?: boolean;
   stalePid?: boolean;
   lockedConfigRoot?: boolean;
@@ -149,6 +150,13 @@ function runHermesGatewayRuntimeCleanup(opts: {
       "socat",
       "TCP-LISTEN:8642,bind=0.0.0.0,fork,reuseaddr",
       "TCP:127.0.0.1:18642",
+    ]);
+  }
+  if (opts.orphanDashboardSocat) {
+    writeFakeProcCmdline(procRoot, 789, [
+      "socat",
+      "TCP-LISTEN:9119,bind=0.0.0.0,fork,reuseaddr",
+      "TCP:127.0.0.1:19119",
     ]);
   }
 
@@ -193,6 +201,8 @@ function runHermesGatewayRuntimeCleanup(opts: {
         : "",
       "PUBLIC_PORT=8642",
       "INTERNAL_PORT=18642",
+      "HERMES_DASHBOARD_PUBLIC_PORT=9119",
+      "HERMES_DASHBOARD_INTERNAL_PORT=19119",
       "cleanup_stale_hermes_gateway_runtime",
     ].join("\n"),
     { mode: 0o700 },
@@ -373,6 +383,18 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.status).toBe(0);
     expect(run.killLog.trim()).toBe("456");
     expect(run.result.stderr).toContain("Removing orphaned socat forwarder");
+  });
+
+  it("kills orphaned dashboard socat forwarders when no Hermes gateway is alive", () => {
+    const run = runHermesGatewayRuntimeCleanup({
+      orphanDashboardSocat: true,
+      staleLock: false,
+      stalePid: false,
+    });
+
+    expect(run.result.status).toBe(0);
+    expect(run.killLog.trim()).toBe("789");
+    expect(run.result.stderr).toContain("Removing orphaned dashboard socat forwarder");
   });
 
   it("preserves Hermes runtime state when a gateway process is alive", () => {

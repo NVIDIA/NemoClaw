@@ -13,6 +13,7 @@ import { dockerBuild, dockerImageInspect } from "../adapters/docker";
 import { getAgentBranding } from "../cli/branding";
 import { getProviderSelectionConfig } from "../inference/config";
 import type { JsonObject as LooseObject } from "../core/json-types";
+import { isTruthyEnv } from "../hermes-dashboard";
 import { runSandboxConfigSync } from "../onboard/config-sync";
 import { ROOT, redact, run, shellQuote } from "../runner";
 import {
@@ -518,6 +519,55 @@ function dashboardUrlForDisplay(url: string): string {
   return redact(url.replace(/#token=[^\s'"]*$/i, ""));
 }
 
+function dashboardUiEnabled(agent: AgentDefinition): boolean {
+  const dashboardUi = agent.dashboardUi;
+  return !!dashboardUi && isTruthyEnv(process.env[dashboardUi.enableEnv]);
+}
+
+function dashboardUiPort(agent: AgentDefinition): number {
+  const dashboardUi = agent.dashboardUi;
+  if (!dashboardUi) return agent.forwardPort;
+  const raw = process.env[dashboardUi.portEnv];
+  if (raw && /^\d+$/.test(raw.trim())) {
+    const port = Number(raw.trim());
+    if (port >= 1 && port <= 65535) return port;
+  }
+  return dashboardUi.port;
+}
+
+function printOptionalDashboardUi(
+  agent: AgentDefinition,
+  deps: {
+    buildControlUiUrls: (token: string | null, port: number) => string[];
+  },
+): void {
+  const dashboardUi = agent.dashboardUi;
+  if (!dashboardUi || !dashboardUiEnabled(agent)) return;
+
+  const port = dashboardUiPort(agent);
+  console.log("");
+  console.log(`  ${agent.displayName} ${dashboardUi.label}`);
+  console.log(`  Port ${port} must be forwarded before opening this URL.`);
+  const seen = new Set<string>();
+  for (const baseUrl of deps.buildControlUiUrls(null, port)) {
+    const withoutHash = baseUrl.split("#")[0].replace(/\/$/, "");
+    let urlPort = "";
+    try {
+      urlPort = new URL(withoutHash).port;
+    } catch {
+      urlPort = "";
+    }
+    if (urlPort !== String(port)) continue;
+    const url =
+      dashboardUi.path && dashboardUi.path !== "/"
+        ? `${withoutHash}${dashboardUi.path}`
+        : `${withoutHash}/`;
+    if (seen.has(url)) continue;
+    seen.add(url);
+    console.log(`  ${dashboardUrlForDisplay(url)}`);
+  }
+}
+
 /**
  * Print the dashboard UI section for a non-OpenClaw agent.
  *
@@ -550,6 +600,7 @@ export function printDashboardUi(
       seen.add(url);
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
+    printOptionalDashboardUi(agent, deps);
     return;
   }
 
@@ -571,4 +622,5 @@ export function printDashboardUi(
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
   }
+  printOptionalDashboardUi(agent, deps);
 }

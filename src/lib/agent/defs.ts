@@ -47,6 +47,15 @@ export interface AgentDashboard {
   path: string;
 }
 
+export interface AgentDashboardUi {
+  label: string;
+  port: number;
+  path: string;
+  enableEnv: string;
+  portEnv: string;
+  tuiEnv: string | null;
+}
+
 export interface AgentInference {
   provider_type?: string;
   provider_options?: string[];
@@ -84,6 +93,7 @@ export interface AgentDefinition {
   readonly healthProbe: AgentHealthProbe;
   readonly forwardPort: number;
   readonly dashboard: AgentDashboard;
+  readonly dashboardUi?: AgentDashboardUi | null;
   readonly configPaths: AgentConfigPaths;
   readonly inferenceProviderOptions: string[];
   readonly stateDirs: string[];
@@ -259,6 +269,39 @@ function readMessagingPlatforms(record: ManifestRecord): { supported?: string[] 
   return supported ? { supported } : {};
 }
 
+function readDashboardUi(record: ManifestRecord): AgentDashboardUi | null {
+  const dashboardUi = readObject(record, "dashboard_ui");
+  if (!dashboardUi) return null;
+
+  const port = dashboardUi.port;
+  if (!isValidPort(port)) {
+    throw new Error(
+      "Agent manifest field 'dashboard_ui.port' must be an integer TCP port between 1 and 65535",
+    );
+  }
+
+  const label = readString(dashboardUi, "label")?.trim() || "Web dashboard";
+  const rawPath = readString(dashboardUi, "path")?.trim() || "/";
+  const enableEnv = readString(dashboardUi, "enable_env")?.trim();
+  const portEnv = readString(dashboardUi, "port_env")?.trim();
+  const tuiEnv = readString(dashboardUi, "tui_env")?.trim() || null;
+  if (!enableEnv) {
+    throw new Error("Agent manifest field 'dashboard_ui.enable_env' is required");
+  }
+  if (!portEnv) {
+    throw new Error("Agent manifest field 'dashboard_ui.port_env' is required");
+  }
+
+  return {
+    label,
+    port,
+    path: rawPath.startsWith("/") ? rawPath : `/${rawPath}`,
+    enableEnv,
+    portEnv,
+    tuiEnv,
+  };
+}
+
 function readInference(record: ManifestRecord): AgentInference | undefined {
   const inference = readObject(record, "inference");
   if (!inference) return undefined;
@@ -340,6 +383,7 @@ export function loadAgent(name: string): AgentDefinition {
   const phoneHomeHosts = readStringArray(raw, "phone_home_hosts");
   const messagingPlatforms = readMessagingPlatforms(raw);
   const legacyPathConfig = readStringMap(raw, "_legacy_paths");
+  const dashboardUi = readDashboardUi(raw);
 
   const agent: AgentDefinition = {
     ...raw,
@@ -393,6 +437,10 @@ export function loadAgent(name: string): AgentDefinition {
         label: normalizedLabel || defaultLabel,
         path,
       };
+    },
+
+    get dashboardUi(): AgentDashboardUi | null {
+      return dashboardUi;
     },
 
     get configPaths(): AgentConfigPaths {

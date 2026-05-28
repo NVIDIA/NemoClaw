@@ -73,6 +73,7 @@ export interface OnboardDashboardHelpers {
     sandboxName: string,
     agent: { forwardPort?: number | null },
   ): number;
+  ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean;
   fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null;
   getDashboardForwardPort(
     chatUiUrl?: string,
@@ -322,6 +323,41 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     return actualAgentDashboardPort;
   }
 
+  function ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean {
+    const forwardUrl = `http://127.0.0.1:${port}`;
+    const forwardTarget = getDashboardForwardTarget(forwardUrl);
+    const stopForwardForSandbox = (portToStop: string | number) =>
+      bestEffortForwardStopForSandbox(
+        deps.runOpenshell,
+        (args, opts) => (deps.runCaptureOpenshell(args, opts) ?? "") as string,
+        portToStop,
+        sandboxName,
+      );
+
+    stopForwardForSandbox(port);
+    const { ok, diagnostic } = runDetachedForwardStartWithPortReleaseRetries(
+      buildDetachedForwardStartSpawn(
+        deps.openshellArgv(["forward", "start", "--background", forwardTarget, sandboxName]),
+      ),
+      () =>
+        (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ?? "") as string,
+      { port, sandboxName },
+      () => {
+        deps.sleep(1);
+        stopForwardForSandbox(port);
+      },
+      { onProgress: buildForwardStartProgressLogger(port) },
+    );
+    if (!ok) {
+      console.warn(
+        `! ${label} forward on port ${port} did not start: ${diagnostic.slice(0, 240)}`,
+      );
+      console.warn(`  Reconnect after resolving the issue: ${deps.cliName()} ${sandboxName} connect`);
+      return false;
+    }
+    return true;
+  }
+
   function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-token-"));
     try {
@@ -439,6 +475,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
     buildOrphanedSandboxRollbackMessage,
     ensureDashboardForward,
     ensureAgentDashboardForward,
+    ensureAgentFixedForward,
     fetchGatewayAuthTokenFromSandbox,
     getDashboardForwardPort,
     getDashboardForwardTarget,

@@ -50,6 +50,14 @@ const apiAgent = makeAgent({
   displayName: "Hermes Agent",
   forwardPort: 8642,
   dashboard: { kind: "api", label: "OpenAI-compatible API", path: "/v1" },
+  dashboardUi: {
+    label: "Web dashboard",
+    port: 9119,
+    path: "/",
+    enableEnv: "NEMOCLAW_HERMES_DASHBOARD",
+    portEnv: "NEMOCLAW_HERMES_DASHBOARD_PORT",
+    tuiEnv: "NEMOCLAW_HERMES_DASHBOARD_TUI",
+  },
 });
 
 const uiAgent = makeAgent({
@@ -78,6 +86,8 @@ describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)
 
   afterEach(() => {
     logSpy.mockClear();
+    delete process.env.NEMOCLAW_HERMES_DASHBOARD;
+    delete process.env.NEMOCLAW_HERMES_DASHBOARD_PORT;
   });
 
   afterAll(() => {
@@ -111,6 +121,23 @@ describe("printDashboardUi — regression for #2078 (port 8642 is not a chat UI)
     // The API endpoint does not require the gateway token — don't confuse
     // the user with the OpenClaw-style "token missing" warning.
     expect(noteSpy).not.toHaveBeenCalled();
+  });
+
+  it("prints the optional Hermes web dashboard URL when dashboard mode is enabled", () => {
+    process.env.NEMOCLAW_HERMES_DASHBOARD = "1";
+    process.env.NEMOCLAW_HERMES_DASHBOARD_PORT = "9120";
+
+    printDashboardUi("sandbox-x", null, apiAgent, {
+      note: noteSpy,
+      buildControlUiUrls: buildUrlsLoopback,
+    });
+
+    const output = logSpy.mock.calls.map((args) => String(args[0])).join("\n");
+    expect(output).toContain("Hermes Agent OpenAI-compatible API");
+    expect(output).toContain("http://127.0.0.1:8642/v1");
+    expect(output).toContain("Hermes Agent Web dashboard");
+    expect(output).toContain("Port 9120 must be forwarded before opening this URL.");
+    expect(output).toContain("http://127.0.0.1:9120/");
   });
 
   it("redacts tokenized URLs for UI-kind agents and shows the token retrieval command", () => {

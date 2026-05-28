@@ -218,6 +218,7 @@ const {
 const onboardProviders = require("./onboard/providers");
 const { ensureResumeProviderReady } = require("./onboard/resume-provider-shim");
 const hermesProviderAuth = require("./hermes-provider-auth");
+const hermesDashboard: typeof import("./hermes-dashboard") = require("./hermes-dashboard");
 const hermesAuth: typeof import("./onboard/hermes-auth") = require("./onboard/hermes-auth");
 const {
   HERMES_AUTH_METHOD_API_KEY,
@@ -230,6 +231,7 @@ const {
 } = hermesAuth;
 
 type HermesAuthMethod = import("./onboard/hermes-auth").HermesAuthMethod;
+type HermesDashboardConfig = import("./hermes-dashboard").HermesDashboardConfig;
 
 function getHermesToolGatewayBroker(): any {
   return require("./hermes-tool-gateway-broker");
@@ -2816,6 +2818,60 @@ async function createSandbox(
   } else {
     chatUiUrl = `http://127.0.0.1:${effectivePort}`;
   }
+  let hermesDashboardConfig: HermesDashboardConfig | null = null;
+  if (agent?.name === "hermes") {
+    try {
+      hermesDashboardConfig = hermesDashboard.readHermesDashboardConfig(process.env);
+    } catch (error) {
+      console.error(`  ${error instanceof Error ? error.message : String(error)}`);
+      process.exit(1);
+    }
+  }
+  const hermesDashboardEnabled = hermesDashboardConfig?.enabled === true;
+  if (hermesDashboardConfig && hermesDashboardEnabled) {
+    if (hermesDashboardConfig.port === effectivePort) {
+      console.error(
+        `  ${hermesDashboard.HERMES_DASHBOARD_PORT_ENV} must not equal the Hermes API port (${effectivePort}).`,
+      );
+      process.exit(1);
+    }
+    if (hermesDashboardConfig.port === hermesDashboardConfig.internalPort) {
+      console.error(
+        `  ${hermesDashboard.HERMES_DASHBOARD_PORT_ENV} must not equal ${hermesDashboard.HERMES_DASHBOARD_INTERNAL_PORT_ENV}.`,
+      );
+      process.exit(1);
+    }
+  }
+  const hermesDashboardRegistryFields = (): Partial<SandboxEntry> => {
+    if (!hermesDashboardConfig || !hermesDashboardEnabled) {
+      return {
+        hermesDashboardEnabled: undefined,
+        hermesDashboardPort: undefined,
+        hermesDashboardInternalPort: undefined,
+        hermesDashboardTui: undefined,
+      };
+    }
+    return {
+      hermesDashboardEnabled: true,
+      hermesDashboardPort: hermesDashboardConfig.port,
+      hermesDashboardInternalPort: hermesDashboardConfig.internalPort,
+      hermesDashboardTui: hermesDashboardConfig.tuiEnabled ? true : undefined,
+    };
+  };
+  const ensureHermesDashboardForwardIfEnabled = (targetSandbox: string): void => {
+    if (!hermesDashboardConfig || !hermesDashboardEnabled) return;
+    if (
+      ensureAgentFixedForward(
+        targetSandbox,
+        hermesDashboardConfig.port,
+        "Hermes dashboard",
+      )
+    ) {
+      note(
+        `  ✓ Hermes dashboard forwarded at http://127.0.0.1:${hermesDashboardConfig.port}/`,
+      );
+    }
+  };
 
   // Check whether messaging providers will be needed — this must happen before
   // the sandbox reuse decision so we can detect stale sandboxes that were created
@@ -3032,10 +3088,22 @@ async function createSandbox(
     const selectionDrift = getSelectionDrift(sandboxName, provider, model, { runOpenshell });
     const confirmedSelectionDrift = selectionDrift.changed && !selectionDrift.unknown;
     const sandboxGpuDrift = hasSandboxGpuDrift(sandboxName, effectiveSandboxGpuConfig);
+    const existingSandboxEntry = registry.getSandbox(sandboxName);
     const recordedHermesToolGateways = normalizeHermesToolGatewaySelections(
-      registry.getSandbox(sandboxName)?.hermesToolGateways,
+      existingSandboxEntry?.hermesToolGateways,
     );
     const hermesToolGatewayDrift = !stringSetsEqual(recordedHermesToolGateways, hermesToolGateways);
+    const recordedHermesDashboardEnabled = existingSandboxEntry?.hermesDashboardEnabled === true;
+    const hermesDashboardDrift =
+      agent?.name === "hermes" &&
+      (recordedHermesDashboardEnabled !== hermesDashboardEnabled ||
+        (hermesDashboardEnabled &&
+          hermesDashboardConfig !== null &&
+          (existingSandboxEntry?.hermesDashboardPort !== hermesDashboardConfig.port ||
+            existingSandboxEntry?.hermesDashboardInternalPort !==
+              hermesDashboardConfig.internalPort ||
+            (existingSandboxEntry?.hermesDashboardTui === true) !==
+              hermesDashboardConfig.tuiEnabled)));
 
     // Detect whether any messaging credential has been rotated since the
     // sandbox was created. Provider credentials are resolved once at sandbox
@@ -3050,7 +3118,8 @@ async function createSandbox(
       !needsProviderMigration &&
       !sandboxGpuDrift &&
       !credentialRotation.changed &&
-      !hermesToolGatewayDrift
+      !hermesToolGatewayDrift &&
+      !hermesDashboardDrift
     ) {
       // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
       // Placed before the non-interactive / interactive split so all reuse
@@ -3094,6 +3163,7 @@ async function createSandbox(
               );
             }
             const reusedPort = ensureDashboardForward(sandboxName, chatUiUrl);
+            ensureHermesDashboardForwardIfEnabled(sandboxName);
             process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort}`;
             updateReusedSandboxMetadata(
               sandboxName,
@@ -3131,6 +3201,7 @@ async function createSandbox(
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
             upsertMessagingProviders(messagingTokenDefs);
             const reusedPort2 = ensureDashboardForward(sandboxName, chatUiUrl);
+            ensureHermesDashboardForwardIfEnabled(sandboxName);
             process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort2}`;
             updateReusedSandboxMetadata(
               sandboxName,
@@ -3183,6 +3254,8 @@ async function createSandbox(
       note(`  Sandbox '${sandboxName}' exists — recreating to apply sandbox GPU settings.`);
     } else if (hermesToolGatewayDrift) {
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes managed-tool changes.`);
+    } else if (hermesDashboardDrift) {
+      note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes dashboard settings.`);
     } else if (credentialRotation.changed) {
       // Message already printed above during backup.
     } else if (existingSandboxState === "ready") {
@@ -3526,6 +3599,24 @@ async function createSandbox(
   // 18789 and the gateway listens on the wrong port. (#2267, #1925)
   const effectiveDashboardPort = getDashboardForwardPort(chatUiUrl);
   envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
+  if (hermesDashboardConfig && hermesDashboardEnabled) {
+    envArgs.push(formatEnvAssignment(hermesDashboard.HERMES_DASHBOARD_ENABLE_ENV, "1"));
+    envArgs.push(
+      formatEnvAssignment(
+        hermesDashboard.HERMES_DASHBOARD_PORT_ENV,
+        String(hermesDashboardConfig.port),
+      ),
+    );
+    envArgs.push(
+      formatEnvAssignment(
+        hermesDashboard.HERMES_DASHBOARD_INTERNAL_PORT_ENV,
+        String(hermesDashboardConfig.internalPort),
+      ),
+    );
+    if (hermesDashboardConfig.tuiEnabled) {
+      envArgs.push(formatEnvAssignment(hermesDashboard.HERMES_DASHBOARD_TUI_ENV, "1"));
+    }
+  }
   // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to the runtime
   // sandbox container. patchStagedDockerfile() already substitutes them
   // into the build-time Dockerfile ARG/ENV, but `openshell sandbox create
@@ -3722,6 +3813,7 @@ async function createSandbox(
   const actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
     rollbackSandboxOnFailure: true,
   });
+  ensureHermesDashboardForwardIfEnabled(sandboxName);
   // Update chatUiUrl and CHAT_UI_URL env so printDashboard / getDashboardAccessInfo
   // see the final port (they re-read process.env.CHAT_UI_URL independently).
   if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
@@ -3767,6 +3859,7 @@ async function createSandbox(
     messagingChannelConfig: messagingChannelConfig || undefined,
     disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,
     hermesToolGateways: hermesToolGateways.length > 0 ? [...hermesToolGateways] : undefined,
+    ...hermesDashboardRegistryFields(),
     dashboardPort: actualDashboardPort,
   });
   registry.setDefault(sandboxName);
@@ -6355,6 +6448,7 @@ const {
   buildOrphanedSandboxRollbackMessage,
   ensureDashboardForward,
   ensureAgentDashboardForward,
+  ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
   getWslHostAddress,
