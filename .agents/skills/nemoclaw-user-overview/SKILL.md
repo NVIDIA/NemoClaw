@@ -1,6 +1,7 @@
 ---
 name: "nemoclaw-user-overview"
 description: "Explains how OpenClaw, OpenShell, and NemoClaw form the ecosystem, NemoClaw's position in the stack, what NemoClaw adds beyond the community sandbox, and when to prefer NemoClaw versus integrating OpenShell and OpenClaw directly. Use when users ask about the relationship between OpenClaw, OpenShell, and NemoClaw, or when to use NemoClaw versus OpenShell. Trigger keywords - nemoclaw ecosystem, openclaw openshell, nemoclaw vs openshell, sandboxed openclaw, how nemoclaw works, nemoclaw sandbox lifecycle blueprint, nemoclaw overview, openclaw always-on assistants, nvidia openshell, nvidia nemotron, nemoclaw release notes, nemoclaw changelog."
+license: "Apache-2.0"
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

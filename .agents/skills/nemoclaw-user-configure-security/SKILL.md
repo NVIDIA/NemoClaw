@@ -1,6 +1,7 @@
 ---
 name: "nemoclaw-user-configure-security"
 description: "Presents a risk framework for every configurable security control in NemoClaw. Use when evaluating security posture, reviewing sandbox security defaults, or assessing control trade-offs. Trigger keywords - nemoclaw security best practices, sandbox security controls risk framework, nemoclaw credential storage, openshell provider, api key security, openclaw security controls, nemoclaw security boundary, prompt injection, tool access control."
+license: "Apache-2.0"
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->

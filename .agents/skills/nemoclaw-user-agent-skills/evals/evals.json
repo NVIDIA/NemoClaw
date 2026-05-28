@@ -1,0 +1,44 @@
+[
+  {
+    "id": "docs-resources-agent-skills-001",
+    "question": "I'm looking at NemoClaw agent skills. Help me find a skill that can guide installation, policy, inference, or operations so I can delegate the right workflow to my AI coding assistant.",
+    "expected_skill": "nemoclaw-user-agent-skills",
+    "ground_truth": "A NemoClaw-specific answer that helps the user find a skill that can guide installation, policy, inference, or operations and gives enough concrete guidance, decision criteria, verification steps, or risk framing to delegate the right workflow to my AI coding assistant.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: looking at NemoClaw agent skills.",
+      "The AI coding assistant loads the expected_skill and references/agent-skills.md",
+      "The output helps the user find a skill that can guide installation, policy, inference, or operations with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to delegate the right workflow to the AI coding assistant.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/agent-skills.md file."
+    ]
+  },
+  {
+    "id": "docs-resources-agent-skills-002",
+    "question": "I'm choosing among multiple NemoClaw skills. Help me understand what each skill is designed to do so I can avoid using a broad assistant when a targeted skill exists.",
+    "expected_skill": "nemoclaw-user-agent-skills",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand what each skill is designed to do and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid using a broad assistant when a targeted skill exists.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: choosing among multiple NemoClaw skills.",
+      "The AI coding assistant loads the expected_skill and references/agent-skills.md",
+      "The output helps the user understand what each skill is designed to do with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to avoid using a broad assistant when a targeted skill exists.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/agent-skills.md file."
+    ]
+  },
+  {
+    "id": "docs-resources-agent-skills-003",
+    "question": "I'm letting an agent follow NemoClaw-specific instructions. Help me see why the skill guidance is trustworthy and scoped so I can use agent assistance without losing operational control.",
+    "expected_skill": "nemoclaw-user-agent-skills",
+    "ground_truth": "A NemoClaw-specific answer that helps the user see why the skill guidance is trustworthy and scoped and gives enough concrete guidance, decision criteria, verification steps, or risk framing to use agent assistance without losing operational control.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: letting an agent follow NemoClaw-specific instructions.",
+      "The AI coding assistant loads the expected_skill and references/agent-skills.md",
+      "The output helps the user see why the skill guidance is trustworthy and scoped with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to use agent assistance without losing operational control.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/agent-skills.md file."
+    ]
+  }
+]
