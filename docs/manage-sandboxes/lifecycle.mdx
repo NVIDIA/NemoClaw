@@ -258,7 +258,7 @@ nemoclaw uninstall
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
 
 <Note>
-`nemoclaw uninstall` preserves `~/.nemoclaw/rebuild-backups/` (host-side snapshots created by `nemoclaw <name> snapshot create` and `nemoclaw backup-all`) and `~/.nemoclaw/sandboxes.json` (the sandbox registry) by default.
+`nemoclaw uninstall` preserves `~/.nemoclaw/rebuild-backups/` (host-side snapshots created by `nemoclaw <name> snapshot create` and `nemoclaw backup-all`), `~/.nemoclaw/backups/` (workspace backups written by `scripts/backup-workspace.sh`), and `~/.nemoclaw/sandboxes.json` (the sandbox registry) by default.
 Every other entry under `~/.nemoclaw/` is removed.
 Interactive runs prompt before destructive removal of the preserved entries; the default answer is to keep them.
 For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and purge the preserved entries as well.

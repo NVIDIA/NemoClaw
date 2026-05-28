@@ -135,10 +135,9 @@ function removePathExcept(
     deps.log(`Removed ${target}`);
     return;
   }
-  // Only enumerate when `target` is a real directory. A symlink or non-dir at
-  // ~/.nemoclaw would make readdirSync follow into / fail noisily; treat those
-  // as wholesale removal, matching the pre-#4226 behaviour for the unusual
-  // shapes.
+  // Only enumerate when `target` is a real directory. A symlink or non-dir
+  // would make readdirSync follow into / fail noisily; treat those as
+  // wholesale removal, matching prior behaviour for unusual shapes.
   let stat: fs.Stats;
   try {
     stat = fs.lstatSync(target);
@@ -254,7 +253,8 @@ function confirm(options: UninstallRunOptions, runtime: UninstallRuntime): boole
   runtime.log("What will be removed:");
   runtime.log(`  · All OpenShell sandboxes, gateway, and ${branding.display} providers`);
   runtime.log("  · Related Docker containers, images, and volumes");
-  runtime.log("  · ~/.nemoclaw  ~/.config/openshell  ~/.config/nemoclaw");
+  runtime.log("  · ~/.nemoclaw (preserves rebuild-backups/, backups/, sandboxes.json by default)");
+  runtime.log("  · ~/.config/openshell  ~/.config/nemoclaw");
   runtime.log(`  · Global ${branding.display} CLI (npm package: nemoclaw)`);
   runtime.log(options.deleteModels ? `  · Ollama models: ${NEMOCLAW_OLLAMA_MODELS.join(" ")}` : "  · Ollama models: kept");
   runtime.log("Proceed? [y/N]");
