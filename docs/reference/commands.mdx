@@ -786,7 +786,9 @@ Upgrade a sandbox to the current agent version while preserving workspace state.
 The command backs up workspace state, destroys the old sandbox (including its host-side Docker image), recreates it with the current image via `onboard --resume`, and restores workspace state into the new sandbox.
 Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
-The recorded sandbox GPU mode is preserved across rebuild: a sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU; auto-mode sandboxes remain auto.
+The recorded sandbox GPU mode is preserved across rebuild.
+A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU.
+Auto-mode sandboxes remain auto.
 
 ```console
 $ nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v]
