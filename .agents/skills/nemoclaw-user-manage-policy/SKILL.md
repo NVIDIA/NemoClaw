@@ -1,6 +1,7 @@
 ---
 name: "nemoclaw-user-manage-policy"
 description: "Adds, removes, or modifies allowed endpoints in the sandbox policy. Use when customizing network policy, changing egress rules, or configuring sandbox endpoint access. Trigger keywords - customize nemoclaw network policy, sandbox egress policy configuration, nemoclaw integration policy examples, post-install policy setup, openshell approval workflow, policy preset, nemoclaw approve network requests, sandbox egress approval tui."
+license: "Apache-2.0"
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -158,7 +159,7 @@ This is useful when you want to test a destination before deciding whether it be
 
 NemoClaw ships preset policy files for common integrations in `nemoclaw-blueprint/policies/presets/`.
 Apply a preset as-is or use it as a starting template for a custom policy.
-For guided post-install examples, see Common Integration Policy Examples (use the `nemoclaw-user-manage-policy` skill).
+For guided post-install examples, see [Common Integration Policy Examples](references/integration-policy-examples.md).
 
 During onboarding, the policy tier (use the `nemoclaw-user-reference` skill) you select determines which presets are enabled by default.
 You can add or remove individual presets in the interactive preset screen that follows tier selection.
@@ -175,6 +176,7 @@ Available presets:
 | `jira` | Atlassian Jira API |
 | `local-inference` | Local Ollama and vLLM through the host gateway |
 | `npm` | npm and Yarn registries |
+| `openclaw-pricing` | OpenClaw model-pricing reference fetch (LiteLLM and OpenRouter) |
 | `outlook` | Microsoft 365 and Outlook |
 | `pypi` | Python Package Index |
 | `slack` | Slack API and webhooks |
@@ -277,23 +279,18 @@ Fix the failing file and re-run the command to continue.
 Custom preset hosts bypass NemoClaw's review process and can widen sandbox egress to arbitrary destinations.
 Review every host in a custom preset before applying it, especially when the file originates outside your team.
 
-### Remove a Custom Preset
-
-Custom presets applied with `--from-file` or `--from-dir` are recorded in the NemoClaw sandbox registry alongside their full YAML content, so they can be removed by name — the original file does not need to be kept on disk:
-
-```console
-$ nemoclaw my-assistant policy-remove my-internal-api --yes
-```
-
-`policy-remove` accepts both built-in and custom preset names. Run `nemoclaw <name> policy-list` to see every preset currently applied to the sandbox.
+Load [references/customize-network-policy-details.md](references/customize-network-policy-details.md) for detailed steps on Remove a Custom Preset.
 
 ## References
 
 - **[references/integration-policy-examples.md](references/integration-policy-examples.md)** — Guides users through common post-install integration policy setup for maintained NemoClaw policy presets, including Outlook, messaging channels, GitHub, Jira, Brave Search, package managers, Hugging Face, local inference, and OpenShell approval workflows.
 - **Load [references/approve-network-requests.md](references/approve-network-requests.md)** when approving or denying sandbox egress requests, managing blocked network calls, or using the approval TUI. Reviews and approves blocked agent network requests in the TUI.
+- **Load [references/customize-network-policy-details.md](references/customize-network-policy-details.md)** when you need detailed steps for Remove a Custom Preset.
 
 ## Related Skills
 
+- [Approve or Deny Agent Network Requests](references/approve-network-requests.md) for real-time operator approval.
+- [Common Integration Policy Examples](references/integration-policy-examples.md) for maintained preset examples such as Outlook, messaging, GitHub, Jira, Brave Search, package managers, Hugging Face, and local inference.
 - `nemoclaw-user-reference` — Network Policies (use the `nemoclaw-user-reference` skill) for the full baseline policy reference
 - OpenShell [Policy Schema](https://docs.nvidia.com/openshell/latest/reference/policy-schema.html) for the full YAML policy schema reference.
 - OpenShell [Sandbox Policies](https://docs.nvidia.com/openshell/latest/sandboxes/policies.html) for applying, iterating, and debugging policies at the OpenShell layer.

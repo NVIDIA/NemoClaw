@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-name: CI / Onboard Entrypoint Budget
+name: CI / Codebase Growth Guardrails
 
 # pull_request_target runs in the base repo context, so this policy cannot be
 # bypassed by editing workflow files or scripts in the PR. Keep this workflow
@@ -15,8 +15,8 @@ permissions:
   pull-requests: read
 
 jobs:
-  onboard-entrypoint-budget:
-    name: onboard-entrypoint-budget
+  codebase-growth-guardrails:
+    name: codebase-growth-guardrails
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

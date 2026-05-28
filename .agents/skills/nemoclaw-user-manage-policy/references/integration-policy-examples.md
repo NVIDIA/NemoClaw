@@ -45,6 +45,7 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Hugging Face Hub and Inference API | `huggingface` |
 | Jira and Atlassian Cloud | `jira` |
 | Local Ollama or vLLM through the host gateway | `local-inference` |
+| OpenClaw model-pricing reference fetch | `openclaw-pricing` |
 | npm and Yarn packages | `npm` |
 | Microsoft 365, Outlook, and Graph API | `outlook` |
 | Python Package Index | `pypi` |
@@ -269,6 +270,23 @@ $ nemoclaw my-assistant exec -- brew install <formula>
 
 You do not need to bootstrap Homebrew, install build dependencies, or source `brew shellenv` inside the sandbox.
 
+## Model Pricing
+
+OpenClaw's gateway fetches reference pricing from LiteLLM and OpenRouter on every start so it can populate `usage.cost` in session JSONL records.
+The default-strict egress policy denies both hosts.
+The fetch fails closed, the gateway logs `[gateway/model-pricing] LiteLLM pricing fetch failed: TypeError: fetch failed` (and the matching OpenRouter line) on every startup, and every session record records `usage.cost = 0` even though the input and output token counts populate correctly.
+Tools that read the session log to display per-turn cost (audit dashboards, compliance review surfaces) cannot distinguish a real free run from this silent failure.
+
+Apply the `openclaw-pricing` preset to allow both pricing endpoints.
+The preset pins each host to a single read-only path so it does not widen egress beyond the pricing fetch:
+
+```console
+$ nemoclaw my-assistant policy-add openclaw-pricing --dry-run
+$ nemoclaw my-assistant policy-add openclaw-pricing --yes
+```
+
+After the next gateway restart the WARN entries stop and `usage.cost` populates from the fetched pricing tables.
+
 ## Local Inference
 
 Use `local-inference` when the sandbox needs access to host-side local inference services such as Ollama or vLLM through the OpenShell host gateway.
@@ -312,7 +330,7 @@ Use `nemoclaw my-assistant policy-add` for maintained NemoClaw presets.
 
 ## Next Steps
 
-- Approve or Deny Agent Network Requests (use the `nemoclaw-user-manage-policy` skill) for the interactive OpenShell TUI flow.
-- Customize the Sandbox Network Policy (use the `nemoclaw-user-manage-policy` skill) for static policy edits and raw OpenShell policy files.
+- [Approve or Deny Agent Network Requests](approve-network-requests.md) for the interactive OpenShell TUI flow.
+- [Customize the Sandbox Network Policy](../SKILL.md) for static policy edits and raw OpenShell policy files.
 - Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) for Telegram, Discord, Slack, WeChat, and WhatsApp channel configuration.
 - Commands (use the `nemoclaw-user-reference` skill) for the full `policy-add`, `policy-list`, `policy-remove`, and `channels` command reference.

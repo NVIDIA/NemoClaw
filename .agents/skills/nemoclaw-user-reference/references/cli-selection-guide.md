@@ -198,7 +198,7 @@ Use `openshell sandbox upload` and `openshell sandbox download` for manual file 
 
 ## Related Topics
 
-- Commands (use the `nemoclaw-user-reference` skill) for the full NemoClaw command reference.
+- [Commands](commands.md) for the full NemoClaw command reference.
 - Manage Sandbox Lifecycle (use the `nemoclaw-user-manage-sandboxes` skill) for day-two operations.
 - Switch Inference Models (use the `nemoclaw-user-configure-inference` skill) for inference route examples.
 - Customize the Network Policy (use the `nemoclaw-user-manage-policy` skill) for persistent network access changes.
