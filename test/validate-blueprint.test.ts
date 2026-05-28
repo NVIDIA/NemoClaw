@@ -21,6 +21,10 @@ const BASE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox.yaml",
   import.meta.url,
 );
+const BRAVE_PROVIDER_PROFILE_PATH = new URL(
+  "../nemoclaw-blueprint/provider-profiles/brave.yaml",
+  import.meta.url,
+);
 const PERMISSIVE_POLICY_PATH = new URL(
   "../nemoclaw-blueprint/policies/openclaw-sandbox-permissive.yaml",
   import.meta.url,
@@ -84,6 +88,26 @@ type SandboxPolicy = {
 type PolicyPreset = {
   preset?: { name?: string; description?: string };
   network_policies?: Record<string, PolicyEntry>;
+};
+
+type ProviderProfileCredential = {
+  env_vars?: string[];
+  auth_style?: string;
+  header_name?: string;
+};
+
+type ProviderProfileEndpoint = {
+  host?: string;
+  port?: number;
+  protocol?: string;
+  access?: string;
+  enforcement?: string;
+};
+
+type ProviderProfile = {
+  id?: string;
+  credentials?: ProviderProfileCredential[];
+  endpoints?: ProviderProfileEndpoint[];
 };
 
 function loadYaml<T>(path: URL): T {
@@ -420,6 +444,33 @@ describe("base sandbox policy", () => {
     // npm/node being in this list lets the agent bypass 'none' policy preset.
     // Exact allowlist — adding any binary here requires a deliberate review.
     expect(paths).toEqual(["/usr/local/bin/openclaw"]);
+  });
+});
+
+describe("Brave Search provider profile", () => {
+  const profile = loadYaml<ProviderProfile>(BRAVE_PROVIDER_PROFILE_PATH);
+
+  it("routes BRAVE_API_KEY through Brave's subscription-token header", () => {
+    expect(profile.id).toBe("brave");
+    expect(profile.credentials).toEqual([
+      expect.objectContaining({
+        env_vars: ["BRAVE_API_KEY"],
+        auth_style: "header",
+        header_name: "x-subscription-token",
+      }),
+    ]);
+  });
+
+  it("matches the Brave Search API endpoint used by the policy preset", () => {
+    expect(profile.endpoints).toEqual([
+      expect.objectContaining({
+        host: "api.search.brave.com",
+        port: 443,
+        protocol: "rest",
+        access: "read-write",
+        enforcement: "enforce",
+      }),
+    ]);
   });
 });
 

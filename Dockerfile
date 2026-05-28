@@ -176,12 +176,24 @@ RUN set -eu; \
 # runtime and image ENV vars set by Dockerfile are stripped. OPENSHELL_SANDBOX
 # is the only marker reliably present in the runtime.
 #
+# === Patch 2b: allow OpenShell host gateway through web_fetch guard ===
+# OpenClaw's web_fetch SSRF guard blocks *.internal hostnames before the
+# OpenShell L7 proxy sees the request. NemoClaw users legitimately reach
+# host-local approved services through host.openshell.internal after the
+# OpenShell policy explicitly allows that host:port. Add this exact hostname
+# only to the web_fetch trusted-env-proxy policy, only inside an OpenShell
+# sandbox. The generic SSRF helper and strict/direct DNS-pinned paths remain
+# unmodified, so metadata/link-local/private IP literals are unchanged.
+#
 # === Removal criteria ===
 # Patch 1: drop when OpenClaw deprecates withStrictGuardedFetchMode or
 #   when all media-fetch callsites unconditionally pass useEnvProxy.
 # Patch 2: drop when OpenClaw fixes assertExplicitProxyAllowed to skip the
 #   target hostname allowlist for the proxy hostname check (or exposes config
 #   to disable the check).
+# Patch 2b: drop when OpenClaw ships a reviewed web_fetch trusted-proxy SSRF
+#   policy surface that can allow host.openshell.internal without allowing
+#   broader private/special-use hostnames.
 #
 # SYNC WITH OPENCLAW: these patches classify the compiled OpenClaw dist at
 # build time. They apply the legacy patch when the old target exists, skip
@@ -264,6 +276,40 @@ RUN set -eu; \
             echo "ERROR: Patch 2 target missing but proxy hostname validation references remain:" >&2; \
             printf '%s\n' "$proxy_hostname_checks" | head -n 5 >&2; \
             patch_fail "Patch 2 cannot safely skip"; \
+        fi; \
+    fi; \
+    # --- Patch 2b: allow OpenShell host gateway only through web_fetch trusted env proxy --- \
+    # Reviewed against openclaw@2026.5.22 dist: fetchWithWebToolsNetworkGuard \
+    # passes useEnvProxy into withTrustedEnvProxyGuardedFetchMode(resolved), and \
+    # the SSRF guard consumes policy.allowedHostnames to skip private-network \
+    # checks for an exact normalized hostname. hostnameAllowlist only gates \
+    # hostname pattern matching and does not bypass .internal/private blocking. \
+    web_guard_files="$(grep -RIlE --include='*.js' 'function fetchWithWebToolsNetworkGuard\(params\)' "$OC_DIST" || true)"; \
+    if [ -n "$web_guard_files" ]; then \
+        patched_host_gateway=0; \
+        for f in $web_guard_files; do \
+            if grep -q 'nemoclaw: OpenShell host gateway for web_fetch trusted env proxy' "$f"; then \
+                echo "INFO: Patch 2b already present in $f"; \
+            else \
+                grep -q 'withTrustedEnvProxyGuardedFetchMode(resolved)' "$f" \
+                    || patch_fail "Patch 2b target $f is missing reviewed trusted env-proxy web_fetch call"; \
+                sed -i -E 's|return fetchWithSsrFGuard\(useEnvProxy \? withTrustedEnvProxyGuardedFetchMode\(resolved\) : withStrictGuardedFetchMode\(resolved\)\);|const hostGatewayPolicy = process.env.OPENSHELL_SANDBOX === "1" \&\& useEnvProxy \&\& new URL(resolved.url).hostname === "host.openshell.internal" ? { ...resolved.policy, allowedHostnames: [...resolved.policy?.allowedHostnames ?? [], "host.openshell.internal"] } : resolved.policy; return fetchWithSsrFGuard(useEnvProxy ? withTrustedEnvProxyGuardedFetchMode({ ...resolved, policy: hostGatewayPolicy }) : withStrictGuardedFetchMode(resolved)); /* nemoclaw: OpenShell host gateway for web_fetch trusted env proxy, see Dockerfile */|' "$f"; \
+                grep -Fq 'process.env.OPENSHELL_SANDBOX === "1" && useEnvProxy && new URL(resolved.url).hostname === "host.openshell.internal"' "$f" \
+                    || patch_fail "Patch 2b verification failed for $f"; \
+                patched_host_gateway=1; \
+            fi; \
+        done; \
+        if [ "$patched_host_gateway" = "1" ]; then \
+            echo "INFO: Patch 2b applied to OpenClaw ${OC_VERSION} web_fetch trusted-proxy host-gateway policy"; \
+        fi; \
+    else \
+        web_fetch_proxy_refs="$(grep -RIlE --include='*.js' 'web_fetch|useEnvProxy|useTrustedEnvProxy|withTrustedEnvProxyGuardedFetchMode\(resolved\)' "$OC_DIST" || true)"; \
+        if [ -z "$web_fetch_proxy_refs" ]; then \
+            echo "INFO: OpenClaw ${OC_VERSION} has no web_fetch trusted env-proxy callsite; Patch 2b not needed"; \
+        else \
+            echo "ERROR: Patch 2b target missing but web_fetch/trusted-proxy references remain:" >&2; \
+            printf '%s\n' "$web_fetch_proxy_refs" | head -n 5 >&2; \
+            patch_fail "Patch 2b cannot safely skip"; \
         fi; \
     fi; \
     # --- Patch 3: follow symlinks in plugin-install path checks (#2203) --- \

@@ -1,0 +1,40 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Explicit allowlist for NemoClaw skills exported to the NVIDIA Verified Skills catalog.
+# Keep this file deterministic: no timestamps, no generated comments, and no implicit globs.
+# The export is regenerated with: python3 scripts/export-catalog-skills.py
+version: 1
+source: .agents/skills
+export: skills
+include:
+  - skill: nemoclaw-skills-guide
+    rationale: Public index for user-facing NemoClaw skills.
+  - skill: nemoclaw-user-agent-skills
+    rationale: Public user documentation skill.
+  - skill: nemoclaw-user-configure-inference
+    rationale: Public user documentation skill.
+  - skill: nemoclaw-user-configure-security
+    rationale: Public user documentation skill.
+  - skill: nemoclaw-user-deploy-remote
+    rationale: Public user documentation skill.
+  - skill: nemoclaw-user-get-started
+    rationale: Public user documentation skill.
+  - skill: nemoclaw-user-manage-policy
+    rationale: Public user documentation skill.
+  - skill: nemoclaw-user-manage-sandboxes
+    rationale: Public user documentation skill.
+  - skill: nemoclaw-user-monitor-sandbox
+    rationale: Public user documentation skill.
+  - skill: nemoclaw-user-overview
+    rationale: Public user documentation skill.
+  - skill: nemoclaw-user-reference
+    rationale: Public user documentation skill.
+exclude:
+  - pattern: nemoclaw-maintainer-*
+    rationale: Internal maintainer workflows are not catalog/customer-facing.
+  - pattern: nemoclaw-contributor-*
+    rationale: Contributor workflows are repo-local until explicitly approved for catalog publication.
+metadata:
+  minNemoClawVersion: "0.1.0"
+  testedNemoClawVersion: "0.1.0"

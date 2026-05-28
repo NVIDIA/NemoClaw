@@ -145,9 +145,9 @@ selectFromList(items, options)
 
 describe("policies", () => {
   describe("listPresets", () => {
-    it("returns all 19 presets", () => {
+    it("returns all 20 presets", () => {
       const presets = policies.listPresets();
-      expect(presets.length).toBe(19);
+      expect(presets.length).toBe(20);
     });
 
     it("each preset has name and description", () => {
@@ -176,6 +176,7 @@ describe("policies", () => {
         "nous-image",
         "nous-web",
         "npm",
+        "openclaw-pricing",
         "outlook",
         "pypi",
         "slack",
@@ -314,6 +315,45 @@ describe("policies", () => {
         expect(endpoint, `missing host-gateway endpoint for port ${port}`).toBeDefined();
         expect(endpoint?.allowed_ips).toEqual(expectedRanges);
       }
+    });
+
+    it("openclaw-pricing preset pins LiteLLM and OpenRouter reference fetches to GET-only paths", () => {
+      // OpenClaw's gateway/model-pricing subsystem fetches the LiteLLM
+      // pricing table and the OpenRouter model catalogue on every start.
+      // Both endpoints are read-only metadata fetches, so the preset must
+      // expose exactly one GET rule per host on the specific path each
+      // fetch reads, with no wildcards that could widen into a general
+      // raw.githubusercontent.com or openrouter.ai escape hatch.
+      const parsed = parsePresetYaml("openclaw-pricing");
+      const endpoints: Array<Record<string, unknown>> =
+        parsed?.network_policies?.["openclaw-pricing"]?.endpoints ?? [];
+      expect(endpoints).toHaveLength(2);
+
+      const litellm = endpoints.find((item) => item.host === "raw.githubusercontent.com");
+      if (!litellm) throw new Error("expected raw.githubusercontent.com endpoint");
+      expect(litellm.port).toBe(443);
+      expect(litellm.protocol).toBe("rest");
+      expect(litellm.enforcement).toBe("enforce");
+      expect(litellm.rules).toEqual([
+        {
+          allow: {
+            method: "GET",
+            path: "/BerriAI/litellm/main/model_prices_and_context_window.json",
+          },
+        },
+      ]);
+
+      const openrouter = endpoints.find((item) => item.host === "openrouter.ai");
+      if (!openrouter) throw new Error("expected openrouter.ai endpoint");
+      expect(openrouter.port).toBe(443);
+      expect(openrouter.protocol).toBe("rest");
+      expect(openrouter.enforcement).toBe("enforce");
+      expect(openrouter.rules).toEqual([{ allow: { method: "GET", path: "/api/v1/models" } }]);
+
+      const binaries: Array<{ path: string }> =
+        parsed?.network_policies?.["openclaw-pricing"]?.binaries ?? [];
+      const binaryPaths = binaries.map((entry) => entry.path).sort();
+      expect(binaryPaths).toEqual(["/usr/bin/node", "/usr/local/bin/node"]);
     });
 
     it("local-inference preset includes openclaw and common tool binaries", () => {

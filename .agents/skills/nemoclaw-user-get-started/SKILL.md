@@ -12,7 +12,7 @@ Follow these steps to get started with NemoClaw and your first sandboxed OpenCla
 
 **Note:**
 
-Make sure you have completed reviewing the Prerequisites (use the `nemoclaw-user-get-started` skill) before following this guide.
+Make sure you have completed reviewing the [Prerequisites](references/prerequisites.md) before following this guide.
 
 ## Install NemoClaw and Onboard OpenClaw Agent
 

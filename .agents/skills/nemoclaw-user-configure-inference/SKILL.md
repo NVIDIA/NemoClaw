@@ -73,6 +73,7 @@ NemoClaw lists installed models or offers starter models if none are installed.
 On hosts where the larger starter models fit the currently available GPU memory, the starter list includes `qwen3.6:35b` and selects it by default.
 When another GPU workload is using most of the memory at onboard time, NemoClaw downgrades the menu to the largest model that still fits.
 It pulls the selected model, loads it into memory, and validates it before continuing.
+When Ollama reports a loaded-model context length, NemoClaw uses that value for the `contextWindow` baked into `openclaw.json` unless you set `NEMOCLAW_CONTEXT_WINDOW` yourself.
 If the selected model declares that it does not support tool calling, onboarding stops with guidance to choose a model whose `ollama show <model>` capabilities include `tools`.
 The validation also requires structured chat-completions tool calls.
 If the model leaks tool-call JSON as plain message text, onboarding stops so you can choose a model that returns tool calls in the expected response field.
@@ -100,7 +101,7 @@ Ollama is convenient for local chat, but some model/template combinations can
 return tool calls as plain text under realistic agent load. If the TUI shows raw
 JSON such as `{"name":"memory_search","arguments":{...}}` instead of running a
 tool, switch to vLLM with `--enable-auto-tool-choice` and the correct
-`--tool-call-parser`. See Tool-Calling Reliability (use the `nemoclaw-user-configure-inference` skill).
+`--tool-call-parser`. See [Tool-Calling Reliability](references/tool-calling-reliability.md).
 
 ### Authenticated Reverse Proxy
 
@@ -252,7 +253,7 @@ You can use this variable in both interactive and non-interactive mode.
 If you already onboarded and the sandbox is failing at runtime, re-run
 `nemoclaw onboard` to re-probe the endpoint and bake the correct API path
 into the image.
-Refer to Switch Inference Models (use the `nemoclaw-user-configure-inference` skill) for details.
+Refer to [Switch Inference Models](references/switch-inference-providers.md) for details.
 
 ## Anthropic-Compatible Server
 
@@ -430,7 +431,7 @@ If `Inference` is healthy but `Inference (auth proxy)` is not, rerun onboarding 
 ## Switch Models at Runtime
 
 You can change the model without re-running onboard.
-Refer to Switch Inference Models (use the `nemoclaw-user-configure-inference` skill) for the full procedure.
+Refer to [Switch Inference Models](references/switch-inference-providers.md) for the full procedure.
 
 For compatible endpoints, the command is:
 
@@ -449,4 +450,7 @@ If the provider itself needs to change (for example, switching from vLLM to a cl
 
 ## Related Skills
 
+- [Inference Options](references/inference-options.md) for the full list of providers available during onboarding.
+- [Tool-Calling Reliability](references/tool-calling-reliability.md) for diagnosing raw JSON tool-call output with local models.
+- [Switch Inference Models](references/switch-inference-providers.md) for runtime model switching.
 - `nemoclaw-user-get-started` — Quickstart (use the `nemoclaw-user-get-started` skill) for first-time installation

@@ -159,6 +159,6 @@ model.
 
 ## Next Steps
 
-- Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill)
-- Inference Options (use the `nemoclaw-user-configure-inference` skill)
-- Switch Inference Models (use the `nemoclaw-user-configure-inference` skill)
+- [Use a Local Inference Server](../SKILL.md)
+- [Inference Options](inference-options.md)
+- [Switch Inference Models](switch-inference-providers.md)

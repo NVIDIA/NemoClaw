@@ -746,6 +746,7 @@ def rewrite_doc_paths(
     source_page: DocPage,
     docs_dir: Path,
     doc_to_skill: dict[str, str],
+    local_doc_links: dict[str, str] | None = None,
     html_baseurl: str | None = None,
     doc_platform: str = "myst-md",
 ) -> tuple[str, list[tuple[Path, str]]]:
@@ -762,12 +763,14 @@ def rewrite_doc_paths(
        record a copy task and rewrite the link to ``images/<basename>``.
        The caller is responsible for copying the recorded files into the
        skill output directory after writing the markdown body.
-    3. If the target resolves to a doc that has a generated skill,
+    3. If the target resolves to a doc emitted in the current skill
+       directory, rewrite the link to that local file.
+    4. If the target resolves to a doc that has a generated skill,
        replace the whole link with ``text (use the `<skill>` skill)``.
-    4. If the target is a page inside ``docs/``, emit
+    5. If the target is a page inside ``docs/``, emit
        ``[text](<html_baseurl><page>.html)`` using the base URL read
        from ``conf.py``.
-    5. Otherwise (target outside ``docs/``, or no base URL available),
+    6. Otherwise (target outside ``docs/``, or no base URL available),
        strip the hyperlink and keep the link text. Self-containment wins
        over navigability in the fallback.
 
@@ -861,6 +864,16 @@ def rewrite_doc_paths(
             if not resolved.is_file():
                 continue
             return f"[{link_text}]({_record_image_copy(resolved)})"
+
+        # Prefer same-skill reference files over self-referential skill hints.
+        for resolved in candidates:
+            try:
+                rel_to_repo = resolved.relative_to(repo_root)
+            except ValueError:
+                continue
+            rel_str = rel_to_repo.as_posix()
+            if local_doc_links and rel_str in local_doc_links:
+                return f"[{link_text}]({local_doc_links[rel_str]}{frag})"
 
         # Check if target doc maps to a generated skill
         for resolved in candidates:
@@ -1502,7 +1515,12 @@ def generate_skill(
     skill_md_images: list[tuple[Path, str]] = []
     ref_images: dict[str, list[tuple[Path, str]]] = {}
 
-    def _clean(text: str, source: DocPage, image_acc: list[tuple[Path, str]]) -> str:
+    def _clean(
+        text: str,
+        source: DocPage,
+        image_acc: list[tuple[Path, str]],
+        local_doc_links: dict[str, str] | None = None,
+    ) -> str:
         """Apply directive cleanup and path rewriting for a source page."""
         if doc_platform == "fern-mdx":
             result = clean_fern_mdx(text)
@@ -1514,6 +1532,7 @@ def generate_skill(
                 source,
                 docs_dir,
                 doc_to_skill,
+                local_doc_links=local_doc_links,
                 html_baseurl=html_baseurl,
                 doc_platform=doc_platform,
             )
@@ -1523,6 +1542,30 @@ def generate_skill(
     procedures, deferred_procedures, context_pages, reference_pages = (
         partition_skill_pages(pages)
     )
+    ref_section_pages = deferred_procedures + context_pages + reference_pages
+
+    def _page_rel(page: DocPage) -> str | None:
+        if docs_dir is None:
+            return None
+        try:
+            return page.path.resolve().relative_to(docs_dir.parent).as_posix()
+        except ValueError:
+            return None
+
+    skill_md_local_links: dict[str, str] = {}
+    reference_local_links: dict[str, str] = {}
+    for page in ref_section_pages:
+        rel = _page_rel(page)
+        if rel is None:
+            continue
+        ref_name = page.path.stem + ".md"
+        skill_md_local_links[rel] = f"references/{ref_name}"
+        reference_local_links[rel] = ref_name
+    for page in procedures:
+        rel = _page_rel(page)
+        if rel is not None:
+            reference_local_links[rel] = "../SKILL.md"
+
     description_pages = (
         procedures + deferred_procedures + context_pages + reference_pages
         if procedures
@@ -1571,7 +1614,9 @@ def generate_skill(
     for pp in procedures:
         for heading, content in pp.sections:
             if heading.lower() in ("prerequisites", "before you begin"):
-                cleaned = _clean(content, pp, skill_md_images)
+                cleaned = _clean(
+                    content, pp, skill_md_images, skill_md_local_links
+                )
                 for item_line in cleaned.split("\n"):
                     stripped = item_line.strip()
                     if stripped.startswith("- "):
@@ -1605,17 +1650,21 @@ def generate_skill(
             if heading.lower() in skip_sections:
                 continue
             if heading.lower() in related_sections:
-                collected_related.append(_clean(content, pp, skill_md_images))
+                collected_related.append(
+                    _clean(content, pp, skill_md_images, skill_md_local_links)
+                )
                 continue
             if not heading:
-                cleaned = _clean(content, pp, skill_md_images)
+                cleaned = _clean(content, pp, skill_md_images, skill_md_local_links)
                 cleaned = re.sub(r"^#\s+.+\n+", "", cleaned)
                 if cleaned.strip():
                     lines.append(cleaned)
                     lines.append("")
                 continue
 
-            cleaned_content = _clean(content, pp, skill_md_images)
+            cleaned_content = _clean(
+                content, pp, skill_md_images, skill_md_local_links
+            )
             lines.append(f"## {heading}")
             lines.append("")
             lines.append(cleaned_content)
@@ -1649,7 +1698,6 @@ def generate_skill(
     # trigger from description.agent (the "Use when ..." clause) so the
     # agent can decide on-sight whether to load the file, which is how
     # progressive disclosure is supposed to work.
-    ref_section_pages = deferred_procedures + context_pages + reference_pages
     if ref_section_pages:
         lines.append("")
         lines.append("## References")
@@ -1683,7 +1731,7 @@ def generate_skill(
     for rp in deferred_procedures + reference_pages + context_pages:
         ref_name = rp.path.stem + ".md"
         ref_image_acc: list[tuple[Path, str]] = []
-        body = _clean(rp.body, rp, ref_image_acc)
+        body = _clean(rp.body, rp, ref_image_acc, reference_local_links)
         if doc_platform == "myst-md" and rp.title:
             body = canonicalize_leading_h1(body, rp.title)
         elif doc_platform == "fern-mdx" and rp.title and not body.startswith("# "):

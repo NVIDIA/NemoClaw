@@ -217,6 +217,22 @@ remove_stale_gateway_file() {
   fi
 }
 
+hermes_config_path_is_locked() {
+  local path="$1"
+  local owner mode
+
+  [ -f "$path" ] || return 1
+  [ ! -L "$path" ] || return 1
+
+  owner="$(stat -c '%U:%G' "$path" 2>/dev/null || stat -f '%Su:%Sg' "$path" 2>/dev/null || true)"
+  mode="$(stat -c '%a' "$path" 2>/dev/null || stat -f '%Lp' "$path" 2>/dev/null || true)"
+  mode="${mode#0}"
+  [ -n "$mode" ] || return 1
+
+  [ "$owner" = "root:root" ] || return 1
+  (((8#$mode & 0222) == 0))
+}
+
 hermes_config_root_is_locked() {
   local owner mode
 
@@ -224,9 +240,12 @@ hermes_config_root_is_locked() {
   mode="$(stat -c '%a' "$HERMES_DIR" 2>/dev/null || stat -f '%Lp' "$HERMES_DIR" 2>/dev/null || true)"
 
   case "${owner} ${mode}" in
-    "root:root 755" | "root:root 0755") return 0 ;;
+    "root:root 755" | "root:root 0755") ;;
+    *) return 1 ;;
   esac
-  return 1
+
+  hermes_config_path_is_locked "${HERMES_DIR}/config.yaml" \
+    && hermes_config_path_is_locked "${HERMES_DIR}/.env"
 }
 
 ensure_hermes_config_root_mode() {
