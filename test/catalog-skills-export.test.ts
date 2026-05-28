@@ -74,7 +74,7 @@ describe("catalog skills export", () => {
     try {
       const tempAgents = path.join(tempDir, ".agents");
       const tempScripts = path.join(tempDir, "scripts");
-      const tempSkills = path.join(tempDir, "skills", "nemoclaw");
+      const tempSkills = path.join(tempDir, "skills");
       fs.mkdirSync(tempAgents, { recursive: true });
       fs.mkdirSync(tempScripts, { recursive: true });
       fs.cpSync(sourceRoot, path.join(tempAgents, "skills"), {
@@ -143,7 +143,7 @@ describe("catalog skills export", () => {
         [
           "version: 1",
           "source: ../outside",
-          "export: skills/nemoclaw",
+          "export: skills",
           "include:",
           "  - skill: ../escape",
           "",
@@ -171,7 +171,7 @@ describe("catalog skills export", () => {
     try {
       const tempAgents = path.join(tempDir, ".agents");
       const tempScripts = path.join(tempDir, "scripts");
-      const tempSkills = path.join(tempDir, "skills", "nemoclaw");
+      const tempSkills = path.join(tempDir, "skills");
       fs.mkdirSync(tempAgents, { recursive: true });
       fs.mkdirSync(tempScripts, { recursive: true });
       fs.cpSync(sourceRoot, path.join(tempAgents, "skills"), {

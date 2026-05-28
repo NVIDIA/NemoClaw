@@ -5,7 +5,7 @@
 
 ## Summary
 
-- Regenerates `skills/nemoclaw/` from `.agents/catalog-skills.yaml` and `.agents/skills/`.
+- Regenerates `skills/` from `.agents/catalog-skills.yaml` and `.agents/skills/`.
 - Keeps the NVIDIA Verified Skills catalog export deterministic and reviewable.
 
 ## Validation

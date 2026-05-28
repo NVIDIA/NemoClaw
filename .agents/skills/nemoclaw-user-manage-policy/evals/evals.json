@@ -1,0 +1,128 @@
+[
+  {
+    "id": "docs-network-policy-customize-network-policy-001",
+    "question": "I'm customizing sandbox network policy. Help me allow the agent to reach a required external service so I can enable the integration while preserving least privilege.",
+    "expected_skill": "nemoclaw-user-manage-policy",
+    "ground_truth": "A NemoClaw-specific answer that helps the user allow the agent to reach a required external service and gives enough concrete guidance, decision criteria, verification steps, or risk framing to enable the integration while preserving least privilege.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: customizing sandbox network policy.",
+      "The AI coding assistant loads the expected_skill and SKILL.md",
+      "The output helps the user allow the agent to reach a required external service with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to enable the integration while preserving least privilege.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the SKILL.md file."
+    ]
+  },
+  {
+    "id": "docs-network-policy-customize-network-policy-002",
+    "question": "I'm writing an egress rule. Help me specify the minimum necessary host, port, and protocol so I can avoid opening broader access than the agent needs.",
+    "expected_skill": "nemoclaw-user-manage-policy",
+    "ground_truth": "A NemoClaw-specific answer that helps the user specify the minimum necessary host, port, and protocol and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid opening broader access than the agent needs.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: writing an egress rule.",
+      "The AI coding assistant loads the expected_skill and SKILL.md",
+      "The output helps the user specify the minimum necessary host, port, and protocol with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to avoid opening broader access than the agent needs.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the SKILL.md file."
+    ]
+  },
+  {
+    "id": "docs-network-policy-customize-network-policy-003",
+    "question": "I'm validating a policy change. Help me test that the intended integration works and unrelated egress remains blocked so I can ship a safer policy update.",
+    "expected_skill": "nemoclaw-user-manage-policy",
+    "ground_truth": "A NemoClaw-specific answer that helps the user test that the intended integration works and unrelated egress remains blocked and gives enough concrete guidance, decision criteria, verification steps, or risk framing to ship a safer policy update.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: validating a policy change.",
+      "The AI coding assistant loads the expected_skill and SKILL.md",
+      "The output helps the user test that the intended integration works and unrelated egress remains blocked with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to ship a safer policy update.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the SKILL.md file."
+    ]
+  },
+  {
+    "id": "docs-network-policy-approve-network-requests-001",
+    "question": "I'm reviewing a blocked network request. Help me understand why the agent wants to reach that endpoint so I can approve only requests that support the current job.",
+    "expected_skill": "nemoclaw-user-manage-policy",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand why the agent wants to reach that endpoint and gives enough concrete guidance, decision criteria, verification steps, or risk framing to approve only requests that support the current job.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: reviewing a blocked network request.",
+      "The AI coding assistant loads the expected_skill and references/approve-network-requests.md",
+      "The output helps the user understand why the agent wants to reach that endpoint with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to approve only requests that support the current job.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/approve-network-requests.md file."
+    ]
+  },
+  {
+    "id": "docs-network-policy-approve-network-requests-002",
+    "question": "I'm using the approval UI. Help me spot unexpected or prompt-injection-driven egress so I can deny suspicious access before it becomes policy.",
+    "expected_skill": "nemoclaw-user-manage-policy",
+    "ground_truth": "A NemoClaw-specific answer that helps the user spot unexpected or prompt-injection-driven egress and gives enough concrete guidance, decision criteria, verification steps, or risk framing to deny suspicious access before it becomes policy.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: using the approval UI.",
+      "The AI coding assistant loads the expected_skill and references/approve-network-requests.md",
+      "The output helps the user spot unexpected or prompt-injection-driven egress with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to deny suspicious access before it becomes policy.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/approve-network-requests.md file."
+    ]
+  },
+  {
+    "id": "docs-network-policy-approve-network-requests-003",
+    "question": "I'm after approving or denying a request. Help me understand audit, rollback, and policy update behavior so I can keep operator decisions traceable.",
+    "expected_skill": "nemoclaw-user-manage-policy",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand audit, rollback, and policy update behavior and gives enough concrete guidance, decision criteria, verification steps, or risk framing to keep operator decisions traceable.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: after approving or denying a request.",
+      "The AI coding assistant loads the expected_skill and references/approve-network-requests.md",
+      "The output helps the user understand audit, rollback, and policy update behavior with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to keep operator decisions traceable.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/approve-network-requests.md file."
+    ]
+  },
+  {
+    "id": "docs-network-policy-integration-policy-examples-001",
+    "question": "I'm following an integration policy example. Help me enable a common third-party workflow quickly so I can avoid writing a policy from scratch.",
+    "expected_skill": "nemoclaw-user-manage-policy",
+    "ground_truth": "A NemoClaw-specific answer that helps the user enable a common third-party workflow quickly and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid writing a policy from scratch.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: following an integration policy example.",
+      "The AI coding assistant loads the expected_skill and references/integration-policy-examples.md",
+      "The output helps the user enable a common third-party workflow quickly with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to avoid writing a policy from scratch.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/integration-policy-examples.md file."
+    ]
+  },
+  {
+    "id": "docs-network-policy-integration-policy-examples-002",
+    "question": "I'm adapting an example to my organization. Help me replace sample hosts and ports with exact production endpoints so I can create a policy that matches our real integration.",
+    "expected_skill": "nemoclaw-user-manage-policy",
+    "ground_truth": "A NemoClaw-specific answer that helps the user replace sample hosts and ports with exact production endpoints and gives enough concrete guidance, decision criteria, verification steps, or risk framing to create a policy that matches our real integration.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: adapting an example to my organization.",
+      "The AI coding assistant loads the expected_skill and references/integration-policy-examples.md",
+      "The output helps the user replace sample hosts and ports with exact production endpoints with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to create a policy that matches our real integration.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/integration-policy-examples.md file."
+    ]
+  },
+  {
+    "id": "docs-network-policy-integration-policy-examples-003",
+    "question": "I'm copying an example into a stricter environment. Help me identify broad rules or assumptions that need tightening so I can avoid weakening production egress controls.",
+    "expected_skill": "nemoclaw-user-manage-policy",
+    "ground_truth": "A NemoClaw-specific answer that helps the user identify broad rules or assumptions that need tightening and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid weakening production egress controls.",
+    "expected_behavior": [
+      "The output directly addresses the user's situation: copying an example into a stricter environment.",
+      "The AI coding assistant loads the expected_skill and references/integration-policy-examples.md",
+      "The output helps the user identify broad rules or assumptions that need tightening with NemoClaw-specific guidance rather than generic advice.",
+      "The output gives enough concrete guidance, decision criteria, verification steps, or risk framing for the user to avoid weakening production egress controls.",
+      "The output avoids inventing unsupported NemoClaw behavior.",
+      "The output follows progressive disclosure: it answers the current request without dumping unrelated details other than the expected_skill and the references/integration-policy-examples.md file."
+    ]
+  }
+]

@@ -65,8 +65,13 @@ export function validateE2eScenariosWorkflowBoundary(
   }
 
   const dispatchInputs = asRecord(workflowDispatch.inputs);
-  requireInput(errors, dispatchInputs, "scenario");
-  requireInput(errors, dispatchInputs, "suite_filter");
+  requireInput(errors, dispatchInputs, "scenarios");
+  if (Object.hasOwn(dispatchInputs, "scenario")) {
+    errors.push("workflow_dispatch must not expose legacy scenario input");
+  }
+  if (Object.hasOwn(dispatchInputs, "suite_filter")) {
+    errors.push("workflow_dispatch must not expose legacy suite_filter input");
+  }
   if (Object.hasOwn(dispatchInputs, "plan_only")) {
     errors.push("workflow_dispatch must not expose retired plan_only input");
   }
@@ -84,22 +89,39 @@ export function validateE2eScenariosWorkflowBoundary(
   }
 
   const steps = asSteps(runScenario.steps);
-  const normalRun = requireStep(errors, steps, "Run scenario");
-  requireRunContains(errors, normalRun, "bash test/e2e/runtime/run-scenario.sh");
-  requireRunContains(errors, normalRun, '"$SCENARIO"');
-  requireRunContains(errors, normalRun, "exit \"$rc\"");
-  if (stringValue(normalRun?.run).includes("--plan-only")) {
-    errors.push("Run scenario step must not use retired --plan-only flag");
-  }
+  const normalRun = requireStep(errors, steps, "Run typed scenarios");
+  requireRunContains(errors, normalRun, "npx tsx test/e2e-scenario/scenarios/run.ts");
+  requireRunContains(errors, normalRun, "--scenarios");
+  requireRunContains(errors, normalRun, "--dry-run");
 
-  const wslRun = requireStep(errors, steps, "Run scenario in WSL");
-  requireRunContains(errors, wslRun, "bash test/e2e/runtime/run-scenario.sh");
-  requireRunContains(errors, wslRun, '"$SCENARIO"');
+  const wslInstall = requireStep(errors, steps, "Ensure Ubuntu WSL exists");
+  requireRunContains(errors, wslInstall, "wsl --install");
+  requireRunContains(errors, wslInstall, "wsl --set-default");
+
+  const wslDeps = requireStep(errors, steps, "Install Ubuntu dependencies");
+  requireRunContains(errors, wslDeps, "apt-get install");
+  requireRunContains(errors, wslDeps, "rsync");
+
+  const wslNode = requireStep(errors, steps, "Install Node.js 22 in WSL");
+  requireRunContains(errors, wslNode, "setup_22.x");
+  requireRunContains(errors, wslNode, "npm --version");
+
+  const wslWorkspace = requireStep(errors, steps, "Copy checkout into WSL ext4 workspace");
+  requireRunContains(errors, wslWorkspace, "rsync -a");
+  requireRunContains(errors, wslWorkspace, "WSL ext4 workspace ready");
+
+  const wslRun = requireStep(errors, steps, "Run typed scenarios in WSL");
+  requireRunContains(errors, wslRun, "npx tsx test/e2e-scenario/scenarios/run.ts");
+  requireRunContains(errors, wslRun, "--scenarios");
+  requireRunContains(errors, wslRun, "--dry-run");
+  requireRunContains(errors, wslRun, "$env:WSL_WORKDIR");
+  requireRunContains(errors, wslRun, "WriteAllText");
+  requireRunContains(errors, wslRun, "bash -l $wslTmp");
 
   const upload = requireStep(errors, steps, "Upload scenario artifacts");
   const uploadWith = asRecord(upload?.with);
-  if (uploadWith.name !== "e2e-scenario-${{ inputs.scenario }}") {
-    errors.push("artifact upload name must include the scenario input");
+  if (uploadWith.name !== "e2e-scenario-${{ inputs.scenarios || github.event.inputs.scenarios }}") {
+    errors.push("artifact upload name must include the scenarios input");
   }
   if (uploadWith["include-hidden-files"] !== true) {
     errors.push("artifact upload must include hidden .e2e files");

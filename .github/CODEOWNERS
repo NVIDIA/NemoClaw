@@ -33,7 +33,11 @@
 # ── Agent skills catalog ──
 /.agents/catalog-skills.yaml        @NVIDIA/nemoclaw-maintainer @NVIDIA/nemoclaw-engineer
 /.agents/skills/                    @NVIDIA/nemoclaw-maintainer @NVIDIA/nemoclaw-engineer
-/skills/nemoclaw/                   @NVIDIA/nemoclaw-maintainer @NVIDIA/nemoclaw-engineer
+/skills/                            @NVIDIA/nemoclaw-maintainer @NVIDIA/nemoclaw-engineer
+
+# ── NVSkills CI request listener (must stay CODEOWNERS-protected per
+#    NVIDIA/nvskills-ci team-onboarding step 4) ──
+/.github/workflows/request-nvskills-ci.yml  @NVIDIA/nemoclaw-maintainer
 
 # ── Tests ──
 /test/                              @NVIDIA/nemoclaw-engineer

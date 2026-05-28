@@ -8,11 +8,6 @@ import { loadE2eWorkflowContract, reusableNightlyJobs } from "./helpers/e2e-work
 describe("E2E reusable workflow contract", () => {
   const { runnerWorkflow, nightlyWorkflow, action } = loadE2eWorkflowContract();
 
-  it("opts functional E2E workflows into residual-cap execution on CI hosts", () => {
-    expect(runnerWorkflow.env?.NEMOCLAW_ALLOW_RESIDUAL_CAPS).toBe("1");
-    expect(nightlyWorkflow.env?.NEMOCLAW_ALLOW_RESIDUAL_CAPS).toBe("1");
-  });
-
   it("does not persist checkout credentials in the reusable runner", () => {
     const checkoutSteps = runnerWorkflow.jobs.run.steps.filter((step) =>
       String(step.uses ?? "").startsWith("actions/checkout@"),
@@ -37,13 +32,27 @@ describe("E2E reusable workflow contract", () => {
 
   it("passes only named secrets to reusable nightly jobs", () => {
     const reusableJobs = reusableNightlyJobs(nightlyWorkflow);
+    const defaultSecrets = {
+      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+      BRAVE_API_KEY: "${{ secrets.BRAVE_API_KEY }}",
+    };
+    const messagingLiveSecrets = {
+      TELEGRAM_BOT_TOKEN_REAL: "${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}",
+      TELEGRAM_CHAT_ID_E2E: "${{ secrets.TELEGRAM_CHAT_ID_E2E }}",
+      DISCORD_BOT_TOKEN_REAL: "${{ secrets.DISCORD_BOT_TOKEN_REAL }}",
+      DISCORD_CHANNEL_ID_E2E: "${{ secrets.DISCORD_CHANNEL_ID_E2E }}",
+      SLACK_BOT_TOKEN_REAL: "${{ secrets.SLACK_BOT_TOKEN_REAL }}",
+      SLACK_APP_TOKEN_REAL: "${{ secrets.SLACK_APP_TOKEN_REAL }}",
+      SLACK_CHANNEL_ID_E2E: "${{ secrets.SLACK_CHANNEL_ID_E2E }}",
+    };
 
     expect(reusableJobs.length).toBeGreaterThan(20);
     for (const [name, job] of reusableJobs) {
-      expect(job.secrets, name).toEqual({
-        NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
-        BRAVE_API_KEY: "${{ secrets.BRAVE_API_KEY }}",
-      });
+      const expectedSecrets =
+        name === "messaging-providers-e2e"
+          ? { ...defaultSecrets, ...messagingLiveSecrets }
+          : defaultSecrets;
+      expect(job.secrets, name).toEqual(expectedSecrets);
     }
   });
 

@@ -235,15 +235,10 @@ drop_capabilities() {
         --drop=cap_sys_admin,cap_sys_ptrace,cap_net_raw,cap_dac_override,cap_sys_chroot,cap_fsetid,cap_setfcap,cap_mknod,cap_audit_write,cap_net_bind_service \
         -- -c "exec $entrypoint \"\$@\"" -- "$@"
     else
-      # report_residual_capabilities intentionally returns non-zero when
-      # dangerous caps remain. Handle that status explicitly so `set -e`
-      # cannot skip the refusal banner or the opt-in escape hatch.
-      report_residual_capabilities || true
-      enforce_residual_capability_policy "CAP_SETPCAP unavailable"
+      report_residual_capabilities
     fi
   elif [ "${NEMOCLAW_CAPS_DROPPED:-}" != "1" ]; then
     echo "[SECURITY WARNING] capsh not available — running with default capabilities" >&2
-    enforce_residual_capability_policy "capsh not available"
   fi
 }
 
@@ -251,8 +246,6 @@ drop_capabilities() {
 # residual dangerous bounding-set caps surface in logs instead of being
 # silently inherited from the container runtime. Called from the
 # CAP_SETPCAP-missing fallback path of drop_capabilities() (issue #3280).
-# Returns 0 when no dangerous caps remain (or status unreadable), non-zero
-# when dangerous caps were detected so callers can refuse to start.
 report_residual_capabilities() {
   echo "[SECURITY] CAP_SETPCAP not available — cannot drop bounding-set caps via capsh" >&2
 
@@ -281,44 +274,7 @@ report_residual_capabilities() {
   done
   if [ -n "$present_caps" ]; then
     echo "[SECURITY] Dangerous caps remain in bounding set: ${present_caps}" >&2
-    return 1
   fi
-  return 0
-}
-
-# Refuse to continue when the bounding-set drop did not actually happen, so
-# the sandbox is never started with a security posture weaker than the
-# script's stated intent (issue #4264). NEMOCLAW_ALLOW_RESIDUAL_CAPS=1 is
-# the explicit opt-in for environments like Brev shadecloud where the host
-# kernel doesn't grant CAP_SETPCAP — operators acknowledge they are running
-# with a weaker posture.
-enforce_residual_capability_policy() {
-  local reason="$1"
-  if [ "${NEMOCLAW_ALLOW_RESIDUAL_CAPS:-}" = "1" ]; then
-    echo "[SECURITY] NEMOCLAW_ALLOW_RESIDUAL_CAPS=1 set — continuing with weakened posture" >&2
-    return 0
-  fi
-  cat >&2 <<EOF
-
-╔══════════════════════════════════════════════════════════════════════════════╗
-║ [SECURITY] Refusing to start sandbox: bounding-set capability drop failed.   ║
-║                                                                              ║
-║ Reason: ${reason}
-║                                                                              ║
-║ NemoClaw's runtime security model expects cap_sys_admin, cap_sys_ptrace,     ║
-║ cap_net_raw, cap_dac_override, cap_net_bind_service (and others) to be       ║
-║ dropped from the bounding set before any sandbox process starts. The drop    ║
-║ failed on this host, so the sandbox would inherit privileges the model       ║
-║ assumes are gone.                                                            ║
-║                                                                              ║
-║ To run anyway (acknowledging the weaker posture), set:                       ║
-║   NEMOCLAW_ALLOW_RESIDUAL_CAPS=1                                             ║
-║                                                                              ║
-║ Filed as: https://github.com/NVIDIA/NemoClaw/issues/4264                     ║
-╚══════════════════════════════════════════════════════════════════════════════╝
-
-EOF
-  exit 1
 }
 
 # ── Privilege step-down (issue #3280 follow-up) ──────────────────

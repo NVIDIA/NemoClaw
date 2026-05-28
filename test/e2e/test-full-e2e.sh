@@ -138,11 +138,6 @@ if [ "${NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE:-}" != "1" ]; then
   exit 1
 fi
 
-if [ "${NEMOCLAW_E2E_SECURITY_POSTURE:-}" = "1" ] && [ "${NEMOCLAW_E2E_EXPECT_NON_ROOT_HOST:-}" = "1" ]; then
-  export NEMOCLAW_ALLOW_RESIDUAL_CAPS="${NEMOCLAW_ALLOW_RESIDUAL_CAPS:-1}"
-  info "Security-posture E2E is explicitly opting in to residual caps on non-root hosts; fail-closed behavior is covered by gateway-isolation."
-fi
-
 # ══════════════════════════════════════════════════════════════════
 # Phase 2: Install nemoclaw (non-interactive mode)
 # ══════════════════════════════════════════════════════════════════
