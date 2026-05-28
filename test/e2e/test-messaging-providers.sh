@@ -885,6 +885,47 @@ print(account.get('botToken', ''))
     skip "M6: Telegram channel not in openclaw.json (expected in non-root sandbox)"
   fi
 
+  # M6a/M6b: When the channel block is present in openclaw.json, the
+  # generated config must mark it enabled at the top level so OpenClaw
+  # 2026.5.22+ actually loads the bridge. NemoClaw#4314 / #4390 reproduced
+  # as silent "no bridge / no logs"; the symptom matched the Slack
+  # regression fixed in #4222. Mirror M6's skip-on-absent pattern — the
+  # non-root sandbox path cannot patch openclaw.json and the block may be
+  # missing entirely; we only assert behavior when the block is present.
+  tg_state=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+block = d.get('telegram')
+if not isinstance(block, dict):
+    print('absent')
+elif block.get('enabled') is True:
+    print('enabled')
+else:
+    print('missing')
+" 2>/dev/null || echo "absent")
+  case "$tg_state" in
+    enabled) pass "M6a: channels.telegram.enabled is true (bridge loadable per #4314/#4390)" ;;
+    missing) fail "M6a: channels.telegram present but enabled flag missing — bridge will silently no-op" ;;
+    *)       skip "M6a: Telegram channel block not in openclaw.json (expected in non-root sandbox)" ;;
+  esac
+
+  dc_state=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+block = d.get('discord')
+if not isinstance(block, dict):
+    print('absent')
+elif block.get('enabled') is True:
+    print('enabled')
+else:
+    print('missing')
+" 2>/dev/null || echo "absent")
+  case "$dc_state" in
+    enabled) pass "M6b: channels.discord.enabled is true (bridge loadable)" ;;
+    missing) fail "M6b: channels.discord present but enabled flag missing — bridge will silently no-op" ;;
+    *)       skip "M6b: Discord channel block not in openclaw.json (expected in non-root sandbox)" ;;
+  esac
+
   # M7: Telegram token is NOT the real/fake host token
   if [ -n "$tg_token" ] && [ "$tg_token" != "$TELEGRAM_TOKEN" ]; then
     pass "M7: Telegram botToken is not the host-side token (placeholder confirmed)"

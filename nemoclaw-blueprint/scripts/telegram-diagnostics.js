@@ -191,4 +191,49 @@
   wrapHttp(https, 'request');
   wrapHttp(https, 'get');
   process.nextTick(maybeLogCredentialPlaceholderDiagnostics);
+
+  // Defense in depth for #4314/#4390: if Telegram is configured but the
+  // bridge module never logs "starting provider" and never hits the Bot
+  // API within the startup window, surface a single actionable breadcrumb
+  // so the channel is observably broken instead of silently invisible.
+  //
+  // Gate to the OpenClaw gateway process flavors only. The preload is
+  // exported via NODE_OPTIONS, so every short-lived Node child the user
+  // spawns inside the sandbox (CLI tools, shells, npm scripts) also requires
+  // this file; without the gate the timer would emit a false "bridge did
+  // not start" line from every Node command even while the real gateway
+  // bridge is healthy. Mirrors sandbox-safety-net.js's gatewayProcessFlavor.
+  function basename(value) {
+    return String(value || '').split(/[\\/]/).pop();
+  }
+  function gatewayProcessFlavor() {
+    if (basename(process.argv0) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (basename(process.title) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (process.argv[2] === 'gateway') return 'launcher';
+    if (basename(process.argv[1]) === 'openclaw-gateway') return 'openclaw-gateway';
+    if (basename(process.argv[0]) === 'openclaw-gateway') return 'openclaw-gateway';
+    return '';
+  }
+  if (!gatewayProcessFlavor()) return;
+  var STARTUP_GRACE_MS = Number(process.env.NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS || '') || 15000;
+  var noStartupTimer = setTimeout(function () {
+    if (providerStarted || startupProbeLogged) return;
+    var configPath = process.env.OPENCLAW_CONFIG_PATH || '/sandbox/.openclaw/openclaw.json';
+    try {
+      var fs = require('fs');
+      var cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      var telegram = cfg && cfg.channels && cfg.channels.telegram;
+      if (!telegram || telegram.enabled === false) return;
+      var accounts = telegram.accounts || {};
+      if (!Object.keys(accounts).length) return;
+    } catch (_e) {
+      return;
+    }
+    emit(
+      '[telegram] [default] bridge did not start within ' +
+        Math.round(STARTUP_GRACE_MS / 1000) +
+        's; check channels.telegram.enabled, plugin entries, and gateway log'
+    );
+  }, STARTUP_GRACE_MS);
+  if (typeof noStartupTimer.unref === 'function') noStartupTimer.unref();
 })();

@@ -552,6 +552,21 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(slack.appToken).toMatch(/^xapp-[A-Za-z0-9_-]+$/);
   });
 
+  it("marks Telegram and Discord channels enabled so OpenClaw loads the bridges (#4314, #4390)", () => {
+    // Regression: OpenClaw 2026.5.22 no longer auto-starts a channel bridge
+    // from the account-level enabled flag alone. The Slack mitigation in
+    // PR #4222 added `channels.slack.enabled: true`; #4314 / #4390 reported
+    // the same silent failure for Telegram, and the symptom matches Discord
+    // too. Bake the top-level enabled marker for every credential-backed
+    // messaging channel.
+    const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.telegram.enabled).toBe(true);
+    expect(config.channels.discord.enabled).toBe(true);
+    expect(config.channels.telegram.accounts.default.enabled).toBe(true);
+    expect(config.channels.discord.accounts.default.enabled).toBe(true);
+  });
+
   it("uses Slack allowed IDs for DMs and channel mention allowlisting (#3729)", () => {
     const allowedUsers = ["U01ABC2DEF3", "U04GHI5JKL6"];
     const channels = Buffer.from(JSON.stringify(["slack"])).toString("base64");
