@@ -24,89 +24,47 @@ import { VLLM_PORT } from "../core/ports";
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
 
-// Windows-on-ARM WSL2 hosts ship a d3d12/WDDM `nvidia-smi.exe` shim that
-// fakes the surface of a real NVIDIA card for CUDA-aware userland. The shim
-// populates obvious fields (`name`, `memory.total`, `driver_version`,
-// `temperature.gpu`) with plausible-looking values but cannot produce the
-// kernel-mode artefacts that a real NVIDIA driver writes. The strict-identity
-// gate (`hasStrictNvidiaIdentity`) cross-checks three fields a userland shim
-// cannot realistically forge:
-//
-//   uuid          → kernel-issued GPU UUID, always "GPU-<uuid>" on real hardware
-//   compute_cap   → silicon SM capability, e.g. "8.9" for Ada
-//   vbios_version → 5-tuple of hex bytes burned into the board VBIOS
-//
-// The denylist below covers the NVIDIA-driver placeholder name family
-// (`JMJWOA-Generic-*`) that pre-release firmware and the d3d12/WDDM shim
-// both publish. Matching the full prefix catches the GPU and NPU variants
-// observed in the wild plus any future suffix without a code change. It is
-// effectively a no-op under the strict-identity gate above, kept as a safety
-// net against any future loosening of the gate.
+// On Windows-on-ARM (Snapdragon X) WSL2 hosts, a d3d12/WDDM shim publishes a
+// `nvidia-smi.exe` that returns a placeholder name (e.g. "JMJWOA-Generic-GPU")
+// even though the system has no NVIDIA hardware. Real DGX Spark legitimately
+// reports the same string (see #3510), distinguished by the firmware platform.
+// Accept a name as NVIDIA when it either advertises the vendor explicitly or
+// matches a known NVIDIA product family; otherwise the caller must cross-check
+// against `detectNvidiaPlatform()` before trusting the nvidia-smi output.
+const NVIDIA_GPU_NAME_PATTERN =
+  /\bNVIDIA\b|\b(GeForce|Tesla|Quadro|RTX|GTX|TITAN|H100|H200|A100|A40|A10|L40|L4|GB1\d|GB200|GB300|Grace[\s_-]+Hopper)\b/i;
+
+// Names that have been observed both on legitimate NVIDIA unified-memory
+// hardware (DGX Spark — #3510) and on Windows-on-ARM WSL2 d3d12 shims with no
+// NVIDIA silicon. The prefix match catches the GPU and NPU placeholder
+// variants the shim emits, plus any future suffix without a code change. Even
+// with an `NVIDIA ` vendor prefix the name alone is not sufficient — the
+// caller must cross-check `detectNvidiaPlatform()`.
 const NVIDIA_GPU_NAME_DENYLIST_PATTERN = /\bJMJWOA-Generic-/i;
 
-// Strict-identity validators. Each pattern accepts only what a real NVIDIA
-// kernel driver produces; placeholder shims either omit these fields, return
-// `[Not Supported]`, or fail the format check.
-const STRICT_NVIDIA_UUID_PATTERN =
-  /^GPU-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const STRICT_COMPUTE_CAP_PATTERN = /^([0-9]+)\.([0-9]+)$/;
-const STRICT_VBIOS_VERSION_PATTERN = /^[0-9a-f]{2}(\.[0-9a-f]{2}){4}$/i;
+// `/proc/driver/nvidia/` is populated by the real NVIDIA kernel driver on
+// Linux/WSL2. The Snapdragon X d3d12/WDDM shim ships a userland `nvidia-smi`
+// binary but no kernel module, so this interface is absent — a cheap and
+// definitive signal that no genuine NVIDIA driver is bound. On non-Linux
+// platforms (macOS, Windows-native) the path does not apply and the helper
+// returns `true` so the caller falls back to the name denylist alone.
+const NVIDIA_DRIVER_PROC_PATH = "/proc/driver/nvidia";
 
-const STRICT_COMPUTE_CAP_MAJOR_MIN = 3;
-const STRICT_COMPUTE_CAP_MAJOR_MAX = 15;
-
-export function hasStrictNvidiaIdentity(
-  uuid: string,
-  computeCap: string,
-  vbios: string,
-): boolean {
-  const u = (uuid ?? "").trim();
-  const c = (computeCap ?? "").trim();
-  const v = (vbios ?? "").trim();
-  if (!STRICT_NVIDIA_UUID_PATTERN.test(u)) return false;
-  const ccMatch = STRICT_COMPUTE_CAP_PATTERN.exec(c);
-  if (!ccMatch) return false;
-  const major = Number(ccMatch[1]);
-  if (!Number.isFinite(major)) return false;
-  if (major < STRICT_COMPUTE_CAP_MAJOR_MIN || major > STRICT_COMPUTE_CAP_MAJOR_MAX) {
+function nvidiaKernelInterfaceExists(): boolean {
+  if (process.platform !== "linux") return true;
+  try {
+    return fs.existsSync(NVIDIA_DRIVER_PROC_PATH);
+  } catch {
     return false;
   }
-  if (!STRICT_VBIOS_VERSION_PATTERN.test(v)) return false;
-  return true;
 }
 
-type StrictNvidiaIdentity = { uuid: string; computeCap: string; vbios: string };
-
-// Query nvidia-smi for the strict-identity triple per GPU. Returns the
-// validated rows on success, or `null` if any GPU fails the gate or the
-// invocation itself fails. Caller uses `null` as "do not trust the primary
-// detectGpu() result on this host".
-function readStrictNvidiaIdentities(): StrictNvidiaIdentity[] | null {
-  let out: string;
-  try {
-    out = runCapture(
-      [
-        "nvidia-smi",
-        "--query-gpu=uuid,compute_cap,vbios_version",
-        "--format=csv,noheader,nounits",
-      ],
-      { ignoreError: true },
-    );
-  } catch {
-    return null;
-  }
-  if (!out) return null;
-  const rows: StrictNvidiaIdentity[] = [];
-  for (const raw of out.split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
-    const parts = line.split(",").map((p: string) => p.trim());
-    if (parts.length !== 3) return null;
-    const [uuid, computeCap, vbios] = parts;
-    if (!hasStrictNvidiaIdentity(uuid, computeCap, vbios)) return null;
-    rows.push({ uuid, computeCap, vbios });
-  }
-  return rows.length > 0 ? rows : null;
+function isPlausibleNvidiaGpuName(name: string): boolean {
+  return (
+    !!name &&
+    !NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(name) &&
+    NVIDIA_GPU_NAME_PATTERN.test(name)
+  );
 }
 
 export interface NimModel {
@@ -433,33 +391,28 @@ export function detectGpu(): GpuDetection | null {
       }
       if (parsed.length > 0) {
         const platform = detectNvidiaPlatform();
-        // Hosts whose firmware classifies as Spark/Station/Jetson have a real
-        // NVIDIA platform vouching for them, so we trust whatever name and
-        // memory nvidia-smi reports — including the `JMJWOA-Generic-*`
-        // placeholder that pre-release Spark firmware uses.
+        // Off Spark/Station/Jetson firmware, layer a denylist check and a
+        // kernel-interface check before trusting the nvidia-smi probe. The
+        // Snapdragon X WSL2 d3d12/WDDM shim emits a `JMJWOA-Generic-*`
+        // placeholder name AND ships no `/proc/driver/nvidia/` directory,
+        // so either signal alone is sufficient to reject. We treat any
+        // denylisted row as a poisoned probe and reject the whole result —
+        // partial filtering would let a mixed-row spoof surface a non-
+        // placeholder row as a real GPU. Firmware-vouched platforms keep
+        // the #3510 path working.
         const firmwareConfirmsNvidia =
           platform === "spark" || platform === "station" || platform === "jetson";
         let trusted: ParsedGpu[];
         if (firmwareConfirmsNvidia) {
           trusted = parsed;
         } else {
-          // Off-Spark/Station/Jetson, cross-check each GPU against the
-          // strict-identity triple (uuid + compute_cap + vbios_version). A
-          // d3d12/WDDM userland shim cannot fill these convincingly; if any
-          // GPU fails the gate, reject the whole probe so a partially-spoofed
-          // mixed host cannot slip through.
-          const strictIdentities = readStrictNvidiaIdentities();
-          if (strictIdentities === null || strictIdentities.length !== parsed.length) {
-            return null;
-          }
-          // Belt-and-braces: if any row carries a denylisted placeholder name,
-          // treat the whole probe as compromised. Slicing it into a partial
-          // trust would let a mixed-row spoof through (one denylisted row
-          // dropped, one normal row surfaced as a real GPU).
           if (parsed.some((p: ParsedGpu) => NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(p.name))) {
             return null;
           }
-          trusted = parsed;
+          if (!nvidiaKernelInterfaceExists()) {
+            return null;
+          }
+          trusted = parsed.filter((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
         }
         if (trusted.length === 0) {
           return null;

@@ -272,7 +272,7 @@ $ nemoclaw onboard --from ./Dockerfile.custom
 ### GPU passthrough
 
 When `nemoclaw onboard` detects an NVIDIA GPU on the host, it enables OpenShell GPU passthrough at both the gateway and sandbox level by default.
-The detection requires `nvidia-smi` to succeed and, on hosts whose firmware does not classify as a known NVIDIA platform (DGX Spark, DGX Station, Jetson, or Tegra), additionally requires `nvidia-smi` to report a strict NVIDIA identity (a kernel-issued GPU UUID, a valid SM compute capability, and a board VBIOS version) so that WSL2 d3d12/WDDM placeholder shims on non-NVIDIA hardware are not mistaken for real GPUs.
+The detection requires `nvidia-smi` to succeed and, on hosts whose firmware does not classify as a known NVIDIA platform (DGX Spark, DGX Station, Jetson, or Tegra), additionally requires the NVIDIA kernel driver to be bound (`/proc/driver/nvidia/` present on Linux) and the GPU name to not match the WSL2 d3d12/WDDM placeholder family (`JMJWOA-Generic-*`), so that placeholder shims on non-NVIDIA hardware are not mistaken for real GPUs.
 Use `--no-gpu` to opt out when you want host-side inference providers only and do not need direct GPU access inside the sandbox.
 Use `--gpu` to require GPU passthrough and fail fast if an NVIDIA GPU is not detected.
 Use `--sandbox-gpu` or `--no-sandbox-gpu` to control only direct NVIDIA GPU access inside the sandbox.
