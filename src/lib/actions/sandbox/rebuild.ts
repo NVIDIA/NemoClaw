@@ -66,12 +66,25 @@ import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShi
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
  */
 export function rebuildShouldOptOutGpu(
-  sb: { sandboxGpuEnabled?: boolean; gpuEnabled?: boolean } | null | undefined,
+  sb:
+    | {
+        sandboxGpuMode?: string | null;
+        sandboxGpuEnabled?: boolean;
+        gpuEnabled?: boolean;
+      }
+    | null
+    | undefined,
 ): boolean {
   if (!sb) return false;
-  if (sb.sandboxGpuEnabled === false) return true;
-  if (sb.sandboxGpuEnabled === undefined && sb.gpuEnabled === false) return true;
-  return false;
+  const mode = sb.sandboxGpuMode;
+  if (mode === "0") return true;
+  if (mode === "1" || mode === "auto") return false;
+  // Legacy entries without sandboxGpuMode fall back to gpuEnabled. Treat the
+  // missing mode field as "no explicit intent recorded" and only opt out
+  // when the explicit-opt-out signal (`gpuEnabled === false`) is set with no
+  // counter-signal from `sandboxGpuEnabled`.
+  if (sb.sandboxGpuEnabled === true) return false;
+  return sb.gpuEnabled === false;
 }
 
 function _rebuildLog(msg: string) {

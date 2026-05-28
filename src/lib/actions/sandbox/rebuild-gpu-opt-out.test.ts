@@ -11,29 +11,67 @@ describe("rebuildShouldOptOutGpu", () => {
     expect(rebuildShouldOptOutGpu(undefined)).toBe(false);
   });
 
-  it("returns true when sandboxGpuEnabled is explicitly false", () => {
-    expect(rebuildShouldOptOutGpu({ sandboxGpuEnabled: false })).toBe(true);
+  it("returns true when sandboxGpuMode is the explicit opt-out '0'", () => {
     expect(
-      rebuildShouldOptOutGpu({ sandboxGpuEnabled: false, gpuEnabled: true }),
+      rebuildShouldOptOutGpu({ sandboxGpuMode: "0", sandboxGpuEnabled: false }),
     ).toBe(true);
+    expect(rebuildShouldOptOutGpu({ sandboxGpuMode: "0" })).toBe(true);
   });
 
-  it("returns true when sandboxGpuEnabled is missing and gpuEnabled is false (legacy entries)", () => {
+  it("returns false when sandboxGpuMode is 'auto' (CPU fallback is not explicit opt-out)", () => {
+    expect(
+      rebuildShouldOptOutGpu({
+        sandboxGpuMode: "auto",
+        sandboxGpuEnabled: false,
+      }),
+    ).toBe(false);
+    expect(
+      rebuildShouldOptOutGpu({
+        sandboxGpuMode: "auto",
+        sandboxGpuEnabled: true,
+      }),
+    ).toBe(false);
+  });
+
+  it("returns false when sandboxGpuMode is '1' regardless of sandboxGpuEnabled", () => {
+    expect(
+      rebuildShouldOptOutGpu({ sandboxGpuMode: "1", sandboxGpuEnabled: true }),
+    ).toBe(false);
+    expect(
+      rebuildShouldOptOutGpu({ sandboxGpuMode: "1", sandboxGpuEnabled: false }),
+    ).toBe(false);
+  });
+
+  it("falls back to gpuEnabled=false for legacy entries with no sandboxGpuMode", () => {
     expect(rebuildShouldOptOutGpu({ gpuEnabled: false })).toBe(true);
   });
 
-  it("returns false when sandboxGpuEnabled is true regardless of gpuEnabled", () => {
+  it("ignores legacy gpuEnabled=false when sandboxGpuEnabled=true is recorded", () => {
     expect(
       rebuildShouldOptOutGpu({ sandboxGpuEnabled: true, gpuEnabled: false }),
     ).toBe(false);
-    expect(rebuildShouldOptOutGpu({ sandboxGpuEnabled: true })).toBe(false);
   });
 
-  it("returns false when both flags are unset (no recorded intent)", () => {
+  it("returns false when no GPU metadata is recorded", () => {
     expect(rebuildShouldOptOutGpu({})).toBe(false);
   });
 
-  it("returns false when sandboxGpuEnabled is missing and gpuEnabled is true", () => {
+  it("returns false when only gpuEnabled=true is recorded", () => {
     expect(rebuildShouldOptOutGpu({ gpuEnabled: true })).toBe(false);
+  });
+
+  it("treats unrecognized sandboxGpuMode values as no explicit intent", () => {
+    expect(
+      rebuildShouldOptOutGpu({
+        sandboxGpuMode: "bogus" as unknown as string,
+        gpuEnabled: false,
+      }),
+    ).toBe(true);
+    expect(
+      rebuildShouldOptOutGpu({
+        sandboxGpuMode: "bogus" as unknown as string,
+        sandboxGpuEnabled: true,
+      }),
+    ).toBe(false);
   });
 });
