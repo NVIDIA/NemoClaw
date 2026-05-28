@@ -423,15 +423,17 @@ describe("nim", () => {
       }
     });
 
-    // Belt-and-braces denylist still rejects any `JMJWOA-Generic-*` name even
-    // if a hypothetical future shim manages to forge a strict-identity row.
-    // The pattern matches the full Snapdragon X family prefix so the GPU and
-    // NPU variants observed by QA (#3988) — plus any unseen future suffix —
-    // are all caught without a code change.
+    // Belt-and-braces denylist still rejects any `JMJWOA-Generic-*` name —
+    // both bare and vendor-prefixed — even if a hypothetical future shim
+    // manages to forge a strict-identity row. The pattern matches the full
+    // placeholder family prefix so the GPU and NPU variants plus any unseen
+    // future suffix are all caught without a code change.
     it.each([
       "JMJWOA-Generic-GPU",
       "JMJWOA-Generic-NPU",
       "JMJWOA-Generic-Future",
+      "NVIDIA JMJWOA-Generic-GPU",
+      "NVIDIA JMJWOA-Generic-NPU",
     ])(
       "denylist rejects %s even when strict probe somehow validates (#3988)",
       (placeholderName: string) => {
@@ -459,6 +461,35 @@ describe("nim", () => {
         }
       },
     );
+
+    // Mixed row case: a forged strict probe vouches for two GPUs but one
+    // primary row carries a denylisted placeholder name. Partial trust would
+    // surface the non-placeholder GPU as a real device; the gate must instead
+    // reject the whole probe.
+    it("rejects when any primary row is a denylisted placeholder, even mixed with a real-looking row (#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (
+          cmd[0] === "nvidia-smi" &&
+          cmd.some((a: string) => a.includes("name,memory.total"))
+        ) {
+          return "JMJWOA-Generic-GPU, 65471, 65000\nNVIDIA GeForce RTX 4090 Laptop GPU, 16376, 15000\n";
+        }
+        if (isStrictNvidiaIdentityProbe(cmd)) {
+          return strictNvidiaIdentitiesCsv(2);
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withFirmwareModel("Microsoft Corporation Virtual Machine", () => {
+          expect(nimModule.detectGpu()).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
 
     // Genuine NVIDIA WSL2 path: a real card publishes a kernel-issued UUID, a
     // valid SM compute capability, and a 5-tuple VBIOS version, all of which

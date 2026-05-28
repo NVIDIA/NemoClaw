@@ -24,24 +24,24 @@ import { VLLM_PORT } from "../core/ports";
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
 
-// On Windows-on-ARM (Snapdragon X / N1X) WSL2 hosts a d3d12/WDDM shim
-// publishes an `nvidia-smi.exe` that fakes the surface of a real NVIDIA card
-// for compatibility with CUDA-aware userland. The shim populates obvious
-// fields (`name`, `memory.total`, `driver_version`, `temperature.gpu`) with
-// plausible-looking values but cannot produce the kernel-mode artefacts that
-// a real NVIDIA driver writes. The strict-identity gate below
-// (`hasStrictNvidiaIdentity`) cross-checks three fields a userland shim
+// Windows-on-ARM WSL2 hosts ship a d3d12/WDDM `nvidia-smi.exe` shim that
+// fakes the surface of a real NVIDIA card for CUDA-aware userland. The shim
+// populates obvious fields (`name`, `memory.total`, `driver_version`,
+// `temperature.gpu`) with plausible-looking values but cannot produce the
+// kernel-mode artefacts that a real NVIDIA driver writes. The strict-identity
+// gate (`hasStrictNvidiaIdentity`) cross-checks three fields a userland shim
 // cannot realistically forge:
 //
 //   uuid          → kernel-issued GPU UUID, always "GPU-<uuid>" on real hardware
 //   compute_cap   → silicon SM capability, e.g. "8.9" for Ada
 //   vbios_version → 5-tuple of hex bytes burned into the board VBIOS
 //
-// Belt-and-braces denylist for Snapdragon X placeholder strings observed in
-// the wild (`JMJWOA-Generic-GPU`, `JMJWOA-Generic-NPU`, #3988). Matches the
-// full `JMJWOA-Generic-` prefix so future N1X-family suffixes are caught
-// without a code change. Effectively a no-op under the strict-identity gate
-// above, kept as a safety net against any future loosening of the gate.
+// The denylist below covers the NVIDIA-driver placeholder name family
+// (`JMJWOA-Generic-*`) that pre-release firmware and the d3d12/WDDM shim
+// both publish. Matching the full prefix catches the GPU and NPU variants
+// observed in the wild plus any future suffix without a code change. It is
+// effectively a no-op under the strict-identity gate above, kept as a safety
+// net against any future loosening of the gate.
 const NVIDIA_GPU_NAME_DENYLIST_PATTERN = /\bJMJWOA-Generic-/i;
 
 // Strict-identity validators. Each pattern accepts only what a real NVIDIA
@@ -435,10 +435,8 @@ export function detectGpu(): GpuDetection | null {
         const platform = detectNvidiaPlatform();
         // Hosts whose firmware classifies as Spark/Station/Jetson have a real
         // NVIDIA platform vouching for them, so we trust whatever name and
-        // memory nvidia-smi reports. Real DGX Spark legitimately reports the
-        // same `JMJWOA-Generic-GPU` placeholder a Snapdragon X shim produces
-        // (#3510), which is why we cannot gate Spark on the strict-identity
-        // probe below.
+        // memory nvidia-smi reports — including the `JMJWOA-Generic-*`
+        // placeholder that pre-release Spark firmware uses.
         const firmwareConfirmsNvidia =
           platform === "spark" || platform === "station" || platform === "jetson";
         let trusted: ParsedGpu[];
@@ -449,13 +447,19 @@ export function detectGpu(): GpuDetection | null {
           // strict-identity triple (uuid + compute_cap + vbios_version). A
           // d3d12/WDDM userland shim cannot fill these convincingly; if any
           // GPU fails the gate, reject the whole probe so a partially-spoofed
-          // mixed host cannot slip through. The denylist filter that follows
-          // is a belt-and-braces safeguard kept against any future loosening.
+          // mixed host cannot slip through.
           const strictIdentities = readStrictNvidiaIdentities();
           if (strictIdentities === null || strictIdentities.length !== parsed.length) {
             return null;
           }
-          trusted = parsed.filter((p: ParsedGpu) => !NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(p.name));
+          // Belt-and-braces: if any row carries a denylisted placeholder name,
+          // treat the whole probe as compromised. Slicing it into a partial
+          // trust would let a mixed-row spoof through (one denylisted row
+          // dropped, one normal row surfaced as a real GPU).
+          if (parsed.some((p: ParsedGpu) => NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(p.name))) {
+            return null;
+          }
+          trusted = parsed;
         }
         if (trusted.length === 0) {
           return null;
