@@ -564,25 +564,56 @@ function looksLikeTotalCorrelationRace(repro: LiveIssue2603Trace): boolean {
   );
 }
 
-function looksLikeTransientGatewayRace(repro: LiveIssue2603Trace): boolean {
-  return looksLikeEventCaptureFailure(repro) || looksLikeTotalCorrelationRace(repro);
+// A third transient gateway race manifests as *some* replies never arriving
+// at all — the gateway accepted the chat.send requests but only delivered a
+// subset of replies through the WebSocket stream.  The replies that *did*
+// arrive are correctly correlated (uncorrelatedReplies empty), and the later
+// user turns are missing from chat.history because the gateway never processed
+// them.  A real regression would show uncorrelated or duplicated replies, not
+// cleanly absent ones.  This "partial reply delivery" pattern appeared in
+// validation run 26548379981 (May 28 2026): A2603-REPLY arrived correctly,
+// B2603-REPLY and C2603-REPLY never showed up.
+function looksLikePartialReplyDelivery(repro: LiveIssue2603Trace): boolean {
+  if (repro.error || !Array.isArray(repro.sentRuns) || !Array.isArray(repro.events)) return false;
+
+  const analysis = analyzeIssue2603Trace(repro);
+  return (
+    repro.sentRuns.length >= 2 &&
+    analysis.chatEvents.length > 0 &&
+    analysis.missingReplies.length > 0 &&
+    analysis.missingReplies.length < repro.sentRuns.length &&
+    analysis.uncorrelatedReplies.length === 0 &&
+    analysis.emptyFinalsForSubmittedRuns.length === 0 &&
+    analysis.duplicateReplies.length === 0
+  );
 }
 
-// Two transient gateway races can cause false failures in the live repro:
+function looksLikeTransientGatewayRace(repro: LiveIssue2603Trace): boolean {
+  return (
+    looksLikeEventCaptureFailure(repro) ||
+    looksLikeTotalCorrelationRace(repro) ||
+    looksLikePartialReplyDelivery(repro)
+  );
+}
+
+// Three transient gateway races can cause false failures in the live repro:
 //
 // 1. Zero-event capture: OpenClaw accepts chat.send requests but this
 //    websocket client captures no chat stream events before assertions.
 // 2. Total correlation race: all replies arrive but every runId differs
 //    from chat.send's response, and later user turns are absent from
 //    chat.history.
+// 3. Partial reply delivery: the gateway delivers only a subset of replies
+//    (correctly correlated), while the remaining replies never arrive and
+//    their user turns are missing from chat.history.
 //
-// Both originate in the pinned OpenClaw 2026.5.x gateway/websocket runtime
-// inside the sandbox. This NemoClaw-side E2E retries up to twice (three
-// total attempts) when a transient signature is detected, while preserving
-// signal for real empty-final, duplicate-turn, and partial uncorrelated-
-// reply regressions. Remove these retries when OpenClaw exposes a
-// deterministic chat subscription/readiness acknowledgement or the 10x
-// nightly sweep no longer shows either transient signature.
+// All three originate in the pinned OpenClaw 2026.5.x gateway/websocket
+// runtime inside the sandbox.  This NemoClaw-side E2E retries up to twice
+// (three total attempts) when a transient signature is detected, while
+// preserving signal for real empty-final, duplicate-turn, and partial
+// uncorrelated-reply regressions.  Remove these retries when OpenClaw
+// exposes a deterministic chat subscription/readiness acknowledgement or
+// the 10x nightly sweep no longer shows any transient signature.
 const MAX_TRANSIENT_RETRIES = 2;
 
 function runLiveIssue2603ReproWithEventCaptureRetry(sandboxName: string): LiveIssue2603Run {
@@ -594,7 +625,9 @@ function runLiveIssue2603ReproWithEventCaptureRetry(sandboxName: string): LiveIs
   while (retries < MAX_TRANSIENT_RETRIES && looksLikeTransientGatewayRace(repro)) {
     const reason = looksLikeEventCaptureFailure(repro)
       ? "zero chat events after accepted sends"
-      : "total correlation race (all replies uncorrelated)";
+      : looksLikeTotalCorrelationRace(repro)
+        ? "total correlation race (all replies uncorrelated)"
+        : "partial reply delivery (some replies never arrived)";
     console.warn(
       `ISSUE2603_RETRY ${reason}; retrying with a fresh session (attempt ${retries + 2}/${MAX_TRANSIENT_RETRIES + 1})`,
     );
@@ -771,6 +804,65 @@ describe("OpenClaw TUI chat correlation regression (#2603)", () => {
 
     expect(looksLikeTotalCorrelationRace(partialRaceTrace)).toBe(false);
     expect(looksLikeTransientGatewayRace(partialRaceTrace)).toBe(false);
+  });
+
+  it("detects partial reply delivery as a transient gateway failure", () => {
+    // Only A2603-REPLY arrives (correctly correlated), B2603 and C2603 never
+    // show up — matches the signature from validation run 26548379981 (May 28
+    // 2026).
+    const partialDeliveryTrace: LiveIssue2603Trace = {
+      sentRuns: [
+        {
+          promptToken: "A2603",
+          replyToken: "A2603-REPLY",
+          runId: "b178252f-627f-4f18-8c98-097021cbc621",
+          message: "A2603: First task. Wait 8 seconds, then reply exactly A2603-REPLY and nothing else.",
+        },
+        {
+          promptToken: "B2603",
+          replyToken: "B2603-REPLY",
+          runId: "31992ddd-5e63-46fa-a1f0-d83eeb1329c2",
+          message: "B2603: Second task. Reply exactly B2603-REPLY and nothing else.",
+        },
+        {
+          promptToken: "C2603",
+          replyToken: "C2603-REPLY",
+          runId: "a7565ba3-79a0-4ff4-97c5-73914fc966e6",
+          message: "C2603: Third task. Reply exactly C2603-REPLY and nothing else.",
+        },
+      ],
+      events: [
+        { event: "chat", payload: { runId: "b178252f-627f-4f18-8c98-097021cbc621", state: "delta", message: { role: "assistant", content: [{ type: "text", text: "A2603-REPLY" }] } } },
+        { event: "chat", payload: { runId: "b178252f-627f-4f18-8c98-097021cbc621", state: "final", message: { role: "assistant", content: [{ type: "text", text: "A2603-REPLY" }] } } },
+      ],
+      historyMessages: [
+        { role: "user", content: [{ type: "text", text: "A2603: First task. Wait 8 seconds, then reply exactly A2603-REPLY and nothing else." }] },
+        { role: "assistant", content: [{ type: "text", text: "A2603-REPLY" }] },
+      ],
+    };
+
+    expect(looksLikePartialReplyDelivery(partialDeliveryTrace)).toBe(true);
+    expect(looksLikeTransientGatewayRace(partialDeliveryTrace)).toBe(true);
+
+    // If ALL replies are missing, that's zero-event capture, not partial
+    // delivery.
+    const allMissingTrace: LiveIssue2603Trace = {
+      ...partialDeliveryTrace,
+      events: [],
+    };
+    expect(looksLikePartialReplyDelivery(allMissingTrace)).toBe(false);
+
+    // If some replies are missing AND some are uncorrelated, that signals a
+    // real regression — not a clean partial delivery.
+    const mixedFailureTrace: LiveIssue2603Trace = {
+      ...partialDeliveryTrace,
+      events: [
+        // A2603 arrives but with a wrong runId
+        { event: "chat", payload: { runId: "deadbeef-0000-0000-0000-000000000000", state: "final", message: { role: "assistant", content: [{ type: "text", text: "A2603-REPLY" }] } } },
+      ],
+    };
+    expect(looksLikePartialReplyDelivery(mixedFailureTrace)).toBe(false);
+    expect(looksLikeTransientGatewayRace(mixedFailureTrace)).toBe(false);
   });
 
   it.runIf(process.env[LIVE_REPRO_ENV] === "1")(
