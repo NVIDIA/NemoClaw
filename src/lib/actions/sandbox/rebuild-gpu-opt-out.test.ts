@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { rebuildShouldOptOutGpu } from "../../../../dist/lib/actions/sandbox/rebuild";
+import { rebuildShouldOptOutGpu } from "../../../../dist/lib/actions/sandbox/rebuild-gpu-opt-out";
 
 describe("rebuildShouldOptOutGpu", () => {
   it("returns false when the registry entry is null", () => {

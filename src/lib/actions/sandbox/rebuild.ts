@@ -61,25 +61,7 @@ import {
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
 import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
-import { normalizeSandboxGpuMode } from "../../onboard/sandbox-gpu-mode";
-
-export function rebuildShouldOptOutGpu(
-  sb:
-    | {
-        sandboxGpuMode?: string | null;
-        sandboxGpuEnabled?: boolean;
-        gpuEnabled?: boolean;
-      }
-    | null
-    | undefined,
-): boolean {
-  if (!sb) return false;
-  const mode = normalizeSandboxGpuMode(sb.sandboxGpuMode);
-  if (mode === "0") return true;
-  if (mode === "1" || mode === "auto") return false;
-  if (sb.sandboxGpuEnabled === true) return false;
-  return sb.gpuEnabled === false;
-}
+import { rebuildShouldOptOutGpu } from "./rebuild-gpu-opt-out";
 
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
