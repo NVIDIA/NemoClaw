@@ -51,6 +51,9 @@ jobs:
       - name: Verify platform matrix is in sync
         run: python3 scripts/generate-platform-docs.py --check
 
+      - name: Verify catalog skills export is in sync
+        run: python3 scripts/export-catalog-skills.py --check --allow-missing
+
   test-e2e-ollama-proxy:
     needs: [checks, changes]
     if: needs.changes.outputs.code == 'true'

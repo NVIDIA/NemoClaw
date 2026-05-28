@@ -22,6 +22,7 @@ function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyCha
     buildChain: vi.fn(() => ({ port: 18789 })),
     verify: vi.fn(async () => ({ ok: true })),
     diagnostics: vi.fn(() => ["  ✓ verified"]),
+    verifyWebSearch: vi.fn(),
     dashboard: vi.fn(),
     error: vi.fn(),
     log: vi.fn(),
@@ -40,6 +41,7 @@ function createDeps(overrides: Partial<FinalizationStateOptions<Agent, VerifyCha
       buildVerifyChain: calls.buildChain,
       verifyDeployment: calls.verify,
       formatVerificationDiagnostics: calls.diagnostics,
+      verifyWebSearchInsideSandbox: calls.verifyWebSearch,
       printDashboard: calls.dashboard,
       error: calls.error,
       log: calls.log,
@@ -61,6 +63,7 @@ function baseOptions(
     hermesToolGateways: [],
     stagedLegacyKeys: [],
     migratedLegacyKeys: new Set(),
+    webSearchEnabled: false,
     deps,
   };
 }
@@ -141,5 +144,27 @@ describe("handleFinalizationState", () => {
     expect(calls.removeLegacy).not.toHaveBeenCalled();
     expect(calls.error).toHaveBeenCalledWith(expect.stringContaining("SLACK_BOT_TOKEN"));
     expect(result.unmigratedLegacyKeys).toEqual(["SLACK_BOT_TOKEN"]);
+  });
+
+  it("runs web-search verification only when webSearchEnabled is true", async () => {
+    const { deps: depsOff, calls: callsOff } = createDeps();
+    await handleFinalizationState(baseOptions(depsOff));
+    expect(callsOff.verifyWebSearch).not.toHaveBeenCalled();
+
+    const { deps: depsOn, calls: callsOn } = createDeps();
+    const agent = { name: "openclaw" };
+    await handleFinalizationState({
+      ...baseOptions(depsOn),
+      agent,
+      webSearchEnabled: true,
+    });
+    expect(callsOn.verifyWebSearch).toHaveBeenCalledWith("my-assistant", agent);
+    // Probe runs after sandbox-process recovery so the post-policy state is live.
+    expect(callsOn.verifyWebSearch.mock.invocationCallOrder[0]).toBeGreaterThan(
+      callsOn.recoverProcesses.mock.invocationCallOrder[0],
+    );
+    expect(callsOn.verifyWebSearch.mock.invocationCallOrder[0]).toBeLessThan(
+      callsOn.verify.mock.invocationCallOrder[0],
+    );
   });
 });

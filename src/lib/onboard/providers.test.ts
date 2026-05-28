@@ -7,7 +7,7 @@ type RunResult = { status: number; stdout?: string; stderr?: string };
 type RunOptions = { env?: Record<string, string | undefined> };
 type RunOpenshell = (command: string[], opts?: RunOptions) => RunResult;
 
-const { buildProviderArgs, providerExistsInGateway, upsertProvider } = require(
+const { buildProviderArgs, providerExistsInGateway, upsertProvider, upsertMessagingProviders } = require(
   "../../../dist/lib/onboard/providers",
 ) as {
   buildProviderArgs: (
@@ -25,7 +25,18 @@ const { buildProviderArgs, providerExistsInGateway, upsertProvider } = require(
     baseUrl: string | null,
     env: Record<string, string | undefined>,
     runOpenshell: RunOpenshell,
+    options?: { replaceExisting?: boolean },
   ) => { ok: boolean; status?: number; message?: string };
+  upsertMessagingProviders: (
+    tokenDefs: Array<{
+      name: string;
+      envKey: string;
+      token: string | null;
+      providerType?: string;
+    }>,
+    runOpenshell: RunOpenshell,
+    options?: { replaceExisting?: boolean },
+  ) => string[];
 };
 
 describe("onboard provider helpers", () => {
@@ -164,5 +175,85 @@ describe("onboard provider helpers", () => {
     });
 
     expect(result).toEqual({ ok: false, status: 1, message: "gateway unreachable" });
+  });
+
+  it("creates Brave Search providers with the Brave provider profile", () => {
+    const commands: string[] = [];
+    const providers = upsertMessagingProviders(
+      [
+        {
+          name: "alpha-brave-search",
+          envKey: "BRAVE_API_KEY",
+          token: "brv-test",
+          providerType: "brave",
+        },
+      ],
+      (command) => {
+        commands.push(command.join(" "));
+        if (command.includes("get")) return { status: 1, stdout: "", stderr: "" };
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    expect(providers).toEqual(["alpha-brave-search"]);
+    expect(commands).toContain("provider get alpha-brave-search");
+    expect(commands).toContain(
+      "provider create --name alpha-brave-search --type brave --credential BRAVE_API_KEY",
+    );
+  });
+
+  it("updates an existing Brave Search provider in place on reuse paths", () => {
+    const commands: string[] = [];
+    const providers = upsertMessagingProviders(
+      [
+        {
+          name: "alpha-brave-search",
+          envKey: "BRAVE_API_KEY",
+          token: "brv-test",
+          providerType: "brave",
+        },
+      ],
+      (command) => {
+        commands.push(command.join(" "));
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    );
+
+    // No `provider delete` — OpenShell rejects deleting providers that are
+    // still attached to a live sandbox, so reuse paths must use `update`.
+    expect(providers).toEqual(["alpha-brave-search"]);
+    expect(commands).toEqual([
+      "provider get alpha-brave-search",
+      "provider update alpha-brave-search --credential BRAVE_API_KEY",
+    ]);
+  });
+
+  it("replaces existing providers when the caller opts in (post-sandbox-delete path)", () => {
+    const commands: string[] = [];
+    // replaceExisting: true is only safe after the sandbox holding the
+    // provider has been deleted. Used to migrate legacy generic-typed
+    // Brave providers to the brave profile on `--recreate-sandbox`.
+    const providers = upsertMessagingProviders(
+      [
+        {
+          name: "alpha-brave-search",
+          envKey: "BRAVE_API_KEY",
+          token: "brv-test",
+          providerType: "brave",
+        },
+      ],
+      (command) => {
+        commands.push(command.join(" "));
+        return { status: 0, stdout: "", stderr: "" };
+      },
+      { replaceExisting: true },
+    );
+
+    expect(providers).toEqual(["alpha-brave-search"]);
+    expect(commands).toEqual([
+      "provider get alpha-brave-search",
+      "provider delete alpha-brave-search",
+      "provider create --name alpha-brave-search --type brave --credential BRAVE_API_KEY",
+    ]);
   });
 });

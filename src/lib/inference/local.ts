@@ -930,6 +930,7 @@ export function validateOllamaModel(
   runCaptureImpl?: RunCaptureFn,
   isSparkImpl?: () => boolean,
   runCaptureExImpl?: RunCaptureExFn,
+  options: { allowToolsIncompatible?: boolean } = {},
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
   const captureEx = runCaptureExImpl ?? runCaptureEx;
@@ -959,37 +960,46 @@ export function validateOllamaModel(
     if (parsed && typeof parsed.error === "string" && parsed.error.trim()) {
       const errText = parsed.error.trim();
       if (/does not support tools/i.test(errText)) {
-        return {
-          ok: false,
-          message:
-            `Selected Ollama model '${model}' does not support tool calling, which ` +
-            `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
-            `model's capabilities and pick one whose list includes 'tools'.`,
-        };
-      }
-      // Ollama checks available RAM instead of total; false positive on DGX Spark
-      // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
-      const memMatch = errText.match(
-        /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
-      );
-      if (memMatch && sparkHost) {
-        const requiresGiB = parseFloat(memMatch[1]);
-        const freeOut = capture(["free", "-m"], { ignoreError: true });
-        if (freeOut) {
-          const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
-          if (memLine) {
-            const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
-            const totalGiB = totalMB / 1024;
-            if (totalGiB >= requiresGiB) {
-              return { ok: true };
+        if (options.allowToolsIncompatible !== true) {
+          return {
+            ok: false,
+            message:
+              `Selected Ollama model '${model}' does not support tool calling, which ` +
+              `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
+              `model's capabilities and pick one whose list includes 'tools'.`,
+          };
+        }
+        // Override accepted — log and fall through to the Spark CPU-only
+        // runtime check below so it still enforces. (#4241)
+        console.warn(
+          `  ⚠ Ollama model '${model}' confirmed not to support tools; ` +
+            `continuing because the no-tools override was accepted.`,
+        );
+      } else {
+        // Ollama checks available RAM instead of total; false positive on DGX Spark
+        // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
+        const memMatch = errText.match(
+          /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
+        );
+        if (memMatch && sparkHost) {
+          const requiresGiB = parseFloat(memMatch[1]);
+          const freeOut = capture(["free", "-m"], { ignoreError: true });
+          if (freeOut) {
+            const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
+            if (memLine) {
+              const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
+              const totalGiB = totalMB / 1024;
+              if (totalGiB >= requiresGiB) {
+                return { ok: true };
+              }
             }
           }
         }
+        return {
+          ok: false,
+          message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
+        };
       }
-      return {
-        ok: false,
-        message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
-      };
     }
   } catch {
     /* ignored */
@@ -1006,6 +1016,29 @@ export function validateOllamaModel(
   }
 
   return { ok: true };
+}
+
+// Helpers for threading the user's "use this no-tools Ollama model anyway"
+// override (see #4241) through onboard validators so they don't loop the
+// wizard back to model selection after the user already accepted.
+
+export function buildOllamaProbeOptions(allowToolsIncompatible: boolean): {
+  skipResponsesProbe: true;
+  requireChatCompletionsToolCalling: boolean;
+  allowHostDockerInternal: boolean;
+} {
+  return {
+    skipResponsesProbe: true,
+    requireChatCompletionsToolCalling: !allowToolsIncompatible,
+    allowHostDockerInternal: getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
+  };
+}
+
+export function validateOllamaModelWithToolsOverride(
+  model: string,
+  allowToolsIncompatible: boolean,
+): ValidationResult {
+  return validateOllamaModel(model, undefined, undefined, undefined, { allowToolsIncompatible });
 }
 
 // ─── Tools-capability probe (issue #2667) ─────────────────────────

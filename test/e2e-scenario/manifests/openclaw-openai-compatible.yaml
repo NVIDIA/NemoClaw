@@ -1,0 +1,24 @@
+apiVersion: nemoclaw.io/v1
+kind: NemoClawInstance
+metadata:
+  name: openclaw-openai-compatible
+spec:
+  setup:
+    install:
+      source: repo-current
+    runtime:
+      containerEngine: docker
+      containerDaemon: running
+    platform:
+      os: ubuntu
+      executionTarget: local
+  onboarding:
+    agent: openclaw
+    provider: openai-compatible
+    modelRoute: inference-local
+    policyTier: balanced
+    messaging: []
+  state:
+    workspaceRef: default
+    credentialRefs:
+      - OPENAI_COMPATIBLE_API_KEY

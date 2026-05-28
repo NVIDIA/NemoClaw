@@ -17,6 +17,7 @@ export interface ProviderSelectionResult {
   hermesToolGateways: string[];
   preferredInferenceApi: string | null;
   nimContainer: string | null;
+  allowToolsIncompatible?: boolean;
 }
 
 export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
@@ -55,6 +56,7 @@ export interface ProviderInferenceStateOptions<Gpu, Agent, Host> {
       credentialEnv: string | null,
       hermesAuthMethod: string | null,
       hermesToolGateways: string[],
+      options?: { allowToolsIncompatible?: boolean },
     ): Promise<ProviderInferenceRetry>;
     startRecordedStep(
       stepName: string,
@@ -167,6 +169,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
   let nimContainer = initial.nimContainer;
   const webSearchConfig = initial.webSearchConfig;
   let forceProviderSelection = initialForceProviderSelection;
+  let allowToolsIncompatible = false;
 
   while (true) {
     let forceInferenceSetup = false;
@@ -231,6 +234,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
       hermesToolGateways = selection.hermesToolGateways;
       preferredInferenceApi = selection.preferredInferenceApi;
       nimContainer = selection.nimContainer;
+      allowToolsIncompatible = selection.allowToolsIncompatible === true;
       shouldRecordProviderSelection = true;
     }
 
@@ -283,6 +287,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
                 credentialEnv,
                 hermesAuthMethod,
                 hermesToolGateways,
+                { allowToolsIncompatible },
               ),
           );
         } finally {
@@ -366,6 +371,7 @@ export async function handleProviderInferenceState<Gpu, Agent, Host>({
             credentialEnv,
             hermesAuthMethod,
             hermesToolGateways,
+            { allowToolsIncompatible },
           ),
       );
     } finally {
