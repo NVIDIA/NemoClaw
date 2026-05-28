@@ -1306,6 +1306,7 @@ localInference.validateLocalProvider = () => ({
 localInference.getLocalProviderBaseUrl = () => "http://host.openshell.internal:11435/v1";
 localInference.getOllamaWarmupCommand = () => ["true"];
 localInference.validateOllamaModel = () => ({ ok: true });
+localInference.validateOllamaModelWithToolsOverride = () => ({ ok: true });
 proxy.ensureOllamaAuthProxy = () => {
   proxyCalls.push("ensure");
 };
@@ -3123,6 +3124,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   console.log(JSON.stringify({ sandboxName, commands }));
 })().catch((error) => {
@@ -3161,6 +3163,420 @@ const { createSandbox } = require(${onboardPath});
         payload.commands.some((entry: CommandEntry) => entry.command.includes("sandbox create")),
         "should create a new sandbox when --recreate-sandbox is set",
       );
+    },
+  );
+
+  it(
+    "recreate-sandbox flag backs up and restores workspace state",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-recreate-backup-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "recreate-backup.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const sandboxStatePath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "state", "sandbox.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const sandboxState = require(${sandboxStatePath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const events = [];
+runner.run = (command) => {
+  events.push({ kind: "run", cmd: _n(command) });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("sandbox get my-assistant")) return "my-assistant";
+  if (cmd.includes("sandbox list")) return "my-assistant Ready";
+  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
+  return "";
+};
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+
+sandboxState.backupSandboxState = (name) => {
+  events.push({ kind: "backup", name });
+  return {
+    success: true,
+    backedUpDirs: ["workspace", "skills"],
+    failedDirs: [],
+    backedUpFiles: ["UPGRADE_MARKER.md"],
+    failedFiles: [],
+    manifest: { backupPath: "/tmp/fake-backup-path", timestamp: "2026-05-25T00:00:00Z" },
+  };
+};
+sandboxState.restoreSandboxState = (name, backupPath) => {
+  events.push({ kind: "restore", name, backupPath });
+  return {
+    success: true,
+    restoredDirs: ["workspace", "skills"],
+    failedDirs: [],
+    restoredFiles: ["UPGRADE_MARKER.md"],
+    failedFiles: [],
+  };
+};
+
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+preflight.checkPortAvailable = async () => ({ ok: true });
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.unref = () => {};
+  child.pid = 4243;
+  events.push({ kind: "spawn", cmd: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]) });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log(JSON.stringify({ sandboxName, events }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      const events = payload.events as Array<{ kind: string; cmd?: string; name?: string; backupPath?: string }>;
+      const backupIndex = events.findIndex((e) => e.kind === "backup");
+      const deleteIndex = events.findIndex((e) => e.kind === "run" && (e.cmd || "").includes("sandbox delete"));
+      const restoreIndex = events.findIndex((e) => e.kind === "restore");
+
+      assert.ok(backupIndex >= 0, "should call backupSandboxState before delete");
+      assert.ok(deleteIndex > backupIndex, "backup must happen before sandbox delete");
+      assert.ok(restoreIndex > deleteIndex, "restore must happen after sandbox recreate");
+      const backupEvent = events[backupIndex];
+      assert.equal(backupEvent?.name, "my-assistant", "backup target must match sandbox name");
+      const restoreEvent = events[restoreIndex];
+      assert.equal(restoreEvent?.backupPath, "/tmp/fake-backup-path", "restore must use backup path");
+    },
+  );
+
+  it(
+    "recreate-sandbox with NEMOCLAW_RECREATE_WITHOUT_BACKUP=1 skips backup",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-recreate-skip-backup-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "recreate-skip-backup.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const sandboxStatePath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "state", "sandbox.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const sandboxState = require(${sandboxStatePath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const events = [];
+runner.run = (command) => {
+  events.push({ kind: "run", cmd: _n(command) });
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("sandbox get my-assistant")) return "my-assistant";
+  if (cmd.includes("sandbox list")) return "my-assistant Ready";
+  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
+  return "";
+};
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+
+sandboxState.backupSandboxState = () => {
+  events.push({ kind: "backup" });
+  return { success: true, backedUpDirs: [], failedDirs: [], backedUpFiles: [], failedFiles: [] };
+};
+sandboxState.restoreSandboxState = () => {
+  events.push({ kind: "restore" });
+  return { success: true, restoredDirs: [], failedDirs: [], restoredFiles: [], failedFiles: [] };
+};
+
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+preflight.checkPortAvailable = async () => ({ ok: true });
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.unref = () => {};
+  child.pid = 4244;
+  events.push({ kind: "spawn", cmd: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]) });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log(JSON.stringify({ sandboxName, events }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+      const events = payload.events as Array<{ kind: string }>;
+      assert.ok(
+        !events.some((e) => e.kind === "backup"),
+        "should not call backupSandboxState when NEMOCLAW_RECREATE_WITHOUT_BACKUP=1",
+      );
+      assert.ok(
+        !events.some((e) => e.kind === "restore"),
+        "should not call restoreSandboxState when no backup occurred",
+      );
+    },
+  );
+
+  it(
+    "recreate-sandbox flag backs up and restores when existing sandbox is not ready",
+    { timeout: 60_000 },
+    async () => {
+      const repoRoot = path.join(import.meta.dirname, "..");
+      const tmpDir = fs.mkdtempSync(
+        path.join(os.tmpdir(), "nemoclaw-onboard-recreate-notready-"),
+      );
+      const fakeBin = path.join(tmpDir, "bin");
+      const scriptPath = path.join(tmpDir, "recreate-notready.js");
+      const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+      const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+      const registryPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "state", "registry.js"));
+      const sandboxStatePath = JSON.stringify(
+        path.join(repoRoot, "dist", "lib", "state", "sandbox.js"),
+      );
+
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+        mode: 0o755,
+      });
+
+      const script = String.raw`
+const runner = require(${runnerPath});
+const _n = (c) => (Array.isArray(c) ? c.join(" ") : String(c)).replace(/'/g, "");
+const registry = require(${registryPath});
+const sandboxState = require(${sandboxStatePath});
+const childProcess = require("node:child_process");
+const { EventEmitter } = require("node:events");
+
+const events = [];
+let sandboxDeleted = false;
+runner.run = (command) => {
+  const cmd = _n(command);
+  events.push({ kind: "run", cmd });
+  if (cmd.includes("sandbox delete")) sandboxDeleted = true;
+  return { status: 0 };
+};
+runner.runCapture = (command) => {
+  const cmd = _n(command);
+  if (cmd.includes("sandbox get my-assistant")) return "my-assistant";
+  if (cmd.includes("sandbox list")) {
+    return sandboxDeleted ? "my-assistant Ready" : "my-assistant NotReady";
+  }
+  if (cmd.includes("forward list")) return "my-assistant 127.0.0.1 18789 12345 running";
+  {
+    const sandboxExecCurl = require(${onboardScriptMocksPath}).mockSandboxExecCurl(command, {
+      defaultCurlOutput: "ok",
+    });
+    if (sandboxExecCurl !== null) return sandboxExecCurl;
+  }
+  return "";
+};
+registry.getSandbox = () => ({ name: "my-assistant", gpuEnabled: false });
+registry.registerSandbox = () => true;
+registry.updateSandbox = () => true;
+registry.setDefault = () => true;
+registry.removeSandbox = () => true;
+
+sandboxState.backupSandboxState = (name) => {
+  events.push({ kind: "backup", name });
+  return {
+    success: true,
+    backedUpDirs: ["workspace"],
+    failedDirs: [],
+    backedUpFiles: ["UPGRADE_MARKER.md"],
+    failedFiles: [],
+    manifest: { backupPath: "/tmp/fake-backup-notready", timestamp: "2026-05-25T00:00:00Z" },
+  };
+};
+sandboxState.restoreSandboxState = (name, backupPath) => {
+  events.push({ kind: "restore", name, backupPath });
+  return {
+    success: true,
+    restoredDirs: ["workspace"],
+    failedDirs: [],
+    restoredFiles: ["UPGRADE_MARKER.md"],
+    failedFiles: [],
+  };
+};
+
+const preflight = require(${JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard", "preflight.js"))});
+preflight.checkPortAvailable = async () => ({ ok: true });
+
+childProcess.spawn = (...args) => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.unref = () => {};
+  child.pid = 4245;
+  events.push({ kind: "spawn", cmd: _n([args[0], ...(Array.isArray(args[1]) ? args[1] : [])]) });
+  process.nextTick(() => {
+    child.stdout.emit("data", Buffer.from("Created sandbox: my-assistant\n"));
+    child.emit("close", 0);
+  });
+  return child;
+};
+
+const { createSandbox } = require(${onboardPath});
+
+(async () => {
+  process.env.OPENSHELL_GATEWAY = "nemoclaw";
+  process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  const sandboxName = await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
+  console.log(JSON.stringify({ sandboxName, events }));
+})().catch((error) => {
+  console.error(error);
+  process.exit(1);
+});
+`;
+      fs.writeFileSync(scriptPath, script);
+
+      const result = spawnSync(process.execPath, [scriptPath], {
+        cwd: repoRoot,
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          HOME: tmpDir,
+          PATH: `${fakeBin}:${process.env.PATH || ""}`,
+          NEMOCLAW_NON_INTERACTIVE: "1",
+        },
+      });
+
+      assert.equal(result.status, 0, result.stderr);
+      const payloadLine = result.stdout
+        .trim()
+        .split("\n")
+        .slice()
+        .reverse()
+        .find((line) => line.startsWith("{") && line.endsWith("}"));
+      assert.ok(payloadLine, `expected JSON payload in stdout:\n${result.stdout}`);
+      const payload = JSON.parse(payloadLine);
+
+      const events = payload.events as Array<{ kind: string; cmd?: string; name?: string; backupPath?: string }>;
+      const backupIndex = events.findIndex((e) => e.kind === "backup");
+      const deleteIndex = events.findIndex(
+        (e) => e.kind === "run" && (e.cmd || "").includes("sandbox delete"),
+      );
+      const restoreIndex = events.findIndex((e) => e.kind === "restore");
+
+      assert.ok(backupIndex >= 0, "should call backupSandboxState for not-ready sandbox");
+      assert.ok(deleteIndex > backupIndex, "backup must happen before sandbox delete");
+      assert.ok(restoreIndex > deleteIndex, "restore must happen after sandbox recreate");
     },
   );
 
@@ -3246,6 +3662,7 @@ const { createSandbox } = require(${onboardPath});
 (async () => {
   process.env.OPENSHELL_GATEWAY = "nemoclaw";
   process.env.NEMOCLAW_RECREATE_SANDBOX = "1";
+  process.env.NEMOCLAW_RECREATE_WITHOUT_BACKUP = "1";
   await createSandbox(null, "gpt-5.4", "nvidia-prod", null, "my-assistant");
   const session = onboardSession.loadSession();
   console.log(JSON.stringify({ policyPresets: session && session.policyPresets }));
@@ -3527,6 +3944,7 @@ const { createSandbox } = require(${onboardPath});
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
       };
       delete env["NEMOCLAW_NON_INTERACTIVE"];
       delete env["NEMOCLAW_RECREATE_SANDBOX"];
@@ -3671,6 +4089,7 @@ const { createSandbox } = require(${onboardPath});
         ...process.env,
         HOME: tmpDir,
         PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_RECREATE_WITHOUT_BACKUP: "1",
       };
       delete env["NEMOCLAW_NON_INTERACTIVE"];
       delete env["NEMOCLAW_RECREATE_SANDBOX"];
@@ -4078,6 +4497,100 @@ const { setupInference } = require(${onboardPath});
       !SANDBOX_BASE_IMAGE.includes("openshell-community"),
       `SANDBOX_BASE_IMAGE must NOT reference openshell-community, got: ${SANDBOX_BASE_IMAGE}`,
     );
+  });
+
+  it("aborts createSandbox for missing BRAVE_API_KEY before any sandbox delete (#3626)", () => {
+    // Regression: the Brave credential guard previously sat *after* the
+    // recreate/sandbox-delete branch ran. A user with Brave enabled and no
+    // BRAVE_API_KEY would lose their existing sandbox before seeing the abort.
+    // Move it next to the credential lookup and assert no `sandbox delete`
+    // command escapes before exit.
+    const repoRoot = path.join(import.meta.dirname, "..");
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-brave-abort-"));
+    const fakeBin = path.join(tmpDir, "bin");
+    const scriptPath = path.join(tmpDir, "brave-abort-check.js");
+    const outputPath = path.join(tmpDir, "outcome.json");
+    const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+    const runnerPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "runner.js"));
+    const outputPathLiteral = JSON.stringify(outputPath);
+
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.writeFileSync(path.join(fakeBin, "openshell"), "#!/usr/bin/env bash\nexit 0\n", {
+      mode: 0o755,
+    });
+
+    const script = String.raw`
+const fs = require("node:fs");
+const runner = require(${runnerPath});
+
+const openshellCalls = [];
+runner.runOpenshell = (command) => {
+  openshellCalls.push(Array.isArray(command) ? command.join(" ") : String(command));
+  return { status: 0, stdout: "", stderr: "" };
+};
+runner.runCaptureOpenshell = () => "";
+runner.run = (command) => {
+  openshellCalls.push("run: " + (Array.isArray(command) ? command.join(" ") : String(command)));
+  return { status: 0 };
+};
+
+const errors = [];
+const originalError = console.error;
+console.error = (...args) => errors.push(args.join(" "));
+const originalExit = process.exit;
+process.exit = (code) => {
+  fs.writeFileSync(${outputPathLiteral}, JSON.stringify({ exitCode: code, errors, openshellCalls }));
+  originalExit(code);
+};
+
+// Reproduce the bug scenario: Brave enabled, no key anywhere.
+delete process.env.BRAVE_API_KEY;
+
+const { createSandbox } = require(${onboardPath});
+(async () => {
+  await createSandbox(
+    null,           // gpu
+    "gpt-5.4",      // model
+    "nvidia-prod",  // provider
+    null,           // preferredInferenceApi
+    "my-assistant", // sandboxNameOverride
+    { fetchEnabled: true }, // webSearchConfig
+  );
+})().catch(() => {});
+`;
+    fs.writeFileSync(scriptPath, script);
+
+    const result = spawnSync(process.execPath, [scriptPath], {
+      cwd: repoRoot,
+      encoding: "utf-8",
+      env: {
+        ...process.env,
+        HOME: tmpDir,
+        PATH: `${fakeBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_NON_INTERACTIVE: "1",
+        NEMOCLAW_RECREATE_SANDBOX: "1",
+        BRAVE_API_KEY: "",
+      },
+    });
+
+    assert.ok(
+      fs.existsSync(outputPath),
+      `outcome file missing; exit=${result.status}\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+    );
+    const payload = JSON.parse(fs.readFileSync(outputPath, "utf-8")) as {
+      exitCode: number;
+      errors: string[];
+      openshellCalls: string[];
+    };
+    expect(payload.exitCode).toBe(1);
+    expect(payload.errors.join("\n")).toMatch(/BRAVE_API_KEY is not available/);
+    // The abort must run before *any* destructive openshell command —
+    // most importantly `sandbox delete`. `forward list` is read-only and
+    // happens earlier; only flag mutating commands here.
+    const destructive = payload.openshellCalls.filter((c) =>
+      /\bsandbox\s+(?:delete|create|rebuild)\b|\bprovider\s+(?:delete|create|update)\b/.test(c),
+    );
+    expect(destructive).toEqual([]);
   });
 
 });
