@@ -70,13 +70,14 @@ function runEntryGuard(opts: {
 
     # ---- begin: inlined entry-guard staging block from install.sh ----
     _test_bash_source=${bashSourceExpr}
-    if [[ -z "$_test_bash_source" ]] && [[ "\${NEMOCLAW_INSTALLER_STAGED:-}" != "1" ]]; then
+    if [[ -z "$_test_bash_source" ]] && [[ -z "\${NEMOCLAW_INSTALLER_STAGED:-}" ]]; then
       _installer_url="\${NEMOCLAW_INSTALLER_URL:-https://www.nvidia.com/nemoclaw.sh}"
       if _staged="$(mktemp /tmp/nemoclaw-installer-XXXXXX 2>/dev/null)" \\
          && curl -fsSL "$_installer_url" -o "$_staged" 2>/dev/null \\
-         && [[ -s "$_staged" ]]; then
+         && [[ -s "$_staged" ]] \\
+         && head -1 "$_staged" | grep -qE '^#!.*(sh|bash)'; then
         chmod +x "$_staged"
-        export NEMOCLAW_INSTALLER_STAGED=1
+        export NEMOCLAW_INSTALLER_STAGED="$_staged"
         # TEST capture point: record the intended exec argv + the staged
         # file's contents instead of actually exec'ing.
         printf '%s\\n' "$_staged" "$@" > ${JSON.stringify(execLog)}
@@ -140,15 +141,23 @@ describe("install.sh entry-guard staging — #4414 curl|bash stdin self-stage", 
     const outcome = runEntryGuard({ curlSucceeds: false });
 
     expect(outcome.execIntent.length).toBe(0);
+    // outcome.status === 0 locks in clean fallthrough — a syntax/runtime
+    // error in the inlined snippet would surface as non-zero here.
+    expect(outcome.status).toBe(0);
   });
 
-  it("skips staging when NEMOCLAW_INSTALLER_STAGED=1 is already set (one-shot loop guard)", () => {
+  it("skips staging when NEMOCLAW_INSTALLER_STAGED is already set (one-shot loop guard)", () => {
     // The staged copy that already ran main() reaches this guard a second
     // time on re-entry from ensure_docker's sg(1) re-exec. The env-var
-    // must demote that second pass to fallthrough so we don't loop.
-    const outcome = runEntryGuard({ envOverrides: { NEMOCLAW_INSTALLER_STAGED: "1" } });
+    // must demote that second pass to fallthrough so we don't loop. The
+    // value is the staged file path (cleanup uses it), but any non-empty
+    // value triggers the guard.
+    const outcome = runEntryGuard({
+      envOverrides: { NEMOCLAW_INSTALLER_STAGED: "/tmp/nemoclaw-installer-aBcDeF" },
+    });
 
     expect(outcome.execIntent.length).toBe(0);
+    expect(outcome.status).toBe(0);
   });
 
   it("does not stage when invoked from a disk file (BASH_SOURCE non-empty)", () => {
@@ -159,5 +168,18 @@ describe("install.sh entry-guard staging — #4414 curl|bash stdin self-stage", 
     });
 
     expect(outcome.execIntent.length).toBe(0);
+    expect(outcome.status).toBe(0);
+  });
+
+  it("falls through when the curl-downloaded content lacks a shell shebang (corruption / URL drift)", () => {
+    // Defense against URL drift: if the canonical URL ever serves a
+    // non-script payload (CDN cache miss, HTML error page, etc.), staging
+    // must not chmod+x + exec it. The shebang check catches that.
+    const outcome = runEntryGuard({
+      curlOutputContent: "<html><body>404</body></html>\n",
+    });
+
+    expect(outcome.execIntent.length).toBe(0);
+    expect(outcome.status).toBe(0);
   });
 });
