@@ -3,7 +3,10 @@
 
 import { describe, expect, it } from "vitest";
 
-import { rebuildShouldOptOutGpu } from "../../../../dist/lib/actions/sandbox/rebuild-gpu-opt-out";
+import {
+  buildRebuildRecreateOnboardOpts,
+  rebuildShouldOptOutGpu,
+} from "../../../../dist/lib/actions/sandbox/rebuild-gpu-opt-out";
 
 describe("rebuildShouldOptOutGpu", () => {
   it("returns false when the registry entry is null", () => {
@@ -98,5 +101,71 @@ describe("rebuildShouldOptOutGpu", () => {
         sandboxGpuEnabled: false,
       }),
     ).toBe(false);
+  });
+});
+
+describe("buildRebuildRecreateOnboardOpts", () => {
+  const baseArgs = {
+    rebuildAgent: "openclaw",
+    storedFromDockerfile: null,
+    autoYes: true,
+  };
+
+  it("forwards noGpu:true when the recorded sandboxGpuMode is the explicit opt-out '0'", () => {
+    const opts = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: { sandboxGpuMode: "0", sandboxGpuEnabled: false },
+    });
+    expect(opts.noGpu).toBe(true);
+    expect(opts).toMatchObject({
+      resume: true,
+      nonInteractive: true,
+      recreateSandbox: true,
+      agent: "openclaw",
+      fromDockerfile: null,
+      autoYes: true,
+    });
+  });
+
+  it("forwards noGpu:true for legacy entries with gpuEnabled:false and no sandboxGpuMode", () => {
+    const opts = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: { gpuEnabled: false },
+    });
+    expect(opts.noGpu).toBe(true);
+  });
+
+  it("omits noGpu for auto-mode CPU fallback so resume stays auto", () => {
+    const opts = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: { sandboxGpuMode: "auto", sandboxGpuEnabled: false },
+    });
+    expect(opts).not.toHaveProperty("noGpu");
+  });
+
+  it("omits noGpu when sandboxGpuMode is '1'", () => {
+    const opts = buildRebuildRecreateOnboardOpts({
+      ...baseArgs,
+      sb: { sandboxGpuMode: "1", sandboxGpuEnabled: true },
+    });
+    expect(opts).not.toHaveProperty("noGpu");
+  });
+
+  it("omits noGpu when no sandbox entry is captured", () => {
+    const opts = buildRebuildRecreateOnboardOpts({ ...baseArgs, sb: null });
+    expect(opts).not.toHaveProperty("noGpu");
+  });
+
+  it("preserves storedFromDockerfile and autoYes regardless of GPU opt-out", () => {
+    const opts = buildRebuildRecreateOnboardOpts({
+      sb: { sandboxGpuMode: "0" },
+      rebuildAgent: "hermes",
+      storedFromDockerfile: "/sandbox/.openclaw/Dockerfile.custom",
+      autoYes: false,
+    });
+    expect(opts.agent).toBe("hermes");
+    expect(opts.fromDockerfile).toBe("/sandbox/.openclaw/Dockerfile.custom");
+    expect(opts.autoYes).toBe(false);
+    expect(opts.noGpu).toBe(true);
   });
 });

@@ -61,7 +61,7 @@ import {
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
 import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
-import { rebuildShouldOptOutGpu } from "./rebuild-gpu-opt-out";
+import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
 
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
@@ -677,25 +677,22 @@ export async function rebuildSandbox(
     throw err;
   }) as typeof process.exit;
 
-  // Propagate the original sandbox's no-GPU intent into the recreate path so
-  // the inner `onboard --resume` does not enforce a Docker CDI GPU preflight
-  // on hosts without an NVIDIA GPU.
-  const sbHadNoGpu = rebuildShouldOptOutGpu(sb);
+  // Reaching here means the user already consented to the destructive
+  // rebuild (either via --yes/--force or by answering "y" at the prompt).
+  // Propagate that consent so the size-confirm gate inside the
+  // non-interactive onboard does not abort after the old sandbox has
+  // been deleted (#2639 follow-up). The recreate path also inherits the
+  // original sandbox's no-GPU intent so the inner `onboard --resume` does
+  // not enforce the Docker CDI GPU preflight on hosts without an NVIDIA
+  // GPU.
+  const recreateOpts = buildRebuildRecreateOnboardOpts({
+    sb,
+    rebuildAgent,
+    storedFromDockerfile,
+    autoYes: skipConfirm || rebuildConfirmed,
+  });
   try {
-    await onboard({
-      resume: true,
-      nonInteractive: true,
-      recreateSandbox: true,
-      agent: rebuildAgent,
-      fromDockerfile: storedFromDockerfile,
-      // Reaching here means the user already consented to the destructive
-      // rebuild (either via --yes/--force or by answering "y" at the prompt).
-      // Propagate that consent so the size-confirm gate inside the
-      // non-interactive onboard does not abort after the old sandbox has
-      // been deleted (#2639 follow-up).
-      autoYes: skipConfirm || rebuildConfirmed,
-      ...(sbHadNoGpu ? { noGpu: true } : {}),
-    });
+    await onboard(recreateOpts);
     log("onboard() returned successfully");
   } catch (err) {
     onboardFailed = true;
