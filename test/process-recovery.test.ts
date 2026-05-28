@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { createRequire } from "node:module";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -17,6 +20,24 @@ const requireDist = createRequire(import.meta.url);
 afterEach(() => {
   vi.restoreAllMocks();
 });
+
+function withFakeOpenshellBinary<T>(fn: () => T): T {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
+  const bin = path.join(dir, "openshell");
+  const previous = process.env.NEMOCLAW_OPENSHELL_BIN;
+  fs.writeFileSync(bin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  process.env.NEMOCLAW_OPENSHELL_BIN = bin;
+  try {
+    return fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.NEMOCLAW_OPENSHELL_BIN;
+    } else {
+      process.env.NEMOCLAW_OPENSHELL_BIN = previous;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 describe("resolveSandboxDashboardPort", () => {
   it("uses the recorded OpenClaw dashboard port for multi-sandbox recovery", () => {
@@ -190,7 +211,9 @@ beta  127.0.0.1  18789  12345  running`;
       .spyOn(openshellRuntime, "runOpenshell")
       .mockReturnValue({ status: 0 } as never);
 
-    expect(checkAndRecoverSandboxProcesses("beta", { quiet: true })).toEqual({
+    expect(
+      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+    ).toEqual({
       checked: true,
       wasRunning: true,
       recovered: false,

@@ -115,8 +115,8 @@ is_truthy_env_value() {
 }
 
 hermes_dashboard_e2e_enabled() {
-  is_truthy_env_value "${NEMOCLAW_E2E_HERMES_DASHBOARD:-}" ||
-    is_truthy_env_value "${NEMOCLAW_HERMES_DASHBOARD:-}"
+  is_truthy_env_value "${NEMOCLAW_E2E_HERMES_DASHBOARD:-}" \
+    || is_truthy_env_value "${NEMOCLAW_HERMES_DASHBOARD:-}"
 }
 
 http_status_ok() {
@@ -304,15 +304,15 @@ else
 fi
 
 if hermes_dashboard_e2e_enabled; then
-  if grep -Fq "Hermes Agent OpenAI-compatible API" "$INSTALL_LOG" &&
-    grep -Fq "http://127.0.0.1:8642/v1" "$INSTALL_LOG"; then
+  if grep -Fq "Hermes Agent OpenAI-compatible API" "$INSTALL_LOG" \
+    && grep -Fq "http://127.0.0.1:8642/v1" "$INSTALL_LOG"; then
     pass "Install output advertises Hermes API on 8642/v1"
   else
     fail "Install output did not advertise Hermes API on 8642/v1"
   fi
 
-  if grep -Fq "Hermes Agent Web dashboard" "$INSTALL_LOG" &&
-    grep -Fq "http://127.0.0.1:${HERMES_DASHBOARD_PORT}/" "$INSTALL_LOG"; then
+  if grep -Fq "Hermes Agent Web dashboard" "$INSTALL_LOG" \
+    && grep -Fq "http://127.0.0.1:${HERMES_DASHBOARD_PORT}/" "$INSTALL_LOG"; then
     pass "Install output advertises Hermes web dashboard on ${HERMES_DASHBOARD_PORT}"
   else
     fail "Install output did not advertise Hermes web dashboard on ${HERMES_DASHBOARD_PORT}"
@@ -493,7 +493,8 @@ fi
 if hermes_dashboard_e2e_enabled; then
   section "Phase 4f: Hermes web dashboard"
 
-  registry_check=$(python3 - "$SANDBOX_NAME" "$HERMES_DASHBOARD_PORT" "$HERMES_DASHBOARD_INTERNAL_PORT" <<'PY' 2>&1
+  registry_check=$(
+    python3 - "$SANDBOX_NAME" "$HERMES_DASHBOARD_PORT" "$HERMES_DASHBOARD_INTERNAL_PORT" <<'PY' 2>&1
 import json
 import os
 import sys
