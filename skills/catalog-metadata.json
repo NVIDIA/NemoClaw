@@ -1,0 +1,25 @@
+{
+  "exportContentSha256": "76130705685498adb7e78123ea3edf06d05103a1486a638b2f7a91c73ab5bc04",
+  "generatedBy": "scripts/export-catalog-skills.py",
+  "metadata": {
+    "minNemoClawVersion": "0.1.0",
+    "testedNemoClawVersion": "0.1.0"
+  },
+  "schemaVersion": 1,
+  "skills": [
+    "nemoclaw-skills-guide",
+    "nemoclaw-user-agent-skills",
+    "nemoclaw-user-configure-inference",
+    "nemoclaw-user-configure-security",
+    "nemoclaw-user-deploy-remote",
+    "nemoclaw-user-get-started",
+    "nemoclaw-user-manage-policy",
+    "nemoclaw-user-manage-sandboxes",
+    "nemoclaw-user-monitor-sandbox",
+    "nemoclaw-user-overview",
+    "nemoclaw-user-reference"
+  ],
+  "source": ".agents/skills",
+  "sourceCommit": "1daf081718489f514d8219d7e229f8ed712ce82d",
+  "sourceContentSha256": "76130705685498adb7e78123ea3edf06d05103a1486a638b2f7a91c73ab5bc04"
+}

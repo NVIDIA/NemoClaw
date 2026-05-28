@@ -1434,6 +1434,9 @@ CONTENT_TYPE_ROLE = {
     "concept": "context",
     "reference": "reference",
 }
+SKILL_FRONTMATTER_LICENSE = "Apache-2.0"
+MAX_SKILL_MD_CHARS = 11_500
+NEMOCLAW_INSTALLER_URL = "https://www.nvidia.com/nemoclaw.sh"
 
 
 def markdown_spdx_header() -> str:
@@ -1445,6 +1448,181 @@ def markdown_spdx_header() -> str:
             "",
         ]
     )
+
+
+def _build_installer_run_command(
+    pre_env: str, post_pipe: str, script_name: str = "nemoclaw.sh"
+) -> str:
+    """Convert the right side of an installer pipe into a script invocation."""
+    env_parts = [pre_env.strip()] if pre_env.strip() else []
+    post = post_pipe.strip()
+    args = ""
+
+    if " bash -s --" in post:
+        env_part, _, args = post.partition(" bash -s --")
+        if env_part.strip():
+            env_parts.append(env_part.strip())
+    elif post.startswith("bash -s --"):
+        args = post[len("bash -s --") :].strip()
+    elif post.endswith(" bash"):
+        env_part = post[: -len(" bash")].strip()
+        if env_part:
+            env_parts.append(env_part)
+    elif post != "bash" and post:
+        env_parts.append(post)
+
+    prefix = " ".join(part for part in env_parts if part)
+    command = f"{prefix} bash {script_name}".strip()
+    if args.strip():
+        command = f"{command} {args.strip()}"
+    return command
+
+
+_INSTALLER_PIPE_LINE_RE = re.compile(
+    rf"^(?P<indent>\s*)(?P<prompt>\$\s*)?"
+    rf"(?P<pre>(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S+)\s+)*)"
+    rf"curl\s+-fsSL\s+{re.escape(NEMOCLAW_INSTALLER_URL)}\s*\|\s*"
+    rf"(?P<post>[^\n]+)$",
+    re.MULTILINE,
+)
+
+_INSTALLER_PIPE_INLINE_RE = re.compile(
+    rf"`((?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S+)\s+)*"
+    rf"curl\s+-fsSL\s+{re.escape(NEMOCLAW_INSTALLER_URL)}\s*\|\s*"
+    rf"[^`]+)`"
+)
+
+_SHELL_SCRIPT_PIPE_LINE_RE = re.compile(
+    r"^(?P<indent>\s*)(?P<prompt>\$\s*)?"
+    r"(?P<pre>(?:[A-Za-z_][A-Za-z0-9_]*=(?:\"[^\"]*\"|'[^']*'|\S+)\s+)*)"
+    r"curl\s+-fsSL\s+(?P<url>https?://[^\s|]+/(?P<script>[A-Za-z0-9._-]+\.sh))"
+    r"\s*\|\s*(?P<post>[^\n]+)$",
+    re.MULTILINE,
+)
+
+
+def rewrite_installer_pipes(text: str) -> str:
+    """Rewrite generated ``curl | bash`` installer examples to inspect first."""
+
+    def _replace_line(match: re.Match, *, script_name: str = "nemoclaw.sh") -> str:
+        indent = match.group("indent") or ""
+        prompt = match.group("prompt") or ""
+        run_command = _build_installer_run_command(
+            match.group("pre") or "",
+            match.group("post") or "bash",
+            script_name=script_name,
+        )
+        prefix = f"{indent}{prompt}"
+        url = (
+            match.group("url")
+            if "url" in match.groupdict()
+            else NEMOCLAW_INSTALLER_URL
+        )
+        return "\n".join(
+            [
+                f"{prefix}curl -fsSLo {script_name} {url}",
+                f"{prefix}less {script_name}",
+                f"{prefix}{run_command}",
+            ]
+        )
+
+    def _replace_script_line(match: re.Match) -> str:
+        return _replace_line(match, script_name=match.group("script"))
+
+    def _replace_inline(match: re.Match) -> str:
+        command = match.group(1)
+        line_match = _INSTALLER_PIPE_LINE_RE.match(command)
+        if not line_match:
+            return match.group(0)
+        run_command = _build_installer_run_command(
+            line_match.group("pre") or "", line_match.group("post") or "bash"
+        )
+        return (
+            f"`curl -fsSLo nemoclaw.sh {NEMOCLAW_INSTALLER_URL}`, "
+            f"inspect `nemoclaw.sh`, then run `{run_command}`"
+        )
+
+    text = _INSTALLER_PIPE_LINE_RE.sub(_replace_line, text)
+    text = _SHELL_SCRIPT_PIPE_LINE_RE.sub(_replace_script_line, text)
+    text = _INSTALLER_PIPE_INLINE_RE.sub(_replace_inline, text)
+    for old, new in {
+        "The piped installer prompts": "The downloaded installer prompts",
+        "pass explicit acceptance to the `bash` side of the pipe": "pass explicit acceptance when running `bash nemoclaw.sh`",
+        "pass explicit acceptance to the `bash` side of the installer pipe": "pass explicit acceptance when running `bash nemoclaw.sh`",
+        "piped `curl | bash`": "download-inspect-run installer",
+        "`curl ... | bash`": "`bash nemoclaw.sh`",
+        "`curl \u2026 | bash`": "download-inspect-run fallback",
+        "`curl \u2026 \\| bash`": "download-inspect-run fallback",
+        "installer pipeline": "installer flow",
+        "Pipes a remote script straight to `bash` with no review step.": "Downloads a remote script for inspection before running it with `bash`.",
+        "set on the `bash` side of the pipe, not on `curl`": "set on the `bash nemoclaw.sh` command, not on the `curl` download command",
+    }.items():
+        text = text.replace(old, new)
+    return text
+
+
+def split_markdown_h3_sections(content: str) -> tuple[str, list[tuple[str, str]]]:
+    """Split an H2 body into preamble plus H3 subsection blocks."""
+    preamble: list[str] = []
+    sections: list[tuple[str, str]] = []
+    current_heading: str | None = None
+    current_lines: list[str] = []
+
+    def _flush() -> None:
+        nonlocal current_heading, current_lines
+        if current_heading is None:
+            return
+        body = "\n".join(current_lines).strip()
+        sections.append((current_heading, body))
+        current_heading = None
+        current_lines = []
+
+    for line in content.split("\n"):
+        if line.startswith("### "):
+            _flush()
+            current_heading = line[4:].strip()
+            current_lines = [line]
+            continue
+        if current_heading is None:
+            preamble.append(line)
+        else:
+            current_lines.append(line)
+    _flush()
+
+    return "\n".join(preamble).strip(), sections
+
+
+_SECTION_HEADING_RE = re.compile(r"(?m)^(#{2,6})\s+(.+)$")
+
+
+def _section_similarity(left: str, right: str) -> float:
+    """Return token overlap ratio for generated duplicate-section detection."""
+    left_tokens = set(re.findall(r"[a-z0-9_./:-]+", left.lower()))
+    right_tokens = set(re.findall(r"[a-z0-9_./:-]+", right.lower()))
+    if not left_tokens or not right_tokens:
+        return 0.0
+    return len(left_tokens & right_tokens) / min(len(left_tokens), len(right_tokens))
+
+
+def dedupe_repeated_heading_sections(text: str) -> str:
+    """Drop later same-heading sections when generated content substantially overlaps."""
+    matches = list(_SECTION_HEADING_RE.finditer(text))
+    if not matches:
+        return text
+
+    chunks: list[str] = [text[: matches[0].start()]]
+    seen: dict[str, str] = {}
+    for idx, match in enumerate(matches):
+        end = matches[idx + 1].start() if idx + 1 < len(matches) else len(text)
+        section = text[match.start() : end]
+        key = re.sub(r"\s+", " ", match.group(2).strip().lower())
+        previous = seen.get(key)
+        if previous is not None and _section_similarity(previous, section) >= 0.35:
+            continue
+        seen[key] = section
+        chunks.append(section)
+
+    return "".join(chunks).strip()
 
 
 def canonicalize_leading_h1(body: str, title: str) -> str:
@@ -1537,7 +1715,7 @@ def generate_skill(
                 doc_platform=doc_platform,
             )
             image_acc.extend(copies)
-        return result
+        return rewrite_installer_pipes(result)
 
     procedures, deferred_procedures, context_pages, reference_pages = (
         partition_skill_pages(pages)
@@ -1572,6 +1750,108 @@ def generate_skill(
         else pages
     )
     description = build_skill_description(name, description_pages)
+    generated_ref_sections: dict[str, list[str]] = {}
+    generated_ref_topics: dict[str, list[str]] = {}
+    generated_ref_images: dict[str, list[tuple[Path, str]]] = {}
+    generated_ref_names: dict[Path, str] = {}
+    reserved_ref_names = {page.path.stem + ".md" for page in ref_section_pages}
+
+    def _unique_generated_ref_name(page: DocPage) -> str:
+        cached = generated_ref_names.get(page.path)
+        if cached:
+            return cached
+        base = re.sub(r"[^a-z0-9-]", "-", page.path.stem.lower()).strip("-")
+        candidate = f"{base}-details.md"
+        suffix = 2
+        while candidate in reserved_ref_names:
+            candidate = f"{base}-details-{suffix}.md"
+            suffix += 1
+        reserved_ref_names.add(candidate)
+        generated_ref_names[page.path] = candidate
+        return candidate
+
+    def _defer_detail(
+        page: DocPage,
+        section_heading: str,
+        content: str,
+        topic: str | None = None,
+    ) -> str:
+        """Store overflow procedure detail in a generated reference file."""
+        ref_name = _unique_generated_ref_name(page)
+        if ref_name not in generated_ref_sections:
+            title = page.title or _brand_case(page.path.stem.replace("-", " ").title())
+            generated_ref_sections[ref_name] = [f"# {title}: Details"]
+            generated_ref_topics[ref_name] = []
+            generated_ref_images[ref_name] = []
+        block = content.strip()
+        if not block:
+            return ref_name
+        if not block.startswith("#"):
+            block = f"## {section_heading}\n\n{block}"
+        generated_ref_sections[ref_name].append(block)
+        topic_text = topic or section_heading
+        if topic_text and topic_text not in generated_ref_topics[ref_name]:
+            generated_ref_topics[ref_name].append(topic_text)
+        return ref_name
+
+    def _current_skill_size() -> int:
+        return len("\n".join(lines))
+
+    def _append_section_or_defer(
+        page: DocPage,
+        heading: str,
+        cleaned_content: str,
+    ) -> None:
+        """Append a procedure section, moving overflow detail to references."""
+        section_lines = [f"## {heading}", "", cleaned_content, ""]
+        if (
+            _current_skill_size() + len("\n".join(section_lines))
+            <= MAX_SKILL_MD_CHARS
+        ):
+            lines.extend(section_lines)
+            return
+
+        preamble, subsections = split_markdown_h3_sections(cleaned_content)
+        if not subsections:
+            ref_name = _defer_detail(page, heading, cleaned_content)
+            lines.extend(
+                [
+                    f"## {heading}",
+                    "",
+                    f"Load [references/{ref_name}](references/{ref_name}) for detailed steps.",
+                    "",
+                ]
+            )
+            return
+
+        lines.append(f"## {heading}")
+        lines.append("")
+        if preamble:
+            lines.append(preamble)
+            lines.append("")
+
+        deferred_topics: list[str] = []
+        for subheading, block in subsections:
+            block_lines = [block, ""]
+            if (
+                _current_skill_size() + len("\n".join(block_lines))
+                <= MAX_SKILL_MD_CHARS
+            ):
+                lines.extend(block_lines)
+                continue
+            ref_name = _defer_detail(page, heading, block, topic=subheading)
+            if subheading not in deferred_topics:
+                deferred_topics.append(subheading)
+
+        if deferred_topics:
+            ref_name = _unique_generated_ref_name(page)
+            topic_text = ", ".join(deferred_topics[:3])
+            if len(deferred_topics) > 3:
+                topic_text += ", and related details"
+            lines.append(
+                f"Load [references/{ref_name}](references/{ref_name}) for detailed steps on {topic_text}."
+            )
+            lines.append("")
 
     # Build SKILL.md content
     lines: list[str] = []
@@ -1580,6 +1860,7 @@ def generate_skill(
     lines.append("---")
     lines.append(f"name: {yaml_scalar(name)}")
     lines.append(f"description: {yaml_scalar(description)}")
+    lines.append(f"license: {yaml_scalar(SKILL_FRONTMATTER_LICENSE)}")
     lines.append("---")
     lines.append("")
     lines.append(markdown_spdx_header().rstrip("\n"))
@@ -1665,10 +1946,7 @@ def generate_skill(
             cleaned_content = _clean(
                 content, pp, skill_md_images, skill_md_local_links
             )
-            lines.append(f"## {heading}")
-            lines.append("")
-            lines.append(cleaned_content)
-            lines.append("")
+            _append_section_or_defer(pp, heading, cleaned_content)
 
     # Build Related Skills from collected sections + any remaining in body
     raw_md = "\n".join(lines)
@@ -1698,7 +1976,7 @@ def generate_skill(
     # trigger from description.agent (the "Use when ..." clause) so the
     # agent can decide on-sight whether to load the file, which is how
     # progressive disclosure is supposed to work.
-    if ref_section_pages:
+    if ref_section_pages or generated_ref_topics:
         lines.append("")
         lines.append("## References")
         lines.append("")
@@ -1715,6 +1993,14 @@ def generate_skill(
             else:
                 bullet = f"- {file_link}"
             lines.append(bullet)
+        for ref_name, topics in generated_ref_topics.items():
+            file_link = f"[references/{ref_name}](references/{ref_name})"
+            topic_text = ", ".join(topics[:3])
+            if len(topics) > 3:
+                topic_text += ", and related details"
+            lines.append(
+                f"- **Load {file_link}** when you need detailed steps for {topic_text}."
+            )
 
     if merged_entries:
         lines.append("")
@@ -1728,6 +2014,12 @@ def generate_skill(
 
     # --- Build reference files ---
     ref_files: dict[str, str] = {}
+    for ref_name, sections in generated_ref_sections.items():
+        body = "\n\n".join(sections)
+        body = normalize_heading_levels(dedupe_repeated_heading_sections(body))
+        ref_files[ref_name] = body
+        ref_images[ref_name] = generated_ref_images.get(ref_name, [])
+
     for rp in deferred_procedures + reference_pages + context_pages:
         ref_name = rp.path.stem + ".md"
         ref_image_acc: list[tuple[Path, str]] = []
@@ -1737,6 +2029,7 @@ def generate_skill(
         elif doc_platform == "fern-mdx" and rp.title and not body.startswith("# "):
             body = f"# {rp.title}\n\n{body}".rstrip()
         body = normalize_heading_levels(body)
+        body = dedupe_repeated_heading_sections(body)
         ref_files[ref_name] = body
         ref_images[ref_name] = ref_image_acc
 

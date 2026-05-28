@@ -1,0 +1,69 @@
+<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+# Prerequisites
+
+Before getting started, check the prerequisites to ensure you have the necessary software and hardware to run NemoClaw.
+
+## Hardware
+
+| Resource | Minimum        | Recommended      |
+|----------|----------------|------------------|
+| CPU      | 4 vCPU         | 4+ vCPU          |
+| RAM      | 8 GB           | 16 GB            |
+| Disk     | 20 GB free     | 40 GB free       |
+
+The sandbox image is approximately 2.4 GB compressed. During image push, the Docker daemon, k3s, and the OpenShell gateway run alongside the export pipeline. The pipeline buffers decompressed layers in memory. On machines with less than 8 GB of RAM, this combined usage can trigger the OOM killer. If you cannot add memory, configuring at least 8 GB of swap can work around the issue at the cost of slower performance.
+
+## Software
+
+| Dependency | Version                          |
+|------------|----------------------------------|
+| Node.js    | 22.16 or later |
+| npm        | 10 or later |
+| Docker     | Docker Engine, Docker Desktop, or Colima on a tested platform |
+| Platform   | See [Platforms](#platforms) below |
+
+On Linux, the installer can install Docker, start the Docker service, and add your user to the `docker` group.
+If the group change is not active in the current shell, the installer exits with `newgrp docker` guidance before it starts onboarding.
+If you choose the native Linux Ollama install path, the onboard wizard also requires `zstd` for Ollama archive extraction.
+
+**Docker group access:**
+
+NemoClaw needs Docker access.
+On personal Linux development machines, adding your user to the `docker` group is the standard way to run Docker without sudo.
+Members of the `docker` group can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path.
+For background, review Docker's [daemon attack surface guidance](https://docs.docker.com/engine/security/#docker-daemon-attack-surface).
+
+On Debian and Ubuntu, NemoClaw installs `zstd` with `apt-get` if it is missing; on other Linux distributions, install `zstd` before onboarding.
+
+On macOS, NemoClaw uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
+You do not need to install or sign a separate OpenShell VM driver helper for standard macOS onboarding.
+
+**OpenShell Lifecycle:**
+
+For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
+Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
+
+**Docker storage driver:**
+
+On Linux hosts running Docker 26 or later with the [containerd image store](https://docs.docker.com/engine/storage/containerd/) enabled (the install-time default for fresh `docker-ce` installations on Ubuntu 24.04 and similar distros), `nemoclaw onboard` transparently builds a `fuse-overlayfs`-enabled cluster image to bypass a kernel-level nested-overlay limitation in k3s.
+No manual setup is required.
+See the troubleshooting guide (use the `nemoclaw-user-reference` skill) for the override knobs and a manual `daemon.json` alternative.
+
+## Platforms
+
+The following table lists tested platform and runtime combinations.
+Availability is not limited to these entries, but untested configurations can have issues.
+The table is generated from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoClaw/blob/main/ci/platform-matrix.json), the single source of truth kept in sync by CI and QA.
+
+| OS | Container runtime | Status | Notes |
+|----|-------------------|--------|-------|
+| Linux | Docker | Tested | Primary tested path. |
+| macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
+| DGX Spark | Docker | Tested | Use the standard installer and `nemoclaw onboard`. For an end-to-end walkthrough with local Ollama inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
+| Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. |
+
+## Next Steps
+
+- [Prepare Windows for NemoClaw](windows-preparation.md) if you are using Windows.
+- [Quickstart](../SKILL.md) to install NemoClaw and launch your first sandbox.
