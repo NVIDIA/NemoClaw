@@ -22,6 +22,20 @@ import { sleepSeconds } from "../../core/wait";
 import { ROOT, shellQuote } from "../../runner";
 import * as registry from "../../state/registry";
 import { parseForwardList } from "../../state/sandbox-session";
+import {
+  classifyForwardHealthWithReachability,
+  isLocalForwardReachable,
+} from "./forward-health";
+import {
+  ensureHermesDashboardPortForwardIfEnabled as ensureHermesDashboardPortForward,
+  getHermesDashboardRecoveryConfig,
+  recoverHermesDashboardProcessIfEnabled as recoverHermesDashboardProcess,
+} from "./hermes-dashboard-recovery";
+
+export {
+  classifyForwardHealthWithReachability,
+  classifySandboxForwardHealth,
+} from "./forward-health";
 
 export type SandboxCommandResult = {
   status: number;
@@ -390,96 +404,15 @@ function ensureSandboxPortForwardForPort(sandboxName: string, port: number): boo
   return isSandboxPortForwardHealthy(sandboxName, port) === true;
 }
 
-function getHermesDashboardRecoveryConfig(
-  sandboxName: string,
-): agentRuntime.HermesDashboardRecoveryConfig | null {
-  const sandbox = registry.getSandbox(sandboxName);
-  if (sandbox?.agent !== "hermes" || sandbox.hermesDashboardEnabled !== true) return null;
-  if (!isValidPort(sandbox.hermesDashboardPort)) return null;
-  if (!isValidPort(sandbox.hermesDashboardInternalPort)) return null;
-  return {
-    publicPort: sandbox.hermesDashboardPort,
-    internalPort: sandbox.hermesDashboardInternalPort,
-    tuiEnabled: sandbox.hermesDashboardTui === true,
-  };
-}
-
 function ensureHermesDashboardPortForwardIfEnabled(sandboxName: string): boolean | null {
-  const dashboard = getHermesDashboardRecoveryConfig(sandboxName);
-  if (dashboard === null) return null;
-  const forwardHealth = isSandboxPortForwardHealthy(sandboxName, dashboard.publicPort);
-  if (forwardHealth === true || forwardHealth === "occupied") return false;
-  return ensureSandboxPortForwardForPort(sandboxName, dashboard.publicPort);
+  return ensureHermesDashboardPortForward(sandboxName, {
+    isPortForwardHealthy: isSandboxPortForwardHealthy,
+    ensurePortForward: ensureSandboxPortForwardForPort,
+  });
 }
 
 function recoverHermesDashboardProcessIfEnabled(sandboxName: string): boolean | null {
-  const dashboard = getHermesDashboardRecoveryConfig(sandboxName);
-  if (dashboard === null) return null;
-  const result = executeSandboxCommand(
-    sandboxName,
-    agentRuntime.buildHermesDashboardProcessRecoveryScript(dashboard),
-  );
-  return !!(
-    result &&
-    result.status === 0 &&
-    (result.stdout.includes("DASHBOARD_PID=") ||
-      result.stdout.includes("DASHBOARD_ALREADY_RUNNING"))
-  );
-}
-
-export function classifySandboxForwardHealth(
-  entries: SandboxForwardListEntry[],
-  sandboxName: string,
-  port: string,
-): Exclude<SandboxForwardHealth, null> {
-  const match = entries.find((entry) => entry.port === port);
-  if (!match) return false;
-  if (match.sandboxName !== sandboxName) return "occupied";
-  return match.status === "running";
-}
-
-/**
- * Like {@link classifySandboxForwardHealth} but accepts a reachability
- * callback that probes whether the local forwarded port actually answers.
- * When the entry-based classification would return `false`, the
- * reachability check overrides it: a port that answers is healthy
- * regardless of what `forward list` reports. The "occupied" verdict is
- * preserved — we never silently take over a forward owned by another
- * sandbox, even if that forward happens to be reachable.
- */
-export function classifyForwardHealthWithReachability(
-  entries: SandboxForwardListEntry[],
-  sandboxName: string,
-  port: string,
-  isReachable: () => boolean,
-): Exclude<SandboxForwardHealth, null> {
-  const verdict = classifySandboxForwardHealth(entries, sandboxName, port);
-  if (verdict !== false) return verdict;
-  return isReachable() ? true : false;
-}
-
-/**
- * Synchronous reachability check for a local port. Used to override a
- * negative `openshell forward list` verdict when the forward is actually
- * still serving traffic — see {@link classifyForwardHealthWithReachability}.
- * Returns false on any error so the existing recovery path stays intact
- * when Node can't probe (e.g., restrictive sandbox).
- */
-function isLocalForwardReachable(port: number): boolean {
-  const script =
-    "const net=require('node:net');" +
-    `const s=net.createConnection({host:'127.0.0.1',port:${port}});` +
-    "s.setTimeout(1000);" +
-    "s.on('connect',()=>{s.destroy();process.exit(0)});" +
-    "s.on('error',()=>process.exit(1));" +
-    "s.on('timeout',()=>{s.destroy();process.exit(1)});";
-  const result = spawnSync(process.execPath, ["-e", script], {
-    encoding: "utf-8",
-    stdio: ["ignore", "ignore", "ignore"],
-    timeout: 2000,
-  });
-  if (result.error) return false;
-  return result.status === 0;
+  return recoverHermesDashboardProcess(sandboxName, { executeCommand: executeSandboxCommand });
 }
 
 /**

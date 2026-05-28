@@ -6,9 +6,9 @@
 
 import fs from "node:fs";
 import path from "node:path";
-
-import { ROOT } from "../runner";
 import { DASHBOARD_PORT } from "../core/ports";
+import { ROOT } from "../runner";
+import { type AgentDashboardUi, readDashboardUi } from "./dashboard-ui";
 
 export const AGENTS_DIR = path.join(ROOT, "agents");
 
@@ -45,15 +45,6 @@ export interface AgentDashboard {
   kind: AgentDashboardKind;
   label: string;
   path: string;
-}
-
-export interface AgentDashboardUi {
-  label: string;
-  port: number;
-  path: string;
-  enableEnv: string;
-  portEnv: string;
-  tuiEnv: string | null;
 }
 
 export interface AgentInference {
@@ -267,39 +258,6 @@ function readMessagingPlatforms(record: ManifestRecord): { supported?: string[] 
 
   const supported = readStringArray(messagingPlatforms, "supported");
   return supported ? { supported } : {};
-}
-
-function readDashboardUi(record: ManifestRecord): AgentDashboardUi | null {
-  const dashboardUi = readObject(record, "dashboard_ui");
-  if (!dashboardUi) return null;
-
-  const port = dashboardUi.port;
-  if (!isValidPort(port)) {
-    throw new Error(
-      "Agent manifest field 'dashboard_ui.port' must be an integer TCP port between 1 and 65535",
-    );
-  }
-
-  const label = readString(dashboardUi, "label")?.trim() || "Web dashboard";
-  const rawPath = readString(dashboardUi, "path")?.trim() || "/";
-  const enableEnv = readString(dashboardUi, "enable_env")?.trim();
-  const portEnv = readString(dashboardUi, "port_env")?.trim();
-  const tuiEnv = readString(dashboardUi, "tui_env")?.trim() || null;
-  if (!enableEnv) {
-    throw new Error("Agent manifest field 'dashboard_ui.enable_env' is required");
-  }
-  if (!portEnv) {
-    throw new Error("Agent manifest field 'dashboard_ui.port_env' is required");
-  }
-
-  return {
-    label,
-    port,
-    path: rawPath.startsWith("/") ? rawPath : `/${rawPath}`,
-    enableEnv,
-    portEnv,
-    tuiEnv,
-  };
 }
 
 function readInference(record: ManifestRecord): AgentInference | undefined {

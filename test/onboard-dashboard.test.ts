@@ -71,10 +71,11 @@ describe("onboard dashboard helpers", () => {
       status: 0,
     }));
     const runCaptureOpenshell = vi.fn(() => "hermes-sandbox 127.0.0.1 9119 123 running");
+    const openshellArgv = vi.fn((args: string[]) => [process.execPath, "-e", "", ...args]);
     const helpers = createOnboardDashboardHelpers({
       runOpenshell,
       runCaptureOpenshell,
-      openshellArgv: (args: string[]) => [process.execPath, "-e", "", ...args],
+      openshellArgv,
       cliName: () => "nemohermes",
       agentProductName: () => "NemoHermes",
       getProviderLabel: (provider: string) => provider,
@@ -85,12 +86,24 @@ describe("onboard dashboard helpers", () => {
       printAgentDashboardUi: vi.fn(),
     });
 
-    expect(helpers.ensureAgentFixedForward("hermes-sandbox", 9119, "Hermes dashboard")).toBe(
-      true,
-    );
+    vi.stubEnv("NEMOCLAW_DASHBOARD_BIND", "0.0.0.0");
+    try {
+      expect(helpers.ensureAgentFixedForward("hermes-sandbox", 9119, "Hermes dashboard")).toBe(
+        true,
+      );
+    } finally {
+      vi.unstubAllEnvs();
+    }
 
     const stopArgs = runOpenshell.mock.calls.map(([args]) => args);
     expect(stopArgs).toContainEqual(["forward", "stop", "9119", "hermes-sandbox"]);
+    expect(openshellArgv).toHaveBeenCalledWith([
+      "forward",
+      "start",
+      "--background",
+      "9119",
+      "hermes-sandbox",
+    ]);
     expect(
       stopArgs.some(
         (args) =>

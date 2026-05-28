@@ -4,26 +4,26 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
 import type { AgentDefinition } from "../agent/defs";
 import { DASHBOARD_PORT } from "../core/ports";
 import { buildChain, buildControlUiUrls } from "../dashboard/contract";
 import * as nim from "../inference/nim";
 import { runCapture as defaultRunCapture } from "../runner";
+import { ensureAgentFixedForward as ensureFixedAgentForward } from "./agent-fixed-forward";
 import * as dashboardAccess from "./dashboard-access";
 import {
   findAvailableDashboardPort,
   getOccupiedPorts,
   isLiveForwardStatus,
 } from "./dashboard-port";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "../adapters/openshell/timeouts";
+import { bestEffortForwardStop, bestEffortForwardStopForSandbox } from "./forward-cleanup";
 import {
   buildDetachedForwardStartSpawn,
   buildForwardStartProgressLogger,
   looksLikeForwardPortConflict,
   runDetachedForwardStartWithPortReleaseRetries,
 } from "./forward-start";
-import { bestEffortForwardStop, bestEffortForwardStopForSandbox } from "./forward-cleanup";
 
 const ANSI_RE = /\x1B(?:\[[0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\)|[@-_])/g;
 export const CONTROL_UI_PORT = DASHBOARD_PORT;
@@ -324,38 +324,7 @@ export function createOnboardDashboardHelpers(deps: OnboardDashboardDeps): Onboa
   }
 
   function ensureAgentFixedForward(sandboxName: string, port: number, label: string): boolean {
-    const forwardUrl = `http://127.0.0.1:${port}`;
-    const forwardTarget = getDashboardForwardTarget(forwardUrl);
-    const stopForwardForSandbox = (portToStop: string | number) =>
-      bestEffortForwardStopForSandbox(
-        deps.runOpenshell,
-        (args, opts) => (deps.runCaptureOpenshell(args, opts) ?? "") as string,
-        portToStop,
-        sandboxName,
-      );
-
-    stopForwardForSandbox(port);
-    const { ok, diagnostic } = runDetachedForwardStartWithPortReleaseRetries(
-      buildDetachedForwardStartSpawn(
-        deps.openshellArgv(["forward", "start", "--background", forwardTarget, sandboxName]),
-      ),
-      () =>
-        (deps.runCaptureOpenshell(["forward", "list"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS }) ?? "") as string,
-      { port, sandboxName },
-      () => {
-        deps.sleep(1);
-        stopForwardForSandbox(port);
-      },
-      { onProgress: buildForwardStartProgressLogger(port) },
-    );
-    if (!ok) {
-      console.warn(
-        `! ${label} forward on port ${port} did not start: ${diagnostic.slice(0, 240)}`,
-      );
-      console.warn(`  Reconnect after resolving the issue: ${deps.cliName()} ${sandboxName} connect`);
-      return false;
-    }
-    return true;
+    return ensureFixedAgentForward(deps, sandboxName, port, label);
   }
 
   function fetchGatewayAuthTokenFromSandbox(sandboxName: string): string | null {
