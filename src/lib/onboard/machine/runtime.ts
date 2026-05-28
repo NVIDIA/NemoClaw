@@ -3,7 +3,7 @@
 
 import type { JsonObject } from "../../core/json-types";
 import * as onboardSession from "../../state/onboard-session";
-import type { Session, SessionUpdates } from "../../state/onboard-session";
+import type { Session, SessionUpdates, StepMutationOptions } from "../../state/onboard-session";
 import {
   createOnboardMachineEvent,
   emitOnboardMachineEvent,
@@ -22,10 +22,10 @@ export interface OnboardRuntimeDeps {
   createSession(overrides?: Partial<Session>): Session;
   saveSession(session: Session): Session;
   updateSession(mutator: (session: Session) => Session | void): Session;
-  markStepStarted(stepName: string): Session;
-  markStepComplete(stepName: string, updates?: SessionUpdates): Session;
+  markStepStarted(stepName: string, options?: StepMutationOptions): Session;
+  markStepComplete(stepName: string, updates?: SessionUpdates, options?: StepMutationOptions): Session;
   markStepSkipped(stepName: string): Session;
-  markStepFailed(stepName: string, message?: string | null): Session;
+  markStepFailed(stepName: string, message?: string | null, options?: StepMutationOptions): Session;
   completeSession(updates?: SessionUpdates): Session;
   filterSafeUpdates(updates: SessionUpdates): Partial<Session>;
   emitEvent(event: OnboardMachineEvent): void;
@@ -102,20 +102,31 @@ export class OnboardRuntime {
     return session;
   }
 
-  async markStepStarted(stepName: string): Promise<Session> {
-    return this.deps.markStepStarted(stepName);
+  async markStepStarted(
+    stepName: string,
+    options: StepMutationOptions = {},
+  ): Promise<Session> {
+    return this.deps.markStepStarted(stepName, options);
   }
 
-  async markStepComplete(stepName: string, updates: SessionUpdates = {}): Promise<Session> {
-    return this.deps.markStepComplete(stepName, updates);
+  async markStepComplete(
+    stepName: string,
+    updates: SessionUpdates = {},
+    options: StepMutationOptions = {},
+  ): Promise<Session> {
+    return this.deps.markStepComplete(stepName, updates, options);
   }
 
   async markStepSkipped(stepName: string): Promise<Session> {
     return this.deps.markStepSkipped(stepName);
   }
 
-  async markStepFailed(stepName: string, message: string | null = null): Promise<Session> {
-    return this.deps.markStepFailed(stepName, message);
+  async markStepFailed(
+    stepName: string,
+    message: string | null = null,
+    options: StepMutationOptions = {},
+  ): Promise<Session> {
+    return this.deps.markStepFailed(stepName, message, options);
   }
 
   async completeSession(updates: SessionUpdates = {}): Promise<Session> {

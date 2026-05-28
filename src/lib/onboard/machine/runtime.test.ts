@@ -123,6 +123,23 @@ describe("OnboardRuntime", () => {
     expect(events[1]).toMatchObject({ type: "onboard.resumed", state: "init" });
   });
 
+  it("forwards step mutation options to step recording dependencies", async () => {
+    const { runtime, getSession } = createHarness();
+
+    await runtime.markStepStarted("preflight", { updateMachine: false });
+    await runtime.markStepComplete("preflight", { sandboxName: "my-assistant" }, { updateMachine: false });
+    await runtime.markStepFailed("gateway", "boom", { updateMachine: false });
+
+    expect(getSession()).toMatchObject({
+      sandboxName: "my-assistant",
+      status: "failed",
+      steps: {
+        preflight: { status: "complete" },
+        gateway: { status: "failed" },
+      },
+    });
+  });
+
   it("validates and persists explicit transitions", async () => {
     const { runtime, events, getSession } = createHarness();
 
