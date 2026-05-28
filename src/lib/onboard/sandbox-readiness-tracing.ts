@@ -72,9 +72,23 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
   timeoutSecs: number;
   runCaptureOpenshell: RunCaptureOpenshell;
   isSandboxReady: (output: string, sandboxName: string) => boolean;
+  /**
+   * Optional terminal-failure-phase classifier. When provided, the waiter
+   * short-circuits as soon as the sandbox enters a terminal failure phase
+   * (e.g. Error / Failed / CrashLoopBackOff) rather than burning the full
+   * timeout window before reporting "did not become ready" (#4316).
+   */
+  isSandboxInErrorPhase?: (output: string, sandboxName: string) => boolean;
   sleep: (seconds: number) => void;
 }): boolean {
-  const { sandboxName, timeoutSecs, runCaptureOpenshell, isSandboxReady, sleep } = options;
+  const {
+    sandboxName,
+    timeoutSecs,
+    runCaptureOpenshell,
+    isSandboxReady,
+    isSandboxInErrorPhase,
+    sleep,
+  } = options;
   return withSandboxReadinessTrace(sandboxName, { timeout_seconds: timeoutSecs }, () => {
     const readyAttempts = Math.max(1, Math.ceil(timeoutSecs / 2));
     for (let i = 0; i < readyAttempts; i++) {
@@ -82,6 +96,10 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
       if (isSandboxReady(list, sandboxName)) {
         addTraceEvent("ready", { attempt: i + 1 });
         return true;
+      }
+      if (isSandboxInErrorPhase?.(list, sandboxName)) {
+        addTraceEvent("terminal_failure_phase", { attempt: i + 1 });
+        return false;
       }
       if (i < readyAttempts - 1) sleep(2);
     }

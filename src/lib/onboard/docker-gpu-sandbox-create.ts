@@ -19,7 +19,7 @@ import {
 
 type DockerGpuSandboxCreateDeps = Pick<
   DockerGpuPatchDeps,
-  "runOpenshell" | "runCaptureOpenshell" | "sleep"
+  "runOpenshell" | "runCaptureOpenshell" | "sleep" | "dockerCapture"
 >;
 
 type DockerGpuSandboxCreatePatchOptions = {
@@ -50,6 +50,7 @@ export type DockerGpuSandboxCreatePatch = {
   ensureApplied: () => void;
   waitForSupervisorReconnectIfNeeded: () => void;
   selectedMode: () => DockerGpuPatchMode | null;
+  patchedContainerId: () => string | null;
 };
 
 export function createDockerGpuSandboxCreatePatch(
@@ -96,6 +97,7 @@ export function createDockerGpuSandboxCreatePatch(
       if (!patchError) return;
       printDockerGpuPatchFailureAndExit(options.sandboxName, patchError, {
         runCaptureOpenshell: options.deps.runCaptureOpenshell,
+        dockerCapture: options.deps.dockerCapture,
       });
     },
 
@@ -115,7 +117,15 @@ export function createDockerGpuSandboxCreatePatch(
       const supervisorReady = waitForOpenShellSupervisorReconnect(
         options.sandboxName,
         supervisorReconnectTimeoutSecs,
-        { runOpenshell: options.deps.runOpenshell, sleep: options.deps.sleep },
+        {
+          runOpenshell: options.deps.runOpenshell,
+          // Pass `runCaptureOpenshell` so the supervisor-reconnect wait can
+          // short-circuit on a terminal sandbox phase instead of burning
+          // the full reconnect timeout window when the patched container
+          // crashed on startup (#4316).
+          runCaptureOpenshell: options.deps.runCaptureOpenshell,
+          sleep: options.deps.sleep,
+        },
       );
       if (supervisorReady) return;
       printDockerGpuPatchFailureAndExit(
@@ -123,6 +133,7 @@ export function createDockerGpuSandboxCreatePatch(
         new Error("OpenShell supervisor did not reconnect to the GPU-enabled container."),
         {
           runCaptureOpenshell: options.deps.runCaptureOpenshell,
+          dockerCapture: options.deps.dockerCapture,
           context: {
             sandboxName: options.sandboxName,
             oldContainerId: result?.oldContainerId,
@@ -136,6 +147,10 @@ export function createDockerGpuSandboxCreatePatch(
 
     selectedMode() {
       return result?.mode ?? null;
+    },
+
+    patchedContainerId() {
+      return result?.newContainerId ?? null;
     },
   };
 }

@@ -649,6 +649,8 @@ const {
 // Gateway state functions — delegated to src/lib/state/gateway.ts
 const {
   isSandboxReady,
+  isSandboxInErrorPhase,
+  getSandboxFailurePhase,
   parseSandboxStatus,
   hasStaleGateway,
   isSelectedGateway,
@@ -3573,7 +3575,12 @@ async function createSandbox(
     openshellSandboxCommand: sandboxStartupCommand,
     timeoutSecs: sandboxReadyTimeoutSecs,
     backend: effectiveSandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
-    deps: { runOpenshell, runCaptureOpenshell, sleep: sleepSeconds },
+    deps: {
+      runOpenshell,
+      runCaptureOpenshell,
+      sleep: sleepSeconds,
+      dockerCapture: docker.dockerCapture,
+    },
   });
   const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
     readyCheck: () => {
@@ -3638,6 +3645,7 @@ async function createSandbox(
     timeoutSecs: sandboxReadyTimeoutSecs,
     runCaptureOpenshell,
     isSandboxReady,
+    isSandboxInErrorPhase,
     sleep: sleepSeconds,
   });
 
@@ -3669,7 +3677,15 @@ async function createSandbox(
       dockerGpuPatch.printDockerGpuReadinessFailure(
         sandboxName,
         dockerGpuCreatePatch.selectedMode(),
-        { runCaptureOpenshell },
+        {
+          runCaptureOpenshell,
+          dockerCapture: docker.dockerCapture,
+          context: {
+            sandboxName,
+            newContainerId: dockerGpuCreatePatch.patchedContainerId(),
+            selectedMode: dockerGpuCreatePatch.selectedMode(),
+          },
+        },
       );
     } else {
       // Clean up non-GPU failures after preserving local diagnostics so the
@@ -3700,6 +3716,41 @@ async function createSandbox(
   });
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
+    // Before issuing GPU proof commands through `openshell sandbox exec`,
+    // confirm the sandbox is still in a live phase. A sandbox that
+    // transitioned to Error after the readiness wait succeeded (e.g. the
+    // patched GPU container crashed mid-startup) would make the proof step
+    // fail with an exec error that looks like an `nvidia-smi` failure —
+    // masking the real cause. When that happens, surface the patched-
+    // container/Error-phase classification instead of running the proof
+    // (#4316).
+    if (useDockerGpuPatch) {
+      const preProofList = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
+      if (isSandboxInErrorPhase(preProofList, sandboxName)) {
+        const failurePhase = getSandboxFailurePhase(preProofList, sandboxName);
+        console.error("");
+        console.error(
+          `  Skipping GPU proof: sandbox '${sandboxName}' is in ${failurePhase ?? "a terminal failure"} phase.`,
+        );
+        dockerGpuPatch.printDockerGpuProofFailure(
+          sandboxName,
+          new Error(
+            `Sandbox '${sandboxName}' entered ${failurePhase ?? "a terminal failure"} phase after readiness; GPU proof skipped.`,
+          ),
+          dockerGpuCreatePatch.selectedMode(),
+          {
+            runCaptureOpenshell,
+            dockerCapture: docker.dockerCapture,
+            context: {
+              sandboxName,
+              newContainerId: dockerGpuCreatePatch.patchedContainerId(),
+              selectedMode: dockerGpuCreatePatch.selectedMode(),
+            },
+          },
+        );
+        process.exit(1);
+      }
+    }
     try {
       verifyDirectSandboxGpu(sandboxName);
     } catch (error) {
@@ -3707,7 +3758,17 @@ async function createSandbox(
         sandboxName,
         error,
         dockerGpuCreatePatch.selectedMode(),
-        { runCaptureOpenshell },
+        {
+          runCaptureOpenshell,
+          dockerCapture: docker.dockerCapture,
+          context: useDockerGpuPatch
+            ? {
+                sandboxName,
+                newContainerId: dockerGpuCreatePatch.patchedContainerId(),
+                selectedMode: dockerGpuCreatePatch.selectedMode(),
+              }
+            : null,
+        },
       );
       throw error;
     }
@@ -7229,6 +7290,8 @@ module.exports = {
   getPortConflictServiceHints,
   classifyValidationFailure,
   isSandboxReady,
+  isSandboxInErrorPhase,
+  getSandboxFailurePhase,
   isLoopbackHostname,
   normalizeProviderBaseUrl,
   onboard,
