@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Runtime Controls and Sandbox Mutability
 
 This page explains which parts of a running NemoClaw sandbox can change immediately and which changes require a rebuild or re-onboard.

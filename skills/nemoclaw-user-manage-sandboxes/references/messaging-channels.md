@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Messaging Channels
 
 Telegram, Discord, Slack, WeChat, and WhatsApp reach your OpenClaw or Hermes agent through OpenShell-managed processes and gateway constructs.

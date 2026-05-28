@@ -3,10 +3,6 @@ name: "nemoclaw-user-manage-sandboxes"
 description: "Explains operational tasks after the quickstart: listing sandboxes, status and health checks, logs, diagnostics, port forwards, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall. Trigger keywords - manage nemoclaw sandboxes, nemoclaw status, nemoclaw list, nemoclaw dashboard port, nemoclaw rebuild, nemoclaw upgrade sandboxes, nemoclaw uninstall, sandbox mutability, sandbox runtime configuration, sandbox rebuild, nemoclaw backup, nemoclaw restore, workspace backup, openshell sandbox download upload, nemoclaw messaging channels, nemoclaw telegram, nemoclaw discord, nemoclaw slack, nemoclaw wechat, nemoclaw whatsapp, openshell channel messaging, nemoclaw workspace files, soul.md, user.md, identity.md, agents.md, sandbox persistence."
 license: "Apache-2.0"
 ---
-
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 # Manage Sandbox Lifecycle
 
 Use this guide after you finish the OpenClaw quickstart (use the `nemoclaw-user-get-started` skill).

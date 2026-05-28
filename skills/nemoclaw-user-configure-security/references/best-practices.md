@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # NemoClaw Security Best Practices: Controls, Risks, and Posture Profiles
 
 NemoClaw ships with deny-by-default security controls across four layers: network, filesystem, process, and inference.

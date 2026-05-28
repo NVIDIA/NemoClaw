@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # NemoClaw CLI Commands Reference
 
 The `nemoclaw` CLI is the primary interface for managing NemoClaw sandboxes.

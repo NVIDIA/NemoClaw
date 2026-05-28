@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Prerequisites
 
 Before getting started, check the prerequisites to ensure you have the necessary software and hardware to run NemoClaw.

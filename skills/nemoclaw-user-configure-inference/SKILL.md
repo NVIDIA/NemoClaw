@@ -3,10 +3,6 @@ name: "nemoclaw-user-configure-inference"
 description: "Connects NemoClaw to a local inference server. Use when setting up Ollama, vLLM, TensorRT-LLM, NIM, or any OpenAI-compatible local model server with NemoClaw. Trigger keywords - nemoclaw local inference, ollama nemoclaw, vllm nemoclaw, local model server, openai compatible endpoint, switch nemoclaw inference model, change inference runtime, nemoclaw additional model, nemoclaw sub-agent model, openclaw sub-agent, agents.list, sessions_spawn, vlm-demo, nemoclaw tool calling, ollama tool calls, vllm tool-call-parser, raw json in tui, nemoclaw inference options, nemoclaw onboarding providers, nemoclaw inference routing."
 license: "Apache-2.0"
 ---
-
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
-
 # Use a Local Inference Server
 
 ## Gotchas

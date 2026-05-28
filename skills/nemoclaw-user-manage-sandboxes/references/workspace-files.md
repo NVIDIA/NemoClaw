@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Workspace Files
 
 OpenClaw stores its personality, user context, and behavioral configuration in a set of Markdown files inside the sandbox.

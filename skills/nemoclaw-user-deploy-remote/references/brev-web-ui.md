@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Launch NemoClaw with the Brev Web UI
 
 Use the Brev web UI to launch a hosted NemoClaw sandbox from your browser.

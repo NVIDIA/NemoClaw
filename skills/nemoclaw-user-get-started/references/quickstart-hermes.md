@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # NemoClaw Quickstart with Hermes
 
 Use NemoHermes when you want NemoClaw to create an OpenShell sandbox that runs Hermes instead of the default OpenClaw agent.

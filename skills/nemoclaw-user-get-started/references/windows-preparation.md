@@ -1,5 +1,3 @@
-<!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
 # Prepare Windows for NemoClaw
 
 You can run NemoClaw inside Windows Subsystem for Linux (WSL 2) on Windows.
