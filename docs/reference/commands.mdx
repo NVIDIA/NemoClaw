@@ -763,8 +763,8 @@ $ nemoclaw my-assistant channels start telegram
 
 Run channel-specific runtime diagnostics. For WhatsApp the command probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy/config coverage; a paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
 
-```console
-$ nemoclaw my-assistant channels status --channel whatsapp
+```bash
+nemoclaw my-assistant channels status --channel whatsapp
 ```
 
 | Flag | Description |
