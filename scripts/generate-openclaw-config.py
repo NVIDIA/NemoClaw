@@ -885,6 +885,8 @@ def _append_web_search_answer_instruction(config: dict) -> None:
         "\n\n## Web search (NemoClaw)\n"
         f"When you use web search to answer a question, tell the user clearly: "
         f"**{usage_line}** before summarizing search results.\n"
+        "Call the **`web_search`** tool with a `query` argument. "
+        "Do **not** use `tool_search_code` or invent `openclaw.tools.*` APIs.\n"
     )
     agents_md.parent.mkdir(parents=True, exist_ok=True)
     existing = ""

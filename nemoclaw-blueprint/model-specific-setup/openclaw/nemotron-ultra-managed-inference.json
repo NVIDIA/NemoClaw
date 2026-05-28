@@ -1,0 +1,17 @@
+{
+  "$schema": "../schema.json",
+  "id": "nemotron-ultra-managed-inference",
+  "agent": "openclaw",
+  "description": "Disable OpenClaw compact tool-search for Nemotron Ultra; the model invents invalid tool_search_code instead of calling web_search directly.",
+  "match": {
+    "modelIds": ["nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1"],
+    "providerKey": "inference",
+    "inferenceApi": "openai-completions",
+    "baseUrl": "https://inference.local/v1"
+  },
+  "effects": {
+    "openclawTools": {
+      "toolSearch": false
+    }
+  }
+}
