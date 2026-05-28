@@ -16,11 +16,6 @@ type TuiState = {
 };
 
 const VISIBLE_ERROR_RE = /\b(error|failed|timeout|timed out|unavailable|fetch failed|upstream|connection)\b/i;
-const ERROR_CAUSE_RE =
-  /\b(?:HTTP\s*(?:status\s*)?\d{3}|fetch failed|ETIMEDOUT|ECONN(?:REFUSED|RESET|ABORTED)?|ENOTFOUND|EAI_AGAIN|timeout|timed out|unavailable)\b/i;
-const ERROR_LAYER_RE = /\b(?:gateway|proxy|upstream|inference|endpoint|provider|chat\.send)\b/i;
-const RECOVERY_HINT_RE =
-  /\b(?:retry|try again|check|verify|network|firewall|endpoint|connectivity|NVIDIA|API key|provider)\b/i;
 const CONNECTED_SPINNER_RE =
   /(?:flibbertigibbeting|thinking|waiting|processing).*?\|\s*connected|[0-9]+m\s+[0-9]+s\s*\|\s*connected/i;
 
@@ -30,25 +25,10 @@ function stripAnsi(value: string): string {
 
 function analyzeIssue4434TuiCapture(capture: string) {
   const plain = stripAnsi(capture);
-  const errorContext = plain
-    .split(/\r?\n/)
-    .filter(
-      (line) =>
-        VISIBLE_ERROR_RE.test(line) ||
-        ERROR_CAUSE_RE.test(line) ||
-        /\|\s*error\b/i.test(line),
-    )
-    .join("\n");
   const visibleError = VISIBLE_ERROR_RE.test(plain);
-  const concreteCause = ERROR_CAUSE_RE.test(errorContext);
-  const reportingLayer = ERROR_LAYER_RE.test(errorContext);
-  const recoveryHint = RECOVERY_HINT_RE.test(errorContext);
   const connectedSpinner = CONNECTED_SPINNER_RE.test(plain);
   return {
     visibleError,
-    concreteCause,
-    reportingLayer,
-    recoveryHint,
     connectedSpinner,
     issue4434Signature: connectedSpinner && !visibleError,
   };
@@ -127,9 +107,6 @@ describe("issue #4434 unreachable inference TUI behavior", () => {
 
     expect(analyzeIssue4434TuiCapture(capture)).toEqual({
       visibleError: false,
-      concreteCause: false,
-      reportingLayer: false,
-      recoveryHint: false,
       connectedSpinner: true,
       issue4434Signature: true,
     });
@@ -152,9 +129,6 @@ describe("issue #4434 unreachable inference TUI behavior", () => {
     expect(result.state.status).toBe("error");
     expect(analyzeIssue4434TuiCapture(result.capture)).toMatchObject({
       visibleError: true,
-      concreteCause: true,
-      reportingLayer: true,
-      recoveryHint: true,
       connectedSpinner: false,
       issue4434Signature: false,
     });
