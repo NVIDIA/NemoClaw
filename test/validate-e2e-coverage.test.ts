@@ -225,7 +225,10 @@ describe("nightly E2E workflow validation", () => {
         invalid.push(`${jobName} checkout.ref=${String(checkoutWith?.ref)}`);
       }
 
-      const resolver = getJobStep(job, "Resolve public install ref");
+      const resolver = getJobStep(
+        job,
+        privilegedTrustedScript ? "Resolve trusted public install ref" : "Resolve public install ref",
+      );
       if (!resolver) {
         invalid.push(`${jobName} missing resolved-ref step`);
       } else {
@@ -238,8 +241,11 @@ describe("nightly E2E workflow validation", () => {
           if (env?.TARGET_REF !== "${{ inputs.target_ref }}") {
             invalid.push(`${jobName} resolved-ref TARGET_REF=${String(env?.TARGET_REF)}`);
           }
-          if (!run.includes("${TARGET_REF:-$GITHUB_SHA}")) {
-            invalid.push(`${jobName} resolved-ref step does not use target_ref or GITHUB_SHA`);
+          if (!run.includes("trusted_head=\"$(git rev-parse HEAD)\"")) {
+            invalid.push(`${jobName} resolved-ref step does not derive trusted HEAD`);
+          }
+          if (!run.includes("git merge-base --is-ancestor")) {
+            invalid.push(`${jobName} resolved-ref step does not validate ref reachability`);
           }
         } else if (!run.includes("git rev-parse HEAD")) {
           invalid.push(`${jobName} resolved-ref step does not use git rev-parse HEAD`);

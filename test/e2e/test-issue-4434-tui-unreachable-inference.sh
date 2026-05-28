@@ -20,8 +20,12 @@ INSTALL_LOG="${E2E_ISSUE_4434_INSTALL_LOG:-/tmp/nemoclaw-e2e-issue-4434-install.
 CAPTURE_DIR="${NEMOCLAW_ISSUE_4434_CAPTURE_DIR:-$(mktemp -d "${TMPDIR:-/tmp}/nemoclaw-issue-4434.XXXXXX")}"
 CAPTURE_FILE="${CAPTURE_DIR}/openclaw-tui-capture.log"
 PLAIN_CAPTURE_FILE="${CAPTURE_DIR}/openclaw-tui-capture.plain.log"
+ERROR_CONTEXT_FILE="${CAPTURE_DIR}/openclaw-tui-error-context.log"
 TUI_TIMEOUT_SEC="${NEMOCLAW_ISSUE_4434_TUI_TIMEOUT_SEC:-180}"
 VISIBLE_ERROR_RE="error|failed|timeout|timed out|unavailable|fetch failed|ETIMEDOUT|ECONN|upstream"
+ERROR_CAUSE_RE="HTTP[[:space:]]*(status[[:space:]]*)?[0-9]{3}|fetch failed|ETIMEDOUT|ECONN(REFUSED|RESET|ABORTED)?|ENOTFOUND|EAI_AGAIN|timeout|timed out|unavailable"
+ERROR_LAYER_RE="gateway|proxy|upstream|inference|endpoint|provider|chat\\.send"
+RECOVERY_HINT_RE="retry|try again|check|verify|network|firewall|endpoint|connectivity|NVIDIA|API key|provider"
 SPINNER_CONNECTED_RE="flibbertigibbeting|[0-9]+m[[:space:]][0-9]+s[[:space:]]*\\|[[:space:]]*connected"
 STATUS_LINE_RE="(connecting|gateway connected|connected|sending|running|flibbertigibbeting).*\\|[[:space:]]*(connected|error)"
 BLOCKED_IPS=("75.2.113.119" "99.83.136.103")
@@ -179,6 +183,17 @@ if ! grep -Eiq "$VISIBLE_ERROR_RE" "$PLAIN_CAPTURE_FILE"; then
   fi
   fail "TUI did not surface a visible inference error before the timeout window"
 fi
+grep -Ei -C2 "$VISIBLE_ERROR_RE|$ERROR_CAUSE_RE|\\|[[:space:]]*error\\b" \
+  "$PLAIN_CAPTURE_FILE" >"$ERROR_CONTEXT_FILE" || true
+if ! grep -Eiq "$ERROR_CAUSE_RE" "$ERROR_CONTEXT_FILE"; then
+  fail "TUI error did not include a concrete HTTP status or transport cause"
+fi
+if ! grep -Eiq "$ERROR_LAYER_RE" "$ERROR_CONTEXT_FILE"; then
+  fail "TUI error did not identify the reporting layer"
+fi
+if ! grep -Eiq "$RECOVERY_HINT_RE" "$ERROR_CONTEXT_FILE"; then
+  fail "TUI error did not include a one-line recovery hint"
+fi
 if [ "$expect_rc" -ne 0 ]; then
   fail "expect harness exited ${expect_rc} even though an error-looking capture was found"
 fi
@@ -193,5 +208,5 @@ if ! grep -Eiq "\\|[[:space:]]*error\\b" <<<"$last_status_line"; then
   fail "TUI capture did not end with a visible error status after the failed run"
 fi
 
-info "PASS: openclaw tui surfaced a visible unreachable-inference error and stopped the spinner"
+info "PASS: openclaw tui surfaced a structured unreachable-inference error and stopped the spinner"
 info "capture: ${PLAIN_CAPTURE_FILE}"

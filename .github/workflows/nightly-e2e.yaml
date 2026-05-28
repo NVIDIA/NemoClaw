@@ -359,14 +359,30 @@ jobs:
           # the product under test is selected separately via
           # NEMOCLAW_PUBLIC_INSTALL_REF.
           ref: ${{ github.ref }}
+          fetch-depth: 0
 
-      - name: Resolve public install ref
+      - name: Resolve trusted public install ref
         id: public_install_ref
         shell: bash
         env:
           TARGET_REF: ${{ inputs.target_ref }}
         run: |
-          printf 'ref=%s\n' "${TARGET_REF:-$GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          trusted_head="$(git rev-parse HEAD)"
+          ref="${TARGET_REF:-$trusted_head}"
+          if [[ ! "$ref" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::issue #4434 privileged E2E requires target_ref to be a full commit SHA"
+            exit 1
+          fi
+          if ! git cat-file -e "${ref}^{commit}" 2>/dev/null; then
+            echo "::error::target_ref ${ref} is not present in the trusted workflow checkout"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$ref" "$trusted_head"; then
+            echo "::error::target_ref ${ref} is not reachable from trusted workflow ref ${trusted_head}"
+            exit 1
+          fi
+          printf 'ref=%s\n' "$ref" >> "$GITHUB_OUTPUT"
 
       - name: "Install issue #4434 test dependencies"
         shell: bash
@@ -386,6 +402,25 @@ jobs:
           NEMOCLAW_PUBLIC_INSTALL_REF: ${{ steps.public_install_ref.outputs.ref }}
           GITHUB_TOKEN: ${{ github.token }}
         run: bash test/e2e/test-issue-4434-tui-unreachable-inference.sh
+
+      - name: "Sanitize issue #4434 logs on failure"
+        if: failure()
+        shell: bash
+        env:
+          NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for file in /tmp/nemoclaw-e2e-issue-4434-install.log /tmp/nemoclaw-issue-4434.*; do
+            [ -f "$file" ] || continue
+            if [ -n "${NVIDIA_API_KEY:-}" ]; then
+              perl -0pi -e 's/\Q$ENV{NVIDIA_API_KEY}\E/[REDACTED_NVIDIA_API_KEY]/g' "$file"
+            fi
+            if [ -n "${GITHUB_TOKEN:-}" ]; then
+              perl -0pi -e 's/\Q$ENV{GITHUB_TOKEN}\E/[REDACTED_GITHUB_TOKEN]/g' "$file"
+            fi
+            perl -0pi -e 's/nvapi-[A-Za-z0-9._-]+/[REDACTED_NVIDIA_API_KEY]/g; s/gh[pousr]_[A-Za-z0-9_]+/[REDACTED_GITHUB_TOKEN]/g' "$file"
+          done
 
       - name: "Upload issue #4434 logs on failure"
         if: failure()
