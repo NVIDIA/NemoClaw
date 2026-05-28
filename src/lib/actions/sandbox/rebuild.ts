@@ -681,10 +681,9 @@ export async function rebuildSandbox(
   // rebuild (either via --yes/--force or by answering "y" at the prompt).
   // Propagate that consent so the size-confirm gate inside the
   // non-interactive onboard does not abort after the old sandbox has
-  // been deleted (#2639 follow-up). The recreate path also inherits the
-  // original sandbox's no-GPU intent so the inner `onboard --resume` does
-  // not enforce the Docker CDI GPU preflight on hosts without an NVIDIA
-  // GPU.
+  // been deleted. The recreate path also inherits the original sandbox's
+  // no-GPU intent so the inner `onboard --resume` does not enforce the
+  // Docker CDI GPU preflight on hosts without an NVIDIA GPU.
   const recreateOpts = buildRebuildRecreateOnboardOpts({
     sb,
     rebuildAgent,
