@@ -369,6 +369,7 @@ describe("nim", () => {
       "JMJWOA-Generic-Future",
       "NVIDIA JMJWOA-Generic-GPU",
       "NVIDIA JMJWOA-Generic-NPU",
+      "NVIDIA JMJWOA-Generic-Future",
     ])("rejects denylisted placeholder name %s on generic firmware (#3988)", (placeholder) => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
@@ -420,8 +421,8 @@ describe("nim", () => {
     // Secondary gate: when no real NVIDIA kernel driver is bound,
     // `/proc/driver/nvidia/` is absent. Even if the nvidia-smi probe returns a
     // plausible-looking NVIDIA name, the absence of the kernel interface is a
-    // definitive "no real driver" signal and the host must be rejected. Covers
-    // QA-confirmed Snapdragon X N1X WSL2 hosts where the shim emits
+    // definitive "no real driver" signal and the host must be rejected.
+    // Covers QA-confirmed Snapdragon X N1X WSL2 hosts where the shim emits
     // format-valid `uuid`/`compute_cap`/`vbios_version` triples but no
     // `/proc/driver/nvidia/` directory.
     it("rejects when /proc/driver/nvidia/ is absent on generic firmware (#3988)", () => {
@@ -672,6 +673,62 @@ describe("nim", () => {
             nimCapable: true,
             unifiedMemory: true,
             spark: false,
+          });
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Unified-memory fallback must reject WDDM placeholder names on hosts
+    // where firmware does not vouch for an NVIDIA platform. Otherwise a
+    // d3d12/WDDM shim emitting `JMJWOA-Generic-*` on the names-only fallback
+    // would slip past the primary-path gate.
+    it("unified-memory fallback rejects denylisted names on generic firmware (#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd.some((a: string) => a.includes("memory.total"))) return "";
+        if (cmd.some((a: string) => a.includes("query-gpu=name"))) {
+          return "JMJWOA-Generic-GPU";
+        }
+        if (cmd[0] === "free" && cmd[1] === "-m") {
+          return "              total        used        free      shared  buff/cache   available\nMem:          32768        5120       20000         512       7148       27136\nSwap:             0           0           0";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withGenericLinuxFirmware(() => {
+          expect(nimModule.detectGpu()).toBeNull();
+        });
+      } finally {
+        restore();
+      }
+    });
+
+    // Unified-memory fallback must also enforce the kernel-interface gate on
+    // generic firmware. A tagged name like "NVIDIA Jetson AGX Orin" on a host
+    // with no `/proc/driver/nvidia/` cannot be trusted; only firmware-vouched
+    // platforms (Spark/Jetson) bypass the gate on this path.
+    it("unified-memory fallback rejects tagged names without kernel interface on generic firmware (#3988)", () => {
+      const runCapture = vi.fn((cmd: string | string[]) => {
+        if (!Array.isArray(cmd)) throw new Error("expected argv array");
+        if (cmd.some((a: string) => a.includes("memory.total"))) return "";
+        if (cmd.some((a: string) => a.includes("query-gpu=name"))) {
+          return "NVIDIA Jetson AGX Orin";
+        }
+        if (cmd[0] === "free" && cmd[1] === "-m") {
+          return "              total        used        free      shared  buff/cache   available\nMem:          32768        5120       20000         512       7148       27136\nSwap:             0           0           0";
+        }
+        return "";
+      });
+      const { nimModule, restore } = loadNimWithMockedRunner(runCapture);
+
+      try {
+        withGenericLinuxFirmware(() => {
+          withNvidiaKernelInterface(false, () => {
+            expect(nimModule.detectGpu()).toBeNull();
           });
         });
       } finally {

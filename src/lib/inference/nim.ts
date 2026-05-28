@@ -45,9 +45,10 @@ const NVIDIA_GPU_NAME_DENYLIST_PATTERN = /\bJMJWOA-Generic-/i;
 // `/proc/driver/nvidia/` is populated by the real NVIDIA kernel driver on
 // Linux/WSL2. The Snapdragon X d3d12/WDDM shim ships a userland `nvidia-smi`
 // binary but no kernel module, so this interface is absent — a cheap and
-// definitive signal that no genuine NVIDIA driver is bound. On non-Linux
-// platforms (macOS, Windows-native) the path does not apply and the helper
-// returns `true` so the caller falls back to the name denylist alone.
+// definitive signal that no genuine NVIDIA driver is bound. Used as a last
+// guard after the name denylist; on non-Linux platforms (macOS, Windows
+// native) the path does not apply and the helper returns `true` so the
+// caller falls back to the denylist alone.
 const NVIDIA_DRIVER_PROC_PATH = "/proc/driver/nvidia";
 
 function nvidiaKernelInterfaceExists(): boolean {
@@ -466,11 +467,29 @@ export function detectGpu(): GpuDetection | null {
     const firmwarePlatform = detectNvidiaPlatform();
     const firmwareIsUnifiedMemory =
       firmwarePlatform === "spark" || firmwarePlatform === "jetson";
+    // Reject placeholder names on hosts where firmware does not vouch for an
+    // NVIDIA platform, mirroring the primary path. A WSL2 d3d12/WDDM shim
+    // could in principle emit `JMJWOA-Generic-*` on this fallback too.
+    if (!firmwareIsUnifiedMemory && gpuNames.some((name: string) =>
+      NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(name),
+    )) {
+      return null;
+    }
     const taggedNames = gpuNames.filter((name: string) =>
       UNIFIED_MEMORY_GPU_TAGS.some((tag) => new RegExp(tag, "i").test(name)),
     );
+    // Tagged-name acceptance on non-firmware-vouched hosts must additionally
+    // pass the kernel-interface gate so the doc claim ("real kernel driver
+    // bound") holds on the unified-memory fallback as well.
+    const allowTaggedOnGenericFirmware = nvidiaKernelInterfaceExists();
     const unifiedGpuNames =
-      taggedNames.length > 0 ? taggedNames : firmwareIsUnifiedMemory ? gpuNames : [];
+      taggedNames.length > 0
+        ? firmwareIsUnifiedMemory || allowTaggedOnGenericFirmware
+          ? taggedNames
+          : []
+        : firmwareIsUnifiedMemory
+          ? gpuNames
+          : [];
     if (unifiedGpuNames.length > 0) {
       const totalMemoryMB = readHostMemoryMB();
       const count = unifiedGpuNames.length;
