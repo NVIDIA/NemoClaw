@@ -277,15 +277,24 @@ RUN mkdir -p /home/linuxbrew/.linuxbrew/bin \
         printf '%s\n' 'exec /home/linuxbrew/.linuxbrew/bin/brew "$@"'; \
     } > /usr/local/bin/brew \
     && chmod 755 /usr/local/bin/brew \
+    && grep -qx 'export HOMEBREW_TEMP=/tmp' /usr/local/bin/brew \
+    && grep -qx 'export TMPDIR=/tmp' /usr/local/bin/brew \
+    && gosu sandbox env HOMEBREW_TEMP=/var/tmp TMPDIR=/var/tmp /usr/local/bin/brew --prefix \
+        | grep -qx /home/linuxbrew/.linuxbrew \
     && gosu sandbox /usr/local/bin/brew --prefix | grep -qx /home/linuxbrew/.linuxbrew \
     && gosu sandbox /usr/local/bin/brew --version
 RUN { \
-        printf '%s\n' "if [ \"\$(id -un 2>/dev/null || true)\" = sandbox ]; then"; \
+        printf '%s\n' "if [ \"\$(/usr/bin/id -un 2>/dev/null || true)\" = sandbox ]; then"; \
         printf '%s\n' "  export PATH=\"\${PATH}:/home/linuxbrew/.linuxbrew/bin\""; \
         printf '%s\n' "fi"; \
     } > /etc/profile.d/nemoclaw-linuxbrew.sh \
     && chmod 644 /etc/profile.d/nemoclaw-linuxbrew.sh \
     && bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 1 ;; *) exit 0 ;; esac" \
+    && mkdir -p /tmp/nemoclaw-hostile-bin \
+    && { printf '%s\n' '#!/bin/sh'; printf '%s\n' 'echo sandbox'; } > /tmp/nemoclaw-hostile-bin/id \
+    && chmod 755 /tmp/nemoclaw-hostile-bin/id \
+    && PATH="/tmp/nemoclaw-hostile-bin:${PATH}" bash -lc "case \":\${PATH}:\" in *:/home/linuxbrew/.linuxbrew/bin:*) exit 1 ;; *) exit 0 ;; esac" \
+    && rm -rf /tmp/nemoclaw-hostile-bin \
     && gosu sandbox bash -lc 'command -v brew >/dev/null' \
     && gosu sandbox bash -lc 'command -v brew' | grep -qx /usr/local/bin/brew \
     && gosu sandbox bash -lc 'brew --prefix' | grep -qx /home/linuxbrew/.linuxbrew \
