@@ -501,7 +501,6 @@ import {
   readMessagingChannelConfigFromEnv,
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
-import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
   normalizeHermesToolGatewaySelections,
@@ -516,16 +515,13 @@ import {
   resolveQrSelectedChannels,
 } from "./onboard/messaging-state";
 import { getValidatedMessagingToken, getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
+import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import type {
   DockerDriverBinaryOverrides,
   OpenShellInstallDeps,
   OpenShellInstallResult,
 } from "./onboard/openshell-install";
 import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
-import {
-  backupSandboxBeforeRecreate,
-  shouldSkipPreRecreateBackup,
-} from "./onboard/sandbox-backup-on-recreate";
 import { getSuggestedPolicyPresets } from "./onboard/policy-presets";
 import {
   computeSetupPresetSuggestions as computeSetupPresetSuggestionsImpl,
@@ -534,6 +530,10 @@ import {
   type SetupPresetSuggestionOptions,
   setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
 } from "./onboard/policy-selection";
+import {
+  backupSandboxBeforeRecreate,
+  shouldSkipPreRecreateBackup,
+} from "./onboard/sandbox-backup-on-recreate";
 import {
   getResumeSandboxGpuOverrides,
   resolveSandboxGpuConfig,
@@ -2817,27 +2817,40 @@ async function createSandbox(
   } else {
     chatUiUrl = `http://127.0.0.1:${effectivePort}`;
   }
-  const hermesDashboardState = onboardHermesDashboard.resolveHermesDashboardOnboardState({
-    agentName: agent?.name,
-    effectivePort,
-    env: process.env,
-    fail: (message: string): never => {
-      console.error(`  ${message}`);
-      process.exit(1);
-    },
-  });
-  const ensureHermesDashboardForwardIfEnabled =
-    onboardHermesDashboard.createHermesDashboardForwardEnsurer({
-      state: hermesDashboardState,
-      ensureForward: ensureAgentFixedForward,
-      note,
-      rollbackSandbox: (targetSandbox) =>
-        runOpenshell(["sandbox", "delete", targetSandbox], { ignoreError: true }),
+  const resolveHermesDashboardStateForPort = (port: number) =>
+    onboardHermesDashboard.resolveHermesDashboardOnboardState({
+      agentName: agent?.name,
+      effectivePort: port,
+      env: process.env,
       fail: (message: string): never => {
         console.error(`  ${message}`);
         process.exit(1);
       },
     });
+  const createHermesDashboardForwardEnsurer = (
+    state: ReturnType<typeof onboardHermesDashboard.resolveHermesDashboardOnboardState>,
+  ) =>
+    onboardHermesDashboard.createHermesDashboardForwardEnsurer({
+      state,
+      ensureForward: ensureAgentFixedForward,
+      note,
+      rollbackSandbox: (targetSandbox) => {
+        runOpenshell(["forward", "stop", getDashboardForwardPort(chatUiUrl), targetSandbox], {
+          ignoreError: true,
+        });
+        if (state.config) {
+          runOpenshell(["forward", "stop", String(state.config.port), targetSandbox], {
+            ignoreError: true,
+          });
+        }
+        runOpenshell(["sandbox", "delete", targetSandbox], { ignoreError: true });
+      },
+      fail: (message: string): never => {
+        console.error(`  ${message}`);
+        process.exit(1);
+      },
+    });
+  const hermesDashboardState = resolveHermesDashboardStateForPort(effectivePort);
 
   // Check whether messaging providers will be needed — this must happen before
   // the sandbox reuse decision so we can detect stale sandboxes that were created
@@ -3123,7 +3136,8 @@ async function createSandbox(
               );
             }
             const reusedPort = ensureDashboardForward(sandboxName, chatUiUrl);
-            ensureHermesDashboardForwardIfEnabled(sandboxName);
+            const reusedHermesDashboardState = resolveHermesDashboardStateForPort(reusedPort);
+            createHermesDashboardForwardEnsurer(reusedHermesDashboardState)(sandboxName);
             process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort}`;
             updateReusedSandboxMetadata(
               sandboxName,
@@ -3133,6 +3147,10 @@ async function createSandbox(
               reusedPort,
               !selectionDrift.unknown,
               effectiveSandboxGpuConfig,
+            );
+            registry.updateSandbox(
+              sandboxName,
+              onboardHermesDashboard.getHermesDashboardRegistryFields(reusedHermesDashboardState),
             );
             return sandboxName;
           }
@@ -3161,7 +3179,8 @@ async function createSandbox(
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
             upsertMessagingProviders(messagingTokenDefs);
             const reusedPort2 = ensureDashboardForward(sandboxName, chatUiUrl);
-            ensureHermesDashboardForwardIfEnabled(sandboxName);
+            const reusedHermesDashboardState2 = resolveHermesDashboardStateForPort(reusedPort2);
+            createHermesDashboardForwardEnsurer(reusedHermesDashboardState2)(sandboxName);
             process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort2}`;
             updateReusedSandboxMetadata(
               sandboxName,
@@ -3171,6 +3190,10 @@ async function createSandbox(
               reusedPort2,
               !selectionDrift.unknown,
               effectiveSandboxGpuConfig,
+            );
+            registry.updateSandbox(
+              sandboxName,
+              onboardHermesDashboard.getHermesDashboardRegistryFields(reusedHermesDashboardState2),
             );
             return sandboxName;
           }
@@ -3760,13 +3783,14 @@ async function createSandbox(
   const actualDashboardPort = ensureDashboardForward(sandboxName, chatUiUrl, {
     rollbackSandboxOnFailure: true,
   });
-  ensureHermesDashboardForwardIfEnabled(sandboxName, true);
   // Update chatUiUrl and CHAT_UI_URL env so printDashboard / getDashboardAccessInfo
   // see the final port (they re-read process.env.CHAT_UI_URL independently).
   if (actualDashboardPort !== Number(getDashboardForwardPort(chatUiUrl))) {
     chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;
   }
   process.env.CHAT_UI_URL = chatUiUrl;
+  const finalHermesDashboardState = resolveHermesDashboardStateForPort(actualDashboardPort);
+  createHermesDashboardForwardEnsurer(finalHermesDashboardState)(sandboxName, true);
 
   // Register only after confirmed ready — prevents phantom entries
   const providerCredentialHashes: Record<string, string> = {};
@@ -3806,7 +3830,7 @@ async function createSandbox(
     messagingChannelConfig: messagingChannelConfig || undefined,
     disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,
     hermesToolGateways: hermesToolGateways.length > 0 ? [...hermesToolGateways] : undefined,
-    ...onboardHermesDashboard.getHermesDashboardRegistryFields(hermesDashboardState),
+    ...onboardHermesDashboard.getHermesDashboardRegistryFields(finalHermesDashboardState),
     dashboardPort: actualDashboardPort,
   });
   registry.setDefault(sandboxName);

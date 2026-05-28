@@ -47,6 +47,42 @@ function extractRuntimeShellEnvBlock(src: string): string {
   return src.slice(start, end).trimEnd();
 }
 
+function runHermesPortValidation(opts: {
+  publicPort?: number;
+  internalPort?: number;
+  dashboardPublicPort?: number;
+  dashboardInternalPort?: number;
+}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-port-validation-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "validate_tcp_port"),
+      extractShellFunctionFromSource(src, "validate_port_configuration"),
+      `PUBLIC_PORT=${opts.publicPort ?? 8642}`,
+      `INTERNAL_PORT=${opts.internalPort ?? 18642}`,
+      `HERMES_DASHBOARD_PUBLIC_PORT=${opts.dashboardPublicPort ?? 9119}`,
+      `HERMES_DASHBOARD_INTERNAL_PORT=${opts.dashboardInternalPort ?? 19119}`,
+      "validate_port_configuration",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 function runTirithMarkerBootstrap(opts: {
   markerReason?: string;
   symlinkMarker?: boolean;
@@ -324,6 +360,27 @@ describe("agents/hermes/start.sh runtime shell env", () => {
   });
 
 });
+
+describe("agents/hermes/start.sh port validation", () => {
+  it("rejects cross-collisions between API and dashboard ports", () => {
+    const dashboardPublicOnApiInternal = runHermesPortValidation({
+      dashboardPublicPort: 18642,
+    });
+    expect(dashboardPublicOnApiInternal.status).toBe(1);
+    expect(dashboardPublicOnApiInternal.stderr).toContain(
+      "HERMES_DASHBOARD_PUBLIC_PORT must not equal INTERNAL_PORT",
+    );
+
+    const dashboardInternalOnApiPublic = runHermesPortValidation({
+      dashboardInternalPort: 8642,
+    });
+    expect(dashboardInternalOnApiPublic.status).toBe(1);
+    expect(dashboardInternalOnApiPublic.stderr).toContain(
+      "HERMES_DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT",
+    );
+  });
+});
+
 describe("agents/hermes/start.sh gateway runtime cleanup", () => {
   it("removes stale Hermes pid and lock files plus the legacy compatibility pid symlink", () => {
     const run = runHermesGatewayRuntimeCleanup({});

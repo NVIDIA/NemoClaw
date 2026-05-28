@@ -104,6 +104,11 @@ describe("onboard dashboard helpers", () => {
       "9119",
       "hermes-sandbox",
     ]);
+    for (const args of stopArgs) {
+      if (args[0] === "forward" && args[1] === "stop") {
+        expect(args.at(-1)).toBe("hermes-sandbox");
+      }
+    }
     expect(
       stopArgs.some(
         (args) =>

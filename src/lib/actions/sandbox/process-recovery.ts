@@ -396,7 +396,10 @@ function ensureSandboxPortForwardForPort(sandboxName: string, port: number): boo
   if (forwardHealth === true) return true;
   if (forwardHealth === "occupied") return false;
 
-  runOpenshell(["forward", "stop", String(port)], { ignoreError: true, stdio: "ignore" });
+  runOpenshell(["forward", "stop", String(port), sandboxName], {
+    ignoreError: true,
+    stdio: "ignore",
+  });
   const startResult = runOpenshell(["forward", "start", "--background", String(port), sandboxName], {
     ignoreError: true,
   });

@@ -160,7 +160,7 @@ describe("agent definitions", () => {
         "display_name: Broken Dashboard UI",
         "dashboard_ui:",
         "  label: Web dashboard",
-        "  port: 70000",
+        "  port: 1023",
         "  enable_env: NEMOCLAW_TEST_DASHBOARD",
         "  port_env: NEMOCLAW_TEST_DASHBOARD_PORT",
       ].join("\n"),

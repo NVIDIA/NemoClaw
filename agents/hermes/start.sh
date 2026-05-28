@@ -87,14 +87,14 @@ if [ "${1:-}" = "env" ]; then
   _self_wrapper_index=""
   for ((i = 1; i < ${#_raw_args[@]}; i += 1)); do
     case "${_raw_args[$i]}" in
-      *=*) ;;
-      nemoclaw-start | /usr/local/bin/nemoclaw-start)
-        _self_wrapper_index="$i"
-        break
-        ;;
-      *)
-        break
-        ;;
+    *=*) ;;
+    nemoclaw-start | /usr/local/bin/nemoclaw-start)
+      _self_wrapper_index="$i"
+      break
+      ;;
+    *)
+      break
+      ;;
     esac
   done
   if [ -n "$_self_wrapper_index" ]; then
@@ -106,7 +106,7 @@ if [ "${1:-}" = "env" ]; then
 fi
 
 case "${1:-}" in
-  nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
+nemoclaw-start | /usr/local/bin/nemoclaw-start) shift ;;
 esac
 NEMOCLAW_CMD=("$@")
 CHAT_UI_URL="${CHAT_UI_URL:-http://127.0.0.1:8642}"
@@ -130,8 +130,8 @@ HERMES_HASH_FILE="/etc/nemoclaw/hermes.config-hash"
 
 truthy_env() {
   case "$(printf '%s' "${1:-}" | tr '[:upper:]' '[:lower:]')" in
-    1 | true | yes | on) return 0 ;;
-    *) return 1 ;;
+  1 | true | yes | on) return 0 ;;
+  *) return 1 ;;
   esac
 }
 
@@ -139,10 +139,10 @@ validate_tcp_port() {
   local name="$1"
   local value="$2"
   case "$value" in
-    '' | *[!0-9]*)
-      echo "[gateway] ERROR: ${name} must be an integer TCP port, got '${value}'" >&2
-      exit 1
-      ;;
+  '' | *[!0-9]*)
+    echo "[gateway] ERROR: ${name} must be an integer TCP port, got '${value}'" >&2
+    exit 1
+    ;;
   esac
   if [ "$value" -lt 1024 ] || [ "$value" -gt 65535 ]; then
     echo "[gateway] ERROR: ${name} must be between 1024 and 65535, got '${value}'" >&2
@@ -150,18 +150,30 @@ validate_tcp_port() {
   fi
 }
 
-validate_tcp_port PUBLIC_PORT "$PUBLIC_PORT"
-validate_tcp_port INTERNAL_PORT "$INTERNAL_PORT"
-validate_tcp_port HERMES_DASHBOARD_PUBLIC_PORT "$HERMES_DASHBOARD_PUBLIC_PORT"
-validate_tcp_port HERMES_DASHBOARD_INTERNAL_PORT "$HERMES_DASHBOARD_INTERNAL_PORT"
-if [ "$HERMES_DASHBOARD_PUBLIC_PORT" -eq "$PUBLIC_PORT" ]; then
-  echo "[gateway] ERROR: HERMES_DASHBOARD_PUBLIC_PORT must not equal PUBLIC_PORT (${PUBLIC_PORT})" >&2
-  exit 1
-fi
-if [ "$HERMES_DASHBOARD_INTERNAL_PORT" -eq "$INTERNAL_PORT" ]; then
-  echo "[gateway] ERROR: HERMES_DASHBOARD_INTERNAL_PORT must not equal INTERNAL_PORT (${INTERNAL_PORT})" >&2
-  exit 1
-fi
+validate_port_configuration() {
+  validate_tcp_port PUBLIC_PORT "$PUBLIC_PORT"
+  validate_tcp_port INTERNAL_PORT "$INTERNAL_PORT"
+  validate_tcp_port HERMES_DASHBOARD_PUBLIC_PORT "$HERMES_DASHBOARD_PUBLIC_PORT"
+  validate_tcp_port HERMES_DASHBOARD_INTERNAL_PORT "$HERMES_DASHBOARD_INTERNAL_PORT"
+  if [ "$HERMES_DASHBOARD_PUBLIC_PORT" -eq "$PUBLIC_PORT" ]; then
+    echo "[gateway] ERROR: HERMES_DASHBOARD_PUBLIC_PORT must not equal PUBLIC_PORT (${PUBLIC_PORT})" >&2
+    exit 1
+  fi
+  if [ "$HERMES_DASHBOARD_INTERNAL_PORT" -eq "$INTERNAL_PORT" ]; then
+    echo "[gateway] ERROR: HERMES_DASHBOARD_INTERNAL_PORT must not equal INTERNAL_PORT (${INTERNAL_PORT})" >&2
+    exit 1
+  fi
+  if [ "$HERMES_DASHBOARD_PUBLIC_PORT" -eq "$INTERNAL_PORT" ]; then
+    echo "[gateway] ERROR: HERMES_DASHBOARD_PUBLIC_PORT must not equal INTERNAL_PORT (${INTERNAL_PORT})" >&2
+    exit 1
+  fi
+  if [ "$HERMES_DASHBOARD_INTERNAL_PORT" -eq "$PUBLIC_PORT" ]; then
+    echo "[gateway] ERROR: HERMES_DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT (${PUBLIC_PORT})" >&2
+    exit 1
+  fi
+}
+
+validate_port_configuration
 
 hermes_dashboard_enabled() {
   truthy_env "$HERMES_DASHBOARD_ENABLED"
@@ -222,7 +234,7 @@ cmdline_is_hermes_gateway() {
   local cmdline=" $1 "
 
   case "$cmdline" in
-    *"/hermes gateway run "* | *" hermes gateway run "*) return 0 ;;
+  *"/hermes gateway run "* | *" hermes gateway run "*) return 0 ;;
   esac
   return 1
 }
@@ -252,14 +264,14 @@ cleanup_orphan_socat_forwarders() {
     pid="$(basename "$(dirname "$cmdline_file")")"
     cmdline="$(tr '\0' ' ' <"$cmdline_file" 2>/dev/null || true)"
     case "$cmdline" in
-      *socat*"TCP-LISTEN:${PUBLIC_PORT}"*"TCP:127.0.0.1:${INTERNAL_PORT}"*)
-        echo "[gateway] Removing orphaned socat forwarder for ${PUBLIC_PORT}->${INTERNAL_PORT} (pid ${pid})" >&2
-        kill "$pid" 2>/dev/null || true
-        ;;
-      *socat*"TCP-LISTEN:${dashboard_public}"*"TCP:127.0.0.1:${dashboard_internal}"*)
-        echo "[gateway] Removing orphaned dashboard socat forwarder for ${dashboard_public}->${dashboard_internal} (pid ${pid})" >&2
-        kill "$pid" 2>/dev/null || true
-        ;;
+    *socat*"TCP-LISTEN:${PUBLIC_PORT}"*"TCP:127.0.0.1:${INTERNAL_PORT}"*)
+      echo "[gateway] Removing orphaned socat forwarder for ${PUBLIC_PORT}->${INTERNAL_PORT} (pid ${pid})" >&2
+      kill "$pid" 2>/dev/null || true
+      ;;
+    *socat*"TCP-LISTEN:${dashboard_public}"*"TCP:127.0.0.1:${dashboard_internal}"*)
+      echo "[gateway] Removing orphaned dashboard socat forwarder for ${dashboard_public}->${dashboard_internal} (pid ${pid})" >&2
+      kill "$pid" 2>/dev/null || true
+      ;;
     esac
   done
 }
@@ -302,12 +314,12 @@ hermes_config_root_is_locked() {
   mode="$(stat -c '%a' "$HERMES_DIR" 2>/dev/null || stat -f '%Lp' "$HERMES_DIR" 2>/dev/null || true)"
 
   case "${owner} ${mode}" in
-    "root:root 755" | "root:root 0755") ;;
-    *) return 1 ;;
+  "root:root 755" | "root:root 0755") ;;
+  *) return 1 ;;
   esac
 
-  hermes_config_path_is_locked "${HERMES_DIR}/config.yaml" \
-    && hermes_config_path_is_locked "${HERMES_DIR}/.env"
+  hermes_config_path_is_locked "${HERMES_DIR}/config.yaml" &&
+    hermes_config_path_is_locked "${HERMES_DIR}/.env"
 }
 
 ensure_hermes_config_root_mode() {
@@ -587,7 +599,7 @@ legacy_symlinks_exist() {
     [ -L "$entry" ] || continue
     target="$(readlink -f "$entry" 2>/dev/null || readlink "$entry" 2>/dev/null || true)"
     case "$target" in
-      "$data_real"/* | "$data_dir"/*) return 0 ;;
+    "$data_real"/* | "$data_dir"/*) return 0 ;;
     esac
   done
   return 1
@@ -605,10 +617,10 @@ assert_no_legacy_layout() {
     [ -L "$entry" ] || continue
     target="$(readlink -f "$entry" 2>/dev/null || readlink "$entry" 2>/dev/null || true)"
     case "$target" in
-      "$data_real"/* | "$data_dir"/*)
-        echo "[SECURITY] ${label}: legacy symlink remains after migration: ${entry} -> ${target}" >&2
-        return 1
-        ;;
+    "$data_real"/* | "$data_dir"/*)
+      echo "[SECURITY] ${label}: legacy symlink remains after migration: ${entry} -> ${target}" >&2
+      return 1
+      ;;
     esac
   done
 }
@@ -716,7 +728,7 @@ refresh_hermes_provider_placeholders() {
   for key in $keys; do
     value="${!key:-}"
     case "$value" in
-      openshell:resolve:env:*) has_scoped_placeholder=1 ;;
+    openshell:resolve:env:*) has_scoped_placeholder=1 ;;
     esac
   done
   [ "$has_scoped_placeholder" -eq 1 ] || return 0

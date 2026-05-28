@@ -32,7 +32,7 @@ function isValidPort(value: unknown): value is number {
   return (
     typeof value === "number" &&
     Number.isInteger(value) &&
-    value >= 1 &&
+    value >= 1024 &&
     value <= 65535
   );
 }
@@ -44,7 +44,7 @@ export function readDashboardUi(record: ManifestRecordLike): AgentDashboardUi | 
   const port = dashboardUi.port;
   if (!isValidPort(port)) {
     throw new Error(
-      "Agent manifest field 'dashboard_ui.port' must be an integer TCP port between 1 and 65535",
+      "Agent manifest field 'dashboard_ui.port' must be an integer TCP port between 1024 and 65535",
     );
   }
 
@@ -81,7 +81,7 @@ function dashboardUiPort(agent: AgentDefinition, env: NodeJS.ProcessEnv): number
   const raw = env[dashboardUi.portEnv];
   if (raw && /^\d+$/.test(raw.trim())) {
     const port = Number(raw.trim());
-    if (port >= 1 && port <= 65535) return port;
+    if (port >= 1024 && port <= 65535) return port;
   }
   return dashboardUi.port;
 }

@@ -40,6 +40,26 @@ describe("Hermes dashboard recovery helpers", () => {
         hermesDashboardInternalPort: 19119,
       })),
     ).toBeNull();
+
+    expect(
+      getHermesDashboardRecoveryConfig("alpha", () => ({
+        name: "alpha",
+        agent: "hermes",
+        hermesDashboardEnabled: true,
+        hermesDashboardPort: 1023,
+        hermesDashboardInternalPort: 19119,
+      })),
+    ).toBeNull();
+
+    expect(
+      getHermesDashboardRecoveryConfig("alpha", () => ({
+        name: "alpha",
+        agent: "hermes",
+        hermesDashboardEnabled: true,
+        hermesDashboardPort: 9119,
+        hermesDashboardInternalPort: 1023,
+      })),
+    ).toBeNull();
   });
 
   it("restarts the dashboard forward only when the recorded forward is unhealthy", () => {
@@ -66,6 +86,16 @@ describe("Hermes dashboard recovery helpers", () => {
         ensurePortForward,
       }),
     ).toBe(false);
+
+    const ensurePortForwardWhenOccupied = vi.fn(() => true);
+    expect(
+      ensureHermesDashboardPortForwardIfEnabled("alpha", {
+        getRecoveryConfig,
+        isPortForwardHealthy: () => "occupied",
+        ensurePortForward: ensurePortForwardWhenOccupied,
+      }),
+    ).toBe(false);
+    expect(ensurePortForwardWhenOccupied).not.toHaveBeenCalled();
 
     expect(
       ensureHermesDashboardPortForwardIfEnabled("alpha", {
