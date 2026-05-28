@@ -4437,6 +4437,8 @@ async function setupNim(
               console.error(
                 "  NVIDIA_API_KEY (or NEMOCLAW_PROVIDER_KEY) is required for NVIDIA Endpoints in non-interactive mode.",
               );
+              console.error("  Set with: export NVIDIA_API_KEY=nvapi-...");
+              console.error(`  Get a key from ${REMOTE_PROVIDER_CONFIG.build.helpUrl}`);
               process.exit(1);
             }
             const keyError = validateNvidiaApiKeyValue(resolvedNvidiaKey);

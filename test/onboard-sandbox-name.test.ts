@@ -4,7 +4,11 @@
 import { describe, expect, it } from "vitest";
 
 import { loadAgent } from "../dist/lib/agent/defs.js";
-import { getNameValidationGuidance, NAME_ALLOWED_FORMAT } from "../dist/lib/name-validation.js";
+import {
+  getNameValidationGuidance,
+  NAME_ALLOWED_FORMAT,
+  suggestNameSlug,
+} from "../dist/lib/name-validation.js";
 
 const {
   getDefaultSandboxNameForAgent,
@@ -82,8 +86,49 @@ describe("onboard sandbox naming helpers", () => {
     expect(getNameValidationGuidance("sandbox name", "a".repeat(64))).toEqual([
       "Sandbox names must be 63 characters or fewer.",
       `Allowed format: ${NAME_ALLOWED_FORMAT}.`,
+      `Try: ${"a".repeat(63)}`,
     ]);
     expect(getNameValidationGuidance("sandbox name", "bad name", { includeAllowedFormat: false }))
-      .toEqual(["Sandbox names cannot contain spaces."]);
+      .toEqual(["Sandbox names cannot contain spaces.", "Try: bad-name"]);
+  });
+
+  describe("suggestNameSlug", () => {
+    it("lowercases mixed-case input (T5987921 spec: 'MyAssistant' -> 'myassistant')", () => {
+      expect(suggestNameSlug("MyAssistant")).toBe("myassistant");
+    });
+
+    it("replaces spaces and other illegal characters with hyphens", () => {
+      expect(suggestNameSlug("bad name")).toBe("bad-name");
+      expect(suggestNameSlug("My Project Sandbox")).toBe("my-project-sandbox");
+      expect(suggestNameSlug("agent_007")).toBe("agent-007");
+    });
+
+    it("collapses runs of hyphens and trims terminal hyphens", () => {
+      expect(suggestNameSlug("--legacy--")).toBe("legacy");
+      expect(suggestNameSlug("foo  bar")).toBe("foo-bar");
+      expect(suggestNameSlug("a---b")).toBe("a-b");
+    });
+
+    it("prefixes 's-' when the slug would otherwise start with a digit", () => {
+      expect(suggestNameSlug("123-leading")).toBe("s-123-leading");
+      expect(suggestNameSlug("9lives")).toBe("s-9lives");
+    });
+
+    it("truncates over-length inputs to the max name length", () => {
+      const slug = suggestNameSlug("a".repeat(80));
+      expect(slug).toBe("a".repeat(63));
+      expect(slug!.length).toBe(63);
+    });
+
+    it("returns null when the input is already a valid name", () => {
+      expect(suggestNameSlug("my-assistant")).toBeNull();
+      expect(suggestNameSlug("openclaw")).toBeNull();
+    });
+
+    it("returns null when no recoverable slug can be derived", () => {
+      expect(suggestNameSlug("")).toBeNull();
+      expect(suggestNameSlug("---")).toBeNull();
+      expect(suggestNameSlug("!!!")).toBeNull();
+    });
   });
 });
