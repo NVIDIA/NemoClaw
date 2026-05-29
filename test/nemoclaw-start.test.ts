@@ -3759,14 +3759,53 @@ describe("run_step_down_as_sandbox (#4512)", () => {
     }
   });
 
-  it("survives a heredoc-bearing function body (regression for the original #4512 trigger)", () => {
-    // The production caller passes write_auth_profile + harden_auth_profiles,
-    // both of which contain a `<<'TAG'` heredoc inside the function body
-    // (python3 - <<'PYAUTH' ...). This test mirrors that shape with two
-    // adjacent heredocs to exercise declare-f → file → bash through the
-    // step-down prefix and assert the body runs end-to-end without the
-    // `syntax error near unexpected token 'fi'` that the original
-    // `bash -c "$(declare -f ...) ..."` route reported.
+  it("forces HOME=/sandbox for the auth-profile root-mode invocation snippet", () => {
+    // setpriv preserves the parent shell's environment, so the root
+    // entrypoint's HOME=/root would otherwise leak into the step-down
+    // shell and `write_auth_profile`'s `~/.openclaw/...` expansion
+    // would target /root. The production snippet exports HOME=/sandbox
+    // up front; this test pins that behaviour by extracting the exact
+    // invocation line from the script source and running it with a
+    // stub `write_auth_profile` that records the HOME it observed.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-step-down-home-"));
+    const stepDownLog = path.join(tmpDir, "step-down.log");
+    const observedHome = path.join(tmpDir, "observed-home");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const invocation =
+      src.match(/run_step_down_as_sandbox \\\n\s*"([^"]+)" \\\n\s*write_auth_profile/);
+    expect(invocation, "expected the auth-profile invocation snippet in scripts/nemoclaw-start.sh").not.toBeNull();
+    const snippet = (invocation as RegExpMatchArray)[1];
+    expect(snippet).toContain("export HOME=/sandbox");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "export HOME=/root", // simulate the parent root entrypoint's env
+        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$2" >${JSON.stringify(stepDownLog)}; exec "$@"' sandbox-step-down)`,
+        `write_auth_profile() { printf '%s\\n' "$HOME" >${JSON.stringify(observedHome)}; }`,
+        "harden_auth_profiles() { :; }",
+        helper,
+        `run_step_down_as_sandbox ${JSON.stringify(snippet)} write_auth_profile harden_auth_profiles`,
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    try {
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(fs.readFileSync(observedHome, "utf-8").trim()).toBe("/sandbox");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("survives heredoc-bearing function bodies through the temp-script round-trip", () => {
+    // The production caller passes functions whose bodies contain a
+    // `<<'TAG'` heredoc (e.g. `python3 - <<'PYAUTH' ...`). This test
+    // mirrors that shape with two adjacent heredocs to exercise the
+    // declare-f → file → bash dispatch and assert both bodies run
+    // end-to-end without the `syntax error near unexpected token 'fi'`
+    // that the older `bash -c "$(declare -f ...) ..."` route reported.
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-step-down-heredoc-"));
     const stepDownLog = path.join(tmpDir, "step-down.log");
     const outPath = path.join(tmpDir, "out.txt");

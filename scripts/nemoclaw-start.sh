@@ -2439,6 +2439,15 @@ NODE
 # invocation. The directory is intentionally not configurable.
 #
 # Usage: run_step_down_as_sandbox <invocation-snippet> <fn>...
+#
+# SECURITY CONTRACT: <invocation-snippet> is appended verbatim to the
+# generated bash script and parsed by the step-down shell. It MUST be
+# a trusted literal authored alongside this script — never derived
+# from environment, file contents, sandbox-uid input, or any
+# non-static source. Pass arguments through positional parameters of
+# the dispatched functions, not through string interpolation into the
+# snippet, and keep the snippet to the minimum set of function calls
+# (plus the explicit `export HOME=...` the auth-profile path needs).
 run_step_down_as_sandbox() {
   local invocation="$1"
   shift
@@ -2669,8 +2678,14 @@ verify_no_slack_secrets_on_disk
 # auth-profiles.json files under ~/.openclaw. Routed through the
 # temp-file helper so the step-down shell does not have to re-parse
 # the heredoc-bearing function body through `bash -c`'s argv.
+#
+# HOME must be set explicitly: setpriv preserves the parent shell's
+# environment, so the root entrypoint's HOME=/root would propagate
+# through and `write_auth_profile`'s `~/.openclaw/...` expansion would
+# target /root instead of the sandbox user's home (the non-root path
+# already exports HOME=/sandbox at startup).
 run_step_down_as_sandbox \
-  "write_auth_profile; harden_auth_profiles" \
+  "export HOME=/sandbox; write_auth_profile; harden_auth_profiles" \
   write_auth_profile \
   harden_auth_profiles
 
