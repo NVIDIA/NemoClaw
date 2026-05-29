@@ -254,7 +254,6 @@ function parseProbeOutput(stdout: string): ParsedProbe {
   let inLogs = false;
   const heartbeatBuf: string[] = [];
   const logLines: string[] = [];
-  let bridgeProcessAlive = false;
   let sawProcMatch = false;
   let sawProcDone = false;
 
@@ -293,7 +292,6 @@ function parseProbeOutput(stdout: string): ParsedProbe {
     }
     if (line.startsWith("PROC ")) {
       sawProcMatch = true;
-      bridgeProcessAlive = true;
       continue;
     }
     if (line === PROC_DONE) {
