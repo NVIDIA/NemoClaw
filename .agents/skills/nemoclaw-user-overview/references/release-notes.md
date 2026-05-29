@@ -4,6 +4,18 @@
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
+## v0.0.54
+
+NemoClaw v0.0.54 updates messaging activation, Windows WSL onboarding, NemoHermes dashboard access, and sandbox repair paths:
+
+- Generated OpenClaw config now marks Telegram, Discord, Slack, and WhatsApp as enabled at the channel level. Selected messaging plugins are pinned during the image build, and `channels add` verifies Telegram, Discord, and Slack bridge startup after the rebuild instead of leaving silent channel failures for later debugging. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+- The Windows bootstrap flow waits for Ubuntu account creation before touching Docker settings, enables Docker Desktop WSL integration for the target distro, avoids changing the global WSL default distro, and adds WSL-specific Docker reachability hints during onboarding. For more information, refer to Prepare Windows for NemoClaw (use the `nemoclaw-user-get-started` skill).
+- Windows-host Ollama setup inside WSL now requires the Docker Desktop WSL integration path. NemoClaw still shows Windows-host Ollama options when it detects them, but labels the Docker Desktop requirement and blocks unsupported native Docker-in-WSL selections before it tries to start or install Ollama. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
+- NemoHermes can expose the optional native Hermes web dashboard separately from the OpenAI-compatible API. Set `NEMOCLAW_HERMES_DASHBOARD=1` before onboarding to start and forward the dashboard on port `9119`, with `NEMOCLAW_HERMES_DASHBOARD_PORT` and `NEMOCLAW_HERMES_DASHBOARD_TUI` available for port and TUI tab control. For more information, refer to NemoClaw Quickstart with Hermes (use the `nemoclaw-user-get-started` skill).
+- Onboarding diagnostics include more copy-paste-ready recovery hints. Invalid sandbox names now include a `Try: <suggested-slug>` line when NemoClaw can derive a valid name, and non-interactive NVIDIA Endpoints setup prints the exact `export NVIDIA_API_KEY=nvapi-...` shape when the key is missing. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- Homebrew stays on the Linuxbrew prefix while exposing installed formula commands in sandbox shell sessions, the `/nemoclaw` slash command activates at OpenClaw startup again, Hermes rebuilds tolerate older release tarballs that lack optional UI package lockfiles, and device scope-upgrade approvals recover without being pinned to the old gateway-scoped request. For more information, refer to Common NemoClaw Integration Policy Examples (use the `nemoclaw-user-manage-policy` skill).
+- The host-gateway allowance for OpenClaw `web_fetch` is confined to the trusted proxy path, while strict and direct paths continue to block host-gateway names. Hermes Provider onboarding skips the host-side smoke probe only for OAuth-backed setup and keeps direct validation for Nous API key setup. For more information, refer to NemoClaw Inference Options (use the `nemoclaw-user-configure-inference` skill).
+
 ## v0.0.53
 
 NemoClaw v0.0.53 focuses on safer sandbox recreation, stricter onboarding preflight defaults, local inference reliability, policy coverage, and day-two repair workflows:

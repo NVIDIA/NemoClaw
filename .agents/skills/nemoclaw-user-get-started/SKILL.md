@@ -28,12 +28,28 @@ NemoClaw creates a fresh OpenClaw instance inside the sandbox during the onboard
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-The piped installer prompts through your terminal. In headless scripts or CI,
-pass explicit acceptance to the `bash` side of the pipe:
+The third-party software notice runs before Node.js or the NemoClaw CLI is installed.
+The piped installer can prompt through your terminal when a TTY is available.
+In non-TTY contexts, such as CI, an SSH command with piped stdin, or a shell script, pass explicit acceptance to the `bash` side of the pipe:
 
-```console
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
 ```
+
+or pass the installer flag through `bash -s`:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
+```
+
+To run both installation and onboarding without prompts, also set non-interactive mode and the provider variables your chosen inference path requires:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```
+
+Do not place `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` before `curl`.
+In `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 curl ... | bash`, the variable applies only to `curl`, so the installer process cannot see the acceptance.
 
 If you use nvm or fnm to manage Node.js, the installer might not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
@@ -76,8 +92,9 @@ For example, if you picked an OpenAI-compatible endpoint, the summary looks like
   ──────────────────────────────────────────────────
   Provider:      compatible-endpoint
   Model:         openai/openai/gpt-5.5
-  API key:       COMPATIBLE_API_KEY (staged for OpenShell gateway registration)
+  API key:       configured for OpenShell gateway registration
   Web search:    disabled
+  Managed tools: none
   Messaging:     none
   Sandbox name:  my-gpt-claw
   Note:          Sandbox build typically takes 5–15 minutes on this host.
@@ -106,6 +123,7 @@ Review Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) befor
 ### Choose Network Policy Presets
 
 After the sandbox image builds and OpenClaw starts inside the sandbox, NemoClaw asks which network policy tier to apply.
+Web search and messaging selections happen before this point so the sandbox image and the policy suggestions stay aligned.
 The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, and Brave Search when the selected agent supports web search.
 Use the arrow keys or `j` and `k` to move, Space to select, and Enter to confirm.
 

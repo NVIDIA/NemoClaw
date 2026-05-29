@@ -4,7 +4,9 @@
 
 ## Respond to the Onboard Wizard
 
-After the installer launches `nemoclaw onboard`, the wizard runs preflight checks, starts or reuses the OpenShell gateway, and asks for an inference provider, sandbox name, optional web search, optional messaging channels, and network policy presets.
+After the installer launches `nemoclaw onboard`, the wizard runs preflight checks, starts or reuses the OpenShell gateway, asks for an inference provider and model, collects any required credential, then asks for the sandbox name.
+It prints a review summary before it registers the provider with OpenShell.
+After you confirm, NemoClaw registers inference, prompts for optional web search and messaging channels, builds and starts the sandbox, sets up OpenClaw, then applies the selected network policy tier and presets.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 If existing sandbox sessions are running, the installer warns before onboarding because the setup can rebuild or upgrade sandboxes after the new sandbox launches.
 

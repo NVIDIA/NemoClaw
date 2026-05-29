@@ -47,6 +47,42 @@ function extractRuntimeShellEnvBlock(src: string): string {
   return src.slice(start, end).trimEnd();
 }
 
+function runHermesPortValidation(opts: {
+  publicPort?: number;
+  internalPort?: number;
+  dashboardPublicPort?: number;
+  dashboardInternalPort?: number;
+}) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hermes-port-validation-"));
+  const scriptPath = path.join(tmpDir, "run.sh");
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  fs.writeFileSync(
+    scriptPath,
+    [
+      "#!/usr/bin/env bash",
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "validate_tcp_port"),
+      extractShellFunctionFromSource(src, "validate_port_configuration"),
+      `PUBLIC_PORT=${opts.publicPort ?? 8642}`,
+      `INTERNAL_PORT=${opts.internalPort ?? 18642}`,
+      `HERMES_DASHBOARD_PUBLIC_PORT=${opts.dashboardPublicPort ?? 9119}`,
+      `HERMES_DASHBOARD_INTERNAL_PORT=${opts.dashboardInternalPort ?? 19119}`,
+      "validate_port_configuration",
+    ].join("\n"),
+    { mode: 0o700 },
+  );
+
+  try {
+    return spawnSync("bash", [scriptPath], {
+      encoding: "utf-8",
+      timeout: 5000,
+      env: process.env,
+    });
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+}
+
 function runTirithMarkerBootstrap(opts: {
   markerReason?: string;
   symlinkMarker?: boolean;
@@ -114,6 +150,7 @@ function lstatIfPresent(entry: string): fs.Stats | null {
 function runHermesGatewayRuntimeCleanup(opts: {
   liveGateway?: boolean;
   orphanSocat?: boolean;
+  orphanDashboardSocat?: boolean;
   staleLock?: boolean;
   stalePid?: boolean;
   lockedConfigRoot?: boolean;
@@ -149,6 +186,13 @@ function runHermesGatewayRuntimeCleanup(opts: {
       "socat",
       "TCP-LISTEN:8642,bind=0.0.0.0,fork,reuseaddr",
       "TCP:127.0.0.1:18642",
+    ]);
+  }
+  if (opts.orphanDashboardSocat) {
+    writeFakeProcCmdline(procRoot, 789, [
+      "socat",
+      "TCP-LISTEN:9119,bind=0.0.0.0,fork,reuseaddr",
+      "TCP:127.0.0.1:19119",
     ]);
   }
 
@@ -193,6 +237,8 @@ function runHermesGatewayRuntimeCleanup(opts: {
         : "",
       "PUBLIC_PORT=8642",
       "INTERNAL_PORT=18642",
+      "HERMES_DASHBOARD_PUBLIC_PORT=9119",
+      "HERMES_DASHBOARD_INTERNAL_PORT=19119",
       "cleanup_stale_hermes_gateway_runtime",
     ].join("\n"),
     { mode: 0o700 },
@@ -315,6 +361,26 @@ describe("agents/hermes/start.sh runtime shell env", () => {
 
 });
 
+describe("agents/hermes/start.sh port validation", () => {
+  it("rejects cross-collisions between API and dashboard ports", () => {
+    const dashboardPublicOnApiInternal = runHermesPortValidation({
+      dashboardPublicPort: 18642,
+    });
+    expect(dashboardPublicOnApiInternal.status).toBe(1);
+    expect(dashboardPublicOnApiInternal.stderr).toContain(
+      "HERMES_DASHBOARD_PUBLIC_PORT must not equal INTERNAL_PORT",
+    );
+
+    const dashboardInternalOnApiPublic = runHermesPortValidation({
+      dashboardInternalPort: 8642,
+    });
+    expect(dashboardInternalOnApiPublic.status).toBe(1);
+    expect(dashboardInternalOnApiPublic.stderr).toContain(
+      "HERMES_DASHBOARD_INTERNAL_PORT must not equal PUBLIC_PORT",
+    );
+  });
+});
+
 describe("agents/hermes/start.sh gateway runtime cleanup", () => {
   it("removes stale Hermes pid and lock files plus the legacy compatibility pid symlink", () => {
     const run = runHermesGatewayRuntimeCleanup({});
@@ -373,6 +439,18 @@ describe("agents/hermes/start.sh gateway runtime cleanup", () => {
     expect(run.result.status).toBe(0);
     expect(run.killLog.trim()).toBe("456");
     expect(run.result.stderr).toContain("Removing orphaned socat forwarder");
+  });
+
+  it("kills orphaned dashboard socat forwarders when no Hermes gateway is alive", () => {
+    const run = runHermesGatewayRuntimeCleanup({
+      orphanDashboardSocat: true,
+      staleLock: false,
+      stalePid: false,
+    });
+
+    expect(run.result.status).toBe(0);
+    expect(run.killLog.trim()).toBe("789");
+    expect(run.result.stderr).toContain("Removing orphaned dashboard socat forwarder");
   });
 
   it("preserves Hermes runtime state when a gateway process is alive", () => {

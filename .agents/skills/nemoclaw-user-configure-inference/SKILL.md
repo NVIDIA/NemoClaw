@@ -96,6 +96,10 @@ If the HTTP endpoint is not reachable yet, NemoClaw also checks for the Windows 
 If the daemon does not become reachable, onboarding prints PowerShell commands you can run to inspect the Windows-side process and port state. Use one Ollama instance on port `11434` at a time.
 If both WSL and Windows-host Ollama are running, pick the intended menu entry during onboarding so NemoClaw validates and pulls models against the right daemon.
 
+Windows-host Ollama requires Docker Desktop WSL integration because the sandbox reaches the Windows daemon through Docker Desktop's WSL routing path.
+If NemoClaw detects native Docker Engine inside WSL, the provider menu labels Windows-host Ollama actions as requiring Docker Desktop integration.
+Selecting one of those actions in the unsupported native Docker topology exits early with a remediation message instead of trying to start or install Ollama on Windows.
+
 **Warning:**
 
 Ollama is convenient for local chat, but some model/template combinations can
@@ -150,13 +154,7 @@ If Ollama is already running on a non-loopback address when you start onboard,
 the wizard restarts it on `127.0.0.1:11434` so the proxy is the only network
 path to the model server.
 
-### GPU Memory Cleanup
-
-When you switch away from Ollama, stop host services, or destroy an Ollama-backed sandbox, NemoClaw asks Ollama to unload currently loaded models from GPU memory.
-The cleanup sends `keep_alive: 0` for each model reported by Ollama and runs on a best-effort basis, so shutdown continues if Ollama is already stopped.
-This does not delete downloaded model files.
-
-Load [references/use-local-inference-details.md](references/use-local-inference-details.md) for detailed steps on Non-Interactive Setup.
+Load [references/use-local-inference-details.md](references/use-local-inference-details.md) for detailed steps on GPU Memory Cleanup, Non-Interactive Setup.
 
 ## OpenAI-Compatible Server
 
@@ -275,7 +273,7 @@ Load [references/use-local-inference-details.md](references/use-local-inference-
 - **Load [references/set-up-sub-agent.md](references/set-up-sub-agent.md)** when users ask how to add a second model, configure a sub-agent model, use Omni for vision tasks, configure agents.list, or use sessions_spawn in NemoClaw. Shows the NemoClaw-specific file paths and update flow for adding an auxiliary OpenClaw sub-agent model.
 - **[references/tool-calling-reliability.md](references/tool-calling-reliability.md)** — Explains Ollama tool-call leak symptoms, when vLLM with a tool-call parser is recommended, and how to repoint NemoClaw to a parser-aware local endpoint.
 - **Load [references/inference-options.md](references/inference-options.md)** when explaining which providers are available, what the onboard wizard presents, or how inference routing works. Lists all inference providers offered during NemoClaw onboarding.
-- **Load [references/use-local-inference-details.md](references/use-local-inference-details.md)** when you need detailed steps for Non-Interactive Setup, Selecting the API Path, Anthropic-Compatible Server, and related details.
+- **Load [references/use-local-inference-details.md](references/use-local-inference-details.md)** when you need detailed steps for GPU Memory Cleanup, Non-Interactive Setup, Selecting the API Path, and related details.
 
 ## Related Skills
 
