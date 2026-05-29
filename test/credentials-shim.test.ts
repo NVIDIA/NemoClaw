@@ -2,13 +2,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import fs from "node:fs";
+import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import credentialsModule from "../bin/lib/credentials.js";
+const require = createRequire(import.meta.url);
 
-const credentials = credentialsModule;
+type CredentialsShim = typeof import("../dist/lib/credentials/store.js") & {
+  CREDS_DIR: string;
+  CREDS_FILE: string;
+};
+
+const credentials = require("../bin/lib/credentials.js") as CredentialsShim;
 const TRACKED_ENV_KEYS = [...credentials.KNOWN_CREDENTIAL_ENV_KEYS, "TEST_KEY"];
 
 function clearTrackedEnv() {
@@ -18,8 +24,8 @@ function clearTrackedEnv() {
 }
 
 describe("credentials shim", () => {
-  let tmpDir;
-  let origHome;
+  let tmpDir: string;
+  let origHome: string | undefined;
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cred-test-"));
@@ -38,8 +44,8 @@ describe("credentials shim", () => {
     const dir = path.join(tmpDir, ".nemoclaw");
     const file = path.join(dir, "credentials.json");
 
-    expect(Reflect.get(credentials, "CREDS_DIR")).toBe(dir);
-    expect(Reflect.get(credentials, "CREDS_FILE")).toBe(file);
+    expect(credentials.CREDS_DIR).toBe(dir);
+    expect(credentials.CREDS_FILE).toBe(file);
     expect(fs.existsSync(dir)).toBe(false);
   });
 

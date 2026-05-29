@@ -1,19 +1,53 @@
-#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-const fs = require("fs");
-const os = require("os");
-const path = require("path");
-const { execFileSync, spawnSync } = require("child_process");
-const {
+import { execFileSync, spawnSync } from "node:child_process";
+import type { StdioOptions } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
+import {
   collectBuildContextStats,
   stageLegacySandboxBuildContext,
   stageOptimizedSandboxBuildContext,
-} = require("../dist/lib/sandbox/build-context");
+  type StagedBuildContext,
+} from "../dist/lib/sandbox/build-context";
 
-function parseArgs(argv) {
-  const args = {
+type Args = {
+  currentRepo: string;
+  mainRef: string;
+  noCache: boolean;
+  keepWorktree: boolean;
+};
+
+type RunOptions = {
+  cwd?: string;
+  stdio?: StdioOptions;
+};
+
+type StageBuildContext = (repoRoot: string, tmpRoot: string) => StagedBuildContext;
+
+type ImageBuildResult = {
+  label: string;
+  buildCtx: string;
+  fileCount: number;
+  totalBytes: number;
+  elapsedSeconds: number;
+  imageBytes: number;
+  imageTag: string;
+};
+
+function requireValue(argv: string[], index: number, flag: string): string {
+  const value = argv[index];
+  if (!value || value.startsWith("-")) {
+    throw new Error(`Missing value for ${flag}`);
+  }
+  return value;
+}
+
+function parseArgs(argv: string[]): Args {
+  const args: Args = {
     currentRepo: process.cwd(),
     mainRef: "origin/main",
     noCache: true,
@@ -22,20 +56,28 @@ function parseArgs(argv) {
 
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i];
-    if (arg === "--current-repo") args.currentRepo = argv[++i];
-    else if (arg === "--main-ref") args.mainRef = argv[++i];
-    else if (arg === "--cache") args.noCache = false;
-    else if (arg === "--keep-worktree") args.keepWorktree = true;
-    else throw new Error(`Unknown argument: ${arg}`);
+    if (arg === "--current-repo") {
+      i += 1;
+      args.currentRepo = requireValue(argv, i, arg);
+    } else if (arg === "--main-ref") {
+      i += 1;
+      args.mainRef = requireValue(argv, i, arg);
+    } else if (arg === "--cache") {
+      args.noCache = false;
+    } else if (arg === "--keep-worktree") {
+      args.keepWorktree = true;
+    } else {
+      throw new Error(`Unknown argument: ${arg}`);
+    }
   }
 
   return args;
 }
 
-function run(command, args, options = {}) {
+function run(command: string, args: string[], options: RunOptions = {}): string {
   const result = spawnSync(command, args, {
     encoding: "utf8",
-    stdio: options.stdio || "pipe",
+    stdio: options.stdio ?? "pipe",
     cwd: options.cwd,
   });
   if (result.status !== 0) {
@@ -44,13 +86,18 @@ function run(command, args, options = {}) {
   return result.stdout.trim();
 }
 
-function makeTempWorktree(mainRef, currentRepo) {
+function makeTempWorktree(mainRef: string, currentRepo: string): string {
   const worktreeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-main-worktree-"));
-  run("git", ["worktree", "add", "--detach", worktreeRoot, mainRef], { cwd: currentRepo });
+  try {
+    run("git", ["worktree", "add", "--detach", worktreeRoot, mainRef], { cwd: currentRepo });
+  } catch (error) {
+    fs.rmSync(worktreeRoot, { recursive: true, force: true });
+    throw error;
+  }
   return worktreeRoot;
 }
 
-function removeWorktree(worktreeRoot, currentRepo) {
+function removeWorktree(worktreeRoot: string, currentRepo: string): void {
   try {
     run("git", ["worktree", "remove", "--force", worktreeRoot], { cwd: currentRepo });
   } catch {
@@ -59,7 +106,12 @@ function removeWorktree(worktreeRoot, currentRepo) {
   fs.rmSync(worktreeRoot, { recursive: true, force: true });
 }
 
-function dockerBuild(repoRoot, stageFn, label, noCache) {
+function dockerBuild(
+  repoRoot: string,
+  stageFn: StageBuildContext,
+  label: string,
+  noCache: boolean,
+): ImageBuildResult {
   const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), `nemoclaw-bench-${label}-`));
   const { buildCtx } = stageFn(repoRoot, tmpRoot);
   const stats = collectBuildContextStats(buildCtx);
@@ -90,15 +142,15 @@ function dockerBuild(repoRoot, stageFn, label, noCache) {
   }
 }
 
-function fmtMiB(bytes) {
+function fmtMiB(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MiB`;
 }
 
-function fmtSeconds(seconds) {
+function fmtSeconds(seconds: number): string {
   return `${seconds.toFixed(1)}s`;
 }
 
-function printSummary(results) {
+function printSummary(results: ImageBuildResult[]): void {
   console.log("");
   console.log("Sandbox image build benchmark");
   console.log("");
@@ -121,7 +173,7 @@ function printSummary(results) {
   }
 }
 
-function main() {
+function main(): void {
   const args = parseArgs(process.argv.slice(2));
   const currentRepo = path.resolve(args.currentRepo);
   const currentHead = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
