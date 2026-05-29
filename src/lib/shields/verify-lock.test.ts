@@ -304,7 +304,7 @@ describe("verifyShieldsLockState", () => {
 
     expect(result.ok).toBe(false);
     expect(result.issues).toContain(
-      "/sandbox/.openclaw/.config-hash no seal recorded (expected SHA-256)",
+      "/sandbox/.openclaw/.config-hash content drifted (no seal recorded; expected SHA-256)",
     );
   });
 

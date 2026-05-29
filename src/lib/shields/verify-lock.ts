@@ -106,7 +106,12 @@ export function verifyShieldsLockState(
         // Seal was missing for this file — flag explicitly rather than
         // silently passing. Callers that genuinely lack a seal pass
         // `expectedHashes: undefined` instead of an empty record.
-        issues.push(`${f} no seal recorded (expected SHA-256)`);
+        // Prefix with "content drifted" so callers that filter on that
+        // substring (`shieldsUp` re-seal refusal) treat every hash-trust
+        // failure as non-launderable.
+        issues.push(
+          `${f} content drifted (no seal recorded; expected SHA-256)`,
+        );
         continue;
       }
       let raw: string;
@@ -114,12 +119,14 @@ export function verifyShieldsLockState(
         raw = exec(["sha256sum", f]);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        issues.push(`${f} sha256sum failed: ${msg}`);
+        issues.push(`${f} content drifted (sha256sum failed: ${msg})`);
         continue;
       }
       const got = parseSha256Output(raw);
       if (!got) {
-        issues.push(`${f} sha256sum output unparsable: ${raw.trim()}`);
+        issues.push(
+          `${f} content drifted (sha256sum output unparsable: ${raw.trim()})`,
+        );
         continue;
       }
       if (got !== want.toLowerCase()) {
