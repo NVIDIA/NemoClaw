@@ -95,6 +95,10 @@ If the HTTP endpoint is not reachable yet, NemoClaw also checks for the Windows 
 If the daemon does not become reachable, onboarding prints PowerShell commands you can run to inspect the Windows-side process and port state. Use one Ollama instance on port `11434` at a time.
 If both WSL and Windows-host Ollama are running, pick the intended menu entry during onboarding so NemoClaw validates and pulls models against the right daemon.
 
+Windows-host Ollama requires Docker Desktop WSL integration because the sandbox reaches the Windows daemon through Docker Desktop's WSL routing path.
+If NemoClaw detects native Docker Engine inside WSL, the provider menu labels Windows-host Ollama actions as requiring Docker Desktop integration.
+Selecting one of those actions in the unsupported native Docker topology exits early with a remediation message instead of trying to start or install Ollama on Windows.
+
 <Warning>
 Ollama is convenient for local chat, but some model/template combinations can
 return tool calls as plain text under realistic agent load. If the TUI shows raw

@@ -2,7 +2,13 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Use a Local Inference Server: Details
 
-## Non-Interactive Setup
+## GPU Memory Cleanup
+
+When you switch away from Ollama, stop host services, or destroy an Ollama-backed sandbox, NemoClaw asks Ollama to unload currently loaded models from GPU memory.
+The cleanup sends `keep_alive: 0` for each model reported by Ollama and runs on a best-effort basis, so shutdown continues if Ollama is already stopped.
+This does not delete downloaded model files.
+
+### Non-Interactive Setup
 
 ```console
 $ NEMOCLAW_PROVIDER=ollama \
