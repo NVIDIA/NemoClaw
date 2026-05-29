@@ -633,6 +633,37 @@ describe("shields — unit logic", () => {
       );
     });
 
+    it("rejects state files whose fileHashes entries are not SHA-256 hex strings", async () => {
+      const sandboxName = "openclaw";
+      fs.mkdirSync(stateDir(), { recursive: true });
+      // Hash value is the right length but contains non-hex chars,
+      // and another value is far too short. Either alone should fail
+      // the isOptionalHashMap guard.
+      fs.writeFileSync(
+        path.join(stateDir(), `shields-${sandboxName}.json`),
+        JSON.stringify({
+          shieldsDown: false,
+          fileHashes: {
+            "/sandbox/.openclaw/openclaw.json": "not-a-real-hash",
+          },
+          updatedAt: new Date().toISOString(),
+        }),
+      );
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((code?: string | number | null) => {
+          throw new Error(`exit ${String(code)}`);
+        });
+
+      const { shieldsStatus } = await loadShieldsModule();
+      expect(() => shieldsStatus(sandboxName)).toThrow("exit 1");
+      expect(errorSpy).toHaveBeenCalledWith(
+        "  Shields: ERROR (state file is corrupt)",
+      );
+      expect(exitSpy).toHaveBeenCalledWith(1);
+    });
+
     it("status fails fast on corrupt shields state instead of reporting NOT CONFIGURED", async () => {
       const sandboxName = "openclaw";
       fs.mkdirSync(stateDir(), { recursive: true });

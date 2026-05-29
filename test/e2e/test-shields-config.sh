@@ -328,9 +328,16 @@ CTR=$(docker ps --filter "name=openshell-${SANDBOX_NAME}" -q | head -n1)
 if [ -z "$CTR" ]; then
   fail "Could not find sandbox container for ${SANDBOX_NAME}"
 else
-  ORIG_CONTENT=$(docker exec -u 0 "$CTR" cat "$CONFIG_PATH" 2>/dev/null || true)
-  if [ -z "$ORIG_CONTENT" ]; then
+  # Use a byte-preserving temp file for backup/restore. Bash command
+  # substitution `$(...)` strips trailing newlines, which would change
+  # the file's SHA-256 between backup and restore and create false
+  # drift after the post-restore status check.
+  ORIG_CONTENT_FILE=$(mktemp -t nemoclaw-shields-orig.XXXXXX)
+  trap 'rm -f "$ORIG_CONTENT_FILE"' EXIT
+  if ! docker exec -u 0 "$CTR" cat "$CONFIG_PATH" >"$ORIG_CONTENT_FILE" 2>/dev/null; then
     fail "Could not read original ${CONFIG_PATH} content as host root"
+  elif [ ! -s "$ORIG_CONTENT_FILE" ]; then
+    fail "Original ${CONFIG_PATH} read returned an empty file"
   else
     docker exec -u 0 "$CTR" sh -c \
       "chmod 644 ${CONFIG_PATH} && printf ' ' >> ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}" \
@@ -343,10 +350,13 @@ else
       fail "Expected tamper to leave 444 root:root, got: ${PERMS_AFTER_TAMPER}"
     fi
 
-    set +e
+    # The script runs with `set -uo pipefail` (no -e), so `$?` after a
+    # command substitution gives that command's exit code without
+    # aborting the script. Toggling `set -e` here would interact badly
+    # with the `fail()` helper, whose `((FAIL++))` returns a non-zero
+    # exit when FAIL is 0 and would abort under -e.
     STATUS_TAMPER_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1)
     STATUS_TAMPER_EXIT=$?
-    set -e
     echo "$STATUS_TAMPER_OUTPUT"
     if [ "$STATUS_TAMPER_EXIT" = "2" ]; then
       pass "shields status exits 2 on content drift"
@@ -364,10 +374,8 @@ else
       fail "shields status should name the drifted file"
     fi
 
-    set +e
     REUP_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields up 2>&1)
     REUP_EXIT=$?
-    set -e
     echo "$REUP_OUTPUT"
     if [ "$REUP_EXIT" != "0" ]; then
       pass "shields up refuses to re-seal a tampered baseline (exit ${REUP_EXIT})"
@@ -381,10 +389,12 @@ else
     fi
 
     # Restore the original content as host root so the rest of the suite
-    # can continue against a clean lock.
-    docker exec -u 0 "$CTR" sh -c \
+    # can continue against a clean lock. `docker exec -i` keeps stdin
+    # open and we stream the backup file straight in — no command
+    # substitution that would strip trailing newlines.
+    docker exec -i -u 0 "$CTR" sh -c \
       "chmod 644 ${CONFIG_PATH} && cat > ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}" \
-      <<<"$ORIG_CONTENT" >/dev/null 2>&1
+      <"$ORIG_CONTENT_FILE" >/dev/null 2>&1
     POST_RESTORE_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1 || true)
     if echo "$POST_RESTORE_OUTPUT" | grep -q "Shields: UP (lockdown active)"; then
       pass "shields status clean after content restore"

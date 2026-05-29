@@ -295,13 +295,19 @@ function isOptionalNullableNumber(
   );
 }
 
+// SHA-256 hex strings are 64 lowercase or uppercase hex chars. The seal
+// helper normalises to lowercase before persisting; accept either case
+// here so manually edited state files and legacy uppercase entries still
+// load, and reject anything that cannot be a real digest.
+const SHA256_HEX_RE = /^[0-9a-f]{64}$/i;
+
 function isOptionalHashMap(
   value: unknown,
 ): value is { [path: string]: string } | undefined {
   if (value === undefined) return true;
   if (!isObjectRecord(value)) return false;
   for (const v of Object.values(value)) {
-    if (typeof v !== "string") return false;
+    if (typeof v !== "string" || !SHA256_HEX_RE.test(v)) return false;
   }
   return true;
 }
@@ -1149,11 +1155,37 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
       expectedHashes: state.fileHashes,
     });
     if (issues.length === 0) {
-      // Legacy locked state predates the content seal. Capture one now so
-      // future `shields status` calls can detect content drift instead of
-      // relying on perm-only verification. We only do this when the
-      // verifier was already happy with the on-disk state.
+      // Legacy locked state predates the content seal. Capturing a seal
+      // now would treat the *current* file content as the trusted
+      // baseline, but perm-only verification gives no proof that the
+      // bytes match the image-original. A pre-existing content tamper
+      // would be sealed in as the new "trusted" content.
+      //
+      // Refuse by default and ask the operator to either:
+      //   1. rebuild the sandbox (clean baseline), then `shields up`;
+      //   2. explicitly opt in via `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1`
+      //      to acknowledge that the current bytes are trusted.
+      // Once the operator opts in, the seal is captured and subsequent
+      // `shields up`/`shields status` runs detect any future drift.
       if (!state.fileHashes) {
+        if (process.env.NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE !== "1") {
+          console.error(
+            "  ERROR: locked sandbox has no content seal (state predates the seal).",
+          );
+          console.error(
+            "  Perm-only verification cannot prove the locked files have not already been tampered with.",
+          );
+          console.error(
+            `  Recovery: rebuild the sandbox for a known-good baseline, then run \`nemoclaw ${sandboxName} shields up\`.`,
+          );
+          console.error(
+            `  Or accept the current bytes as the trusted baseline by setting NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and rerunning.`,
+          );
+          return failShieldsCommand(
+            "Locked sandbox has no content seal; refusing to seal a legacy baseline without explicit operator acknowledgement",
+            opts.throwOnError,
+          );
+        }
         try {
           const filesToHash = [
             target.configPath,
@@ -1162,7 +1194,7 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
           const newHashes = captureSealHashes(sandboxName, filesToHash);
           saveShieldsState(sandboxName, { fileHashes: newHashes });
           console.log(
-            "  Captured SHA-256 content seal for existing lockdown.",
+            "  Captured SHA-256 content seal for existing lockdown (current bytes accepted as baseline).",
           );
         } catch (err) {
           const message = err instanceof Error ? err.message : String(err);
@@ -1413,9 +1445,20 @@ function shieldsStatus(
         for (const issue of driftIssues) {
           console.error(`    - ${issue}`);
         }
-        console.error(
-          `  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`,
-        );
+        // Hash-trust failures cannot be repaired by re-locking — re-up
+        // would just seal the tampered or unverifiable content. Perm
+        // drift (mode/owner/chattr/legacy-layout) is launderable by
+        // re-up. Surface the right recovery for the failure mode.
+        const hasHashTrouble = driftIssues.some(isHashVerificationIssue);
+        if (hasHashTrouble) {
+          console.error(
+            `  Recovery: restore the original file content from a trusted source, or rebuild the sandbox, then run \`nemoclaw ${sandboxName} shields up\` to re-seal.`,
+          );
+        } else {
+          console.error(
+            `  Recovery: nemoclaw ${sandboxName} shields up   # re-lock and re-verify`,
+          );
+        }
         process.exit(2);
       }
       console.log(`  Shields: ${posture.statusText}`);
