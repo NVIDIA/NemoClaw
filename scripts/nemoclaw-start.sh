@@ -1435,14 +1435,26 @@ ALLOWED_MODES = {'webchat', 'cli'}
 
 RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 
-def run(*args):
+# Workaround boundary (NemoClaw#4462): OpenClaw owns the gateway/device
+# approval semantics. In OpenClaw 2026.5.x, a gateway-pinned
+# `openclaw devices approve <scope-upgrade>` can request the upgraded scopes
+# for its own connection and return the same pending-scope error it is trying
+# to resolve. List calls must stay gateway-pinned so we inspect the live
+# gateway, but approval calls temporarily remove OPENCLAW_GATEWAY_URL to use
+# OpenClaw's local pairing fallback. Remove this when OpenClaw approve can
+# complete scope upgrades through the gateway using only operator.pairing.
+def run(*args, strip_gateway_url=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
     # no timeout would hold a hung `openclaw devices list/approve` past
     # the fast→slow transition and the 8h deadline check.
+    env = None
+    if strip_gateway_url:
+        env = os.environ.copy()
+        env.pop('OPENCLAW_GATEWAY_URL', None)
     try:
         proc = subprocess.run(
-            args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS,
+            args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS, env=env,
         )
         return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
     except subprocess.TimeoutExpired as exc:
@@ -1491,16 +1503,18 @@ while time.time() < DEADLINE:
                 HANDLED.add(request_id)
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
                 continue
-            arc, aout, aerr = run(OPENCLAW, 'devices', 'approve', request_id, '--json')
+            arc, aout, aerr = run(
+                OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_url=True,
+            )
             # rc=124 is the timeout sentinel from run() — do NOT add the
             # request to HANDLED on a transient timeout, so the next poll
-            # can retry (CodeRabbit #4292). Permanent failures (other
-            # non-zero rc) still get HANDLED so we don't spin on a stuck
-            # bad request.
+            # can retry (CodeRabbit #4292). Other approve failures stay
+            # retryable too; only intentionally rejected unknown clients
+            # and confirmed successful approvals are marked handled.
             if arc == 124:
                 continue
-            HANDLED.add(request_id)
             if arc == 0:
+                HANDLED.add(request_id)
                 APPROVED += 1
                 print(f'[auto-pair] approved request={request_id} client={client_id} mode={client_mode}')
             elif aout or aerr:
@@ -1754,6 +1768,14 @@ PROXYEOF
     cat <<'GUARDENVEOF'
 # nemoclaw-configure-guard begin
 openclaw() {
+  # NemoClaw#4462: keep user-initiated device approval usable from an
+  # interactive sandbox shell until upstream OpenClaw can approve scope
+  # upgrades through the gateway without requesting the upgraded scopes for
+  # the approval command itself. Other commands keep OPENCLAW_GATEWAY_URL.
+  if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
+    ( unset OPENCLAW_GATEWAY_URL; command openclaw "$@" )
+    return $?
+  fi
   case "$1" in
     configure)
       echo "Error: 'openclaw configure' cannot modify config inside the sandbox." >&2
