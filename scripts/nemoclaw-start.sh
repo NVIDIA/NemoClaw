@@ -647,10 +647,9 @@ ensure_mutable_openclaw_config_hash() {
   fi
 
   # Mutable-default mode: $config_dir is 2770 sandbox:sandbox and
-  # $hash_file is 660 sandbox:sandbox. When running as root in a
-  # CAP_DAC_OVERRIDE-dropped environment (issue #4498) the redirection
-  # cannot bypass the sandbox-only write bit and fails with EACCES.
-  # Step down to the sandbox uid so the write goes through the owner.
+  # $hash_file is 660 sandbox:sandbox. Without CAP_DAC_OVERRIDE root
+  # cannot bypass the sandbox-only write bit and the redirection
+  # aborts with EACCES, so step down to the file's owner for the write.
   local run_prefix=()
   if [ "$(id -u)" -eq 0 ]; then
     run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
@@ -2427,23 +2426,24 @@ NODE
 # Run one or more locally-defined bash functions as the sandbox user
 # without round-tripping through `bash -c "$(declare -f ...) ..."`.
 #
-# The interpolated form has been observed to fail under restricted
-# runtimes (issue #4512: CAP_DAC_OVERRIDE-dropped startup) where the
-# step-down shell could not re-parse the heredoc-bearing function body
-# carried through `bash -c`'s argv. Writing the declarations plus the
-# trailing invocation to a temp script and invoking `bash <file>`
-# avoids the argv/quoting fragility: the step-down shell reads the
-# literal source bytes from disk and parses them as a normal script.
+# The interpolated form is fragile under restricted runtimes: the
+# step-down shell cannot always re-parse a heredoc-bearing function
+# body carried through `bash -c`'s argv. Writing the declarations plus
+# the trailing invocation to a temp script and invoking `bash <file>`
+# instead lets the step-down shell read the literal source bytes from
+# disk so the argv/quoting round-trip is gone.
+#
+# The temp script lives directly under /tmp (sticky-bit, world-writable
+# but unlink-protected) with an unguessable mktemp suffix, so an
+# attacker cannot swap the file between mktemp and the step-down bash
+# invocation. The directory is intentionally not configurable.
 #
 # Usage: run_step_down_as_sandbox <invocation-snippet> <fn>...
-# NEMOCLAW_STEP_DOWN_TMPDIR overrides the temp directory (defaults to /tmp);
-# tests rely on this hook to isolate the generated helper script.
 run_step_down_as_sandbox() {
   local invocation="$1"
   shift
-  local tmpdir="${NEMOCLAW_STEP_DOWN_TMPDIR:-/tmp}"
   local script
-  script="$(mktemp "${tmpdir}/nemoclaw-step-down-XXXXXX.sh")" || return 1
+  script="$(mktemp /tmp/nemoclaw-step-down-XXXXXX.sh)" || return 1
   if ! chmod 0644 "$script" 2>/dev/null; then
     rm -f "$script" 2>/dev/null || true
     return 1
@@ -2666,9 +2666,9 @@ install_slack_channel_guard
 verify_no_slack_secrets_on_disk
 
 # Write auth profile as sandbox user and recursively re-tighten any
-# auth-profiles.json files under ~/.openclaw. Routed through the temp-
-# file helper (issue #4512) so the step-down shell does not have to
-# re-parse the heredoc-bearing function body through `bash -c`'s argv.
+# auth-profiles.json files under ~/.openclaw. Routed through the
+# temp-file helper so the step-down shell does not have to re-parse
+# the heredoc-bearing function body through `bash -c`'s argv.
 run_step_down_as_sandbox \
   "write_auth_profile; harden_auth_profiles" \
   write_auth_profile \

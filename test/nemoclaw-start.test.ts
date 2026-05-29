@@ -2567,7 +2567,6 @@ describe("seed_default_workspace_templates (#3240)", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         `STEP_DOWN_LOG=${JSON.stringify(stepDownLog)}`,
-        `NEMOCLAW_STEP_DOWN_TMPDIR=${JSON.stringify(tmpDir)}`,
         `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$0" >"$STEP_DOWN_LOG"; exec "$@"' sandbox-step-down)`,
         `seed_default_workspace_templates() { printf 'seeded\\n' > ${JSON.stringify(path.join(workspaceDir, "SOUL.md"))}; }`,
         runStepDown,
@@ -3713,7 +3712,6 @@ describe("run_step_down_as_sandbox (#4512)", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$2" >${JSON.stringify(stepDownLog)}; exec "$@"' sandbox-step-down)`,
-        `NEMOCLAW_STEP_DOWN_TMPDIR=${JSON.stringify(tmpDir)}`,
         `payload_fn() { printf 'ran\\n' >${JSON.stringify(marker)}; }`,
         helper,
         "run_step_down_as_sandbox 'payload_fn' payload_fn",
@@ -3724,11 +3722,9 @@ describe("run_step_down_as_sandbox (#4512)", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status, result.stderr || result.stdout).toBe(0);
       expect(fs.readFileSync(marker, "utf-8").trim()).toBe("ran");
-      expect(fs.readFileSync(stepDownLog, "utf-8").trim()).toMatch(/nemoclaw-step-down-.*\.sh$/);
-      const leftover = fs
-        .readdirSync(tmpDir)
-        .filter((name) => name.startsWith("nemoclaw-step-down-"));
-      expect(leftover).toEqual([]);
+      const tempScriptPath = fs.readFileSync(stepDownLog, "utf-8").trim();
+      expect(tempScriptPath).toMatch(/^\/tmp\/nemoclaw-step-down-[A-Za-z0-9]{6}\.sh$/);
+      expect(fs.existsSync(tempScriptPath)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -3736,14 +3732,14 @@ describe("run_step_down_as_sandbox (#4512)", () => {
 
   it("removes the temp script even when the step-down body fails", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-step-down-fail-"));
+    const stepDownLog = path.join(tmpDir, "step-down.log");
     const scriptPath = path.join(tmpDir, "run.sh");
     fs.writeFileSync(
       scriptPath,
       [
         "#!/usr/bin/env bash",
         "set -uo pipefail",
-        "STEP_DOWN_PREFIX_SANDBOX=()",
-        `NEMOCLAW_STEP_DOWN_TMPDIR=${JSON.stringify(tmpDir)}`,
+        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$2" >${JSON.stringify(stepDownLog)}; exec "$@"' sandbox-step-down)`,
         "failing_fn() { return 7; }",
         helper,
         "run_step_down_as_sandbox 'failing_fn' failing_fn",
@@ -3755,10 +3751,75 @@ describe("run_step_down_as_sandbox (#4512)", () => {
       const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status).toBe(0);
       expect(result.stdout).toContain("EXIT=7");
-      const leftover = fs
-        .readdirSync(tmpDir)
-        .filter((name) => name.startsWith("nemoclaw-step-down-"));
-      expect(leftover).toEqual([]);
+      const tempScriptPath = fs.readFileSync(stepDownLog, "utf-8").trim();
+      expect(tempScriptPath).toMatch(/^\/tmp\/nemoclaw-step-down-[A-Za-z0-9]{6}\.sh$/);
+      expect(fs.existsSync(tempScriptPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("survives a heredoc-bearing function body (regression for the original #4512 trigger)", () => {
+    // The production caller passes write_auth_profile + harden_auth_profiles,
+    // both of which contain a `<<'TAG'` heredoc inside the function body
+    // (python3 - <<'PYAUTH' ...). This test mirrors that shape with two
+    // adjacent heredocs to exercise declare-f → file → bash through the
+    // step-down prefix and assert the body runs end-to-end without the
+    // `syntax error near unexpected token 'fi'` that the original
+    // `bash -c "$(declare -f ...) ..."` route reported.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-step-down-heredoc-"));
+    const stepDownLog = path.join(tmpDir, "step-down.log");
+    const outPath = path.join(tmpDir, "out.txt");
+    const altPath = path.join(tmpDir, "alt.txt");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$2" >${JSON.stringify(stepDownLog)}; exec "$@"' sandbox-step-down)`,
+        `OUT_PATH=${JSON.stringify(outPath)}`,
+        `ALT_PATH=${JSON.stringify(altPath)}`,
+        // Mimic write_auth_profile's `python3 - <<'PYAUTH'` shape, including
+        // a second function with its own heredoc, to ensure declare -f
+        // round-trips both bodies through the temp script intact.
+        "heredoc_one() {",
+        "  if [ -z \"${OUT_PATH:-}\" ]; then",
+        "    return",
+        "  fi",
+        "  python3 - \"$OUT_PATH\" <<'PYONE'",
+        "import sys",
+        "with open(sys.argv[1], 'w') as fh:",
+        "    fh.write('heredoc-one-ok\\n')",
+        "PYONE",
+        "}",
+        "heredoc_two() {",
+        "  if [ -z \"${ALT_PATH:-}\" ]; then",
+        "    return",
+        "  fi",
+        "  python3 - \"$ALT_PATH\" <<'PYTWO'",
+        "import sys",
+        "with open(sys.argv[1], 'w') as fh:",
+        "    fh.write('heredoc-two-ok\\n')",
+        "PYTWO",
+        "}",
+        helper,
+        "run_step_down_as_sandbox 'heredoc_one; heredoc_two' heredoc_one heredoc_two",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    try {
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: { ...process.env, OUT_PATH: outPath, ALT_PATH: altPath },
+        timeout: 5000,
+      });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(fs.readFileSync(outPath, "utf-8")).toBe("heredoc-one-ok\n");
+      expect(fs.readFileSync(altPath, "utf-8")).toBe("heredoc-two-ok\n");
+      const tempScriptPath = fs.readFileSync(stepDownLog, "utf-8").trim();
+      expect(tempScriptPath).toMatch(/^\/tmp\/nemoclaw-step-down-[A-Za-z0-9]{6}\.sh$/);
+      expect(fs.existsSync(tempScriptPath)).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -3836,6 +3897,78 @@ describe("ensure_mutable_openclaw_config_hash root-mode step-down (#4498)", () =
       expect(result.status, result.stderr || result.stdout).toBe(0);
       expect(hashAfter).not.toContain("stale-content");
       expect(hashAfter).toMatch(/^[0-9a-f]{64}\s+openclaw\.json$/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  // Reproduces the production EACCES condition in-process. CI cannot drop
+  // CAP_DAC_OVERRIDE on a real uid=0 entrypoint, so we substitute: a
+  // pre-existing .config-hash that is read-only to its owner is the
+  // closest single-uid analog of "root cannot bypass the write bit".
+  // The first phase asserts the precondition (direct redirection
+  // genuinely fails on the read-only file); the second runs the
+  // production function under a step-down prefix that relaxes the
+  // perms (mirroring how setpriv puts the write through the owner
+  // uid with full DAC) and asserts the hash refresh now succeeds.
+  it("the direct redirection fails on a read-only hash file but the step-down path recovers it", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hash-eacces-"));
+    try {
+      const configDir = path.join(tmpDir, "openclaw");
+      fs.mkdirSync(configDir, { recursive: true });
+      const configPath = path.join(configDir, "openclaw.json");
+      const hashPath = path.join(configDir, ".config-hash");
+      fs.writeFileSync(configPath, "{}\n");
+      fs.writeFileSync(hashPath, "placeholder\n");
+      fs.chmodSync(hashPath, 0o444);
+
+      // Phase 1: prove that a direct `>` redirection against the
+      // read-only hash file genuinely fails (the surrogate for the
+      // production EACCES).
+      const directProbe = spawnSync(
+        "sh",
+        [
+          "-c",
+          `cd ${JSON.stringify(configDir)} && sha256sum openclaw.json >".config-hash"`,
+        ],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+      expect(directProbe.status).not.toBe(0);
+      expect(directProbe.stderr.toLowerCase()).toContain("permission denied");
+      expect(fs.readFileSync(hashPath, "utf-8")).toBe("placeholder\n");
+
+      // Phase 2: the production function runs the same redirection
+      // through `STEP_DOWN_PREFIX_SANDBOX`, here stubbed to relax the
+      // hash file so the inner sh can write (mirroring the production
+      // owner-uid step-down restoring effective write access).
+      const stepDownLog = path.join(tmpDir, "step-down.log");
+      const scriptPath = path.join(tmpDir, "run.sh");
+      const helperFn = extractShellFunctionFromSource(src, "ensure_mutable_openclaw_config_hash")
+        .replaceAll("/sandbox/.openclaw", configDir);
+      fs.writeFileSync(
+        scriptPath,
+        [
+          "#!/usr/bin/env bash",
+          "set -euo pipefail",
+          'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
+          'openclaw_config_dir_owner() { printf "sandbox"; }',
+          `HASH_PATH=${JSON.stringify(hashPath)}`,
+          `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "step-down\\n" >>${JSON.stringify(stepDownLog)}; chmod 0660 "$HASH_PATH"; exec "$@"' sandbox-step-down)`,
+          helperFn,
+          "ensure_mutable_openclaw_config_hash",
+        ].join("\n"),
+        { mode: 0o700 },
+      );
+      const result = spawnSync("bash", [scriptPath], {
+        encoding: "utf-8",
+        env: { ...process.env, HASH_PATH: hashPath },
+        timeout: 5000,
+      });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(fs.readFileSync(stepDownLog, "utf-8").trim().split("\n").filter(Boolean)).toHaveLength(1);
+      expect(fs.readFileSync(hashPath, "utf-8").trim()).toMatch(
+        /^[0-9a-f]{64}\s+openclaw\.json$/,
+      );
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
