@@ -33,6 +33,8 @@
 #                            agent state, and the same agent type running.
 #   hermes-e2e               Hermes Agent E2E — install → onboard --agent hermes → health
 #                            probe → live inference. Validates the multi-agent architecture.
+#   hermes-dashboard-e2e     Hermes Agent E2E with optional web dashboard enabled,
+#                            validating API/dashboard forwards and host reachability.
 #   hermes-root-entrypoint-smoke-e2e
 #                            Builds the real Hermes image and verifies root entrypoint startup,
 #                            gateway-user execution, v0.14 layout repair, and PID migration.
@@ -94,6 +96,7 @@ on:
           token-rotation-e2e, sandbox-survival-e2e,
           openshell-gateway-upgrade-e2e,
           issue-2478-crash-loop-recovery-e2e, hermes-e2e,
+          hermes-dashboard-e2e,
           hermes-root-entrypoint-smoke-e2e,
           openclaw-onboard-security-posture-e2e,
           hermes-onboard-security-posture-e2e,
@@ -694,6 +697,24 @@ jobs:
       artifact_name: "hermes-e2e-install-log"
       artifact_path: "/tmp/nemoclaw-e2e-hermes-install.log"
       env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+  hermes-dashboard-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',hermes-dashboard-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-hermes-e2e.sh
+      timeout_minutes: 60
+      artifact_name: "hermes-dashboard-e2e-install-log"
+      artifact_path: "/tmp/nemoclaw-e2e-hermes-install.log"
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_AGENT":"hermes","NEMOCLAW_E2E_HERMES_DASHBOARD":"1","NEMOCLAW_HERMES_DASHBOARD":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_RECREATE_SANDBOX":"1","NEMOCLAW_SANDBOX_NAME":"e2e-hermes-dashboard"}'
       nvidia_api_key: true
       github_token: true
     secrets:
@@ -1859,6 +1880,7 @@ jobs:
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
         hermes-e2e,
+        hermes-dashboard-e2e,
         hermes-root-entrypoint-smoke-e2e,
         openclaw-onboard-security-posture-e2e,
         hermes-onboard-security-posture-e2e,
@@ -1963,6 +1985,7 @@ jobs:
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
         hermes-e2e,
+        hermes-dashboard-e2e,
         hermes-root-entrypoint-smoke-e2e,
         openclaw-onboard-security-posture-e2e,
         hermes-onboard-security-posture-e2e,
@@ -2124,6 +2147,7 @@ jobs:
         sandbox-survival-e2e,
         issue-2478-crash-loop-recovery-e2e,
         hermes-e2e,
+        hermes-dashboard-e2e,
         hermes-root-entrypoint-smoke-e2e,
         openclaw-onboard-security-posture-e2e,
         hermes-onboard-security-posture-e2e,

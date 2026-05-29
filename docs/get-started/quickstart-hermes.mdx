@@ -104,6 +104,18 @@ Use the provider variables from [Inference Options](/inference/inference-options
 
 When onboarding completes, NemoClaw prints the sandbox name, model, lifecycle commands, and Hermes API endpoint.
 Hermes exposes an OpenAI-compatible API on port `8642`, not a browser dashboard.
+To also launch the native Hermes web dashboard, opt in before onboarding:
+
+```bash
+export NEMOCLAW_HERMES_DASHBOARD=1
+nemohermes onboard
+```
+
+The dashboard uses port `9119` by default.
+Set `NEMOCLAW_HERMES_DASHBOARD_PORT` before onboarding to choose a different port.
+Set `NEMOCLAW_HERMES_DASHBOARD_TUI=1` to enable Hermes' optional in-browser TUI tab.
+For upstream dashboard features, see the
+[Hermes web dashboard documentation](https://hermes-agent.nousresearch.com/docs/user-guide/features/web-dashboard).
 
 ```text
 ──────────────────────────────────────────────────
@@ -117,6 +129,10 @@ Access
   Hermes Agent OpenAI-compatible API
   Port 8642 must be forwarded before connecting.
   http://127.0.0.1:8642/v1
+
+  Hermes Agent Web dashboard
+  Port 9119 must be forwarded before opening this URL.
+  http://127.0.0.1:9119/
 
 Terminal:
   nemohermes my-hermes connect
@@ -163,6 +179,20 @@ $ openshell forward start --background 8642 my-hermes
 Configure an OpenAI-compatible client with the base URL `http://127.0.0.1:8642/v1`.
 Hermes uses API header authentication for client requests.
 Do not append an OpenClaw `#token=` URL fragment to the Hermes endpoint.
+
+## Open the Optional Dashboard
+
+When `NEMOCLAW_HERMES_DASHBOARD=1` is set during onboarding, NemoClaw starts `hermes dashboard --no-open` inside the sandbox and forwards `http://127.0.0.1:9119/` on the host.
+The API endpoint remains separate on `8642`.
+
+If the dashboard forward is missing after a reboot or terminal restart, start it again:
+
+```bash
+openshell forward start --background 9119 my-hermes
+```
+
+Treat the dashboard as a local management UI.
+Avoid exposing it on shared or public networks unless you put it behind your own access controls.
 
 ## Manage the Sandbox
 
