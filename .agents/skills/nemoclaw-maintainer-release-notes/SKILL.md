@@ -152,10 +152,17 @@ Create a Markdown draft and an HTML preview. By default, place these outside the
 
 The Markdown body is the source that will be posted to GitHub Discussions. The HTML file is just a browser preview for review.
 
-After writing the files, open the HTML preview:
+After writing the files, open the HTML preview with the platform's default file opener:
 
-```bash
+```text
+macOS:
 open ../nemoclaw-<current-version>-release-note-draft.html
+
+Linux:
+xdg-open ../nemoclaw-<current-version>-release-note-draft.html
+
+Windows (PowerShell):
+Start-Process ../nemoclaw-<current-version>-release-note-draft.html
 ```
 
 Stop here unless the user approves posting.
