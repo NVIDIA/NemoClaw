@@ -149,6 +149,37 @@ const MEMORY_BASENAMES: ReadonlySet<string> = new Set([
  * `memory/` get scanned for secrets — the tradeoff is intentional.
  */
 const MEMORY_RELATIVE_PREFIXES: readonly string[] = [".openclaw/", ".nemoclaw/", "memory/"];
+const WORKSPACE_MEMORY_PREFIX = /^workspace(?:-[^/]+)?\/memory(?:\/|$)/;
+
+function normalizePathForMemoryClassification(filePath: string): string {
+  const isAbsolute = filePath.startsWith("/");
+  const parts: string[] = [];
+
+  for (const part of filePath.split("/")) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      const last = parts[parts.length - 1];
+      if (last !== undefined && last !== "..") {
+        parts.pop();
+      } else if (!isAbsolute) {
+        parts.push(part);
+      }
+      continue;
+    }
+    parts.push(part);
+  }
+
+  if (parts.length === 0) return isAbsolute ? "/" : "";
+  return `${isAbsolute ? "/" : ""}${parts.join("/")}`;
+}
+
+function dropLeadingParentSegments(filePath: string): string {
+  let normalized = filePath;
+  while (normalized.startsWith("../")) {
+    normalized = normalized.slice("../".length);
+  }
+  return normalized;
+}
 
 function basenameOf(filePath: string): string {
   const slash = filePath.lastIndexOf("/");
@@ -163,12 +194,18 @@ function basenameOf(filePath: string): string {
  *      (e.g. `/sandbox/.openclaw/memory/notes.md`).
  *   2. Relative paths whose basename matches a canonical workspace file
  *      (e.g. `IDENTITY.md`, `MEMORY.md`).
- *   3. Relative paths starting with `.openclaw/` or `.nemoclaw/`.
+ *   3. Lexically-normalized relative paths targeting `.openclaw/`,
+ *      `.nemoclaw/`, `memory/`, or named workspace daily memory.
  */
 export function isMemoryPath(filePath: unknown): boolean {
   if (typeof filePath !== "string" || filePath.length === 0) return false;
-  if (MEMORY_PATH_SEGMENTS.some((segment) => filePath.includes(segment))) return true;
-  if (MEMORY_BASENAMES.has(basenameOf(filePath))) return true;
-  if (MEMORY_RELATIVE_PREFIXES.some((prefix) => filePath.startsWith(prefix))) return true;
+  const normalizedPath = normalizePathForMemoryClassification(filePath);
+  const normalizedRelativePath = dropLeadingParentSegments(normalizedPath);
+  if (MEMORY_PATH_SEGMENTS.some((segment) => normalizedPath.includes(segment))) return true;
+  if (MEMORY_BASENAMES.has(basenameOf(normalizedPath))) return true;
+  if (MEMORY_RELATIVE_PREFIXES.some((prefix) => normalizedRelativePath.startsWith(prefix))) {
+    return true;
+  }
+  if (WORKSPACE_MEMORY_PREFIX.test(normalizedRelativePath)) return true;
   return false;
 }

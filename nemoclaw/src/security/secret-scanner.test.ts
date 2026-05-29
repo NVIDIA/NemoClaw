@@ -1,8 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
-import { scanForSecrets, isMemoryPath } from "./secret-scanner.js";
+import { describe, expect, it } from "vitest";
+import { isMemoryPath, scanForSecrets } from "./secret-scanner.js";
 
 // Test fixtures use synthetic values that look like real secrets but are not.
 // Assembled at runtime to avoid triggering gitleaks/detect-private-key hooks.
@@ -295,5 +295,22 @@ describe("isMemoryPath", () => {
   it("matches relative memory/ daily notes (workspace-relative writes)", () => {
     expect(isMemoryPath("memory/notes.md")).toBe(true);
     expect(isMemoryPath("memory/2026-05-29.md")).toBe(true);
+  });
+
+  it("matches normalized-equivalent relative memory paths", () => {
+    expect(isMemoryPath("./memory/notes.md")).toBe(true);
+    expect(isMemoryPath("memory//2026-05-29.md")).toBe(true);
+    expect(isMemoryPath("foo/../memory/2026-05-29.md")).toBe(true);
+    expect(isMemoryPath("../memory/2026-05-29.md")).toBe(true);
+  });
+
+  it("matches named-workspace daily memory paths", () => {
+    expect(isMemoryPath("workspace/memory/2026-05-29.md")).toBe(true);
+    expect(isMemoryPath("workspace-main/memory/2026-05-29.md")).toBe(true);
+  });
+
+  it("does not match unrelated relative memory subdirectories", () => {
+    expect(isMemoryPath("src/memory/notes.md")).toBe(false);
+    expect(isMemoryPath("foo/../src/memory/notes.md")).toBe(false);
   });
 });

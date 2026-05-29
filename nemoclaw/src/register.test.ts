@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { OpenClawPluginApi } from "./index.js";
 
 vi.mock("node:fs", async (importOriginal) => {
@@ -360,6 +360,30 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
       },
     });
     expect(result).toMatchObject({ block: true });
+  });
+
+  it("blocks normalized relative memory paths when the host resolver is unavailable", () => {
+    const api = createMockApi();
+    (api.resolvePath as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      undefined as unknown as string,
+    );
+    const handler = getHookHandler(api);
+    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
+
+    for (const path of [
+      "./memory/2026-05-29.md",
+      "foo/../memory/2026-05-29.md",
+      "workspace-main/memory/2026-05-29.md",
+    ]) {
+      const result = handler({
+        toolName: "write",
+        params: {
+          path,
+          content: `api key: ${fakeKey}`,
+        },
+      });
+      expect(result).toMatchObject({ block: true });
+    }
   });
 });
 
