@@ -36,14 +36,22 @@ For Hermes, set `NEMOCLAW_AGENT=hermes` before running the installer, or use the
 
 ## Documentation
 
-| Topic | Link |
-|-------|------|
-| Overview | [What NemoClaw provides](https://docs.nvidia.com/nemoclaw/latest/about/overview.html) |
-| Architecture | [NemoClaw Architecture Overview](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) |
-| Inference | [Inference Options and Model Router](https://docs.nvidia.com/nemoclaw/latest/inference/inference-options.html) |
-| Security | [Best practices and controls](https://docs.nvidia.com/nemoclaw/latest/security/best-practices.html) |
-| CLI reference | [Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) |
-| Troubleshooting | [Common issues](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html) |
+Refer to the following pages on the official documentation website for more information on NemoClaw.
+
+| Page | Description |
+|------|-------------|
+| [Overview](https://docs.nvidia.com/nemoclaw/latest/about/overview.html) | What NemoClaw does and how it fits together. |
+| [Architecture Overview](https://docs.nvidia.com/nemoclaw/latest/about/how-it-works.html) | High-level overview of Plugin, blueprint, sandbox lifecycle, and protection layers. |
+| [Ecosystem](https://docs.nvidia.com/nemoclaw/latest/about/ecosystem.html) | How OpenClaw, OpenShell, and NemoClaw form a stack and when to use NemoClaw versus OpenShell alone. |
+| [Architecture Details](https://docs.nvidia.com/nemoclaw/latest/reference/architecture.html) | Detailed description of Plugin structure, blueprint lifecycle, sandbox environment, and host-side state. |
+| [Prerequisites](https://docs.nvidia.com/nemoclaw/latest/get-started/prerequisites.html) | Hardware, software, and supported platforms, with any platform-specific pre-setup. |
+| [Inference Options](https://docs.nvidia.com/nemoclaw/latest/inference/inference-options.html) | Supported providers, validation, and routed inference configuration. |
+| [Network Policies](https://docs.nvidia.com/nemoclaw/latest/reference/network-policies.html) | Baseline rules, operator approval flow, and egress control. |
+| [Customize Network Policy](https://docs.nvidia.com/nemoclaw/latest/network-policy/customize-network-policy.html) | Static and dynamic policy changes, presets. |
+| [Security Best Practices](https://docs.nvidia.com/nemoclaw/latest/security/best-practices.html) | Controls reference, risk framework, and posture profiles for sandbox security. |
+| [Sandbox Hardening](https://docs.nvidia.com/nemoclaw/latest/deployment/sandbox-hardening.html) | Container security measures, capability drops, process limits. |
+| [CLI Commands](https://docs.nvidia.com/nemoclaw/latest/reference/commands.html) | Full NemoClaw CLI command reference. |
+| [Troubleshooting](https://docs.nvidia.com/nemoclaw/latest/reference/troubleshooting.html) | Common issues and resolution steps. |
 
 ## Community
 
