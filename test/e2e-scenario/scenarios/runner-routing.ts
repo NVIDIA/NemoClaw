@@ -38,7 +38,13 @@ const PLATFORM_DEFAULT_RUNNER: Record<string, string> = {
 export function resolveRunnerForScenario(scenario: ScenarioDefinition): ResolvedRunner {
   const explicit = (scenario.runnerRequirements ?? []).find((req) => req.startsWith("runs-on:"));
   if (explicit) {
-    return { runner: explicit.slice("runs-on:".length), reason: "runnerRequirements override" };
+    const runner = explicit.slice("runs-on:".length).trim();
+    if (!runner) {
+      throw new Error(
+        `Cannot resolve runner for scenario '${scenario.id}': empty runs-on override.`,
+      );
+    }
+    return { runner, reason: "runnerRequirements override" };
   }
 
   const platform = scenario.environment?.platform;

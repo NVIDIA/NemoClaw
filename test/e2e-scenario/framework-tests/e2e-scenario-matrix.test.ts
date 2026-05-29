@@ -67,6 +67,24 @@ describe("typed scenario matrix", () => {
     expect(resolveRunnerForScenario(custom).runner).toBe("custom-self-hosted");
   });
 
+  it("rejects empty runs-on requirement overrides", () => {
+    const broken = scenario("test-empty-runs-on-override")
+      .description("test fixture")
+      .manifest("test/e2e-scenario/manifests/openclaw-nvidia.yaml")
+      .environment({
+        platform: "ubuntu-local",
+        install: "repo-current",
+        runtime: "docker-running",
+        onboarding: "cloud-openclaw",
+      })
+      .expectedState("cloud-openclaw-ready")
+      .onboardingAssertions(["base-installed"])
+      .suites(["smoke"])
+      .runnerRequirements(["runs-on:   "])
+      .build();
+    expect(() => resolveRunnerForScenario(broken)).toThrow(/empty runs-on override/);
+  });
+
   it("fails loudly when a platform has no default runner mapping", () => {
     const broken = scenario("test-unknown-platform")
       .description("test fixture")
