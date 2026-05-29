@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
 import { spawnSync } from "node:child_process";
 import path from "node:path";
 
@@ -21,7 +24,7 @@ const calls = [];
 
 process.env.VITEST = "false";
 
-Module._load = function patchedLoad(request, parent, isMain) {
+Module._load = function patchedLoad(request, _parent, _isMain) {
   if (request === "../credentials/store") {
     return {
       getCredential(name) {
