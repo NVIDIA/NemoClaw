@@ -28,30 +28,29 @@ const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
 // a known NVIDIA product family. The caller must still cross-check against
 // `detectNvidiaPlatform()` and the trust-tier gate below before trusting the
 // nvidia-smi output — the name alone is insufficient because both real DGX
-// Spark and the observed Snapdragon X WSL2 nvidia-smi shim publish placeholder
-// names like "JMJWOA-Generic-GPU".
+// Spark and the observed Windows-on-ARM WSL2 nvidia-smi shim publish
+// placeholder names like "JMJWOA-Generic-GPU".
 const NVIDIA_GPU_NAME_PATTERN =
   /\bNVIDIA\b|\b(GeForce|Tesla|Quadro|RTX|GTX|TITAN|H100|H200|A100|A40|A10|L40|L4|GB1\d|GB200|GB300|Grace[\s_-]+Hopper)\b/i;
 
-// Placeholder names observed on the Snapdragon X WSL2 nvidia-smi shim AND on
-// legitimate NVIDIA unified-memory hardware. The prefix match catches the GPU
-// and NPU placeholder variants the shim emits, plus any future suffix without
-// a code change. Even with an `NVIDIA ` vendor prefix the name alone is not
-// sufficient — the caller must cross-check `detectNvidiaPlatform()`.
+// Placeholder names observed on the Windows-on-ARM WSL2 nvidia-smi shim AND
+// on legitimate NVIDIA unified-memory hardware. The prefix match catches the
+// GPU and NPU placeholder variants the shim emits, plus any future suffix
+// without a code change. Even with an `NVIDIA ` vendor prefix the name alone
+// is not sufficient — the caller must cross-check `detectNvidiaPlatform()`.
 const NVIDIA_GPU_NAME_DENYLIST_PATTERN = /\bJMJWOA-Generic-/i;
 
 // Trust-tier check used after the name denylist on hosts whose firmware does
 // not vouch for an NVIDIA platform. A host is considered genuine when ANY of:
 //   - the platform is not Linux (no userland `nvidia-smi` impersonator is
 //     known to ship inside the Linux kernel namespace on other platforms);
-//   - the architecture is not `arm64` (the observed Snapdragon X WSL2
-//     nvidia-smi shim is Windows-on-ARM only — Microsoft's WoA is ARM-only
-//     by spec, so a Linux x86_64 host that exposes `nvidia-smi` cannot be
-//     this shim);
+//   - the architecture is not `arm64` (the observed nvidia-smi shim is
+//     Windows-on-ARM only — Microsoft's WoA is ARM-only by spec, so a Linux
+//     x86_64 host that exposes `nvidia-smi` cannot be this shim);
 //   - `/proc/driver/nvidia/` exists on Linux (real NVIDIA kernel driver
 //     bound; the observed shim never creates this path).
 // The remaining case (ARM64 Linux with no `/proc/driver/nvidia/` populated) is
-// the Snapdragon X shim profile and is rejected by the caller.
+// the WoA shim profile and is rejected by the caller.
 const NVIDIA_DRIVER_PROC_PATH = "/proc/driver/nvidia";
 
 function nvidiaHostLooksGenuine(): boolean {
@@ -398,7 +397,7 @@ export function detectGpu(): GpuDetection | null {
         const platform = detectNvidiaPlatform();
         // Off Spark/Station/Jetson firmware, layer a denylist check and the
         // trust-tier gate before trusting the nvidia-smi probe. The observed
-        // Snapdragon X WSL2 nvidia-smi shim emits a `JMJWOA-Generic-*`
+        // Windows-on-ARM WSL2 nvidia-smi shim emits a `JMJWOA-Generic-*`
         // placeholder name AND ships no `/proc/driver/nvidia/` directory, so
         // either signal alone is sufficient to reject. Treat any denylisted
         // row as a poisoned probe and reject the whole result — partial

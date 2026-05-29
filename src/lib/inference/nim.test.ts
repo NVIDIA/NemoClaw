@@ -392,7 +392,7 @@ describe("nim", () => {
       }
     });
 
-    // The observed Snapdragon X WSL2 nvidia-smi shim returns a generic name
+    // The observed Windows-on-ARM WSL2 nvidia-smi shim returns a generic name
     // like "JMJWOA-Generic-GPU" for non-NVIDIA hardware. The widened denylist
     // must reject the full `JMJWOA-Generic-*` family, not just the GPU suffix
     // observed in the wild today. NPU and any future suffix should also be
@@ -429,8 +429,8 @@ describe("nim", () => {
 
     // A mixed-row spoof — one denylisted row alongside one normal NVIDIA row —
     // must reject the entire probe. Partial-trust filtering would surface the
-    // normal row as if it were a real GPU, which is exactly what the Snapdragon
-    // X shim could exploit if the kernel-interface gate were ever bypassed.
+    // normal row as if it were a real GPU, which is exactly what the WoA shim
+    // could exploit if the kernel-interface gate were ever bypassed.
     it("rejects the whole probe when any row is denylisted on generic firmware", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
@@ -454,8 +454,8 @@ describe("nim", () => {
     });
 
     // Trust-tier gate: on ARM64 Linux with generic firmware, the absence of
-    // `/proc/driver/nvidia/` is the Snapdragon X N1X shim profile and must be
-    // rejected even when the nvidia-smi probe returns a plausible-looking
+    // `/proc/driver/nvidia/` is the Windows-on-ARM WSL shim profile and must
+    // be rejected even when the nvidia-smi probe returns a plausible-looking
     // NVIDIA name. The shim was QA-confirmed to emit format-valid
     // `uuid`/`compute_cap`/`vbios_version` triples but never populates the
     // kernel-driver path.
@@ -522,8 +522,8 @@ describe("nim", () => {
     });
 
     // Counter-test: ARM64 Linux with `/proc/driver/nvidia/` present is a real
-    // kernel-driver-bound host (e.g. legitimate N1X with a real GB20y dGPU
-    // and the NVIDIA driver loaded) — the gate must trust it.
+    // kernel-driver-bound host (e.g. a real ARM64 board with an NVIDIA dGPU
+    // and the kernel driver loaded) — the gate must trust it.
     it("accepts known NVIDIA names when /proc/driver/nvidia/ is present on ARM64", () => {
       const runCapture = vi.fn((cmd: string | string[]) => {
         if (!Array.isArray(cmd)) throw new Error("expected argv array");
@@ -555,7 +555,7 @@ describe("nim", () => {
       }
     });
 
-    // The observed Snapdragon X WSL2 nvidia-smi shim is Windows-on-ARM only —
+    // The observed Windows-on-ARM WSL2 nvidia-smi shim is WoA/ARM64-only —
     // Microsoft's WoA is ARM-only by spec, so an x86_64 Linux host that
     // exposes `nvidia-smi` cannot be that shim. The trust-tier gate must
     // therefore trust x86_64 hosts whose `/proc/driver/nvidia/` is missing
