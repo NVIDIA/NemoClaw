@@ -1480,23 +1480,32 @@ function shieldsStatus(
         }
         process.exit(2);
       }
+      if (!state.fileHashes) {
+        // Legacy state file pre-dates the content seal. Perm-only
+        // verification cannot prove the locked bytes were not already
+        // tampered before the upgrade, so we cannot honestly call this
+        // a clean lockdown. Surface integrity-unknown and exit with
+        // status 2 (same code as drifted) so scripts treat it as a
+        // failure until the operator seals an explicit baseline.
+        console.error(
+          "  Shields: UP (UNSEALED — content integrity unknown for legacy lockdown)",
+        );
+        console.error(policyLine);
+        if (state.shieldsDownAt) {
+          console.error(`  Last unlocked: ${state.shieldsDownAt}`);
+        }
+        console.error(
+          "  Recovery: rebuild the sandbox for a known-good baseline,",
+        );
+        console.error(
+          `  or set NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and re-run \`nemoclaw ${sandboxName} shields up\` to seal the current bytes.`,
+        );
+        process.exit(2);
+      }
       console.log(`  Shields: ${posture.statusText}`);
       console.log(policyLine);
       if (state.shieldsDownAt) {
         console.log(`  Last unlocked: ${state.shieldsDownAt}`);
-      }
-      if (!state.fileHashes) {
-        // Legacy state file pre-dates the content seal — perm-only
-        // verification cannot catch a host-root chmod-write-chmod tamper
-        // cycle. `shields up` refuses to seal an unverified baseline by
-        // default, so point at the recovery paths instead of suggesting
-        // a bare re-up that will abort.
-        console.log(
-          "  Notice: no content seal recorded; rebuild the sandbox for a known-good baseline",
-        );
-        console.log(
-          `  or set NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and re-run \`nemoclaw ${sandboxName} shields up\` to seal the current bytes.`,
-        );
       }
       return;
     }

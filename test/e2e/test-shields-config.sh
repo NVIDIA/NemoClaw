@@ -341,9 +341,30 @@ else
   elif [ ! -s "$ORIG_CONTENT_FILE" ]; then
     fail "Original ${CONFIG_PATH} read returned an empty file"
   else
+    # When shields-up applied `chattr +i`, `chmod 644` alone would EPERM
+    # and the tamper would no-op — masking the seal check. Drop the
+    # immutable bit best-effort before the tamper, then restore it after
+    # so the post-tamper file is indistinguishable from the locked
+    # baseline by `stat`/`lsattr` alone. Track whether `+i` was applied
+    # via `lsattr -d` so we only re-apply when it was set before.
+    LSATTR_BEFORE=$(docker exec -u 0 "$CTR" lsattr -d "$CONFIG_PATH" 2>/dev/null | awk '{print $1}' || true)
+    HAD_IMMUTABLE_BIT=false
+    if echo "$LSATTR_BEFORE" | grep -q "i"; then
+      HAD_IMMUTABLE_BIT=true
+    fi
     docker exec -u 0 "$CTR" sh -c \
-      "chmod 644 ${CONFIG_PATH} && printf ' ' >> ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}" \
+      "chattr -i ${CONFIG_PATH} 2>/dev/null || true; \
+       chmod 644 ${CONFIG_PATH} && printf ' ' >> ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}" \
       >/dev/null 2>&1
+    TAMPER_EXIT=$?
+    if [ "$HAD_IMMUTABLE_BIT" = "true" ]; then
+      docker exec -u 0 "$CTR" chattr +i "$CONFIG_PATH" >/dev/null 2>&1 || true
+    fi
+    if [ "$TAMPER_EXIT" = "0" ]; then
+      pass "Tamper command executed (chmod-write-chmod) without error"
+    else
+      fail "Tamper command failed (exit ${TAMPER_EXIT}); cannot validate drift detection"
+    fi
     PERMS_AFTER_TAMPER=$(docker exec "$CTR" stat -c '%a %U:%G' "$CONFIG_PATH" 2>/dev/null || true)
     info "Config perms after chmod-write-chmod tamper: ${PERMS_AFTER_TAMPER}"
     if [ "$PERMS_AFTER_TAMPER" = "444 root:root" ]; then
@@ -391,12 +412,18 @@ else
     fi
 
     # Restore the original content as host root so the rest of the suite
-    # can continue against a clean lock. `docker exec -i` keeps stdin
+    # can continue against a clean lock. Drop the immutable bit (if any)
+    # before the write and re-apply it after so the file ends in the
+    # same chattr posture it started in. `docker exec -i` keeps stdin
     # open and we stream the backup file straight in — no command
     # substitution that would strip trailing newlines.
     docker exec -i -u 0 "$CTR" sh -c \
-      "chmod 644 ${CONFIG_PATH} && cat > ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}" \
+      "chattr -i ${CONFIG_PATH} 2>/dev/null || true; \
+       chmod 644 ${CONFIG_PATH} && cat > ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}" \
       <"$ORIG_CONTENT_FILE" >/dev/null 2>&1
+    if [ "$HAD_IMMUTABLE_BIT" = "true" ]; then
+      docker exec -u 0 "$CTR" chattr +i "$CONFIG_PATH" >/dev/null 2>&1 || true
+    fi
     POST_RESTORE_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1 || true)
     if echo "$POST_RESTORE_OUTPUT" | grep -q "Shields: UP (lockdown active)"; then
       pass "shields status clean after content restore"

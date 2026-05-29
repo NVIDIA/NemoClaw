@@ -706,7 +706,10 @@ describe("shields — unit logic", () => {
       return path.join(tmpDir, ".nemoclaw", "state");
     }
 
-    function writeLockedState(sandboxName: string): void {
+    function writeLockedState(
+      sandboxName: string,
+      extra: Record<string, unknown> = {},
+    ): void {
       fs.mkdirSync(stateDir(), { recursive: true });
       fs.writeFileSync(
         path.join(stateDir(), `shields-${sandboxName}.json`),
@@ -714,12 +717,23 @@ describe("shields — unit logic", () => {
           {
             shieldsDown: false,
             updatedAt: new Date().toISOString(),
+            ...extra,
           },
           null,
           2,
         ),
         { mode: 0o600 },
       );
+    }
+
+    const SEAL_HASH =
+      "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    function writeSealedLockedState(sandboxName: string): void {
+      writeLockedState(sandboxName, {
+        chattrApplied: true,
+        fileHashes: { "/sandbox/.openclaw/openclaw.json": SEAL_HASH },
+      });
     }
 
     it("prints DRIFTED with the issue list and exits 2 when the verifier reports drift", async () => {
@@ -765,7 +779,7 @@ describe("shields — unit logic", () => {
 
     it("prints a clean locked status when the verifier reports no drift", async () => {
       const sandboxName = "openclaw";
-      writeLockedState(sandboxName);
+      writeSealedLockedState(sandboxName);
       const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
       const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
 
@@ -836,28 +850,36 @@ describe("shields — unit logic", () => {
       expect(errorSpy).not.toHaveBeenCalled();
     });
 
-    it("logs a legacy-state notice when locked but no fileHashes seal is recorded", async () => {
+    it("exits 2 with an UNSEALED line when locked but no fileHashes seal is recorded", async () => {
       const sandboxName = "openclaw";
       writeLockedState(sandboxName);
-      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      const exitSpy = vi
+        .spyOn(process, "exit")
+        .mockImplementation((code?: string | number | null) => {
+          throw new Error(`exit ${String(code)}`);
+        });
 
       const { shieldsStatus } = await loadShieldsModule();
-      shieldsStatus(sandboxName, true, {
-        verifyLockState: () => ({ ok: true, issues: [] }),
-        resolveConfig: () => ({
-          agentName: "openclaw",
-          configPath: "/sandbox/.openclaw/openclaw.json",
-          configDir: "/sandbox/.openclaw",
+      expect(() =>
+        shieldsStatus(sandboxName, true, {
+          verifyLockState: () => ({ ok: true, issues: [] }),
+          resolveConfig: () => ({
+            agentName: "openclaw",
+            configPath: "/sandbox/.openclaw/openclaw.json",
+            configDir: "/sandbox/.openclaw",
+          }),
         }),
-      });
+      ).toThrow("exit 2");
 
-      const lines = logSpy.mock.calls.map((args) => args[0]).join("\n");
-      expect(lines).toContain(
-        "Notice: no content seal recorded; rebuild the sandbox for a known-good baseline",
+      const errors = errorSpy.mock.calls.map((args) => args[0]).join("\n");
+      expect(errors).toContain(
+        "Shields: UP (UNSEALED — content integrity unknown for legacy lockdown)",
       );
-      expect(lines).toContain(
+      expect(errors).toContain(
         `or set NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and re-run \`nemoclaw ${sandboxName} shields up\` to seal the current bytes.`,
       );
+      expect(exitSpy).toHaveBeenCalledWith(2);
     });
 
     it("surfaces content-drift entries from the verifier without re-locking", async () => {
