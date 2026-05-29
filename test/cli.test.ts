@@ -279,11 +279,34 @@ function createCloudflaredServiceDir(prefix: string): { sandboxName: string; ser
   return { sandboxName, serviceDir };
 }
 
-function createDebugCommandTestEnv(prefix: string): Record<string, string> {
+function createDebugCommandTestEnv(
+  prefix: string,
+  options: { extraSandboxNames?: string[] } = {},
+): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
   const sandboxName = `${prefix}${process.pid.toString(36)}-${Date.now().toString(36)}`;
   fs.mkdirSync(localBin, { recursive: true });
+  // Register the env-sourced sandbox plus any extra names supplied via the
+  // --sandbox flag so the validation gate added for #4494 accepts them.
+  writeSandboxRegistry(home, sandboxName);
+  if (options.extraSandboxNames && options.extraSandboxNames.length > 0) {
+    const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
+    const current = JSON.parse(fs.readFileSync(registryPath, "utf-8")) as {
+      sandboxes: Record<string, unknown>;
+      defaultSandbox?: string | null;
+    };
+    for (const extra of options.extraSandboxNames) {
+      current.sandboxes[extra] = {
+        name: extra,
+        model: "test-model",
+        provider: "nvidia-prod",
+        gpuEnabled: false,
+        policies: [],
+      };
+    }
+    fs.writeFileSync(registryPath, JSON.stringify(current), { mode: 0o600 });
+  }
   fs.writeFileSync(
     path.join(localBin, "openshell"),
     [
@@ -1489,11 +1512,26 @@ describe("CLI dispatch", () => {
   it("debug --sandbox NAME targets the specified sandbox", testTimeoutOptions(30_000), () => {
     const r = runWithEnv(
       "debug --quick --sandbox mybox",
-      createDebugCommandTestEnv("nemoclaw-cli-debug-sandbox-"),
+      createDebugCommandTestEnv("nemoclaw-cli-debug-sandbox-", { extraSandboxNames: ["mybox"] }),
       30000,
     );
     expect(r.code).toBe(0);
     expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
+  });
+
+  it("debug --sandbox NAME rejects an unregistered name and exits non-zero", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-debug-unknown-"));
+    writeSandboxRegistry(home);
+    const tarball = path.join(home, "out.tar.gz");
+    const r = runWithEnv(
+      `debug --sandbox does-not-exist --output ${tarball} 2>&1`,
+      { HOME: home },
+      30000,
+    );
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("does-not-exist");
+    expect(r.out).toContain("not registered");
+    expect(fs.existsSync(tarball)).toBe(false);
   });
 
   it("debug --sandbox without a name exits 1", () => {
@@ -1522,7 +1560,18 @@ describe("CLI dispatch", () => {
     fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
     fs.writeFileSync(
       path.join(home, ".nemoclaw", "sandboxes.json"),
-      JSON.stringify({ sandboxes: {}, defaultSandbox: "ghost" }),
+      JSON.stringify({
+        sandboxes: {
+          mybox: {
+            name: "mybox",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "ghost",
+      }),
       { mode: 0o600 },
     );
     const r = runWithEnv("debug --quick --sandbox mybox 2>&1", { HOME: home }, 30000);

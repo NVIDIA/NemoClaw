@@ -5,13 +5,48 @@ import type { DebugOptions } from "./debug";
 
 export interface RunDebugCommandDeps {
   getDefaultSandbox: () => string | undefined;
+  isSandboxKnown: (name: string) => boolean;
   runDebug: (options: DebugOptions) => void;
+  env?: NodeJS.ProcessEnv;
+  errorLine?: (message: string) => void;
+  exit?: (code: number) => never;
+}
+
+function resolveExplicitName(
+  options: DebugOptions,
+  env: NodeJS.ProcessEnv,
+): { name: string; source: "flag" | "env" } | null {
+  const flagName = options.sandboxName?.trim();
+  if (flagName) return { name: flagName, source: "flag" };
+  const envName = (env.NEMOCLAW_SANDBOX ?? env.SANDBOX_NAME ?? "").trim();
+  if (envName) return { name: envName, source: "env" };
+  return null;
 }
 
 export function runDebugCommandWithOptions(options: DebugOptions, deps: RunDebugCommandDeps): void {
   const opts = { ...options };
-  if (!opts.sandboxName) {
+  const env = deps.env ?? process.env;
+  const errorLine = deps.errorLine ?? ((msg: string) => console.error(msg));
+  const exit =
+    deps.exit ??
+    ((code: number) => {
+      process.exit(code);
+    });
+
+  const explicit = resolveExplicitName(opts, env);
+  if (explicit) {
+    if (!deps.isSandboxKnown(explicit.name)) {
+      const sourceLabel =
+        explicit.source === "env" ? " (from NEMOCLAW_SANDBOX/SANDBOX_NAME)" : "";
+      errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} is not registered.`);
+      errorLine("  Run `nemoclaw list` to see available sandboxes.");
+      exit(1);
+      return;
+    }
+    opts.sandboxName = explicit.name;
+  } else {
     opts.sandboxName = deps.getDefaultSandbox();
   }
+
   deps.runDebug(opts);
 }

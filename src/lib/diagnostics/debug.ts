@@ -517,6 +517,11 @@ export function createTarball(collectDir: string, output: string): boolean {
       ? `killed by signal ${result.signal}`
       : `exited with code ${result.status ?? "unknown"}`;
     error(`Failed to create tarball at ${output} (tar ${reason})`);
+    try {
+      rmSync(output, { force: true });
+    } catch {
+      /* best-effort cleanup of partial tarball */
+    }
     process.exitCode = 1;
     return false;
   }
