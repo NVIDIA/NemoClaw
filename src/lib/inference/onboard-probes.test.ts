@@ -22,7 +22,8 @@ const {
 
 describe("OpenAI-compatible inference probe response parsing", () => {
   it("does not host-smoke Hermes Provider with the ambient OPENAI_API_KEY", () => {
-    expect(shouldSmokeOpenAiLikeOnboardRoute("hermes-provider")).toBe(false);
+    expect(shouldSmokeOpenAiLikeOnboardRoute("hermes-provider", "OPENAI_API_KEY")).toBe(false);
+    expect(shouldSmokeOpenAiLikeOnboardRoute("hermes-provider", "NOUS_API_KEY")).toBe(true);
     expect(shouldSmokeOpenAiLikeOnboardRoute("openai-api")).toBe(true);
   });
 
