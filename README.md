@@ -13,14 +13,16 @@
 NVIDIA NemoClaw is an open source reference stack for running always-on AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
 It provides guided onboarding, a hardened blueprint, routed inference, network policy, and lifecycle management through a single CLI.
 
-**Supported agents:** [OpenClaw](https://openclaw.ai) (default) and [Hermes](https://get-hermes.ai/).
-
-> **Alpha software**
->
-> NemoClaw is available in early preview starting March 16, 2026.
+> [!NOTE]
+> NemoClaw is **alpha software**.
 > This software is not production-ready.
 > Interfaces, APIs, and behavior may change without notice.
 > See [Release Notes](https://docs.nvidia.com/nemoclaw/latest/about/release-notes.html) for the current version.
+
+**Supported agents:**
+
+- [OpenClaw](https://openclaw.ai) (default)
+- [Hermes](https://get-hermes.ai/)
 
 For capabilities, architecture, security controls, and the full feature list, see the [NemoClaw documentation](https://docs.nvidia.com/nemoclaw/latest/).
 
