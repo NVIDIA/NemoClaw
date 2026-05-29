@@ -1,11 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { runVerifyOnboardSmokeHarness } from "../../../test/helpers/onboard-smoke-verifier-harness";
 
 const {
   getChatCompletionsProbeCurlArgs,
@@ -29,89 +29,11 @@ describe("OpenAI-compatible inference probe response parsing", () => {
   });
 
   it("skips only the Hermes OAuth smoke path in the runtime verifier", () => {
-    const harness = String.raw`
-const Module = require("node:module");
-const originalLoad = Module._load;
-const calls = [];
-
-process.env.VITEST = "false";
-
-Module._load = function patchedLoad(request, parent, isMain) {
-  if (request === "../credentials/store") {
-    return {
-      getCredential(name) {
-        calls.push(["getCredential", name]);
-        return "stored-" + name;
-      },
-      normalizeCredentialValue(value) {
-        calls.push(["normalizeCredentialValue", value]);
-        return value;
-      },
-      resolveProviderCredential(name) {
-        calls.push(["resolveProviderCredential", name]);
-        return "resolved-" + name;
-      },
-    };
-  }
-  if (request === "../adapters/http/probe") {
-    return {
-      getCurlTimingArgs() {
-        return [];
-      },
-      runChatCompletionsStreamingProbe() {
-        throw new Error("unexpected streaming probe");
-      },
-      runCurlProbe(args) {
-        const authHeader =
-          args.find((arg) => String(arg).startsWith("Authorization: Bearer ")) || "no-auth";
-        calls.push(["runCurlProbe", args[args.length - 1], authHeader]);
-        return {
-          ok: true,
-          httpStatus: 200,
-          curlStatus: 0,
-          message: "OK",
-          body: '{"choices":[{"message":{"content":"OK"}}]}',
-        };
-      },
-      runStreamingEventProbe() {
-        throw new Error("unexpected streaming event probe");
-      },
-    };
-  }
-  return originalLoad.apply(this, arguments);
-};
-
-const { verifyOnboardInferenceSmoke } = require(process.env.PROBES_MODULE);
-console.log = (...args) => calls.push(["log", args.join(" ")]);
-
-const baseOptions = {
-  endpointUrl: "https://api.example.com/v1",
-  model: "nous/test-model",
-  provider: "hermes-provider",
-};
-
-verifyOnboardInferenceSmoke({ ...baseOptions, credentialEnv: "OPENAI_API_KEY" });
-verifyOnboardInferenceSmoke({ ...baseOptions, credentialEnv: "NOUS_API_KEY" });
-verifyOnboardInferenceSmoke({
-  ...baseOptions,
-  credentialEnv: "OPENAI_API_KEY",
-  forceOpenAiLike: true,
-});
-
-process.stdout.write(JSON.stringify(calls));
-`;
-    const result = spawnSync(process.execPath, ["-e", harness], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      env: {
-        ...process.env,
-        PROBES_MODULE: path.join(process.cwd(), "dist/lib/inference/onboard-probes.js"),
-        VITEST: "false",
-      },
-    });
-
-    expect(result.status, result.stderr).toBe(0);
-    const calls = JSON.parse(result.stdout) as [string, ...unknown[]][];
+    const calls = runVerifyOnboardSmokeHarness([
+      { credentialEnv: "OPENAI_API_KEY" },
+      { credentialEnv: "NOUS_API_KEY" },
+      { credentialEnv: "OPENAI_API_KEY", forceOpenAiLike: true },
+    ]);
     expect(
       calls.filter((call) =>
         ["resolveProviderCredential", "getCredential", "runCurlProbe"].includes(call[0]),
