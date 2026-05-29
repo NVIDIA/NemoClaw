@@ -47,6 +47,9 @@ Optional demo of scale up/down:
 
 
 
+<img width="1926" height="550" alt="Screenshot 2026-05-28 at 12 42 34 PM" src="https://github.com/user-attachments/assets/25b876d5-19a8-4758-8880-5702b38d5f51" />
+
+
 
 
 If install keeps failing with **rollout failed** or Deployment **`0 up-to-date`**:
