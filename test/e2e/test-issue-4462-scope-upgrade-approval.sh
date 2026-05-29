@@ -35,7 +35,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 
 PASS=0
 FAIL=0
-SKIP=0
 TOTAL=0
 
 pass() {
@@ -887,8 +886,8 @@ if [ "$TEST_MODE" = "legacy-repro" ]; then
   legacy_gateway_pinned_approve_must_fail "$scope_request_id" || exit 1
   section "Summary"
   echo ""
-  printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m | \033[33mSkip: %d\033[0m\n' \
-    "$TOTAL" "$PASS" "$FAIL" "$SKIP"
+  printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m\n' \
+    "$TOTAL" "$PASS" "$FAIL"
   echo ""
   if [ "$FAIL" -gt 0 ]; then
     echo "RESULT: FAILED - ${FAIL} test(s) failed"
@@ -971,8 +970,8 @@ pass "approved agent output contains no fallback or pairing markers"
 
 section "Summary"
 echo ""
-printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m | \033[33mSkip: %d\033[0m\n' \
-  "$TOTAL" "$PASS" "$FAIL" "$SKIP"
+printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m\n' \
+  "$TOTAL" "$PASS" "$FAIL"
 echo ""
 
 if [ "$FAIL" -gt 0 ]; then
