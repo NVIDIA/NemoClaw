@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 // Import from compiled dist/ so coverage is attributed correctly.
 import {
+  buildDmesgRerunCommand,
   createTarball,
   dmesgRestrictedMessage,
   getDebugCompletionMessages,
@@ -160,5 +161,55 @@ describe("dmesgRestrictedMessage (#4366)", () => {
     const msg = dmesgRestrictedMessage("some-reason");
     expect(msg).toMatch(/sudo nemoclaw debug/);
     expect(msg.toLowerCase()).toMatch(/re-?run/);
+  });
+
+  it("warns that privileged diagnostics may contain sensitive data", () => {
+    const msg = dmesgRestrictedMessage("some-reason");
+    expect(msg.toLowerCase()).toMatch(/sensitive/);
+  });
+
+  it("preserves --quick in the rerun hint when the user invoked debug --quick", () => {
+    const msg = dmesgRestrictedMessage("some-reason", { quick: true });
+    expect(msg).toContain("sudo nemoclaw debug --quick");
+  });
+
+  it("preserves --output in the rerun hint when the user supplied an output path", () => {
+    const msg = dmesgRestrictedMessage("some-reason", { output: "/tmp/out.tgz" });
+    expect(msg).toContain("sudo nemoclaw debug --output '/tmp/out.tgz'");
+  });
+
+  it("preserves both --quick and --output together", () => {
+    const msg = dmesgRestrictedMessage("some-reason", {
+      quick: true,
+      output: "/tmp/out.tgz",
+    });
+    expect(msg).toContain("sudo nemoclaw debug --quick --output '/tmp/out.tgz'");
+  });
+
+  it("falls back to bare 'sudo nemoclaw debug' when no options are supplied", () => {
+    const msg = dmesgRestrictedMessage("some-reason");
+    expect(msg).toMatch(/`sudo nemoclaw debug`/);
+  });
+});
+
+describe("buildDmesgRerunCommand (#4366)", () => {
+  it("returns the bare command when no options are set", () => {
+    expect(buildDmesgRerunCommand()).toBe("sudo nemoclaw debug");
+  });
+
+  it("appends --quick when opts.quick is true", () => {
+    expect(buildDmesgRerunCommand({ quick: true })).toBe("sudo nemoclaw debug --quick");
+  });
+
+  it("appends a single-quoted --output path", () => {
+    expect(buildDmesgRerunCommand({ output: "/tmp/out.tgz" })).toBe(
+      "sudo nemoclaw debug --output '/tmp/out.tgz'",
+    );
+  });
+
+  it("escapes single quotes inside the output path", () => {
+    expect(buildDmesgRerunCommand({ output: "/tmp/o'ut.tgz" })).toBe(
+      "sudo nemoclaw debug --output '/tmp/o'\\''ut.tgz'",
+    );
   });
 });
