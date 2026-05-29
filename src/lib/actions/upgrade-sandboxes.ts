@@ -74,7 +74,11 @@ export async function upgradeSandboxes(
   const { stale, unknown } = classifyUpgradeableSandboxes(
     sandboxes,
     liveNames,
-    sandboxVersion.checkAgentVersion,
+    (name) =>
+      sandboxVersion.checkAgentVersion(
+        name,
+        liveNames.has(name) ? { forceProbe: true } : undefined,
+      ),
   );
 
   if (stale.length === 0 && unknown.length === 0) {
