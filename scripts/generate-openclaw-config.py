@@ -732,7 +732,8 @@ def build_config(env: dict | None = None) -> dict:
     for _plugin_id, _provider_keys in _bundled_provider_plugins.items():
         if provider_key not in _provider_keys:
             plugin_entries[_plugin_id] = {"enabled": False}
-    if "discord" in _ch_cfg: plugin_entries["discord"] = {"enabled": True}
+    if "discord" in _ch_cfg:
+        plugin_entries["discord"] = {"enabled": True}
     plugins = {"entries": plugin_entries}
     plugin_load_paths: list[str] = []
     for plugin in openclaw_plugins:
