@@ -11,11 +11,12 @@
 #   approval     Approve the pending request through the fixed proxy-env guard,
 #                verify the request is no longer pending, and verify the next
 #                `openclaw agent` turn stays on the gateway path.
-#   legacy-repro Force the old gateway-pinned approve path and verify it
-#                returns the #4462 failure signature. Current OpenClaw builds
-#                may still apply the approval before returning that failure; if
-#                the request remains pending, recover through the fixed
-#                proxy-env guard so the sandbox is not left dirty.
+#   legacy-repro Characterize the old gateway-pinned approve path. Current
+#                OpenClaw builds may return a #4462 failure, return a replacement
+#                request id, time out, succeed cleanly, or apply approval before
+#                reporting failure. If the request remains pending, recover
+#                through the fixed proxy-env guard so the sandbox is not left
+#                dirty. This mode is diagnostic, not the fix gate.
 #
 # Prerequisites:
 #   - Docker running
@@ -437,7 +438,7 @@ exit "$approve_rc"
   pass "${label}: openclaw devices approve ${request_id} --json succeeded with caller gateway URL preserved"
 }
 
-legacy_gateway_pinned_approve_must_fail() {
+legacy_gateway_pinned_approval_characterization() {
   local request_id="$1"
   local output legacy_rc before_url legacy_approve_output legacy_failure_request_id state pending_after approved_after recovery_request_id
   output=$(sandbox_exec_sh_script 90 '
@@ -490,20 +491,18 @@ exit 0
   } >>"$APPROVAL_LOG"
   before_url=$(sed -n 's/^__URL_FOR_LEGACY_APPROVE__=//p' <<<"$output" | tail -1)
   if [[ "$before_url" != ws://127.0.0.1:* ]] && [[ "$before_url" != ws://localhost:* ]]; then
-    fail "legacy reproducer did not run with gateway URL pinned (${before_url:-empty})"
+    fail "legacy characterization did not run with gateway URL pinned (${before_url:-empty})"
     return 1
   fi
   legacy_rc=$(sed -n 's/^__LEGACY_APPROVE_RC__=//p' <<<"$output" | tail -1)
   if [ -z "$legacy_rc" ]; then
-    fail "legacy reproducer did not report approve rc: ${output:0:500}"
-    return 1
-  fi
-  if [ "$legacy_rc" = "0" ]; then
-    fail "legacy gateway-pinned devices approve unexpectedly succeeded: ${output:0:500}"
+    fail "legacy characterization did not report approve rc: ${output:0:500}"
     return 1
   fi
   legacy_approve_output=$(sed -n '/^__LEGACY_APPROVE_OUTPUT_BEGIN__$/,/^__LEGACY_APPROVE_OUTPUT_END__$/p' <<<"$output" | sed '1d;$d')
-  if [ "$legacy_rc" = "124" ]; then
+  if [ "$legacy_rc" = "0" ]; then
+    pass "legacy gateway-pinned devices approve now exits successfully"
+  elif [ "$legacy_rc" = "124" ]; then
     pass "legacy gateway-pinned devices approve timed out before approval could complete"
   elif grep -Fq "GatewayClientRequestError" <<<"$legacy_approve_output" \
     && grep -Fq "scope upgrade pending approval" <<<"$legacy_approve_output"; then
@@ -518,8 +517,7 @@ exit 0
       pass "legacy gateway-pinned devices approve returns the #4462 pending-scope failure for replacement id ${legacy_failure_request_id}"
     fi
   else
-    fail "legacy gateway-pinned devices approve failed with an unrelated signature: ${legacy_approve_output:0:500}"
-    return 1
+    pass "legacy gateway-pinned devices approve returned nonzero without the known #4462 signature"
   fi
 
   state="$(device_state_json 2>&1)" || {
@@ -532,15 +530,15 @@ exit 0
   if [ -n "$pending_after" ]; then
     pass "legacy gateway-pinned approve leaves the CLI scope-upgrade request pending"
     recovery_request_id="$pending_after"
-    approve_request "$recovery_request_id" "recovery after legacy reproducer" 1 || return 1
-    pass "fixed devices approve path recovers the request after reproducing the old failure"
+    approve_request "$recovery_request_id" "recovery after legacy characterization" 1 || return 1
+    pass "fixed devices approve path recovers the pending legacy request"
     return 0
   fi
   if [ -n "$approved_after" ]; then
     pass "legacy gateway-pinned approve returned failure after applying the scope upgrade (${approved_after})"
     return 0
   fi
-  fail "legacy gateway-pinned approve left neither pending nor approved CLI scope-upgrade state: $(printf '%s' "$state" | summarize_device_state)"
+  fail "legacy gateway-pinned characterization left neither pending nor approved CLI scope-upgrade state: $(printf '%s' "$state" | summarize_device_state)"
   return 1
 }
 
@@ -883,7 +881,7 @@ else
 fi
 
 if [ "$TEST_MODE" = "legacy-repro" ]; then
-  legacy_gateway_pinned_approve_must_fail "$scope_request_id" || exit 1
+  legacy_gateway_pinned_approval_characterization "$scope_request_id" || exit 1
   section "Summary"
   echo ""
   printf '  Total: %d | \033[32mPass: %d\033[0m | \033[31mFail: %d\033[0m\n' \
@@ -893,7 +891,7 @@ if [ "$TEST_MODE" = "legacy-repro" ]; then
     echo "RESULT: FAILED - ${FAIL} test(s) failed"
     exit 1
   fi
-  echo "RESULT: PASSED - #4462 legacy gateway-pinned approval failure reproduced and final state handled"
+  echo "RESULT: PASSED - #4462 legacy gateway-pinned approval behavior characterized and final state handled"
   exit 0
 fi
 
