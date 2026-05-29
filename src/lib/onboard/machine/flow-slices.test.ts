@@ -8,14 +8,19 @@ import type { OnboardFlowContext } from "./flow-context";
 import { advanceTo } from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import type { OnboardSequencePhase } from "./sequence-runner";
-import { initialOnboardFlowPhases, runInitialOnboardFlowSequence } from "./flow-slices";
+import {
+  coreOnboardFlowPhases,
+  initialOnboardFlowPhases,
+  runCoreOnboardFlowSequence,
+  runInitialOnboardFlowSequence,
+} from "./flow-slices";
 
 function cloneSession(session: Session): Session {
   return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
 }
 
-function runtime() {
-  let session = createSession({ machine: { version: 1, state: "preflight", stateEnteredAt: null, revision: 1 } });
+function runtime(state: Session["machine"]["state"] = "preflight") {
+  let session = createSession({ machine: { version: 1, state, stateEnteredAt: null, revision: 1 } });
   const updateSession = (mutator: (value: Session) => Session | void): Session => {
     session = cloneSession(mutator(cloneSession(session)) ?? session);
     return cloneSession(session);
@@ -82,6 +87,17 @@ describe("onboard flow slices", () => {
     ).toEqual(["preflight", "gateway"]);
   });
 
+  it("selects only core provider/sandbox phases", () => {
+    expect(
+      coreOnboardFlowPhases([
+        phase("gateway", "provider_selection"),
+        phase("provider_selection", "sandbox"),
+        phase("sandbox", "openclaw"),
+        phase("openclaw", "policies"),
+      ]).map((entry) => entry.state),
+    ).toEqual(["provider_selection", "sandbox"]);
+  });
+
   it("runs the initial slice and stops at provider selection", async () => {
     const result = await runInitialOnboardFlowSequence({
       context: context(),
@@ -94,5 +110,19 @@ describe("onboard flow slices", () => {
     });
 
     expect(result.session.machine.state).toBe("provider_selection");
+  });
+
+  it("runs the core slice and stops at the selected branch state", async () => {
+    const result = await runCoreOnboardFlowSequence({
+      context: context(),
+      runtime: runtime("provider_selection"),
+      phases: [
+        { state: "provider_selection", run: (ctx) => ({ context: ctx, result: [advanceTo("inference"), advanceTo("sandbox")] }) },
+        { state: "sandbox", run: (ctx) => ({ context: ctx, result: { type: "transition", next: "openclaw", transitionKind: "branch" } }) },
+        phase("openclaw", "policies"),
+      ],
+    });
+
+    expect(result.session.machine.state).toBe("openclaw");
   });
 });
