@@ -672,3 +672,283 @@ const ctx = module.exports;
     assert.ok(payload.callOrder.includes("promptAndRebuild"));
   });
 });
+
+// Regression: `nemoclaw <sandbox> channels add telegram` followed by a
+// rebuild produced no Telegram process, no logs, and no errors — the
+// command reported a successful rebuild but the bridge silently no-op'd
+// (#4314, #4390). After the fix the channel block is baked enabled and
+// addSandboxChannel runs a post-rebuild probe that reports either a
+// startup breadcrumb confirmation or an actionable warning. These tests
+// drive the verifier through stubbed sandbox-exec output so the contract
+// is pinned regardless of OpenClaw/OpenShell runtime availability.
+describe("channels add verifies bridge startup after rebuild (issue #4314, #4390)", () => {
+  function buildInteractivePreamble(): string {
+    const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
+    return String.raw`
+const resolver = require(${j("adapters/openshell/resolve.js")});
+resolver.resolveOpenshell = () => "/fake/openshell";
+
+const openshellRuntime = require(${j("adapters/openshell/runtime.js")});
+openshellRuntime.runOpenshell = () => ({ status: 0, stdout: "", stderr: "" });
+
+const processRecovery = require(${j("actions/sandbox/process-recovery.js")});
+const execCalls = [];
+processRecovery.executeSandboxExecCommand = (name, command) => {
+  execCalls.push({ name, command });
+  if (typeof command === "string" && command.startsWith("cat /sandbox/.openclaw/openclaw.json")) {
+    return { status: 0, stdout: JSON.stringify(global.__testConfig || {}), stderr: "" };
+  }
+  if (typeof command === "string" && command.indexOf("tail -n 400 /tmp/gateway.log") !== -1) {
+    return { status: 0, stdout: global.__testLog || "", stderr: "" };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+processRecovery.executeSandboxCommand = () => null;
+
+const rebuild = require(${j("actions/sandbox/rebuild.js")});
+let rebuildCount = 0;
+rebuild.rebuildSandbox = async () => { rebuildCount += 1; };
+
+const runner = require(${j("runner.js")});
+runner.run = () => ({ status: 0, stdout: "", stderr: "" });
+runner.runCapture = () => "";
+
+const gatewayRuntime = require(${j("gateway-runtime-action.js")});
+gatewayRuntime.recoverNamedGatewayRuntime = async () => ({ recovered: true });
+
+const credentials = require(${j("credentials/store.js")});
+credentials.getCredential = (key) => process.env[key] || null;
+credentials.saveCredential = () => true;
+credentials.deleteCredential = () => true;
+credentials.prompt = async () => "y";
+
+const onboard = require(${j("onboard.js")});
+onboard.isNonInteractive = () => false;
+
+const onboardProviders = require(${j("onboard/providers.js")});
+onboardProviders.upsertMessagingProviders = () => {};
+
+const registry = require(${j("state/registry.js")});
+registry.getSandbox = () => ({
+  name: "test-sb",
+  agent: global.__testAgent || "openclaw",
+  messagingChannels: [],
+  disabledChannels: [],
+  providerCredentialHashes: {},
+});
+registry.updateSandbox = () => true;
+
+const policies = require(${j("policy/index.js")});
+policies.listPresets = () => [{ name: "telegram" }, { name: "slack" }, { name: "discord" }];
+policies.applyPreset = () => true;
+policies.getAppliedPresets = () => [];
+
+const onboardSession = require(${j("state/onboard-session.js")});
+onboardSession.loadSession = () => ({ sandboxName: "test-sb", policyPresets: [] });
+onboardSession.updateSession = (mutator) => {
+  const s = { sandboxName: "test-sb", policyPresets: [] };
+  mutator(s);
+  return s;
+};
+
+const logs = [];
+const origLog = console.log;
+console.log = (...args) => {
+  const line = args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ");
+  logs.push(line);
+};
+
+const channelModule = require(${j("actions/sandbox/policy-channel.js")});
+
+module.exports = { channelModule, execCalls, getRebuildCount: () => rebuildCount, logs };
+`;
+  }
+
+  it("confirms the startup breadcrumb when the bridge logs the starting-provider line", () => {
+    const preamble = buildInteractivePreamble();
+    const script = `${preamble}
+global.__testConfig = { channels: { telegram: { enabled: true, accounts: { default: {} } } } };
+global.__testLog = [
+  "[telegram] [default] starting provider",
+  "[telegram] [default] provider ready (Bot API reachable; agent replies use inference.local)",
+].join("\\n");
+const ctx = module.exports;
+(async () => {
+  await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    rebuildCount: ctx.getRebuildCount(),
+    execCalls: ctx.execCalls.length,
+    logs: ctx.logs,
+  }) + "\\n");
+})().catch((err) => process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message }) + "\\n"));
+`;
+    const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, payload.error);
+    assert.equal(payload.rebuildCount, 1);
+    assert.ok(
+      payload.logs.some((line: string) => line.includes("'telegram' bridge startup detected")),
+      `expected startup confirmation in logs; got:\n${payload.logs.join("\n")}`,
+    );
+  });
+
+  it("warns when the baked config does not mark the channel enabled", () => {
+    const preamble = buildInteractivePreamble();
+    const script = `${preamble}
+global.__testConfig = { channels: { telegram: { accounts: { default: {} } } } };
+global.__testLog = "";
+const ctx = module.exports;
+(async () => {
+  await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({ logs: ctx.logs }) + "\\n");
+})().catch((err) => process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message }) + "\\n"));
+`;
+    const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, payload.error);
+    assert.ok(
+      payload.logs.some((line: string) => line.includes("was not marked enabled in baked openclaw.json")),
+      `expected enabled-flag warning; got:\n${payload.logs.join("\n")}`,
+    );
+  });
+
+  it("warns when the gateway log shows no bridge breadcrumb yet", () => {
+    const preamble = buildInteractivePreamble();
+    const script = `${preamble}
+global.__testConfig = { channels: { telegram: { enabled: true, accounts: { default: {} } } } };
+global.__testLog = "";
+const ctx = module.exports;
+(async () => {
+  await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({ logs: ctx.logs }) + "\\n");
+})().catch((err) => process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message }) + "\\n"));
+`;
+    const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, payload.error);
+    assert.ok(
+      payload.logs.some((line: string) => line.includes("did not log a startup breadcrumb")),
+      `expected missing-breadcrumb warning; got:\n${payload.logs.join("\n")}`,
+    );
+  });
+
+  it("does NOT claim success when only the no-start breadcrumb is present", () => {
+    // Regression: the original verifier matched any [<channel>] line and
+    // fell through to "bridge startup detected" even when the only log line
+    // was the preload's own "bridge did not start within Ns" diagnostic.
+    // That handed users a false-green signal for the exact failure mode
+    // #4314 reported.
+    const preamble = buildInteractivePreamble();
+    const script = `${preamble}
+global.__testConfig = { channels: { telegram: { enabled: true, accounts: { default: {} } } } };
+global.__testLog = "[telegram] [default] bridge did not start within 15s; check channels.telegram.enabled, plugin entries, and gateway log";
+const ctx = module.exports;
+(async () => {
+  await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({ logs: ctx.logs }) + "\\n");
+})().catch((err) => process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message }) + "\\n"));
+`;
+    const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, payload.error);
+    assert.ok(
+      !payload.logs.some((line: string) => line.includes("bridge startup detected")),
+      `must not claim startup detected; got:\n${payload.logs.join("\n")}`,
+    );
+    assert.ok(
+      payload.logs.some((line: string) =>
+        line.includes("logged credential/startup warnings") || line.includes("did not start within"),
+      ),
+      `expected the no-start breadcrumb to be surfaced; got:\n${payload.logs.join("\n")}`,
+    );
+  });
+
+  it("forwards credential-placeholder warnings surfaced by the bridge", () => {
+    const preamble = buildInteractivePreamble();
+    const script = `${preamble}
+global.__testConfig = { channels: { telegram: { enabled: true, accounts: { default: {} } } } };
+global.__testLog = "[telegram] [default] credential placeholder mismatch: openclaw.json botToken does not match runtime TELEGRAM_BOT_TOKEN placeholder";
+const ctx = module.exports;
+(async () => {
+  await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({ logs: ctx.logs }) + "\\n");
+})().catch((err) => process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message }) + "\\n"));
+`;
+    const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, payload.error);
+    assert.ok(
+      payload.logs.some((line: string) => line.includes("logged credential/startup warnings")),
+      `expected credential warning summary; got:\n${payload.logs.join("\n")}`,
+    );
+  });
+
+  it("skips the OpenClaw-shaped probe for Hermes sandboxes (avoids false negatives)", () => {
+    const preamble = buildInteractivePreamble();
+    const script = `${preamble}
+global.__testAgent = "hermes";
+// Hermes sandboxes do not use /sandbox/.openclaw/openclaw.json; if the
+// verifier mistakenly ran it would read an empty config and warn about a
+// missing enabled flag. We confirm the absence of that misleading guidance.
+global.__testConfig = { channels: { telegram: {} } };
+global.__testLog = "";
+const ctx = module.exports;
+(async () => {
+  await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({ logs: ctx.logs, execCalls: ctx.execCalls.length }) + "\\n");
+})().catch((err) => process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message }) + "\\n"));
+`;
+    const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, payload.error);
+    assert.equal(payload.execCalls, 0, "verifier must not run any sandbox exec probes for Hermes");
+    assert.ok(
+      !payload.logs.some((line: string) => line.includes("was not marked enabled in baked openclaw.json")),
+      `Hermes sandbox should not see OpenClaw-shaped warning; got:\n${payload.logs.join("\n")}`,
+    );
+    assert.ok(
+      !payload.logs.some((line: string) => line.includes("bridge startup detected")),
+      `Hermes sandbox should not claim OpenClaw-style startup confirmation; got:\n${payload.logs.join("\n")}`,
+    );
+  });
+
+  it("skips the verifier for WhatsApp (QR-only) and WeChat (different runtime key)", () => {
+    const preamble = buildInteractivePreamble();
+    const script = `${preamble}
+// WhatsApp uses the in-sandbox-qr path which short-circuits before the
+// bridge probe. Extend the preset list (already stubbed in the preamble)
+// so applyPreset can match the whatsapp name.
+policies.listPresets = () => [{ name: "whatsapp" }, { name: "telegram" }, { name: "slack" }, { name: "discord" }];
+const ctx = module.exports;
+global.__testConfig = { channels: {} };
+global.__testLog = "";
+(async () => {
+  await ctx.channelModule.addSandboxChannel("test-sb", { channel: "whatsapp" });
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({ logs: ctx.logs, execCalls: ctx.execCalls.length }) + "\\n");
+})().catch((err) => process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message }) + "\\n"));
+`;
+    const result = runScript(script, { NEMOCLAW_NON_INTERACTIVE: "" });
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, payload.error);
+    assert.equal(payload.execCalls, 0, "verifier must not probe sandbox exec for QR-only WhatsApp");
+    assert.ok(
+      !payload.logs.some((line: string) => line.includes("was not marked enabled in baked openclaw.json")),
+      `WhatsApp should not trigger OpenClaw-shaped warning; got:\n${payload.logs.join("\n")}`,
+    );
+  });
+});

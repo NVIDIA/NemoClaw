@@ -127,13 +127,22 @@ RUN node --experimental-strip-types /opt/nemoclaw-hermes-config/generate-config.
 RUN mkdir -p /sandbox/.hermes/plugins/nemoclaw \
     && cp -r /opt/nemoclaw-hermes-plugin/* /sandbox/.hermes/plugins/nemoclaw/
 
-# Write a default SOUL.md for the sandboxed agent.
+# Write the default SOUL.md (agent identity) for the sandboxed agent.
+# This is the stock Hermes default soul (hermes_cli/default_soul.py,
+# DEFAULT_SOUL_MD) shipped verbatim. The OpenShell/NemoClaw environment is
+# described separately via HERMES_ENVIRONMENT_HINT (below), which Hermes
+# appends to the system prompt's environment-hints block — the correct slot
+# for execution-environment facts, keeping the identity slot unmodified.
 RUN mkdir -p /sandbox/.hermes/memories \
-    && printf '%s\n' \
-    'You are a helpful AI assistant running inside an NVIDIA OpenShell sandbox.' \
-    'Your inference is routed through NemoClaw. You have access to terminal,' \
-    'file, and web tools. Be concise and helpful.' \
+    && printf '%s' \
+    'You are Hermes Agent, an intelligent AI assistant created by Nous Research. You are helpful, knowledgeable, and direct. You assist users with a wide range of tasks including answering questions, writing and editing code, analyzing information, creative work, and executing actions via your tools. You communicate clearly, admit uncertainty when appropriate, and prioritize being genuinely useful over being verbose unless otherwise directed below. Be targeted and efficient in your exploration and investigations.' \
     > /sandbox/.hermes/SOUL.md
+
+# Describe the execution environment via Hermes's dedicated environment-hint
+# mechanism (agent/prompt_builder.py:build_environment_hints). This lands in
+# the system prompt's environment slot, not the identity slot, and is read once
+# at prompt-build time so it stays in the cache-safe portion of the prompt.
+ENV HERMES_ENVIRONMENT_HINT="You are running inside an NVIDIA OpenShell sandbox, with inference routed through NemoClaw. Your terminal, file, and web tools execute against the sandbox filesystem and egress through the OpenShell L7 proxy, which enforces network policy and rewrites credentials at the boundary, so you never see raw secrets. Your config and memory live under /sandbox/.hermes and are mutable unless shields are up. Work within the sandbox boundary."
 
 # Set mutable-default permissions (640 files, 3770 config root).
 # The sandbox user can write config; the gateway user can read it via

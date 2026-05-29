@@ -182,13 +182,13 @@ Writable agent state such as plugins, skills, hooks, and workspace metadata live
 By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
 For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so config and writable state entry points cannot be changed by the sandbox user.
 
-- **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `700` and `openclaw.json` with mode `600`, so the agent can read and write config directly.
+- **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly. A reviewed host-side immutability workflow should compare the intended ownership and mode with the live sandbox filesystem before treating the config tree as locked.
 - **Config integrity hash.** The image includes a SHA256 hash of `openclaw.json`. In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash. When the hash is root-owned and read-only, startup enforces it and refuses to start if the hash does not match.
 - **Gateway token environment.** The gateway exports `OPENCLAW_GATEWAY_TOKEN` and writes it to `/tmp/nemoclaw-proxy-env.sh` for interactive sandbox sessions. Keep this in mind when deciding whether a workload should run with mutable config or an immutable config posture.
 
 | Aspect | Detail |
 |---|---|
-| Default | The sandbox keeps `/sandbox/.openclaw` writable (`700 sandbox:sandbox`), sets `openclaw.json` to `600 sandbox:sandbox`, lets the agent manage state directly, and has the gateway place `OPENCLAW_GATEWAY_TOKEN` in `/tmp/nemoclaw-proxy-env.sh` for interactive shells. |
+| Default | The sandbox keeps `/sandbox/.openclaw` writable (`2770 sandbox:sandbox`), sets `openclaw.json` to `660 sandbox:sandbox`, lets the agent manage state directly, and has the gateway place `OPENCLAW_GATEWAY_TOKEN` in `/tmp/nemoclaw-proxy-env.sh` for interactive shells. |
 | What you can change | Apply a reviewed host-side immutability workflow to lock config and state directories with DAC permissions and the immutable flag where available. |
 | Risk of default | A writable `.openclaw` directory lets the agent modify its own gateway config: disabling CORS or redirecting inference to an attacker-controlled endpoint. |
 | Recommendation | For always-on assistants handling sensitive workloads, lock config after initial setup. For development workflows, the writable default is appropriate. |
@@ -400,7 +400,7 @@ The scanner intercepts Write, Edit, and similar tool calls targeting memory and 
 | Aspect | Detail |
 |---|---|
 | Default | Enabled. The plugin registers a `before_tool_call` hook that scans for 14 high-confidence secret patterns. |
-| What it covers | Examples include `.openclaw/memory/`, `.openclaw/workspace/`, `.openclaw/agents/`, `.openclaw/skills/`, `.openclaw/hooks/`, `.openclaw/credentials/`, `.openclaw/openclaw.json`, `.nemoclaw/`, and `MEMORY.md`; the exact coverage is defined by `MEMORY_PATH_SEGMENTS` and enforced through `isMemoryPath()`. |
+| What it covers | Three classifiers, all enforced through `isMemoryPath()`: (1) absolute `MEMORY_PATH_SEGMENTS` such as `/.openclaw/memory/`, `/.openclaw/workspace/`, `/.openclaw/agents/`, `/.openclaw/skills/`, `/.openclaw/hooks/`, `/.openclaw/credentials/`, `/.openclaw/openclaw.json`, `/.nemoclaw/`; (2) canonical workspace basenames in `MEMORY_BASENAMES` (`IDENTITY.md`, `MEMORY.md`, `SOUL.md`, `USER.md`, `AGENTS.md`) matched regardless of the surrounding path; and (3) lexically-normalized workspace-relative writes matching `MEMORY_RELATIVE_PREFIXES` (`.openclaw/`, `.nemoclaw/`, `memory/`) or named workspace daily memory paths, for embedded-fallback mode where the host's path resolver is unavailable. |
 | What you can change | This is not a user-facing knob. The plugin enforces it automatically. |
 | Risk if relaxed | Without scanning, the agent could persist API keys or tokens in memory files that survive across sessions and backups. |
 | Recommendation | No action needed. If a write is blocked, the agent receives an actionable error listing the detected patterns. |

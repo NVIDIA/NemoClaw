@@ -112,6 +112,16 @@ e2e_messaging_read_config_surface() {
     cat "${path}"
     return 0
   fi
+  local sandbox_name
+  sandbox_name="$(e2e_context_get E2E_SANDBOX_NAME)"
+  if [[ -n "${sandbox_name}" && "${path}" == /sandbox/* ]]; then
+    local remote
+    remote="$(timeout 30 openshell sandbox exec --name "${sandbox_name}" -- cat "${path}" 2>/dev/null || true)"
+    if [[ -n "${remote}" ]]; then
+      printf '%s\n' "${remote}"
+      return 0
+    fi
+  fi
   e2e_fail "expected-state.messaging.config-surface missing config content/path for ${path}"
 }
 

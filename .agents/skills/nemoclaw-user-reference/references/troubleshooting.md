@@ -211,7 +211,7 @@ $ NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 nemoclaw onbo
 Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only when other hosts on the
 network should be able to reach the gateway.
 
-See Environment Variables (use the `nemoclaw-user-reference` skill) for the full list of port overrides.
+See [Environment Variables](commands.md#environment-variables) for the full list of port overrides.
 
 ### Running multiple sandboxes simultaneously
 
@@ -355,7 +355,8 @@ Run `nemoclaw status` for a broader gateway health report.
 ### Invalid sandbox name
 
 Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
-Uppercase letters are automatically lowercased.
+The CLI rejects names that do not match these rules.
+It prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant` and you can rerun with the suggested slug.
 
 Names that collide with global CLI commands are also rejected.
 Reserved names include `onboard`, `list`, `deploy`, `setup`, `start`, `stop`, `status`, `debug`, `uninstall`, `credentials`, and `help`.
@@ -397,6 +398,9 @@ Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headro
 On macOS Apple Silicon, the build can stall part-way through with no progress and no error, leaving the wizard waiting indefinitely.
 
 Preflight inspects `docker info` for `NCPU` and `MemTotal` and prints a warning when the runtime falls below 4 vCPU or 8 GiB.
+In interactive onboarding, the warning prompt defaults to abort, so pressing Enter stops the run before the sandbox build reaches the likely stall point.
+Type `y` only when you intentionally want to continue on the smaller runtime.
+Non-interactive onboarding prints the warning and continues.
 On Colima, raise the resources before re-running onboard:
 
 ```console
@@ -773,6 +777,23 @@ You scan the iLink QR from WeChat on your phone and NemoClaw registers the captu
 WhatsApp pairs entirely inside the sandbox.
 NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes after you add the channel on the host.
 Run `openclaw channels login --channel whatsapp` inside OpenClaw sandboxes, or run `hermes whatsapp` inside Hermes sandboxes.
+
+### `scripts/rcf_patch.py` is missing from the blueprint
+
+`scripts/rcf_patch.py` is intentionally absent from current NemoClaw blueprints.
+Older QA plans used that helper for a Dockerfile "Patch-4" test that corrupted the build-time `replaceConfigFile` monkey-patch and expected `ERROR: Patch 4 (replaceConfigFile EACCES) not applied`.
+The old Patch-4 fail-closed test no longer applies because NemoClaw no longer patches OpenClaw's compiled `replaceConfigFile` source at image build time.
+
+Current sandboxes use a mutable-default config model instead.
+Before a reviewed host-side lockdown, `/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow.
+After lockdown, runtime config mutations should fail cleanly or route users to the supported host-side NemoClaw command.
+
+To validate this area now, use the config lifecycle tests instead of looking for `rcf_patch.py`:
+
+```console
+$ npm run build:cli
+$ npm test -- test/repro-2681-group-writable.test.ts
+```
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
@@ -1167,7 +1188,10 @@ Recent NVIDIA Container Toolkit installs configure the Docker daemon for Contain
 If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
 The standard NemoClaw installer detects this gap before onboarding, first tries to enable the NVIDIA CDI refresh systemd units, and falls back to generating the spec directly with `nvidia-ctk`.
 If you run `nemoclaw onboard` directly, preflight prints the manual remediation instead.
-The underlying fix is the same on any Docker host whose `docker info` advertises a non-empty `CDISpecDirs`.
+The native Linux fix is the same on Docker hosts whose `docker info` advertises a non-empty `CDISpecDirs`.
+On WSL with Docker Desktop, Docker may advertise CDI directories even though `--device nvidia.com/gpu=all` is not usable from the WSL distro.
+For that runtime, NemoClaw skips Linux CDI repair and uses Docker's `--gpus` compatibility path for sandbox GPU access.
+This compatibility path can be retired once Docker Desktop exposes usable `nvidia.com/gpu` CDI specs inside WSL, or once OpenShell no longer requires host-visible CDI specs for Docker Desktop WSL GPU passthrough.
 
 Enable the refresh units, verify they list `nvidia.com/gpu` entries, then rerun onboarding:
 
@@ -1183,6 +1207,12 @@ If the refresh units are unavailable or do not generate CDI devices, generate th
 $ sudo mkdir -p /etc/cdi
 $ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 $ nvidia-ctk cdi list
+```
+
+On WSL with Docker Desktop, confirm Docker Desktop WSL integration is enabled for your distro and verify Docker GPU access from WSL:
+
+```console
+$ docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benchmark
 ```
 
 If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
@@ -1354,7 +1384,7 @@ If you see this error, use the host-side config command instead:
 $ nemoclaw <name> config set --key <dotpath> --value '<json-or-string>' --restart
 ```
 
-Refer to Commands (use the `nemoclaw-user-reference` skill) for the full list of supported configuration keys.
+Refer to [Commands](commands.md) for the full list of supported configuration keys.
 
 ### OpenClaw dashboard is unreachable after extended uptime on Brev
 
