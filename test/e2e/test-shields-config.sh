@@ -331,9 +331,11 @@ else
   # Use a byte-preserving temp file for backup/restore. Bash command
   # substitution `$(...)` strips trailing newlines, which would change
   # the file's SHA-256 between backup and restore and create false
-  # drift after the post-restore status check.
+  # drift after the post-restore status check. The temp file is cleaned
+  # up at the end of the phase — do not install an EXIT trap here
+  # because `sandbox-teardown.sh` already owns the EXIT trap and a bare
+  # `trap '...' EXIT` would clobber the sandbox cleanup.
   ORIG_CONTENT_FILE=$(mktemp -t nemoclaw-shields-orig.XXXXXX)
-  trap 'rm -f "$ORIG_CONTENT_FILE"' EXIT
   if ! docker exec -u 0 "$CTR" cat "$CONFIG_PATH" >"$ORIG_CONTENT_FILE" 2>/dev/null; then
     fail "Could not read original ${CONFIG_PATH} content as host root"
   elif [ ! -s "$ORIG_CONTENT_FILE" ]; then
@@ -402,6 +404,7 @@ else
       fail "shields status should report clean UP after content restore: ${POST_RESTORE_OUTPUT}"
     fi
   fi
+  rm -f "$ORIG_CONTENT_FILE"
 fi
 
 # ══════════════════════════════════════════════════════════════════

@@ -1157,38 +1157,69 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
       assertLegacyLayout: assertNoLegacyStateLayout,
       expectedHashes: state.fileHashes,
     });
+    // Classify the verifier output. "no seal recorded" entries mean the
+    // verifier wanted a hash for a file that has no recorded baseline —
+    // this happens both for legacy lockdowns (no fileHashes at all) and
+    // for partial lockdowns whose seal predates a newly added sensitive
+    // file. Everything else under `isHashVerificationIssue` is a real
+    // content-trust failure (drift, sha256sum failure, unparsable
+    // output) and never launderable.
+    const hashIssues = issues.filter(isHashVerificationIssue);
+    const realHashDrift = hashIssues.filter(
+      (entry) => !entry.includes("no seal recorded"),
+    );
+    if (realHashDrift.length > 0) {
+      console.error("  ERROR: locked file seal cannot be trusted:");
+      for (const entry of realHashDrift) {
+        console.error(`    - ${entry}`);
+      }
+      console.error(
+        "  Refusing to re-seal a tampered baseline. Restore the file or rebuild the sandbox, then re-run shields up.",
+      );
+      return failShieldsCommand(
+        `Locked file seal cannot be trusted: ${realHashDrift.join("; ")}`,
+        opts.throwOnError,
+      );
+    }
+
+    // Legacy lockdown (no fileHashes at all) or partial lockdown (some
+    // sealed, some missing because the locked-file set grew between
+    // releases). Both cases would seal the *current* bytes as the new
+    // trusted baseline, which perm-only verification cannot prove are
+    // untampered. Require explicit operator opt-in via the env var.
+    const hasMissingSeals = hashIssues.length > realHashDrift.length;
+    const requiresLegacyOptIn = !state.fileHashes || hasMissingSeals;
+    if (
+      requiresLegacyOptIn &&
+      process.env.NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE !== "1"
+    ) {
+      console.error(
+        state.fileHashes
+          ? "  ERROR: locked sandbox seal is missing entries (locked file set grew after the existing seal was captured)."
+          : "  ERROR: locked sandbox has no content seal (state predates the seal).",
+      );
+      console.error(
+        "  Perm-only verification cannot prove the unsealed files have not already been tampered with.",
+      );
+      console.error(
+        `  Recovery: rebuild the sandbox for a known-good baseline, then run \`nemoclaw ${sandboxName} shields up\`.`,
+      );
+      console.error(
+        `  Or accept the current bytes as the trusted baseline by setting NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and rerunning.`,
+      );
+      return failShieldsCommand(
+        state.fileHashes
+          ? "Locked sandbox seal is incomplete; refusing to seal the missing entries without explicit operator acknowledgement"
+          : "Locked sandbox has no content seal; refusing to seal a legacy baseline without explicit operator acknowledgement",
+        opts.throwOnError,
+      );
+    }
+
     if (issues.length === 0) {
-      // Legacy locked state predates the content seal. Capturing a seal
-      // now would treat the *current* file content as the trusted
-      // baseline, but perm-only verification gives no proof that the
-      // bytes match the image-original. A pre-existing content tamper
-      // would be sealed in as the new "trusted" content.
-      //
-      // Refuse by default and ask the operator to either:
-      //   1. rebuild the sandbox (clean baseline), then `shields up`;
-      //   2. explicitly opt in via `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1`
-      //      to acknowledge that the current bytes are trusted.
-      // Once the operator opts in, the seal is captured and subsequent
-      // `shields up`/`shields status` runs detect any future drift.
+      // Verifier saw a clean lock. If the legacy-baseline opt-in was
+      // required (no fileHashes), capture the seal now so future
+      // `shields status` runs can detect content drift.
       if (!state.fileHashes) {
-        if (process.env.NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE !== "1") {
-          console.error(
-            "  ERROR: locked sandbox has no content seal (state predates the seal).",
-          );
-          console.error(
-            "  Perm-only verification cannot prove the locked files have not already been tampered with.",
-          );
-          console.error(
-            `  Recovery: rebuild the sandbox for a known-good baseline, then run \`nemoclaw ${sandboxName} shields up\`.`,
-          );
-          console.error(
-            `  Or accept the current bytes as the trusted baseline by setting NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and rerunning.`,
-          );
-          return failShieldsCommand(
-            "Locked sandbox has no content seal; refusing to seal a legacy baseline without explicit operator acknowledgement",
-            opts.throwOnError,
-          );
-        }
         try {
           const filesToHash = [
             target.configPath,
@@ -1212,25 +1243,10 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
       console.log("  Lockdown is already active.");
       return;
     }
-    // Any hash-verification failure (content drift, sha256sum failure,
-    // unparsable output, missing seal entry) means the seal cannot be
-    // trusted. Re-locking on such a state would launder the tampered or
-    // unknown content into a fresh seal, so refuse and ask the operator
-    // to restore the file (or rebuild the sandbox) before re-running.
-    const hashIssues = issues.filter(isHashVerificationIssue);
-    if (hashIssues.length > 0) {
-      console.error("  ERROR: locked file seal cannot be trusted:");
-      for (const entry of hashIssues) {
-        console.error(`    - ${entry}`);
-      }
-      console.error(
-        "  Refusing to re-seal a tampered baseline. Restore the file or rebuild the sandbox, then re-run shields up.",
-      );
-      return failShieldsCommand(
-        `Locked file seal cannot be trusted: ${hashIssues.join("; ")}`,
-        opts.throwOnError,
-      );
-    }
+    // At this point the verifier still flagged something: perm drift, or
+    // missing-seal entries that the operator has just opted in to. In
+    // both cases re-applying the lock rewrites perms and captures a
+    // fresh, complete seal.
     console.log(
       `  Lockdown drifted — re-applying lock for ${sandboxName}...`,
     );
