@@ -44,7 +44,7 @@ function runEntryGuard(opts: {
       `  shift\n` +
       `done\n` +
       `if [ -n "$out" ]; then\n` +
-      `  printf '%s' ${JSON.stringify(stagedContent)} > "$out"\n` +
+      `  printf '%b' ${JSON.stringify(stagedContent)} > "$out"\n` +
       `fi\nexit 0\n`;
   fs.writeFileSync(curlStub, curlBody, { mode: 0o755 });
 
@@ -75,7 +75,8 @@ function runEntryGuard(opts: {
       if _staged="$(mktemp /tmp/nemoclaw-installer-XXXXXX 2>/dev/null)" \\
          && curl -fsSL "$_installer_url" -o "$_staged" 2>/dev/null \\
          && [[ -s "$_staged" ]] \\
-         && head -1 "$_staged" | grep -qE '^#!.*(sh|bash)'; then
+         && head -1 "$_staged" | grep -qE '^#!.*(sh|bash)' \\
+         && bash -n "$_staged" 2>/dev/null; then
         chmod +x "$_staged"
         export NEMOCLAW_INSTALLER_STAGED="$_staged"
         # TEST capture point: record the intended exec argv + the staged
@@ -177,6 +178,15 @@ describe("install.sh entry-guard staging — #4414 curl|bash stdin self-stage", 
     // must not chmod+x + exec it. The shebang check catches that.
     const outcome = runEntryGuard({
       curlOutputContent: "<html><body>404</body></html>\n",
+    });
+
+    expect(outcome.execIntent.length).toBe(0);
+    expect(outcome.status).toBe(0);
+  });
+
+  it("falls through when the staged installer fails bash syntax validation", () => {
+    const outcome = runEntryGuard({
+      curlOutputContent: "#!/usr/bin/env bash\nif true; then\n",
     });
 
     expect(outcome.execIntent.length).toBe(0);

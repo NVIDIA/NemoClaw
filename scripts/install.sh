@@ -2492,13 +2492,14 @@ if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { 
     if _staged="$(mktemp /tmp/nemoclaw-installer-XXXXXX 2>/dev/null)" \
       && curl -fsSL "$_installer_url" -o "$_staged" 2>/dev/null \
       && [[ -s "$_staged" ]] \
-      && head -1 "$_staged" | grep -qE '^#!.*(sh|bash)'; then
+      && head -1 "$_staged" | grep -qE '^#!.*(sh|bash)' \
+      && bash -n "$_staged" 2>/dev/null; then
       chmod +x "$_staged"
       export NEMOCLAW_INSTALLER_STAGED="$_staged"
       exec bash "$_staged" "$@"
     fi
-    # Staging failed (mktemp / curl / empty / bad shebang) — fall through
-    # to direct main(). The legacy newgrp/re-curl path still applies.
+    # Staging failed (mktemp / curl / empty / bad shebang / syntax check) —
+    # fall through to direct main(). The legacy newgrp/re-curl path still applies.
     rm -f "${_staged:-}" 2>/dev/null
   fi
   main "$@"
