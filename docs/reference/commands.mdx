@@ -92,7 +92,7 @@ $ NEMOCLAW_SINGLE_SESSION=1 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 When existing sandboxes were created with OpenShell earlier than `0.0.37`, the installer prompts before running the new automatic gateway upgrade path.
 For scripted installs, set `NEMOCLAW_ACCEPT_EXPERIMENTAL_OPENSHELL_UPGRADE=1` to allow the installer to back up registered sandbox state, retire the old gateway, install the current supported OpenShell release, and restore state during onboarding.
 The automatic path is disabled if the existing `nemoclaw` CLI does not advertise `backup-all`; preserve sandbox state manually before retiring the old gateway in that case.
-To perform those steps manually, run `nemoclaw backup-all`, retire the old gateway with `openshell gateway destroy -g nemoclaw || openshell gateway destroy`, then rerun the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
+To perform those steps manually, run `nemoclaw backup-all`, retire the old gateway registration with `openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy` (both verbs are tried so the right one runs on either OpenShell release), stop any remaining privileged host gateway with `sudo pkill -f openshell-gateway`, then rerun the installer as `curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash`.
 
 The wizard prompts for a provider first, then collects the provider credential if needed.
 Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, Google Gemini, and compatible OpenAI or Anthropic endpoints.
@@ -390,6 +390,18 @@ $ nemoclaw my-assistant recover
 ### `nemoclaw <name> status`
 
 Show sandbox status, health, and inference configuration.
+
+Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
+The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, and `policies`.
+`openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks.
+The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, or the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`).
+The alias form `nemoclaw <name> status --json` requires the sandbox to be registered locally; the canonical form `nemoclaw sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
+
+```console
+$ nemoclaw my-assistant status
+$ nemoclaw my-assistant status --json
+$ nemoclaw sandbox status my-assistant --json
+```
 
 The command probes every inference provider and reports one of three states on the `Inference` line:
 
@@ -800,6 +812,9 @@ Upgrade a sandbox to the current agent version while preserving workspace state.
 The command backs up workspace state, destroys the old sandbox (including its host-side Docker image), recreates it with the current image via `onboard --resume`, and restores workspace state into the new sandbox.
 Credentials are stripped from backups before storage.
 Policy presets applied to the old sandbox are reapplied to the new one so your egress rules survive the rebuild.
+The recorded sandbox GPU mode is preserved across rebuild.
+A sandbox onboarded with an explicit GPU opt-out (stored as `sandboxGpuMode: "0"`, plus legacy registry entries that only record `gpuEnabled: false`) is recreated with the same opt-out, so the inner `onboard --resume` skips the Docker CDI GPU preflight on hosts without an NVIDIA GPU.
+Auto-mode sandboxes remain auto.
 
 ```console
 $ nemoclaw my-assistant rebuild [--yes|-y|--force] [--verbose|-v]

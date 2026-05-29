@@ -3334,9 +3334,9 @@ NON_INTERACTIVE=""
 NEMOCLAW_PROVIDER=""
 NEMOCLAW_NO_EXPRESS=""
 maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s\\n" \\
+printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s SANDBOX=%s\\n" \\
   "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
-  "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}"
+  "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
 '''
 env = dict(os.environ)
 env["INSTALLER_UNDER_TEST"] = installer
@@ -3414,11 +3414,12 @@ sys.exit(exit_code)
     expect(output).toMatch(
       /Express install will configure managed local Ollama with model qwen3\.6:35b/,
     );
+    expect(output).toMatch(/Sandbox name: my-spark-assistant/);
     expect(output).toMatch(/Sandbox policy: suggested mode, tier 'balanced'/);
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for DGX Spark/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-ollama MODEL=qwen3\.6:35b POLICY=suggested YES=1/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-ollama MODEL=qwen3\.6:35b POLICY=suggested YES=1 SANDBOX=my-spark-assistant/,
     );
   });
 
@@ -3460,7 +3461,7 @@ detect_express_platform
     expect(output).toMatch(/Run express install/);
     expect(output).toMatch(/Using express install for Windows WSL/);
     expect(output).toMatch(
-      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-windows-ollama MODEL= POLICY=suggested YES=1/,
+      /RESULT NON_INTERACTIVE=1 SUDO_MODE=prompt PROVIDER=install-windows-ollama MODEL= POLICY=suggested YES=1 SANDBOX=/,
     );
   });
 
@@ -3481,9 +3482,9 @@ NON_INTERACTIVE=""
 NEMOCLAW_PROVIDER=""
 NEMOCLAW_NO_EXPRESS=""
 maybe_offer_express_install
-printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s\\n" \\
+printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YES=%s SANDBOX=%s\\n" \\
   "\${NON_INTERACTIVE:-}" "\${NEMOCLAW_NON_INTERACTIVE_SUDO_MODE:-}" "\${NEMOCLAW_PROVIDER:-}" "\${NEMOCLAW_MODEL:-}" \\
-  "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}"
+  "\${NEMOCLAW_POLICY_MODE:-}" "\${NEMOCLAW_YES:-}" "\${NEMOCLAW_SANDBOX_NAME:-}"
 `,
       ],
       {
@@ -3502,7 +3503,7 @@ printf "RESULT NON_INTERACTIVE=%s SUDO_MODE=%s PROVIDER=%s MODEL=%s POLICY=%s YE
     expect(output).toMatch(/Detected DGX Spark/);
     expect(output).toMatch(/Skipping express prompt \(no TTY\)/);
     expect(output).not.toMatch(/Run express install/);
-    expect(output).toMatch(/RESULT NON_INTERACTIVE= SUDO_MODE= PROVIDER= MODEL= POLICY= YES=/);
+    expect(output).toMatch(/RESULT NON_INTERACTIVE= SUDO_MODE= PROVIDER= MODEL= POLICY= YES= SANDBOX=/);
   });
 });
 

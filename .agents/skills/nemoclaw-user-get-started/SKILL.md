@@ -15,6 +15,12 @@ Follow these steps to get started with NemoClaw and your first sandboxed OpenCla
 
 Make sure you have completed reviewing the [Prerequisites](references/prerequisites.md) before following this guide.
 
+**Use Agent Skills:**
+
+NemoClaw ships user skills for AI coding assistants.
+Load them when you want your assistant to walk through installation, inference choices, policy approvals, monitoring, or troubleshooting with NemoClaw-specific guidance.
+Refer to Agent Skills (use the `nemoclaw-user-agent-skills` skill).
+
 ## Install NemoClaw and Onboard OpenClaw Agent
 
 Download and run the installer script.
@@ -115,6 +121,7 @@ If you enable it, enter a Brave Search API key when prompted.
 
 The wizard also offers messaging channels such as Telegram, Discord, Slack, WeChat, and WhatsApp.
 Press a channel number to toggle it, then press Enter to continue.
+If you leave all channels unselected, pressing Enter skips messaging setup.
 If you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
 For example, Slack bot tokens must start with `xoxb-`.
 WeChat and WhatsApp are experimental.
@@ -212,3 +219,4 @@ openclaw tui
 ## Related Skills
 
 - `nemoclaw-user-overview` — NemoClaw Overview (use the `nemoclaw-user-overview` skill) to learn what NemoClaw is and its capabilities
+- `nemoclaw-user-agent-skills` — Agent Skills (use the `nemoclaw-user-agent-skills` skill) to load NemoClaw guidance into an AI coding assistant

@@ -1178,11 +1178,12 @@ Run `fix-coredns.sh` to point CoreDNS at the container gateway IP instead, then 
 ### `k3s` cannot find a freshly built image
 
 After building a new sandbox image, `k3s` inside the gateway container sometimes fails to pull it even though the image exists on the host.
-Destroy and restart the gateway, then re-run setup.
+Remove the gateway registration, stop any leftover host gateway process, then re-run setup.
 
 ```console
-$ openshell gateway destroy
-$ openshell gateway start
+$ openshell gateway remove nemoclaw
+$ sudo pkill -f openshell-gateway
+$ nemoclaw onboard --resume
 ```
 
 ### GPU passthrough on Spark

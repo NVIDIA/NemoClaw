@@ -12,6 +12,7 @@ import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
+import { isShieldsDown } from "../../shields";
 import { isGatewayHealthy } from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
@@ -329,6 +330,11 @@ export async function runSandboxSnapshot(
       const liveNames = parseLiveSandboxNames(isLive.output || "");
       if (!liveNames.has(sandboxName)) {
         console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
+        snapshotExit(1);
+      }
+      if (!isShieldsDown(sandboxName)) {
+        console.error("  Cannot create snapshot while shields are up.");
+        console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
         snapshotExit(1);
       }
       const label = request.name ? ` (--name ${request.name})` : "";

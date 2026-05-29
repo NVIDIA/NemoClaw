@@ -463,6 +463,8 @@ const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env
 const { getDockerDriverGatewayEndpoint } = dockerDriverGatewayEnv;
 const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
   require("./onboard/docker-driver-gateway-runtime-marker");
+const hostGatewayProcess: typeof import("./onboard/host-gateway-process") =
+  require("./onboard/host-gateway-process");
 const vmDriverProcess: typeof import("./onboard/vm-driver-process") = require("./onboard/vm-driver-process");
 const preflightUtils: typeof import("./onboard/preflight") = require("./onboard/preflight");
 const clusterImagePatch: typeof import("./cluster-image-patch") = require("./cluster-image-patch");
@@ -1120,38 +1122,19 @@ function removeDockerDriverGatewayRegistration(): boolean {
   return destroyResult.status === 0;
 }
 
-function terminateDockerDriverGatewayProcess(pid: number): boolean {
-  if (!isPidAlive(pid)) {
-    return false;
-  }
-
-  try {
-    process.kill(pid, "SIGTERM");
-    for (let i = 0; i < 10; i += 1) {
-      if (!isPidAlive(pid)) break;
-      sleepSeconds(1);
-    }
-    if (isPidAlive(pid)) process.kill(pid, "SIGKILL");
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function stopDockerDriverGatewayProcess(): boolean {
-  const pid = getDockerDriverGatewayPid();
-  if (pid === null || !isPidAlive(pid)) {
-    clearDockerDriverGatewayRuntimeFiles();
-    return false;
-  }
-  if (!isDockerDriverGatewayProcess(pid, resolveOpenShellGatewayBinary())) {
-    clearDockerDriverGatewayRuntimeFiles();
-    return false;
-  }
-
-  const stopped = terminateDockerDriverGatewayProcess(pid);
-  clearDockerDriverGatewayRuntimeFiles();
-  return stopped;
+  const result = hostGatewayProcess.stopHostGatewayProcesses(
+    {
+      log: console.log,
+      warn: console.warn,
+    },
+    {
+      gatewayBin: resolveOpenShellGatewayBinary(),
+      pidFile: getDockerDriverGatewayPidFile(),
+      stateDir: getDockerDriverGatewayStateDir(),
+    },
+  );
+  return result.stopped.length > 0;
 }
 
 function stopLegacyGatewayClusterContainer(): boolean {
@@ -1190,8 +1173,18 @@ function retireLegacyGatewayForDockerDriverUpgrade(): void {
 
 function restartDockerDriverGatewayProcessForDrift(pid: number, reason: string): void {
   console.log(`  Existing OpenShell Docker-driver gateway is stale (${reason}); restarting...`);
-  terminateDockerDriverGatewayProcess(pid);
-  clearDockerDriverGatewayRuntimeFiles();
+  hostGatewayProcess.stopHostGatewayProcesses(
+    {
+      log: console.log,
+      warn: console.warn,
+    },
+    {
+      gatewayBin: resolveOpenShellGatewayBinary(),
+      pidFile: getDockerDriverGatewayPidFile(),
+      pids: [pid],
+      stateDir: getDockerDriverGatewayStateDir(),
+    },
+  );
 }
 
 async function refreshDockerDriverGatewayReuseState(
@@ -1316,6 +1309,11 @@ function handleFinalGatewayStartFailure({
   printError(`    openshell gateway remove ${GATEWAY_NAME}`);
   printError(`    # For OpenShell releases that still expose lifecycle commands:`);
   printError(`    openshell gateway destroy -g ${GATEWAY_NAME}`);
+  if (process.platform === "linux") {
+    printError(
+      "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
+    );
+  }
   printError(
     `    docker volume ls -q --filter "name=openshell-cluster-${GATEWAY_NAME}" | xargs -r docker volume rm`,
   );
