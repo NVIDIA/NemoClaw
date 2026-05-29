@@ -1,7 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+vi.mock("../../runner", () => ({
+  ROOT: "/repo/root",
+  run: vi.fn(),
+  runCapture: vi.fn(),
+}));
+
 import {
   DOCKER_INFO_RUNTIME_PROBE_ATTEMPTS,
   DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS,
