@@ -276,11 +276,13 @@ $ nemoclaw my-assistant policy-remove huggingface --yes
 ### Homebrew Specifics
 
 The sandbox base image includes Homebrew (Linuxbrew), so applying the `brew` preset is the only step needed before installing a formula.
-A `/usr/local/bin/brew` symlink puts the entry point on the sandbox `PATH`, so the agent can run `brew install <formula>` directly:
+A `/usr/local/bin/brew` wrapper puts the entry point on the sandbox `PATH` while delegating to the Linuxbrew prefix.
+Installed formula commands are available from the Linuxbrew bin directory in sandbox shell sessions:
 
 ```console
 $ nemoclaw my-assistant policy-add brew --yes
 $ nemoclaw my-assistant exec -- brew install <formula>
+$ nemoclaw my-assistant exec -- bash -lc '<formula-command>'
 ```
 
 You do not need to bootstrap Homebrew, install build dependencies, or source `brew shellenv` inside the sandbox.
