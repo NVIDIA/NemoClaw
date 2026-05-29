@@ -125,7 +125,10 @@ const MEMORY_PATH_SEGMENTS = [
 
 /**
  * Returns true if the given file path targets a persistent memory location.
+ * Accepts `unknown` so a host runtime that hands us a non-string value cannot
+ * trigger a TypeError (#4518).
  */
-export function isMemoryPath(filePath: string): boolean {
+export function isMemoryPath(filePath: unknown): boolean {
+  if (typeof filePath !== "string" || filePath.length === 0) return false;
   return MEMORY_PATH_SEGMENTS.some((segment) => filePath.includes(segment));
 }

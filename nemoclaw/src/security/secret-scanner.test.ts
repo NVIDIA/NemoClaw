@@ -258,4 +258,12 @@ describe("isMemoryPath", () => {
   it("does not match unanchored MEMORY.md in project paths", () => {
     expect(isMemoryPath("/sandbox/my-project/MEMORY.md")).toBe(false);
   });
+
+  it("returns false for non-string input rather than throwing (#4518)", () => {
+    expect(isMemoryPath(undefined)).toBe(false);
+    expect(isMemoryPath(null)).toBe(false);
+    expect(isMemoryPath(42)).toBe(false);
+    expect(isMemoryPath({})).toBe(false);
+    expect(isMemoryPath("")).toBe(false);
+  });
 });

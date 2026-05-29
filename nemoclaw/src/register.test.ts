@@ -327,6 +327,72 @@ describe("before_tool_call secret scanner hook (#1233)", () => {
       expect.stringContaining("[SECURITY] Blocked memory write"),
     );
   });
+
+  it("does not throw when api.resolvePath returns undefined (#4518 embedded fallback)", () => {
+    const api = createMockApi();
+    (api.resolvePath as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      undefined as unknown as string,
+    );
+    const handler = getHookHandler(api);
+    expect(() =>
+      handler({
+        toolName: "write",
+        params: {
+          file_path: "IDENTITY.md",
+          content: "# IDENTITY.md - Who Am I?\nhello",
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("falls back to the raw path when api.resolvePath returns undefined, still blocks memory paths with secrets", () => {
+    const api = createMockApi();
+    (api.resolvePath as unknown as ReturnType<typeof vi.fn>).mockReturnValue(
+      undefined as unknown as string,
+    );
+    const handler = getHookHandler(api);
+    const fakeKey = "nvapi-" + "abcdefghijklmnopqrstuvwxyz";
+    const result = handler({
+      toolName: "write",
+      params: {
+        file_path: "/sandbox/.openclaw/memory/notes.md",
+        content: `api key: ${fakeKey}`,
+      },
+    });
+    expect(result).toMatchObject({ block: true });
+  });
+
+  it("swallows api.resolvePath throws and falls back to the raw path", () => {
+    const api = createMockApi();
+    (api.resolvePath as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      throw new Error("embedded fallback: resolver unavailable");
+    });
+    const handler = getHookHandler(api);
+    expect(() =>
+      handler({
+        toolName: "write",
+        params: {
+          file_path: "/sandbox/project/notes.txt",
+          content: "no secrets here",
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("treats a missing api.resolvePath as the raw path", () => {
+    const api = createMockApi();
+    (api as unknown as { resolvePath?: unknown }).resolvePath = undefined;
+    const handler = getHookHandler(api);
+    expect(() =>
+      handler({
+        toolName: "write",
+        params: {
+          file_path: "/sandbox/.openclaw/memory/notes.md",
+          content: "harmless",
+        },
+      }),
+    ).not.toThrow();
+  });
 });
 
 describe("getPluginConfig", () => {

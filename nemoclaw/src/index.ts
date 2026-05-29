@@ -340,6 +340,31 @@ export function getPluginConfig(api: OpenClawPluginApi): NemoClawConfig {
 /** Tool names that can write/modify files and should be scanned for secrets. */
 const WRITE_TOOL_NAMES = new Set(["write", "edit", "apply_patch", "notebook_edit"]);
 
+// Resolve a path through the host's resolver, falling back to the raw path
+// when the host runtime does not expose a usable resolver. OpenClaw's
+// embedded-fallback runtime (entered when gateway scope upgrade is pending,
+// see #4518) ships a degraded api object whose resolvePath returns undefined
+// or is missing entirely; previously this poisoned the downstream
+// `filePath.includes(...)` check and crashed the hook. Returning the raw
+// path keeps the memory-path check operational on its literal form.
+export function safeResolvePath(
+  api: Pick<OpenClawPluginApi, "resolvePath" | "logger">,
+  rawPath: string,
+): string {
+  if (typeof api.resolvePath !== "function") return rawPath;
+  try {
+    const resolved = api.resolvePath(rawPath);
+    return typeof resolved === "string" && resolved.length > 0 ? resolved : rawPath;
+  } catch (err) {
+    api.logger?.debug?.(
+      `safeResolvePath: host resolver threw for '${rawPath}': ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+    );
+    return rawPath;
+  }
+}
+
 export default function register(api: OpenClawPluginApi): void {
   // 1. Register /nemoclaw slash command (chat interface)
   api.registerCommand({
@@ -391,8 +416,11 @@ export default function register(api: OpenClawPluginApi): void {
         const rawPath = event.params["file_path"] ?? event.params["path"];
         if (typeof rawPath !== "string" || rawPath.length === 0) return undefined;
         // Resolve symlinks and traversal before checking — prevents bypasses like
-        // /sandbox/project/../../.openclaw/memory/secrets.md
-        const filePath = api.resolvePath(rawPath);
+        // /sandbox/project/../../.openclaw/memory/secrets.md. The host's
+        // resolver may be missing or return undefined in embedded fallback
+        // mode (#4518), so route through safeResolvePath which falls back to
+        // the raw path rather than crashing the hook.
+        const filePath = safeResolvePath(api, rawPath);
         if (!isMemoryPath(filePath)) return undefined;
 
         const content =
