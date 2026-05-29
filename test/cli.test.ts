@@ -976,6 +976,22 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Stop the cloudflared public-URL tunnel");
   });
 
+  it("tunnel --help exits 0 and shows tunnel subcommands", () => {
+    const r = run("tunnel --help");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("USAGE");
+    expect(r.out).toContain("$ nemoclaw tunnel <start|stop>");
+    expect(r.out).toContain("tunnel start");
+    expect(r.out).toContain("tunnel stop");
+  });
+
+  it("bare tunnel exits 0 and shows tunnel subcommands", () => {
+    const r = run("tunnel");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("tunnel start");
+    expect(r.out).toContain("tunnel stop");
+  });
+
   it("deprecated stop --help exits 0 and shows alias usage", () => {
     const r = run("stop --help");
     expect(r.code).toBe(0);
