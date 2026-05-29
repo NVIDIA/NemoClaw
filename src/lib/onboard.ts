@@ -187,13 +187,15 @@ const {
   getOllamaModelOptions,
   getOllamaWarmupCommand,
   OLLAMA_HOST_DOCKER_INTERNAL,
-  validateOllamaPortConfiguration,
   validateOllamaModel,
   validateLocalProvider,
 } = localInference;
-const { resolveOllamaInstallMenuEntry, assertOllamaUpgradeApplied } = require(
-  "./onboard/ollama-install-menu",
-);
+const {
+  checkOllamaPortsOrWarn,
+  resolveOllamaInstallMenuEntry,
+  resolveRunningOllamaMenuEntry,
+  assertOllamaUpgradeApplied,
+} = require("./onboard/ollama-install-menu");
 const {
   ensureOllamaAuthProxy,
   getOllamaProxyToken,
@@ -219,7 +221,9 @@ const {
 const onboardProviders = require("./onboard/providers");
 const { ensureResumeProviderReady } = require("./onboard/resume-provider-shim");
 const hermesProviderAuth = require("./hermes-provider-auth");
+const onboardHermesDashboard: typeof import("./onboard/hermes-dashboard") = require("./onboard/hermes-dashboard");
 const hermesAuth: typeof import("./onboard/hermes-auth") = require("./onboard/hermes-auth");
+const { warnIfLandlockUnsupported } = require("./onboard/landlock-warning");
 const {
   HERMES_AUTH_METHOD_API_KEY,
   HERMES_AUTH_METHOD_OAUTH,
@@ -231,7 +235,6 @@ const {
 } = hermesAuth;
 
 type HermesAuthMethod = import("./onboard/hermes-auth").HermesAuthMethod;
-
 function getHermesToolGatewayBroker(): any {
   return require("./hermes-tool-gateway-broker");
 }
@@ -288,7 +291,9 @@ const platformUtils: typeof import("./platform") = require("./platform");
 const { isWsl, shouldPatchCoredns } = platformUtils;
 const {
   getContainerRuntime,
+  getWindowsHostOllamaDockerRequirement,
   repairLocalInferenceSystemdOverrideOrExit,
+  rejectUnsupportedWindowsHostOllama,
   shouldFrontOllamaWithProxy,
 }: typeof import("./onboard/local-inference-topology") = require("./onboard/local-inference-topology");
 const { resolveOpenshell } = require("./adapters/openshell/resolve");
@@ -501,7 +506,6 @@ import {
   readMessagingChannelConfigFromEnv,
 } from "./messaging-channel-config";
 import { streamGatewayStart } from "./onboard/gateway";
-import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import {
   mergeRequiredHermesToolGatewayPolicyPresets,
   normalizeHermesToolGatewaySelections,
@@ -516,16 +520,13 @@ import {
   resolveQrSelectedChannels,
 } from "./onboard/messaging-state";
 import { getValidatedMessagingToken, getValidatedMessagingTokenByEnvKey } from "./onboard/messaging-token";
+import { runOllamaStartupOrGate } from "./onboard/ollama-startup";
 import type {
   DockerDriverBinaryOverrides,
   OpenShellInstallDeps,
   OpenShellInstallResult,
 } from "./onboard/openshell-install";
 import { decidePolicyCarryForward } from "./onboard/policy-carryforward";
-import {
-  backupSandboxBeforeRecreate,
-  shouldSkipPreRecreateBackup,
-} from "./onboard/sandbox-backup-on-recreate";
 import { getSuggestedPolicyPresets } from "./onboard/policy-presets";
 import {
   computeSetupPresetSuggestions as computeSetupPresetSuggestionsImpl,
@@ -534,6 +535,10 @@ import {
   type SetupPresetSuggestionOptions,
   setupPoliciesWithSelection as setupPoliciesWithSelectionImpl,
 } from "./onboard/policy-selection";
+import {
+  backupSandboxBeforeRecreate,
+  shouldSkipPreRecreateBackup,
+} from "./onboard/sandbox-backup-on-recreate";
 import {
   getResumeSandboxGpuOverrides,
   resolveSandboxGpuConfig,
@@ -2817,6 +2822,15 @@ async function createSandbox(
   } else {
     chatUiUrl = `http://127.0.0.1:${effectivePort}`;
   }
+  const hermesDashboardForwarding = onboardHermesDashboard.createHermesDashboardOnboardForwarding({
+    agentName: agent?.name,
+    env: process.env,
+    ensureForward: ensureAgentFixedForward,
+    note,
+    runOpenshell,
+    getApiForwardPort: () => getDashboardForwardPort(chatUiUrl),
+  });
+  const hermesDashboardState = hermesDashboardForwarding.resolveStateForPort(effectivePort);
 
   // Check whether messaging providers will be needed — this must happen before
   // the sandbox reuse decision so we can detect stale sandboxes that were created
@@ -3033,10 +3047,16 @@ async function createSandbox(
     const selectionDrift = getSelectionDrift(sandboxName, provider, model, { runOpenshell });
     const confirmedSelectionDrift = selectionDrift.changed && !selectionDrift.unknown;
     const sandboxGpuDrift = hasSandboxGpuDrift(sandboxName, effectiveSandboxGpuConfig);
+    const existingSandboxEntry = registry.getSandbox(sandboxName);
     const recordedHermesToolGateways = normalizeHermesToolGatewaySelections(
-      registry.getSandbox(sandboxName)?.hermesToolGateways,
+      existingSandboxEntry?.hermesToolGateways,
     );
     const hermesToolGatewayDrift = !stringSetsEqual(recordedHermesToolGateways, hermesToolGateways);
+    const hermesDashboardDrift = onboardHermesDashboard.hasHermesDashboardDrift({
+      agentName: agent?.name,
+      existing: existingSandboxEntry,
+      state: hermesDashboardState,
+    });
 
     // Detect whether any messaging credential has been rotated since the
     // sandbox was created. Provider credentials are resolved once at sandbox
@@ -3051,7 +3071,8 @@ async function createSandbox(
       !needsProviderMigration &&
       !sandboxGpuDrift &&
       !credentialRotation.changed &&
-      !hermesToolGatewayDrift
+      !hermesToolGatewayDrift &&
+      !hermesDashboardDrift
     ) {
       // Guard against reusing a CPU-only sandbox when GPU passthrough is enabled.
       // Placed before the non-interactive / interactive split so all reuse
@@ -3095,7 +3116,11 @@ async function createSandbox(
               );
             }
             const reusedPort = ensureDashboardForward(sandboxName, chatUiUrl);
-            process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort}`;
+            chatUiUrl = `http://127.0.0.1:${reusedPort}`;
+            process.env.CHAT_UI_URL = chatUiUrl;
+            const reusedHermesDashboardState =
+              hermesDashboardForwarding.resolveStateForPort(reusedPort);
+            hermesDashboardForwarding.ensureForState(reusedHermesDashboardState, sandboxName);
             updateReusedSandboxMetadata(
               sandboxName,
               agent,
@@ -3104,6 +3129,10 @@ async function createSandbox(
               reusedPort,
               !selectionDrift.unknown,
               effectiveSandboxGpuConfig,
+            );
+            registry.updateSandbox(
+              sandboxName,
+              onboardHermesDashboard.getHermesDashboardRegistryFields(reusedHermesDashboardState),
             );
             return sandboxName;
           }
@@ -3132,7 +3161,11 @@ async function createSandbox(
           if (await promptYesNoOrDefault("  Reuse existing sandbox?", null, true)) {
             upsertMessagingProviders(messagingTokenDefs);
             const reusedPort2 = ensureDashboardForward(sandboxName, chatUiUrl);
-            process.env.CHAT_UI_URL = `http://127.0.0.1:${reusedPort2}`;
+            chatUiUrl = `http://127.0.0.1:${reusedPort2}`;
+            process.env.CHAT_UI_URL = chatUiUrl;
+            const reusedHermesDashboardState2 =
+              hermesDashboardForwarding.resolveStateForPort(reusedPort2);
+            hermesDashboardForwarding.ensureForState(reusedHermesDashboardState2, sandboxName);
             updateReusedSandboxMetadata(
               sandboxName,
               agent,
@@ -3141,6 +3174,10 @@ async function createSandbox(
               reusedPort2,
               !selectionDrift.unknown,
               effectiveSandboxGpuConfig,
+            );
+            registry.updateSandbox(
+              sandboxName,
+              onboardHermesDashboard.getHermesDashboardRegistryFields(reusedHermesDashboardState2),
             );
             return sandboxName;
           }
@@ -3184,6 +3221,8 @@ async function createSandbox(
       note(`  Sandbox '${sandboxName}' exists — recreating to apply sandbox GPU settings.`);
     } else if (hermesToolGatewayDrift) {
       note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes managed-tool changes.`);
+    } else if (hermesDashboardDrift) {
+      note(`  Sandbox '${sandboxName}' exists — recreating to apply Hermes dashboard settings.`);
     } else if (credentialRotation.changed) {
       // Message already printed above during backup.
     } else if (existingSandboxState === "ready") {
@@ -3527,6 +3566,11 @@ async function createSandbox(
   // 18789 and the gateway listens on the wrong port. (#2267, #1925)
   const effectiveDashboardPort = getDashboardForwardPort(chatUiUrl);
   envArgs.push(formatEnvAssignment("NEMOCLAW_DASHBOARD_PORT", effectiveDashboardPort));
+  onboardHermesDashboard.appendHermesDashboardEnvArgs(
+    envArgs,
+    hermesDashboardState,
+    formatEnvAssignment,
+  );
   // Propagate NEMOCLAW_PROXY_HOST / NEMOCLAW_PROXY_PORT to the runtime
   // sandbox container. patchStagedDockerfile() already substitutes them
   // into the build-time Dockerfile ARG/ENV, but `openshell sandbox create
@@ -3729,6 +3773,9 @@ async function createSandbox(
     chatUiUrl = `http://127.0.0.1:${actualDashboardPort}`;
   }
   process.env.CHAT_UI_URL = chatUiUrl;
+  const finalHermesDashboardState =
+    hermesDashboardForwarding.resolveStateForPort(actualDashboardPort);
+  hermesDashboardForwarding.ensureForState(finalHermesDashboardState, sandboxName, true);
 
   // Register only after confirmed ready — prevents phantom entries
   const providerCredentialHashes: Record<string, string> = {};
@@ -3768,6 +3815,7 @@ async function createSandbox(
     messagingChannelConfig: messagingChannelConfig || undefined,
     disabledChannels: disabledChannels.length > 0 ? [...disabledChannels] : undefined,
     hermesToolGateways: hermesToolGateways.length > 0 ? [...hermesToolGateways] : undefined,
+    ...onboardHermesDashboard.getHermesDashboardRegistryFields(finalHermesDashboardState),
     dashboardPort: actualDashboardPort,
   });
   registry.setDefault(sandboxName);
@@ -3813,39 +3861,7 @@ async function createSandbox(
 
   console.log(`  ✓ Sandbox '${sandboxName}' created`);
 
-  try {
-    if (process.platform === "darwin") {
-      const vmKernel = dockerInfoFormat("{{.KernelVersion}}", {
-        ignoreError: true,
-      }).trim();
-      if (vmKernel) {
-        const parts = vmKernel.split(".");
-        const major = parseInt(parts[0], 10);
-        const minor = parseInt(parts[1], 10);
-        if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
-          console.warn(
-            `  ⚠ Landlock: Docker VM kernel ${vmKernel} does not support Landlock (requires ≥5.13).`,
-          );
-          console.warn(
-            "    Sandbox filesystem restrictions will silently degrade (best_effort mode).",
-          );
-        }
-      }
-    } else if (process.platform === "linux") {
-      const uname = runCapture(["uname", "-r"], { ignoreError: true }).trim();
-      if (uname) {
-        const parts = uname.split(".");
-        const major = parseInt(parts[0], 10);
-        const minor = parseInt(parts[1], 10);
-        if (!isNaN(major) && !isNaN(minor) && (major < 5 || (major === 5 && minor < 13))) {
-          console.warn(`  ⚠ Landlock: Kernel ${uname} does not support Landlock (requires ≥5.13).`);
-          console.warn(
-            "    Sandbox filesystem restrictions will silently degrade (best_effort mode).",
-          );
-        }
-      }
-    }
-  } catch {}
+  warnIfLandlockUnsupported({ dockerInfoFormat, runCapture });
 
   return sandboxName;
 }
@@ -3853,13 +3869,6 @@ async function createSandbox(
 // ── Step 3: Inference selection ──────────────────────────────────
 
 type ProviderChoice = { key: string; label: string };
-
-function providerNameToOptionKey(
-  name: string | null | undefined,
-  opts: { hasNimContainer?: boolean } = {},
-): string | null {
-  return providerRecovery.providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, name, opts);
-}
 
 const { readLiveInference, readRecordedProvider, readRecordedNimContainer, readRecordedModel } =
   providerRecovery.createProviderRecoveryHelpers({
@@ -3994,6 +4003,7 @@ async function setupNim(
   const hasOllama = hostCommandExists("ollama");
   const ollamaHost = findReachableOllamaHost();
   const ollamaRunning = ollamaHost !== null;
+  const isWindowsHostOllama = ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL;
   const vllmRunning = !!runCapture(
     ["curl", "-sf", ...localProbeCurlArgs, `http://127.0.0.1:${VLLM_PORT}/v1/models`],
     { ignoreError: true },
@@ -4007,6 +4017,9 @@ async function setupNim(
     vllmProfile &&
     docker.dockerCapture(["images", "-q", vllmProfile.image], { ignoreError: true }).trim()
   );
+  const windowsHostOllamaDockerRequirement = getWindowsHostOllamaDockerRequirement(
+    isWsl() ? getContainerRuntime() : null,
+  );
   // Probed even when WSL has its own Ollama: users may prefer the Windows
   // instance for GPU access and a unified model cache. See
   // src/lib/onboard/windows-host-ollama.ts for process/path fallback details.
@@ -4019,7 +4032,7 @@ async function setupNim(
   // on 127.0.0.1, Windows-host may also be running on 0.0.0.0 and we want
   // to offer a "switch" without restarting anything.
   let windowsOllamaReachable = false;
-  if (isWsl() && ollamaHost !== "host.docker.internal") {
+  if (isWsl() && !isWindowsHostOllama) {
     windowsOllamaReachable = !!runCapture(
       ["curl", "-sf", ...localProbeCurlArgs, `http://host.docker.internal:${OLLAMA_PORT}/api/tags`],
       { ignoreError: true },
@@ -4052,26 +4065,17 @@ async function setupNim(
   options.push({ key: "anthropic", label: "Anthropic" });
   options.push({ key: "anthropicCompatible", label: "Other Anthropic-compatible endpoint" });
   options.push({ key: "gemini", label: "Google Gemini" });
-  if (hasOllama || ollamaRunning) {
-    let hostDisplay: string;
-    if (ollamaHost === "host.docker.internal") {
-      hostDisplay = `Windows host:${OLLAMA_PORT}`;
-    } else if (isWsl()) {
-      hostDisplay = `WSL:${OLLAMA_PORT}`;
-    } else {
-      hostDisplay = `localhost:${OLLAMA_PORT}`;
-    }
-    // On WSL the Windows-host entry (Use/Restart/Start, or Install) always
-    // carries the suggestion instead, since Windows-host is preferred.
-    const wslOllamaSuggested =
-      ollamaRunning && (ollamaHost === "host.docker.internal" || !isWsl());
-    options.push({
-      key: "ollama",
-      label:
-        `Local Ollama (${hostDisplay})${ollamaRunning ? " — running" : ""}` +
-        (wslOllamaSuggested ? " (suggested)" : ""),
-    });
-  }
+  const runningOllamaMenu = resolveRunningOllamaMenuEntry({
+    hasOllama,
+    ollamaRunning,
+    ollamaHost,
+    isWsl: isWsl(),
+    ollamaPort: OLLAMA_PORT,
+    windowsHostLabelSuffix: windowsHostOllamaDockerRequirement.supported
+      ? ""
+      : windowsHostOllamaDockerRequirement.labelSuffix,
+  });
+  if (runningOllamaMenu) options.push(runningOllamaMenu);
   if (EXPERIMENTAL && gpu && gpu.nimCapable) {
     options.push({ key: "nim-local", label: "Local NVIDIA NIM [experimental]" });
   }
@@ -4086,16 +4090,14 @@ async function setupNim(
   );
   // Skipped when Windows-host already won the cache: the running entry
   // above already covers that case.
-  if (hasWindowsOllama && ollamaHost !== "host.docker.internal") {
-    let windowsOllamaLabel: string;
-    if (windowsOllamaReachable) {
-      windowsOllamaLabel = "Use Ollama on Windows host - running (suggested)";
-    } else if (winOllamaLoopbackOnly) {
-      windowsOllamaLabel = "Restart Ollama on Windows host with 0.0.0.0 binding (suggested)";
-    } else {
-      windowsOllamaLabel = "Start Ollama on Windows host (suggested)";
-    }
-    options.push({ key: "start-windows-ollama", label: windowsOllamaLabel });
+  if (hasWindowsOllama && !isWindowsHostOllama) {
+    options.push({
+      key: "start-windows-ollama",
+      label: windowsHostOllamaDockerRequirement.startLabel({
+        reachable: windowsOllamaReachable,
+        loopbackOnly: winOllamaLoopbackOnly,
+      }),
+    });
   }
   // On WSL, always offer to install Ollama on the Windows host when not
   // already installed, regardless of WSL Ollama state — users may prefer the
@@ -4103,7 +4105,7 @@ async function setupNim(
   if (isWsl() && !hasWindowsOllama) {
     options.push({
       key: "install-windows-ollama",
-      label: "Install Ollama on Windows host (recommended)",
+      label: windowsHostOllamaDockerRequirement.installLabel,
     });
   }
   const ollamaInstallMenu = resolveOllamaInstallMenuEntry({
@@ -4127,18 +4129,14 @@ async function setupNim(
     options.push({ key: providerKey, label: remoteConfig.label });
   }
 
-  function checkOllamaPortsOrWarn(): boolean {
-    const portValidation = validateOllamaPortConfiguration();
-    if (!portValidation.ok) {
-      console.error(`  ${portValidation.message}`);
-      if (isNonInteractive()) {
-        process.exit(1);
-      }
-      console.log("  Choose a different local inference provider or fix the port settings.");
-      console.log("");
-      return false;
-    }
-    return true;
+  function rejectWindowsHostOllama(providerKey: string, windowsHostSelected: boolean): boolean {
+    return rejectUnsupportedWindowsHostOllama(
+      windowsHostOllamaDockerRequirement,
+      providerKey,
+      windowsHostSelected,
+      isNonInteractive,
+      abortNonInteractive,
+    );
   }
 
   if (options.length > 1) {
@@ -4155,7 +4153,7 @@ async function setupNim(
         if (!providerKey) {
           const recordedProvider = readRecordedProvider(sandboxName);
           const hasNimContainer = !!readRecordedNimContainer(sandboxName);
-          const recoveredKey = providerNameToOptionKey(recordedProvider, { hasNimContainer });
+          const recoveredKey = providerRecovery.providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, recordedProvider, { hasNimContainer });
           if (recoveredKey) {
             // Refuse to silently switch providers behind the user's back; if
             // the previously-recorded one is gone, surface the recorded value
@@ -4165,11 +4163,7 @@ async function setupNim(
             // (so the menu's "ollama" key points there), the availability
             // check below would pass and silently swap the daemon. Detect
             // and fail-loud with a hint.
-            if (
-              isWsl() &&
-              recordedProvider === "ollama-local" &&
-              ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL
-            ) {
+            if (isWsl() && recordedProvider === "ollama-local" && isWindowsHostOllama) {
               console.error(
                 `  Recorded provider '${recordedProvider}' (WSL Ollama) is not available in this environment.`,
               );
@@ -4215,8 +4209,16 @@ async function setupNim(
         }
         selected = options.find((o) => o.key === providerKey);
         if (!selected) {
+          if (
+            (providerKey === "start-windows-ollama" ||
+              providerKey === "install-windows-ollama") &&
+            rejectWindowsHostOllama(providerKey, isWindowsHostOllama)
+          ) {
+            process.exit(1);
+          }
           selected = resolveProviderKeyFallback(options, providerKey, {
-            isWindowsHostOllama: ollamaHost === OLLAMA_HOST_DOCKER_INTERNAL,
+            canUseWindowsHostOllama:
+              isWindowsHostOllama && windowsHostOllamaDockerRequirement.supported,
           });
           if (!selected) {
             if (providerKey === "hermesProvider" && !hermesProviderAvailable) {
@@ -4848,7 +4850,10 @@ async function setupNim(
         }
         break;
       } else if (selected.key === "ollama") {
-        if (!checkOllamaPortsOrWarn()) continue selectionLoop;
+        if (rejectWindowsHostOllama(selected.key, isWindowsHostOllama)) {
+          continue selectionLoop;
+        }
+        if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
         let ollamaReady = ollamaRunning;
         const overrideState = ensureOllamaLoopbackSystemdOverride({ isNonInteractive });
         if (overrideState === "ready") {
@@ -4900,11 +4905,11 @@ async function setupNim(
           preferredInferenceApi = "openai-completions";
         }
         break;
-      } else if (
-        selected.key === "start-windows-ollama" ||
-        selected.key === "install-windows-ollama"
-      ) {
-        if (!checkOllamaPortsOrWarn()) continue selectionLoop;
+      } else if (["start-windows-ollama", "install-windows-ollama"].includes(selected.key)) {
+        if (rejectWindowsHostOllama(selected.key, true)) {
+          continue selectionLoop;
+        }
+        if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
         const isInstall = selected.key === "install-windows-ollama";
         const isSwitch = !isInstall && windowsOllamaReachable;
         const isRestart = !isInstall && !isSwitch && winOllamaLoopbackOnly;
@@ -4987,7 +4992,7 @@ async function setupNim(
         }
         break;
       } else if (selected.key === "install-ollama") {
-        if (!checkOllamaPortsOrWarn()) continue selectionLoop;
+        if (!checkOllamaPortsOrWarn({ isNonInteractive })) continue selectionLoop;
         const isUpgrade = ollamaInstallMenu.hasUpgradableOllama;
         const installResult = process.platform === "darwin"
           ? installOllamaOnMacOS({ isNonInteractive, isUpgrade })
@@ -6309,16 +6314,10 @@ async function presetsCheckboxSelector(
   });
 }
 
-function computeSetupPresetSuggestions(
+const computeSetupPresetSuggestions = (
   tierName: string,
   options: SetupPresetSuggestionOptions = {},
-): string[] {
-  return computeSetupPresetSuggestionsImpl(
-    { policies, tiers, localInferenceProviders: LOCAL_INFERENCE_PROVIDERS },
-    tierName,
-    options,
-  );
-}
+): string[] => computeSetupPresetSuggestionsImpl({ policies, tiers, localInferenceProviders: LOCAL_INFERENCE_PROVIDERS }, tierName, options);
 
 async function setupPoliciesWithSelection(
   sandboxName: string,
@@ -6354,6 +6353,7 @@ const {
   buildOrphanedSandboxRollbackMessage,
   ensureDashboardForward,
   ensureAgentDashboardForward,
+  ensureAgentFixedForward,
   fetchGatewayAuthTokenFromSandbox,
   getDashboardForwardPort,
   getWslHostAddress,
@@ -7254,7 +7254,7 @@ module.exports = {
   MESSAGING_CHANNELS,
   selectOnboardAgent,
   setupNim,
-  providerNameToOptionKey,
+  providerNameToOptionKey: (name: string | null | undefined, opts: { hasNimContainer?: boolean } = {}) => providerRecovery.providerNameToOptionKey(REMOTE_PROVIDER_CONFIG, name, opts),
   readRecordedProvider,
   readRecordedModel,
   readRecordedNimContainer,
