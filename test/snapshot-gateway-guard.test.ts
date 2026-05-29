@@ -145,20 +145,25 @@ function makeHealthyVmGatewayEnv(prefix: string): Record<string, string> {
 // VM-driver env with an `imageTag` set in the sandbox registry so the
 // `resolveSrcPodImage()` fast path returns the image without falling back to
 // the docker/kubectl probe.
-function makeVmRestoreToEnv(prefix: string): Record<string, string> {
+function makeVmRestoreToEnv(
+  prefix: string,
+  entry: Record<string, unknown> = { imageTag: "openshell/sandbox-from:fast-path-test" },
+): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
   fs.mkdirSync(localBin, { recursive: true });
   writeSandboxRegistry(home, "alpha", {
     openshellDriver: "vm",
-    imageTag: "openshell/sandbox-from:fast-path-test",
+    ...entry,
   });
 
+  const cloneReadyMarker = path.join(home, "clone-1-ready");
   writeExecutable(path.join(localBin, "openshell"), [
     'case "$1 $2" in',
     '  "gateway info") printf "Gateway Info\\n\\nGateway: nemoclaw\\nGateway endpoint: https://127.0.0.1:8080/\\n"; exit 0 ;;',
-    '  "sandbox list") printf "NAME STATUS\\nalpha Ready\\n"; exit 0 ;;',
+    `  "sandbox list") if [ -f ${JSON.stringify(cloneReadyMarker)} ]; then printf "NAME STATUS\\nalpha Ready\\nclone-1 Ready\\n"; else printf "NAME STATUS\\nalpha Ready\\n"; fi; exit 0 ;;`,
     '  "sandbox ssh-config") printf "Host openshell-alpha\\n  HostName 127.0.0.1\\n  User sandbox\\n"; exit 0 ;;',
+    `  "sandbox create") touch ${JSON.stringify(cloneReadyMarker)}; printf "created clone-1\\n"; exit 0 ;;`,
     "esac",
     'if [ "$1" = "status" ]; then exit 0; fi',
     "exit 0",
@@ -218,8 +223,23 @@ describe("snapshot VM-driver gateway guard", () => {
     expect(seed.out).toContain("Snapshot v1 name=baseline created");
 
     const r = runCli("alpha snapshot restore baseline --to clone-1", env);
+    expect(r.code).toBe(0);
     expect(r.out).not.toContain("could not resolve");
     expect(r.out).not.toContain("kubectl-must-not-run");
     expect(r.out).toContain("openshell/sandbox-from:fast-path-test");
+  });
+
+  it("snapshot restore --to fails closed for VM-driver entries missing imageTag", () => {
+    const env = makeVmRestoreToEnv("nemoclaw-snap-vm-gw-restore-to-missing-image-", {
+      imageTag: null,
+    });
+
+    const seed = runCli("alpha snapshot create --name baseline", env);
+    expect(seed.code).toBe(0);
+
+    const r = runCli("alpha snapshot restore baseline --to clone-1", env);
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Cannot resolve image");
+    expect(r.out).not.toContain("kubectl-must-not-run");
   });
 });
