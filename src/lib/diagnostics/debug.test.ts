@@ -84,13 +84,13 @@ describe("createTarball", () => {
 
   it("removes any partial tarball when tar fails", () => {
     tempDir = mkdtempSync(join(tmpdir(), "debug-test-"));
-    writeFileSync(join(tempDir, "dummy.txt"), "test data");
+    writeFileSync(join(tempDir, "payload.txt"), "test data");
     outputDir = mkdtempSync(join(tmpdir(), "debug-test-out-"));
     const output = join(outputDir, "partial.tar.gz");
     // Pre-create a stub file so createTarball can prove it removed a partial.
     writeFileSync(output, "stub partial tarball");
-    // Force tar failure by removing the source directory before tar starts
-    // would race; instead point tar at a missing source via the same trick.
+    // Removing the source dir forces tar to fail without racing in-progress
+    // collection.
     rmSync(tempDir, { recursive: true, force: true });
     const ok = createTarball(tempDir, output);
     expect(ok).toBe(false);

@@ -288,7 +288,7 @@ function createDebugCommandTestEnv(
   const sandboxName = `${prefix}${process.pid.toString(36)}-${Date.now().toString(36)}`;
   fs.mkdirSync(localBin, { recursive: true });
   // Register the env-sourced sandbox plus any extra names supplied via the
-  // --sandbox flag so the validation gate added for #4494 accepts them.
+  // --sandbox flag so the validation gate accepts them.
   writeSandboxRegistry(home, sandboxName);
   if (options.extraSandboxNames && options.extraSandboxNames.length > 0) {
     const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");

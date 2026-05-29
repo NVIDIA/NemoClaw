@@ -73,7 +73,7 @@ describe("debug command", () => {
       runDebugCommandWithOptions(
         {},
         {
-          env: { NEMOCLAW_SANDBOX: "ghost" } as NodeJS.ProcessEnv,
+          env: { NEMOCLAW_SANDBOX_NAME: "ghost" } as NodeJS.ProcessEnv,
           getDefaultSandbox: () => "alpha",
           isSandboxKnown: () => false,
           runDebug,
@@ -84,7 +84,27 @@ describe("debug command", () => {
     ).toThrow("exit");
     expect(runDebug).not.toHaveBeenCalled();
     expect(errorLines[0]).toContain("ghost");
-    expect(errorLines[0]).toContain("NEMOCLAW_SANDBOX");
+    expect(errorLines[0]).toContain("NEMOCLAW_SANDBOX_NAME");
+  });
+
+  it("prefers NEMOCLAW_SANDBOX_NAME over NEMOCLAW_SANDBOX and SANDBOX_NAME", () => {
+    const runDebug = vi.fn();
+    const isSandboxKnown = vi.fn().mockReturnValue(true);
+    runDebugCommandWithOptions(
+      {},
+      {
+        env: {
+          NEMOCLAW_SANDBOX_NAME: "primary",
+          NEMOCLAW_SANDBOX: "secondary",
+          SANDBOX_NAME: "tertiary",
+        } as NodeJS.ProcessEnv,
+        getDefaultSandbox: () => undefined,
+        isSandboxKnown,
+        runDebug,
+      },
+    );
+    expect(isSandboxKnown).toHaveBeenCalledWith("primary");
+    expect(runDebug).toHaveBeenCalledWith({ sandboxName: "primary" });
   });
 
   it("flag overrides env vars when both are present", () => {

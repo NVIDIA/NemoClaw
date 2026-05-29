@@ -563,9 +563,15 @@ export function runDebug(opts: DebugOptions = {}): void {
   // Compiled location: dist/lib/diagnostics/debug.js → repo root is 3 levels up
   const repoDir = join(__dirname, "..", "..", "..");
 
-  // Resolve sandbox name
+  // Resolve sandbox name. Precedence matches the documented services + debug
+  // contract in docs/reference/commands.mdx: explicit option > NEMOCLAW_SANDBOX_NAME
+  // > NEMOCLAW_SANDBOX > SANDBOX_NAME.
   let sandboxName =
-    opts.sandboxName ?? process.env.NEMOCLAW_SANDBOX ?? process.env.SANDBOX_NAME ?? "";
+    opts.sandboxName ??
+    process.env.NEMOCLAW_SANDBOX_NAME ??
+    process.env.NEMOCLAW_SANDBOX ??
+    process.env.SANDBOX_NAME ??
+    "";
   if (!sandboxName) {
     sandboxName = detectSandboxName();
   }

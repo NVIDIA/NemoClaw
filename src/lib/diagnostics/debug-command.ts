@@ -12,14 +12,18 @@ export interface RunDebugCommandDeps {
   exit?: (code: number) => never;
 }
 
+const SANDBOX_NAME_ENV_VARS = ["NEMOCLAW_SANDBOX_NAME", "NEMOCLAW_SANDBOX", "SANDBOX_NAME"] as const;
+
 function resolveExplicitName(
   options: DebugOptions,
   env: NodeJS.ProcessEnv,
-): { name: string; source: "flag" | "env" } | null {
+): { name: string; source: "flag" | "env"; envVar?: string } | null {
   const flagName = options.sandboxName?.trim();
   if (flagName) return { name: flagName, source: "flag" };
-  const envName = (env.NEMOCLAW_SANDBOX ?? env.SANDBOX_NAME ?? "").trim();
-  if (envName) return { name: envName, source: "env" };
+  for (const envVar of SANDBOX_NAME_ENV_VARS) {
+    const value = env[envVar]?.trim();
+    if (value) return { name: value, source: "env", envVar };
+  }
   return null;
 }
 
@@ -37,7 +41,7 @@ export function runDebugCommandWithOptions(options: DebugOptions, deps: RunDebug
   if (explicit) {
     if (!deps.isSandboxKnown(explicit.name)) {
       const sourceLabel =
-        explicit.source === "env" ? " (from NEMOCLAW_SANDBOX/SANDBOX_NAME)" : "";
+        explicit.source === "env" && explicit.envVar ? ` (from ${explicit.envVar})` : "";
       errorLine(`Error: Sandbox '${explicit.name}'${sourceLabel} is not registered.`);
       errorLine("  Run `nemoclaw list` to see available sandboxes.");
       exit(1);
