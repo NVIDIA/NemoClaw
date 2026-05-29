@@ -10,16 +10,25 @@ import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
 const ORIGINAL_PLATFORM = Object.getOwnPropertyDescriptor(process, "platform");
 
+/**
+ * Overrides process.platform for runtime-driver metadata tests.
+ */
 function setPlatform(platform: NodeJS.Platform): void {
   Object.defineProperty(process, "platform", { value: platform, configurable: true });
 }
 
+/**
+ * Restores the original process.platform descriptor after each platform-specific assertion.
+ */
 function restorePlatform(): void {
   if (ORIGINAL_PLATFORM) {
     Object.defineProperty(process, "platform", ORIGINAL_PLATFORM);
   }
 }
 
+/**
+ * Loads the compiled metadata helpers after each test has configured process state.
+ */
 async function makeHelpers(opts: { dockerDriverEnabled: boolean }) {
   // Import the compiled module: sandbox-registry-metadata.ts pulls in state/registry,
   // which transitively requires the JS-only `./platform` helper that vitest cannot
@@ -32,6 +41,9 @@ async function makeHelpers(opts: { dockerDriverEnabled: boolean }) {
   });
 }
 
+/**
+ * Creates a minimal OpenClaw agent definition for metadata preservation tests.
+ */
 function openclawAgent(expectedVersion: string): AgentDefinition {
   return {
     name: "openclaw",

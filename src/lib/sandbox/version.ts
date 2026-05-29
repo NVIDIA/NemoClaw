@@ -30,6 +30,9 @@ export interface VersionCheckResult {
   detectionMethod: "registry" | "ssh-exec" | "unavailable";
 }
 
+/**
+ * Controls whether version checks may use cached metadata or must inspect the sandbox runtime.
+ */
 export interface VersionCheckOptions {
   forceProbe?: boolean;
   skipProbe?: boolean;

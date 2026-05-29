@@ -51,6 +51,16 @@ type ProbeProviderHealth = (
   options?: ProviderHealthProbeOptions,
 ) => ProviderHealthStatus | null;
 
+/**
+ * Returns true when status can validate a cached agent version against the running sandbox.
+ */
+function shouldProbeSandboxRuntimeVersion(
+  lookup: SandboxGatewayState,
+  sandbox: registry.SandboxEntry,
+): boolean {
+  return lookup.state === "present" && Boolean(sandbox.agentVersion);
+}
+
 export function getSandboxStatusInferenceHealth(
   gatewayPresent: boolean,
   currentProvider: unknown,
@@ -312,7 +322,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
 
     // Agent version check
     try {
-      const shouldProbeRuntimeVersion = lookup.state === "present" && Boolean(sb.agentVersion);
+      const shouldProbeRuntimeVersion = shouldProbeSandboxRuntimeVersion(lookup, sb);
       const versionCheck = sandboxVersion.checkAgentVersion(sandboxName, {
         forceProbe: shouldProbeRuntimeVersion,
         skipProbe: !shouldProbeRuntimeVersion,
