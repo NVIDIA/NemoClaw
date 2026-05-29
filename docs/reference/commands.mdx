@@ -1234,6 +1234,9 @@ All ports must be non-privileged integers between 1024 and 65535.
 | `NEMOCLAW_GATEWAY_PORT` | 8080 | OpenShell gateway port |
 | `NEMOCLAW_GATEWAY_BIND_ADDRESS` | 127.0.0.1 | OpenShell gateway bind address (`127.0.0.1` or `0.0.0.0`) |
 | `NEMOCLAW_DASHBOARD_PORT` | 18789 (auto-derived from `CHAT_UI_URL` port if set) | Dashboard UI |
+| `NEMOCLAW_HERMES_DASHBOARD` | 0 | Optional Hermes native web dashboard (`1`, `true`, `yes`, or `on` enables it) |
+| `NEMOCLAW_HERMES_DASHBOARD_PORT` | 9119 | Optional Hermes native web dashboard forward port |
+| `NEMOCLAW_HERMES_DASHBOARD_TUI` | 0 | Optional Hermes in-browser TUI tab when the dashboard is enabled |
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |
@@ -1266,6 +1269,8 @@ These overrides apply to onboarding, status checks, health probes, and the unins
 Defaults are unchanged when no variable is set.
 If `NEMOCLAW_DASHBOARD_PORT` or the port from `CHAT_UI_URL` is already occupied by another sandbox, onboarding scans `18789` through `18799` and uses the next free dashboard port.
 Pass `--control-ui-port <N>` to require a specific port.
+For Hermes sandboxes, `NEMOCLAW_HERMES_DASHBOARD=1` starts the native Hermes dashboard separately from the OpenAI-compatible API.
+The Hermes API remains on port `8642`; the optional browser dashboard uses `NEMOCLAW_HERMES_DASHBOARD_PORT`.
 
 ### Onboarding Configuration
 
