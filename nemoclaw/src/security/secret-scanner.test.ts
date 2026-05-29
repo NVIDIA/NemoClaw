@@ -290,6 +290,10 @@ describe("isMemoryPath", () => {
   it("does not match unrelated relative files", () => {
     expect(isMemoryPath("README.md")).toBe(false);
     expect(isMemoryPath("src/index.ts")).toBe(false);
-    expect(isMemoryPath("memory/notes.md")).toBe(false);
+  });
+
+  it("matches relative memory/ daily notes (workspace-relative writes)", () => {
+    expect(isMemoryPath("memory/notes.md")).toBe(true);
+    expect(isMemoryPath("memory/2026-05-29.md")).toBe(true);
   });
 });

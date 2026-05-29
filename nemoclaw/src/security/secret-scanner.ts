@@ -141,11 +141,14 @@ const MEMORY_BASENAMES: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Relative path prefixes that unambiguously target NemoClaw / OpenClaw
- * persistent memory. Ambiguous prefixes (e.g. `memory/`, `workspace/`) are
- * deliberately excluded because they are common project subdirectory names.
+ * Relative path prefixes that target NemoClaw / OpenClaw persistent state
+ * (workspace, memory). `memory/` is included because the OpenClaw workspace
+ * docs define `memory/` as the canonical persistent daily-note directory; the
+ * agent's CWD inside the sandbox is the workspace, so a relative `memory/...`
+ * write is a memory write. Project subdirectories that happen to be named
+ * `memory/` get scanned for secrets — the tradeoff is intentional.
  */
-const MEMORY_RELATIVE_PREFIXES: readonly string[] = [".openclaw/", ".nemoclaw/"];
+const MEMORY_RELATIVE_PREFIXES: readonly string[] = [".openclaw/", ".nemoclaw/", "memory/"];
 
 function basenameOf(filePath: string): string {
   const slash = filePath.lastIndexOf("/");
