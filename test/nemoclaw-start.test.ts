@@ -705,7 +705,7 @@ describe("nemoclaw-start configure guard behavior", () => {
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(commandLog)}\nexit 0\n`,
+      `#!/usr/bin/env bash\nprintf 'ARGS=%s URL=%s\\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(commandLog)}\nexit 0\n`,
       { mode: 0o755 },
     );
     const runtimeBlock = `${runtimeShellEnvBlock(src)}\nwrite_runtime_shell_env`.replaceAll(
@@ -726,6 +726,7 @@ describe("nemoclaw-start configure guard behavior", () => {
       '_SECCOMP_GUARD_SCRIPT="/tmp/seccomp-guard.js"',
       '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
       '_SLACK_GUARD_SCRIPT="/nonexistent/slack-guard.js"',
+      'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
       "_TOOL_REDIRECTS=()",
       "set +u",
       runtimeBlock,
@@ -737,7 +738,11 @@ describe("nemoclaw-start configure guard behavior", () => {
     return { tmpDir, fakeBin, proxyEnv, commandLog };
   }
 
-  function runGuardedOpenclaw(setup: ReturnType<typeof writeProxyEnvWithGuard>, args: string[]) {
+  function shellOpenclawCommand(args: string[]) {
+    return ["openclaw", ...args.map((arg) => JSON.stringify(arg))].join(" ");
+  }
+
+  function runGuardedShell(setup: ReturnType<typeof writeProxyEnvWithGuard>, commands: string[]) {
     return spawnSync(
       "bash",
       [
@@ -746,7 +751,7 @@ describe("nemoclaw-start configure guard behavior", () => {
         "-c",
         [
           `source ${JSON.stringify(setup.proxyEnv)}`,
-          ["openclaw", ...args.map((arg) => JSON.stringify(arg))].join(" "),
+          ...commands,
         ].join("; "),
       ],
       {
@@ -755,6 +760,10 @@ describe("nemoclaw-start configure guard behavior", () => {
         timeout: 5000,
       },
     );
+  }
+
+  function runGuardedOpenclaw(setup: ReturnType<typeof writeProxyEnvWithGuard>, args: string[]) {
+    return runGuardedShell(setup, [shellOpenclawCommand(args)]);
   }
 
   it("emits a proxy-env guard that blocks mutating OpenClaw commands and passes read-only commands through", () => {
@@ -790,6 +799,28 @@ describe("nemoclaw-start configure guard behavior", () => {
       expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("agent --agent main -m hello");
       expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("config get foo");
       expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("channels list");
+    } finally {
+      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#4462: unsets OPENCLAW_GATEWAY_URL only for devices approve", () => {
+    const setup = writeProxyEnvWithGuard();
+    try {
+      const result = runGuardedShell(setup, [
+        shellOpenclawCommand(["devices", "list", "--json"]),
+        shellOpenclawCommand(["devices", "approve", "request-1", "--json"]),
+        `printf 'SHELL_URL=%s\\n' "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(setup.commandLog)}`,
+        shellOpenclawCommand(["agent", "--agent", "main", "-m", "hello"]),
+      ]);
+
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(setup.commandLog, "utf-8").trim().split("\n")).toEqual([
+        "ARGS=devices list --json URL=ws://127.0.0.1:18789",
+        "ARGS=devices approve request-1 --json URL=unset",
+        "SHELL_URL=ws://127.0.0.1:18789",
+        "ARGS=agent --agent main -m hello URL=ws://127.0.0.1:18789",
+      ]);
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
@@ -1316,6 +1347,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateFile = path.join(tmpDir, "list-count");
     const approveLog = path.join(tmpDir, "approvals.log");
+    const envLog = path.join(tmpDir, "env.log");
     const pendingJson = JSON.stringify({
       pending: [
         "not-a-device",
@@ -1335,6 +1367,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
       `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  printf 'list:%s\n' "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(envLog)}
   count="$(cat ${JSON.stringify(stateFile)} 2>/dev/null || echo 0)"
   count=$((count + 1))
   echo "$count" > ${JSON.stringify(stateFile)}
@@ -1346,6 +1379,7 @@ if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
   exit 0
 fi
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  printf 'approve:%s:%s\n' "$3" "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(envLog)}
   echo "$3" >> ${JSON.stringify(approveLog)}
   printf '{}\n'
   exit 0
@@ -1367,6 +1401,7 @@ exit 2
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
+          OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
           // Cap the slow-mode keepalive (NemoClaw#4263) so the test
           // terminates without waiting out the default 8h deadline.
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "5",
@@ -1387,6 +1422,10 @@ exit 2
         "ok-browser",
         "ok-webchat",
       ]);
+      const envLogLines = fs.readFileSync(envLog, "utf-8").trim().split("\n");
+      expect(envLogLines).toContain("list:ws://127.0.0.1:18789");
+      expect(envLogLines).toContain("approve:ok-browser:unset");
+      expect(envLogLines).toContain("approve:ok-webchat:unset");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1858,6 +1897,81 @@ exit 2
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 40_000);
+
+  it("retries a non-zero approve failure without counting it as approved", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-afail-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const stateFile = path.join(tmpDir, "approve-count");
+    const approveLog = path.join(tmpDir, "approvals.log");
+    const pendingResponse = JSON.stringify({
+      pending: [
+        { requestId: "retry-cli", clientId: "openclaw-cli", clientMode: "cli" },
+      ],
+      paired: [],
+    });
+    const allPaired = JSON.stringify({
+      pending: [],
+      paired: [{ clientId: "openclaw-cli", clientMode: "cli" }],
+    });
+
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  if [ -f ${JSON.stringify(approveLog)} ]; then
+    printf '%s\n' ${JSON.stringify(allPaired)}
+  else
+    printf '%s\n' ${JSON.stringify(pendingResponse)}
+  fi
+  exit 0
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  count="$(cat ${JSON.stringify(stateFile)} 2>/dev/null || echo 0)"
+  count=$((count + 1))
+  echo "$count" > ${JSON.stringify(stateFile)}
+  if [ "$count" = "1" ]; then
+    echo "temporary approve failure" >&2
+    exit 7
+  fi
+  echo "$3" >> ${JSON.stringify(approveLog)}
+  printf '{}\n'
+  exit 0
+fi
+echo "unexpected: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", buildAutoPairScript()], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "600",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+        },
+        timeout: 20_000,
+      });
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain(
+        "[auto-pair] approve failed request=retry-cli: temporary approve failure",
+      );
+      expect(run.stdout).toContain(
+        "[auto-pair] approved request=retry-cli client=openclaw-cli mode=cli",
+      );
+      expect(run.stdout).toContain("watcher deadline reached approvals=1");
+      expect(fs.readFileSync(stateFile, "utf-8").trim()).toBe("2");
+      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
+        "retry-cli",
+      ]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 describe("nemoclaw-start gateway launch signal handling", () => {
