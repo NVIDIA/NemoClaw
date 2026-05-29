@@ -103,6 +103,14 @@ function resolveCurlProcessTimeoutMs(argv: string[], opts: CurlProbeOptions): nu
   );
 }
 
+function normalizeSpawnErrorCode(error: unknown): number {
+  if (isErrnoException(error) && error.code === "ETIMEDOUT") return -110;
+  const rawErrorCode = isErrnoException(error)
+    ? (error.errno ?? error.code)
+    : undefined;
+  return typeof rawErrorCode === "number" ? rawErrorCode : 1;
+}
+
 function sanitizeCurlUrl(value: string): string {
   try {
     const url = new URL(value);
@@ -220,10 +228,7 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
     );
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     if (result.error) {
-      const rawErrorCode = isErrnoException(result.error)
-        ? (result.error.errno ?? result.error.code)
-        : undefined;
-      const errorCode = typeof rawErrorCode === "number" ? rawErrorCode : 1;
+      const errorCode = normalizeSpawnErrorCode(result.error);
       const errorMessage = compactText(
         `${result.error.message || String(result.error)} ${String(result.stderr || "")}`,
       );
@@ -335,10 +340,7 @@ function runChatCompletionsStreamingProbeImpl(
 
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     if (result.error) {
-      const rawErrorCode = isErrnoException(result.error)
-        ? (result.error.errno ?? result.error.code)
-        : undefined;
-      const errorCode = typeof rawErrorCode === "number" ? rawErrorCode : 1;
+      const errorCode = normalizeSpawnErrorCode(result.error);
       const errorMessage = compactText(
         `${result.error.message || String(result.error)} ${String(result.stderr || "")}`,
       );
@@ -457,13 +459,14 @@ function runStreamingEventProbeImpl(
     if (result.error || (result.status !== null && result.status !== 0 && result.status !== 28)) {
       // curl exit 28 = timeout, which is expected — we cap with --max-time
       // and may still have collected enough events before the timeout.
+      const curlStatus = result.error ? normalizeSpawnErrorCode(result.error) : (result.status ?? 1);
       const detail = result.error
         ? String(result.error.message || result.error)
         : String(result.stderr || "");
       emitCurlResultTraceEvent({
         ok: false,
         missing_events_count: REQUIRED_STREAMING_EVENTS.length,
-        curl_status: result.status ?? 1,
+        curl_status: curlStatus,
       });
       return {
         ok: false,
