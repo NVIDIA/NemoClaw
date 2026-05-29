@@ -307,12 +307,14 @@ function createDebugCommandTestEnv(
     }
     fs.writeFileSync(registryPath, JSON.stringify(current), { mode: 0o600 });
   }
+  const registeredNames = [sandboxName, ...(options.extraSandboxNames ?? [])];
+  const listLines = ["NAME", ...registeredNames.map((name) => `${name}      Ready`)];
   fs.writeFileSync(
     path.join(localBin, "openshell"),
     [
       "#!/bin/sh",
       'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-      "  echo 'NAME'",
+      ...listLines.map((line) => `  echo ${JSON.stringify(line)}`),
       "  exit 0",
       "fi",
       "echo 'openshell ok'",
@@ -1533,6 +1535,46 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("not registered");
     expect(fs.existsSync(tarball)).toBe(false);
   });
+
+  it(
+    "debug --sandbox NAME rejects a stale registry entry missing from the live gateway",
+    testTimeoutOptions(30_000),
+    () => {
+      // Same fixture pattern as createDebugCommandTestEnv but with an openshell
+      // stub whose live list intentionally omits the registry name, mirroring
+      // the bug where the local registry kept a name the gateway no longer
+      // serves.
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-debug-stale-"));
+      const localBin = path.join(home, "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      writeSandboxRegistry(home, "stale-box");
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          "  echo 'NAME'",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const tarball = path.join(home, "out.tar.gz");
+      const r = runWithEnv(
+        `debug --sandbox stale-box --output ${tarball} 2>&1`,
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        30000,
+      );
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain("stale-box");
+      expect(r.out).toContain("not registered");
+      expect(fs.existsSync(tarball)).toBe(false);
+    },
+  );
 
   it("debug --sandbox without a name exits 1", () => {
     const r = run("debug --sandbox");

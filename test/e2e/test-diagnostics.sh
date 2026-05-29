@@ -314,7 +314,10 @@ test_diag_06_debug_sandbox_validation() {
     fail "TC-DIAG-06: Registered name" "exit=$good_rc, output=${good_log:0:300}"
   fi
 
-  local bad_name="nemoclaw-e2e-does-not-exist"
+  # Unique per-run name avoids collisions when another e2e job leaves a
+  # sandbox with a shared "does-not-exist" placeholder behind.
+  local bad_name
+  bad_name="nemoclaw-e2e-missing-$$-$(date +%s)-${RANDOM}"
   local bad_output="${debug_dir}/unknown.tar.gz"
   local bad_rc=0 bad_log=""
   bad_log=$(${TIMEOUT_CMD:+$TIMEOUT_CMD 30} nemoclaw debug --quick --sandbox "$bad_name" --output "$bad_output" 2>&1) || bad_rc=$?

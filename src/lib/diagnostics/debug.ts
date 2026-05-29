@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 
@@ -508,19 +508,40 @@ function collectKernelMessages(collectDir: string): void {
  * guidance that goes with the generated file.
  */
 export function createTarball(collectDir: string, output: string): boolean {
-  const result = spawnSync("tar", ["czf", output, "-C", dirname(collectDir), basename(collectDir)], {
-    stdio: "inherit",
-    timeout: 60_000,
-  });
+  // Write to a sibling temp path so a tar failure cannot clobber a
+  // pre-existing user file at `output`. Rename atomically on success.
+  const partial = `${output}.partial.${process.pid}`;
+  const result = spawnSync(
+    "tar",
+    ["czf", partial, "-C", dirname(collectDir), basename(collectDir)],
+    {
+      stdio: "inherit",
+      timeout: 60_000,
+    },
+  );
   if (result.status !== 0 || result.signal) {
     const reason = result.signal
       ? `killed by signal ${result.signal}`
       : `exited with code ${result.status ?? "unknown"}`;
     error(`Failed to create tarball at ${output} (tar ${reason})`);
     try {
-      rmSync(output, { force: true });
+      rmSync(partial, { force: true });
     } catch {
       /* best-effort cleanup of partial tarball */
+    }
+    process.exitCode = 1;
+    return false;
+  }
+  try {
+    renameSync(partial, output);
+  } catch (err) {
+    error(
+      `Failed to move tarball into place at ${output}: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    try {
+      rmSync(partial, { force: true });
+    } catch {
+      /* best-effort */
     }
     process.exitCode = 1;
     return false;

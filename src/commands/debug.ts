@@ -61,10 +61,12 @@ function buildDebugCommandDeps(rootDir: string): RunDebugCommandDeps {
 
   const isSandboxKnown = (name: string): boolean => {
     const { sandboxes } = registry.listSandboxes();
-    if (sandboxes.find((sandbox) => sandbox.name === name)) return true;
+    if (!sandboxes.find((sandbox) => sandbox.name === name)) return false;
     const liveList = captureOpenshell(rootDir, ["sandbox", "list"]);
-    if (liveList.status === 0 && parseLiveSandboxNames(liveList.output).has(name)) return true;
-    return false;
+    if (liveList.status === 0 && !parseLiveSandboxNames(liveList.output).has(name)) {
+      return false;
+    }
+    return true;
   };
 
   return {

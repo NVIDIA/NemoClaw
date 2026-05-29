@@ -82,6 +82,7 @@ describe("debug command", () => {
         },
       ),
     ).toThrow("exit");
+    expect(exit).toHaveBeenCalledWith(1);
     expect(runDebug).not.toHaveBeenCalled();
     expect(errorLines[0]).toContain("ghost");
     expect(errorLines[0]).toContain("NEMOCLAW_SANDBOX_NAME");
