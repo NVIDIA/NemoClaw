@@ -1187,10 +1187,6 @@ ensure_gateway_token() {
     return 1
   fi
 
-  if [ -n "$(_read_gateway_token)" ]; then
-    return 0
-  fi
-
   if [ "$(id -u)" -eq 0 ]; then
     prepare_openclaw_config_for_write "$config_file" "$hash_file"
   fi
@@ -1208,37 +1204,36 @@ try:
     with open(path) as f:
         cfg = json.load(f)
     auth = cfg.setdefault('gateway', {}).setdefault('auth', {})
-    if not auth.get('token'):
-        auth['token'] = secrets.token_urlsafe(32)
-        dir_path = os.path.dirname(path)
-        fd, tmp_path = tempfile.mkstemp(prefix='.openclaw.', suffix='.tmp', dir=dir_path, text=True)
+    auth['token'] = secrets.token_urlsafe(32)
+    dir_path = os.path.dirname(path)
+    fd, tmp_path = tempfile.mkstemp(prefix='.openclaw.', suffix='.tmp', dir=dir_path, text=True)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            fd = None
+            json.dump(cfg, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, path)
+        dir_flags = os.O_RDONLY
+        if hasattr(os, 'O_DIRECTORY'):
+            dir_flags |= os.O_DIRECTORY
+        dir_fd = os.open(dir_path, dir_flags)
         try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, 'w') as f:
-                fd = None
-                json.dump(cfg, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, path)
-            dir_flags = os.O_RDONLY
-            if hasattr(os, 'O_DIRECTORY'):
-                dir_flags |= os.O_DIRECTORY
-            dir_fd = os.open(dir_path, dir_flags)
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+    except Exception:
+        if fd is not None:
             try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-        except Exception:
-            if fd is not None:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-            try:
-                os.unlink(tmp_path)
+                os.close(fd)
             except OSError:
                 pass
-            raise
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 except Exception as exc:
     print(f'[SECURITY] Failed to ensure OpenClaw gateway token: {exc}', file=sys.stderr)
     sys.exit(1)
@@ -1253,6 +1248,7 @@ PYTOKEN
   fi
 
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+  printf '[token] Gateway auth token refreshed for startup\n' >&2
 }
 
 export_gateway_token() {

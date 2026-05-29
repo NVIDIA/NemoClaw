@@ -621,6 +621,26 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(hashAfter).toMatch(/ openclaw\.json\n$/);
   });
 
+  it("#4517: rotates an existing gateway token before writing the runtime shell env", () => {
+    const oldToken = "old-token-before-rebuild";
+    const { result, envFile, configAfter, hashAfter } = runGatewayTokenHarness(
+      JSON.stringify({ gateway: { auth: { token: oldToken } } }),
+      "stale-token",
+      "18790",
+      true,
+    );
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(configAfter.gateway.auth.token).toEqual(expect.any(String));
+    expect(configAfter.gateway.auth.token).not.toBe("");
+    expect(configAfter.gateway.auth.token).not.toBe(oldToken);
+    expect(envFile).toContain(`export OPENCLAW_GATEWAY_TOKEN='${configAfter.gateway.auth.token}'`);
+    expect(envFile).not.toContain(oldToken);
+    expect(envFile).not.toContain("stale-token");
+    expect(hashAfter).not.toBe("initial-hash\n");
+    expect(hashAfter).toMatch(/ openclaw\.json\n$/);
+  });
+
   it("does not write gateway tokens through a preseeded predictable temp symlink", () => {
     const {
       result,
