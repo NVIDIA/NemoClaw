@@ -5,13 +5,15 @@ import { describe, expect, it } from "vitest";
 
 import { createSession, filterSafeUpdates, normalizeSession, type Session, type SessionUpdates } from "../../state/onboard-session";
 import type { OnboardFlowContext } from "./flow-context";
-import { advanceTo } from "./result";
+import { advanceTo, completeOnboardMachine } from "./result";
 import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
 import type { OnboardSequencePhase } from "./sequence-runner";
 import {
   coreOnboardFlowPhases,
+  finalOnboardFlowPhases,
   initialOnboardFlowPhases,
   runCoreOnboardFlowSequence,
+  runFinalOnboardFlowSequence,
   runInitialOnboardFlowSequence,
 } from "./flow-slices";
 
@@ -98,6 +100,20 @@ describe("onboard flow slices", () => {
     ).toEqual(["provider_selection", "sandbox"]);
   });
 
+  it("selects final branch-to-complete phases", () => {
+    expect(
+      finalOnboardFlowPhases([
+        phase("provider_selection", "inference"),
+        phase("sandbox", "openclaw"),
+        phase("openclaw", "policies"),
+        phase("agent_setup", "policies"),
+        phase("policies", "finalizing"),
+        phase("finalizing", "post_verify"),
+        { state: "post_verify", run: (ctx) => ({ context: ctx, result: completeOnboardMachine() }) },
+      ]).map((entry) => entry.state),
+    ).toEqual(["openclaw", "agent_setup", "policies", "finalizing", "post_verify"]);
+  });
+
   it("runs the initial slice and stops at provider selection", async () => {
     const result = await runInitialOnboardFlowSequence({
       context: context(),
@@ -124,5 +140,24 @@ describe("onboard flow slices", () => {
     });
 
     expect(result.session.machine.state).toBe("openclaw");
+  });
+
+  it("runs the final slice from openclaw to completion", async () => {
+    const result = await runFinalOnboardFlowSequence({
+      context: context(),
+      runtime: runtime("openclaw"),
+      phases: [
+        phase("openclaw", "policies"),
+        phase("policies", "finalizing"),
+        phase("finalizing", "post_verify"),
+        { state: "post_verify", run: (ctx) => ({ context: ctx, result: completeOnboardMachine({ sandboxName: "my-assistant" }) }) },
+      ],
+    });
+
+    expect(result.session).toMatchObject({
+      status: "complete",
+      sandboxName: "my-assistant",
+      machine: { state: "complete" },
+    });
   });
 });
