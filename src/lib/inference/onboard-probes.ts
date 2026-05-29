@@ -427,7 +427,7 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       temperature: 0,
       // Bound strict tool-call probes so a slow local model cannot keep
       // generating until the host-side curl process timeout kills validation.
-      max_tokens: 64,
+      max_tokens: 256,
       stream: false,
     }),
     url,

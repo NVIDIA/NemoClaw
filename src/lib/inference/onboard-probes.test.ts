@@ -656,7 +656,7 @@ exit 0
         );
         expect(retryPayload).toMatchObject({
           tool_choice: "required",
-          max_tokens: 64,
+          max_tokens: 256,
           stream: false,
         });
       } finally {
