@@ -1144,6 +1144,9 @@ $ nemoclaw debug [--quick|-q] [--sandbox NAME] [--output PATH|-o PATH]
 | `--output PATH`, `-o PATH` | Write diagnostics tarball to the given path |
 
 If `--output` is set and the tarball cannot be written (for example, the destination directory is missing or read-only), the command exits non-zero so scripts can detect the failure.
+The tarball is written to a temporary sibling and renamed on success, so a pre-existing file at `--output` is preserved when `tar` fails.
+
+When `--sandbox` is supplied explicitly (via flag or one of `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_SANDBOX`, `SANDBOX_NAME` — flag wins, then the env vars in that order), the name must match a registered sandbox; if `openshell sandbox list` succeeds it must also appear in the live gateway. An unknown or stale name exits non-zero with an actionable error that names the sandbox and reports the source env var when applicable, and no tarball is written. Without an explicit name, `nemoclaw debug` falls back to the registry's default sandbox (and warns if that default is stale).
 
 ### `nemoclaw credentials list`
 

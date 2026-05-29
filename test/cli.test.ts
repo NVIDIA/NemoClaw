@@ -1616,7 +1616,28 @@ describe("CLI dispatch", () => {
       }),
       { mode: 0o600 },
     );
-    const r = runWithEnv("debug --quick --sandbox mybox 2>&1", { HOME: home }, 30000);
+    // Fake openshell so the live-list check sees `mybox`. Without this the
+    // host's real openshell (or absence thereof) decides the assertion.
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        "  echo 'NAME'",
+        "  echo 'mybox      Ready'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const r = runWithEnv(
+      "debug --quick --sandbox mybox 2>&1",
+      { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+      30000,
+    );
     expect(r.code).toBe(0);
     expect(r.out).not.toContain("default sandbox 'ghost'");
     expect(r.out).not.toContain("--sandbox NAME");
