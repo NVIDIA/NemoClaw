@@ -19,12 +19,14 @@ What it does:
   2. Classifies each page by content type (how_to, concept, reference,
      get_started) using the frontmatter `content.type` field.
   3. Groups pages into skills using one of two strategies:
-       - grouped (default): groups by parent directory; the page with the
-         lowest frontmatter ``skill.priority`` (highest priority) becomes the
-         full SKILL.md body; siblings go to ``references/``.
+       - grouped (default): groups by parent directory; the highest-priority
+         procedure page (``how_to``, ``get_started``, or ``tutorial``) becomes
+         the full SKILL.md body and siblings go to ``references/``. Groups
+         with no procedure page put every sibling in ``references/`` only.
        - individual: each ``how_to``, ``get_started``, or ``tutorial`` page
-         becomes its own skill; all other pages are collected into one
-         reference skill.
+         becomes its own skill; ``concept`` pages collect into
+         ``nemoclaw-user-concept`` and ``reference`` pages (plus other
+         non-procedure types) collect into ``nemoclaw-user-reference``.
   4. Generates a skill directory per group containing:
        - SKILL.md with frontmatter (name, description), the lead page body,
          a References section linking sibling pages, and Related Skills links.
@@ -147,6 +149,19 @@ def normalize_heading_levels(text: str) -> str:
 def space_anchor_headings(text: str) -> str:
     """Keep standalone HTML anchors from tripping heading spacing lint."""
     return re.sub(r'(?m)^(<a\s+id="[^"]+"></a>)\n(#{1,6}\s)', r"\1\n\n\2", text)
+
+
+def collapse_consecutive_blank_lines(text: str) -> str:
+    """Collapse runs of blank lines to a single blank line (markdownlint MD012)."""
+    return re.sub(r"\n{3,}", "\n\n", text)
+
+
+def append_markdown_section(lines: list[str], heading: str) -> None:
+    """Append a section heading, avoiding duplicate blank lines before it."""
+    if lines and lines[-1] != "":
+        lines.append("")
+    lines.append(heading)
+    lines.append("")
 
 
 # ---------------------------------------------------------------------------
@@ -1124,6 +1139,7 @@ CATEGORY_VERBS = {
 
 CATEGORY_NOUNS = {
     "about": "overview",
+    "concept": "concept",
     "reference": "reference",
     "get-started": "get-started",
     "root": "overview",
@@ -1493,9 +1509,29 @@ def partition_skill_pages(pages: list[DocPage]) -> tuple[DocPage, list[DocPage]]
     """Split a skill group into the lead page and reference siblings.
 
     The lead page has the lowest ``skill.priority`` value (highest priority).
+    Used by the ``individual`` strategy.
     """
     ordered = sorted(pages, key=lambda p: (p.skill_priority, str(p.path)))
     return ordered[0], ordered[1:]
+
+
+def partition_grouped_skill_pages(
+    pages: list[DocPage],
+) -> tuple[DocPage | None, list[DocPage]]:
+    """Split a grouped skill into an optional inline lead and reference siblings.
+
+    When the group contains a procedure page (``how_to``, ``get_started``, or
+    ``tutorial``), the one with the lowest ``skill.priority`` becomes the
+    SKILL.md body and siblings go to ``references/``. Otherwise every page is
+    reference-only progressive disclosure.
+    """
+    ordered = sorted(pages, key=lambda p: (p.skill_priority, str(p.path)))
+    candidates = [p for p in pages if p.content_type in PROCEDURE_CONTENT_TYPES]
+    if not candidates:
+        return None, ordered
+    lead = min(candidates, key=lambda p: (p.skill_priority, str(p.path)))
+    refs = [p for p in ordered if p is not lead]
+    return lead, refs
 
 
 def _append_page_sections_to_skill(
@@ -1540,6 +1576,7 @@ def generate_skill(
     doc_to_skill: dict[str, str] | None = None,
     html_baseurl: str | None = None,
     doc_platform: str = "myst-md",
+    strategy: str = "grouped",
     dry_run: bool = False,
 ) -> dict:
     """Generate a complete skill directory from a group of doc pages."""
@@ -1569,7 +1606,15 @@ def generate_skill(
             image_acc.extend(copies)
         return result
 
-    primary_page, reference_pages = partition_skill_pages(pages)
+    if strategy == "grouped":
+        primary_page, reference_pages = partition_grouped_skill_pages(pages)
+    else:
+        primary_page, reference_pages = partition_skill_pages(pages)
+
+    ordered_pages = sorted(pages, key=lambda p: (p.skill_priority, str(p.path)))
+    description_pages = (
+        [primary_page, *reference_pages] if primary_page is not None else ordered_pages
+    )
 
     def _page_rel(page: DocPage) -> str | None:
         if docs_dir is None:
@@ -1588,11 +1633,12 @@ def generate_skill(
         ref_name = page.path.stem + ".md"
         skill_md_local_links[rel] = f"references/{ref_name}"
         reference_local_links[rel] = ref_name
-    primary_rel = _page_rel(primary_page)
-    if primary_rel is not None:
-        reference_local_links[primary_rel] = "../SKILL.md"
+    if primary_page is not None:
+        primary_rel = _page_rel(primary_page)
+        if primary_rel is not None:
+            reference_local_links[primary_rel] = "../SKILL.md"
 
-    description = build_skill_description(name, pages)
+    description = build_skill_description(name, description_pages)
     lines: list[str] = []
 
     lines.append("---")
@@ -1604,77 +1650,83 @@ def generate_skill(
     lines.append(markdown_spdx_header().rstrip("\n"))
     lines.append("")
 
-    skill_title = primary_page.title or _brand_case(name.replace("-", " ").title())
+    skill_title = (
+        primary_page.title
+        if primary_page is not None and primary_page.title
+        else _brand_case(name.replace("-", " ").title())
+    )
     lines.append(f"# {skill_title}")
-    lines.append("")
-
-    gotchas = _extract_gotchas([primary_page], doc_platform=doc_platform)
-    if gotchas:
-        lines.append("## Gotchas")
-        lines.append("")
-        for gotcha in gotchas:
-            lines.append(gotcha)
+    if primary_page is not None:
         lines.append("")
 
-    prereq_items: list[str] = []
-    seen_prereqs: set[str] = set()
-    for heading, content in primary_page.sections:
-        if heading.lower() not in ("prerequisites", "before you begin"):
-            continue
-        cleaned = _clean(content, primary_page, skill_md_images, skill_md_local_links)
-        for item_line in cleaned.split("\n"):
-            stripped = item_line.strip()
-            if stripped.startswith("- "):
-                if prereq_items and not prereq_items[-1].startswith("- "):
-                    prereq_items.append("")
-                norm = stripped.lower().strip("- .")
-                if norm not in seen_prereqs:
-                    seen_prereqs.add(norm)
+    if primary_page is not None:
+        gotchas = _extract_gotchas([primary_page], doc_platform=doc_platform)
+        if gotchas:
+            lines.append("## Gotchas")
+            lines.append("")
+            for gotcha in gotchas:
+                lines.append(gotcha)
+            lines.append("")
+
+        prereq_items: list[str] = []
+        seen_prereqs: set[str] = set()
+        for heading, content in primary_page.sections:
+            if heading.lower() not in ("prerequisites", "before you begin"):
+                continue
+            cleaned = _clean(content, primary_page, skill_md_images, skill_md_local_links)
+            for item_line in cleaned.split("\n"):
+                stripped = item_line.strip()
+                if stripped.startswith("- "):
+                    if prereq_items and not prereq_items[-1].startswith("- "):
+                        prereq_items.append("")
+                    norm = stripped.lower().strip("- .")
+                    if norm not in seen_prereqs:
+                        seen_prereqs.add(norm)
+                        prereq_items.append(stripped)
+                elif stripped and not prereq_items:
                     prereq_items.append(stripped)
-            elif stripped and not prereq_items:
-                prereq_items.append(stripped)
 
-    if prereq_items:
-        lines.append("## Prerequisites")
-        lines.append("")
-        for item in prereq_items:
-            lines.append(item)
-        lines.append("")
+        if prereq_items:
+            lines.append("## Prerequisites")
+            lines.append("")
+            for item in prereq_items:
+                lines.append(item)
+            lines.append("")
 
-    collected_related: list[str] = []
-    _append_page_sections_to_skill(
-        primary_page,
-        lines,
-        clean_fn=_clean,
-        skill_md_images=skill_md_images,
-        skill_md_local_links=skill_md_local_links,
-        collected_related=collected_related,
-    )
+        collected_related: list[str] = []
+        _append_page_sections_to_skill(
+            primary_page,
+            lines,
+            clean_fn=_clean,
+            skill_md_images=skill_md_images,
+            skill_md_local_links=skill_md_local_links,
+            collected_related=collected_related,
+        )
 
-    raw_md = "\n".join(lines)
-    raw_md, body_related = extract_related_skills(raw_md)
-    lines = raw_md.rstrip("\n").split("\n")
+        raw_md = "\n".join(lines)
+        raw_md, body_related = extract_related_skills(raw_md)
+        lines = raw_md.rstrip("\n").split("\n")
 
-    all_related_text = "\n".join(
-        f"## Related Topics\n\n{block}" for block in collected_related
-    )
-    _, section_related = extract_related_skills(all_related_text)
+        all_related_text = "\n".join(
+            f"## Related Topics\n\n{block}" for block in collected_related
+        )
+        _, section_related = extract_related_skills(all_related_text)
 
-    seen_skills: set[str] = set()
-    merged_entries: list[str] = []
-    for entry in section_related + body_related:
-        skill_match = re.search(r"`([a-z0-9-]+)`", entry)
-        key = skill_match.group(1) if skill_match else entry
-        if key == name:
-            continue
-        if key not in seen_skills:
-            seen_skills.add(key)
-            merged_entries.append(entry)
+        seen_skills: set[str] = set()
+        merged_entries: list[str] = []
+        for entry in section_related + body_related:
+            skill_match = re.search(r"`([a-z0-9-]+)`", entry)
+            key = skill_match.group(1) if skill_match else entry
+            if key == name:
+                continue
+            if key not in seen_skills:
+                seen_skills.add(key)
+                merged_entries.append(entry)
+    else:
+        merged_entries = []
 
     if reference_pages:
-        lines.append("")
-        lines.append("## References")
-        lines.append("")
+        append_markdown_section(lines, "## References")
         for ref_page in reference_pages:
             ref_name = ref_page.path.stem + ".md"
             file_link = f"[references/{ref_name}](references/{ref_name})"
@@ -1690,14 +1742,14 @@ def generate_skill(
             lines.append(bullet)
 
     if merged_entries:
-        lines.append("")
-        lines.append("## Related Skills")
-        lines.append("")
+        append_markdown_section(lines, "## Related Skills")
         for entry in merged_entries:
             lines.append(entry)
         lines.append("")
 
-    skill_md = normalize_heading_levels("\n".join(lines))
+    skill_md = collapse_consecutive_blank_lines(
+        normalize_heading_levels("\n".join(lines))
+    )
 
     ref_files: dict[str, str] = {}
     for ref_page in reference_pages:
@@ -1793,14 +1845,19 @@ def group_by_directory(pages: list[DocPage]) -> dict[str, list[DocPage]]:
 
 
 def group_individual(pages: list[DocPage]) -> dict[str, list[DocPage]]:
-    """Give each procedure page its own skill; collect the rest into reference."""
+    """Give each procedure page its own skill; bucket concept and reference pages."""
     groups: dict[str, list[DocPage]] = {}
+    concept_pages: list[DocPage] = []
     reference_pages: list[DocPage] = []
     for page in pages:
         if page.content_type in PROCEDURE_CONTENT_TYPES:
             groups[page.path.stem] = [page]
+        elif page.content_type == "concept":
+            concept_pages.append(page)
         else:
             reference_pages.append(page)
+    if concept_pages:
+        groups["concept"] = concept_pages
     if reference_pages:
         groups["reference"] = reference_pages
     return groups
@@ -1882,8 +1939,9 @@ def main():
         epilog=textwrap.dedent("""\
             Strategies:
               grouped     Group docs by parent directory (default)
-              individual  One skill per how_to/get_started/tutorial page; one
-                          reference skill for all other pages
+              individual  One skill per how_to/get_started/tutorial page;
+                          concept pages -> nemoclaw-user-concept;
+                          reference pages -> nemoclaw-user-reference
 
             Examples:
               %(prog)s docs/ .agents/skills/ --prefix nemoclaw-user --doc-platform fern-mdx
@@ -2045,6 +2103,7 @@ def main():
             doc_to_skill=doc_to_skill,
             html_baseurl=html_baseurl,
             doc_platform=args.doc_platform,
+            strategy=args.strategy,
             dry_run=args.dry_run,
         )
         summaries.append(summary)

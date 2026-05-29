@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-get-started"
-description: "Lists the hardware, software, and container runtime requirements for running NemoClaw. Use when verifying prerequisites before installation. Trigger keywords - nemoclaw prerequisites, nemoclaw supported platforms, nemoclaw hardware software, nemohermes quickstart, hermes agent nemoclaw, run hermes openshell sandbox, nemoclaw quickstart, install nemoclaw openclaw sandbox, nemoclaw windows wsl2 setup, nemoclaw install windows docker desktop."
+description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time. Trigger keywords - nemoclaw quickstart, install nemoclaw openclaw sandbox, nemohermes quickstart, hermes agent nemoclaw, run hermes openshell sandbox, nemoclaw prerequisites, nemoclaw supported platforms, nemoclaw hardware software, nemoclaw windows wsl2 setup, nemoclaw install windows docker desktop."
 license: "Apache-2.0"
 ---
 

@@ -95,10 +95,11 @@ Other useful flags:
 ### How the Script Works
 
 The script reads YAML frontmatter from each doc page to determine its content type (`how_to`, `concept`, `reference`, `get_started`), then groups pages into skills using the `grouped` strategy by default.
-Within each directory group, the page with the lowest `skill.priority` value (highest priority) becomes the full body of `SKILL.md`.
+Within each directory group, the highest-priority procedure page (`how_to`, `get_started`, or `tutorial`) becomes the full body of `SKILL.md`.
 Sibling pages are written unchanged to `references/`.
+Groups with no procedure page keep every sibling in `references/` only.
 
-Use `--strategy individual` to emit one skill per `how_to`, `get_started`, or `tutorial` page and collect all other pages into a single reference skill.
+Use `--strategy individual` to emit one skill per `how_to`, `get_started`, or `tutorial` page, collect `concept` pages into `nemoclaw-user-concept`, and collect `reference` pages (and other non-procedure types) into `nemoclaw-user-reference`.
 
 Cross-references between doc pages are rewritten as skill-to-skill pointers so agents can navigate between skills.
 Fern MDX components and MyST/Sphinx directives are converted to standard markdown.

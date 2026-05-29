@@ -107,4 +107,4 @@ On the next run NemoClaw prompts again unless the credential is supplied through
 
 ## Related Files
 
-For the broader sandbox security model and operational trade-offs, see [Security Best Practices](../SKILL.md) and Architecture (use the `nemoclaw-user-reference` skill).
+For the broader sandbox security model and operational trade-offs, see [Security Best Practices](best-practices.md) and Architecture (use the `nemoclaw-user-reference` skill).

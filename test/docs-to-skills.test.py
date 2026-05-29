@@ -46,15 +46,46 @@ class DocsToSkillsHelpersTest(unittest.TestCase):
         self.assertEqual(lead.path.stem, "high")
         self.assertEqual([page.path.stem for page in refs], ["low"])
 
-    def test_group_individual_splits_procedure_and_reference_pages(self):
+    def test_partition_grouped_skill_pages_uses_highest_priority_procedure(self):
+        concept = make_page("overview", content_type="concept", priority=10)
+        primary = make_page("lifecycle", content_type="how_to", priority=10)
+        secondary = make_page("backup", content_type="how_to", priority=20)
+        lead, refs = self.mod.partition_grouped_skill_pages(
+            [secondary, concept, primary]
+        )
+        self.assertEqual(lead.path.stem, "lifecycle")
+        self.assertEqual(
+            {page.path.stem for page in refs},
+            {"backup", "overview"},
+        )
+
+    def test_partition_grouped_skill_pages_reference_only_without_procedure(self):
+        concept = make_page("overview", content_type="concept", priority=10)
+        reference = make_page("commands", content_type="reference", priority=20)
+        lead, refs = self.mod.partition_grouped_skill_pages([reference, concept])
+        self.assertIsNone(lead)
+        self.assertEqual([page.path.stem for page in refs], ["overview", "commands"])
+
+    def test_partition_grouped_skill_pages_treats_get_started_as_procedure(self):
+        quickstart = make_page("quickstart", content_type="get_started", priority=10)
+        prereq = make_page("prerequisites", content_type="reference", priority=5)
+        lead, refs = self.mod.partition_grouped_skill_pages([prereq, quickstart])
+        self.assertEqual(lead.path.stem, "quickstart")
+        self.assertEqual([page.path.stem for page in refs], ["prerequisites"])
+
+    def test_group_individual_splits_procedure_concept_and_reference_pages(self):
         procedure = make_page("quickstart", content_type="get_started")
         concept = make_page("overview", content_type="concept")
         reference = make_page("commands", content_type="reference")
-        groups = self.mod.group_individual([procedure, concept, reference])
+        troubleshooting = make_page("tool-calling", content_type="troubleshooting")
+        groups = self.mod.group_individual(
+            [procedure, concept, reference, troubleshooting]
+        )
         self.assertEqual(groups["quickstart"], [procedure])
+        self.assertEqual(groups["concept"], [concept])
         self.assertEqual(
             {page.path.stem for page in groups["reference"]},
-            {"overview", "commands"},
+            {"commands", "tool-calling"},
         )
 
     def test_group_by_directory_keeps_siblings_together(self):
@@ -64,6 +95,18 @@ class DocsToSkillsHelpersTest(unittest.TestCase):
         page_b.category = "get-started"
         groups = self.mod.group_by_directory([page_a, page_b])
         self.assertEqual(len(groups["get-started"]), 2)
+
+    def test_collapse_consecutive_blank_lines(self):
+        text = "# Title\n\n\n## References\n"
+        self.assertEqual(
+            self.mod.collapse_consecutive_blank_lines(text),
+            "# Title\n\n## References\n",
+        )
+
+    def test_append_markdown_section_avoids_duplicate_blank_lines(self):
+        lines = ["# Title"]
+        self.mod.append_markdown_section(lines, "## References")
+        self.assertEqual(lines, ["# Title", "", "## References", ""])
 
 
 if __name__ == "__main__":
