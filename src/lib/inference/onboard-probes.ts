@@ -33,6 +33,8 @@ const EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS = new Set([
   "qwen/qwen3.5-397b-a17b",
   "deepseek-ai/deepseek-v4-flash",
 ]);
+const CURL_TIMEOUT_STATUS = 28;
+const NODE_SPAWN_TIMEOUT_STATUS = -110;
 
 // Hostnames that are normally meant for the sandbox/container host boundary.
 // host.openshell.internal only resolves inside the OpenShell sandbox network,
@@ -254,8 +256,22 @@ function shouldRetryHttpProbe(result) {
   );
 }
 
-function isCurlTimeout(result) {
-  return result && !result.ok && result.curlStatus === 28;
+function isProbeTimeout(result) {
+  return (
+    result &&
+    !result.ok &&
+    (result.curlStatus === CURL_TIMEOUT_STATUS ||
+      result.curlStatus === NODE_SPAWN_TIMEOUT_STATUS)
+  );
+}
+
+function isTimeoutOrConnFailureStatus(curlStatus) {
+  return (
+    curlStatus === CURL_TIMEOUT_STATUS ||
+    curlStatus === NODE_SPAWN_TIMEOUT_STATUS ||
+    curlStatus === 6 ||
+    curlStatus === 7
+  );
 }
 
 function executeProbeWithHttpRetry(probe) {
@@ -698,7 +714,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     if (
       probe.api === "openai-completions" &&
       isDeepSeekV4ProModel(model) &&
-      isCurlTimeout(result)
+      isProbeTimeout(result)
     ) {
       const warning =
         "DeepSeek V4 Pro validation timed out before the stream returned data; continuing with NVIDIA Endpoints because this model can take longer than the onboarding probe budget to emit its first token.";
@@ -729,15 +745,14 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   // stack can cause the initial probe to time out before the TLS handshake
   // completes (#987); hosted providers also occasionally drop connections for
   // tens of seconds during incidents (#3033).
-  const isTimeoutOrConnFailure = (cs) => cs === 28 || cs === 6 || cs === 7;
   const isRetriableProbeResult = (result) =>
-    isTimeoutOrConnFailure(result.curlStatus) ||
+    isTimeoutOrConnFailureStatus(result.curlStatus) ||
     RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus);
   // Look across every failure entry rather than only failures[0] so a probe
   // ordering like /responses (HTTP error) followed by /chat/completions
   // (curl 28) still triggers the chat-completions retry path.
   let retriedAfterTimeout = false;
-  if (failures.some((failure) => isTimeoutOrConnFailure(failure.curlStatus))) {
+  if (failures.some((failure) => isTimeoutOrConnFailureStatus(failure.curlStatus))) {
     retriedAfterTimeout = true;
     const platformOptions =
       typeof options.isWsl === "boolean" ? { isWsl: options.isWsl } : undefined;
@@ -748,10 +763,10 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       ...doubledArgs,
       "-H",
       "Content-Type: application/json",
-      ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+      ...authHeader,
       "-d",
       JSON.stringify(getChatCompletionsProbePayload(model)),
-      `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
+      appendKey("/chat/completions"),
     ];
     const runRetryProbe = () =>
       options.requireChatCompletionsToolCalling === true
@@ -769,7 +784,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     }
     for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
       if (!isRetriableProbeResult(retryResult)) break;
-      const reason = isTimeoutOrConnFailure(retryResult.curlStatus)
+      const reason = isTimeoutOrConnFailureStatus(retryResult.curlStatus)
         ? "timed out"
         : `returned HTTP ${retryResult.httpStatus}`;
       console.log(
