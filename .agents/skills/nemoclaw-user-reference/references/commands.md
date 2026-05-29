@@ -59,6 +59,17 @@ Use this command for new installs and for recreating a sandbox after changes to 
 $ nemoclaw onboard [--non-interactive] [--resume | --fresh] [--recreate-sandbox] [--gpu | --no-gpu] [--from <Dockerfile>] [--name <sandbox>] [--sandbox-gpu | --no-sandbox-gpu] [--sandbox-gpu-device <device>] [--agent <name>] [--control-ui-port <N>] [--yes | -y] [--no-ollama-autostart] [--yes-i-accept-third-party-software]
 ```
 
+#### `--resume` and `--fresh`
+
+NemoClaw records onboarding progress so interrupted runs can continue.
+Use `--resume` to continue a resumable onboarding session with the provider, model, sandbox name, agent, and custom Dockerfile path recorded by the original run.
+If the recorded session conflicts with flags you pass on the recovery run, NemoClaw exits and tells you to either rerun with the original settings or start over.
+
+Use `--fresh` to discard the saved onboarding session and start the wizard from the beginning.
+This clears stale or failed session state before NemoClaw creates a new session record.
+The installer also accepts `--fresh` and forwards it to `nemoclaw onboard`, which skips automatic resume detection.
+`--resume` and `--fresh` are mutually exclusive.
+
 **Warning:**
 
 For NemoClaw-managed environments, use `nemoclaw onboard` when you need to create or recreate the OpenShell gateway or sandbox.
@@ -81,7 +92,8 @@ Supported non-experimental choices include NVIDIA Endpoints, OpenAI, Anthropic, 
 Credentials are registered with the OpenShell gateway and never persisted to host disk. See Credential Storage (use the `nemoclaw-user-configure-security` skill) for details on inspection, rotation, and migration from earlier releases.
 The legacy `nemoclaw setup` command is deprecated; use `nemoclaw onboard` instead.
 
-After provider selection, the wizard prompts for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
+After provider selection, the wizard reviews the provider, model, credential state, and sandbox name before registering inference.
+It then prompts for optional web search and messaging channels, builds and starts the sandbox, and asks for a **policy tier** that controls the default set of network policy presets applied to the sandbox.
 Three tiers are available:
 
 | Tier | Description |
@@ -150,7 +162,8 @@ After fixing the key, re-enable web search with `nemoclaw config web-search`.
 
 The wizard prompts for a sandbox name.
 Names must be 1 to 63 characters, lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
-Uppercase letters are automatically lowercased.
+The CLI rejects names that do not match these rules.
+It also prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant`.
 Names that match global CLI commands (`status`, `list`, `debug`, etc.) are rejected to avoid routing conflicts.
 Use `--agent <name>` to target a specific installed agent profile during onboarding.
 
@@ -666,6 +679,7 @@ After registering the channel, NemoClaw asks whether to rebuild immediately.
 Running `add` for an already-configured channel simply overwrites the stored credentials where applicable — the operation is idempotent.
 Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
 If a matching built-in network policy preset exists, NemoClaw applies it to the sandbox before the rebuild so the bridge has egress to its upstream API; if applying the preset fails, NemoClaw warns and tells you to re-apply manually with `nemoclaw <name> policy-add <channel>`.
+For Telegram, Discord, and Slack, a rebuild triggered by `channels add` also verifies that the selected bridge starts and reports credential, startup, or plugin discovery warnings.
 
 ```console
 $ nemoclaw my-assistant channels add telegram
@@ -1198,6 +1212,9 @@ All ports must be non-privileged integers between 1024 and 65535.
 | `NEMOCLAW_GATEWAY_PORT` | 8080 | OpenShell gateway port |
 | `NEMOCLAW_GATEWAY_BIND_ADDRESS` | 127.0.0.1 | OpenShell gateway bind address (`127.0.0.1` or `0.0.0.0`) |
 | `NEMOCLAW_DASHBOARD_PORT` | 18789 (auto-derived from `CHAT_UI_URL` port if set) | Dashboard UI |
+| `NEMOCLAW_HERMES_DASHBOARD` | 0 | Optional Hermes native web dashboard (`1`, `true`, `yes`, or `on` enables it) |
+| `NEMOCLAW_HERMES_DASHBOARD_PORT` | 9119 | Optional Hermes native web dashboard forward port |
+| `NEMOCLAW_HERMES_DASHBOARD_TUI` | 0 | Optional Hermes in-browser TUI tab when the dashboard is enabled |
 | `NEMOCLAW_VLLM_PORT` | 8000 | vLLM / NIM inference |
 | `NEMOCLAW_OLLAMA_PORT` | 11434 | Ollama inference |
 | `NEMOCLAW_OLLAMA_PROXY_PORT` | 11435 | Ollama auth proxy |
@@ -1230,6 +1247,8 @@ These overrides apply to onboarding, status checks, health probes, and the unins
 Defaults are unchanged when no variable is set.
 If `NEMOCLAW_DASHBOARD_PORT` or the port from `CHAT_UI_URL` is already occupied by another sandbox, onboarding scans `18789` through `18799` and uses the next free dashboard port.
 Pass `--control-ui-port <N>` to require a specific port.
+For Hermes sandboxes, `NEMOCLAW_HERMES_DASHBOARD=1` starts the native Hermes dashboard separately from the OpenAI-compatible API.
+The Hermes API remains on port `8642`; the optional browser dashboard uses `NEMOCLAW_HERMES_DASHBOARD_PORT`.
 
 ### Onboarding Configuration
 

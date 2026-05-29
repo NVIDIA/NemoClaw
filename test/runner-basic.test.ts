@@ -3,9 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import runnerModule from "../dist/lib/runner.js";
-
-const { runCapture } = runnerModule;
+import { runCapture } from "../dist/lib/runner.js";
 
 describe("runner", () => {
   describe("runCapture", () => {
@@ -42,9 +40,9 @@ describe("runner", () => {
     });
 
     it("rejects shell strings", () => {
-      const shellString = /** @type {unknown} */ ("echo hello");
+      const shellString: unknown = "echo hello";
       expect(() => {
-        runCapture(/** @type {readonly string[]} */ (shellString));
+        runCapture(shellString as readonly string[]);
       }).toThrow(/argv array/);
     });
 
