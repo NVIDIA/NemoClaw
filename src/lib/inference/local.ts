@@ -11,7 +11,6 @@ import os from "node:os";
 import nodePath from "node:path";
 import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
-import type { ContainerRuntime } from "../platform";
 import type { CaptureResult } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
 import {
@@ -39,11 +38,10 @@ import {
   SMALLEST_OLLAMA_MODEL_TAG,
 } from "./ollama-model-registry";
 
-const { containerCanReachHostLoopback, inferContainerRuntime, isWsl } = require("../platform");
-const { dockerInfo } = require("../adapters/docker/info");
+const { containerCanReachHostLoopback, isWsl } = require("../platform");
+const { detectContainerRuntimeFromDockerInfo } =
+  require("../adapters/docker/runtime") as typeof import("../adapters/docker/runtime");
 const { detectNvidiaPlatform } = require("./nim");
-
-const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 1500;
 
 /**
  * Port containers use to reach Ollama. Returns the raw Ollama port when the
@@ -54,9 +52,7 @@ const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 1500;
 let _ollamaContainerPort: number | null = null;
 export function getOllamaContainerPort(): number {
   if (_ollamaContainerPort !== null) return _ollamaContainerPort;
-  const runtime = inferContainerRuntime(
-    dockerInfo({ ignoreError: true, timeout: DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS }),
-  ) as ContainerRuntime;
+  const runtime = detectContainerRuntimeFromDockerInfo();
   _ollamaContainerPort = containerCanReachHostLoopback(runtime) ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
   return _ollamaContainerPort;
 }

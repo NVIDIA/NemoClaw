@@ -186,6 +186,30 @@ describe("http-probe helpers", () => {
     expect(result.message).toContain("curl failed");
     expect(result.stderr).toContain("spawn ENOENT");
   });
+
+  it("reports spawnSync ETIMEDOUT as a timeout status", () => {
+    const result = runCurlProbe(["-sS", "https://example.test/models"], {
+      spawnSyncImpl: () => {
+        const error = Object.assign(new Error("spawnSync curl ETIMEDOUT"), {
+          code: "ETIMEDOUT",
+          errno: -60,
+        });
+        return {
+          pid: 1,
+          output: [],
+          stdout: "",
+          stderr: "",
+          status: null,
+          signal: null,
+          error,
+        };
+      },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.curlStatus).toBe(-110);
+    expect(result.message).toContain("ETIMEDOUT");
+  });
 });
 
 describe("runChatCompletionsStreamingProbe", () => {

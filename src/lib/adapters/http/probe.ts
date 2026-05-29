@@ -103,6 +103,14 @@ function resolveCurlProcessTimeoutMs(argv: string[], opts: CurlProbeOptions): nu
   );
 }
 
+function normalizeSpawnErrorCode(error: unknown): number {
+  if (isErrnoException(error) && error.code === "ETIMEDOUT") return -110;
+  const rawErrorCode = isErrnoException(error)
+    ? (error.errno ?? error.code)
+    : undefined;
+  return typeof rawErrorCode === "number" ? rawErrorCode : 1;
+}
+
 function sanitizeCurlUrl(value: string): string {
   try {
     const url = new URL(value);
@@ -220,10 +228,7 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
     );
     const body = fs.existsSync(bodyFile) ? fs.readFileSync(bodyFile, "utf8") : "";
     if (result.error) {
-      const rawErrorCode = isErrnoException(result.error)
-        ? (result.error.errno ?? result.error.code)
-        : undefined;
-      const errorCode = typeof rawErrorCode === "number" ? rawErrorCode : 1;
+      const errorCode = normalizeSpawnErrorCode(result.error);
       const errorMessage = compactText(
         `${result.error.message || String(result.error)} ${String(result.stderr || "")}`,
       );
