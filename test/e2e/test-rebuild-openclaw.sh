@@ -62,20 +62,14 @@ info() { echo -e "${YELLOW}[INFO]${NC} $1"; }
 diag() { echo -e "${YELLOW}[DIAG]${NC} $1"; }
 
 read_sandbox_gateway_token() {
-  openshell sandbox exec --name "${SANDBOX_NAME}" -- python3 -c '
-import json
-with open("/sandbox/.openclaw/openclaw.json") as f:
-    cfg = json.load(f)
-print(cfg.get("gateway", {}).get("auth", {}).get("token", ""), end="")
-'
+  openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+    python3 -c 'import json; cfg = json.load(open("/sandbox/.openclaw/openclaw.json")); print(cfg.get("gateway", {}).get("auth", {}).get("token", ""), end="")'
 }
 
 read_sandbox_runtime_gateway_token() {
   # shellcheck disable=SC2016 # OPENCLAW_GATEWAY_TOKEN must expand inside the sandbox.
-  openshell sandbox exec --name "${SANDBOX_NAME}" -- bash -lc '
-. /tmp/nemoclaw-proxy-env.sh >/dev/null 2>&1 || exit 1
-printf "%s" "${OPENCLAW_GATEWAY_TOKEN:-}"
-'
+  openshell sandbox exec --name "${SANDBOX_NAME}" -- \
+    bash -lc '. /tmp/nemoclaw-proxy-env.sh >/dev/null 2>&1 || exit 1; printf "%s" "${OPENCLAW_GATEWAY_TOKEN:-}"'
 }
 
 read_sandbox_config_hash() {
@@ -196,18 +190,9 @@ openshell sandbox exec --name "${SANDBOX_NAME}" -- \
 
 # Seed an existing gateway token so the rebuild path must rotate it.
 openshell sandbox exec --name "${SANDBOX_NAME}" -- \
-  env "PRE_REBUILD_GATEWAY_TOKEN=${PRE_REBUILD_GATEWAY_TOKEN}" python3 -c '
-import json
-import os
-
-path = "/sandbox/.openclaw/openclaw.json"
-with open(path) as f:
-    cfg = json.load(f)
-cfg.setdefault("gateway", {}).setdefault("auth", {})["token"] = os.environ["PRE_REBUILD_GATEWAY_TOKEN"]
-with open(path, "w") as f:
-    json.dump(cfg, f, indent=2)
-    f.write("\n")
-' || fail "Failed to seed old gateway token"
+  env "PRE_REBUILD_GATEWAY_TOKEN=${PRE_REBUILD_GATEWAY_TOKEN}" \
+  python3 -c 'import json, os; path = "/sandbox/.openclaw/openclaw.json"; cfg = json.load(open(path)); cfg.setdefault("gateway", {}).setdefault("auth", {})["token"] = os.environ["PRE_REBUILD_GATEWAY_TOKEN"]; f = open(path, "w"); json.dump(cfg, f, indent=2); f.write("\n"); f.close()' \
+  || fail "Failed to seed old gateway token"
 openshell sandbox exec --name "${SANDBOX_NAME}" -- \
   sh -c "cd /sandbox/.openclaw && sha256sum openclaw.json > .config-hash" \
   || fail "Failed to write pre-rebuild config hash"
