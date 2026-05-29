@@ -1,0 +1,20 @@
+[
+  {
+    "id": "docs-resources-agent-skills-001",
+    "question": "I'm looking at NemoClaw agent skills. Help me find a skill that can guide installation, policy, inference, or operations so I can delegate the right workflow to my AI coding assistant.",
+    "expected_skill": "nemoclaw-user-agent-skills",
+    "ground_truth": "A NemoClaw-specific answer that helps the user find a skill that can guide installation, policy, inference, or operations and gives enough concrete guidance, decision criteria, verification steps, or risk framing to delegate the right workflow to my AI coding assistant."
+  },
+  {
+    "id": "docs-resources-agent-skills-002",
+    "question": "I'm choosing among multiple NemoClaw skills. Help me understand what each skill is designed to do so I can avoid using a broad assistant when a targeted skill exists.",
+    "expected_skill": "nemoclaw-user-agent-skills",
+    "ground_truth": "A NemoClaw-specific answer that helps the user understand what each skill is designed to do and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid using a broad assistant when a targeted skill exists."
+  },
+  {
+    "id": "docs-resources-agent-skills-003",
+    "question": "I'm letting an agent follow NemoClaw-specific instructions. Help me see why the skill guidance is trustworthy and scoped so I can use agent assistance without losing operational control.",
+    "expected_skill": "nemoclaw-user-agent-skills",
+    "ground_truth": "A NemoClaw-specific answer that helps the user see why the skill guidance is trustworthy and scoped and gives enough concrete guidance, decision criteria, verification steps, or risk framing to use agent assistance without losing operational control."
+  }
+]
