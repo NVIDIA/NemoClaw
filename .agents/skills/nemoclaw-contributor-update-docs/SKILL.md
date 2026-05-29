@@ -132,6 +132,13 @@ When updating an existing page:
 - Do not reorganize sections unless the change requires it.
 - Update any cross-references or "Next Steps" links if relevant.
 
+**Release prep only:** When updating `docs/about/release-notes.mdx`:
+
+- For each release-note bullet that corresponds to a deeper doc page, end the bullet with `For more information, refer to [DOC PAGE](/doc/path).`
+- Link to the most specific existing page that explains the behavior, command, setup flow, or troubleshooting path.
+- Do not add a link when no deeper page exists or when the only possible target is unrelated or too broad.
+- Keep the source docs link as a normal MDX link. The docs-to-skills generator will convert it to the appropriate generated skill reference where needed.
+
 When creating a new page:
 
 - Follow the frontmatter template from existing pages in `docs/`.
