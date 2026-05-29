@@ -621,6 +621,7 @@ describe("uninstall run plan", () => {
   it("kills host openshell-gateway process during uninstall (#3516)", () => {
     const logs: string[] = [];
     const killed: number[] = [];
+    const exited = new Set<number>();
     const result = runUninstallPlan(
       { assumeYes: true, deleteModels: false, keepOpenShell: true },
       {
@@ -630,13 +631,19 @@ describe("uninstall run plan", () => {
         isTty: false,
         kill: (pid) => {
           killed.push(pid);
+          exited.add(pid);
           return true;
         },
         log: (line) => logs.push(line),
         rmSync: vi.fn(),
         run: (command, args) => {
-          if (command === "pgrep" && args.includes("openshell-gateway")) {
-            return { status: 0, stdout: "99887\n", stderr: "" };
+          const psResult = psStub("9999887", {
+            cmdline: "/home/test/.local/bin/openshell-gateway --port 8080\n",
+            exited,
+          })(args);
+          if (psResult) return psResult;
+          if (command === "pgrep" && args[0] === "-f" && String(args[1]).includes("openshell-gateway")) {
+            return { status: 0, stdout: "9999887\n", stderr: "" };
           }
           if (command === "lsof") return ok("");
           if (args[0] === "-c") return ok("/fake/bin/tool\n");
@@ -648,8 +655,8 @@ describe("uninstall run plan", () => {
     );
 
     expect(result.exitCode).toBe(0);
-    expect(killed).toContain(99887);
-    expect(logs).toContain("Stopped host openshell-gateway processes 99887");
+    expect(killed).toContain(9999887);
+    expect(logs).toContain("Stopped host openshell-gateway process 9999887");
 
   });
 });

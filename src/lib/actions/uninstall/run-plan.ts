@@ -11,6 +11,7 @@ import { getAgentBranding, type AgentBranding } from "../../cli/branding";
 import { sleepMs } from "../../core/wait";
 import { defaultUninstallPaths, NEMOCLAW_OLLAMA_MODELS, NEMOCLAW_PROVIDERS, type UninstallPaths } from "../../domain/uninstall/paths";
 import { buildUninstallPlan, type UninstallPlan } from "../../domain/uninstall/plan";
+import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup";
 import { classifyShimPath, type FileSystemDeps } from "./plan";
 
@@ -582,7 +583,17 @@ function executePlan(plan: UninstallPlan, paths: UninstallPaths, options: Uninst
         commandExists: runtime.commandExists,
       });
       stopOrphanedOpenShell(runtime);
-      stopMatchingPids("openshell-gateway", runtime, "host openshell-gateway processes");
+      stopHostGatewayProcesses(
+        {
+          run: runtime.run,
+          kill: runtime.kill,
+          env: runtime.env,
+          log: runtime.log,
+          warn: runtime.warn,
+          commandExists: runtime.commandExists,
+        },
+        { logNoProcesses: true },
+      );
       stopOllamaAuthProxy(paths, runtime);
     } else if (step.name === "OpenShell resources") {
       removeOpenShellResources(options, runtime);

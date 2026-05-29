@@ -1165,15 +1165,42 @@ install_telegram_diagnostics() {
 }
 
 _read_gateway_token() {
-  python3 - <<'PYTOKEN'
-import json
-try:
-    with open('/sandbox/.openclaw/openclaw.json') as f:
-        cfg = json.load(f)
-    print(cfg.get('gateway', {}).get('auth', {}).get('token', ''))
-except Exception:
-    print('')
-PYTOKEN
+  node - <<'NODETOKEN'
+const fs = require("fs");
+
+const configPath = "/sandbox/.openclaw/openclaw.json";
+
+function loadJson5() {
+  try {
+    const JSON5 = require("/opt/nemoclaw/node_modules/json5");
+    if (JSON5 && typeof JSON5.parse === "function") {
+      return JSON5;
+    }
+  } catch {
+    // Fall through to the caller's empty-token behavior.
+  }
+  return undefined;
+}
+
+function parseConfig(text) {
+  try {
+    return JSON.parse(text);
+  } catch (jsonError) {
+    const JSON5 = loadJson5();
+    if (!JSON5) {
+      throw jsonError;
+    }
+    return JSON5.parse(text);
+  }
+}
+
+try {
+  const cfg = parseConfig(fs.readFileSync(configPath, "utf8"));
+  console.log(cfg?.gateway?.auth?.token || "");
+} catch {
+  console.log("");
+}
+NODETOKEN
 }
 
 ensure_gateway_token() {
@@ -1187,62 +1214,111 @@ ensure_gateway_token() {
     return 1
   fi
 
-  if [ -n "$(_read_gateway_token)" ]; then
-    return 0
-  fi
-
   if [ "$(id -u)" -eq 0 ]; then
     prepare_openclaw_config_for_write "$config_file" "$hash_file"
   fi
 
   local _write_rc=0
-  python3 - "$config_file" <<'PYTOKEN' || _write_rc=$?
-import json
-import os
-import secrets
-import sys
-import tempfile
+  node - "$config_file" <<'NODETOKEN' || _write_rc=$?
+const crypto = require("crypto");
+const fs = require("fs");
+const pathModule = require("path");
 
-path = sys.argv[1]
-try:
-    with open(path) as f:
-        cfg = json.load(f)
-    auth = cfg.setdefault('gateway', {}).setdefault('auth', {})
-    if not auth.get('token'):
-        auth['token'] = secrets.token_urlsafe(32)
-        dir_path = os.path.dirname(path)
-        fd, tmp_path = tempfile.mkstemp(prefix='.openclaw.', suffix='.tmp', dir=dir_path, text=True)
-        try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, 'w') as f:
-                fd = None
-                json.dump(cfg, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, path)
-            dir_flags = os.O_RDONLY
-            if hasattr(os, 'O_DIRECTORY'):
-                dir_flags |= os.O_DIRECTORY
-            dir_fd = os.open(dir_path, dir_flags)
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-        except Exception:
-            if fd is not None:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
-except Exception as exc:
-    print(f'[SECURITY] Failed to ensure OpenClaw gateway token: {exc}', file=sys.stderr)
-    sys.exit(1)
-PYTOKEN
+const path = process.argv[2];
+
+function loadJson5() {
+  const candidate = "/opt/nemoclaw/node_modules/json5";
+  const JSON5 = require(candidate);
+  if (!JSON5 || typeof JSON5.parse !== "function") {
+    throw new Error(`JSON5 parser at ${candidate} is missing parse()`);
+  }
+  return JSON5;
+}
+
+function parseConfig(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return loadJson5().parse(text);
+  }
+}
+
+function tokenUrlSafe(bytes) {
+  return crypto
+    .randomBytes(bytes)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function makeTempPath(dirPath) {
+  for (let i = 0; i < 16; i += 1) {
+    const suffix = crypto.randomBytes(12).toString("hex");
+    const tmpPath = pathModule.join(dirPath, `.openclaw.${process.pid}.${suffix}.tmp`);
+    try {
+      const fd = fs.openSync(tmpPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+      return { fd, tmpPath };
+    } catch (error) {
+      if (error && error.code === "EEXIST") {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("unable to allocate temporary OpenClaw config path");
+}
+
+try {
+  const cfg = parseConfig(fs.readFileSync(path, "utf8"));
+  const gateway = cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : (cfg.gateway = {});
+  const auth = gateway.auth && typeof gateway.auth === "object" ? gateway.auth : (gateway.auth = {});
+  auth.token = tokenUrlSafe(32);
+
+  const dirPath = pathModule.dirname(path);
+  let fd;
+  let tmpPath;
+  try {
+    ({ fd, tmpPath } = makeTempPath(dirPath));
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, JSON.stringify(cfg, null, 2));
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmpPath, path);
+
+    let dirFlags = fs.constants.O_RDONLY;
+    if (fs.constants.O_DIRECTORY) {
+      dirFlags |= fs.constants.O_DIRECTORY;
+    }
+    const dirFd = fs.openSync(dirPath, dirFlags);
+    try {
+      fs.fsyncSync(dirFd);
+    } finally {
+      fs.closeSync(dirFd);
+    }
+  } catch (error) {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Ignore cleanup failure and report the original error below.
+      }
+    }
+    if (tmpPath) {
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        // Ignore cleanup failure and report the original error below.
+      }
+    }
+    throw error;
+  }
+} catch (error) {
+  console.error(`[SECURITY] Failed to ensure OpenClaw gateway token: ${error.message || error}`);
+  process.exit(1);
+}
+NODETOKEN
 
   if [ "$_write_rc" -eq 0 ] && [ -f "$hash_file" ]; then
     (cd "$(dirname "$config_file")" && sha256sum "$(basename "$config_file")" >"$hash_file") || _write_rc=$?
@@ -1253,6 +1329,15 @@ PYTOKEN
   fi
 
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+  printf '[token] Gateway auth token refreshed for startup\n' >&2
+}
+
+ensure_gateway_token_if_missing() {
+  if [ -n "$(_read_gateway_token)" ]; then
+    return 0
+  fi
+
+  ensure_gateway_token
 }
 
 export_gateway_token() {
@@ -1278,6 +1363,17 @@ needs_gateway_token_for_current_command() {
     openclaw) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+prepare_gateway_token_for_current_command() {
+  if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+    ensure_gateway_token
+    return $?
+  fi
+
+  if needs_gateway_token_for_current_command; then
+    ensure_gateway_token_if_missing
+  fi
 }
 
 # Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
@@ -2452,9 +2548,7 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_cors_override
   refresh_openclaw_provider_placeholders
   ensure_mutable_openclaw_config_hash
-  if needs_gateway_token_for_current_command; then
-    ensure_gateway_token
-  fi
+  prepare_gateway_token_for_current_command
   # Capture baseline for next start's recovery — only after overrides and
   # placeholder refresh have produced the post-startup config the user
   # actually runs with.
@@ -2595,9 +2689,7 @@ apply_cors_override
 configure_messaging_channels
 refresh_openclaw_provider_placeholders
 ensure_mutable_openclaw_config_hash
-if needs_gateway_token_for_current_command; then
-  ensure_gateway_token
-fi
+prepare_gateway_token_for_current_command
 # Capture baseline for next start's recovery — only after overrides and
 # placeholder refresh have produced the post-startup config the user
 # actually runs with.
