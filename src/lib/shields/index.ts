@@ -51,6 +51,7 @@ const {
 const {
   parseSha256Output,
   isHashVerificationIssue,
+  isSha256Hex,
 }: typeof import("./seal") = require("./seal");
 
 const STATE_DIR = resolveNemoclawStateDir();
@@ -115,8 +116,10 @@ interface ShieldsState {
   // host-root tamper pattern that defeats perm-only checks: chmod to
   // mutable -> write -> chmod back to 444 leaves mode/owner identical to
   // the locked baseline but produces a new content hash. Absent on state
-  // files captured before the seal landed; the first `shields up` after
-  // upgrade captures one even when the verifier reports a clean lock.
+  // files captured before the seal landed; on those legacy lockdowns
+  // `shields up` refuses to seal an unverified baseline by default and
+  // asks the operator to rebuild the sandbox, or to opt in via
+  // `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1`.
   fileHashes?: { [path: string]: string };
   updatedAt?: string;
 }
@@ -298,16 +301,16 @@ function isOptionalNullableNumber(
 // SHA-256 hex strings are 64 lowercase or uppercase hex chars. The seal
 // helper normalises to lowercase before persisting; accept either case
 // here so manually edited state files and legacy uppercase entries still
-// load, and reject anything that cannot be a real digest.
-const SHA256_HEX_RE = /^[0-9a-f]{64}$/i;
-
+// load, and reject anything that cannot be a real digest. Uses the same
+// `isSha256Hex` predicate as the verifier so the persisted-state and
+// runtime contracts stay aligned.
 function isOptionalHashMap(
   value: unknown,
 ): value is { [path: string]: string } | undefined {
   if (value === undefined) return true;
   if (!isObjectRecord(value)) return false;
   for (const v of Object.values(value)) {
-    if (typeof v !== "string" || !SHA256_HEX_RE.test(v)) return false;
+    if (typeof v !== "string" || !isSha256Hex(v)) return false;
   }
   return true;
 }
@@ -1469,9 +1472,14 @@ function shieldsStatus(
       if (!state.fileHashes) {
         // Legacy state file pre-dates the content seal — perm-only
         // verification cannot catch a host-root chmod-write-chmod tamper
-        // cycle. Recommend re-locking to capture a SHA-256 seal.
+        // cycle. `shields up` refuses to seal an unverified baseline by
+        // default, so point at the recovery paths instead of suggesting
+        // a bare re-up that will abort.
         console.log(
-          `  Notice: no content seal recorded; re-run \`nemoclaw ${sandboxName} shields up\` to capture one for drift detection.`,
+          "  Notice: no content seal recorded; rebuild the sandbox for a known-good baseline",
+        );
+        console.log(
+          `  or set NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and re-run \`nemoclaw ${sandboxName} shields up\` to seal the current bytes.`,
         );
       }
       return;

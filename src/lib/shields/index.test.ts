@@ -853,7 +853,10 @@ describe("shields — unit logic", () => {
 
       const lines = logSpy.mock.calls.map((args) => args[0]).join("\n");
       expect(lines).toContain(
-        `Notice: no content seal recorded; re-run \`nemoclaw ${sandboxName} shields up\` to capture one for drift detection.`,
+        "Notice: no content seal recorded; rebuild the sandbox for a known-good baseline",
+      );
+      expect(lines).toContain(
+        `or set NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1 and re-run \`nemoclaw ${sandboxName} shields up\` to seal the current bytes.`,
       );
     });
 

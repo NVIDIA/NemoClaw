@@ -208,8 +208,8 @@ For sensitive workloads, use a reviewed host-side immutability workflow after in
   When `nemoclaw <name> shields up` runs against a clean lock, it captures a SHA-256 seal of `openclaw.json` and any other locked files into the host-side shields state file.
   On sealed sandboxes, every `shields status` call recomputes the hash inside the sandbox and surfaces drift on any mismatch, so a host-root tamper that flips perms back to `444 root:root` after rewriting the file is still flagged.
   Sandboxes locked before this seal landed have no recorded hash; perm-only verification cannot prove their bytes match the image-original, so the seal is **not** a retroactive proof of integrity for legacy state.
-  By default, `shields up` refuses to seal such a baseline and asks the operator to rebuild the sandbox first for a known-good baseline.
-  Operators who explicitly trust the current bytes can opt in via `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1`, which captures a seal over the current files and is acknowledged in the log line.
+  By default, `shields up` refuses to seal such a baseline and asks you to rebuild the sandbox first for a known-good baseline.
+  If you explicitly trust the current bytes, opt in via `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1`, which captures a seal over the current files and is acknowledged in the log line.
   Once a sandbox is sealed, `shields up` refuses to re-seal a tampered baseline; restore the original file or rebuild the sandbox before re-running.
 - **Gateway token environment.** The gateway exports `OPENCLAW_GATEWAY_TOKEN` and writes it to `/tmp/nemoclaw-proxy-env.sh` for interactive sandbox sessions. Keep this in mind when deciding whether a workload should run with mutable config or an immutable config posture.
 

@@ -5,13 +5,20 @@
 // path that writes the seal and the status path that re-checks it share
 // the same input contract (sha256sum output shape, hex normalisation).
 
-const SHA256_HEX = /^[0-9a-f]{64}$/i;
+// Single source of truth for the SHA-256 hex shape used across the
+// shields module: by the verifier, the lock-time seal capture, and the
+// `ShieldsState.fileHashes` schema guard.
+export const SHA256_HEX_RE = /^[0-9a-f]{64}$/i;
+
+export function isSha256Hex(value: string): boolean {
+  return SHA256_HEX_RE.test(value);
+}
 
 export function parseSha256Output(raw: string): string | null {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   const token = trimmed.split(/\s+/, 1)[0];
-  return SHA256_HEX.test(token) ? token.toLowerCase() : null;
+  return isSha256Hex(token) ? token.toLowerCase() : null;
 }
 
 // Issue-string prefixes the verifier emits for hash-related failures.
