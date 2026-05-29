@@ -688,7 +688,7 @@ function printToolsIncompatibleWarning(model: string): void {
 
 async function checkOllamaModelToolSupport(
   model: string,
-): Promise<{ ok: boolean; message?: string }> {
+): Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }> {
   const caps = probeOllamaModelCapabilities(model);
 
   if (caps.supportsTools === true) {
@@ -705,11 +705,15 @@ async function checkOllamaModelToolSupport(
   }
 
   // supportsTools === false — model is on disk but advertises no tools support.
+  // Every code path below that returns ok:true must also set
+  // allowToolsIncompatible:true so downstream validators (validateOllamaModel,
+  // probeChatCompletionsToolCalling via setupOllama / setupInference) don't
+  // reject the same model on the same condition — see issue #4241.
   printToolsIncompatibleWarning(model);
 
   if (isProxyAutoYes()) {
     console.log("  Continuing because --yes was passed.");
-    return { ok: true };
+    return { ok: true, allowToolsIncompatible: true };
   }
 
   if (isProxyNonInteractive()) {
@@ -717,7 +721,7 @@ async function checkOllamaModelToolSupport(
       console.error(
         `  NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 set — proceeding with '${model}' despite missing 'tools'.`,
       );
-      return { ok: true };
+      return { ok: true, allowToolsIncompatible: true };
     }
     console.error(
       "  Re-run with NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 to override, or pick a tools-capable model.",
@@ -729,10 +733,13 @@ async function checkOllamaModelToolSupport(
   if (!proceed) {
     return { ok: false, message: "Choose a tools-capable model." };
   }
-  return { ok: true };
+  return { ok: true, allowToolsIncompatible: true };
 }
 
-async function prepareOllamaModel(model, installedModels = []) {
+async function prepareOllamaModel(
+  model,
+  installedModels: string[] = [],
+): Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }> {
   const alreadyInstalled = installedModels.includes(model);
   if (!alreadyInstalled) {
     console.log(`  Pulling Ollama model: ${model}`);
@@ -753,7 +760,11 @@ async function prepareOllamaModel(model, installedModels = []) {
 
   console.log(`  Loading Ollama model: ${model}`);
   run(getOllamaWarmupCommand(model), { ignoreError: true });
-  return validateOllamaModel(model);
+  const allowToolsIncompatible = capCheck.allowToolsIncompatible === true;
+  const result = validateOllamaModel(model, undefined, undefined, undefined, {
+    allowToolsIncompatible,
+  });
+  return { ...result, allowToolsIncompatible };
 }
 
 /**

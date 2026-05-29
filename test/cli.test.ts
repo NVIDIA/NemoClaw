@@ -1841,6 +1841,10 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Added host alias searxng.local -> 192.168.1.105");
     const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
+    // The docker invocation must start with the `exec` subcommand. Without
+    // it, docker parses kubectl's `-n` as a docker flag and exits 125
+    // ("unknown shorthand flag: 'n' in -n").
+    expect(log[0]).toBe("exec");
     expect(log).toContain("patch");
     expect(log).toContain("--type=json");
     const patch = JSON.parse(log[log.indexOf("-p") + 1]);
@@ -1862,12 +1866,15 @@ describe("CLI dispatch", () => {
   it("lists host aliases from the sandbox resource", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-hosts-list-"));
     const localBin = path.join(home, "bin");
+    const dockerLog = path.join(home, "docker.log");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home);
     fs.writeFileSync(
       path.join(localBin, "docker"),
       [
         "#!/usr/bin/env bash",
+        `log_file=${JSON.stringify(dockerLog)}`,
+        'printf "%s\\n" "$@" >> "$log_file"',
         'printf "%s\\n" \'{"metadata":{"resourceVersion":"123"},"spec":{"podTemplate":{"spec":{"hostAliases":[{"ip":"192.168.1.105","hostnames":["searxng.local","search.lan"]}]}}}}\'',
       ].join("\n"),
       { mode: 0o755 },
@@ -1881,6 +1888,10 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Host aliases for 'alpha'");
     expect(r.out).toContain("192.168.1.105  searxng.local, search.lan");
+    const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
+    expect(log[0]).toBe("exec");
+    expect(log).toContain("kubectl");
+    expect(log).toContain("get");
   });
 
   it("removes host aliases with a sandbox json patch", () => {
@@ -1902,6 +1913,7 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Removed host alias searxng.local");
     const log = fs.readFileSync(dockerLog, "utf8").trim().split(/\n/);
+    expect(log[0]).toBe("exec");
     expect(log).toContain("patch");
     const patch = JSON.parse(log[log.lastIndexOf("-p") + 1]);
     expect(patch[0]).toEqual({
