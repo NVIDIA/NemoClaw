@@ -4,6 +4,14 @@
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
+## v0.0.55
+
+NemoClaw v0.0.55 improves local Ollama onboarding reliability, plugin secret-scanner resilience, and messaging-channel prompt clarity:
+
+- Local Ollama validation retries host-side curl process timeouts with a larger timeout before failing, and Docker runtime detection retries `docker info` before choosing the local inference route. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
+- The NemoClaw OpenClaw plugin keeps the memory secret scanner active when OpenClaw runs in embedded fallback mode without a usable path resolver. The scanner falls back to literal memory and workspace-relative paths instead of crashing before the first write-tool call. For more information, refer to Security Best Practices (use the `nemoclaw-user-configure-security` skill).
+- The onboarding messaging-channel picker now states that pressing Enter with no channels selected skips messaging setup. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+
 ## v0.0.54
 
 NemoClaw v0.0.54 updates messaging activation, Windows WSL onboarding, NemoHermes dashboard access, and sandbox repair paths:

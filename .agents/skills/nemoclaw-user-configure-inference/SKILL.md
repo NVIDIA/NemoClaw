@@ -78,6 +78,7 @@ When Ollama reports a loaded-model context length, NemoClaw uses that value for 
 If the selected model declares that it does not support tool calling, onboarding stops with guidance to choose a model whose `ollama show <model>` capabilities include `tools`.
 The validation also requires structured chat-completions tool calls.
 If the model leaks tool-call JSON as plain message text, onboarding stops so you can choose a model that returns tool calls in the expected response field.
+If a host-side validation probe times out, NemoClaw retries the Ollama tool-call validation with a larger timeout before failing the setup.
 On WSL, if you choose the Windows-host Ollama path, NemoClaw uses `host.docker.internal:11434` and pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
 
 ### WSL with Windows-Host Ollama
@@ -108,53 +109,35 @@ JSON such as `{"name":"memory_search","arguments":{...}}` instead of running a
 tool, switch to vLLM with `--enable-auto-tool-choice` and the correct
 `--tool-call-parser`. See [Tool-Calling Reliability](references/tool-calling-reliability.md).
 
-### Authenticated Reverse Proxy
+### GPU Memory Cleanup
 
-On non-WSL hosts, NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated reverse proxy on `0.0.0.0:11435`.
-The native install/start paths also reset NemoClaw-managed systemd launches to the loopback binding.
-Containers and other hosts on the local network reach Ollama only through the
-proxy, which validates a Bearer token before forwarding requests.
-On that native path, NemoClaw never exposes Ollama without authentication.
+When you switch away from Ollama, stop host services, or destroy an Ollama-backed sandbox, NemoClaw asks Ollama to unload currently loaded models from GPU memory.
+The cleanup sends `keep_alive: 0` for each model reported by Ollama and runs on a best-effort basis, so shutdown continues if Ollama is already stopped.
+This does not delete downloaded model files.
 
-WSL Ollama paths do not use this proxy.
-Windows-host Ollama uses the Windows daemon through `host.docker.internal`.
-
-For non-WSL Ollama setups, the onboard wizard manages the proxy automatically:
-
-- Generates a random 24-byte token on first run and stores it in
-  `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
-- Starts the proxy after Ollama and verifies it before continuing.
-- Cleans up stale proxy processes from previous runs.
-- Probes the sandbox Docker network path to the proxy before committing the inference route.
-- Stops matching proxy processes during uninstall before deleting NemoClaw state.
-- Reuses the persisted token after a host reboot so you do not need to re-run
-  onboard.
-
-On native Linux hosts, a firewall can allow the host proxy health check while still blocking sandbox containers on the OpenShell Docker bridge.
-When the sandbox-side proxy probe fails with a TCP error, onboarding exits before it saves the inference route and prints a command like:
+### Non-Interactive Setup
 
 ```console
-$ sudo ufw allow from <openshell-docker-subnet> to any port 11435 proto tcp
-$ nemoclaw onboard
+$ NEMOCLAW_PROVIDER=ollama \
+  NEMOCLAW_MODEL=qwen2.5:14b \
+  nemoclaw onboard --non-interactive --yes
 ```
 
-If the probe cannot run, for example because Docker Desktop or WSL uses a different host routing model, onboarding continues and relies on the regular proxy health check.
+If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on available memory.
+If `NEMOCLAW_MODEL` names a known bootstrap model (for example `qwen3.6:35b`) that does not fit the host's currently available GPU memory, NemoClaw warns and falls back to the largest known model that does fit.
+Unknown or custom tags (any value the bootstrap registry has not seen) are still passed through; the Ollama runner validates the choice itself.
 
-The sandbox provider is configured to use proxy port `11435` with the generated
-token as its `OPENAI_API_KEY` credential.
-OpenShell's L7 proxy injects the token at egress, so the agent inside the
-sandbox never sees the token directly.
+`--yes` (or `NEMOCLAW_YES=1`) authorises the Ollama model download without an interactive confirmation prompt.
+Under `--non-interactive`, `--yes` (or `NEMOCLAW_YES=1`) is required to authorise the download — onboard exits otherwise, since it cannot prompt.
+Run onboard without `--non-interactive` to get the interactive `[y/N]` prompt that shows the model size before downloading.
 
-All proxy endpoints require the Bearer token, including `GET /api/tags`.
-Internal health and reachability checks run via the proxy treat any HTTP
-response (including `401`) as proof the proxy is alive — they only fail
-when nothing answers at all.
+| Variable | Purpose |
+|---|---|
+| `NEMOCLAW_PROVIDER` | Set to `ollama`. |
+| `NEMOCLAW_MODEL` | Ollama model tag to use. Optional. |
+| `NEMOCLAW_YES` | Set to `1` to auto-accept the model-download confirmation prompt. Optional. |
 
-If Ollama is already running on a non-loopback address when you start onboard,
-the wizard restarts it on `127.0.0.1:11434` so the proxy is the only network
-path to the model server.
-
-Load [references/use-local-inference-details.md](references/use-local-inference-details.md) for detailed steps on GPU Memory Cleanup, Non-Interactive Setup.
+Load [references/use-local-inference-details.md](references/use-local-inference-details.md) for detailed steps on Authenticated Reverse Proxy.
 
 ## OpenAI-Compatible Server
 
@@ -273,7 +256,7 @@ Load [references/use-local-inference-details.md](references/use-local-inference-
 - **Load [references/set-up-sub-agent.md](references/set-up-sub-agent.md)** when users ask how to add a second model, configure a sub-agent model, use Omni for vision tasks, configure agents.list, or use sessions_spawn in NemoClaw. Shows the NemoClaw-specific file paths and update flow for adding an auxiliary OpenClaw sub-agent model.
 - **[references/tool-calling-reliability.md](references/tool-calling-reliability.md)** — Explains Ollama tool-call leak symptoms, when vLLM with a tool-call parser is recommended, and how to repoint NemoClaw to a parser-aware local endpoint.
 - **Load [references/inference-options.md](references/inference-options.md)** when explaining which providers are available, what the onboard wizard presents, or how inference routing works. Lists all inference providers offered during NemoClaw onboarding.
-- **Load [references/use-local-inference-details.md](references/use-local-inference-details.md)** when you need detailed steps for GPU Memory Cleanup, Non-Interactive Setup, Selecting the API Path, and related details.
+- **Load [references/use-local-inference-details.md](references/use-local-inference-details.md)** when you need detailed steps for Authenticated Reverse Proxy, Non-Interactive Setup, Selecting the API Path, and related details.
 
 ## Related Skills
 

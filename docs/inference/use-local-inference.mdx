@@ -77,6 +77,7 @@ When Ollama reports a loaded-model context length, NemoClaw uses that value for 
 If the selected model declares that it does not support tool calling, onboarding stops with guidance to choose a model whose `ollama show <model>` capabilities include `tools`.
 The validation also requires structured chat-completions tool calls.
 If the model leaks tool-call JSON as plain message text, onboarding stops so you can choose a model that returns tool calls in the expected response field.
+If a host-side validation probe times out, NemoClaw retries the Ollama tool-call validation with a larger timeout before failing the setup.
 On WSL, if you choose the Windows-host Ollama path, NemoClaw uses `host.docker.internal:11434` and pulls missing models through the Ollama HTTP API instead of requiring the `ollama` CLI inside WSL.
 
 ### WSL with Windows-Host Ollama
@@ -409,6 +410,8 @@ This setting is baked into the sandbox at build time.
 Changing it after onboarding requires re-running `nemoclaw onboard`.
 
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only governs the inference-server validation probe.
+During local Ollama setup, NemoClaw treats host-side curl process timeouts as retryable probe failures and retries with a larger timeout before it reports a validation failure.
+NemoClaw also retries Docker runtime detection with a longer `docker info` timeout before it chooses the local inference route.
 The post-create readiness wait (image build, gateway upload, in-sandbox boot) has its own budget, `NEMOCLAW_SANDBOX_READY_TIMEOUT`, also defaulting to 180 seconds.
 On hosts where the sandbox image takes minutes to build or upload — large quantised models, DGX Station first runs, or remote VMs over a slow link — raise both together:
 

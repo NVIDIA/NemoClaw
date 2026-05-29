@@ -2,33 +2,70 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Use a Local Inference Server: Details
 
-## GPU Memory Cleanup
+## Authenticated Reverse Proxy
 
-When you switch away from Ollama, stop host services, or destroy an Ollama-backed sandbox, NemoClaw asks Ollama to unload currently loaded models from GPU memory.
-The cleanup sends `keep_alive: 0` for each model reported by Ollama and runs on a best-effort basis, so shutdown continues if Ollama is already stopped.
-This does not delete downloaded model files.
+On non-WSL hosts, NemoClaw keeps Ollama bound to `127.0.0.1:11434` and starts a token-gated reverse proxy on `0.0.0.0:11435`.
+The native install/start paths also reset NemoClaw-managed systemd launches to the loopback binding.
+Containers and other hosts on the local network reach Ollama only through the
+proxy, which validates a Bearer token before forwarding requests.
+On that native path, NemoClaw never exposes Ollama without authentication.
+
+WSL Ollama paths do not use this proxy.
+Windows-host Ollama uses the Windows daemon through `host.docker.internal`.
+
+For non-WSL Ollama setups, the onboard wizard manages the proxy automatically:
+
+- Generates a random 24-byte token on first run and stores it in
+  `~/.nemoclaw/ollama-proxy-token` with `0600` permissions.
+- Starts the proxy after Ollama and verifies it before continuing.
+- Cleans up stale proxy processes from previous runs.
+- Probes the sandbox Docker network path to the proxy before committing the inference route.
+- Stops matching proxy processes during uninstall before deleting NemoClaw state.
+- Reuses the persisted token after a host reboot so you do not need to re-run
+  onboard.
+
+On native Linux hosts, a firewall can allow the host proxy health check while still blocking sandbox containers on the OpenShell Docker bridge.
+When the sandbox-side proxy probe fails with a TCP error, onboarding exits before it saves the inference route and prints a command like:
+
+```console
+$ sudo ufw allow from <openshell-docker-subnet> to any port 11435 proto tcp
+$ nemoclaw onboard
+```
+
+If the probe cannot run, for example because Docker Desktop or WSL uses a different host routing model, onboarding continues and relies on the regular proxy health check.
+
+The sandbox provider is configured to use proxy port `11435` with the generated
+token as its `OPENAI_API_KEY` credential.
+OpenShell's L7 proxy injects the token at egress, so the agent inside the
+sandbox never sees the token directly.
+
+All proxy endpoints require the Bearer token, including `GET /api/tags`.
+Internal health and reachability checks run via the proxy treat any HTTP
+response (including `401`) as proof the proxy is alive — they only fail
+when nothing answers at all.
+
+If Ollama is already running on a non-loopback address when you start onboard,
+the wizard restarts it on `127.0.0.1:11434` so the proxy is the only network
+path to the model server.
 
 ### Non-Interactive Setup
 
+Set the following environment variables for scripted or CI/CD deployments.
+
 ```console
-$ NEMOCLAW_PROVIDER=ollama \
-  NEMOCLAW_MODEL=qwen2.5:14b \
-  nemoclaw onboard --non-interactive --yes
+$ NEMOCLAW_PROVIDER=custom \
+  NEMOCLAW_ENDPOINT_URL=http://localhost:8000/v1 \
+  NEMOCLAW_MODEL=meta-llama/Llama-3.1-8B-Instruct \
+  COMPATIBLE_API_KEY=dummy \
+  nemoclaw onboard --non-interactive
 ```
-
-If `NEMOCLAW_MODEL` is not set, NemoClaw selects a default model based on available memory.
-If `NEMOCLAW_MODEL` names a known bootstrap model (for example `qwen3.6:35b`) that does not fit the host's currently available GPU memory, NemoClaw warns and falls back to the largest known model that does fit.
-Unknown or custom tags (any value the bootstrap registry has not seen) are still passed through; the Ollama runner validates the choice itself.
-
-`--yes` (or `NEMOCLAW_YES=1`) authorises the Ollama model download without an interactive confirmation prompt.
-Under `--non-interactive`, `--yes` (or `NEMOCLAW_YES=1`) is required to authorise the download — onboard exits otherwise, since it cannot prompt.
-Run onboard without `--non-interactive` to get the interactive `[y/N]` prompt that shows the model size before downloading.
 
 | Variable | Purpose |
 |---|---|
-| `NEMOCLAW_PROVIDER` | Set to `ollama`. |
-| `NEMOCLAW_MODEL` | Ollama model tag to use. Optional. |
-| `NEMOCLAW_YES` | Set to `1` to auto-accept the model-download confirmation prompt. Optional. |
+| `NEMOCLAW_PROVIDER` | Set to `custom` for an OpenAI-compatible endpoint. |
+| `NEMOCLAW_ENDPOINT_URL` | Base URL of the local server. |
+| `NEMOCLAW_MODEL` | Model ID as reported by the server. |
+| `COMPATIBLE_API_KEY` | API key for the endpoint. Use any non-empty value if authentication is not required. |
 
 ### Selecting the API Path
 
@@ -75,6 +112,26 @@ $ NEMOCLAW_PROVIDER=anthropicCompatible \
   nemoclaw onboard --non-interactive
 ```
 
+### Non-Interactive Setup
+
+Use an already-running vLLM server:
+
+```console
+$ NEMOCLAW_PROVIDER=vllm \
+  nemoclaw onboard --non-interactive
+```
+
+Install or start managed vLLM when a supported profile is detected.
+On DGX Spark and DGX Station, `NEMOCLAW_PROVIDER=install-vllm` is enough for non-interactive runs; add `NEMOCLAW_EXPERIMENTAL=1` on generic Linux NVIDIA GPU hosts.
+
+```console
+$ NEMOCLAW_PROVIDER=install-vllm \
+  nemoclaw onboard --non-interactive
+```
+
+NemoClaw records the model returned by vLLM's `/v1/models` endpoint.
+Start vLLM with the model you want before onboarding if you manage the server yourself.
+
 ### Override the Managed-vLLM Model
 
 Managed vLLM serves the profile default unless you select a different registry entry.
@@ -120,6 +177,8 @@ This setting is baked into the sandbox at build time.
 Changing it after onboarding requires re-running `nemoclaw onboard`.
 
 `NEMOCLAW_LOCAL_INFERENCE_TIMEOUT` only governs the inference-server validation probe.
+During local Ollama setup, NemoClaw treats host-side curl process timeouts as retryable probe failures and retries with a larger timeout before it reports a validation failure.
+NemoClaw also retries Docker runtime detection with a longer `docker info` timeout before it chooses the local inference route.
 The post-create readiness wait (image build, gateway upload, in-sandbox boot) has its own budget, `NEMOCLAW_SANDBOX_READY_TIMEOUT`, also defaulting to 180 seconds.
 On hosts where the sandbox image takes minutes to build or upload — large quantised models, DGX Station first runs, or remote VMs over a slow link — raise both together:
 
