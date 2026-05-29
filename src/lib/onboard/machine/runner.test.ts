@@ -125,6 +125,23 @@ describe("runOnboardMachine", () => {
     ]);
   });
 
+  it("stops before configured non-terminal states without requiring a handler", async () => {
+    const runtime = createRuntime();
+
+    const result = await runOnboardMachine({
+      context: { attempts: 0, visited: [] } as RunnerContext,
+      runtime,
+      stopStates: ["provider_selection"],
+      handlers: {
+        init: () => advanceTo("preflight"),
+        preflight: () => advanceTo("gateway"),
+        gateway: () => advanceTo("provider_selection"),
+      },
+    });
+
+    expect(result.session.machine.state).toBe("provider_selection");
+  });
+
   it("rejects handlers that return an empty result list", async () => {
     const runtime = createRuntime();
 

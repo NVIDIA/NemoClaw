@@ -31,6 +31,7 @@ export interface OnboardMachineRunnerOptions<Context> {
     result: OnboardStateResult;
     session: Session;
   }): Context | Promise<Context>;
+  stopStates?: readonly OnboardMachineState[];
 }
 
 export interface OnboardMachineRunnerResult<Context> {
@@ -53,11 +54,12 @@ export async function runOnboardMachine<Context>({
   runtime,
   handlers,
   updateContext,
+  stopStates = [],
 }: OnboardMachineRunnerOptions<Context>): Promise<OnboardMachineRunnerResult<Context>> {
   let context = initialContext;
   let session = await runtime.session();
 
-  while (!isTerminalOnboardMachineState(session.machine.state)) {
+  while (!isTerminalOnboardMachineState(session.machine.state) && !stopStates.includes(session.machine.state)) {
     const state = session.machine.state;
     const handler = handlers[state as OnboardNonTerminalMachineState];
     if (!handler) throw new MissingOnboardStateHandlerError(state as OnboardNonTerminalMachineState);
