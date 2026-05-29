@@ -3,8 +3,8 @@
 # SPDX-License-Identifier: Apache-2.0
 title: "NVIDIA NemoClaw"
 sidebar-title: "NVIDIA NemoClaw Developer Guide"
-description: "NemoClaw is an open-source reference stack that simplifies running OpenClaw always-on assistants more safely, with a single command."
-keywords: "NemoClaw, OpenClaw, OpenShell, AI agents, sandboxing, inference routing"
+description: "NemoClaw is an open-source reference stack that simplifies running OpenClaw always-on assistants more safely, with a single command and packaged agent skills."
+keywords: "NemoClaw, OpenClaw, OpenShell, AI agents, agent skills, sandboxing, inference routing"
 position: 1
 ---
 
@@ -39,6 +39,7 @@ import { CommandTerminal } from "./_components/CommandTerminal";
 NVIDIA NemoClaw is an open-source reference stack that simplifies running [OpenClaw](https://openclaw.ai) always-on assistants more safely.
 NemoClaw provides onboarding, lifecycle management, and OpenClaw operations within OpenShell containers.
 It installs the [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) runtime, part of NVIDIA Agent Toolkit, setting up an environment designed for executing agents with additional security and inference routing capabilities.
+NemoClaw also ships user skills for AI coding assistants, so tools such as Cursor and Claude Code can guide you through setup, inference, policy management, monitoring, deployment, security, and troubleshooting from the same documentation.
 
 ## Get Started
 
@@ -59,6 +60,22 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 </llms-only>
 
 For more detailed guidance on getting started, refer to [Quickstart](/get-started/quickstart).
+
+## Use NemoClaw User Skills
+
+If you work from an AI coding assistant, load NemoClaw's user skills before you install or operate a sandbox.
+The skills turn these docs into task-focused guidance that your assistant can apply to your local environment.
+
+<Cards>
+
+<Card title="Set Up Agent Skills" href="/resources/agent-skills">
+
+Clone the skills or add them to your assistant so NemoClaw guidance is available directly in chat.
+
+<Badge intent="tip" minimal outlined>Resource</Badge>
+</Card>
+
+</Cards>
 
 ---
 
@@ -100,6 +117,13 @@ Track NemoClaw release changes and component version policy.
 Install NemoClaw, verify prerequisites, and run your first sandboxed agent.
 
 <Badge intent="tip" minimal outlined>Guide</Badge>
+</Card>
+
+<Card title="Agent Skills" href="/resources/agent-skills">
+
+Use NemoClaw's packaged agent skills to guide coding assistants through common workflows.
+
+<Badge intent="tip" minimal outlined>Resource</Badge>
 </Card>
 
 <Card title="Inference" href="/inference/inference-options">
@@ -156,13 +180,6 @@ Look up architecture details, CLI commands, policies, and troubleshooting guidan
 Learn about the NemoClaw architecture, plugin structure, and blueprint design in detail.
 
 <Badge intent="tip" minimal outlined>Reference</Badge>
-</Card>
-
-<Card title="Agent Skills" href="/resources/agent-skills">
-
-Use NemoClaw's packaged agent skills to guide coding assistants through common workflows.
-
-<Badge intent="tip" minimal outlined>Resource</Badge>
 </Card>
 
 </Cards>
