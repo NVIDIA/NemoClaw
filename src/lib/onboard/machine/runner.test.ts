@@ -71,17 +71,20 @@ function createRuntime(initialSession: Session = createSession()) {
 }
 
 describe("runOnboardMachine", () => {
-  it("runs handlers until completion while applying retry and branch transitions", async () => {
+  it("runs handlers until completion while applying multiple results, retry, and branch transitions", async () => {
     const runtime = createRuntime();
     const calls: string[] = [];
     const handlers: OnboardStateHandlers<RunnerContext> = {
       init: () => advanceTo("preflight"),
       preflight: () => advanceTo("gateway"),
       gateway: () => advanceTo("provider_selection"),
-      provider_selection: () => advanceTo("inference"),
+      provider_selection: (context) => {
+        if (context.attempts === 0) return advanceTo("inference");
+        return [advanceTo("inference"), advanceTo("sandbox")];
+      },
       inference: (context) => {
         calls.push(`inference:${context.attempts}`);
-        return context.attempts === 0 ? retryTo("provider_selection") : advanceTo("sandbox");
+        return retryTo("provider_selection");
       },
       sandbox: () => branchTo("openclaw"),
       openclaw: () => advanceTo("policies"),
@@ -105,7 +108,7 @@ describe("runOnboardMachine", () => {
       sandboxName: "my-assistant",
       machine: { state: "complete" },
     });
-    expect(calls).toEqual(["inference:0", "inference:1"]);
+    expect(calls).toEqual(["inference:0"]);
     expect(result.context.visited).toEqual([
       "init",
       "preflight",
@@ -113,13 +116,25 @@ describe("runOnboardMachine", () => {
       "provider_selection",
       "inference",
       "provider_selection",
-      "inference",
+      "provider_selection",
       "sandbox",
       "openclaw",
       "policies",
       "finalizing",
       "post_verify",
     ]);
+  });
+
+  it("rejects handlers that return an empty result list", async () => {
+    const runtime = createRuntime();
+
+    await expect(
+      runOnboardMachine({
+        context: { attempts: 0, visited: [] } as RunnerContext,
+        runtime,
+        handlers: { init: () => [] },
+      }),
+    ).rejects.toThrow("returned no results");
   });
 
   it("stops on failed terminal results", async () => {

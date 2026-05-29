@@ -6,9 +6,11 @@ import type { OnboardStateResult } from "./result";
 import { isTerminalOnboardMachineState } from "./transitions";
 import type { OnboardMachineState, OnboardNonTerminalMachineState } from "./types";
 
+export type OnboardStateHandlerResult = OnboardStateResult | readonly OnboardStateResult[];
+
 export type OnboardStateHandler<Context> = (
   context: Context,
-) => Promise<OnboardStateResult> | OnboardStateResult;
+) => Promise<OnboardStateHandlerResult> | OnboardStateHandlerResult;
 
 export type OnboardStateHandlers<Context> = Partial<
   Record<OnboardNonTerminalMachineState, OnboardStateHandler<Context>>
@@ -60,11 +62,18 @@ export async function runOnboardMachine<Context>({
     const handler = handlers[state as OnboardNonTerminalMachineState];
     if (!handler) throw new MissingOnboardStateHandlerError(state as OnboardNonTerminalMachineState);
 
-    const result = await handler(context);
-    session = await runtime.applyResult(result);
-    context = updateContext
-      ? await updateContext({ context, state, result, session })
-      : context;
+    const handlerResult = await handler(context);
+    const results = Array.isArray(handlerResult) ? handlerResult : [handlerResult];
+    if (results.length === 0) {
+      throw new Error(`Onboarding machine handler for state '${state}' returned no results`);
+    }
+
+    for (const result of results) {
+      session = await runtime.applyResult(result);
+      context = updateContext
+        ? await updateContext({ context, state, result, session })
+        : context;
+    }
   }
 
   return { context, session };
