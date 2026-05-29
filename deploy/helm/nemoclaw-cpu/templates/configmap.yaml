@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nemoclaw-cpu.fullname" . }}-agent
+  namespace: {{ include "nemoclaw-cpu.namespace" . }}
+  labels:
+    {{- include "nemoclaw-cpu.labels" . | nindent 4 }}
+data:
+  agent-server.mjs: |
+{{ .Files.Get "files/agent-server.mjs" | indent 4 }}
+  cpu-spin-worker.mjs: |
+{{ .Files.Get "files/cpu-spin-worker.mjs" | indent 4 }}
+  INFERENCE_BASE_URL: {{ .Values.inference.baseUrl | quote }}
+  INFERENCE_MODEL: {{ .Values.inference.model | quote }}

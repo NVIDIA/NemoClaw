@@ -1,0 +1,52 @@
+{{- if .Values.autoscaling.enabled }}
+{{- $hpaMin := include "nemoclaw-cpu.hpaMinReplicas" . | int }}
+{{- $hpaMax := include "nemoclaw-cpu.hpaMaxReplicas" . | int }}
+{{- if lt $hpaMax $hpaMin }}
+{{- fail (printf "autoscaling.maxReplicas (%d) must be >= minReplicas (%d)" $hpaMax $hpaMin) }}
+{{- end }}
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "nemoclaw-cpu.fullname" . }}-agent
+  namespace: {{ include "nemoclaw-cpu.namespace" . }}
+  labels:
+    {{- include "nemoclaw-cpu.labels" . | nindent 4 }}
+  annotations:
+    nemoclaw.ai/hpa-policy: "min-{{ $hpaMin }}-max-{{ $hpaMax }}-never-zero"
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "nemoclaw-cpu.fullname" . }}-agent
+  minReplicas: {{ $hpaMin }}
+  maxReplicas: {{ $hpaMax }}
+  metrics:
+    {{- if eq .Values.autoscaling.mode "performance" }}
+    - type: Pods
+      pods:
+        metric:
+          name: nemoclaw_http_inflight_requests
+        target:
+          type: AverageValue
+          averageValue: {{ .Values.autoscaling.performance.inflightRequestsPerPod | quote }}
+    {{- else }}
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetCPUUtilizationPercentage }}
+    {{- if .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ .Values.autoscaling.targetMemoryUtilizationPercentage }}
+    {{- end }}
+    {{- end }}
+  {{- with .Values.autoscaling.behavior }}
+  behavior:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}

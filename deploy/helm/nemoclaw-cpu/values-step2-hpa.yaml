@@ -1,0 +1,29 @@
+# Step 2: CPU HPA — one Nemoclaw agent pod per CPU, auto scale up and down.
+# Requires metrics-server: microk8s enable metrics-server
+#
+#   helm upgrade nemoclaw . -n nemoclaw -f values-step2-hpa.yaml --reuse-values \
+#     --set inference.apiKey="$NVIDIA_INFERENCE_HUB_API_KEY"
+#
+# On an 8-vCPU node, maxReplicas: 7 leaves ~1 CPU for kube/system.
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 7
+  maxCpus: 8
+  mode: resource
+  targetCPUUtilizationPercentage: 65
+
+cpuScaling:
+  oneReplicaPerCpu: true
+  count: 1
+  perPodRequest: "1"
+  perPodLimit: "1"
+  perPodMemory: "1Gi"
+  perPodMemoryLimit: "2Gi"
+
+loadTest:
+  cpuSpinMs: 0
+
+probes:
+  readinessChecksInferenceHub: false

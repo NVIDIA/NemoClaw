@@ -1,0 +1,34 @@
+# Performance HPA: Prometheus scrapes /metrics → prometheus-adapter → HPA on inflight requests.
+# Requires: kube-prometheus-stack + prometheus-adapter (see scripts/install-performance-hpa.sh)
+#
+# One Nemoclaw agent pod per CPU; min 1, max 7 on ~8 vCPU node.
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 7
+  maxCpus: 8
+  mode: performance
+  # Scale out when average in-flight HTTP requests per pod exceeds this value
+  performance:
+    inflightRequestsPerPod: "10"
+
+cpuScaling:
+  oneReplicaPerCpu: true
+  count: 1
+  perPodRequest: "1"
+  perPodLimit: "1"
+  perPodMemory: "1Gi"
+  perPodMemoryLimit: "2Gi"
+
+loadTest:
+  cpuSpinMs: 0
+
+metrics:
+  enabled: true
+  path: /metrics
+  serviceMonitor:
+    enabled: true
+    interval: 15s
+    labels:
+      release: kube-prometheus

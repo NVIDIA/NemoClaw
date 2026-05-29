@@ -1,0 +1,118 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# --- Step 1: manual scaling (one pod per CPU) ---
+#   helm install nemoclaw . -n nemoclaw --create-namespace --set cpuScaling.count=4
+#   helm upgrade nemoclaw . -n nemoclaw --set cpuScaling.count=2   # 2 CPUs → 2 pods
+#   kubectl scale deployment -n nemoclaw -l app.kubernetes.io/name=nemoclaw-cpu --replicas=4
+cpuScaling:
+  oneReplicaPerCpu: true
+  count: 1              # desired CPUs in cluster == number of replicas
+  perPodRequest: "1"    # each pod requests exactly 1 CPU
+  perPodLimit: "1"      # limit 1 CPU per pod (set higher for burst, e.g. "2")
+  perPodMemory: "1Gi"
+  perPodMemoryLimit: "2Gi"
+
+# Used only when cpuScaling.oneReplicaPerCpu is false
+replicaCount: 1
+
+image:
+  repository: node
+  tag: "22-bookworm-slim"
+  pullPolicy: IfNotPresent
+
+nameOverride: ""
+fullnameOverride: ""
+
+namespace:
+  # Prefer: helm install --create-namespace (avoids "namespace already exists" errors)
+  create: false
+  name: nemoclaw
+
+service:
+  type: ClusterIP
+  port: 8080
+
+# Remote inference (no GPU in cluster) — same model path as NemoClaw on your VM
+inference:
+  baseUrl: "https://inference-api.nvidia.com/v1"
+  model: "nvidia/nvidia/llama-3.1-nemotron-ultra-253b-v1"
+  # Set via --set-file or external Secret in production
+  existingSecret: ""
+  secretName: nemoclaw-inference-hub
+  apiKey: ""  # NVIDIA_INFERENCE_HUB_API_KEY (sk-*); leave empty if using existingSecret
+
+# Used only when cpuScaling.oneReplicaPerCpu is false
+resources:
+  requests:
+    cpu: "1"
+    memory: "1Gi"
+  limits:
+    cpu: "4"
+    memory: "4Gi"
+
+podAnnotations: {}
+
+# Readiness: /healthz (process up) vs /readyz (Inference Hub reachable).
+# Use false for install/rollout; verify Hub with: curl .../readyz after install.
+probes:
+  readinessChecksInferenceHub: false
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# --- Step 2: HPA (disabled until you enable) ---
+# Each agent pod requests 1 CPU (cpuScaling); HPA adds/removes pods under load.
+# Enable: helm upgrade ... -f values-step2-hpa.yaml
+autoscaling:
+  enabled: false
+  minReplicas: 1        # never 0 — at least one Nemoclaw agent pod always runs
+  maxReplicas: 7        # set to 0 to use maxCpus instead; 7 fits 8-vCPU node (1 CPU/pod + system)
+  maxCpus: 8            # fallback max when maxReplicas is 0 and oneReplicaPerCpu
+  # resource | performance
+  mode: resource
+  targetCPUUtilizationPercentage: 65
+  targetMemoryUtilizationPercentage: null
+  # Scale-up is aggressive; scale-down is slower but much faster than default 5m window.
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 4
+          periodSeconds: 30
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 120
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 60
+        - type: Pods
+          value: 2
+          periodSeconds: 60
+      selectPolicy: Max
+  # Performance mode (needs Prometheus + prometheus-adapter)
+  # See observability.md and NVIDIA Riva autoscaling blog:
+  # https://developer.nvidia.com/blog/autoscaling-nvidia-riva-deployment-with-kubernetes-for-speech-ai-in-production/
+  performance:
+    requestsPerSecondPerPod: "20"
+    inflightRequestsPerPod: "10"
+    latencyP95Milliseconds: "500"
+
+# HPA load test: POST /v1/chat/completions (Inference Hub) + optional CPU spin per request
+loadTest:
+  cpuSpinMs: 0          # hpa-load-test.sh sets ~350; POST /bench also spins CPU
+  targetUtilization: 35 # optional: lower HPA target during test (easier scale-up to 7 pods)
+
+metrics:
+  enabled: true
+  path: /metrics
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}

@@ -1,0 +1,8 @@
+{{- if .Values.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ include "nemoclaw-cpu.namespace" . }}
+  labels:
+    {{- include "nemoclaw-cpu.labels" . | nindent 4 }}
+{{- end }}

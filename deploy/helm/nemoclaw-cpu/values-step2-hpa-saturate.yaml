@@ -1,0 +1,42 @@
+# Load-test overlay on a small node: lower CPU *request* so HPA can schedule more pods
+# for the same physical CPUs. Each pod still caps at 1 CPU (limit).
+# For production-style "1 request = 1 CPU", use values-step2-hpa.yaml instead.
+
+autoscaling:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 7
+  maxCpus: 8
+  targetCPUUtilizationPercentage: 50
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+        - type: Pods
+          value: 4
+          periodSeconds: 30
+      selectPolicy: Max
+    scaleDown:
+      stabilizationWindowSeconds: 90
+      policies:
+        - type: Percent
+          value: 50
+          periodSeconds: 45
+        - type: Pods
+          value: 2
+          periodSeconds: 45
+      selectPolicy: Max
+
+cpuScaling:
+  oneReplicaPerCpu: true
+  count: 1
+  perPodRequest: "400m"
+  perPodLimit: "1"
+  perPodMemory: "512Mi"
+  perPodMemoryLimit: "2Gi"
+
+loadTest:
+  cpuSpinMs: 450

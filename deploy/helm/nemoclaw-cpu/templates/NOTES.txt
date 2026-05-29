@@ -1,0 +1,29 @@
+NemoClaw CPU chart installed (remote Inference Hub — no GPU in cluster).
+
+Namespace: {{ include "nemoclaw-cpu.namespace" . }}
+Deployment: {{ include "nemoclaw-cpu.fullname" . }}-agent
+
+Step 1 — manual scale (one replica per CPU):
+{{- if .Values.cpuScaling.oneReplicaPerCpu }}
+  Desired CPUs: {{ .Values.cpuScaling.count }} → {{ include "nemoclaw-cpu.replicas" . }} pod(s), {{ .Values.cpuScaling.perPodRequest }} CPU each
+  helm upgrade {{ .Release.Name }} . -n {{ include "nemoclaw-cpu.namespace" . }} --set cpuScaling.count=4
+  kubectl scale deployment {{ include "nemoclaw-cpu.fullname" . }}-agent -n {{ include "nemoclaw-cpu.namespace" . }} --replicas=4
+{{- else }}
+  kubectl scale deployment {{ include "nemoclaw-cpu.fullname" . }}-agent -n {{ include "nemoclaw-cpu.namespace" . }} --replicas=3
+  helm upgrade {{ .Release.Name }} . -n {{ include "nemoclaw-cpu.namespace" . }} --set replicaCount=3
+{{- end }}
+
+Health:
+  kubectl port-forward -n {{ include "nemoclaw-cpu.namespace" . }} svc/{{ include "nemoclaw-cpu.fullname" . }}-agent 8080:8080
+  curl -s http://127.0.0.1:8080/healthz
+  curl -s http://127.0.0.1:8080/readyz
+
+Metrics (for Step 2 HPA / Grafana):
+  curl -s http://127.0.0.1:8080/metrics
+
+Step 2 — enable HPA:
+  helm upgrade {{ .Release.Name }} . -n {{ include "nemoclaw-cpu.namespace" . }} \
+    --set autoscaling.enabled=true \
+    --set replicaCount=null
+
+See README.md in this chart directory.

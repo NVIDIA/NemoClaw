@@ -1,0 +1,21 @@
+# prometheus-adapter: expose nemoclaw_http_inflight_requests to the HPA custom metrics API.
+# Install with scripts/install-performance-hpa.sh (sets prometheus.url automatically).
+
+prometheus:
+  url: http://REPLACE_PROMETHEUS_SERVICE.monitoring.svc
+  port: 9090
+
+rules:
+  default: false
+  custom:
+    - seriesQuery: 'nemoclaw_http_inflight_requests{namespace!="",pod!=""}'
+      resources:
+        overrides:
+          namespace:
+            resource: namespace
+          pod:
+            resource: pod
+      name:
+        matches: "^(.*)$"
+        as: "nemoclaw_http_inflight_requests"
+      metricsQuery: 'avg(<<.Series>>{<<.LabelMatchers>>}) by (<<.GroupBy>>)'

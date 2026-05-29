@@ -1,0 +1,99 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "nemoclaw-cpu.fullname" . }}-agent
+  namespace: {{ include "nemoclaw-cpu.namespace" . }}
+  labels:
+    {{- include "nemoclaw-cpu.labels" . | nindent 4 }}
+spec:
+  {{- if .Values.autoscaling.enabled }}
+  # Floor for HPA (min 1). HPA scales between minReplicas and maxReplicas under load.
+  replicas: {{ include "nemoclaw-cpu.hpaMinReplicas" . }}
+  {{- else }}
+  replicas: {{ include "nemoclaw-cpu.replicas" . }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "nemoclaw-cpu.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "nemoclaw-cpu.selectorLabels" . | nindent 8 }}
+      annotations:
+        checksum/agent-config: {{ printf "%s%s" (.Files.Get "files/agent-server.mjs") (.Files.Get "files/cpu-spin-worker.mjs") | sha256sum }}
+      {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: agent
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["node", "/app/agent-server.mjs"]
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          env:
+            - name: PORT
+              value: "8080"
+            - name: INFERENCE_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "nemoclaw-cpu.fullname" . }}-agent
+                  key: INFERENCE_BASE_URL
+            - name: INFERENCE_MODEL
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ include "nemoclaw-cpu.fullname" . }}-agent
+                  key: INFERENCE_MODEL
+            - name: NVIDIA_INFERENCE_HUB_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "nemoclaw-cpu.secretName" . }}
+                  key: NVIDIA_INFERENCE_HUB_API_KEY
+            - name: LOAD_TEST_CPU_SPIN_MS
+              value: {{ .Values.loadTest.cpuSpinMs | quote }}
+          volumeMounts:
+            - name: app
+              mountPath: /app
+              readOnly: true
+          resources:
+            {{- include "nemoclaw-cpu.agentResources" . | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 5
+          readinessProbe:
+            httpGet:
+              path: {{ if .Values.probes.readinessChecksInferenceHub }}/readyz{{ else }}/healthz{{ end }}
+              port: http
+            initialDelaySeconds: {{ if .Values.probes.readinessChecksInferenceHub }}5{{ else }}3{{ end }}
+            periodSeconds: 20
+            timeoutSeconds: {{ if .Values.probes.readinessChecksInferenceHub }}5{{ else }}3{{ end }}
+            failureThreshold: 5
+      volumes:
+        - name: app
+          configMap:
+            name: {{ include "nemoclaw-cpu.fullname" . }}-agent
+            items:
+              - key: agent-server.mjs
+                path: agent-server.mjs
+              - key: cpu-spin-worker.mjs
+                path: cpu-spin-worker.mjs
