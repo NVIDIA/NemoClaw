@@ -124,11 +124,48 @@ const MEMORY_PATH_SEGMENTS = [
 ];
 
 /**
+ * Canonical OpenClaw workspace files — these basenames are always treated as
+ * persistent memory regardless of the surrounding path. Catches the case
+ * where the host has CWD'd into the workspace directory and the agent
+ * writes the bare basename (e.g. `IDENTITY.md`) instead of an absolute
+ * `/sandbox/.openclaw/workspace/IDENTITY.md`.
+ *
+ * Keep in sync with `docs/manage-sandboxes/workspace-files.mdx`.
+ */
+const MEMORY_BASENAMES: ReadonlySet<string> = new Set([
+  "IDENTITY.md",
+  "MEMORY.md",
+  "SOUL.md",
+  "USER.md",
+  "AGENTS.md",
+]);
+
+/**
+ * Relative path prefixes that unambiguously target NemoClaw / OpenClaw
+ * persistent memory. Ambiguous prefixes (e.g. `memory/`, `workspace/`) are
+ * deliberately excluded because they are common project subdirectory names.
+ */
+const MEMORY_RELATIVE_PREFIXES: readonly string[] = [".openclaw/", ".nemoclaw/"];
+
+function basenameOf(filePath: string): string {
+  const slash = filePath.lastIndexOf("/");
+  return slash === -1 ? filePath : filePath.slice(slash + 1);
+}
+
+/**
  * Returns true if the given file path targets a persistent memory location.
  * Accepts `unknown` so a host runtime that hands us a non-string value cannot
- * trigger a TypeError (#4518).
+ * trigger a TypeError. Handles three flavours:
+ *   1. Absolute paths containing one of the known memory segments
+ *      (e.g. `/sandbox/.openclaw/memory/notes.md`).
+ *   2. Relative paths whose basename matches a canonical workspace file
+ *      (e.g. `IDENTITY.md`, `MEMORY.md`).
+ *   3. Relative paths starting with `.openclaw/` or `.nemoclaw/`.
  */
 export function isMemoryPath(filePath: unknown): boolean {
   if (typeof filePath !== "string" || filePath.length === 0) return false;
-  return MEMORY_PATH_SEGMENTS.some((segment) => filePath.includes(segment));
+  if (MEMORY_PATH_SEGMENTS.some((segment) => filePath.includes(segment))) return true;
+  if (MEMORY_BASENAMES.has(basenameOf(filePath))) return true;
+  if (MEMORY_RELATIVE_PREFIXES.some((prefix) => filePath.startsWith(prefix))) return true;
+  return false;
 }

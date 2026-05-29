@@ -255,15 +255,41 @@ describe("isMemoryPath", () => {
     expect(isMemoryPath("/sandbox/my-project/workspace/readme.md")).toBe(false);
   });
 
-  it("does not match unanchored MEMORY.md in project paths", () => {
-    expect(isMemoryPath("/sandbox/my-project/MEMORY.md")).toBe(false);
+  it("matches MEMORY.md even outside the OpenClaw workspace", () => {
+    // Trades a narrow false-positive (project files named MEMORY.md get
+    // scanned for secrets) for closing the embedded-fallback bypass where
+    // agents write workspace files through bare basenames.
+    expect(isMemoryPath("/sandbox/my-project/MEMORY.md")).toBe(true);
   });
 
-  it("returns false for non-string input rather than throwing (#4518)", () => {
+  it("returns false for non-string input rather than throwing", () => {
     expect(isMemoryPath(undefined)).toBe(false);
     expect(isMemoryPath(null)).toBe(false);
     expect(isMemoryPath(42)).toBe(false);
     expect(isMemoryPath({})).toBe(false);
     expect(isMemoryPath("")).toBe(false);
+  });
+
+  it("matches canonical workspace basenames written through a relative path", () => {
+    expect(isMemoryPath("IDENTITY.md")).toBe(true);
+    expect(isMemoryPath("MEMORY.md")).toBe(true);
+    expect(isMemoryPath("SOUL.md")).toBe(true);
+    expect(isMemoryPath("USER.md")).toBe(true);
+    expect(isMemoryPath("AGENTS.md")).toBe(true);
+  });
+
+  it("matches canonical workspace basenames even when nested under a relative subdir", () => {
+    expect(isMemoryPath("workspace-main/IDENTITY.md")).toBe(true);
+  });
+
+  it("matches relative .openclaw and .nemoclaw prefixes", () => {
+    expect(isMemoryPath(".openclaw/memory/notes.md")).toBe(true);
+    expect(isMemoryPath(".nemoclaw/sandboxes.json")).toBe(true);
+  });
+
+  it("does not match unrelated relative files", () => {
+    expect(isMemoryPath("README.md")).toBe(false);
+    expect(isMemoryPath("src/index.ts")).toBe(false);
+    expect(isMemoryPath("memory/notes.md")).toBe(false);
   });
 });
