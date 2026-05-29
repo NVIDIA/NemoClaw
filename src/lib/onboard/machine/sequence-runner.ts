@@ -19,6 +19,7 @@ export interface OnboardSequenceRunnerOptions<Context> {
   context: Context;
   runtime: OnboardMachineRunnerRuntime;
   phases: readonly OnboardSequencePhase<Context>[];
+  stopStates?: Parameters<typeof runOnboardMachine<Context>>[0]["stopStates"];
 }
 
 export class DuplicateOnboardSequencePhaseError extends Error {
@@ -59,6 +60,7 @@ export async function runOnboardSequenceWithRunner<Context>({
   context: initialContext,
   runtime,
   phases,
+  stopStates,
 }: OnboardSequenceRunnerOptions<Context>) {
   let pendingContext = initialContext;
   return runOnboardMachine({
@@ -68,5 +70,6 @@ export async function runOnboardSequenceWithRunner<Context>({
       pendingContext = context;
     }),
     updateContext: () => pendingContext,
+    stopStates,
   });
 }

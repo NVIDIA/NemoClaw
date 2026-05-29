@@ -1,0 +1,98 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: Apache-2.0
+
+import { describe, expect, it } from "vitest";
+
+import { createSession, filterSafeUpdates, normalizeSession, type Session, type SessionUpdates } from "../../state/onboard-session";
+import type { OnboardFlowContext } from "./flow-context";
+import { advanceTo } from "./result";
+import { OnboardRuntime, type OnboardRuntimeDeps } from "./runtime";
+import type { OnboardSequencePhase } from "./sequence-runner";
+import { initialOnboardFlowPhases, runInitialOnboardFlowSequence } from "./flow-slices";
+
+function cloneSession(session: Session): Session {
+  return normalizeSession(JSON.parse(JSON.stringify(session))) ?? session;
+}
+
+function runtime() {
+  let session = createSession({ machine: { version: 1, state: "preflight", stateEnteredAt: null, revision: 1 } });
+  const updateSession = (mutator: (value: Session) => Session | void): Session => {
+    session = cloneSession(mutator(cloneSession(session)) ?? session);
+    return cloneSession(session);
+  };
+  const deps: OnboardRuntimeDeps = {
+    loadSession: () => cloneSession(session),
+    createSession,
+    saveSession: (next) => {
+      session = cloneSession(next);
+      return cloneSession(session);
+    },
+    updateSession,
+    markStepStarted: () => cloneSession(session),
+    markStepComplete: (_stepName, updates: SessionUpdates = {}) => updateSession((current) => Object.assign(current, filterSafeUpdates(updates))),
+    markStepSkipped: () => cloneSession(session),
+    markStepFailed: () => cloneSession(session),
+    completeSession: () => cloneSession(session),
+    filterSafeUpdates,
+    emitEvent: () => undefined,
+    now: () => "2026-05-29T00:00:00.000Z",
+  };
+  return new OnboardRuntime(deps);
+}
+
+function context(): OnboardFlowContext {
+  return {
+    resume: false,
+    fresh: false,
+    session: createSession(),
+    agent: null,
+    recordedSandboxName: null,
+    requestedSandboxName: null,
+    sandboxName: null,
+    fromDockerfile: null,
+    model: null,
+    provider: null,
+    endpointUrl: null,
+    credentialEnv: null,
+    hermesAuthMethod: null,
+    hermesToolGateways: [],
+    preferredInferenceApi: null,
+    nimContainer: null,
+    webSearchConfig: null,
+    webSearchSupported: false,
+    selectedMessagingChannels: [],
+    gpu: null,
+    sandboxGpuConfig: null,
+    gpuPassthrough: false,
+  };
+}
+
+function phase(state: OnboardSequencePhase<OnboardFlowContext>["state"], next: ReturnType<typeof advanceTo>["next"]): OnboardSequencePhase<OnboardFlowContext> {
+  return { state, run: (ctx) => ({ context: ctx, result: advanceTo(next) }) };
+}
+
+describe("onboard flow slices", () => {
+  it("selects only initial preflight/gateway phases", () => {
+    expect(
+      initialOnboardFlowPhases([
+        phase("preflight", "gateway"),
+        phase("gateway", "provider_selection"),
+        phase("provider_selection", "inference"),
+      ]).map((entry) => entry.state),
+    ).toEqual(["preflight", "gateway"]);
+  });
+
+  it("runs the initial slice and stops at provider selection", async () => {
+    const result = await runInitialOnboardFlowSequence({
+      context: context(),
+      runtime: runtime(),
+      phases: [
+        phase("preflight", "gateway"),
+        phase("gateway", "provider_selection"),
+        phase("provider_selection", "inference"),
+      ],
+    });
+
+    expect(result.session.machine.state).toBe("provider_selection");
+  });
+});
