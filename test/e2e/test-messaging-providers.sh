@@ -1734,35 +1734,46 @@ print(','.join(bad))
   fi
 
   # M-W7: WeChat plugin install registry is restored alongside the channel
-  # block. The upstream plugin loader needs this install metadata after
-  # OpenClaw config rewrites; plugins.entries alone is not enough.
-  wechat_install_json=$(sandbox_exec "python3 -c \"
+  # block, the plugin entry is enabled, and the install spec is pinned to a
+  # concrete semver. The upstream plugin loader needs this install metadata
+  # after OpenClaw config rewrites (plugins.entries alone is not enough),
+  # and a floating spec (e.g. "@latest") would silently bypass the
+  # installer-trust pinning enforced in Dockerfile.base and
+  # scripts/seed-wechat-accounts.py (WECHAT_PLUGIN_SPEC=@2.4.3).
+  wechat_plugins_json=$(sandbox_exec "python3 -c \"
 import json
 cfg = json.load(open('/sandbox/.openclaw/openclaw.json'))
-inst = cfg.get('plugins', {}).get('installs', {}).get('openclaw-weixin', {})
-print(json.dumps(inst))
+plugins = cfg.get('plugins', {}) or {}
+print(json.dumps({
+    'install': plugins.get('installs', {}).get('openclaw-weixin', {}),
+    'entry': plugins.get('entries', {}).get('openclaw-weixin', {}),
+}))
 \"" 2>/dev/null || true)
-  if echo "$wechat_install_json" | python3 -c "
-import json, sys
+  if echo "$wechat_plugins_json" | python3 -c "
+import json, re, sys
 try:
-    inst = json.load(sys.stdin)
+    data = json.load(sys.stdin)
 except Exception:
     sys.exit(2)
+inst = data.get(\"install\") if isinstance(data, dict) else None
+entry = data.get(\"entry\") if isinstance(data, dict) else None
 spec = inst.get(\"spec\") if isinstance(inst, dict) else None
 install_path = inst.get(\"installPath\") if isinstance(inst, dict) else None
 ok = (
     isinstance(inst, dict)
     and inst.get(\"source\") == \"npm\"
     and isinstance(spec, str)
-    and spec.startswith(\"@tencent-weixin/openclaw-weixin@\")
+    and bool(re.fullmatch(r\"@tencent-weixin/openclaw-weixin@\d+\.\d+\.\d+\", spec))
     and isinstance(install_path, str)
     and bool(install_path.strip())
+    and isinstance(entry, dict)
+    and entry.get(\"enabled\") is True
 )
 sys.exit(0 if ok else 1)
 " 2>/dev/null; then
-    pass "M-W7: WeChat plugin install registry restored in openclaw.json"
+    pass "M-W7: WeChat plugin install registry restored, entry enabled, spec pinned in openclaw.json"
   else
-    fail "M-W7: WeChat plugin install registry missing or invalid"
+    fail "M-W7: WeChat plugin install registry missing/invalid, entry not enabled, or spec not pinned to a concrete semver"
   fi
 
   # M-W8: WeChat channel registered under channels.openclaw-weixin with the
