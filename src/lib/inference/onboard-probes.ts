@@ -834,7 +834,7 @@ module.exports = {
   RETRIABLE_HTTP_PROBE_STATUSES,
 };
 
-function shouldSmokeOpenAiLikeOnboardRoute(provider, credentialEnv = null) {
+export function shouldSmokeOpenAiLikeOnboardRoute(provider: string, credentialEnv: string | null = null) {
   const {
     HERMES_INFERENCE_CREDENTIAL_ENV,
     HERMES_PROVIDER_NAME,
@@ -856,7 +856,7 @@ function shouldSmokeOpenAiLikeOnboardRoute(provider, credentialEnv = null) {
   );
 }
 
-function verifyOnboardInferenceSmoke(options) {
+export function verifyOnboardInferenceSmoke(options: any) {
   if (
     !options.forceOpenAiLike &&
     !shouldSmokeOpenAiLikeOnboardRoute(options.provider, options.credentialEnv)
