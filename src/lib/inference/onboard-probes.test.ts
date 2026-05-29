@@ -11,6 +11,7 @@ const {
   getChatCompletionsProbePayload,
   getDeepSeekV4ProValidationProbeCurlArgs,
   getKimiK26ValidationProbeCurlArgs,
+  getValidationProbeCurlArgs,
   hasChatCompletionsToolCall,
   hasChatCompletionsToolCallLeak,
   hasResponsesToolCall,
@@ -287,6 +288,53 @@ describe("OpenAI-compatible inference probes", () => {
       model: "nvidia/nemotron-3-super-120b-a12b",
       messages: [{ role: "user", content: "Reply with exactly: OK" }],
     });
+  });
+
+  it("allows onboard validation max-time to be raised from the environment", () => {
+    const original = process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS;
+    process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS = "300";
+    try {
+      expect(getValidationProbeCurlArgs({ isWsl: false })).toEqual([
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        "300",
+      ]);
+      expect(getKimiK26ValidationProbeCurlArgs({ isWsl: false })).toEqual([
+        "--connect-timeout",
+        "10",
+        "--max-time",
+        "300",
+      ]);
+    } finally {
+      if (original === undefined) {
+        delete process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS;
+      } else {
+        process.env.NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS = original;
+      }
+    }
+  });
+
+  it("uses an extended validation budget for slow NVIDIA Build models", () => {
+    for (const model of ["qwen/qwen3.5-397b-a17b", "deepseek-ai/deepseek-v4-flash"]) {
+      const args = getChatCompletionsProbeCurlArgs({
+        authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+        model,
+        url: "https://integrate.api.nvidia.com/v1/chat/completions",
+        isWsl: false,
+      });
+      expect(args[args.indexOf("--connect-timeout") + 1]).toBe("10");
+      expect(args[args.indexOf("--max-time") + 1]).toBe("300");
+    }
+
+    const wslArgs = getChatCompletionsProbeCurlArgs({
+      authHeader: ["-H", "Authorization: Bearer nvapi-test"],
+      model: "qwen/qwen3.5-397b-a17b",
+      url: "https://integrate.api.nvidia.com/v1/chat/completions",
+      isWsl: true,
+    });
+    expect(wslArgs[wslArgs.indexOf("--connect-timeout") + 1]).toBe("30");
+    expect(wslArgs[wslArgs.indexOf("--max-time") + 1]).toBe("300");
   });
 
   it("caps Kimi K2.6 probe output and gives it a slower validation budget", () => {

@@ -1,11 +1,20 @@
-#!/usr/bin/env node
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
 import { spawn, spawnSync } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync, watch } from "node:fs";
+import type { FSWatcher } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+type FernConfig = {
+  version?: unknown;
+};
+
+type NodeError = Error & {
+  code?: string;
+};
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fernRoot = path.join(repoRoot, "fern");
@@ -13,16 +22,21 @@ const watchRoots = ["docs", "fern"];
 const ignoredDirectoryNames = new Set([".fern-cache", ".git", "_build", "node_modules"]);
 const debounceMs = 500;
 
-const fernVersion = JSON.parse(
+const fernConfig = JSON.parse(
   readFileSync(path.join(repoRoot, "fern", "fern.config.json"), "utf8"),
-).version;
+) as FernConfig;
+const trimmedFernVersion = typeof fernConfig.version === "string" ? fernConfig.version.trim() : "";
+if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/.test(trimmedFernVersion)) {
+  throw new Error("fern.config.json must contain an exact semver version");
+}
+const fernVersion = trimmedFernVersion;
 
 const branchName = currentBranchName();
 let running = false;
 let pending = false;
-let debounceTimer;
-let currentChild;
-const watchers = new Map();
+let debounceTimer: NodeJS.Timeout | undefined;
+let currentChild: ChildProcess | undefined;
+const watchers = new Map<string, FSWatcher>();
 
 console.log(`Using Fern preview id: ${branchName}`);
 console.log(`Watching: ${watchRoots.join(", ")}`);
@@ -45,7 +59,7 @@ process.on("SIGTERM", () => {
   process.exit(143);
 });
 
-function currentBranchName() {
+function currentBranchName(): string {
   const result = spawnSync("git", ["branch", "--show-current"], {
     cwd: repoRoot,
     encoding: "utf8",
@@ -60,7 +74,7 @@ function currentBranchName() {
   return branch;
 }
 
-function watchDirectoryTree(directory) {
+function watchDirectoryTree(directory: string): void {
   if (!existsSync(directory) || watchers.has(directory)) {
     return;
   }
@@ -108,7 +122,7 @@ function watchDirectoryTree(directory) {
   }
 }
 
-function addWatcherForNewDirectory(changedPath) {
+function addWatcherForNewDirectory(changedPath: string): void {
   if (!existsSync(changedPath)) {
     return;
   }
@@ -125,20 +139,24 @@ function addWatcherForNewDirectory(changedPath) {
   }
 }
 
-function isIgnorableWatchError(error) {
-  return error?.code === "ENOENT" || error?.code === "EPERM";
+function isIgnorableWatchError(error: unknown): error is NodeError {
+  return isNodeError(error) && (error.code === "ENOENT" || error.code === "EPERM");
 }
 
-function shouldIgnorePath(candidatePath) {
+function isNodeError(error: unknown): error is NodeError {
+  return error instanceof Error;
+}
+
+function shouldIgnorePath(candidatePath: string): boolean {
   return candidatePath.split(path.sep).some((part) => ignoredDirectoryNames.has(part));
 }
 
-function scheduleRun() {
+function scheduleRun(): void {
   clearTimeout(debounceTimer);
   debounceTimer = setTimeout(() => runFernGenerate("file change"), debounceMs);
 }
 
-function runFernGenerate(reason) {
+function runFernGenerate(reason: string): void {
   if (running) {
     pending = true;
     return;
@@ -191,7 +209,7 @@ function runFernGenerate(reason) {
   });
 }
 
-function closeWatchers() {
+function closeWatchers(): void {
   for (const watcher of watchers.values()) {
     watcher.close();
   }
