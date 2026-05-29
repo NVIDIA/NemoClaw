@@ -5,6 +5,7 @@ import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 import { getSandboxStatusReport, showSandboxStatus } from "../../lib/actions/sandbox/status";
 import { sandboxNameArg } from "../../lib/sandbox/command-support";
+import { redactForLog } from "../../lib/security/redact";
 
 export default class SandboxStatusCommand extends NemoClawCommand {
   static id = "sandbox:status";
@@ -30,7 +31,11 @@ export default class SandboxStatusCommand extends NemoClawCommand {
       if (!report.found || report.gatewayState !== "present" || report.rpcIssue) {
         process.exitCode = 1;
       }
-      return report;
+      // #4310: route the machine-readable report through the centralized
+      // redactForLog source of truth so health diagnostics (inferenceHealth
+      // endpoint/detail/subprobes) cannot leak token-shaped values into
+      // automation that persists CLI JSON output.
+      return redactForLog(report);
     }
     await showSandboxStatus(args.sandboxName);
   }
