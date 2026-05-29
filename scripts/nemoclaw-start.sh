@@ -646,14 +646,25 @@ ensure_mutable_openclaw_config_hash() {
     return 0
   fi
 
-  if ! (cd "$config_dir" && sha256sum openclaw.json >"$hash_file"); then
+  # Mutable-default mode: $config_dir is 2770 sandbox:sandbox and
+  # $hash_file is 660 sandbox:sandbox. When running as root in a
+  # CAP_DAC_OVERRIDE-dropped environment (issue #4498) the redirection
+  # cannot bypass the sandbox-only write bit and fails with EACCES.
+  # Step down to the sandbox uid so the write goes through the owner.
+  local run_prefix=()
+  if [ "$(id -u)" -eq 0 ]; then
+    run_prefix=("${STEP_DOWN_PREFIX_SANDBOX[@]}")
+  fi
+
+  # shellcheck disable=SC2016  # positional params are expanded by the inner sh
+  if ! "${run_prefix[@]}" sh -c '
+    cd "$1" || exit 1
+    sha256sum openclaw.json >".config-hash" || exit 1
+    chmod 660 ".config-hash" 2>/dev/null || true
+  ' _ "$config_dir"; then
     printf '[SECURITY] Failed to refresh mutable OpenClaw config hash\n' >&2
     return 1
   fi
-  if [ "$(id -u)" -eq 0 ]; then
-    chown sandbox:sandbox "$hash_file" 2>/dev/null || true
-  fi
-  chmod 660 "$hash_file" 2>/dev/null || true
 }
 
 # ── Runtime model/provider override ──────────────────────────────
@@ -2413,8 +2424,48 @@ NODE
   fi
 }
 
+# Run one or more locally-defined bash functions as the sandbox user
+# without round-tripping through `bash -c "$(declare -f ...) ..."`.
+#
+# The interpolated form has been observed to fail under restricted
+# runtimes (issue #4512: CAP_DAC_OVERRIDE-dropped startup) where the
+# step-down shell could not re-parse the heredoc-bearing function body
+# carried through `bash -c`'s argv. Writing the declarations plus the
+# trailing invocation to a temp script and invoking `bash <file>`
+# avoids the argv/quoting fragility: the step-down shell reads the
+# literal source bytes from disk and parses them as a normal script.
+#
+# Usage: run_step_down_as_sandbox <invocation-snippet> <fn>...
+# NEMOCLAW_STEP_DOWN_TMPDIR overrides the temp directory (defaults to /tmp);
+# tests rely on this hook to isolate the generated helper script.
+run_step_down_as_sandbox() {
+  local invocation="$1"
+  shift
+  local tmpdir="${NEMOCLAW_STEP_DOWN_TMPDIR:-/tmp}"
+  local script
+  script="$(mktemp "${tmpdir}/nemoclaw-step-down-XXXXXX.sh")" || return 1
+  if ! chmod 0644 "$script" 2>/dev/null; then
+    rm -f "$script" 2>/dev/null || true
+    return 1
+  fi
+  {
+    printf 'set -euo pipefail\n'
+    declare -f "$@"
+    printf '%s\n' "$invocation"
+  } >"$script" || {
+    rm -f "$script" 2>/dev/null || true
+    return 1
+  }
+  local rc=0
+  "${STEP_DOWN_PREFIX_SANDBOX[@]}" bash "$script" || rc=$?
+  rm -f "$script" 2>/dev/null || true
+  return "$rc"
+}
+
 seed_default_workspace_templates_as_sandbox() {
-  "${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "$(declare -f seed_default_workspace_templates); seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json"
+  run_step_down_as_sandbox \
+    "seed_default_workspace_templates /sandbox/.openclaw/workspace '' /sandbox/.openclaw/openclaw.json" \
+    seed_default_workspace_templates
 }
 
 # ── Main ─────────────────────────────────────────────────────────
@@ -2615,8 +2666,13 @@ install_slack_channel_guard
 verify_no_slack_secrets_on_disk
 
 # Write auth profile as sandbox user and recursively re-tighten any
-# auth-profiles.json files under ~/.openclaw.
-"${STEP_DOWN_PREFIX_SANDBOX[@]}" bash -c "$(declare -f write_auth_profile harden_auth_profiles); write_auth_profile; harden_auth_profiles"
+# auth-profiles.json files under ~/.openclaw. Routed through the temp-
+# file helper (issue #4512) so the step-down shell does not have to
+# re-parse the heredoc-bearing function body through `bash -c`'s argv.
+run_step_down_as_sandbox \
+  "write_auth_profile; harden_auth_profiles" \
+  write_auth_profile \
+  harden_auth_profiles
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then

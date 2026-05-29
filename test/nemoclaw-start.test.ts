@@ -2554,6 +2554,7 @@ describe("seed_default_workspace_templates (#3240)", () => {
     const configPath = path.join(tmpDir, "openclaw.json");
     fs.writeFileSync(configPath, JSON.stringify({ agents: { defaults: { skipBootstrap: true } } }));
     const scriptPath = path.join(tmpDir, "seed-as-sandbox.sh");
+    const runStepDown = extractShellFunctionFromSource(src, "run_step_down_as_sandbox");
     const seedAsSandbox = extractShellFunctionFromSource(
       src,
       "seed_default_workspace_templates_as_sandbox",
@@ -2566,8 +2567,10 @@ describe("seed_default_workspace_templates (#3240)", () => {
         "#!/usr/bin/env bash",
         "set -euo pipefail",
         `STEP_DOWN_LOG=${JSON.stringify(stepDownLog)}`,
+        `NEMOCLAW_STEP_DOWN_TMPDIR=${JSON.stringify(tmpDir)}`,
         `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$0" >"$STEP_DOWN_LOG"; exec "$@"' sandbox-step-down)`,
         `seed_default_workspace_templates() { printf 'seeded\\n' > ${JSON.stringify(path.join(workspaceDir, "SOUL.md"))}; }`,
+        runStepDown,
         seedAsSandbox,
         "seed_default_workspace_templates_as_sandbox",
       ].join("\n"),
@@ -2827,6 +2830,7 @@ describe("Telegram diagnostics (#2766)", () => {
         'seed_default_workspace_templates_as_sandbox() { seed_default_workspace_templates; }',
         'write_auth_profile() { :; }',
         'harden_auth_profiles() { :; }',
+        'run_step_down_as_sandbox() { :; }',
         'chown() { :; }',
         'chown_tree_no_symlink_follow() { :; }',
         'start_persistent_gateway_log_mirror() { :; }',
@@ -3691,5 +3695,149 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
     });
     expect(result.status).toBe(0);
     expect(baselineExists).toBe(false);
+  });
+});
+
+describe("run_step_down_as_sandbox (#4512)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const helper = extractShellFunctionFromSource(src, "run_step_down_as_sandbox");
+
+  it("dispatches via a temp script and cleans up after success", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-step-down-helper-"));
+    const stepDownLog = path.join(tmpDir, "step-down.log");
+    const marker = path.join(tmpDir, "marker");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$2" >${JSON.stringify(stepDownLog)}; exec "$@"' sandbox-step-down)`,
+        `NEMOCLAW_STEP_DOWN_TMPDIR=${JSON.stringify(tmpDir)}`,
+        `payload_fn() { printf 'ran\\n' >${JSON.stringify(marker)}; }`,
+        helper,
+        "run_step_down_as_sandbox 'payload_fn' payload_fn",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    try {
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(fs.readFileSync(marker, "utf-8").trim()).toBe("ran");
+      expect(fs.readFileSync(stepDownLog, "utf-8").trim()).toMatch(/nemoclaw-step-down-.*\.sh$/);
+      const leftover = fs
+        .readdirSync(tmpDir)
+        .filter((name) => name.startsWith("nemoclaw-step-down-"));
+      expect(leftover).toEqual([]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("removes the temp script even when the step-down body fails", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-step-down-fail-"));
+    const scriptPath = path.join(tmpDir, "run.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -uo pipefail",
+        "STEP_DOWN_PREFIX_SANDBOX=()",
+        `NEMOCLAW_STEP_DOWN_TMPDIR=${JSON.stringify(tmpDir)}`,
+        "failing_fn() { return 7; }",
+        helper,
+        "run_step_down_as_sandbox 'failing_fn' failing_fn",
+        'printf "EXIT=%s\\n" "$?"',
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    try {
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain("EXIT=7");
+      const leftover = fs
+        .readdirSync(tmpDir)
+        .filter((name) => name.startsWith("nemoclaw-step-down-"));
+      expect(leftover).toEqual([]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("ensure_mutable_openclaw_config_hash root-mode step-down (#4498)", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+
+  function runHashRefresh(opts: { asRoot: boolean; preexistingHash?: string }) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-hash-refresh-"));
+    const configDir = path.join(tmpDir, "openclaw");
+    fs.mkdirSync(configDir, { recursive: true });
+    const configPath = path.join(configDir, "openclaw.json");
+    const hashPath = path.join(configDir, ".config-hash");
+    fs.writeFileSync(configPath, "{}\n");
+    if (opts.preexistingHash !== undefined) {
+      fs.writeFileSync(hashPath, opts.preexistingHash);
+    }
+    const stepDownLog = path.join(tmpDir, "step-down.log");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    const helperFn = extractShellFunctionFromSource(src, "ensure_mutable_openclaw_config_hash")
+      .replaceAll("/sandbox/.openclaw", configDir);
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        opts.asRoot
+          ? 'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }'
+          : 'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
+        'openclaw_config_dir_owner() { printf "sandbox"; }',
+        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "step-down\\n" >>${JSON.stringify(stepDownLog)}; exec "$@"' sandbox-step-down)`,
+        helperFn,
+        "ensure_mutable_openclaw_config_hash",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+    const hashAfter = fs.existsSync(hashPath) ? fs.readFileSync(hashPath, "utf-8").trim() : "";
+    const stepDownInvocations = fs.existsSync(stepDownLog)
+      ? fs.readFileSync(stepDownLog, "utf-8").trim().split("\n").filter(Boolean).length
+      : 0;
+    return { tmpDir, result, hashAfter, stepDownInvocations };
+  }
+
+  it("routes the sha256sum write through the sandbox step-down prefix when uid=0", () => {
+    const { tmpDir, result, hashAfter, stepDownInvocations } = runHashRefresh({ asRoot: true });
+    try {
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(stepDownInvocations).toBe(1);
+      expect(hashAfter).toMatch(/^[0-9a-f]{64}\s+openclaw\.json$/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("skips the step-down prefix when already running as non-root", () => {
+    const { tmpDir, result, hashAfter, stepDownInvocations } = runHashRefresh({ asRoot: false });
+    try {
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(stepDownInvocations).toBe(0);
+      expect(hashAfter).toMatch(/^[0-9a-f]{64}\s+openclaw\.json$/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("overwrites a stale hash without leaving the partial write behind", () => {
+    const { tmpDir, result, hashAfter } = runHashRefresh({
+      asRoot: true,
+      preexistingHash: "stale-content\n",
+    });
+    try {
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(hashAfter).not.toContain("stale-content");
+      expect(hashAfter).toMatch(/^[0-9a-f]{64}\s+openclaw\.json$/);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });
