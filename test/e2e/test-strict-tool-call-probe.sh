@@ -54,11 +54,7 @@ process.env.no_proxy = [process.env.no_proxy, "127.0.0.1", "localhost"].filter(B
 const {
   createInferenceSelectionValidationHelpers,
 } = require("./dist/lib/onboard/inference-selection-validation");
-
-const STRICT_OPTIONS = {
-  skipResponsesProbe: true,
-  requireChatCompletionsToolCalling: true,
-};
+const localInference = require("./dist/lib/inference/local");
 
 function assertStrictPayload(payload) {
   assert.equal(payload.model, "mock-tool-model");
@@ -85,6 +81,13 @@ function makeValidationHelpers(recoveryCalls) {
   });
 }
 
+function strictOllamaProbeOptions() {
+  const options = localInference.buildOllamaProbeOptions(false);
+  assert.equal(options.skipResponsesProbe, true);
+  assert.equal(options.requireChatCompletionsToolCalling, true);
+  return options;
+}
+
 async function validate(endpoint, recoveryCalls = []) {
   const helpers = makeValidationHelpers(recoveryCalls);
   return helpers.validateOpenAiLikeSelection(
@@ -94,7 +97,7 @@ async function validate(endpoint, recoveryCalls = []) {
     null,
     "Choose a different Ollama model or select Other.",
     null,
-    STRICT_OPTIONS,
+    strictOllamaProbeOptions(),
   );
 }
 
