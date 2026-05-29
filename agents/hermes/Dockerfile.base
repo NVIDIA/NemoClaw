@@ -176,10 +176,14 @@ RUN set -eu; \
     done; \
     uv sync --frozen --no-dev "$@" --no-cache \
     && npm ci --prefer-offline --no-audit --no-fund \
-    && npm ci --prefix ui-tui --prefer-offline --no-audit --no-fund \
-    && npm run build --prefix ui-tui \
-    && npm ci --prefix web --prefer-offline --no-audit --no-fund \
-    && npm run build --prefix web \
+    && for ui_dir in ui-tui web; do \
+        if [ -f "${ui_dir}/package-lock.json" ]; then \
+            npm ci --prefix "${ui_dir}" --prefer-offline --no-audit --no-fund; \
+            npm run build --prefix "${ui_dir}"; \
+        else \
+            echo "Skipping optional Hermes UI package ${ui_dir}: package-lock.json not found"; \
+        fi; \
+    done \
     && rm -rf /tmp/camoufox-* \
     && ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \
