@@ -137,6 +137,9 @@ export interface RemediationAction {
   blocking: boolean;
 }
 
+export const DOCKER_DESKTOP_WSL_INTEGRATION_HINT =
+  "If you use Docker Desktop from WSL, open Docker Desktop > Settings > Resources > WSL integration and enable integration for this distro.";
+
 export interface AssessHostOpts {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
@@ -682,6 +685,14 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
       assessment.platform === "linux" && assessment.dockerServiceActive === true;
 
     if (likelyGroupIssue) {
+      const commands = [
+        "sudo usermod -aG docker $USER",
+        "newgrp docker   # or log out and back in",
+        "nemoclaw onboard",
+      ];
+      if (assessment.isWsl) {
+        commands.unshift(DOCKER_DESKTOP_WSL_INTEGRATION_HINT);
+      }
       actions.push({
         id: "docker_group_permission",
         title: "Add user to docker group",
@@ -693,25 +704,25 @@ export function planHostRemediation(assessment: HostAssessment): RemediationActi
           "On personal Linux development machines, adding your user to the docker group is the standard way to run Docker without sudo. " +
           "Docker group members can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path. " +
           "Background: https://docs.docker.com/engine/security/#docker-daemon-attack-surface.",
-        commands: [
-          "sudo usermod -aG docker $USER",
-          "newgrp docker   # or log out and back in",
-          "nemoclaw onboard",
-        ],
+        commands,
         blocking: true,
       });
     } else {
+      const commands =
+        assessment.platform === "darwin"
+          ? ["Start Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
+          : assessment.systemctlAvailable
+            ? ["sudo systemctl start docker", "nemoclaw onboard"]
+            : ["Start the Docker daemon, then rerun `nemoclaw onboard`."];
+      if (assessment.isWsl) {
+        commands.unshift(DOCKER_DESKTOP_WSL_INTEGRATION_HINT);
+      }
       actions.push({
         id: "start_docker",
         title: "Start Docker",
         kind: "manual",
         reason: "Docker is installed but NemoClaw could not talk to the Docker daemon.",
-        commands:
-          assessment.platform === "darwin"
-            ? ["Start Docker Desktop or Colima, then rerun `nemoclaw onboard`."]
-            : assessment.systemctlAvailable
-              ? ["sudo systemctl start docker", "nemoclaw onboard"]
-              : ["Start the Docker daemon, then rerun `nemoclaw onboard`."],
+        commands,
         blocking: true,
       });
     }

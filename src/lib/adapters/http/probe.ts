@@ -35,6 +35,9 @@ export interface StreamingProbeResult {
   message: string;
 }
 
+const DEFAULT_CURL_PROCESS_TIMEOUT_MS = 30_000;
+const CURL_PROCESS_TIMEOUT_SLACK_MS = 5_000;
+
 function validateTempPrefix(prefix: string): string {
   if (
     prefix.length === 0 ||
@@ -69,6 +72,37 @@ export function getCurlTimingArgs(): string[] {
   return ["--connect-timeout", "10", "--max-time", "60"];
 }
 
+function getCurlMaxTimeSeconds(argv: string[]): number | null {
+  let maxTimeSeconds: number | null = null;
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--max-time") {
+      const value = Number(argv[index + 1]);
+      if (Number.isFinite(value) && value > 0) {
+        maxTimeSeconds = value;
+      }
+      continue;
+    }
+    if (arg.startsWith("--max-time=")) {
+      const value = Number(arg.slice("--max-time=".length));
+      if (Number.isFinite(value) && value > 0) {
+        maxTimeSeconds = value;
+      }
+    }
+  }
+  return maxTimeSeconds;
+}
+
+function resolveCurlProcessTimeoutMs(argv: string[], opts: CurlProbeOptions): number {
+  if (opts.timeoutMs !== undefined) return opts.timeoutMs;
+  const maxTimeSeconds = getCurlMaxTimeSeconds(argv);
+  if (maxTimeSeconds === null) return DEFAULT_CURL_PROCESS_TIMEOUT_MS;
+  return Math.max(
+    DEFAULT_CURL_PROCESS_TIMEOUT_MS,
+    Math.ceil(maxTimeSeconds * 1000) + CURL_PROCESS_TIMEOUT_SLACK_MS,
+  );
+}
+
 function sanitizeCurlUrl(value: string): string {
   try {
     const url = new URL(value);
@@ -92,7 +126,7 @@ function getCurlProbeTraceAttributes(argv: string[], opts: CurlProbeOptions): Re
   return {
     "http.url": sanitizeCurlUrl(String(url)),
     "http.request.method": method,
-    "process.timeout_ms": opts.timeoutMs ?? 30_000,
+    "process.timeout_ms": resolveCurlProcessTimeoutMs(argv, opts),
   };
 }
 
@@ -173,13 +207,14 @@ function runCurlProbeImpl(argv: string[], opts: CurlProbeOptions = {}): CurlProb
     const args = [...argv];
     const url = args.pop();
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+    const timeout = resolveCurlProcessTimeoutMs(argv, opts);
     const result = spawnSyncImpl(
       "curl",
       [...args, "-o", bodyFile, "-w", "%{http_code}", String(url || "")],
       {
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
-        timeout: opts.timeoutMs ?? 30_000,
+        timeout,
         env: opts.replaceEnv ? (opts.env ?? {}) : { ...process.env, ...opts.env },
       },
     );
@@ -283,13 +318,14 @@ function runChatCompletionsStreamingProbeImpl(
     const args = [...argv];
     const url = args.pop();
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+    const timeout = resolveCurlProcessTimeoutMs(argv, opts);
     const result = spawnSyncImpl(
       "curl",
       [...args, "-N", "-o", bodyFile, "-w", "%{http_code}", String(url || "")],
       {
         cwd: opts.cwd ?? ROOT,
         encoding: "utf8",
-        timeout: opts.timeoutMs ?? 30_000,
+        timeout,
         env: {
           ...process.env,
           ...opts.env,
@@ -405,10 +441,11 @@ function runStreamingEventProbeImpl(
     const args = [...argv];
     const url = args.pop();
     const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+    const timeout = resolveCurlProcessTimeoutMs(argv, opts);
     const result = spawnSyncImpl("curl", [...args, "-N", "-o", bodyFile, String(url || "")], {
       cwd: opts.cwd ?? ROOT,
       encoding: "utf8",
-      timeout: opts.timeoutMs ?? 30_000,
+      timeout,
       env: {
         ...process.env,
         ...opts.env,
