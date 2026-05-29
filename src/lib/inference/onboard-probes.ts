@@ -835,6 +835,11 @@ module.exports = {
 };
 
 function shouldSmokeOpenAiLikeOnboardRoute(provider) {
+  // Hermes Provider OAuth mints a short-lived agent key and stores it with
+  // OpenShell provider storage. A host-side direct probe would resolve the
+  // ambient OPENAI_API_KEY instead, which can falsely fail after successful
+  // OAuth if the user's shell has a different OpenAI key staged.
+  if (provider === "hermes-provider") return false;
   const { REMOTE_PROVIDER_CONFIG } = require("../onboard/providers");
   if (provider === "nvidia-nim" || provider === "nvidia-router") return true;
   return Object.values(REMOTE_PROVIDER_CONFIG).some(

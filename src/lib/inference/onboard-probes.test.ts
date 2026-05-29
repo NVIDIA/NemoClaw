@@ -1,10 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { describe, expect, it } from "vitest";
 
 const {
   getChatCompletionsProbeCurlArgs,
@@ -17,9 +17,15 @@ const {
   isSandboxInternalUrl,
   probeOpenAiLikeEndpoint,
   RETRIABLE_HTTP_PROBE_STATUSES,
+  shouldSmokeOpenAiLikeOnboardRoute,
 } = require("../../../dist/lib/inference/onboard-probes");
 
 describe("OpenAI-compatible inference probe response parsing", () => {
+  it("does not host-smoke Hermes Provider with the ambient OPENAI_API_KEY", () => {
+    expect(shouldSmokeOpenAiLikeOnboardRoute("hermes-provider")).toBe(false);
+    expect(shouldSmokeOpenAiLikeOnboardRoute("openai-api")).toBe(true);
+  });
+
   it("detects tool-calling responses payloads conservatively", () => {
     expect(
       hasResponsesToolCall(
