@@ -419,7 +419,7 @@ const { handlePoliciesState }: typeof import("./onboard/machine/handlers/policie
 const { handlePreflightState }: typeof import("./onboard/machine/handlers/preflight") = require("./onboard/machine/handlers/preflight");
 const { handleProviderInferenceState }: typeof import("./onboard/machine/handlers/provider-inference") = require("./onboard/machine/handlers/provider-inference");
 const { handleSandboxState }: typeof import("./onboard/machine/handlers/sandbox") = require("./onboard/machine/handlers/sandbox");
-const { runInitialOnboardFlowSequence, runCoreOnboardFlowSequence }: typeof import("./onboard/machine/flow-slices") = require("./onboard/machine/flow-slices");
+const { runInitialOnboardFlowSequence, runCoreOnboardFlowSequence, runFinalOnboardFlowSequence }: typeof import("./onboard/machine/flow-slices") = require("./onboard/machine/flow-slices");
 const { advanceTo }: typeof import("./onboard/machine/result") = require("./onboard/machine/result");
 const { getOnboardProgressStep }: typeof import("./onboard/machine/progress") = require("./onboard/machine/progress");
 const policies: typeof import("./policy") = require("./policy");
@@ -7192,136 +7192,203 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
     selectedMessagingChannels = coreContext.selectedMessagingChannels;
     const webSearchSupported = coreContext.webSearchSupported;
 
-    const agentSetupResult = await handleAgentSetupState({
-      agent,
-      sandboxName,
-      model,
-      provider,
-      resume,
+    const finalFlowContext: CoreOnboardFlowContext = {
+      ...coreContext,
       session,
-      hermesAuthMethod,
-      hermesToolGateways,
-      deps: {
-        handleAgentSetup: agentOnboard.handleAgentSetup,
-        agentSetupContext: () => ({
-          step,
-          runCaptureOpenshell,
-          openshellShellCommand,
-          openshellBinary: getOpenshellBinary(),
-          buildSandboxConfigSyncScript,
-          writeSandboxConfigSyncFile,
-          cleanupTempDir,
-          startRecordedStep,
-          recordStepComplete,
-          recordStepFailed,
-          skippedStepMessage,
-        }),
-        ensureAgentDashboardForward,
-        recordStepSkipped,
-        isOpenclawReady,
-        skippedStepMessage,
-        recordStateSkipped,
-        startRecordedStep,
-        setupOpenclaw,
-        syncNemoClawConfigInSandbox,
-        recordStepComplete,
-        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
-      },
-    });
-    await recordStateResultWithStepCompatibility(agentSetupResult.stateResult);
-    session = agentSetupResult.session;
-
-    const policiesResult = await handlePoliciesState({
-      resume,
       sandboxName,
-      provider,
       model,
+      provider,
       endpointUrl,
       credentialEnv,
-      selectedMessagingChannels,
-      webSearchConfig,
-      webSearchSupported,
-      hermesToolGateways,
-      agent,
-      deps: {
-        loadSession: onboardSession.loadSession,
-        getActiveSandbox: (name) => registry.getSandbox(name),
-        mergePolicyMessagingChannels,
-        verifyCompatibleEndpointSandboxSmoke: (options) =>
-          verifyCompatibleEndpointSandboxSmoke({
-            ...options,
-            runOpenshell,
-            redact,
-          }),
-        preparePolicyPresetResumeSelection: (name, options) =>
-          preparePolicyPresetResumeSelection({ policies }, name, options),
-        arePolicyPresetsApplied,
-        skippedStepMessage,
-        recordStateSkipped,
-        startRecordedStep,
-        setupPoliciesWithSelection,
-        updateSession: onboardSession.updateSession,
-        recordStepComplete,
-        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
-      },
-    });
-    await recordStateResultWithStepCompatibility(policiesResult.stateResult);
-    session = policiesResult.session;
-
-    const finalizationResult = await handleFinalizationState({
-
-      sandboxName,
-      model,
-      provider,
-      nimContainer,
-      agent,
       hermesAuthMethod,
       hermesToolGateways,
-      stagedLegacyKeys,
-      migratedLegacyKeys,
-      webSearchEnabled: braveProviderProfile.shouldEnableBraveWebSearch(webSearchConfig),
-      deps: {
-        ensureAgentDashboardForward,
-        verifyWebSearchInsideSandbox,
-        recordPostVerifyStarted,
-        toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
-        removeLegacyCredentialsFile,
-        cleanupStaleHostFiles,
-        checkAndRecoverSandboxProcesses: (name, options) => {
-          const processRecovery: typeof import("./actions/sandbox/process-recovery") =
-            require("./actions/sandbox/process-recovery");
-          processRecovery.checkAndRecoverSandboxProcesses(name, options);
-        },
-        getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
-        buildVerifyChain: (chatUiUrl) =>
-          buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress() }),
-        verifyDeployment: async (name, chain) => {
-          const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
-          return verifyDeploymentModule.verifyDeployment(name, chain, {
-            executeSandboxCommand: (sandbox: string, script: string) =>
-              executeSandboxCommandForVerification(sandbox, script),
-            probeHostPort: (port: number, probePath: string) => {
-              const result = runCapture(
-                ["curl", "-so", "/dev/null", "-w", "%{http_code}", "--max-time", "3", `http://127.0.0.1:${port}${probePath}`],
-                { ignoreError: true },
-              );
-              return parseInt(result.trim(), 10) || 0;
-            },
-            captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
-            getMessagingChannels: () => selectedMessagingChannels || [],
-            providerExistsInGateway: (providerName: string) => providerExistsInGateway(providerName),
-          });
-        },
-        formatVerificationDiagnostics: (result) => {
-          const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
-          return verifyDeploymentModule.formatVerificationDiagnostics(result);
-        },
-        printDashboard,
-        error: (message) => console.error(message),
-        log: (message) => console.log(message),
+      nimContainer,
+      webSearchConfig,
+      selectedMessagingChannels,
+      webSearchSupported,
+    };
+
+    const branchSetupPhase: import("./onboard/machine/sequence-runner").OnboardSequencePhase<CoreOnboardFlowContext> = {
+      state: agent ? "agent_setup" : "openclaw",
+      async run(context) {
+        if (!context.sandboxName || !context.model || !context.provider) {
+          throw new Error("Onboarding state is incomplete before agent setup.");
+        }
+        const agentSetupResult = await handleAgentSetupState({
+          agent: context.agent,
+          sandboxName: context.sandboxName,
+          model: context.model,
+          provider: context.provider,
+          resume: context.resume,
+          session: context.session,
+          hermesAuthMethod: context.hermesAuthMethod,
+          hermesToolGateways: context.hermesToolGateways,
+          deps: {
+            handleAgentSetup: agentOnboard.handleAgentSetup,
+            agentSetupContext: () => ({
+              step,
+              runCaptureOpenshell,
+              openshellShellCommand,
+              openshellBinary: getOpenshellBinary(),
+              buildSandboxConfigSyncScript,
+              writeSandboxConfigSyncFile,
+              cleanupTempDir,
+              startRecordedStep,
+              recordStepComplete,
+              recordStepFailed,
+              skippedStepMessage,
+            }),
+            ensureAgentDashboardForward,
+            recordStepSkipped,
+            isOpenclawReady,
+            skippedStepMessage,
+            recordStateSkipped,
+            startRecordedStep,
+            setupOpenclaw,
+            syncNemoClawConfigInSandbox,
+            recordStepComplete,
+            toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          },
+        });
+        return {
+          context: { ...context, session: agentSetupResult.session },
+          result: agentSetupResult.stateResult,
+        };
       },
-    });
-    await recordStateResult(finalizationResult.stateResult);
+    };
+
+    const policiesPhase: import("./onboard/machine/sequence-runner").OnboardSequencePhase<CoreOnboardFlowContext> = {
+      state: "policies",
+      async run(context) {
+        if (!context.sandboxName || !context.model || !context.provider) {
+          throw new Error("Onboarding state is incomplete before policies.");
+        }
+        const policiesResult = await handlePoliciesState({
+          resume: context.resume,
+          sandboxName: context.sandboxName,
+          provider: context.provider,
+          model: context.model,
+          endpointUrl: context.endpointUrl,
+          credentialEnv: context.credentialEnv,
+          selectedMessagingChannels: context.selectedMessagingChannels,
+          webSearchConfig: context.webSearchConfig,
+          webSearchSupported: context.webSearchSupported,
+          hermesToolGateways: context.hermesToolGateways,
+          agent: context.agent,
+          deps: {
+            loadSession: onboardSession.loadSession,
+            getActiveSandbox: (name) => registry.getSandbox(name),
+            mergePolicyMessagingChannels,
+            verifyCompatibleEndpointSandboxSmoke: (options) =>
+              verifyCompatibleEndpointSandboxSmoke({
+                ...options,
+                runOpenshell,
+                redact,
+              }),
+            preparePolicyPresetResumeSelection: (name, options) =>
+              preparePolicyPresetResumeSelection({ policies }, name, options),
+            arePolicyPresetsApplied,
+            skippedStepMessage,
+            recordStateSkipped,
+            startRecordedStep,
+            setupPoliciesWithSelection,
+            updateSession: onboardSession.updateSession,
+            recordStepComplete,
+            toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+          },
+        });
+        return {
+          context: { ...context, session: policiesResult.session },
+          result: policiesResult.stateResult,
+        };
+      },
+    };
+
+    const finalizationPhase: import("./onboard/machine/sequence-runner").OnboardSequencePhase<CoreOnboardFlowContext> = {
+      state: "finalizing",
+      async run(context) {
+        if (!context.sandboxName || !context.model || !context.provider) {
+          throw new Error("Onboarding state is incomplete before finalization.");
+        }
+        const finalizationResult = await handleFinalizationState({
+          sandboxName: context.sandboxName,
+          model: context.model,
+          provider: context.provider,
+          nimContainer: context.nimContainer,
+          agent: context.agent,
+          hermesAuthMethod: context.hermesAuthMethod,
+          hermesToolGateways: context.hermesToolGateways,
+          stagedLegacyKeys,
+          migratedLegacyKeys,
+          webSearchEnabled: braveProviderProfile.shouldEnableBraveWebSearch(context.webSearchConfig),
+          deps: {
+            ensureAgentDashboardForward,
+            verifyWebSearchInsideSandbox,
+            recordPostVerifyStarted,
+            toSessionUpdates: (updates) => toSessionUpdates(updates as Parameters<typeof toSessionUpdates>[0]),
+            removeLegacyCredentialsFile,
+            cleanupStaleHostFiles,
+            checkAndRecoverSandboxProcesses: (name, options) => {
+              const processRecovery: typeof import("./actions/sandbox/process-recovery") =
+                require("./actions/sandbox/process-recovery");
+              processRecovery.checkAndRecoverSandboxProcesses(name, options);
+            },
+            getChatUiUrl: () => process.env.CHAT_UI_URL || `http://127.0.0.1:${DASHBOARD_PORT}`,
+            buildVerifyChain: (chatUiUrl) =>
+              buildChain({ chatUiUrl, isWsl: isWsl(), wslHostAddress: getWslHostAddress() }),
+            verifyDeployment: async (name, chain) => {
+              const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
+              return verifyDeploymentModule.verifyDeployment(name, chain, {
+                executeSandboxCommand: (sandbox: string, script: string) =>
+                  executeSandboxCommandForVerification(sandbox, script),
+                probeHostPort: (port: number, probePath: string) => {
+                  const result = runCapture(
+                    ["curl", "-so", "/dev/null", "-w", "%{http_code}", "--max-time", "3", `http://127.0.0.1:${port}${probePath}`],
+                    { ignoreError: true },
+                  );
+                  return parseInt(result.trim(), 10) || 0;
+                },
+                captureForwardList: () => runCaptureOpenshell(["forward", "list"], { ignoreError: true }) || null,
+                getMessagingChannels: () => selectedMessagingChannels || [],
+                providerExistsInGateway: (providerName: string) => providerExistsInGateway(providerName),
+              });
+            },
+            formatVerificationDiagnostics: (result) => {
+              const verifyDeploymentModule: typeof import("./verify-deployment") = require("./verify-deployment");
+              return verifyDeploymentModule.formatVerificationDiagnostics(result);
+            },
+            printDashboard,
+            error: (message) => console.error(message),
+            log: (message) => console.log(message),
+          },
+        });
+        return { context, result: finalizationResult.stateResult };
+      },
+    };
+
+    const finalRuntimeSession = await onboardRuntimeBoundary.getRuntime().session();
+    // Keep resume on the compatibility path for now: resume can intentionally
+    // re-run agent/policy/final verification even when saved machine state is ahead.
+    if (!resume && (finalRuntimeSession.machine.state === "openclaw" || finalRuntimeSession.machine.state === "agent_setup")) {
+      await runFinalOnboardFlowSequence({
+        context: finalFlowContext,
+        runtime: onboardRuntimeBoundary.getRuntime(),
+        phases: [branchSetupPhase, policiesPhase, finalizationPhase],
+      });
+    } else {
+      const branchPhaseResult = await branchSetupPhase.run(finalFlowContext);
+      for (const stateResult of Array.isArray(branchPhaseResult.result) ? branchPhaseResult.result : [branchPhaseResult.result]) {
+        await recordStateResultWithStepCompatibility(stateResult);
+      }
+      const policiesPhaseResult = await policiesPhase.run(branchPhaseResult.context);
+      for (const stateResult of Array.isArray(policiesPhaseResult.result) ? policiesPhaseResult.result : [policiesPhaseResult.result]) {
+        await recordStateResultWithStepCompatibility(stateResult);
+      }
+      const finalizationPhaseResult = await finalizationPhase.run(policiesPhaseResult.context);
+      for (const stateResult of Array.isArray(finalizationPhaseResult.result) ? finalizationPhaseResult.result : [finalizationPhaseResult.result]) {
+        await recordStateResult(stateResult);
+      }
+    }
     traceCompleted = true;
   } finally {
     releaseOnboardLock();
