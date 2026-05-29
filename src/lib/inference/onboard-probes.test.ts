@@ -651,9 +651,14 @@ exit 0
         expect(result).toMatchObject({ ok: false });
         expect(result.message).toContain("did not return a tool call");
         expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
-        expect(fs.readFileSync(path.join(tmpDir, "request-2.json"), "utf8")).toContain(
-          '"tool_choice":"required"',
+        const retryPayload = JSON.parse(
+          fs.readFileSync(path.join(tmpDir, "request-2.json"), "utf8"),
         );
+        expect(retryPayload).toMatchObject({
+          tool_choice: "required",
+          max_tokens: 256,
+          stream: false,
+        });
       } finally {
         process.env.PATH = originalPath;
         fs.rmSync(tmpDir, { recursive: true, force: true });
