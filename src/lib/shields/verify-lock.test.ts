@@ -191,7 +191,7 @@ describe("verifyShieldsLockState", () => {
   });
 
   // ---------------------------------------------------------------------------
-  // Content-seal drift (#4243). Perm-only verification cannot catch
+  // Content-seal drift. Perm-only verification cannot catch
   // chmod-write-chmod cycles because the mode/owner end up identical to
   // the locked baseline. The hash compare is the only way to flag a
   // content tamper that restores the perms afterwards.
@@ -227,7 +227,9 @@ describe("verifyShieldsLockState", () => {
         "/sandbox/.openclaw": "755 root:root",
       },
       {
-        // openclaw.json hash differs from the seal — this is the #4243 repro.
+        // openclaw.json hash differs from the seal — the host-root tamper
+        // restored the perms after writing so only the content-seal check
+        // can catch it.
         "/sandbox/.openclaw/openclaw.json":
           "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
         "/sandbox/.openclaw/.config-hash": CLEAN_CONFIG_HASH_HASH,

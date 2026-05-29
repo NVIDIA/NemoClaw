@@ -24,6 +24,8 @@ interface ShieldsStatePatch {
   shieldsDownTimeout?: number | null;
   shieldsDownReason?: string | null;
   shieldsDownPolicy?: string | null;
+  chattrApplied?: boolean;
+  fileHashes?: { [path: string]: string };
 }
 
 interface TimerArgs {
@@ -187,6 +189,8 @@ function runRestoreTimer(args: TimerArgs): void {
     // that interactive `shields up` uses. Fall back to the bare configPath/
     // configDir from argv if resolution fails (e.g., registry unavailable).
     let lockVerified = true;
+    let lockedChattr: boolean | null = null;
+    let lockedHashes: { [path: string]: string } | null = null;
     if (args.configPath) {
       let lockTarget: {
         agentName?: string;
@@ -220,7 +224,9 @@ function runRestoreTimer(args: TimerArgs): void {
       }
       if (lockTarget) {
         try {
-          lockAgentConfig(args.sandboxName, lockTarget);
+          const lockResult = lockAgentConfig(args.sandboxName, lockTarget);
+          lockedChattr = lockResult.chattrApplied;
+          lockedHashes = lockResult.fileHashes;
         } catch (error: unknown) {
           lockVerified = false;
           appendAudit({
@@ -237,13 +243,16 @@ function runRestoreTimer(args: TimerArgs): void {
 
     // Only mark shields as UP if the lock was verified (or no config path).
     if (lockVerified) {
-      updateState(args.stateFile, {
+      const patch: ShieldsStatePatch = {
         shieldsDown: false,
         shieldsDownAt: null,
         shieldsDownTimeout: null,
         shieldsDownReason: null,
         shieldsDownPolicy: null,
-      });
+      };
+      if (lockedChattr !== null) patch.chattrApplied = lockedChattr;
+      if (lockedHashes !== null) patch.fileHashes = lockedHashes;
+      updateState(args.stateFile, patch);
 
       appendAudit({
         action: "shields_auto_restore",

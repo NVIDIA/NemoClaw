@@ -753,7 +753,7 @@ describe("shields — unit logic", () => {
       expect(errorSpy).not.toHaveBeenCalled();
     });
 
-    it("passes the persisted fileHashes seal to the verifier when present (#4243)", async () => {
+    it("passes the persisted fileHashes seal to the verifier when present", async () => {
       const sandboxName = "openclaw";
       const fileHashes = {
         "/sandbox/.openclaw/openclaw.json":
@@ -826,7 +826,7 @@ describe("shields — unit logic", () => {
       );
     });
 
-    it("surfaces content-drift entries from the verifier without re-locking (#4243)", async () => {
+    it("surfaces content-drift entries from the verifier without re-locking", async () => {
       const sandboxName = "openclaw";
       writeLockedState(sandboxName);
       const driftIssues = [

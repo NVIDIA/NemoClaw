@@ -48,6 +48,10 @@ const { cleanupTempDir } = require("../onboard/temp-files");
 const {
   verifyShieldsLockState,
 }: typeof import("./verify-lock") = require("./verify-lock");
+const {
+  parseSha256Output,
+  isHashVerificationIssue,
+}: typeof import("./seal") = require("./seal");
 
 const STATE_DIR = resolveNemoclawStateDir();
 
@@ -110,7 +114,9 @@ interface ShieldsState {
   // inside the sandbox and flags drift on any mismatch. This catches the
   // host-root tamper pattern that defeats perm-only checks: chmod to
   // mutable -> write -> chmod back to 444 leaves mode/owner identical to
-  // the locked baseline but produces a new content hash (#4243).
+  // the locked baseline but produces a new content hash. Absent on state
+  // files captured before the seal landed; the first `shields up` after
+  // upgrade captures one even when the verifier reports a clean lock.
   fileHashes?: { [path: string]: string };
   updatedAt?: string;
 }
@@ -608,17 +614,6 @@ function unlockAgentConfig(
 // in case the runtime environment supports it.
 // ---------------------------------------------------------------------------
 
-// SHA-256-hex parser shared with verify-lock. Centralised so the lock-path
-// seal write and the status-path drift check stay byte-for-byte identical.
-const SHA256_HEX_RE = /^[0-9a-f]{64}$/i;
-
-function parseSha256Hex(raw: string): string | null {
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const token = trimmed.split(/\s+/, 1)[0];
-  return SHA256_HEX_RE.test(token) ? token.toLowerCase() : null;
-}
-
 function captureSealHashes(
   sandboxName: string,
   filesToHash: string[],
@@ -632,7 +627,7 @@ function captureSealHashes(
       const msg = err instanceof Error ? err.message : String(err);
       throw new Error(`sha256sum ${f} failed: ${msg}`);
     }
-    const hex = parseSha256Hex(raw);
+    const hex = parseSha256Output(raw);
     if (!hex) {
       throw new Error(`sha256sum ${f} returned unparsable output: ${raw}`);
     }
@@ -726,7 +721,7 @@ function lockAgentConfig(
 
   // Mode + ownership are clean; capture the SHA-256 seal of each locked
   // file so `shields status` can detect content drift even when an
-  // attacker restores the mode/owner after writing (#4243).
+  // attacker restores the mode/owner after writing.
   const fileHashes = captureSealHashes(sandboxName, filesToLock);
 
   return { chattrApplied: chattrSucceeded, fileHashes };
@@ -1154,25 +1149,50 @@ function shieldsUp(sandboxName: string, opts: { throwOnError?: boolean } = {}): 
       expectedHashes: state.fileHashes,
     });
     if (issues.length === 0) {
+      // Legacy locked state predates the content seal. Capture one now so
+      // future `shields status` calls can detect content drift instead of
+      // relying on perm-only verification. We only do this when the
+      // verifier was already happy with the on-disk state.
+      if (!state.fileHashes) {
+        try {
+          const filesToHash = [
+            target.configPath,
+            ...(target.sensitiveFiles || []),
+          ];
+          const newHashes = captureSealHashes(sandboxName, filesToHash);
+          saveShieldsState(sandboxName, { fileHashes: newHashes });
+          console.log(
+            "  Captured SHA-256 content seal for existing lockdown.",
+          );
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          console.error(`  ERROR: ${message}`);
+          console.error(
+            "  Could not capture content seal — sandbox filesystem may be unreachable.",
+          );
+          return failShieldsCommand(message, opts.throwOnError);
+        }
+      }
       clearTimerMarker(sandboxName);
       console.log("  Lockdown is already active.");
       return;
     }
-    // Content drift means a host-root tamper rewrote a locked file even
-    // while keeping the mode/owner correct. Re-locking would launder the
-    // tampered content into a fresh seal, so refuse and ask the operator
+    // Any hash-verification failure (content drift, sha256sum failure,
+    // unparsable output, missing seal entry) means the seal cannot be
+    // trusted. Re-locking on such a state would launder the tampered or
+    // unknown content into a fresh seal, so refuse and ask the operator
     // to restore the file (or rebuild the sandbox) before re-running.
-    const contentDrift = issues.filter((entry) => entry.includes("content drifted"));
-    if (contentDrift.length > 0) {
-      console.error("  ERROR: locked file content has drifted:");
-      for (const entry of contentDrift) {
+    const hashIssues = issues.filter(isHashVerificationIssue);
+    if (hashIssues.length > 0) {
+      console.error("  ERROR: locked file seal cannot be trusted:");
+      for (const entry of hashIssues) {
         console.error(`    - ${entry}`);
       }
       console.error(
         "  Refusing to re-seal a tampered baseline. Restore the file or rebuild the sandbox, then re-run shields up.",
       );
       return failShieldsCommand(
-        `Locked file content drifted: ${contentDrift.join("; ")}`,
+        `Locked file seal cannot be trusted: ${hashIssues.join("; ")}`,
         opts.throwOnError,
       );
     }

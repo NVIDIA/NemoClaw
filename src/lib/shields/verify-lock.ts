@@ -9,12 +9,14 @@
 // and surface a content-drift entry on any mismatch. This catches the
 // host-root tamper pattern that defeats perm-only verification: chmod
 // to mutable -> write -> chmod back to 444 leaves mode/owner identical
-// to the locked baseline but produces a new content hash (#4243).
+// to the locked baseline but produces a new content hash.
 //
 // Returns the list of mismatches so callers can either fail the lock
 // operation or surface drift after a host-root tamper. Stat/lsattr/hash
 // failures are folded into `issues` so the caller can decide whether to
 // treat them as drift.
+
+import { parseSha256Output } from "./seal";
 
 export type LockTarget = {
   configPath: string;
@@ -38,21 +40,9 @@ const EXPECTED_FILE_MODE = "444";
 const EXPECTED_DIR_MODE = "755";
 const EXPECTED_OWNER = "root:root";
 
-const SHA256_HEX = /^[0-9a-f]{64}$/i;
-
 function noopAssertLegacyLayout(_sandboxName: string, _configDir: string): void {
   // Production callers replace this with the real legacy-layout assertion;
   // when omitted, the verifier treats legacy-layout state as "no issue".
-}
-
-function parseSha256Output(raw: string): string | null {
-  // `sha256sum <file>` prints `<hash><space><space-or-asterisk><path>`.
-  // Tolerate leading whitespace so callers that pipe through `tr -d ' \t'`
-  // or trim themselves still get a clean comparison.
-  const trimmed = raw.trim();
-  if (!trimmed) return null;
-  const token = trimmed.split(/\s+/, 1)[0];
-  return SHA256_HEX.test(token) ? token.toLowerCase() : null;
 }
 
 export function verifyShieldsLockState(

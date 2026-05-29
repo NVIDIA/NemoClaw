@@ -10,6 +10,7 @@
 #   Phase 3: shields up — verify config becomes immutable
 #   Phase 4: config get — read-only inspection
 #   Phase 5: shields status — shows UP
+#   Phase 5b: Content-seal drift detection (chmod-write-chmod tamper)
 #   Phase 6: shields down — verify config returns to writable
 #   Phase 7: shields status — shows DOWN
 #   Phase 8: Audit trail completeness
@@ -311,6 +312,86 @@ if echo "$STATUS_OUTPUT" | grep -q "Shields: UP"; then
   pass "shields status reports UP"
 else
   fail "shields status should show UP: ${STATUS_OUTPUT}"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 5b: content-seal drift detection — host-root chmod-write-chmod
+# ══════════════════════════════════════════════════════════════════
+# Verifies the SHA-256 content seal: a host-root tamper that rewrites a
+# locked file and restores 444 root:root afterwards leaves mode/owner
+# clean but produces a new content hash. `shields status` must flag this
+# as drift, and `shields up` must refuse to launder the tampered
+# baseline into a fresh seal.
+section "Phase 5b: content-seal drift detection"
+
+CTR=$(docker ps --filter "name=openshell-${SANDBOX_NAME}" -q | head -n1)
+if [ -z "$CTR" ]; then
+  fail "Could not find sandbox container for ${SANDBOX_NAME}"
+else
+  ORIG_CONTENT=$(docker exec -u 0 "$CTR" cat "$CONFIG_PATH" 2>/dev/null || true)
+  if [ -z "$ORIG_CONTENT" ]; then
+    fail "Could not read original ${CONFIG_PATH} content as host root"
+  else
+    docker exec -u 0 "$CTR" sh -c \
+      "chmod 644 ${CONFIG_PATH} && printf ' ' >> ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}" \
+      >/dev/null 2>&1
+    PERMS_AFTER_TAMPER=$(docker exec "$CTR" stat -c '%a %U:%G' "$CONFIG_PATH" 2>/dev/null || true)
+    info "Config perms after chmod-write-chmod tamper: ${PERMS_AFTER_TAMPER}"
+    if [ "$PERMS_AFTER_TAMPER" = "444 root:root" ]; then
+      pass "Tamper restored 444 root:root (mode/owner alone cannot detect drift)"
+    else
+      fail "Expected tamper to leave 444 root:root, got: ${PERMS_AFTER_TAMPER}"
+    fi
+
+    set +e
+    STATUS_TAMPER_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1)
+    STATUS_TAMPER_EXIT=$?
+    set -e
+    echo "$STATUS_TAMPER_OUTPUT"
+    if [ "$STATUS_TAMPER_EXIT" = "2" ]; then
+      pass "shields status exits 2 on content drift"
+    else
+      fail "shields status should exit 2 on content drift, got ${STATUS_TAMPER_EXIT}"
+    fi
+    if echo "$STATUS_TAMPER_OUTPUT" | grep -q "UP (DRIFTED"; then
+      pass "shields status surfaces DRIFTED on content drift"
+    else
+      fail "shields status should surface DRIFTED line on content drift"
+    fi
+    if echo "$STATUS_TAMPER_OUTPUT" | grep -q "content drifted"; then
+      pass "shields status names the drifted file"
+    else
+      fail "shields status should name the drifted file"
+    fi
+
+    set +e
+    REUP_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields up 2>&1)
+    REUP_EXIT=$?
+    set -e
+    echo "$REUP_OUTPUT"
+    if [ "$REUP_EXIT" != "0" ]; then
+      pass "shields up refuses to re-seal a tampered baseline (exit ${REUP_EXIT})"
+    else
+      fail "shields up should refuse to re-seal a tampered baseline"
+    fi
+    if echo "$REUP_OUTPUT" | grep -q "Refusing to re-seal"; then
+      pass "shields up surfaces the refuse-to-re-seal message"
+    else
+      fail "shields up should surface the refuse-to-re-seal message"
+    fi
+
+    # Restore the original content as host root so the rest of the suite
+    # can continue against a clean lock.
+    docker exec -u 0 "$CTR" sh -c \
+      "chmod 644 ${CONFIG_PATH} && cat > ${CONFIG_PATH} && chmod 444 ${CONFIG_PATH}" \
+      <<<"$ORIG_CONTENT" >/dev/null 2>&1
+    POST_RESTORE_OUTPUT=$(nemoclaw "${SANDBOX_NAME}" shields status 2>&1 || true)
+    if echo "$POST_RESTORE_OUTPUT" | grep -q "Shields: UP (lockdown active)"; then
+      pass "shields status clean after content restore"
+    else
+      fail "shields status should report clean UP after content restore: ${POST_RESTORE_OUTPUT}"
+    fi
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════
