@@ -13,7 +13,7 @@ import path from "node:path";
 import { isRecord, type UnknownRecord } from "../core/json-types";
 import { buildPolicySetCommand } from "../policy";
 import { run } from "../runner";
-import { DEFAULT_AGENT_CONFIG, resolveAgentConfig } from "../sandbox/config";
+import { resolveAgentConfig } from "../sandbox/config";
 import { resolveNemoclawStateDir } from "../state/paths";
 import { appendAuditEntry, type ShieldsAuditEntry } from "./audit";
 import { lockAgentConfig } from "./index";
@@ -199,17 +199,22 @@ function runRestoreTimer(args: TimerArgs): void {
         sensitiveFiles?: string[];
       } | null = null;
       try {
-        const resolvedTarget = resolveAgentConfig(args.sandboxName);
-        if (resolvedTarget === DEFAULT_AGENT_CONFIG && args.configDir) {
-          lockTarget = { configPath: args.configPath, configDir: args.configDir };
-        } else {
-          lockTarget = resolvedTarget;
-        }
+        // Always prefer the resolved target — even DEFAULT_AGENT_CONFIG
+        // carries the OpenClaw sensitiveFiles (.config-hash) that
+        // shields-up locks and that the content seal hashes. Dropping
+        // them here would persist a partial fileHashes map and the next
+        // `shields status` would flag the missing entries as drift.
+        lockTarget = resolveAgentConfig(args.sandboxName);
       } catch {
-        // Fall back to argv-supplied paths without sensitive files —
-        // better to lock the main config than nothing at all.
+        // Resolver itself threw (registry unavailable). Fall back to
+        // argv-supplied paths, but still infer sensitiveFiles from
+        // configDir so the locked set matches what shields-up uses.
         if (args.configDir) {
-          lockTarget = { configPath: args.configPath, configDir: args.configDir };
+          lockTarget = {
+            configPath: args.configPath,
+            configDir: args.configDir,
+            sensitiveFiles: [`${args.configDir}/.config-hash`],
+          };
         } else {
           lockVerified = false;
           appendAudit({
