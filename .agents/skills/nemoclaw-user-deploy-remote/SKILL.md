@@ -1,6 +1,6 @@
 ---
 name: "nemoclaw-user-deploy-remote"
-description: "Explains how to run NemoClaw on a remote GPU instance, including the deprecated Brev compatibility path and the preferred installer plus onboard flow. Use when deploying NemoClaw to a remote VM, onboarding a Brev instance, or migrating away from the legacy `nemoclaw deploy` wrapper. Trigger keywords - deploy nemoclaw remote gpu, nemoclaw brev cloud deployment, nemoclaw plugins, openclaw plugins, install openclaw plugin, nemoclaw onboard from dockerfile, nemoclaw brev web ui, nemoclaw getting started, brev quickstart, nvidia nemotron agent, nemoclaw sandbox hardening, container security, docker capabilities, process limits."
+description: "Guides users through deploying NemoClaw with the Brev web UI. Use when a user wants to try NemoClaw without installing the CLI, or asks how to get started on Brev. Trigger keywords - nemoclaw brev web ui, nemoclaw getting started, brev quickstart, nvidia nemotron agent, deploy nemoclaw remote gpu, nemoclaw brev cloud deployment, nemoclaw plugins, openclaw plugins, install openclaw plugin, nemoclaw onboard from dockerfile, nemoclaw sandbox hardening, container security, docker capabilities, process limits."
 license: "Apache-2.0"
 ---
 
