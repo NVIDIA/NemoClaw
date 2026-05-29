@@ -2830,6 +2830,7 @@ describe("Telegram diagnostics (#2766)", () => {
         'write_auth_profile() { :; }',
         'harden_auth_profiles() { :; }',
         'run_step_down_as_sandbox() { :; }',
+        'setup_auth_profile_as_sandbox() { :; }',
         'chown() { :; }',
         'chown_tree_no_symlink_follow() { :; }',
         'start_persistent_gateway_log_mirror() { :; }',
@@ -3697,7 +3698,7 @@ describe("openclaw.json baseline + recovery (#3118)", () => {
   });
 });
 
-describe("run_step_down_as_sandbox (#4512)", () => {
+describe("run_step_down_as_sandbox", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
   const helper = extractShellFunctionFromSource(src, "run_step_down_as_sandbox");
 
@@ -3754,46 +3755,6 @@ describe("run_step_down_as_sandbox (#4512)", () => {
       const tempScriptPath = fs.readFileSync(stepDownLog, "utf-8").trim();
       expect(tempScriptPath).toMatch(/^\/tmp\/nemoclaw-step-down-[A-Za-z0-9]{6}\.sh$/);
       expect(fs.existsSync(tempScriptPath)).toBe(false);
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
-
-  it("forces HOME=/sandbox for the auth-profile root-mode invocation snippet", () => {
-    // setpriv preserves the parent shell's environment, so the root
-    // entrypoint's HOME=/root would otherwise leak into the step-down
-    // shell and `write_auth_profile`'s `~/.openclaw/...` expansion
-    // would target /root. The production snippet exports HOME=/sandbox
-    // up front; this test pins that behaviour by extracting the exact
-    // invocation line from the script source and running it with a
-    // stub `write_auth_profile` that records the HOME it observed.
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-step-down-home-"));
-    const stepDownLog = path.join(tmpDir, "step-down.log");
-    const observedHome = path.join(tmpDir, "observed-home");
-    const scriptPath = path.join(tmpDir, "run.sh");
-    const invocation =
-      src.match(/run_step_down_as_sandbox \\\n\s*"([^"]+)" \\\n\s*write_auth_profile/);
-    expect(invocation, "expected the auth-profile invocation snippet in scripts/nemoclaw-start.sh").not.toBeNull();
-    const snippet = (invocation as RegExpMatchArray)[1];
-    expect(snippet).toContain("export HOME=/sandbox");
-    fs.writeFileSync(
-      scriptPath,
-      [
-        "#!/usr/bin/env bash",
-        "set -euo pipefail",
-        "export HOME=/root", // simulate the parent root entrypoint's env
-        `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "%s\\n" "$2" >${JSON.stringify(stepDownLog)}; exec "$@"' sandbox-step-down)`,
-        `write_auth_profile() { printf '%s\\n' "$HOME" >${JSON.stringify(observedHome)}; }`,
-        "harden_auth_profiles() { :; }",
-        helper,
-        `run_step_down_as_sandbox ${JSON.stringify(snippet)} write_auth_profile harden_auth_profiles`,
-      ].join("\n"),
-      { mode: 0o700 },
-    );
-    try {
-      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
-      expect(result.status, result.stderr || result.stdout).toBe(0);
-      expect(fs.readFileSync(observedHome, "utf-8").trim()).toBe("/sandbox");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -3865,7 +3826,47 @@ describe("run_step_down_as_sandbox (#4512)", () => {
   });
 });
 
-describe("ensure_mutable_openclaw_config_hash root-mode step-down (#4498)", () => {
+describe("setup_auth_profile_as_sandbox", () => {
+  const src = fs.readFileSync(START_SCRIPT, "utf-8");
+  const helper = extractShellFunctionFromSource(src, "run_step_down_as_sandbox");
+  const setup = extractShellFunctionFromSource(src, "setup_auth_profile_as_sandbox");
+
+  it("runs the auth-profile setup under HOME=/sandbox even when the parent env has HOME=/root", () => {
+    // setpriv preserves the parent shell's environment, so the root
+    // entrypoint's HOME=/root would otherwise leak into the step-down
+    // shell and `write_auth_profile`'s `~/.openclaw/...` expansion
+    // would target /root. Stub `write_auth_profile` to record the
+    // HOME the step-down shell actually observed and assert it was
+    // overridden to /sandbox.
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-setup-auth-profile-"));
+    const observedHome = path.join(tmpDir, "observed-home");
+    const scriptPath = path.join(tmpDir, "run.sh");
+    fs.writeFileSync(
+      scriptPath,
+      [
+        "#!/usr/bin/env bash",
+        "set -euo pipefail",
+        "export HOME=/root",
+        "STEP_DOWN_PREFIX_SANDBOX=()",
+        `write_auth_profile() { printf '%s\\n' "$HOME" >${JSON.stringify(observedHome)}; }`,
+        "harden_auth_profiles() { :; }",
+        helper,
+        setup,
+        "setup_auth_profile_as_sandbox",
+      ].join("\n"),
+      { mode: 0o700 },
+    );
+    try {
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
+      expect(result.status, result.stderr || result.stdout).toBe(0);
+      expect(fs.readFileSync(observedHome, "utf-8").trim()).toBe("/sandbox");
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("ensure_mutable_openclaw_config_hash root-mode step-down", () => {
   const src = fs.readFileSync(START_SCRIPT, "utf-8");
 
   function runHashRefresh(opts: { asRoot: boolean; preexistingHash?: string }) {
@@ -3991,18 +3992,14 @@ describe("ensure_mutable_openclaw_config_hash root-mode step-down (#4498)", () =
           "set -euo pipefail",
           'id() { if [ "${1:-}" = "-u" ]; then printf "0"; else command id "$@"; fi; }',
           'openclaw_config_dir_owner() { printf "sandbox"; }',
-          `HASH_PATH=${JSON.stringify(hashPath)}`,
+          `export HASH_PATH=${JSON.stringify(hashPath)}`,
           `STEP_DOWN_PREFIX_SANDBOX=(bash -c 'printf "step-down\\n" >>${JSON.stringify(stepDownLog)}; chmod 0660 "$HASH_PATH"; exec "$@"' sandbox-step-down)`,
           helperFn,
           "ensure_mutable_openclaw_config_hash",
         ].join("\n"),
         { mode: 0o700 },
       );
-      const result = spawnSync("bash", [scriptPath], {
-        encoding: "utf-8",
-        env: { ...process.env, HASH_PATH: hashPath },
-        timeout: 5000,
-      });
+      const result = spawnSync("bash", [scriptPath], { encoding: "utf-8", timeout: 5000 });
       expect(result.status, result.stderr || result.stdout).toBe(0);
       expect(fs.readFileSync(stepDownLog, "utf-8").trim().split("\n").filter(Boolean)).toHaveLength(1);
       expect(fs.readFileSync(hashPath, "utf-8").trim()).toMatch(

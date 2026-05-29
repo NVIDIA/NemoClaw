@@ -2477,6 +2477,19 @@ seed_default_workspace_templates_as_sandbox() {
     seed_default_workspace_templates
 }
 
+# Root-mode entry point for the post-gateway auth-profile setup. The
+# step-down shell needs HOME=/sandbox explicitly because setpriv keeps
+# the parent entrypoint's HOME=/root, which would push
+# write_auth_profile's `~/.openclaw/...` expansion outside the sandbox.
+# The non-root path exports HOME=/sandbox up front, so the equivalent
+# call there does not need the wrapper.
+setup_auth_profile_as_sandbox() {
+  run_step_down_as_sandbox \
+    "export HOME=/sandbox; write_auth_profile; harden_auth_profiles" \
+    write_auth_profile \
+    harden_auth_profiles
+}
+
 # ── Main ─────────────────────────────────────────────────────────
 
 # Migrate legacy symlink layout before anything else reads .openclaw
@@ -2675,19 +2688,9 @@ install_slack_channel_guard
 verify_no_slack_secrets_on_disk
 
 # Write auth profile as sandbox user and recursively re-tighten any
-# auth-profiles.json files under ~/.openclaw. Routed through the
-# temp-file helper so the step-down shell does not have to re-parse
-# the heredoc-bearing function body through `bash -c`'s argv.
-#
-# HOME must be set explicitly: setpriv preserves the parent shell's
-# environment, so the root entrypoint's HOME=/root would propagate
-# through and `write_auth_profile`'s `~/.openclaw/...` expansion would
-# target /root instead of the sandbox user's home (the non-root path
-# already exports HOME=/sandbox at startup).
-run_step_down_as_sandbox \
-  "export HOME=/sandbox; write_auth_profile; harden_auth_profiles" \
-  write_auth_profile \
-  harden_auth_profiles
+# auth-profiles.json files under ~/.openclaw. See
+# setup_auth_profile_as_sandbox for the HOME-handling rationale.
+setup_auth_profile_as_sandbox
 
 # If a command was passed (e.g., "openclaw agent ..."), run it as sandbox user
 if [ ${#NEMOCLAW_CMD[@]} -gt 0 ]; then
