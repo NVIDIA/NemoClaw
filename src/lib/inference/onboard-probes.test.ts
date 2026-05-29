@@ -598,6 +598,70 @@ exit 0
       }
     });
 
+    it("preserves query-param auth on doubled-timeout chat-completions retry", () => {
+      const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-query-retry-probe-"));
+      const fakeBin = path.join(tmpDir, "bin");
+      const counter = path.join(tmpDir, "counter");
+      fs.mkdirSync(fakeBin, { recursive: true });
+      fs.writeFileSync(counter, "0");
+      fs.writeFileSync(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+outfile=""
+n=$(cat "${counter}")
+n=$((n + 1))
+echo "$n" > "${counter}"
+printf '%s\\n' "$@" > "${tmpDir}/args-$n.txt"
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    -o) outfile="$2"; shift 2 ;;
+    -w) shift 2 ;;
+    *) shift ;;
+  esac
+done
+if [ "$n" -eq 1 ]; then
+  if [ -n "$outfile" ]; then
+    : > "$outfile"
+  fi
+  printf '000'
+  exit 28
+fi
+if [ -n "$outfile" ]; then
+  cat <<'JSON' > "$outfile"
+{"choices":[{"message":{"content":"OK"}}]}
+JSON
+fi
+printf '200'
+exit 0
+`,
+        { mode: 0o755 },
+      );
+
+      const originalPath = process.env.PATH;
+      process.env.PATH = `${fakeBin}:${originalPath || ""}`;
+      try {
+        const result = probeOpenAiLikeEndpoint(
+          "https://api.example.com/v1",
+          "test-model",
+          "secret key",
+          { skipResponsesProbe: true, authMode: "query-param" },
+        );
+
+        expect(result).toMatchObject({ ok: true, api: "openai-completions" });
+        expect(fs.readFileSync(counter, "utf8").trim()).toBe("2");
+        for (const call of ["1", "2"]) {
+          const args = fs.readFileSync(path.join(tmpDir, `args-${call}.txt`), "utf8");
+          expect(args).toContain(
+            "https://api.example.com/v1/chat/completions?key=secret%20key",
+          );
+          expect(args).not.toContain("Authorization: Bearer");
+        }
+      } finally {
+        process.env.PATH = originalPath;
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      }
+    });
+
     it("keeps timeout retries strict when chat-completions tool calling is required", () => {
       const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-strict-retry-probe-"));
       const fakeBin = path.join(tmpDir, "bin");

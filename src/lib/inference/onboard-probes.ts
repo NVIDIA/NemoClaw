@@ -759,10 +759,10 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
       ...doubledArgs,
       "-H",
       "Content-Type: application/json",
-      ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+      ...authHeader,
       "-d",
       JSON.stringify(getChatCompletionsProbePayload(model)),
-      `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
+      appendKey("/chat/completions"),
     ];
     const runRetryProbe = () =>
       options.requireChatCompletionsToolCalling === true
