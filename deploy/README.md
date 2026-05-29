@@ -41,6 +41,14 @@ Optional demo of scale up/down:
 ./scripts/hpa-reset.sh    # return to idle baseline after the test
 ```
 
+
+<img width="1832" height="1302" alt="Screenshot 2026-05-28 at 12 49 11 PM" src="https://github.com/user-attachments/assets/a91dd398-059a-4e3f-afec-07b2b66b12b0" />
+
+
+
+
+
+
 If install keeps failing with **rollout failed** or Deployment **`0 up-to-date`**:
 
 ```bash
