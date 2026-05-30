@@ -8,6 +8,8 @@ const readline = require("readline");
 const { execFileSync } = require("child_process");
 
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
+const CREDS_DIR_ENV = "NEMOCLAW_CREDENTIALS_DIR";
+const CREDS_FILE_ENV = "NEMOCLAW_CREDENTIALS_FILE";
 
 function resolveHomeDir() {
   const raw = process.env.HOME || os.homedir();
@@ -46,12 +48,29 @@ let _credsDir = null;
 let _credsFile = null;
 
 function getCredsDir() {
-  if (!_credsDir) _credsDir = path.join(resolveHomeDir(), ".nemoclaw");
+  if (_credsDir) return _credsDir;
+  const overrideFile = process.env[CREDS_FILE_ENV];
+  if (overrideFile) {
+    _credsDir = path.dirname(path.resolve(overrideFile));
+    return _credsDir;
+  }
+  const overrideDir = process.env[CREDS_DIR_ENV];
+  if (overrideDir) {
+    _credsDir = path.resolve(overrideDir);
+    return _credsDir;
+  }
+  _credsDir = path.join(resolveHomeDir(), ".nemoclaw");
   return _credsDir;
 }
 
 function getCredsFile() {
-  if (!_credsFile) _credsFile = path.join(getCredsDir(), "credentials.json");
+  if (_credsFile) return _credsFile;
+  const overrideFile = process.env[CREDS_FILE_ENV];
+  if (overrideFile) {
+    _credsFile = path.resolve(overrideFile);
+    return _credsFile;
+  }
+  _credsFile = path.join(getCredsDir(), "credentials.json");
   return _credsFile;
 }
 
@@ -81,6 +100,25 @@ function saveCredential(key, value) {
   creds[key] = normalizeCredentialValue(value);
   fs.writeFileSync(file, JSON.stringify(creds, null, 2), { mode: 0o600 });
   fs.chmodSync(file, 0o600);
+}
+
+function deleteCredential(key) {
+  const file = getCredsFile();
+  const creds = loadCredentials();
+  if (!Object.prototype.hasOwnProperty.call(creds, key)) {
+    return false;
+  }
+  delete creds[key];
+  const dir = getCredsDir();
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(dir, 0o700);
+  fs.writeFileSync(file, JSON.stringify(creds, null, 2), { mode: 0o600 });
+  fs.chmodSync(file, 0o600);
+  return true;
+}
+
+function listCredentialKeys() {
+  return Object.keys(loadCredentials()).sort();
 }
 
 function getCredential(key) {
@@ -314,11 +352,15 @@ const exports_ = {
   loadCredentials,
   normalizeCredentialValue,
   saveCredential,
+  deleteCredential,
+  listCredentialKeys,
   getCredential,
   prompt,
   ensureApiKey,
   ensureGithubToken,
   isRepoPrivate,
+  CREDS_DIR_ENV,
+  CREDS_FILE_ENV,
 };
 
 Object.defineProperty(exports_, "CREDS_DIR", { get: getCredsDir, enumerable: true });

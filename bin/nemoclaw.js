@@ -31,7 +31,13 @@ const {
 } = require("./lib/runner");
 const { resolveOpenshell } = require("./lib/resolve-openshell");
 const { startGatewayForRecovery } = require("./lib/onboard");
-const { getCredential } = require("./lib/credentials");
+const {
+  getCredential,
+  saveCredential,
+  deleteCredential,
+  listCredentialKeys,
+  prompt: credentialPrompt,
+} = require("./lib/credentials");
 const registry = require("./lib/registry");
 const nim = require("./lib/nim");
 const policies = require("./lib/policies");
@@ -47,6 +53,7 @@ const { executeDeploy } = require("../dist/lib/deploy");
 const GLOBAL_COMMANDS = new Set([
   "onboard",
   "list",
+  "keys",
   "deploy",
   "setup",
   "setup-spark",
@@ -1253,6 +1260,93 @@ async function sandboxDestroy(sandboxName, args = []) {
   console.log(`  ${G}✓${R} Sandbox '${sandboxName}' destroyed`);
 }
 
+function isValidCredentialKeyName(value) {
+  return /^[A-Z][A-Z0-9_]*$/.test(value);
+}
+
+function maskCredentialValue(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) return "(empty)";
+  if (normalized.length <= 8)
+    return `${"*".repeat(Math.max(normalized.length - 2, 1))}${normalized.slice(-2)}`;
+  return `${normalized.slice(0, 3)}${"*".repeat(Math.max(normalized.length - 6, 1))}${normalized.slice(-3)}`;
+}
+
+async function manageKeys(args) {
+  const action = args[0] || "list";
+
+  if (action === "path") {
+    const creds = require("./lib/credentials");
+    console.log("");
+    console.log(`  Credential store: ${creds.CREDS_FILE}`);
+    console.log("");
+    return;
+  }
+
+  if (action === "list") {
+    const keys = listCredentialKeys();
+    console.log("");
+    if (keys.length === 0) {
+      console.log("  No credentials stored yet.");
+      console.log("  Use `nemoclaw keys set NVIDIA_API_KEY` to add one.");
+      console.log("");
+      return;
+    }
+    console.log("  Stored credential keys:");
+    for (const key of keys) {
+      const value = getCredential(key);
+      console.log(`    - ${key} (${maskCredentialValue(value)})`);
+    }
+    console.log("");
+    return;
+  }
+
+  if (action === "set") {
+    const key = args[1];
+    if (!key || !isValidCredentialKeyName(key)) {
+      console.error("  Usage: nemoclaw keys set <ENV_KEY> [--value VALUE]");
+      console.error("  Key names must be uppercase env var names (e.g. NVIDIA_API_KEY).");
+      process.exit(1);
+    }
+    const valueFlag = args.indexOf("--value");
+    let value = "";
+    if (valueFlag !== -1) {
+      value = String(args[valueFlag + 1] || "").trim();
+    }
+    if (!value) {
+      value = String(await credentialPrompt(`  ${key}: `, { secret: true })).trim();
+    }
+    if (!value) {
+      console.error("  A non-empty value is required.");
+      process.exit(1);
+    }
+    saveCredential(key, value);
+    console.log("");
+    console.log(`  Saved ${key} to secure credential store.`);
+    console.log("");
+    return;
+  }
+
+  if (action === "remove" || action === "rm" || action === "delete") {
+    const key = args[1];
+    if (!key || !isValidCredentialKeyName(key)) {
+      console.error("  Usage: nemoclaw keys remove <ENV_KEY>");
+      process.exit(1);
+    }
+    const removed = deleteCredential(key);
+    console.log("");
+    console.log(
+      removed ? `  Removed ${key} from secure credential store.` : `  ${key} was not stored.`,
+    );
+    console.log("");
+    return;
+  }
+
+  console.error(`  Unknown keys action: ${action}`);
+  console.error("  Valid actions: list, set, remove, path");
+  process.exit(1);
+}
+
 // ── Help ─────────────────────────────────────────────────────────
 
 function help() {
@@ -1274,6 +1368,12 @@ function help() {
   ${G}Policy Presets:${R}
     nemoclaw <name> policy-add       Add a network or filesystem policy preset
     nemoclaw <name> policy-list      List presets ${D}(● = applied)${R}
+
+  ${G}Key Keeper:${R}
+    ${B}nemoclaw keys list${R}               List stored API key names
+    nemoclaw keys set <ENV_KEY>      Save/update a key securely
+    nemoclaw keys remove <ENV_KEY>   Delete a stored key
+    nemoclaw keys path               Show credential store location
 
   ${G}Compatibility Commands:${R}
     nemoclaw setup                   Deprecated alias for ${B}nemoclaw onboard${R}
@@ -1347,6 +1447,9 @@ const [cmd, ...args] = process.argv.slice(2);
         break;
       case "list":
         await listSandboxes();
+        break;
+      case "keys":
+        await manageKeys(args);
         break;
       case "--version":
       case "-v": {

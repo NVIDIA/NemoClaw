@@ -225,6 +225,7 @@ Release Notes <about/release-notes>
 :hidden:
 
 Quickstart <get-started/quickstart>
+Offline Setup <get-started/offline-setup>
 ```
 
 ```{toctree}
@@ -283,6 +284,7 @@ Architecture <reference/architecture>
 Commands <reference/commands>
 Network Policies <reference/network-policies>
 Troubleshooting <reference/troubleshooting>
+Terminal Frontend Plan <reference/terminal-frontend-plan>
 ```
 
 ```{toctree}
