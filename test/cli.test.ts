@@ -483,6 +483,35 @@ describe("CLI dispatch", () => {
     expect(r.out).not.toContain("Missing required flag");
     expect(r.out).not.toContain("FailedFlagValidationError");
     expect(r.out).not.toContain("node_modules/@oclif/core");
+
+    let hermesOut = "";
+    let hermesCode = 0;
+    try {
+      hermesOut = execSync(`node "${HERMES_CLI}" inference set 2>&1`, {
+        encoding: "utf-8",
+        stdio: "pipe",
+        timeout: execTimeout(),
+        env: { ...process.env, HOME: `/tmp/nemoclaw-cli-test-${Date.now()}` },
+      });
+    } catch (err) {
+      const result = readCliErrorOutput(
+        isCliErrorCandidate(err)
+          ? {
+              status: typeof err.status === "number" ? err.status : undefined,
+              stdout: readBufferOrStringProperty(err, "stdout"),
+              stderr: readBufferOrStringProperty(err, "stderr"),
+            }
+          : String(err),
+      );
+      hermesOut = result.out;
+      hermesCode = result.code;
+    }
+    expect(hermesCode).toBe(1);
+    expect(hermesOut).toContain("Unknown nemohermes command: inference set");
+    expect(hermesOut).toContain("This operation belongs to OpenShell.");
+    expect(hermesOut).toContain(
+      "Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
+    );
   });
 
   it("suggests list for a mistyped list command", () => {
