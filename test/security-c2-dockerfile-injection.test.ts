@@ -152,7 +152,6 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
           line,
         )
       ) {
-        sawGeneratorRun = true;
         expect(promoted).toBeTruthy();
         return;
       }
