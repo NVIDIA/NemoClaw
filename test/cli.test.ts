@@ -472,11 +472,15 @@ describe("CLI dispatch", () => {
     expect(gateway.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
   });
 
-  it("prints oclif validation failures without stack traces", () => {
+  it("redirects bare `inference set` to openshell instead of leaking oclif validation errors (#4544)", () => {
     const r = run("inference set 2>&1");
-    expect(r.code).toBe(2);
-    expect(r.out).toContain("Missing required flag model");
-    expect(r.out).toContain("Missing required flag provider");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Unknown nemoclaw command: inference set");
+    expect(r.out).toContain("This operation belongs to OpenShell.");
+    expect(r.out).toContain(
+      "Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
+    );
+    expect(r.out).not.toContain("Missing required flag");
     expect(r.out).not.toContain("FailedFlagValidationError");
     expect(r.out).not.toContain("node_modules/@oclif/core");
   });
