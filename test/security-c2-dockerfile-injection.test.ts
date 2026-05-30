@@ -112,12 +112,11 @@ describe("C-2 fix: env var pattern (process.env) is safe", () => {
     }
   });
 
-  it("semicolons and import statements in URL are literal data", () => {
-    const dangerous = "http://x; import subprocess; subprocess.run(['id'])";
+  it("semicolons and require calls in URL are literal data", () => {
+    const dangerous = "http://x; require('node:child_process').execSync('id')";
     const result = runNode(fixedSource(), { CHAT_UI_URL: dangerous });
-    // The URL is treated as data — urlparse may or may not raise, but
-    // the key property is that no code injection occurs. Check stdout or stderr
-    // does NOT contain evidence of os.system/subprocess execution.
+    // The URL is treated as data. The key property is that no injected
+    // JavaScript executes.
     const combined = result.stdout + result.stderr;
     expect(!combined.includes("uid=")).toBeTruthy();
   });
@@ -132,6 +131,7 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
     const lines = src.split("\n");
     let promoted = false;
     let inEnvBlock = false;
+    let sawGeneratorRun = false;
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       if (/^\s*FROM\b/.test(line)) {
@@ -148,14 +148,15 @@ describe("Gateway auth hardening: Dockerfile must not hardcode insecure auth def
         inEnvBlock = false;
       }
       if (
-        /^\s*RUN\b.*node\s+--experimental-strip-types\s+\/usr\/local\/lib\/nemoclaw\/generate-openclaw-config\.ts\b/.test(
+        /^\s*RUN\b.*node\s+--experimental-strip-types\s+\/usr\/local\/lib\/nemoclaw\/generate-openclaw-config\.mts\b/.test(
           line,
         )
       ) {
+        sawGeneratorRun = true;
         expect(promoted).toBeTruthy();
         return;
       }
     }
-    expect(promoted).toBeTruthy();
+    expect(sawGeneratorRun).toBeTruthy();
   });
 });

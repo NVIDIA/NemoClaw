@@ -394,12 +394,12 @@ COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 # needs to read these files to install runtime preloads under /tmp.
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
-COPY scripts/generate-openclaw-config.ts /usr/local/lib/nemoclaw/generate-openclaw-config.ts
+COPY scripts/generate-openclaw-config.mts /usr/local/lib/nemoclaw/generate-openclaw-config.mts
 COPY scripts/seed-wechat-accounts.py /usr/local/lib/nemoclaw/seed-wechat-accounts.py
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
-        /usr/local/lib/nemoclaw/generate-openclaw-config.ts \
+        /usr/local/lib/nemoclaw/generate-openclaw-config.mts \
         /usr/local/lib/nemoclaw/seed-wechat-accounts.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
     && chmod 755 /usr/local/share/nemoclaw \
@@ -533,14 +533,14 @@ USER sandbox
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 #
 # Generate openclaw.json from environment variables. Config generation logic
-# lives in scripts/generate-openclaw-config.ts — see that file for the full
+# lives in scripts/generate-openclaw-config.mts — see that file for the full
 # list of env vars and derivation rules.
 #
 # OpenClaw's managed proxy config activates process-wide HTTP_PROXY/HTTPS_PROXY
 # for child npm processes. During image build the OpenShell gateway is not
 # available at the runtime sandbox proxy address yet, so defer the final proxy
 # block until after build-time OpenClaw doctor/plugin commands complete.
-RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /usr/local/lib/nemoclaw/generate-openclaw-config.ts
+RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /usr/local/lib/nemoclaw/generate-openclaw-config.mts
 
 # hadolint ignore=DL3059,DL4006
 RUN openclaw doctor --fix --non-interactive

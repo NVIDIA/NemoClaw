@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Functional tests for scripts/generate-openclaw-config.ts.
+// Functional tests for scripts/generate-openclaw-config.mts.
 // Runs the actual TypeScript script with controlled env vars and asserts on
 // the generated openclaw.json output.
 
@@ -12,9 +12,9 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { buildConfig, main } from "../scripts/generate-openclaw-config.ts";
+import { buildConfig, main } from "../scripts/generate-openclaw-config.mts";
 
-const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.ts");
+const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.mts");
 const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];
 
 /** Minimal env vars required for a valid config generation run. */
@@ -181,7 +181,7 @@ afterEach(() => {
 // ═══════════════════════════════════════════════════════════════════
 // Phase 1: Extraction — behavior-preserving tests
 // ═══════════════════════════════════════════════════════════════════
-describe("generate-openclaw-config.ts: config generation", () => {
+describe("generate-openclaw-config.mts: config generation", () => {
   it("generates valid JSON with minimal env vars", () => {
     const config = runConfigScript();
     expect(config).toBeDefined();
@@ -1496,7 +1496,7 @@ describe("generate-openclaw-config.ts: config generation", () => {
 // ═══════════════════════════════════════════════════════════════════
 // Phase 2: Auto-disable device auth for non-loopback URLs
 // ═══════════════════════════════════════════════════════════════════
-describe("generate-openclaw-config.ts: non-loopback auto-disable device auth", () => {
+describe("generate-openclaw-config.mts: non-loopback auto-disable device auth", () => {
   it("auto-disables device auth for Brev Launchable URL", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789",
@@ -1543,7 +1543,7 @@ describe("generate-openclaw-config.ts: non-loopback auto-disable device auth", (
   });
 });
 
-describe("generate-openclaw-config.ts: empty-string env vars fall back to defaults", () => {
+describe("generate-openclaw-config.mts: empty-string env vars fall back to defaults", () => {
   it("treats empty CHAT_UI_URL as unset and uses the loopback default", () => {
     const config = runConfigScript({ CHAT_UI_URL: "" });
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
@@ -1579,7 +1579,7 @@ describe("generate-openclaw-config.ts: empty-string env vars fall back to defaul
   });
 });
 
-describe("generate-openclaw-config.ts: numeric env var validation", () => {
+describe("generate-openclaw-config.mts: numeric env var validation", () => {
   function runCapturingStderr(envOverrides: Record<string, string>): {
     config: any;
     stderr: string;
