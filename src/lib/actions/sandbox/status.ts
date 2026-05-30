@@ -35,8 +35,10 @@ import {
 import { getSandboxDockerHealth } from "./docker-health";
 import {
   classifyGatewayFailure,
+  classifySandboxContainerFailure,
   getLayerHeader,
   isDockerDaemonReachable,
+  type SandboxContainerFailureResult,
 } from "./gateway-failure-classifier";
 import type { SandboxGatewayState } from "./gateway-state";
 import {
@@ -259,6 +261,24 @@ export function isDockerDaemonUnreachableForStatus(
   return !probe();
 }
 
+type SandboxContainerFailureProbe = (
+  sandboxName: string,
+  dashboardPort: number | null,
+) => Promise<SandboxContainerFailureResult | null>;
+
+const defaultSandboxContainerFailureProbe: SandboxContainerFailureProbe = (
+  sandboxName,
+  dashboardPort,
+) => classifySandboxContainerFailure(sandboxName, { dashboardPort });
+
+export async function classifySandboxContainerFailureForStatus(
+  sb: registry.SandboxEntry | null,
+  probe: SandboxContainerFailureProbe = defaultSandboxContainerFailureProbe,
+): Promise<SandboxContainerFailureResult | null> {
+  if (!sb || sb.openshellDriver !== "docker") return null;
+  return probe(sb.name, sb.dashboardPort ?? null);
+}
+
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // When the host Docker daemon is stopped on a docker-driver sandbox, the
@@ -267,9 +287,22 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // remote provider directly so it falsely shows healthy too. Probe the
   // daemon once upfront so the failure-layer header is the first thing the
   // user sees and the misleading probe is suppressed.
-  const dockerUnreachable = isDockerDaemonUnreachableForStatus(registry.getSandbox(sandboxName));
+  const sandboxEntryEarly = registry.getSandbox(sandboxName);
+  const dockerUnreachable = isDockerDaemonUnreachableForStatus(sandboxEntryEarly);
   if (dockerUnreachable) {
     console.log(getLayerHeader("docker_unreachable"));
+    process.exitCode = 1;
+  }
+  // #4515: when the per-sandbox container is stopped (and optionally its
+  // dashboard port is held by a foreign listener) the host-side Inference
+  // probe still hits the remote provider directly and falsely shows healthy.
+  // Probe the sandbox container upfront so the failure layer is the first
+  // user-visible signal and the misleading Inference line is suppressed.
+  const sandboxFailure = dockerUnreachable
+    ? null
+    : await classifySandboxContainerFailureForStatus(sandboxEntryEarly);
+  if (sandboxFailure) {
+    console.log(getLayerHeader(sandboxFailure.layer));
     process.exitCode = 1;
   }
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
@@ -279,11 +312,12 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // synthesized fallback keeps the user-visible contract intact.
   const snapshot = await collectSandboxStatusSnapshot(sandboxName);
   const { sb, lookup, rpcIssue, currentModel, currentProvider } = snapshot;
-  // When docker is unreachable on a docker-driver sandbox, host-side probes
-  // misrepresent the sandbox state — the remote-provider reachability check
-  // doesn't go through the local stack. Suppress the probe so the output
-  // doesn't conflict with the failure-layer header.
-  const inferenceHealth = dockerUnreachable ? null : snapshot.inferenceHealth;
+  // When docker is unreachable or the sandbox container itself is stopped,
+  // host-side probes misrepresent the sandbox state — the remote-provider
+  // reachability check doesn't go through the local stack. Suppress the probe
+  // so the output doesn't conflict with the failure-layer header.
+  const inferenceHealth =
+    dockerUnreachable || sandboxFailure ? null : snapshot.inferenceHealth;
   maybeEnsureHermesToolGatewayBroker(sb);
   if (rpcIssue) {
     printOpenShellStateRpcIssue(rpcIssue, {

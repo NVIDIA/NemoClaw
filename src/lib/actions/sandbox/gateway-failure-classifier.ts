@@ -16,7 +16,9 @@ export type GatewayFailureLayer =
   | "container_missing"
   | "container_exited_port_conflict"
   | "container_exited"
-  | "gateway_unreachable";
+  | "gateway_unreachable"
+  | "sandbox_container_stopped"
+  | "sandbox_dashboard_port_conflict";
 
 export type GatewayFailureResult = {
   layer: GatewayFailureLayer;
@@ -27,6 +29,21 @@ export type GatewayFailureRunners = {
   dockerInfo: () => boolean;
   dockerIsRunning: (container: string) => boolean;
   dockerExists: (container: string) => boolean;
+  portProbe: (port: number) => Promise<boolean>;
+};
+
+export type SandboxContainerFailureLayer =
+  | "sandbox_container_stopped"
+  | "sandbox_dashboard_port_conflict";
+
+export type SandboxContainerFailureResult = {
+  layer: SandboxContainerFailureLayer;
+  detail: string;
+};
+
+export type SandboxContainerFailureRunners = {
+  listAllContainerNames: () => string;
+  listRunningContainerNames: () => string;
   portProbe: (port: number) => Promise<boolean>;
 };
 
@@ -131,8 +148,80 @@ const LAYER_HEADERS: Record<GatewayFailureLayer, string> = {
   container_exited: "Failure layer: container_exited — container exited.",
   gateway_unreachable:
     "Failure layer: gateway_unreachable — container running but gateway API unresponsive.",
+  sandbox_container_stopped:
+    "Failure layer: sandbox_container_stopped — sandbox container exists but is not running.",
+  sandbox_dashboard_port_conflict:
+    "Failure layer: sandbox_dashboard_port_conflict — sandbox container is stopped and the dashboard port is held by a foreign listener.",
 };
 
 export function getLayerHeader(layer: GatewayFailureLayer): string {
   return LAYER_HEADERS[layer];
+}
+
+function defaultListAllContainerNames(): string {
+  return dockerCapture(["ps", "-a", "--format", "{{.Names}}"], {
+    ignoreError: true,
+    timeout: DOCKER_TIMEOUT_MS,
+  });
+}
+
+function defaultListRunningContainerNames(): string {
+  return dockerCapture(["ps", "--format", "{{.Names}}"], {
+    ignoreError: true,
+    timeout: DOCKER_TIMEOUT_MS,
+  });
+}
+
+const defaultSandboxContainerRunners: SandboxContainerFailureRunners = {
+  listAllContainerNames: defaultListAllContainerNames,
+  listRunningContainerNames: defaultListRunningContainerNames,
+  portProbe: defaultPortProbe,
+};
+
+function sandboxContainerNamePrefix(sandboxName: string): string {
+  return `openshell-${sandboxName}`;
+}
+
+function findSandboxContainerName(
+  names: string,
+  sandboxName: string,
+): string | null {
+  const prefix = sandboxContainerNamePrefix(sandboxName);
+  for (const line of names.split("\n")) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    if (trimmed === prefix || trimmed.startsWith(`${prefix}-`)) return trimmed;
+  }
+  return null;
+}
+
+export async function classifySandboxContainerFailure(
+  sandboxName: string,
+  opts: {
+    dashboardPort?: number | null;
+    runners?: SandboxContainerFailureRunners;
+  } = {},
+): Promise<SandboxContainerFailureResult | null> {
+  const runners = opts.runners ?? defaultSandboxContainerRunners;
+  const running = findSandboxContainerName(
+    runners.listRunningContainerNames(),
+    sandboxName,
+  );
+  if (running) return null;
+  const present = findSandboxContainerName(
+    runners.listAllContainerNames(),
+    sandboxName,
+  );
+  if (!present) return null;
+  const dashboardPort = opts.dashboardPort ?? null;
+  if (dashboardPort && (await runners.portProbe(dashboardPort))) {
+    return {
+      layer: "sandbox_dashboard_port_conflict",
+      detail: `Sandbox container '${present}' is stopped and dashboard port ${dashboardPort} is held by another process.`,
+    };
+  }
+  return {
+    layer: "sandbox_container_stopped",
+    detail: `Sandbox container '${present}' exists but is not running.`,
+  };
 }

@@ -5,6 +5,7 @@ import { describe, it, expect } from "vitest";
 import { execSync, spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 
@@ -1055,6 +1056,157 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Provider: openai-api");
     expect(r.out).toContain("Model:    gpt-4o-mini");
     expect(r.out).toMatch(/Inference:/);
+  });
+
+  it("sandbox <name> status surfaces sandbox_container_stopped when the per-sandbox container exists but is not running", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-container-stopped-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha", {
+      provider: "openai-api",
+      model: "gpt-4o-mini",
+      openshellDriver: "docker",
+    } as unknown as Partial<SandboxEntry>);
+
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "info" ]; then echo "Server: docker"; exit 0; fi',
+        'if [ "$1" = "ps" ] && [ "$2" = "-a" ]; then echo "openshell-alpha-7616dcb1"; exit 0; fi',
+        'if [ "$1" = "ps" ]; then echo "openshell-cluster-nemoclaw"; exit 0; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: openai-api'",
+        "  echo '  Model: gpt-4o-mini'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(
+      r.out.startsWith(
+        "Failure layer: sandbox_container_stopped — sandbox container exists but is not running.",
+      ),
+    ).toBe(true);
+    expect(r.out).not.toContain("Inference: healthy");
+    expect(r.out).not.toContain("Failure layer: docker_unreachable");
+    expect(r.out).not.toContain("Failure layer: sandbox_dashboard_port_conflict");
+    const headerIdx = r.out.indexOf("Failure layer: sandbox_container_stopped");
+    const sandboxIdx = r.out.indexOf("Sandbox: alpha");
+    expect(headerIdx).toBeGreaterThanOrEqual(0);
+    expect(sandboxIdx).toBeGreaterThan(headerIdx);
+  });
+
+  it("sandbox <name> status surfaces sandbox_dashboard_port_conflict when the sandbox container is stopped and the dashboard port is held by a foreign listener", async () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-port-conflict-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+
+    const server = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      server.close();
+      throw new Error("failed to bind foreign listener on a free port");
+    }
+    const dashboardPort = address.port;
+
+    try {
+      writeSandboxRegistry(home, "alpha", {
+        provider: "openai-api",
+        model: "gpt-4o-mini",
+        openshellDriver: "docker",
+        dashboardPort,
+      } as unknown as Partial<SandboxEntry>);
+
+      fs.writeFileSync(
+        path.join(localBin, "docker"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "info" ]; then echo "Server: docker"; exit 0; fi',
+          'if [ "$1" = "ps" ] && [ "$2" = "-a" ]; then echo "openshell-alpha-7616dcb1"; exit 0; fi',
+          'if [ "$1" = "ps" ]; then echo "openshell-cluster-nemoclaw"; exit 0; fi',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+          "  echo 'Gateway inference:'",
+          "  echo '  Provider: openai-api'",
+          "  echo '  Model: gpt-4o-mini'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "status" ]; then',
+          "  echo 'Gateway: nemoclaw'",
+          "  echo 'Status: Connected'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+          "  echo 'Gateway: nemoclaw'",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("alpha status", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(r.code).toBe(1);
+      expect(
+        r.out.startsWith(
+          "Failure layer: sandbox_dashboard_port_conflict — sandbox container is stopped and the dashboard port is held by a foreign listener.",
+        ),
+      ).toBe(true);
+      expect(r.out).not.toContain("Inference: healthy");
+      expect(r.out).not.toContain("Failure layer: sandbox_container_stopped —");
+      const headerIdx = r.out.indexOf("Failure layer: sandbox_dashboard_port_conflict");
+      const sandboxIdx = r.out.indexOf("Sandbox: alpha");
+      expect(headerIdx).toBeGreaterThanOrEqual(0);
+      expect(sandboxIdx).toBeGreaterThan(headerIdx);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 
   it("sandbox status --json emits structured per-sandbox report", () => {
