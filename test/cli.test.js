@@ -69,6 +69,12 @@ describe("CLI dispatch", () => {
     expect(r.out.includes("No sandboxes")).toBeTruthy();
   });
 
+  it("status exits 0 and shows auxiliary service health", () => {
+    const r = run("status");
+    expect(r.code).toBe(0);
+    expect(r.out.includes("cloudflared")).toBeTruthy();
+  });
+
   it("start does not prompt for NVIDIA_API_KEY before launching local services", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-start-no-key-"));
     const localBin = path.join(home, "bin");
