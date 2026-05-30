@@ -740,8 +740,7 @@ describe("CLI dispatch", () => {
         '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
         '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        `  *"if [ ! -d '${sessionsDir}' ]"*) printf 'PRESENT\\nLOCKS=0\\n'; exit 0 ;;`,
-        `  *"cd '${sessionsDir}'"*"-name '*.jsonl'"*) echo "REMOVED=3"; exit 0 ;;`,
+        `  *"if [ ! -d '${sessionsDir}' ]"*) printf 'REMOVED=3\\nFORCED_LOCKS=0\\n'; exit 0 ;;`,
         "  *) exit 0 ;;",
         "esac",
       ].join("\n"),
@@ -757,12 +756,14 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     expect(r.out).toContain("Wiped agent 'main' sessions directory (3 files removed");
+    expect(r.out).not.toContain("Forced past");
     const calls = fs.readFileSync(openshellLog, "utf8");
     expect(calls).toMatch(
       /sandbox exec --name alpha -- sh -c .*if \[ ! -d '\/sandbox\/\.openclaw\/agents\/main\/sessions' \]/,
     );
     expect(calls).toMatch(/-name '\*\.jsonl\.lock'/);
     expect(calls).toMatch(/-name '\*\.jsonl'/);
+    expect(calls).toMatch(/REFUSE_LOCKS=/);
   });
 
   it("sandbox sessions rm <agent> refuses when an active write lock is present", () => {
@@ -781,8 +782,7 @@ describe("CLI dispatch", () => {
         '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
         '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        `  *"if [ ! -d '${sessionsDir}' ]"*) printf 'PRESENT\\nLOCKS=2\\n'; exit 0 ;;`,
-        '  *"REMOVED="*) echo "should-not-be-called"; exit 1 ;;',
+        `  *"if [ ! -d '${sessionsDir}' ]"*) printf 'REFUSE_LOCKS=2\\n'; exit 2 ;;`,
         "  *) exit 0 ;;",
         "esac",
       ].join("\n"),
@@ -801,8 +801,9 @@ describe("CLI dispatch", () => {
       "Refusing to remove agent 'main': 2 active write lock(s)",
     );
     expect(r.out).toContain("re-run with --force");
+    expect(r.out).not.toContain("Wiped agent");
     const calls = fs.readFileSync(openshellLog, "utf8");
-    expect(calls).not.toMatch(/REMOVED=/);
+    expect(calls).toMatch(/REFUSE_LOCKS=/);
   });
 
   it("sandbox sessions rm <agent> --force overrides an active write lock", () => {
@@ -810,17 +811,18 @@ describe("CLI dispatch", () => {
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home);
+    const openshellLog = path.join(home, "openshell-calls.log");
     const sessionsDir = "/sandbox/.openclaw/agents/main/sessions";
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
         "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
         'case "$*" in',
         '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
         '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        `  *"if [ ! -d '${sessionsDir}' ]"*) printf 'PRESENT\\nLOCKS=1\\n'; exit 0 ;;`,
-        `  *"cd '${sessionsDir}'"*"-name '*.jsonl'"*) echo "REMOVED=4"; exit 0 ;;`,
+        `  *"if [ ! -d '${sessionsDir}' ]"*) printf 'REMOVED=4\\nFORCED_LOCKS=1\\n'; exit 0 ;;`,
         "  *) exit 0 ;;",
         "esac",
       ].join("\n"),
@@ -837,9 +839,12 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Wiped agent 'main' sessions directory (4 files removed");
     expect(r.out).toContain("Forced past 1 active write lock(s).");
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    // Force path skips the in-script REFUSE_LOCKS guard branch.
+    expect(calls).not.toMatch(/REFUSE_LOCKS=%s/);
   });
 
-  it("sandbox sessions rm <agent> <key> resolves the sessionId and removes matching files", () => {
+  it("sandbox sessions rm <agent> <key> resolves the sessionId and removes only owned-shape files", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-rm-key-"));
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
@@ -847,9 +852,12 @@ describe("CLI dispatch", () => {
     const openshellLog = path.join(home, "openshell-calls.log");
     const sessionsDir = "/sandbox/.openclaw/agents/main/sessions";
     const storePath = `${sessionsDir}/sessions.json`;
+    // Prefix-collision fixture: `abc` and `abc2` coexist in the store. Removing
+    // `abc` must scope to the `abc.*`/`abc-topic-*` shapes only, never wildcard
+    // `abc*` (which would clobber `abc2.jsonl`, `abc2.trajectory.jsonl`, etc.).
     const sessionsJson = JSON.stringify({
-      "agent:main:main": { sessionId: "abc123", updatedAt: 1 },
-      "agent:main:telegram:thread": { sessionId: "def456", updatedAt: 2 },
+      "agent:main:main": { sessionId: "abc", updatedAt: 1 },
+      "agent:main:rival": { sessionId: "abc2", updatedAt: 2 },
     });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
@@ -861,7 +869,7 @@ describe("CLI dispatch", () => {
         '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
         `  *"cat '${storePath}'"*) printf '%s' '${sessionsJson}'; exit 0 ;;`,
-        `  *"cd '${sessionsDir}'"*"-name 'def456.*'"*) echo "REMOVED=2"; exit 0 ;;`,
+        `  *"cd '${sessionsDir}'"*"-name 'abc.*'"*) printf 'REMOVED=2\\nFORCED_LOCKS=0\\n'; exit 0 ;;`,
         "  *) exit 0 ;;",
         "esac",
       ].join("\n"),
@@ -869,7 +877,7 @@ describe("CLI dispatch", () => {
     );
 
     const r = runWithEnv(
-      "sandbox sessions rm alpha main agent:main:telegram:thread 2>&1",
+      "sandbox sessions rm alpha main agent:main:main 2>&1",
       {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
@@ -880,12 +888,117 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     expect(r.out).toContain(
-      "Removed session 'agent:main:telegram:thread' (id 'def456') from agent 'main'",
+      "Removed session 'agent:main:main' (id 'abc') from agent 'main'",
     );
     expect(r.out).toContain("2 files removed");
+    expect(r.out).not.toContain("Forced past");
     const calls = fs.readFileSync(openshellLog, "utf8");
     expect(calls).toMatch(/cat '\/sandbox\/\.openclaw\/agents\/main\/sessions\/sessions\.json'/);
-    expect(calls).toMatch(/-name 'def456\.\*' -o -name 'def456-topic-\*'/);
+    expect(calls).toMatch(/-name 'abc\.\*' -o -name 'abc-topic-\*'/);
+    expect(calls).not.toMatch(/-name 'abc\*'/);
+    expect(calls).not.toMatch(/'abc2/);
+    expect(calls).toMatch(/REFUSE_LOCKS=/);
+  });
+
+  it("sandbox sessions rm <agent> <key> refuses when the targeted session has an active lock", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-rm-key-locked-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const openshellLog = path.join(home, "openshell-calls.log");
+    const sessionsDir = "/sandbox/.openclaw/agents/main/sessions";
+    const storePath = `${sessionsDir}/sessions.json`;
+    const sessionsJson = JSON.stringify({
+      "agent:main:main": { sessionId: "abc", updatedAt: 1 },
+    });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  *"cat '${storePath}'"*) printf '%s' '${sessionsJson}'; exit 0 ;;`,
+        `  *"cd '${sessionsDir}'"*"abc.jsonl.lock"*) printf 'REFUSE_LOCKS=1\\n'; exit 2 ;;`,
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv(
+      "sandbox sessions rm alpha main agent:main:main 2>&1",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "1",
+        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+      },
+    );
+
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain(
+      "Refusing to remove session 'agent:main:main' (id 'abc'): 1 active write lock(s)",
+    );
+    expect(r.out).toContain("re-run with --force");
+    expect(r.out).not.toContain("Removed session");
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    expect(calls).toMatch(/REFUSE_LOCKS=1/);
+  });
+
+  it("sandbox sessions download <agent> <key> scopes to owned-shape files only", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-download-key-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const openshellLog = path.join(home, "openshell-calls.log");
+    const sessionsDir = "/sandbox/.openclaw/agents/main/sessions";
+    const storePath = `${sessionsDir}/sessions.json`;
+    const outDir = path.join(home, "out");
+    // Same prefix-collision fixture as rm: `abc` next to `abc2`.
+    const sessionsJson = JSON.stringify({
+      "agent:main:main": { sessionId: "abc", updatedAt: 1 },
+      "agent:main:rival": { sessionId: "abc2", updatedAt: 2 },
+    });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  *"cat '${storePath}'"*) printf '%s' '${sessionsJson}'; exit 0 ;;`,
+        `  *"cd '${sessionsDir}'"*"-name 'abc.*'"*) printf 'abc.jsonl\\nabc.trajectory.jsonl\\n'; exit 0 ;;`,
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv(
+      `sandbox sessions download alpha main agent:main:main --out ${JSON.stringify(outDir)} 2>&1`,
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "1",
+        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+      },
+    );
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(
+      "Downloaded session 'agent:main:main' (id 'abc')",
+    );
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    expect(calls).toMatch(/-name 'abc\.\*' -o -name 'abc-topic-\*'/);
+    expect(calls).not.toMatch(/-name 'abc\*'/);
+    expect(calls).not.toMatch(/'abc2/);
+    expect(calls).toMatch(/sandbox download alpha \S*abc\.jsonl /);
+    expect(calls).toMatch(/sandbox download alpha \S*abc\.trajectory\.jsonl /);
   });
 
   it("sandbox sessions rm reports a helpful error when the session key is unknown", () => {

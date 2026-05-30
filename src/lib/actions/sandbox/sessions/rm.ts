@@ -57,52 +57,50 @@ async function wipeWholeAgent(
   agentId: string,
   force: boolean,
 ): Promise<SessionsRmResult> {
-  const probe = captureOpenshell(
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--",
-      "sh",
-      "-c",
-      [
-        `if [ ! -d ${shellQuote(sessionsDir)} ]; then echo MISSING; exit 0; fi`,
-        `locks=$(find ${shellQuote(sessionsDir)} -mindepth 1 -maxdepth 1 -type f -name '*.jsonl.lock' | wc -l | tr -d ' ')`,
-        'printf "PRESENT\\nLOCKS=%s\\n" "$locks"',
-      ].join("\n"),
-    ],
-    { ignoreError: true },
-  );
-  if (probe.status !== 0 || !probe.output.includes("PRESENT")) {
-    console.error(`  Sessions directory not found for agent '${agentId}': ${sessionsDir}`);
-    console.error(NOT_FOUND_HINT);
-    process.exit(1);
-  }
-  const lockCount = parseLockCount(probe.output);
-  if (lockCount > 0 && !force) {
-    failOnActiveLocks(agentId, lockCount, sessionsDir);
-  }
+  const lockGuard = force
+    ? "locks=0"
+    : [
+        "locks=$(find . -mindepth 1 -maxdepth 1 -type f -name '*.jsonl.lock' | wc -l | tr -d ' ')",
+        'if [ "$locks" -gt 0 ]; then printf "REFUSE_LOCKS=%s\\n" "$locks"; exit 2; fi',
+      ].join("\n");
+  const lockReport = force
+    ? "forced_locks=$(find . -mindepth 1 -maxdepth 1 -type f -name '*.jsonl.lock' | wc -l | tr -d ' ')"
+    : "forced_locks=0";
 
   const script = [
+    `if [ ! -d ${shellQuote(sessionsDir)} ]; then echo MISSING; exit 0; fi`,
     `cd ${shellQuote(sessionsDir)} || exit 1`,
+    lockGuard,
+    lockReport,
     "count=$(find . -mindepth 1 -maxdepth 1 \\( -name '*.jsonl' -o -name '*.jsonl.lock' \\) -type f | wc -l | tr -d ' ')",
     "find . -mindepth 1 -maxdepth 1 \\( -name '*.jsonl' -o -name '*.jsonl.lock' \\) -type f -delete",
     `printf '%s' '{}' > ${shellQuote(storePath)}`,
-    'echo "REMOVED=$count"',
+    'printf "REMOVED=%s\\nFORCED_LOCKS=%s\\n" "$count" "$forced_locks"',
   ].join("\n");
 
   const result = captureOpenshell(
     ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
     { ignoreError: true },
   );
+
+  if (result.output.includes("MISSING")) {
+    console.error(`  Sessions directory not found for agent '${agentId}': ${sessionsDir}`);
+    console.error(NOT_FOUND_HINT);
+    process.exit(1);
+  }
+  const refuseLocks = parseRefuseLocks(result.output);
+  if (refuseLocks !== null) {
+    failOnActiveLocks(agentId, refuseLocks, sessionsDir);
+  }
   if (result.status !== 0) {
     console.error(`  Failed to wipe sessions for agent '${agentId}':`);
     console.error(`  ${result.output}`);
     process.exit(1);
   }
   const filesRemoved = parseRemovedCount(result.output);
-  const forcedSuffix = lockCount > 0 && force ? ` Forced past ${lockCount} active write lock(s).` : "";
+  const forcedLocks = parseForcedLocks(result.output);
+  const forcedSuffix =
+    forcedLocks > 0 ? ` Forced past ${forcedLocks} active write lock(s).` : "";
   console.error(
     `  Wiped agent '${agentId}' sessions directory (${filesRemoved} file${filesRemoved === 1 ? "" : "s"} removed; sessions.json reset).${forcedSuffix}`,
   );
@@ -123,45 +121,39 @@ async function removeSingleSession(
   const updatedStore = { ...store };
   delete updatedStore[sessionKey];
   const updatedJson = JSON.stringify(updatedStore);
-
-  const lockProbe = captureOpenshell(
-    [
-      "sandbox",
-      "exec",
-      "--name",
-      sandboxName,
-      "--",
-      "sh",
-      "-c",
-      `if [ -e ${shellQuote(`${sessionsDir}/${sessionId}.jsonl.lock`)} ]; then echo LOCKED; else echo CLEAR; fi`,
-    ],
-    { ignoreError: true },
-  );
-  if (lockProbe.status !== 0) {
-    console.error(
-      `  Failed to probe write lock for session '${sessionKey}' (id '${sessionId}'): ${lockProbe.output || `exit ${lockProbe.status}`}`,
-    );
-    process.exit(1);
-  }
-  const locked = lockProbe.output.includes("LOCKED");
-  if (locked && !force) {
-    failOnActiveLocks(agentId, 1, sessionsDir, sessionKey, sessionId);
-  }
-
   const safeJson = updatedJson.replace(/'/g, "'\\''");
   const ownedClause = sessionOwnedFilenameFindClause(sessionId);
+  const lockFile = `${sessionId}.jsonl.lock`;
+
+  const lockGuard = force
+    ? "locked=0"
+    : [
+        `if [ -e ${shellQuote(lockFile)} ]; then printf "REFUSE_LOCKS=1\\n"; exit 2; fi`,
+        "locked=0",
+      ].join("\n");
+  const lockReport = force
+    ? `if [ -e ${shellQuote(lockFile)} ]; then forced_locks=1; else forced_locks=0; fi`
+    : "forced_locks=0";
+
   const script = [
     `cd ${shellQuote(sessionsDir)} || exit 1`,
+    lockGuard,
+    lockReport,
     `count=$(find . -mindepth 1 -maxdepth 1 -type f ${ownedClause} | wc -l | tr -d ' ')`,
     `find . -mindepth 1 -maxdepth 1 -type f ${ownedClause} -delete`,
     `printf '%s' '${safeJson}' > ${shellQuote(storePath)}`,
-    'echo "REMOVED=$count"',
+    'printf "REMOVED=%s\\nFORCED_LOCKS=%s\\n" "$count" "$forced_locks"',
   ].join("\n");
 
   const result = captureOpenshell(
     ["sandbox", "exec", "--name", sandboxName, "--", "sh", "-c", script],
     { ignoreError: true },
   );
+
+  const refuseLocks = parseRefuseLocks(result.output);
+  if (refuseLocks !== null) {
+    failOnActiveLocks(agentId, refuseLocks, sessionsDir, sessionKey, sessionId);
+  }
   if (result.status !== 0) {
     console.error(
       `  Failed to remove session '${sessionKey}' (id '${sessionId}') for agent '${agentId}':`,
@@ -170,10 +162,12 @@ async function removeSingleSession(
     process.exit(1);
   }
   const filesRemoved = parseRemovedCount(result.output);
-  const forcedSuffix = locked && force ? " Forced past active write lock." : "";
+  const forcedLocks = parseForcedLocks(result.output);
+  const forcedSuffix = forcedLocks > 0 ? " Forced past active write lock." : "";
   console.error(
     `  Removed session '${sessionKey}' (id '${sessionId}') from agent '${agentId}' (${filesRemoved} file${filesRemoved === 1 ? "" : "s"} removed; sessions.json updated).${forcedSuffix}`,
   );
+  void lockReport;
   return {
     scope: "session",
     removedSessionKey: sessionKey,
@@ -231,8 +225,13 @@ function parseRemovedCount(output: string): number {
   return match ? Number.parseInt(match[1], 10) : 0;
 }
 
-function parseLockCount(output: string): number {
-  const match = /LOCKS=(\d+)/.exec(output);
+function parseRefuseLocks(output: string): number | null {
+  const match = /REFUSE_LOCKS=(\d+)/.exec(output);
+  return match ? Number.parseInt(match[1], 10) : null;
+}
+
+function parseForcedLocks(output: string): number {
+  const match = /FORCED_LOCKS=(\d+)/.exec(output);
   return match ? Number.parseInt(match[1], 10) : 0;
 }
 
