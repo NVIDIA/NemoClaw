@@ -158,6 +158,11 @@ section "Phase 0: Install NemoClaw and first onboard with token A"
 openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
 
+# Always skip the Telegram reachability probe in E2E: fake tokens trigger
+# HTTP 401/404 which the new probe treats as "skip Telegram", breaking the
+# test even when api.telegram.org is reachable.
+export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN_A"
 export DISCORD_BOT_TOKEN="$DISCORD_BOT_TOKEN_A"
 export SLACK_BOT_TOKEN="$SLACK_BOT_TOKEN_A"

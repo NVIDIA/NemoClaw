@@ -419,12 +419,10 @@ install_for_active_agent() {
   export NEMOCLAW_RECREATE_SANDBOX=1
   export NEMOCLAW_FRESH=1
 
-  if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ]; then
-    if ! curl -fsS --max-time 10 https://api.telegram.org/ >/dev/null 2>&1; then
-      export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
-      info "api.telegram.org unreachable from host; setting NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1"
-    fi
-  fi
+  # Always skip the Telegram reachability probe in E2E: fake tokens trigger
+  # HTTP 401/404 which the new probe treats as "skip Telegram", breaking the
+  # test even when api.telegram.org is reachable.
+  export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
 
   info "Running install.sh --non-interactive for ${ACTIVE_AGENT} (${ACTIVE_SANDBOX})..."
   bash install.sh --non-interactive >"$log" 2>&1 &
