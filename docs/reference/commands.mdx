@@ -785,6 +785,21 @@ $ nemoclaw my-assistant channels start telegram
 |------|-------------|
 | `--dry-run` | Report the channel that would be re-enabled without updating the registry or rebuilding |
 
+### `nemoclaw <name> channels status`
+
+Run channel-specific runtime diagnostics. For WhatsApp the command probes the sandbox to separately report pairing/session state, the Noise WebSocket connection, inbound event delivery, and policy/config coverage; a paired channel with no observed inbound delivery exits non-zero with verdict `idle` so an unhealthy bridge cannot pass as healthy.
+
+```bash
+nemoclaw my-assistant channels status --channel whatsapp
+```
+
+| Flag | Description |
+|------|-------------|
+| `--channel <channel>` | Channel to inspect; defaults to `whatsapp` when registered |
+| `--json` | Emit the diagnostic report as JSON (exit non-zero when the verdict is not `healthy` or `unknown`) |
+
+The probe is bounded by an in-sandbox `openshell sandbox exec` with a hard timeout, captures only short matched bridge log signals (e.g. `connection.open`, `401 unauthorized`, `qr expired`), and never forwards message bodies to the host diagnostic output.
+
 ### `nemoclaw <name> skill install <path>`
 
 Deploy a skill directory to a running sandbox.
