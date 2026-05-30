@@ -293,11 +293,11 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     console.log(getLayerHeader("docker_unreachable"));
     process.exitCode = 1;
   }
-  // #4515: when the per-sandbox container is stopped (and optionally its
-  // dashboard port is held by a foreign listener) the host-side Inference
-  // probe still hits the remote provider directly and falsely shows healthy.
-  // Probe the sandbox container upfront so the failure layer is the first
-  // user-visible signal and the misleading Inference line is suppressed.
+  // When the per-sandbox container is stopped (and optionally its dashboard
+  // port is held by a foreign listener) the host-side Inference probe still
+  // hits the remote provider directly and falsely shows healthy. Probe the
+  // sandbox container upfront so the failure layer is the first user-visible
+  // signal and the misleading Inference line is suppressed.
   const sandboxFailure = dockerUnreachable
     ? null
     : await classifySandboxContainerFailureForStatus(sandboxEntryEarly);

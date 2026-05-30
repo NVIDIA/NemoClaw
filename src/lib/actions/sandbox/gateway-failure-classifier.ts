@@ -6,6 +6,7 @@ import net from "node:net";
 import { dockerInfo } from "../../adapters/docker/info";
 import { dockerCapture } from "../../adapters/docker/run";
 import { GATEWAY_PORT } from "../../core/ports";
+import * as registry from "../../state/registry";
 
 const DEFAULT_CONTAINER = "openshell-cluster-nemoclaw";
 const DOCKER_TIMEOUT_MS = 3000;
@@ -44,6 +45,7 @@ export type SandboxContainerFailureResult = {
 export type SandboxContainerFailureRunners = {
   listAllContainerNames: () => string;
   listRunningContainerNames: () => string;
+  listSandboxNames: () => string[];
   portProbe: (port: number) => Promise<boolean>;
 };
 
@@ -172,27 +174,69 @@ function defaultListRunningContainerNames(): string {
   });
 }
 
+function defaultListSandboxNames(): string[] {
+  try {
+    return registry.listSandboxes().sandboxes.map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
 const defaultSandboxContainerRunners: SandboxContainerFailureRunners = {
   listAllContainerNames: defaultListAllContainerNames,
   listRunningContainerNames: defaultListRunningContainerNames,
+  listSandboxNames: defaultListSandboxNames,
   portProbe: defaultPortProbe,
 };
 
-function sandboxContainerNamePrefix(sandboxName: string): string {
-  return `openshell-${sandboxName}`;
-}
-
+// OpenShell names sandbox containers either as `openshell-<sandbox>` (no
+// suffix) or `openshell-<sandbox>-<id>`, where `<id>` is appended by
+// openshell at runtime. Two prefix collisions are possible:
+//
+//   1. A sandbox name can be a prefix of another sandbox name
+//      (`my` vs `my-assistant`).
+//   2. Even with a hyphen-free `<id>`, a sandbox name can be a prefix
+//      of another sandbox name whose own suffix is hyphen-free
+//      (`my-assistant` vs `my-assistant-prod`).
+//
+// Resolve each candidate to the LONGEST registered sandbox name it could
+// belong to and only accept candidates that resolve to the sandbox we are
+// looking up. The exact-name form is preferred before suffixed forms so
+// that an `openshell-<sandbox>` container always wins over an unrelated
+// `openshell-<sandbox>-<runtime-id>` co-tenant. Mirrors the resolver in
+// `docker-health.ts`.
 function findSandboxContainerName(
   names: string,
   sandboxName: string,
+  registeredSandboxNames: readonly string[],
 ): string | null {
-  const prefix = sandboxContainerNamePrefix(sandboxName);
-  for (const line of names.split("\n")) {
-    const trimmed = line.trim();
-    if (!trimmed) continue;
-    if (trimmed === prefix || trimmed.startsWith(`${prefix}-`)) return trimmed;
+  const ourPrefix = `openshell-${sandboxName}-`;
+  const ourExact = `openshell-${sandboxName}`;
+  const known = new Set<string>(registeredSandboxNames);
+  known.add(sandboxName);
+  const candidates = names
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line === ourExact || line.startsWith(ourPrefix));
+  if (candidates.includes(ourExact)) return ourExact;
+  const knownArr = [...known];
+  for (const candidate of candidates) {
+    const stripped = candidate.replace(/^openshell-/, "");
+    const owner = knownArr
+      .filter((name) => stripped === name || stripped.startsWith(`${name}-`))
+      .sort((a, b) => b.length - a.length)[0];
+    if (owner === sandboxName) return candidate;
   }
   return null;
+}
+
+function isValidDashboardPort(port: number | null | undefined): port is number {
+  return (
+    typeof port === "number" &&
+    Number.isInteger(port) &&
+    port >= 1 &&
+    port <= 65535
+  );
 }
 
 export async function classifySandboxContainerFailure(
@@ -203,18 +247,24 @@ export async function classifySandboxContainerFailure(
   } = {},
 ): Promise<SandboxContainerFailureResult | null> {
   const runners = opts.runners ?? defaultSandboxContainerRunners;
+  const registeredSandboxNames = runners.listSandboxNames();
   const running = findSandboxContainerName(
     runners.listRunningContainerNames(),
     sandboxName,
+    registeredSandboxNames,
   );
   if (running) return null;
   const present = findSandboxContainerName(
     runners.listAllContainerNames(),
     sandboxName,
+    registeredSandboxNames,
   );
   if (!present) return null;
-  const dashboardPort = opts.dashboardPort ?? null;
-  if (dashboardPort && (await runners.portProbe(dashboardPort))) {
+  const dashboardPort = opts.dashboardPort;
+  if (
+    isValidDashboardPort(dashboardPort) &&
+    (await runners.portProbe(dashboardPort))
+  ) {
     return {
       layer: "sandbox_dashboard_port_conflict",
       detail: `Sandbox container '${present}' is stopped and dashboard port ${dashboardPort} is held by another process.`,
