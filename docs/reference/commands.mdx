@@ -82,6 +82,8 @@ For NemoClaw-managed environments, use `nemoclaw onboard` when you need to creat
 Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
 </Warning>
 
+Use `--fresh` to ignore any saved onboarding session and restart the wizard from scratch. This is useful after an interrupted `nemoclaw onboard` run when you want to discard saved state instead of continuing it with `--resume`.
+
 The installer detects existing sandbox sessions before onboarding and prints a warning if any are found.
 To make the installer abort instead of continuing, set `NEMOCLAW_SINGLE_SESSION=1`:
 
