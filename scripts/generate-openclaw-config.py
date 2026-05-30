@@ -810,7 +810,7 @@ def build_config(env: dict | None = None) -> dict:
         config["proxy"] = {
             "enabled": True,
             "proxyUrl": proxy_url,
-            "loopbackMode": "proxy",
+            "loopbackMode": "gateway-only",
         }
 
     # Keep keyless web_fetch available by default, but force it through the

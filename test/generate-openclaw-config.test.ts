@@ -465,7 +465,7 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.proxy).toMatchObject({
       enabled: true,
       proxyUrl: "http://10.200.0.1:3128",
-      loopbackMode: "proxy",
+      loopbackMode: "gateway-only",
     });
     expect(config.channels.telegram.enabled).toBe(true);
     expect(config.plugins.entries.telegram).toEqual({ enabled: true });
@@ -492,7 +492,7 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.proxy).toEqual({
       enabled: true,
       proxyUrl: "http://10.201.0.9:43128",
-      loopbackMode: "proxy",
+      loopbackMode: "gateway-only",
     });
     expect(config.channels.discord.accounts.default).toMatchObject({
       token: "openshell:resolve:env:DISCORD_BOT_TOKEN",
