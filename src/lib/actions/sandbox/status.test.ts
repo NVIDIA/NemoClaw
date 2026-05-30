@@ -6,8 +6,10 @@ import { describe, expect, it } from "vitest";
 import type { ProviderHealthProbeOptions } from "../../../../dist/lib/inference/health";
 import {
   classifySandboxContainerFailureForStatus,
+  classifySandboxStatusPreflightFailure,
   getSandboxStatusInferenceHealth,
   isDockerDaemonUnreachableForStatus,
+  maybeGetSandboxStatusInferenceHealth,
 } from "../../../../dist/lib/actions/sandbox/status";
 
 describe("sandbox status inference health", () => {
@@ -150,5 +152,127 @@ describe("classifySandboxContainerFailureForStatus", () => {
       ),
     ).resolves.toBeNull();
     expect(observed).toEqual([{ sandboxName: "alpha", port: null }]);
+  });
+});
+
+describe("maybeGetSandboxStatusInferenceHealth", () => {
+  it("does not invoke the provider probe when suppressInferenceProbe is true even with a present gateway and string provider", () => {
+    let probeCalls = 0;
+    const result = maybeGetSandboxStatusInferenceHealth(
+      true,
+      true,
+      "nvidia-prod",
+      "nvidia/nemotron",
+      (...args) => {
+        probeCalls += 1;
+        throw new Error(`probeProviderHealth should not be invoked (args=${JSON.stringify(args)})`);
+      },
+    );
+    expect(result).toBeNull();
+    expect(probeCalls).toBe(0);
+  });
+
+  it("delegates to the probe when suppressInferenceProbe is false", () => {
+    const calls: { provider: string; options?: ProviderHealthProbeOptions }[] = [];
+    const result = maybeGetSandboxStatusInferenceHealth(
+      false,
+      true,
+      "nvidia-prod",
+      "nvidia/nemotron",
+      (provider, options) => {
+        calls.push({ provider, options });
+        return {
+          ok: true,
+          probed: true,
+          providerLabel: "NVIDIA Endpoints",
+          endpoint: "https://integrate.api.nvidia.com/v1/chat/completions",
+          detail: "healthy",
+        };
+      },
+    );
+    expect(result?.ok).toBe(true);
+    expect(calls).toEqual([
+      { provider: "nvidia-prod", options: { model: "nvidia/nemotron" } },
+    ]);
+  });
+});
+
+describe("classifySandboxStatusPreflightFailure", () => {
+  it("returns docker_unreachable when the daemon probe reports unreachable", async () => {
+    let sandboxProbeCalled = false;
+    const result = await classifySandboxStatusPreflightFailure(
+      { name: "alpha", openshellDriver: "docker" } as never,
+      {
+        dockerProbe: () => false,
+        sandboxContainerProbe: async () => {
+          sandboxProbeCalled = true;
+          return null;
+        },
+      },
+    );
+    expect(result).toEqual({ layer: "docker_unreachable", dockerUnreachable: true });
+    // Short-circuits: a daemon that is already known to be down must not
+    // trigger a follow-up `docker ps` round trip.
+    expect(sandboxProbeCalled).toBe(false);
+  });
+
+  it("returns the sandbox container failure when the daemon is reachable", async () => {
+    const result = await classifySandboxStatusPreflightFailure(
+      { name: "alpha", openshellDriver: "docker", dashboardPort: 18789 } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async (sandboxName, dashboardPort) => {
+          expect(sandboxName).toBe("alpha");
+          expect(dashboardPort).toBe(18789);
+          return {
+            layer: "sandbox_dashboard_port_conflict",
+            detail: "stub failure",
+          };
+        },
+      },
+    );
+    expect(result).toEqual({
+      layer: "sandbox_dashboard_port_conflict",
+      dockerUnreachable: false,
+    });
+  });
+
+  it("returns null when the sandbox container probe finds no failure", async () => {
+    const result = await classifySandboxStatusPreflightFailure(
+      { name: "alpha", openshellDriver: "docker" } as never,
+      {
+        dockerProbe: () => true,
+        sandboxContainerProbe: async () => null,
+      },
+    );
+    expect(result).toBeNull();
+  });
+
+  it("returns null when the sandbox is not on the docker driver", async () => {
+    let dockerCalled = false;
+    let sandboxCalled = false;
+    const result = await classifySandboxStatusPreflightFailure(
+      { name: "alpha", openshellDriver: "vm" } as never,
+      {
+        dockerProbe: () => {
+          dockerCalled = true;
+          return false;
+        },
+        sandboxContainerProbe: async () => {
+          sandboxCalled = true;
+          return null;
+        },
+      },
+    );
+    expect(result).toBeNull();
+    // Both gates are docker-driver-only; a vm sandbox must not provoke
+    // either probe.
+    expect(dockerCalled).toBe(false);
+    expect(sandboxCalled).toBe(false);
+  });
+
+  it("returns null when the sandbox entry is null", async () => {
+    const result = await classifySandboxStatusPreflightFailure(null);
+    expect(result).toBeNull();
   });
 });

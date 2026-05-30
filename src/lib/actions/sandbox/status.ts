@@ -69,6 +69,29 @@ export function getSandboxStatusInferenceHealth(
   });
 }
 
+/**
+ * Gate around `getSandboxStatusInferenceHealth` that short-circuits when the
+ * caller has already classified a pre-snapshot failure (docker daemon down,
+ * sandbox container stopped, dashboard port held). Returns null without
+ * touching the provider probe so the remote-provider reachability request is
+ * never issued in those cases. Exported so tests can drive the seam directly.
+ */
+export function maybeGetSandboxStatusInferenceHealth(
+  suppressInferenceProbe: boolean,
+  gatewayPresent: boolean,
+  currentProvider: unknown,
+  currentModel: unknown,
+  probeProviderHealthImpl?: ProbeProviderHealth,
+): ProviderHealthStatus | null {
+  if (suppressInferenceProbe) return null;
+  return getSandboxStatusInferenceHealth(
+    gatewayPresent,
+    currentProvider,
+    currentModel,
+    probeProviderHealthImpl,
+  );
+}
+
 export interface SandboxStatusReport {
   schemaVersion: 1;
   name: string;
@@ -86,6 +109,11 @@ export interface SandboxStatusReport {
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
+  failureLayer:
+    | "docker_unreachable"
+    | "sandbox_container_stopped"
+    | "sandbox_dashboard_port_conflict"
+    | null;
 }
 
 interface SandboxStatusSnapshot {
@@ -97,8 +125,16 @@ interface SandboxStatusSnapshot {
   inferenceHealth: ProviderHealthStatus | null;
 }
 
-async function collectSandboxStatusSnapshot(
+interface CollectSandboxStatusSnapshotDeps {
+  probeProviderHealthImpl?: ProbeProviderHealth;
+}
+
+export async function collectSandboxStatusSnapshot(
   sandboxName: string,
+  opts: {
+    suppressInferenceProbe?: boolean;
+    deps?: CollectSandboxStatusSnapshotDeps;
+  } = {},
 ): Promise<SandboxStatusSnapshot> {
   const sb = registry.getSandbox(sandboxName);
   let lookup: SandboxGatewayState;
@@ -136,10 +172,18 @@ async function collectSandboxStatusSnapshot(
     liveResult && !isCommandTimeout(liveResult) ? parseGatewayInference(liveResult.output) : null;
   const currentModel = (live && live.model) || (sb && sb.model) || "unknown";
   const currentProvider = (live && live.provider) || (sb && sb.provider) || "unknown";
-  const inferenceHealth = getSandboxStatusInferenceHealth(
+  // When the caller has already determined that the local stack is failed
+  // (docker daemon down, sandbox container stopped, dashboard port held),
+  // skip the provider probe entirely. Without this gate
+  // `getSandboxStatusInferenceHealth` would still issue the remote-provider
+  // reachability request even though the caller would overwrite the returned
+  // value to null afterwards.
+  const inferenceHealth = maybeGetSandboxStatusInferenceHealth(
+    opts.suppressInferenceProbe === true,
     lookup.state === "present",
     currentProvider,
     currentModel,
+    opts.deps?.probeProviderHealthImpl,
   );
   if (
     inferenceHealth &&
@@ -163,10 +207,55 @@ async function collectSandboxStatusSnapshot(
   return { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth };
 }
 
+export type SandboxStatusFailureLayer =
+  | "docker_unreachable"
+  | "sandbox_container_stopped"
+  | "sandbox_dashboard_port_conflict";
+
+export interface SandboxStatusPreflightFailure {
+  layer: SandboxStatusFailureLayer;
+  dockerUnreachable: boolean;
+}
+
+export interface ClassifySandboxStatusPreflightFailureDeps {
+  dockerProbe?: DockerInfoProbe;
+  sandboxContainerProbe?: SandboxContainerFailureProbe;
+}
+
+/**
+ * Classify pre-snapshot failure layers (host docker daemon down, per-sandbox
+ * container stopped, dashboard port held by foreign listener). Returns null
+ * when none apply, including when the sandbox is not on the docker driver or
+ * the registry has no entry. Shared between the human-readable status
+ * renderer and the `--json` report so both paths gate the inference probe
+ * consistently and the JSON path can surface the same failure layer.
+ */
+export async function classifySandboxStatusPreflightFailure(
+  sb: registry.SandboxEntry | null,
+  deps: ClassifySandboxStatusPreflightFailureDeps = {},
+): Promise<SandboxStatusPreflightFailure | null> {
+  if (isDockerDaemonUnreachableForStatus(sb, deps.dockerProbe)) {
+    return { layer: "docker_unreachable", dockerUnreachable: true };
+  }
+  const sandboxFailure = await classifySandboxContainerFailureForStatus(
+    sb,
+    deps.sandboxContainerProbe,
+  );
+  if (sandboxFailure) {
+    return { layer: sandboxFailure.layer, dockerUnreachable: false };
+  }
+  return null;
+}
+
 export async function getSandboxStatusReport(
   sandboxName: string,
 ): Promise<SandboxStatusReport> {
-  const snapshot = await collectSandboxStatusSnapshot(sandboxName);
+  const sandboxEntryEarly = registry.getSandbox(sandboxName);
+  const preflightFailure =
+    await classifySandboxStatusPreflightFailure(sandboxEntryEarly);
+  const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
+    suppressInferenceProbe: preflightFailure !== null,
+  });
   const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
   const phase =
     lookup.state === "present" ? parseSandboxPhase(lookup.output || "") : null;
@@ -194,6 +283,7 @@ export async function getSandboxStatusReport(
     openshellDriver: (sb && sb.openshellDriver) || "unknown",
     openshellVersion: (sb && sb.openshellVersion) || "unknown",
     policies,
+    failureLayer: preflightFailure ? preflightFailure.layer : null,
   };
 }
 
@@ -281,28 +371,21 @@ export async function classifySandboxContainerFailureForStatus(
 
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
-  // When the host Docker daemon is stopped on a docker-driver sandbox, the
+  // When the host Docker daemon is stopped, or the per-sandbox container is
+  // stopped (with or without a foreign listener on the dashboard port), the
   // cached sandbox metadata renders as a "healthy" report even though the
-  // local container stack is down, and the host-side Inference probe hits the
-  // remote provider directly so it falsely shows healthy too. Probe the
-  // daemon once upfront so the failure-layer header is the first thing the
-  // user sees and the misleading probe is suppressed.
+  // local container stack is down, and the host-side Inference probe hits
+  // the remote provider directly so it falsely shows healthy too. Classify
+  // these failure layers upfront so the header is the first thing the user
+  // sees, the remote provider probe is never issued, and downstream
+  // gateway-state branches can suppress duplicate `docker_unreachable`
+  // headers via `alreadyPrintedDockerUnreachable`.
   const sandboxEntryEarly = registry.getSandbox(sandboxName);
-  const dockerUnreachable = isDockerDaemonUnreachableForStatus(sandboxEntryEarly);
-  if (dockerUnreachable) {
-    console.log(getLayerHeader("docker_unreachable"));
-    process.exitCode = 1;
-  }
-  // When the per-sandbox container is stopped (and optionally its dashboard
-  // port is held by a foreign listener) the host-side Inference probe still
-  // hits the remote provider directly and falsely shows healthy. Probe the
-  // sandbox container upfront so the failure layer is the first user-visible
-  // signal and the misleading Inference line is suppressed.
-  const sandboxFailure = dockerUnreachable
-    ? null
-    : await classifySandboxContainerFailureForStatus(sandboxEntryEarly);
-  if (sandboxFailure) {
-    console.log(getLayerHeader(sandboxFailure.layer));
+  const preflightFailure =
+    await classifySandboxStatusPreflightFailure(sandboxEntryEarly);
+  const dockerUnreachable = preflightFailure?.dockerUnreachable === true;
+  if (preflightFailure) {
+    console.log(getLayerHeader(preflightFailure.layer));
     process.exitCode = 1;
   }
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
@@ -310,14 +393,10 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // foreign listener) suppress the sandbox header. The downstream switch
   // handles `gateway_error` by printing an actionable block + exit(1), so a
   // synthesized fallback keeps the user-visible contract intact.
-  const snapshot = await collectSandboxStatusSnapshot(sandboxName);
-  const { sb, lookup, rpcIssue, currentModel, currentProvider } = snapshot;
-  // When docker is unreachable or the sandbox container itself is stopped,
-  // host-side probes misrepresent the sandbox state — the remote-provider
-  // reachability check doesn't go through the local stack. Suppress the probe
-  // so the output doesn't conflict with the failure-layer header.
-  const inferenceHealth =
-    dockerUnreachable || sandboxFailure ? null : snapshot.inferenceHealth;
+  const snapshot = await collectSandboxStatusSnapshot(sandboxName, {
+    suppressInferenceProbe: preflightFailure !== null,
+  });
+  const { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth } = snapshot;
   maybeEnsureHermesToolGatewayBroker(sb);
   if (rpcIssue) {
     printOpenShellStateRpcIssue(rpcIssue, {
