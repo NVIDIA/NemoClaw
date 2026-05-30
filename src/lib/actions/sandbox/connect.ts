@@ -19,7 +19,7 @@ import { D, G, R, YW } from "../../cli/terminal-style";
 import * as agentRuntime from "../../agent/runtime";
 import { parseGatewayInference } from "../../inference/config";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
-import { preflightVllmModelEnv } from "../../inference/vllm-models";
+import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import {
   ensureOllamaAuthProxy,
   probeOllamaAuthProxyHealth,
@@ -753,25 +753,6 @@ function exitWithSpawnResult(result: SpawnLikeResult): void {
     process.exit(signalNumber ? 128 + signalNumber : 1);
   }
 
-  process.exit(1);
-}
-
-// `NEMOCLAW_VLLM_MODEL` only steers the express-vLLM install path, but users
-// often re-export it in the same shell they later run `connect` in. Run the
-// installer's validators up-front so a typo or a gated model with no
-// `HF_TOKEN` fails fast on the host — before any sandbox readiness probe,
-// inference-route reset, or SSH attach — instead of being silently ignored.
-function preflightVllmModelEnvOrExit(): void {
-  const result = preflightVllmModelEnv();
-  if (result.ok) return;
-  console.error("");
-  console.error(`  Error: ${result.message}`);
-  console.error(
-    `  Hint: NEMOCLAW_VLLM_MODEL is consumed by the managed-vLLM install path, not \`${CLI_NAME} <name> connect\`.`,
-  );
-  console.error(
-    "  Unset NEMOCLAW_VLLM_MODEL before reconnecting, or fix the value (and token) and re-run the install path that serves the model.",
-  );
   process.exit(1);
 }
 
