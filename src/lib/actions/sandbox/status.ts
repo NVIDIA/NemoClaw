@@ -74,7 +74,7 @@ export function getSandboxStatusInferenceHealth(
  * caller has already classified a pre-snapshot failure (docker daemon down,
  * sandbox container stopped, dashboard port held). Returns null without
  * touching the provider probe so the remote-provider reachability request is
- * never issued in those cases. Exported so tests can drive the seam directly.
+ * never issued in those cases.
  */
 export function maybeGetSandboxStatusInferenceHealth(
   suppressInferenceProbe: boolean,
@@ -129,7 +129,7 @@ interface CollectSandboxStatusSnapshotDeps {
   probeProviderHealthImpl?: ProbeProviderHealth;
 }
 
-export async function collectSandboxStatusSnapshot(
+async function collectSandboxStatusSnapshot(
   sandboxName: string,
   opts: {
     suppressInferenceProbe?: boolean;
