@@ -28,6 +28,7 @@ import { runOpenshell } from "../../adapters/openshell/runtime";
 import { shellQuote } from "../../runner";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
+import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
 import {
   type ChannelDef,
   KNOWN_CHANNELS,
@@ -460,13 +461,13 @@ async function applyChannelRemoveToGatewayAndRegistry(
   }
 }
 
-async function promptAndRebuild(sandboxName: string, actionDesc: string): Promise<void> {
+async function promptAndRebuild(sandboxName: string, actionDesc: string): Promise<boolean> {
   if (isNonInteractive()) {
     console.log("");
     console.log(
       `  Change queued. Run '${CLI_NAME} ${sandboxName} rebuild' to apply (${actionDesc}).`,
     );
-    return;
+    return false;
   }
   const answer = (await askPrompt(`  Rebuild '${sandboxName}' now to apply? [Y/n]: `))
     .trim()
@@ -475,9 +476,127 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
     console.log(
       `  Run '${CLI_NAME} ${sandboxName} rebuild' when you are ready to apply (${actionDesc}).`,
     );
-    return;
+    return false;
   }
   await rebuildSandbox(sandboxName, ["--yes"]);
+  return true;
+}
+
+// Channels that share the canonical OpenClaw `channels.<name>.enabled` shape
+// and emit `[<name>] [default]` startup breadcrumbs in /tmp/gateway.log.
+// WhatsApp is QR-only (no host-side bridge process at this point), and WeChat
+// is recorded under the `openclaw-weixin` channel id with its own per-account
+// metadata flow seeded by seed-wechat-accounts.py — neither match the probe
+// shape and would produce false-negative warnings here.
+const OPENCLAW_BRIDGE_VERIFIABLE_CHANNELS = new Set(["telegram", "discord", "slack"]);
+
+// Probe OpenClaw runtime state for a freshly added messaging channel. Runs
+// after `channels add <channel>` triggers a successful rebuild. Reads the
+// baked openclaw.json and tails the gateway log to confirm the bridge module
+// is enabled and emitted a startup breadcrumb. Failures here are best-effort
+// warnings — the rebuild has already succeeded; the goal is to surface
+// "bridge did not spawn" so the user does not discover it from radio silence
+// hours later (#4314, #4390). Restricted to the OpenClaw agent because Hermes
+// sandboxes use /sandbox/.hermes with a different config layout.
+function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: string): void {
+  if (!OPENCLAW_BRIDGE_VERIFIABLE_CHANNELS.has(channelName)) return;
+  const agent = resolveAgentForSandbox(sandboxName);
+  if (agent.name !== "openclaw") return;
+  const configProbe = executeSandboxExecCommand(
+    sandboxName,
+    "cat /sandbox/.openclaw/openclaw.json 2>/dev/null || true",
+    10000,
+  );
+  if (!configProbe || configProbe.status !== 0 || !configProbe.stdout) {
+    console.log(
+      `  ${YW}⚠${R} Could not read /sandbox/.openclaw/openclaw.json to verify '${channelName}' bridge startup.`,
+    );
+    console.log(
+      `    Run '${CLI_NAME} ${sandboxName} status' to inspect the sandbox once it is fully running.`,
+    );
+    return;
+  }
+  let channelEnabled = false;
+  let channelBlock: any = null;
+  try {
+    const cfg = JSON.parse(configProbe.stdout);
+    channelBlock = cfg?.channels?.[channelName];
+    channelEnabled = Boolean(channelBlock?.enabled);
+  } catch {
+    // Malformed config — fall through to the log probe to capture context.
+  }
+  if (!channelEnabled) {
+    console.log(
+      `  ${YW}⚠${R} '${channelName}' channel was not marked enabled in baked openclaw.json after rebuild.`,
+    );
+    console.log(
+      `    The bridge will not start. Re-run '${CLI_NAME} ${sandboxName} rebuild' or 'channels remove ${channelName}' and add again.`,
+    );
+    return;
+  }
+  // Match both the channel module's own breadcrumbs (`[<channel>] [default]`)
+  // and the channel-guard preloads' aggregated form (`[channels] [<channel>]`).
+  // The Slack guard writes "[channels] [slack] provider failed to start..."
+  // when a token is rejected; ignoring that line here would leave the user
+  // with a generic "no breadcrumb" warning instead of the actionable cause.
+  const logProbe = executeSandboxExecCommand(
+    sandboxName,
+    `tail -n 400 /tmp/gateway.log 2>/dev/null | grep -E "^\\[${channelName}\\] |^\\[channels\\] \\[${channelName}\\]" || true`,
+    10000,
+  );
+  const lines = (logProbe?.stdout || "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (lines.length === 0) {
+    console.log(
+      `  ${YW}⚠${R} '${channelName}' bridge did not log a startup breadcrumb in /tmp/gateway.log yet.`,
+    );
+    console.log(
+      `    Tail it with 'openshell sandbox exec --name ${sandboxName} -- tail -f /tmp/gateway.log' if the channel stays silent.`,
+    );
+    return;
+  }
+  const credentialWarnings = lines.filter((line) =>
+    /credential placeholder|Bot API rejected|startup probe (?:failed|returned)|provider failed to start|bridge did not start within|invalid_auth|token_revoked|token_expired/i.test(
+      line,
+    ),
+  );
+  if (credentialWarnings.length > 0) {
+    console.log(
+      `  ${YW}⚠${R} '${channelName}' bridge logged credential/startup warnings:`,
+    );
+    for (const line of credentialWarnings.slice(0, 3)) {
+      console.log(`    ${line}`);
+    }
+    console.log(
+      `    Verify the OpenShell provider for ${channelName} holds a valid credential and re-run '${CLI_NAME} ${sandboxName} rebuild' if needed.`,
+    );
+    return;
+  }
+  // Treat the channel as observably started only when we see a positive
+  // startup signal from the bridge module itself ("starting provider" /
+  // "provider ready"). Otherwise the grep above matched a tangential
+  // breadcrumb (e.g. a stale "no startup detected" line) and a green
+  // "startup detected" message would be misleading.
+  const positiveStartup = lines.some((line) =>
+    /\bstarting provider\b|\bprovider ready\b/.test(line),
+  );
+  if (positiveStartup) {
+    console.log(
+      `  ${G}✓${R} '${channelName}' bridge startup detected in sandbox runtime log.`,
+    );
+    if (channelName === "telegram") {
+      printTelegramDirectMessageAllowlistWarning(channelBlock, console.log, `${YW}⚠${R}`);
+    }
+    return;
+  }
+  console.log(
+    `  ${YW}⚠${R} '${channelName}' bridge log lines found but no startup confirmation yet.`,
+  );
+  console.log(
+    `    Tail it with 'openshell sandbox exec --name ${sandboxName} -- tail -f /tmp/gateway.log' if the channel stays silent.`,
+  );
 }
 
 // Paste-prompt token acquisition for Telegram / Discord / Slack — extracted
@@ -687,7 +806,14 @@ export async function addSandboxChannel(
     console.log(
       `  ${G}✓${R} Enabled ${canonical} channel. Complete QR pairing from inside the sandbox after rebuild.`,
     );
-    await promptAndRebuild(sandboxName, `add '${canonical}'`);
+    // Show post-pair guidance (e.g. the channels status hint for WhatsApp)
+    // here because the in-sandbox QR branch returns before the shared note
+    // loop the non-QR branches use.
+    for (const line of channel.setupNotes ?? []) {
+      console.log(`  ${line}`);
+    }
+    const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
+    if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
     return;
   }
 
@@ -709,7 +835,8 @@ export async function addSandboxChannel(
 
   applyChannelPresetIfAvailable(sandboxName, canonical);
 
-  await promptAndRebuild(sandboxName, `add '${canonical}'`);
+  const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
+  if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
 }
 
 // Must run before promptAndRebuild — the rebuild's backup manifest only

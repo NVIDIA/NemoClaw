@@ -616,6 +616,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
     const ch = String(channel);
     if (ch === "whatsapp") {
       channelConfig[ch] = {
+        enabled: true,
         accounts: {
           default: { enabled: true, healthMonitor: { enabled: false } },
         },
@@ -664,7 +665,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
         slackAllowedChannels.map((channelId) => [channelId, { ...slackChannelConfig }]),
       );
     }
-    channelConfig[ch] = { accounts: { default: account } };
+    channelConfig[ch] = { enabled: true, accounts: { default: account } };
   }
 
   if (
@@ -795,7 +796,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
     config.proxy = {
       enabled: true,
       proxyUrl,
-      loopbackMode: "proxy",
+      loopbackMode: "gateway-only",
     };
   }
 

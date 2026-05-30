@@ -346,7 +346,8 @@ describe("generate-openclaw-config.mts: config generation", () => {
     const channels = Buffer.from(JSON.stringify(["whatsapp"])).toString("base64");
     const config = buildConfigDirect({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     expect(config.channels.whatsapp).toBeDefined();
-    expect(config.channels.whatsapp.enabled).toBeUndefined();
+    expect(config.channels.whatsapp.enabled).toBe(true);
+    expect(config.plugins.entries.whatsapp).toEqual({ enabled: true });
     const account = config.channels.whatsapp.accounts.default;
     expect(account.enabled).toBe(true);
     expect(account.healthMonitor).toEqual({ enabled: false });
@@ -358,12 +359,14 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("keeps WhatsApp config alongside token-based channels in the same run", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "whatsapp"])).toString("base64");
     const config = buildConfigDirect({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.telegram.enabled).toBe(true);
+    expect(config.plugins.entries.telegram).toEqual({ enabled: true });
     expect(config.channels.telegram.accounts.default.botToken).toBe(
       "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     );
-    expect(config.channels.telegram.enabled).toBeUndefined();
+    expect(config.channels.whatsapp.enabled).toBe(true);
+    expect(config.plugins.entries.whatsapp).toEqual({ enabled: true });
     expect(config.channels.whatsapp.accounts.default.enabled).toBe(true);
-    expect(config.channels.whatsapp.enabled).toBeUndefined();
     expect(config.channels.whatsapp.accounts.default.botToken).toBeUndefined();
   });
 
@@ -654,8 +657,12 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.proxy).toMatchObject({
       enabled: true,
       proxyUrl: "http://10.200.0.1:3128",
-      loopbackMode: "proxy",
+      loopbackMode: "gateway-only",
     });
+    expect(config.channels.telegram.enabled).toBe(true);
+    expect(config.plugins.entries.telegram).toEqual({ enabled: true });
+    expect(config.channels.discord.enabled).toBe(true);
+    expect(config.plugins.entries.discord).toEqual({ enabled: true });
     expect(config.channels.telegram.accounts.default.botToken).toBe(
       "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     );
@@ -677,7 +684,7 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(config.proxy).toEqual({
       enabled: true,
       proxyUrl: "http://10.201.0.9:43128",
-      loopbackMode: "proxy",
+      loopbackMode: "gateway-only",
     });
     expect(config.channels.discord.accounts.default).toMatchObject({
       token: "openshell:resolve:env:DISCORD_BOT_TOKEN",
@@ -736,6 +743,8 @@ describe("generate-openclaw-config.mts: config generation", () => {
   it("emits Bolt-shape placeholders for Slack so the SDK's prefix regex passes", () => {
     const channels = Buffer.from(JSON.stringify(["slack"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.slack.enabled).toBe(true);
+    expect(config.plugins.entries.slack).toEqual({ enabled: true });
     const slack = config.channels.slack.accounts.default;
     // Bolt validates ^xoxb-[A-Za-z0-9_-]+$ / ^xapp-…$ at App construction.
     // OpenShell resolves these provider-shaped aliases at the egress boundary.
@@ -743,6 +752,37 @@ describe("generate-openclaw-config.mts: config generation", () => {
     expect(slack.appToken).toBe("xapp-OPENSHELL-RESOLVE-ENV-SLACK_APP_TOKEN");
     expect(slack.botToken).toMatch(/^xoxb-[A-Za-z0-9_-]+$/);
     expect(slack.appToken).toMatch(/^xapp-[A-Za-z0-9_-]+$/);
+  });
+
+  it("marks Telegram and Discord channels enabled so OpenClaw loads the bridges (#4314, #4390)", () => {
+    // Regression: OpenClaw 2026.5.22 no longer auto-starts a channel bridge
+    // from the account-level enabled flag alone. The Slack mitigation in
+    // PR #4222 added `channels.slack.enabled: true`; #4314 / #4390 reported
+    // the same silent failure for Telegram, and the symptom matches Discord
+    // too. Bake the top-level enabled marker for every credential-backed
+    // messaging channel.
+    const channels = Buffer.from(JSON.stringify(["telegram", "discord"])).toString("base64");
+    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    expect(config.channels.telegram.enabled).toBe(true);
+    expect(config.channels.discord.enabled).toBe(true);
+    expect(config.channels.telegram.accounts.default.enabled).toBe(true);
+    expect(config.channels.discord.accounts.default.enabled).toBe(true);
+  });
+
+  it("uses Telegram allowed IDs for direct-message allowlisting (#4553)", () => {
+    const allowedUsers = ["8388960805", "8388960806"];
+    const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
+    const allowedIds = Buffer.from(JSON.stringify({ telegram: allowedUsers })).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: allowedIds,
+    });
+    const telegram = config.channels.telegram.accounts.default;
+
+    expect(config.channels.telegram.enabled).toBe(true);
+    expect(config.plugins.entries.telegram).toEqual({ enabled: true });
+    expect(telegram.dmPolicy).toBe("allowlist");
+    expect(telegram.allowFrom).toEqual(allowedUsers);
   });
 
   it("uses Slack allowed IDs for DMs and channel mention allowlisting (#3729)", () => {
@@ -755,6 +795,8 @@ describe("generate-openclaw-config.mts: config generation", () => {
     });
     const slack = config.channels.slack.accounts.default;
 
+    expect(config.channels.slack.enabled).toBe(true);
+    expect(config.plugins.entries.slack).toEqual({ enabled: true });
     expect(slack.dmPolicy).toBe("allowlist");
     expect(slack.allowFrom).toEqual(allowedUsers);
     expect(slack.groupPolicy).toBe("allowlist");

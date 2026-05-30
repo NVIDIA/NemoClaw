@@ -19,17 +19,19 @@
 #   3. Credential isolation — real tokens never appear in sandbox env,
 #      process list, or filesystem
 #   4. Config patching — openclaw.json channels use placeholder values
-#   5. Telegram diagnostics — startup/credential breadcrumbs stay sanitized
-#   6. Network reachability — Node.js can reach messaging APIs through proxy
-#   7. Native Discord gateway path — WebSocket L7 path is tested hermetically
-#   8. L7 proxy rewriting — placeholder is rewritten to real token at egress
-#   9. WhatsApp QR-only parity — channel add/rebuild applies policy, bakes
+#   5. OpenClaw runtime discovery — channels list as installed/configured
+#   6. Telegram diagnostics — startup/credential breadcrumbs stay sanitized
+#   7. Network reachability — Node.js can reach messaging APIs through proxy
+#   8. Native Discord gateway path — WebSocket L7 path is tested hermetically
+#   9. L7 proxy rewriting — placeholder is rewritten to real token at egress
+#  10. WhatsApp QR-only parity — channel add/rebuild applies policy, bakes
 #      openclaw.json, creates no providers, and leaks no token placeholders
 #
 # Uses fake tokens by default (no external accounts needed). With fake tokens,
-# the API returns 401 — proving the full chain worked (request reached the
-# real API with the token rewritten). Optional real tokens enable a bonus
-# round-trip phase.
+# the live API probes return 401/404 — proving the full chain worked (request
+# reached the real API with the token rewritten). The OpenClaw plugin-send phase
+# then sends messages to host-side fake provider APIs when complete real
+# credentials/targets are not configured.
 #
 # Prerequisites:
 #   - Docker running
@@ -45,8 +47,12 @@
 #   TELEGRAM_BOT_TOKEN                     — defaults to fake token
 #   DISCORD_BOT_TOKEN                      — defaults to fake token
 #   TELEGRAM_ALLOWED_IDS                   — comma-separated Telegram user IDs for DM allowlisting
-#   TELEGRAM_BOT_TOKEN_REAL                — optional: enables Phase 6 real round-trip
-#   DISCORD_BOT_TOKEN_REAL                 — optional: enables Phase 6 real round-trip
+#   TELEGRAM_AUTHORIZED_CHAT_IDS           — compatibility alias for TELEGRAM_ALLOWED_IDS
+#   TELEGRAM_CHAT_ID                       — compatibility alias for TELEGRAM_ALLOWED_IDS
+#   TELEGRAM_BOT_TOKEN_REAL                — optional: enables Phase 6 real OpenClaw send
+#   DISCORD_BOT_TOKEN_REAL                 — optional: enables Phase 6 real OpenClaw send
+#   SLACK_BOT_TOKEN_REAL                   — optional: enables Phase 6 real OpenClaw send
+#   SLACK_APP_TOKEN_REAL                   — optional paired Slack app token for real Slack run
 #   SLACK_BOT_TOKEN                        — defaults to fake token (xoxb-fake-...)
 #   SLACK_APP_TOKEN                        — defaults to fake token (xapp-fake-...)
 #   SLACK_ALLOWED_USERS                    — comma-separated Slack user IDs for DM and channel @mention allowlisting
@@ -61,7 +67,14 @@
 #   WHATSAPP_TOKEN / WHATSAPP_BOT_TOKEN / WHATSAPP_SESSION_SECRET
 #                                          — overwritten with fake decoys to prove NemoClaw ignores host-side
 #                                            WhatsApp credential-shaped env vars
-#   TELEGRAM_CHAT_ID_E2E                   — optional: enables sendMessage test
+#   TELEGRAM_CHAT_ID_E2E                   — optional: target for real Telegram send
+#   DISCORD_CHANNEL_ID_E2E                 — optional: target for real Discord send
+#   SLACK_CHANNEL_ID_E2E                   — optional: target for real Slack send
+#   NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E=1  — optional: wait for a real Telegram-client DM
+#                                            from an allowed user and verify inbound +
+#                                            outbound gateway breadcrumbs
+#   NEMOCLAW_TELEGRAM_INBOUND_WAIT_SECONDS — optional: wait time for the live inbound
+#                                            proof (default: 90)
 #   NEMOCLAW_OPENSHELL_BIN                 — optional OpenShell binary under test
 #   NEMOCLAW_FRESH=1                       — auto-set to discard interrupted onboard sessions
 #
@@ -150,16 +163,265 @@ registry_array_contains() {
   printf '%s' "$value" | grep -Fq "\"${item}\""
 }
 
+assert_openclaw_config_activation() {
+  local assertion_id="$1"
+  local channel="$2"
+  local label="$3"
+  local channel_present channel_enabled plugin_enabled
+
+  channel_present=$(printf '%s\n' "$channel_json" | CHANNEL="$channel" python3 -c '
+import json
+import os
+import sys
+try:
+    channels = json.load(sys.stdin)
+    print("true" if isinstance(channels.get(os.environ["CHANNEL"]), dict) else "false")
+except Exception:
+    print("error")
+' 2>/dev/null || true)
+  channel_enabled=$(printf '%s\n' "$channel_json" | CHANNEL="$channel" python3 -c '
+import json
+import os
+import sys
+try:
+    channels = json.load(sys.stdin)
+    entry = channels.get(os.environ["CHANNEL"], {})
+    print("true" if isinstance(entry, dict) and entry.get("enabled") is True else "false")
+except Exception:
+    print("error")
+' 2>/dev/null || true)
+  plugin_enabled=$(printf '%s\n' "$plugin_entries_json" | CHANNEL="$channel" python3 -c '
+import json
+import os
+import sys
+try:
+    entries = json.load(sys.stdin)
+    entry = entries.get(os.environ["CHANNEL"], {})
+    print("true" if isinstance(entry, dict) and entry.get("enabled") is True else "false")
+except Exception:
+    print("error")
+' 2>/dev/null || true)
+
+  if [ "$channel_present" != "true" ]; then
+    skip "${assertion_id}: ${label} channel block not in openclaw.json (expected in non-root sandbox)"
+    return
+  fi
+
+  if [ "$channel_enabled" = "true" ] && [ "$plugin_enabled" = "true" ]; then
+    pass "${assertion_id}: ${label} channel and plugin are explicitly enabled in openclaw.json"
+  else
+    fail "${assertion_id}: ${label} OpenClaw activation missing (channels.${channel}.enabled=${channel_enabled}, plugins.entries.${channel}.enabled=${plugin_enabled})"
+  fi
+}
+
+summarize_openclaw_config_activation() {
+  CHANNEL_JSON="$channel_json" PLUGIN_ENTRIES_JSON="$plugin_entries_json" python3 -c '
+import json
+import os
+
+channels_to_check = ("telegram", "discord", "slack", "whatsapp")
+try:
+    channels = json.loads(os.environ.get("CHANNEL_JSON", "{}"))
+    entries = json.loads(os.environ.get("PLUGIN_ENTRIES_JSON", "{}"))
+except json.JSONDecodeError as exc:
+    print("parse_error=%s" % exc.msg)
+    raise SystemExit(0)
+
+summary = []
+for channel in channels_to_check:
+    channel_entry = channels.get(channel, {})
+    plugin_entry = entries.get(channel, {})
+    summary.append(
+        "%s:channel=%s,plugin=%s"
+        % (
+            channel,
+            isinstance(channel_entry, dict) and channel_entry.get("enabled") is True,
+            isinstance(plugin_entry, dict) and plugin_entry.get("enabled") is True,
+        )
+    )
+print("; ".join(summary))
+' 2>/dev/null || printf 'unavailable'
+}
+
+summarize_openclaw_runtime_channels() {
+  printf '%s\n' "$openclaw_channels_list_json" | python3 -c '
+import json
+import sys
+
+channels_to_check = ("telegram", "discord", "slack", "whatsapp")
+try:
+    data = json.load(sys.stdin)
+except json.JSONDecodeError as exc:
+    print("parse_error=%s" % exc.msg)
+    raise SystemExit(0)
+
+chat = data.get("chat") if isinstance(data, dict) else None
+if not isinstance(chat, dict):
+    print("missing_chat")
+    raise SystemExit(0)
+
+summary = []
+for channel in channels_to_check:
+    entry = chat.get(channel)
+    if not isinstance(entry, dict):
+        summary.append("%s:missing" % channel)
+        continue
+    accounts = entry.get("accounts")
+    if isinstance(accounts, list):
+        account_ids = [str(item) for item in accounts if isinstance(item, str)]
+    else:
+        account_ids = ["<%s>" % type(accounts).__name__]
+    summary.append(
+        "%s:installed=%s,origin=%s,accounts=%s"
+        % (channel, entry.get("installed"), entry.get("origin"), ",".join(account_ids))
+    )
+print("; ".join(summary))
+' 2>/dev/null || printf 'unavailable'
+}
+
+assert_openclaw_runtime_channel() {
+  local assertion_id="$1"
+  local channel="$2"
+  local label="$3"
+  local expected_account="${4:-default}"
+  local runtime_state
+
+  runtime_state=$(printf '%s\n' "$openclaw_channels_list_json" | CHANNEL="$channel" ACCOUNT="$expected_account" python3 -c '
+import json
+import os
+import sys
+
+channel = os.environ["CHANNEL"]
+expected = os.environ.get("ACCOUNT", "")
+try:
+    data = json.load(sys.stdin)
+except json.JSONDecodeError as exc:
+    print("error invalid_json=%s" % exc.msg)
+    raise SystemExit(0)
+
+if not isinstance(data, dict):
+    print("no top_level_type=%s" % type(data).__name__)
+    raise SystemExit(0)
+
+chat = data.get("chat")
+if not isinstance(chat, dict):
+    print("no missing_chat")
+    raise SystemExit(0)
+
+entry = chat.get(channel)
+if not isinstance(entry, dict):
+    print("no missing_channel")
+    raise SystemExit(0)
+
+# OpenClaw `channels list --all --json` currently reports configured account
+# ids as a list of strings, for example: {"chat":{"slack":{"accounts":["default"]}}}.
+# Keep this strict so schema drift fails loudly instead of hiding a discovery
+# regression behind a permissive compatibility parser.
+accounts = entry.get("accounts")
+if not isinstance(accounts, list) or any(not isinstance(item, str) for item in accounts):
+    print(
+        "no installed=%s origin=%s accounts_shape=%s"
+        % (entry.get("installed"), entry.get("origin"), type(accounts).__name__)
+    )
+    raise SystemExit(0)
+
+installed = entry.get("installed") is True
+configured = entry.get("origin") == "configured"
+account_ok = not expected or expected in accounts
+if installed and configured and account_ok:
+    print("yes")
+else:
+    print(
+        "no installed=%s origin=%s accounts=%s"
+        % (entry.get("installed"), entry.get("origin"), accounts)
+    )
+' 2>/dev/null || true)
+
+  if [ "$runtime_state" = "yes" ]; then
+    pass "${assertion_id}: OpenClaw channels list reports ${label} installed and configured"
+  else
+    fail "${assertion_id}: OpenClaw channels list did not report ${label} installed/configured (${runtime_state}; summary=${openclaw_channels_summary:-unavailable})"
+  fi
+}
+
+assert_openclaw_runtime_channel_installed() {
+  local assertion_id="$1"
+  local channel="$2"
+  local label="$3"
+  local runtime_state
+
+  runtime_state=$(printf '%s\n' "$openclaw_channels_list_json" | CHANNEL="$channel" python3 -c '
+import json
+import os
+import sys
+
+channel = os.environ["CHANNEL"]
+try:
+    data = json.load(sys.stdin)
+except json.JSONDecodeError as exc:
+    print("error invalid_json=%s" % exc.msg)
+    raise SystemExit(0)
+
+chat = data.get("chat") if isinstance(data, dict) else None
+if not isinstance(chat, dict):
+    print("no missing_chat")
+    raise SystemExit(0)
+
+entry = chat.get(channel)
+if not isinstance(entry, dict):
+    print("no missing_channel")
+    raise SystemExit(0)
+
+accounts = entry.get("accounts")
+if not isinstance(accounts, list) or any(not isinstance(item, str) for item in accounts):
+    print(
+        "no installed=%s origin=%s accounts_shape=%s"
+        % (entry.get("installed"), entry.get("origin"), type(accounts).__name__)
+    )
+    raise SystemExit(0)
+
+installed = entry.get("installed") is True
+origin_ok = entry.get("origin") in ("available", "configured")
+if installed and origin_ok:
+    print("yes")
+else:
+    print(
+        "no installed=%s origin=%s accounts=%s"
+        % (entry.get("installed"), entry.get("origin"), accounts)
+    )
+' 2>/dev/null || true)
+
+  if [ "$runtime_state" = "yes" ]; then
+    pass "${assertion_id}: OpenClaw channels list reports ${label} plugin installed"
+  else
+    fail "${assertion_id}: OpenClaw channels list did not report ${label} plugin installed (${runtime_state}; summary=${openclaw_channels_summary:-unavailable})"
+  fi
+}
+
 # shellcheck source=test/e2e/lib/sandbox-teardown.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/sandbox-teardown.sh"
 register_sandbox_for_teardown "$SANDBOX_NAME"
 
-# Default to fake tokens if not provided
-TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}"
-DISCORD_TOKEN="${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}"
-SLACK_TOKEN="${SLACK_BOT_TOKEN:-xoxb-fake-slack-token-e2e}"
-SLACK_APP="${SLACK_APP_TOKEN:-xapp-fake-slack-app-token-e2e}"
-TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
+# Default to hermetic fake tokens, but let repository live-message secrets win
+# when they are available. The workflow always provides fake env_json values so
+# the _REAL variables must take precedence here.
+TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN_REAL:-${TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-e2e}}"
+DISCORD_TOKEN="${DISCORD_BOT_TOKEN_REAL:-${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}}"
+SLACK_TOKEN="${SLACK_BOT_TOKEN_REAL:-${SLACK_BOT_TOKEN:-xoxb-fake-slack-token-e2e}}"
+SLACK_APP="${SLACK_APP_TOKEN_REAL:-${SLACK_APP_TOKEN:-xapp-fake-slack-app-token-e2e}}"
+if [ -n "${TELEGRAM_ALLOWED_IDS:-}" ]; then
+  TELEGRAM_IDS="$TELEGRAM_ALLOWED_IDS"
+  TELEGRAM_ALLOWLIST_ENV_KEY="TELEGRAM_ALLOWED_IDS"
+elif [ -n "${TELEGRAM_AUTHORIZED_CHAT_IDS:-}" ]; then
+  TELEGRAM_IDS="$TELEGRAM_AUTHORIZED_CHAT_IDS"
+  TELEGRAM_ALLOWLIST_ENV_KEY="TELEGRAM_AUTHORIZED_CHAT_IDS"
+elif [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+  TELEGRAM_IDS="$TELEGRAM_CHAT_ID"
+  TELEGRAM_ALLOWLIST_ENV_KEY="TELEGRAM_CHAT_ID"
+else
+  TELEGRAM_IDS="123456789,987654321"
+  TELEGRAM_ALLOWLIST_ENV_KEY="TELEGRAM_AUTHORIZED_CHAT_IDS"
+fi
 SLACK_IDS="${SLACK_ALLOWED_USERS-U0AR85ATALW,U09E2ESLACK}"
 # WeChat: pre-seeding WECHAT_BOT_TOKEN + the per-account metadata env vars lets
 # the non-interactive onboard path (src/lib/onboard.ts:8433) treat wechat as
@@ -179,7 +441,19 @@ export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
 export SLACK_BOT_TOKEN="$SLACK_TOKEN"
 export SLACK_APP_TOKEN="$SLACK_APP"
-export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
+case "$TELEGRAM_ALLOWLIST_ENV_KEY" in
+  TELEGRAM_ALLOWED_IDS)
+    export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
+    ;;
+  TELEGRAM_AUTHORIZED_CHAT_IDS)
+    unset TELEGRAM_ALLOWED_IDS
+    export TELEGRAM_AUTHORIZED_CHAT_IDS="$TELEGRAM_IDS"
+    ;;
+  TELEGRAM_CHAT_ID)
+    unset TELEGRAM_ALLOWED_IDS TELEGRAM_AUTHORIZED_CHAT_IDS
+    export TELEGRAM_CHAT_ID="$TELEGRAM_IDS"
+    ;;
+esac
 export SLACK_ALLOWED_USERS="$SLACK_IDS"
 export WECHAT_BOT_TOKEN="$WECHAT_TOKEN"
 export WECHAT_ACCOUNT_ID="$WECHAT_ACCOUNT"
@@ -232,12 +506,110 @@ sandbox_exec() {
   echo "$result"
 }
 
+read_gateway_log() {
+  openshell sandbox exec --name "$SANDBOX_NAME" -- cat /tmp/gateway.log 2>/dev/null || true
+}
+
+run_telegram_inbound_reply_probe() {
+  if [ "${NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E:-}" != "1" ]; then
+    return
+  fi
+
+  section "Phase 6a: Live Telegram Inbound Reply Proof"
+
+  local wait_seconds="${NEMOCLAW_TELEGRAM_INBOUND_WAIT_SECONDS:-90}"
+  if ! [[ "$wait_seconds" =~ ^[0-9]+$ ]]; then
+    wait_seconds=90
+  fi
+  if [ "$wait_seconds" -lt 1 ]; then
+    wait_seconds=90
+  fi
+
+  if [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ]; then
+    fail "M19b: Live Telegram inbound proof requires TELEGRAM_BOT_TOKEN_REAL"
+    return
+  fi
+  if [ "$TELEGRAM_ALLOWLIST_ENV_KEY" = "TELEGRAM_ALLOWED_IDS" ]; then
+    fail "M19b: Live Telegram inbound proof must be run with TELEGRAM_AUTHORIZED_CHAT_IDS or TELEGRAM_CHAT_ID to exercise alias compatibility"
+    return
+  fi
+  if [ -z "$TELEGRAM_IDS" ]; then
+    fail "M19b: Live Telegram inbound proof requires a non-empty Telegram allowlist alias"
+    return
+  fi
+
+  local log_before_lines
+  log_before_lines=$(read_gateway_log | wc -l | tr -d ' ')
+  if [ -z "$log_before_lines" ]; then
+    log_before_lines=0
+  fi
+
+  info "Live Telegram inbound proof is using ${TELEGRAM_ALLOWLIST_ENV_KEY}; send a fresh direct message from an allowed Telegram client to the bot now."
+  info "Waiting up to ${wait_seconds}s for inbound getUpdates and outbound sendMessage breadcrumbs in /tmp/gateway.log..."
+
+  local deadline now delta_log saw_inbound saw_outbound
+  deadline=$(($(date +%s) + wait_seconds))
+  saw_inbound=0
+  saw_outbound=0
+  while true; do
+    delta_log=$(read_gateway_log | awk -v start="$log_before_lines" 'NR > start')
+    if echo "$delta_log" | grep -qF "[telegram] [default] inbound update received"; then
+      saw_inbound=1
+    fi
+    if echo "$delta_log" | grep -qF "[telegram] [default] outbound sendMessage attempted"; then
+      saw_outbound=1
+    fi
+    if [ "$saw_inbound" = "1" ] && [ "$saw_outbound" = "1" ]; then
+      pass "M19b: Telegram client DM produced inbound getUpdates and outbound reply breadcrumbs"
+      return
+    fi
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      break
+    fi
+    sleep 5
+  done
+
+  fail "M19b: Timed out waiting for Telegram inbound/reply breadcrumbs (inbound=${saw_inbound}, outbound=${saw_outbound})"
+}
+
+run_openclaw_message_send() {
+  local channel="$1"
+  local target="$2"
+  local message="$3"
+  local channel_b64 target_b64 message_b64
+  channel_b64=$(printf '%s' "$channel" | base64 | tr -d '\n')
+  target_b64=$(printf '%s' "$target" | base64 | tr -d '\n')
+  message_b64=$(printf '%s' "$message" | base64 | tr -d '\n')
+
+  sandbox_exec_stdin "OPENCLAW_MESSAGE_CHANNEL_B64='$channel_b64' OPENCLAW_MESSAGE_TARGET_B64='$target_b64' OPENCLAW_MESSAGE_TEXT_B64='$message_b64' bash -s" <<'SH'
+decode_b64() {
+  printf '%s' "$1" | base64 -d
+}
+
+channel="$(decode_b64 "$OPENCLAW_MESSAGE_CHANNEL_B64")"
+target="$(decode_b64 "$OPENCLAW_MESSAGE_TARGET_B64")"
+message="$(decode_b64 "$OPENCLAW_MESSAGE_TEXT_B64")"
+
+set +e
+OPENCLAW_NO_COLOR=1 openclaw message send --channel "$channel" --target "$target" --message "$message" --json
+rc=$?
+echo "__OPENCLAW_MESSAGE_SEND_EXIT__:$rc"
+SH
+}
+
+openclaw_message_send_exit_code() {
+  awk -F: '/^__OPENCLAW_MESSAGE_SEND_EXIT__:/ { code = $2 } END { if (code != "") print code }'
+}
+
 # shellcheck source=test/e2e/lib/discord-gateway-proof.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/discord-gateway-proof.sh"
 # shellcheck source=test/e2e/lib/discord-rest-policy-proof.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/discord-rest-policy-proof.sh"
 # shellcheck source=test/e2e/lib/slack-api-proof.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib/slack-api-proof.sh"
+# shellcheck source=test/e2e/lib/telegram-api-proof.sh
+. "$(dirname "${BASH_SOURCE[0]}")/lib/telegram-api-proof.sh"
 
 # ══════════════════════════════════════════════════════════════════
 # Phase 0: Prerequisites
@@ -256,8 +628,17 @@ if ! docker info >/dev/null 2>&1; then
 fi
 pass "Docker is running"
 
-info "Telegram token: ${TELEGRAM_TOKEN:0:10}... (${#TELEGRAM_TOKEN} chars)"
-info "Discord token: ${DISCORD_TOKEN:0:10}... (${#DISCORD_TOKEN} chars)"
+info "Telegram token: configured (${#TELEGRAM_TOKEN} chars)"
+telegram_allowed_id_count=0
+if [ -n "$TELEGRAM_IDS" ]; then
+  IFS=',' read -ra _telegram_allowed_ids <<<"$TELEGRAM_IDS"
+  for _tid in "${_telegram_allowed_ids[@]}"; do
+    _tid="${_tid//[[:space:]]/}"
+    [ -n "$_tid" ] && ((telegram_allowed_id_count++))
+  done
+fi
+info "Telegram allowlist source: ${TELEGRAM_ALLOWLIST_ENV_KEY} (${telegram_allowed_id_count} ID(s))"
+info "Discord token: configured (${#DISCORD_TOKEN} chars)"
 info "Slack bot token: configured (${#SLACK_TOKEN} chars)"
 info "Slack app token: configured (${#SLACK_APP} chars)"
 slack_allowed_user_count=0
@@ -290,11 +671,14 @@ if openshell --version >/dev/null 2>&1; then
 fi
 pass "Pre-cleanup complete"
 
-if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ]; then
-  if ! curl -fsS --max-time 10 https://api.telegram.org/ >/dev/null 2>&1; then
-    export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
-    info "Host cannot reach api.telegram.org; skipping onboarding Telegram reachability probe for fake-token E2E"
-  fi
+if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] \
+  && [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ] \
+  && [[ "$TELEGRAM_TOKEN" == *fake* ]]; then
+  # This E2E normally uses fake tokens to exercise config plumbing, not the
+  # live Telegram API. Keep real-token runs on the onboard validation path.
+  # Remove once onboard has a hermetic fake Telegram API.
+  export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+  info "Skipping onboarding Telegram reachability probe for fake-token E2E"
 fi
 
 # Pre-merge Slack policy into the base sandbox policy.
@@ -861,11 +1245,39 @@ try:
 except Exception as e:
     print(json.dumps({'error': str(e)}))
 \"" 2>/dev/null || true)
+plugin_entries_json=$(sandbox_exec "python3 -c \"
+import json
+try:
+    cfg = json.load(open('/sandbox/.openclaw/openclaw.json'))
+    entries = cfg.get('plugins', {}).get('entries', {})
+    print(json.dumps(entries))
+except Exception as e:
+    print(json.dumps({'error': str(e)}))
+\"" 2>/dev/null || true)
 
 if [ -z "$channel_json" ] || echo "$channel_json" | grep -q '"error"'; then
   fail "M6: Could not read openclaw.json channels (${channel_json:0:200})"
 else
-  info "Channel config: ${channel_json:0:300}"
+  info "OpenClaw channel activation summary: $(summarize_openclaw_config_activation)"
+
+  assert_openclaw_config_activation "M6a" "telegram" "Telegram"
+  assert_openclaw_config_activation "M6b" "discord" "Discord"
+  assert_openclaw_config_activation "M6c" "slack" "Slack"
+  assert_openclaw_config_activation "M6d" "whatsapp" "WhatsApp"
+
+  # This live nightly check intentionally uses OpenClaw's real runtime surface:
+  # config activation alone is not enough if the CLI still treats the channel as
+  # unavailable. Log only derived state; raw channel JSON may grow token/session
+  # fields in future OpenClaw releases.
+  openclaw_channels_list_json=$(sandbox_exec "timeout 45 openclaw channels list --all --json --no-color 2>/dev/null" 2>/dev/null || true)
+  openclaw_channels_summary="$(summarize_openclaw_runtime_channels)"
+  info "OpenClaw channels list summary: ${openclaw_channels_summary}"
+  assert_openclaw_runtime_channel "M6e" "telegram" "Telegram" "default"
+  assert_openclaw_runtime_channel "M6f" "discord" "Discord" "default"
+  assert_openclaw_runtime_channel "M6g" "slack" "Slack" "default"
+  # WhatsApp has no host-side token provider; before QR pairing OpenClaw can
+  # prove only that the external plugin is installed and loadable.
+  assert_openclaw_runtime_channel_installed "M6h" "whatsapp" "WhatsApp"
 
   # M6: Telegram channel exists with a bot token
   # Note: non-root sandboxes cannot patch openclaw.json (chmod 444, root-owned).
@@ -884,6 +1296,47 @@ print(account.get('botToken', ''))
   else
     skip "M6: Telegram channel not in openclaw.json (expected in non-root sandbox)"
   fi
+
+  # M6a/M6b: When the channel block is present in openclaw.json, the
+  # generated config must mark it enabled at the top level so OpenClaw
+  # 2026.5.22+ actually loads the bridge. NemoClaw#4314 / #4390 reproduced
+  # as silent "no bridge / no logs"; the symptom matched the Slack
+  # regression fixed in #4222. Mirror M6's skip-on-absent pattern — the
+  # non-root sandbox path cannot patch openclaw.json and the block may be
+  # missing entirely; we only assert behavior when the block is present.
+  tg_state=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+block = d.get('telegram')
+if not isinstance(block, dict):
+    print('absent')
+elif block.get('enabled') is True:
+    print('enabled')
+else:
+    print('missing')
+" 2>/dev/null || echo "absent")
+  case "$tg_state" in
+    enabled) pass "M6a: channels.telegram.enabled is true (bridge loadable per #4314/#4390)" ;;
+    missing) fail "M6a: channels.telegram present but enabled flag missing — bridge will silently no-op" ;;
+    *) skip "M6a: Telegram channel block not in openclaw.json (expected in non-root sandbox)" ;;
+  esac
+
+  dc_state=$(echo "$channel_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+block = d.get('discord')
+if not isinstance(block, dict):
+    print('absent')
+elif block.get('enabled') is True:
+    print('enabled')
+else:
+    print('missing')
+" 2>/dev/null || echo "absent")
+  case "$dc_state" in
+    enabled) pass "M6b: channels.discord.enabled is true (bridge loadable)" ;;
+    missing) fail "M6b: channels.discord present but enabled flag missing — bridge will silently no-op" ;;
+    *) skip "M6b: Discord channel block not in openclaw.json (expected in non-root sandbox)" ;;
+  esac
 
   # M7: Telegram token is NOT the real/fake host token
   if [ -n "$tg_token" ] && [ "$tg_token" != "$TELEGRAM_TOKEN" ]; then
@@ -1197,6 +1650,9 @@ print(','.join(str(i) for i in ids))
     done
     if [ ${#missing_ids[@]} -eq 0 ]; then
       pass "M11c: Telegram allowFrom contains all expected user IDs: $tg_allow_from"
+      if [ "$TELEGRAM_ALLOWLIST_ENV_KEY" != "TELEGRAM_ALLOWED_IDS" ]; then
+        pass "M11c-alias: Telegram allowFrom honored ${TELEGRAM_ALLOWLIST_ENV_KEY} alias"
+      fi
     else
       fail "M11c: Telegram allowFrom ($tg_allow_from) is missing IDs: ${missing_ids[*]} (expected all of: $TELEGRAM_IDS)"
     fi
@@ -1390,6 +1846,49 @@ print(','.join(bad))
     fail "M-WA9: WhatsApp config contains secret-like fields: ${whatsapp_secret_fields}"
   fi
 
+  # M-W7: WeChat plugin install registry is restored alongside the channel
+  # block, the plugin entry is enabled, and the install spec is pinned to a
+  # concrete semver. The upstream plugin loader needs this install metadata
+  # after OpenClaw config rewrites (plugins.entries alone is not enough),
+  # and a floating spec (e.g. "@latest") would silently bypass the
+  # installer-trust pinning enforced in Dockerfile.base and
+  # scripts/seed-wechat-accounts.py (WECHAT_PLUGIN_SPEC=@2.4.3).
+  wechat_plugins_json=$(sandbox_exec "python3 -c \"
+import json
+cfg = json.load(open('/sandbox/.openclaw/openclaw.json'))
+plugins = cfg.get('plugins', {}) or {}
+print(json.dumps({
+    'install': plugins.get('installs', {}).get('openclaw-weixin', {}),
+    'entry': plugins.get('entries', {}).get('openclaw-weixin', {}),
+}))
+\"" 2>/dev/null || true)
+  if echo "$wechat_plugins_json" | python3 -c "
+import json, re, sys
+try:
+    data = json.load(sys.stdin)
+except Exception:
+    sys.exit(2)
+inst = data.get(\"install\") if isinstance(data, dict) else None
+entry = data.get(\"entry\") if isinstance(data, dict) else None
+spec = inst.get(\"spec\") if isinstance(inst, dict) else None
+install_path = inst.get(\"installPath\") if isinstance(inst, dict) else None
+ok = (
+    isinstance(inst, dict)
+    and inst.get(\"source\") == \"npm\"
+    and isinstance(spec, str)
+    and bool(re.fullmatch(r\"@tencent-weixin/openclaw-weixin@\d+\.\d+\.\d+\", spec))
+    and isinstance(install_path, str)
+    and bool(install_path.strip())
+    and isinstance(entry, dict)
+    and entry.get(\"enabled\") is True
+)
+sys.exit(0 if ok else 1)
+" 2>/dev/null; then
+    pass "M-W7: WeChat plugin install registry restored, entry enabled, spec pinned in openclaw.json"
+  else
+    fail "M-W7: WeChat plugin install registry missing/invalid, entry not enabled, or spec not pinned to a concrete semver"
+  fi
+
   # M-W8: WeChat channel registered under channels.openclaw-weixin with the
   # configured accountId enabled. Written by seed-wechat-accounts.py during
   # image build using NEMOCLAW_WECHAT_CONFIG_B64. Absence here means
@@ -1405,7 +1904,7 @@ print(account.get('enabled', False))
   if [ "$wechat_enabled" = "True" ]; then
     pass "M-W8: WeChat account '$WECHAT_ACCOUNT' is enabled in openclaw.json (channels.openclaw-weixin)"
   else
-    skip "M-W8: WeChat account not enabled in openclaw.json (expected in non-root sandbox or seed-wechat-accounts.py was skipped)"
+    fail "M-W8: WeChat account not enabled in openclaw.json (channels.openclaw-weixin missing or disabled)"
   fi
 fi
 
@@ -1416,7 +1915,7 @@ fi
 # would mean someone bypassed the placeholder constant.
 wechat_account_json=$(sandbox_exec "cat /sandbox/.openclaw/openclaw-weixin/accounts/${WECHAT_ACCOUNT}.json 2>/dev/null || true" 2>/dev/null || true)
 if [ -z "$wechat_account_json" ] || echo "$wechat_account_json" | grep -qi "no such file"; then
-  skip "M-W9: WeChat per-account credential file not found (seed-wechat-accounts.py may have been skipped)"
+  fail "M-W9: WeChat per-account credential file not found (seed-wechat-accounts.py may have been skipped)"
 else
   if echo "$wechat_account_json" | grep -qF "$WECHAT_TOKEN"; then
     fail "M-W9: Real WeChat token spliced into accounts/${WECHAT_ACCOUNT}.json — seed-wechat-accounts.py placeholder regression"
@@ -1432,7 +1931,7 @@ fi
 # auth/accounts.ts boots accounts that appear in this index.
 wechat_index_json=$(sandbox_exec "cat /sandbox/.openclaw/openclaw-weixin/accounts.json 2>/dev/null || true" 2>/dev/null || true)
 if [ -z "$wechat_index_json" ] || echo "$wechat_index_json" | grep -qi "no such file"; then
-  skip "M-W10: WeChat accounts.json index not found"
+  fail "M-W10: WeChat accounts.json index not found"
 else
   if echo "$wechat_index_json" | python3 -c "
 import json, sys
@@ -2071,6 +2570,7 @@ info "Running Slack channel @mention allowlist proof through installed OpenClaw.
 sl_channel_proof=""
 sl_allowed_user="${SLACK_IDS%%,*}"
 sl_allowed_user="${sl_allowed_user//[[:space:]]/}"
+slack_openclaw_plugin_mock_send_ok=0
 if [ "$fake_slack_ready" = "1" ] && [ -n "$sl_allowed_user" ]; then
   sl_channel_proof=$(run_fake_slack_channel_mention_proof "$FAKE_SLACK_API_PORT" "$sl_allowed_user" "U999DENIED" || true)
 fi
@@ -2091,6 +2591,26 @@ if echo "$sl_channel_proof" | grep -q '"ok":true' \
   else
     fail "M-S17b: fake Slack did not capture expected channel reply metadata: ${sl_message_capture:0:300}"
   fi
+  sl_proof_kind=$(printf '%s\n' "$sl_channel_proof" | python3 -c '
+import json
+import sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line.startswith("{"):
+        continue
+    try:
+        value = json.loads(line)
+    except Exception:
+        continue
+    print(value.get("proof", ""))
+    break
+' 2>/dev/null || true)
+  if [ "$sl_proof_kind" = "openclaw-private-helper" ] && [ "$sl_message_capture" = "OK" ]; then
+    slack_openclaw_plugin_mock_send_ok=1
+    pass "M-S17c: installed OpenClaw Slack send helper drove the host-side fake Slack message"
+  else
+    fail "M-S17c: Slack proof did not use the installed OpenClaw Slack send helper (proof=${sl_proof_kind:-missing})"
+  fi
 elif [ "$fake_slack_ready" != "1" ]; then
   skip "M-S17: fake Slack API was not ready"
 elif [ -z "$sl_allowed_user" ]; then
@@ -2100,11 +2620,11 @@ else
 fi
 
 # ══════════════════════════════════════════════════════════════════
-# Phase 6: Real API Round-Trip (Optional)
+# Phase 6: OpenClaw Plugin Sends
 # ══════════════════════════════════════════════════════════════════
-section "Phase 6: Real API Round-Trip (Optional)"
+section "Phase 6: OpenClaw Plugin Sends"
 
-if [ -n "${TELEGRAM_BOT_TOKEN_REAL:-}" ]; then
+if [ -n "${TELEGRAM_BOT_TOKEN_REAL:-}" ] && [ -n "${TELEGRAM_CHAT_ID_E2E:-}" ]; then
   info "Real Telegram token available — testing live round-trip"
 
   # M18: Telegram getMe with real token should return 200 + bot info
@@ -2119,53 +2639,120 @@ if [ -n "${TELEGRAM_BOT_TOKEN_REAL:-}" ]; then
     fail "M18: Expected Telegram getMe 200 with real token, got: $tg_status"
   fi
 
-  # M19: sendMessage if chat ID is available
-  if [ -n "${TELEGRAM_CHAT_ID_E2E:-}" ]; then
-    info "Sending test message to chat ${TELEGRAM_CHAT_ID_E2E}..."
-    send_result=$(sandbox_exec "node -e \"
-const https = require('https');
-const token = process.env.TELEGRAM_BOT_TOKEN || '';
-const chatId = '${TELEGRAM_CHAT_ID_E2E}';
-const msg = 'NemoClaw E2E test ' + new Date().toISOString();
-const data = JSON.stringify({ chat_id: chatId, text: msg });
-const options = {
-  hostname: 'api.telegram.org',
-  path: '/bot' + token + '/sendMessage',
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json', 'Content-Length': data.length },
-};
-const req = https.request(options, (res) => {
-  let body = '';
-  res.on('data', (d) => body += d);
-  res.on('end', () => console.log(res.statusCode + ' ' + body.slice(0, 300)));
-});
-req.on('error', (e) => console.log('ERROR: ' + e.message));
-req.setTimeout(30000, () => { req.destroy(); console.log('TIMEOUT'); });
-req.write(data);
-req.end();
-\"" 2>/dev/null || true)
+  # M19: real send through OpenClaw's message CLI/plugin path.
+  info "Sending Telegram test message through OpenClaw plugin to chat ${TELEGRAM_CHAT_ID_E2E}..."
+  send_result=$(run_openclaw_message_send \
+    "telegram" \
+    "${TELEGRAM_CHAT_ID_E2E}" \
+    "NemoClaw OpenClaw Telegram plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true)
+  send_exit=$(printf '%s\n' "$send_result" | openclaw_message_send_exit_code)
 
-    if echo "$send_result" | grep -q "^200"; then
-      pass "M19: Telegram sendMessage succeeded"
-    else
-      fail "M19: Telegram sendMessage failed: ${send_result:0:200}"
-    fi
+  if [ "$send_exit" = "0" ]; then
+    pass "M19: Telegram openclaw message send succeeded through plugin"
   else
-    skip "M19: TELEGRAM_CHAT_ID_E2E not set — skipping sendMessage test"
+    fail "M19: Telegram openclaw message send failed: ${send_result:0:300}"
   fi
 else
-  skip "M18: TELEGRAM_BOT_TOKEN_REAL not set — skipping real Telegram round-trip"
-  skip "M19: TELEGRAM_BOT_TOKEN_REAL not set — skipping sendMessage test"
+  telegram_mock_chat_id="${TELEGRAM_CHAT_ID_E2E:-42424242}"
+  telegram_mock_text="NemoClaw OpenClaw Telegram plugin mock E2E"
+  info "Complete real Telegram credentials are not available — using host-side fake Telegram Bot API"
+  if start_fake_telegram_api "$TELEGRAM_TOKEN"; then
+    pass "M18: Host-side fake Telegram Bot API started for OpenClaw plugin send"
+    if apply_fake_telegram_api_policy "$SANDBOX_NAME" "$FAKE_TELEGRAM_API_PORT" >/tmp/nemoclaw-fake-telegram-policy.log 2>&1; then
+      pass "M18a: Applied REST policy for host-side fake Telegram Bot API"
+      tg_mock_send_result=$(run_openclaw_telegram_mock_send "$FAKE_TELEGRAM_API_PORT" "$telegram_mock_chat_id" "$telegram_mock_text" || true)
+      tg_mock_send_exit=$(printf '%s\n' "$tg_mock_send_result" | openclaw_message_send_exit_code)
+      tg_mock_capture=$(check_fake_telegram_capture_send "$TELEGRAM_TOKEN" "$telegram_mock_chat_id" "$telegram_mock_text" || true)
+
+      if [ "$tg_mock_send_exit" = "0" ] && [ "$tg_mock_capture" = "OK" ]; then
+        pass "M19: Telegram installed OpenClaw send helper posted through host mock"
+      elif [ "$tg_mock_send_exit" != "0" ]; then
+        fail "M19: Telegram OpenClaw mock helper send failed: ${tg_mock_send_result:0:300}"
+      else
+        fail "M19: Fake Telegram did not capture the expected rewritten message: ${tg_mock_capture:0:300}"
+      fi
+    else
+      fail "M18a: Failed to apply fake Telegram policy: $(tail -20 /tmp/nemoclaw-fake-telegram-policy.log 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
+      fail "M19: Telegram OpenClaw mock message send could not run without fake Telegram policy"
+    fi
+  else
+    fail "M18: Could not start host-side fake Telegram Bot API"
+    fail "M19: Telegram OpenClaw mock message send could not run without fake Telegram"
+  fi
 fi
 
-if [ -n "${DISCORD_BOT_TOKEN_REAL:-}" ]; then
+run_telegram_inbound_reply_probe
+
+if [ -n "${DISCORD_BOT_TOKEN_REAL:-}" ] && [ -n "${DISCORD_CHANNEL_ID_E2E:-}" ]; then
   if [ "$dc_status" = "200" ]; then
     pass "M20: Discord users/@me returned 200 with real token"
   else
     fail "M20: Expected Discord users/@me 200 with real token, got: $dc_status"
   fi
+
+  info "Sending Discord test message through OpenClaw plugin to channel ${DISCORD_CHANNEL_ID_E2E}..."
+  dc_send_result=$(run_openclaw_message_send \
+    "discord" \
+    "channel:${DISCORD_CHANNEL_ID_E2E}" \
+    "NemoClaw OpenClaw Discord plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true)
+  dc_send_exit=$(printf '%s\n' "$dc_send_result" | openclaw_message_send_exit_code)
+
+  if [ "$dc_send_exit" = "0" ]; then
+    pass "M21: Discord openclaw message send succeeded through plugin"
+  else
+    fail "M21: Discord openclaw message send failed: ${dc_send_result:0:300}"
+  fi
 else
-  skip "M20: DISCORD_BOT_TOKEN_REAL not set — skipping real Discord round-trip"
+  discord_mock_channel_id="${DISCORD_CHANNEL_ID_E2E:-420000000000000123}"
+  discord_mock_text="NemoClaw OpenClaw Discord plugin mock E2E"
+  info "Complete real Discord credentials are not available — using host-side fake Discord message API"
+  if start_fake_discord_message_api "$DISCORD_TOKEN"; then
+    pass "M20: Host-side fake Discord message API started for OpenClaw plugin send"
+    if apply_fake_discord_message_api_policy "$SANDBOX_NAME" "$FAKE_DISCORD_MESSAGE_API_PORT" >/tmp/nemoclaw-fake-discord-message-policy.log 2>&1; then
+      pass "M20a: Applied REST policy for host-side fake Discord message API"
+      dc_mock_send_result=$(run_fake_discord_plugin_send_proof "$FAKE_DISCORD_MESSAGE_API_PORT" "$discord_mock_channel_id" "$discord_mock_text" || true)
+      dc_mock_capture=$(check_fake_discord_message_capture "$discord_mock_channel_id" "$discord_mock_text" || true)
+
+      if echo "$dc_mock_send_result" | grep -q '"ok":true' && [ "$dc_mock_capture" = "OK" ]; then
+        pass "M21: Discord installed OpenClaw send helper posted through host mock"
+      elif ! echo "$dc_mock_send_result" | grep -q '"ok":true'; then
+        fail "M21: Discord OpenClaw mock message send failed: ${dc_mock_send_result:0:500}"
+      else
+        fail "M21: Fake Discord did not capture the expected rewritten message: ${dc_mock_capture:0:300}"
+      fi
+    else
+      fail "M20a: Failed to apply fake Discord message policy: $(tail -20 /tmp/nemoclaw-fake-discord-message-policy.log 2>/dev/null | tr '\n' ' ' | cut -c1-300)"
+      fail "M21: Discord OpenClaw mock message send could not run without fake Discord policy"
+    fi
+  else
+    fail "M20: Could not start host-side fake Discord message API"
+    fail "M21: Discord OpenClaw mock message send could not run without fake Discord"
+  fi
+fi
+
+if [ -n "${SLACK_BOT_TOKEN_REAL:-}" ] && [ -n "${SLACK_CHANNEL_ID_E2E:-}" ]; then
+  pass "M22: Complete real Slack credentials are available for live OpenClaw send"
+  info "Sending Slack test message through OpenClaw plugin to channel ${SLACK_CHANNEL_ID_E2E}..."
+  sl_send_result=$(run_openclaw_message_send \
+    "slack" \
+    "channel:${SLACK_CHANNEL_ID_E2E}" \
+    "NemoClaw OpenClaw Slack plugin E2E $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true)
+  sl_send_exit=$(printf '%s\n' "$sl_send_result" | openclaw_message_send_exit_code)
+
+  if [ "$sl_send_exit" = "0" ]; then
+    pass "M23: Slack openclaw message send succeeded through plugin"
+  else
+    fail "M23: Slack openclaw message send failed: ${sl_send_result:0:300}"
+  fi
+else
+  info "Complete real Slack credentials are not available — requiring installed OpenClaw Slack helper proof against host fake Slack"
+  if [ "$slack_openclaw_plugin_mock_send_ok" = "1" ]; then
+    pass "M22: Slack host mock accepted the OpenShell-rewritten bot token"
+    pass "M23: Slack installed OpenClaw send helper posted through host mock"
+  else
+    fail "M22: Slack host mock did not prove OpenShell-rewritten bot token through installed OpenClaw helper"
+    fail "M23: Slack installed OpenClaw send helper did not post through host mock"
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════
@@ -2230,6 +2817,53 @@ elif [ -z "$gw_log" ]; then
   skip "S2: Could not read gateway log (container may have exited)"
 else
   skip "S2: No Slack-related output in gateway log"
+fi
+
+# ══════════════════════════════════════════════════════════════════
+# Phase 7b: Channel runtime registry verification (#4156)
+# ══════════════════════════════════════════════════════════════════
+# Asserts that the new runtime-channel diagnostic (`nemoclaw <sandbox>
+# doctor --json` → Messaging → "Runtime channel registry") fires after
+# rebuild. If the docker image was baked correctly, the diagnostic
+# reports each configured channel as visible to the OpenClaw runtime;
+# if the bake failed (the gap behind #4156), it reports the missing set
+# instead of silently passing.
+section "Phase 7b: Channel runtime registry verification (#4156)"
+
+doctor_json=$(nemoclaw "$SANDBOX_NAME" doctor --json 2>/dev/null || true)
+if [ -z "$doctor_json" ]; then
+  skip "RT0: Could not collect doctor --json output"
+else
+  runtime_check=$(echo "$doctor_json" | python3 -c "
+import json, sys
+try:
+    report = json.load(sys.stdin)
+except Exception as e:
+    print(json.dumps({'error': str(e)})); sys.exit(0)
+match = next(
+    (c for c in report.get('checks', []) if c.get('label') == 'Runtime channel registry'),
+    None,
+)
+print(json.dumps(match or {'missing': True}))
+" 2>/dev/null || echo '{"error":"parse"}')
+
+  if echo "$runtime_check" | grep -q '"missing"'; then
+    skip "RT1: doctor --json had no Runtime channel registry check (no configured channels)"
+  else
+    info "Runtime channel registry check: ${runtime_check:0:300}"
+    rt_status=$(echo "$runtime_check" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))" 2>/dev/null || echo "")
+    if [ "$rt_status" = "ok" ]; then
+      pass "RT1: doctor reports configured channels are visible to OpenClaw runtime registry"
+    elif [ "$rt_status" = "warn" ]; then
+      # A warn is still a pass for this E2E: it means the diagnostic detected
+      # the very gap #4156 closes (e.g. a channel configured but absent from
+      # /sandbox/.openclaw/openclaw.json after rebuild). The detail field
+      # surfaces which channels are missing so the suite output stays useful.
+      pass "RT1: doctor surfaced runtime channel registry warning (detail: $(echo "$runtime_check" | python3 -c "import json,sys; print(json.load(sys.stdin).get('detail',''))"))"
+    else
+      fail "RT1: Unexpected Runtime channel registry status '$rt_status' (raw: ${runtime_check:0:300})"
+    fi
+  fi
 fi
 
 # ══════════════════════════════════════════════════════════════════

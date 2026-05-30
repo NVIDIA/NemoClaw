@@ -4,10 +4,19 @@
 // Re-verify that the sandbox filesystem still matches what `shields up`
 // established: 444 root:root on each locked file, 755 root:root on the
 // config directory, no legacy state layout, and (when the caller knows
-// chattr was applied) the immutable bit. Returns the list of mismatches
-// so callers can either fail the lock operation or surface drift after a
-// host-root tamper. Stat/lsattr failures are folded into `issues` so the
-// caller can decide whether to treat them as drift.
+// chattr was applied) the immutable bit. When the caller supplies the
+// SHA-256 seal that was captured at lock time, also re-hash each file
+// and surface a content-drift entry on any mismatch. This catches the
+// host-root tamper pattern that defeats perm-only verification: chmod
+// to mutable -> write -> chmod back to 444 leaves mode/owner identical
+// to the locked baseline but produces a new content hash.
+//
+// Returns the list of mismatches so callers can either fail the lock
+// operation or surface drift after a host-root tamper. Stat/lsattr/hash
+// failures are folded into `issues` so the caller can decide whether to
+// treat them as drift.
+
+import { parseSha256Output } from "./seal";
 
 export type LockTarget = {
   configPath: string;
@@ -19,6 +28,7 @@ export type VerifyShieldsLockOptions = {
   verifyChattr?: boolean;
   exec: (cmd: string[]) => string;
   assertLegacyLayout?: (sandboxName: string, configDir: string) => void;
+  expectedHashes?: { [path: string]: string };
 };
 
 export type VerifyShieldsLockResult = {
@@ -84,6 +94,45 @@ export function verifyShieldsLockState(
         if (!flags.includes("i")) issues.push(`${f} immutable bit not set`);
       } catch {
         // lsattr may not be available on all images — skip
+      }
+    }
+  }
+
+  if (options.expectedHashes) {
+    const expected = options.expectedHashes;
+    for (const f of filesToVerify) {
+      const want = expected[f];
+      if (!want) {
+        // Seal was missing for this file — flag explicitly rather than
+        // silently passing. Callers that genuinely lack a seal pass
+        // `expectedHashes: undefined` instead of an empty record.
+        // Prefix with "content drifted" so callers that filter on that
+        // substring (`shieldsUp` re-seal refusal) treat every hash-trust
+        // failure as non-launderable.
+        issues.push(
+          `${f} content drifted (no seal recorded; expected SHA-256)`,
+        );
+        continue;
+      }
+      let raw: string;
+      try {
+        raw = exec(["sha256sum", f]);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        issues.push(`${f} content drifted (sha256sum failed: ${msg})`);
+        continue;
+      }
+      const got = parseSha256Output(raw);
+      if (!got) {
+        issues.push(
+          `${f} content drifted (sha256sum output unparsable: ${raw.trim()})`,
+        );
+        continue;
+      }
+      if (got !== want.toLowerCase()) {
+        issues.push(
+          `${f} content drifted (sha256 ${got} != sealed ${want.toLowerCase()})`,
+        );
       }
     }
   }

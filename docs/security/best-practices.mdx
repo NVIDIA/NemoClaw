@@ -202,8 +202,17 @@ Writable agent state such as plugins, skills, hooks, and workspace metadata live
 By default, this directory starts writable so the agent can manage its own config, install skills, and write to standard home-directory paths natively.
 For sensitive workloads, use a reviewed host-side immutability workflow after initial setup so config and writable state entry points cannot be changed by the sandbox user.
 
-- **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly. `shields status` cross-checks the locked posture against the sandbox filesystem and reports drift when a host-root tamper reverts these perms.
+- **DAC permissions (default).** The sandbox user owns `/sandbox/.openclaw` with mode `2770` (setgid `sandbox:sandbox`) and `openclaw.json` with mode `660`, so the agent and its group can read and write config directly. A reviewed host-side immutability workflow should compare the intended ownership and mode with the live sandbox filesystem before treating the config tree as locked.
 - **Config integrity hash.** The image includes a SHA256 hash of `openclaw.json`. In the default mutable state, `.config-hash` is sandbox-owned and is not a tamper-proof trust anchor, so startup does not fail closed on that hash. When the hash is root-owned and read-only, startup enforces it and refuses to start if the hash does not match.
+- **Content seal under shields up.**
+  When `nemoclaw <name> shields up` runs against a clean lock, it captures a SHA-256 seal of `openclaw.json` and any other locked files into the host-side shields state file.
+  On sealed sandboxes, every `shields status` call recomputes the hash inside the sandbox and surfaces drift on any mismatch, so a host-root tamper that flips perms back to `444 root:root` after rewriting the file is still flagged.
+  Sandboxes locked before this seal landed have no recorded hash; perm-only verification cannot prove their bytes match the image-original, so the seal is **not** a retroactive proof of integrity for legacy state.
+  The same refusal applies to partial seals where the locked file set grew after the existing seal was captured (some entries sealed, some missing).
+  By default, `shields up` refuses to seal in either case and asks you to rebuild the sandbox first for a known-good baseline.
+  `shields status` on a legacy lockdown surfaces `UP (UNSEALED — content integrity unknown for legacy lockdown)` and exits with status 2 so scripts treat it as a failure until the operator seals an explicit baseline.
+  If you explicitly trust the current bytes, opt in via `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE=1`, which captures a seal over the current files and is acknowledged in the log line.
+  Once a sandbox is sealed, `shields up` refuses to re-seal a tampered baseline; restore the original file or rebuild the sandbox before re-running.
 - **Gateway token environment.** The gateway exports `OPENCLAW_GATEWAY_TOKEN` and writes it to `/tmp/nemoclaw-proxy-env.sh` for interactive sandbox sessions. Keep this in mind when deciding whether a workload should run with mutable config or an immutable config posture.
 
 | Aspect | Detail |
@@ -423,7 +432,7 @@ The scanner intercepts Write, Edit, and similar tool calls targeting memory and 
 | Aspect | Detail |
 |---|---|
 | Default | Enabled. The plugin registers a `before_tool_call` hook that scans for 14 high-confidence secret patterns. |
-| What it covers | Examples include `.openclaw/memory/`, `.openclaw/workspace/`, `.openclaw/agents/`, `.openclaw/skills/`, `.openclaw/hooks/`, `.openclaw/credentials/`, `.openclaw/openclaw.json`, `.nemoclaw/`, and `MEMORY.md`; the exact coverage is defined by `MEMORY_PATH_SEGMENTS` and enforced through `isMemoryPath()`. |
+| What it covers | Three classifiers, all enforced through `isMemoryPath()`: (1) absolute `MEMORY_PATH_SEGMENTS` such as `/.openclaw/memory/`, `/.openclaw/workspace/`, `/.openclaw/agents/`, `/.openclaw/skills/`, `/.openclaw/hooks/`, `/.openclaw/credentials/`, `/.openclaw/openclaw.json`, `/.nemoclaw/`; (2) canonical workspace basenames in `MEMORY_BASENAMES` (`IDENTITY.md`, `MEMORY.md`, `SOUL.md`, `USER.md`, `AGENTS.md`) matched regardless of the surrounding path; and (3) lexically-normalized workspace-relative writes matching `MEMORY_RELATIVE_PREFIXES` (`.openclaw/`, `.nemoclaw/`, `memory/`) or named workspace daily memory paths, for embedded-fallback mode where the host's path resolver is unavailable. |
 | What you can change | This is not a user-facing knob. The plugin enforces it automatically. |
 | Risk if relaxed | Without scanning, the agent could persist API keys or tokens in memory files that survive across sessions and backups. |
 | Recommendation | No action needed. If a write is blocked, the agent receives an actionable error listing the detected patterns. |

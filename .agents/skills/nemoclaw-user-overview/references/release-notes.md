@@ -4,6 +4,39 @@
 
 NVIDIA NemoClaw is available in early preview starting March 16, 2026. Use this page to track changes.
 
+## v0.0.55
+
+NemoClaw v0.0.55 improves local Ollama onboarding reliability, plugin secret-scanner resilience, and messaging-channel prompt clarity:
+
+- Local Ollama validation retries host-side curl process timeouts with a larger timeout before failing, and Docker runtime detection retries `docker info` before choosing the local inference route. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
+- The NemoClaw OpenClaw plugin keeps the memory secret scanner active when OpenClaw runs in embedded fallback mode without a usable path resolver. The scanner falls back to literal memory and workspace-relative paths instead of crashing before the first write-tool call. For more information, refer to Security Best Practices (use the `nemoclaw-user-configure-security` skill).
+- The onboarding messaging-channel picker now states that pressing Enter with no channels selected skips messaging setup. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+
+## v0.0.54
+
+NemoClaw v0.0.54 updates messaging activation, Windows WSL onboarding, NemoHermes dashboard access, and sandbox repair paths:
+
+- Generated OpenClaw config now marks Telegram, Discord, Slack, and WhatsApp as enabled at the channel level. Selected messaging plugins are pinned during the image build, and `channels add` verifies Telegram, Discord, and Slack bridge startup after the rebuild instead of leaving silent channel failures for later debugging. For more information, refer to Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill).
+- The Windows bootstrap flow waits for Ubuntu account creation before touching Docker settings, enables Docker Desktop WSL integration for the target distro, avoids changing the global WSL default distro, and adds WSL-specific Docker reachability hints during onboarding. For more information, refer to Prepare Windows for NemoClaw (use the `nemoclaw-user-get-started` skill).
+- Windows-host Ollama setup inside WSL now requires the Docker Desktop WSL integration path. NemoClaw still shows Windows-host Ollama options when it detects them, but labels the Docker Desktop requirement and blocks unsupported native Docker-in-WSL selections before it tries to start or install Ollama. For more information, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
+- NemoHermes can expose the optional native Hermes web dashboard separately from the OpenAI-compatible API. Set `NEMOCLAW_HERMES_DASHBOARD=1` before onboarding to start and forward the dashboard on port `9119`, with `NEMOCLAW_HERMES_DASHBOARD_PORT` and `NEMOCLAW_HERMES_DASHBOARD_TUI` available for port and TUI tab control. For more information, refer to NemoClaw Quickstart with Hermes (use the `nemoclaw-user-get-started` skill).
+- Onboarding diagnostics include more copy-paste-ready recovery hints. Invalid sandbox names now include a `Try: <suggested-slug>` line when NemoClaw can derive a valid name, and non-interactive NVIDIA Endpoints setup prints the exact `export NVIDIA_API_KEY=nvapi-...` shape when the key is missing. For more information, refer to NemoClaw CLI Commands Reference (use the `nemoclaw-user-reference` skill).
+- Homebrew stays on the Linuxbrew prefix while exposing installed formula commands in sandbox shell sessions, the `/nemoclaw` slash command activates at OpenClaw startup again, Hermes rebuilds tolerate older release tarballs that lack optional UI package lockfiles, and device scope-upgrade approvals recover without being pinned to the old gateway-scoped request. For more information, refer to Common NemoClaw Integration Policy Examples (use the `nemoclaw-user-manage-policy` skill).
+- The host-gateway allowance for OpenClaw `web_fetch` is confined to the trusted proxy path, while strict and direct paths continue to block host-gateway names. Hermes Provider onboarding skips the host-side smoke probe only for OAuth-backed setup and keeps direct validation for Nous API key setup. For more information, refer to NemoClaw Inference Options (use the `nemoclaw-user-configure-inference` skill).
+
+## v0.0.53
+
+NemoClaw v0.0.53 focuses on safer sandbox recreation, stricter onboarding preflight defaults, local inference reliability, policy coverage, and day-two repair workflows:
+
+- `nemoclaw onboard` backs up workspace state before deleting an existing sandbox during recreation, including sandboxes that are registered but not ready. If the backup is partial or fails, onboarding aborts before delete so workspace, skills, extensions, identity, memory, messaging state, and credentials are not silently dropped. Set `NEMOCLAW_RECREATE_WITHOUT_BACKUP=1` only when you intentionally want a fresh workspace.
+- Under-provisioned container-runtime warnings now default to abort in interactive onboarding. Pressing Enter at the warning stops the run so you can resize Docker Desktop or Colima before the sandbox build stalls. Non-interactive runs continue with a warning, and `NEMOCLAW_IGNORE_RUNTIME_RESOURCES=1` still suppresses the check when you have already accepted the resource trade-off.
+- OpenClaw sandboxes can use the new `openclaw-pricing` policy preset for model-pricing reference fetches from LiteLLM and OpenRouter. NemoClaw suggests this preset during OpenClaw onboarding so session JSONL records can populate `usage.cost` without widening egress beyond the two read-only pricing endpoints.
+- Local Ollama onboarding is more accurate. NemoClaw validates the `/api/tags` response body through the authenticated proxy, honors accepted no-tools overrides through validation and proxy setup, and uses Ollama's reported runtime context length for `contextWindow` unless you set `NEMOCLAW_CONTEXT_WINDOW`.
+- Onboarding and gateway reuse recover from more host-runtime drift. NemoClaw recovers stopped gateways before preserving PVC-backed state, verifies gateway containers before reusing port-conflict state, defers Docker-driver gateway teardown until step `[2/8]`, records Docker-driver sandboxes on macOS, and uses Docker `--gpus` rather than CDI repair on WSL Docker Desktop.
+- The sandbox and integration paths handle more common failures cleanly, including Brave Search credential rewrite through OpenShell providers, Telegram placeholder repair, host-gateway `web_fetch` routing, read-only host targets for `share mount`, live gateway drift in `list`, host-alias Kubernetes invocations, Jetson bridge DNS preflight failures, and non-ready sandboxes during maintenance backups.
+- Hermes startup no longer treats a fresh root-entrypoint layout as locked state, which avoids false locked-layout detection during sandbox boot.
+- Maintainer tooling can export a signed skills catalog, detect untracked files during skills refresh diffs, and run the stale-issue verification workflow added for maintainers.
+
 ## v0.0.52
 
 NemoClaw v0.0.52 upgrades the bundled OpenClaw runtime, repairs Hermes sandbox startup, restores onboarding ready output, and hardens Slack onboarding, Windows bootstrap, and private-network handling:

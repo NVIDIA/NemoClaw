@@ -395,11 +395,13 @@ COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
 COPY scripts/generate-openclaw-config.mts /usr/local/lib/nemoclaw/generate-openclaw-config.mts
+COPY scripts/openclaw-build-messaging-plugins.py /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py
 COPY scripts/seed-wechat-accounts.py /usr/local/lib/nemoclaw/seed-wechat-accounts.py
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
         /usr/local/lib/nemoclaw/generate-openclaw-config.mts \
+        /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py \
         /usr/local/lib/nemoclaw/seed-wechat-accounts.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
     && chmod 755 /usr/local/share/nemoclaw \
@@ -543,7 +545,7 @@ USER sandbox
 RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /usr/local/lib/nemoclaw/generate-openclaw-config.mts
 
 # hadolint ignore=DL3059,DL4006
-RUN openclaw doctor --fix --non-interactive
+RUN python3 /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py
 
 # Lock down npm: no further registry traffic in this image. Everything past
 # this point must resolve from local sources only.
@@ -592,7 +594,7 @@ proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; \
 cfg['proxy'] = { \
     'enabled': True, \
     'proxyUrl': f'http://{proxy_host}:{proxy_port}', \
-    'loopbackMode': 'proxy', \
+    'loopbackMode': 'gateway-only', \
 }; \
 json.dump(cfg, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
