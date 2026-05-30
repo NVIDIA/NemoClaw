@@ -1123,6 +1123,11 @@ describe("CLI dispatch", () => {
     const sandboxIdx = r.out.indexOf("Sandbox: alpha");
     expect(headerIdx).toBeGreaterThanOrEqual(0);
     expect(sandboxIdx).toBeGreaterThan(headerIdx);
+    // The downstream gateway-state fallback header (`Failure layer: ...`)
+    // must be suppressed once preflight has already emitted its own.
+    // Otherwise a non-`present` gateway lookup would print a redundant
+    // second `Failure layer:` line later in the output.
+    expect((r.out.match(/Failure layer:/g) || []).length).toBe(1);
   });
 
   it("sandbox <name> status surfaces sandbox_dashboard_port_conflict when the sandbox container is stopped and the dashboard port is held by a foreign listener", async () => {
@@ -1204,6 +1209,9 @@ describe("CLI dispatch", () => {
       const sandboxIdx = r.out.indexOf("Sandbox: alpha");
       expect(headerIdx).toBeGreaterThanOrEqual(0);
       expect(sandboxIdx).toBeGreaterThan(headerIdx);
+      // Downstream gateway-state fallback must not print a second
+      // `Failure layer:` line when preflight already emitted one.
+      expect((r.out.match(/Failure layer:/g) || []).length).toBe(1);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

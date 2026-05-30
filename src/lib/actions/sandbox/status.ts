@@ -92,6 +92,11 @@ export function maybeGetSandboxStatusInferenceHealth(
   );
 }
 
+export type SandboxStatusFailureLayer =
+  | "docker_unreachable"
+  | "sandbox_container_stopped"
+  | "sandbox_dashboard_port_conflict";
+
 export interface SandboxStatusReport {
   schemaVersion: 1;
   name: string;
@@ -109,11 +114,7 @@ export interface SandboxStatusReport {
   openshellDriver: string;
   openshellVersion: string;
   policies: string[];
-  failureLayer:
-    | "docker_unreachable"
-    | "sandbox_container_stopped"
-    | "sandbox_dashboard_port_conflict"
-    | null;
+  failureLayer: SandboxStatusFailureLayer | null;
 }
 
 interface SandboxStatusSnapshot {
@@ -206,11 +207,6 @@ async function collectSandboxStatusSnapshot(
   }
   return { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth };
 }
-
-export type SandboxStatusFailureLayer =
-  | "docker_unreachable"
-  | "sandbox_container_stopped"
-  | "sandbox_dashboard_port_conflict";
 
 export interface SandboxStatusPreflightFailure {
   layer: SandboxStatusFailureLayer;
@@ -332,12 +328,15 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
 
 async function printGatewayFailureLayerHeader(
   sandboxName: string,
-  alreadyPrintedDockerUnreachable = false,
+  alreadyPrintedPreflightLayer: SandboxStatusFailureLayer | null = null,
 ): Promise<void> {
+  // The preflight classifier (docker_unreachable, sandbox_container_stopped,
+  // sandbox_dashboard_port_conflict) is more specific than the downstream
+  // gateway-state classifier. When it already emitted a header, skip the
+  // gateway-level fallback entirely to avoid a duplicate `Failure layer:`
+  // line in the user-visible output.
+  if (alreadyPrintedPreflightLayer !== null) return;
   const failure = await classifyGatewayFailure(sandboxName);
-  if (alreadyPrintedDockerUnreachable && failure.layer === "docker_unreachable") {
-    return;
-  }
   console.log(`  ${getLayerHeader(failure.layer)}`);
 }
 
@@ -378,12 +377,12 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // the remote provider directly so it falsely shows healthy too. Classify
   // these failure layers upfront so the header is the first thing the user
   // sees, the remote provider probe is never issued, and downstream
-  // gateway-state branches can suppress duplicate `docker_unreachable`
-  // headers via `alreadyPrintedDockerUnreachable`.
+  // gateway-state branches can suppress their own `Failure layer:` line via
+  // `alreadyPrintedPreflightLayer`.
   const sandboxEntryEarly = registry.getSandbox(sandboxName);
   const preflightFailure =
     await classifySandboxStatusPreflightFailure(sandboxEntryEarly);
-  const dockerUnreachable = preflightFailure?.dockerUnreachable === true;
+  const preflightLayer = preflightFailure ? preflightFailure.layer : null;
   if (preflightFailure) {
     console.log(getLayerHeader(preflightFailure.layer));
     process.exitCode = 1;
@@ -518,7 +517,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
       if (guard.state === "connected_other") {
         printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.log);
       } else {
-        await printGatewayFailureLayerHeader(sandboxName, dockerUnreachable);
+        await printGatewayFailureLayerHeader(sandboxName, preflightLayer);
         printGatewayLifecycleHint(guard.status || "", sandboxName, console.log);
       }
     } else {
@@ -552,7 +551,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     process.exit(1);
   } else if (lookup.state === "gateway_unreachable_after_restart") {
     console.log("");
-    await printGatewayFailureLayerHeader(sandboxName, dockerUnreachable);
+    await printGatewayFailureLayerHeader(sandboxName, preflightLayer);
     console.log(
       `  Sandbox '${sandboxName}' may still exist, but the selected ${CLI_DISPLAY_NAME} gateway is still refusing connections after restart.`,
     );
@@ -568,7 +567,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     process.exit(1);
   } else if (lookup.state === "gateway_missing_after_restart") {
     console.log("");
-    await printGatewayFailureLayerHeader(sandboxName, dockerUnreachable);
+    await printGatewayFailureLayerHeader(sandboxName, preflightLayer);
     console.log(
       `  Sandbox '${sandboxName}' may still exist locally, but the ${CLI_DISPLAY_NAME} gateway is no longer configured after restart/rebuild.`,
     );
@@ -588,7 +587,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     if (lookup.output) {
       console.log(lookup.output);
     }
-    await printGatewayFailureLayerHeader(sandboxName, dockerUnreachable);
+    await printGatewayFailureLayerHeader(sandboxName, preflightLayer);
     printGatewayLifecycleHint(lookup.output, sandboxName, console.log);
     process.exit(1);
   }
