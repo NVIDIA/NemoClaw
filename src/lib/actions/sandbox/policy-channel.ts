@@ -28,6 +28,7 @@ import { runOpenshell } from "../../adapters/openshell/runtime";
 import { shellQuote } from "../../runner";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
+import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
 import {
   type ChannelDef,
   KNOWN_CHANNELS,
@@ -516,9 +517,10 @@ function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: strin
     return;
   }
   let channelEnabled = false;
+  let channelBlock: any = null;
   try {
     const cfg = JSON.parse(configProbe.stdout);
-    const channelBlock = cfg?.channels?.[channelName];
+    channelBlock = cfg?.channels?.[channelName];
     channelEnabled = Boolean(channelBlock?.enabled);
   } catch {
     // Malformed config — fall through to the log probe to capture context.
@@ -584,6 +586,9 @@ function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: strin
     console.log(
       `  ${G}✓${R} '${channelName}' bridge startup detected in sandbox runtime log.`,
     );
+    if (channelName === "telegram") {
+      printTelegramDirectMessageAllowlistWarning(channelBlock, console.log, `${YW}⚠${R}`);
+    }
     return;
   }
   console.log(

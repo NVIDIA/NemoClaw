@@ -54,6 +54,26 @@ describe("setupSelectedMessagingChannels", () => {
     expect(output).toContain("reply mode already set: @mentions only");
   });
 
+  it("accepts Telegram allowlist aliases during channel setup", async () => {
+    process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-token";
+    process.env.TELEGRAM_CHAT_ID = "8388960805";
+    process.env.TELEGRAM_REQUIRE_MENTION = "0";
+    const logs: string[] = [];
+    vi.spyOn(console, "log").mockImplementation((message = "") => {
+      logs.push(String(message));
+    });
+
+    await setupSelectedMessagingChannels(
+      ["telegram"],
+      new Set(["telegram"]),
+      [{ name: "telegram", ...KNOWN_CHANNELS.telegram }],
+    );
+
+    expect(process.env.TELEGRAM_ALLOWED_IDS).toBe("8388960805");
+    expect(prompt).not.toHaveBeenCalledWith("  Telegram User ID (for DM access): ");
+    expect(logs.join("\n")).toContain("telegram — allowed IDs already set: 8388960805");
+  });
+
   it("#3715 re-prompts instead of accepting an invalid preconfigured Slack bot token", async () => {
     process.env.SLACK_BOT_TOKEN = "abcd";
     process.env.SLACK_APP_TOKEN = "xapp-existing";
