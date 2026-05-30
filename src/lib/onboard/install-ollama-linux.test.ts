@@ -5,9 +5,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   decideInstallOllamaLinuxMode,
+  type InstallOllamaLinuxOptions,
   installOllamaOnLinux,
   resolveOllamaTarballArch,
-  type InstallOllamaLinuxOptions,
 } from "../../../dist/lib/onboard/install-ollama-linux";
 
 function makeOpts(overrides: Partial<InstallOllamaLinuxOptions>): InstallOllamaLinuxOptions {
@@ -23,7 +23,6 @@ function makeOpts(overrides: Partial<InstallOllamaLinuxOptions>): InstallOllamaL
     runShellImpl: vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null }),
     waitForHttpImpl: vi.fn().mockReturnValue(true),
     sleepSecondsImpl: vi.fn(),
-    findReachableOllamaHostImpl: vi.fn().mockReturnValue(null),
     ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("ready"),
     fileExistsImpl: vi.fn().mockReturnValue(false),
     readFileImpl: vi.fn().mockReturnValue(""),
@@ -126,6 +125,7 @@ describe("decideInstallOllamaLinuxMode", () => {
     });
     expect(decideInstallOllamaLinuxMode(opts)).toBe("system");
   });
+
 });
 
 describe("installOllamaOnLinux (user-local)", () => {
@@ -340,6 +340,7 @@ describe("installOllamaOnLinux (system)", () => {
     expect(ensureOverride).toHaveBeenCalled();
   });
 
+
   it("returns ok:false when the systemd override fails to recover", () => {
     const errorLog = vi.fn();
     const opts = makeOpts({
@@ -353,36 +354,4 @@ describe("installOllamaOnLinux (system)", () => {
     expect(errorLog).toHaveBeenCalledWith(expect.stringContaining("systemd restart"));
   });
 
-  it("falls back to a manual loopback launch when systemd is not applicable and no daemon is reachable", () => {
-    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
-    const opts = makeOpts({
-      modeOverride: "system",
-      runCaptureImpl: vi.fn().mockReturnValue("/usr/bin/zstd"),
-      runShellImpl,
-      ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("not-applicable"),
-      findReachableOllamaHostImpl: vi.fn().mockReturnValue(null),
-      waitForHttpImpl: vi.fn().mockReturnValue(true),
-    });
-    const result = installOllamaOnLinux(opts);
-    expect(result.ok).toBe(true);
-    const manualStart = findRunShellCall(runShellImpl, "ollama serve");
-    expect(manualStart).toBeDefined();
-    expect(manualStart).toContain("OLLAMA_HOST=127.0.0.1:");
-  });
-
-  it("skips the manual launch when systemd is not applicable but Ollama is already reachable", () => {
-    const runShellImpl = vi.fn().mockReturnValue({ status: 0, stdout: "", stderr: "", error: null });
-    const waitForHttpImpl = vi.fn().mockReturnValue(true);
-    const opts = makeOpts({
-      modeOverride: "system",
-      runCaptureImpl: vi.fn().mockReturnValue("/usr/bin/zstd"),
-      runShellImpl,
-      ensureManagedOllamaLoopbackSystemdOverrideImpl: vi.fn().mockReturnValue("not-applicable"),
-      findReachableOllamaHostImpl: vi.fn().mockReturnValue("127.0.0.1"),
-      waitForHttpImpl,
-    });
-    const result = installOllamaOnLinux(opts);
-    expect(result.ok).toBe(true);
-    expect(waitForHttpImpl).not.toHaveBeenCalled();
-  });
 });

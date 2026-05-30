@@ -20,33 +20,14 @@ const { sleepSeconds } = require("../core/wait");
 const nimImages = require("../../../bin/lib/nim-images.json");
 
 import { VLLM_PORT } from "../core/ports";
+import {
+  isDenylistedNvidiaGpuName,
+  isPlausibleNvidiaGpuName,
+  nvidiaHostLooksGenuine,
+} from "./gpu-trust";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
-
-// On Windows-on-ARM (Snapdragon X) WSL2 hosts, a d3d12/WDDM shim publishes a
-// `nvidia-smi.exe` that returns a placeholder name (e.g. "JMJWOA-Generic-GPU")
-// even though the system has no NVIDIA hardware. Real DGX Spark legitimately
-// reports the same string (see #3510), distinguished by the firmware platform.
-// Accept a name as NVIDIA when it either advertises the vendor explicitly or
-// matches a known NVIDIA product family; otherwise the caller must cross-check
-// against `detectNvidiaPlatform()` before trusting the nvidia-smi output.
-const NVIDIA_GPU_NAME_PATTERN =
-  /\bNVIDIA\b|\b(GeForce|Tesla|Quadro|RTX|GTX|TITAN|H100|H200|A100|A40|A10|L40|L4|GB1\d|GB200|GB300|Grace[\s_-]+Hopper)\b/i;
-
-// Names that have been observed both on legitimate NVIDIA unified-memory
-// hardware (DGX Spark — #3510) and on Windows-on-ARM WSL2 d3d12 shims with no
-// NVIDIA silicon. Even with an `NVIDIA ` vendor prefix the name alone is not
-// sufficient — the caller must cross-check `detectNvidiaPlatform()`.
-const NVIDIA_GPU_NAME_DENYLIST_PATTERN = /\bJMJWOA-Generic-GPU\b/i;
-
-function isPlausibleNvidiaGpuName(name: string): boolean {
-  return (
-    !!name &&
-    !NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(name) &&
-    NVIDIA_GPU_NAME_PATTERN.test(name)
-  );
-}
 
 export interface NimModel {
   name: string;
@@ -372,16 +353,28 @@ export function detectGpu(): GpuDetection | null {
       }
       if (parsed.length > 0) {
         const platform = detectNvidiaPlatform();
-        // Reject WDDM/d3d12 placeholder names on hosts where firmware does not
-        // confirm an NVIDIA platform. Otherwise a Snapdragon X WSL2 nvidia-smi
-        // shim returning "JMJWOA-Generic-GPU" would be reported as a real
-        // NVIDIA GPU. Real DGX Spark uses the same placeholder but has
-        // firmware platform "spark", which keeps the #3510 path working.
+        // Off Spark/Station/Jetson firmware, layer a denylist check and the
+        // trust-tier gate before trusting the nvidia-smi probe. The observed
+        // Windows-on-ARM WSL2 nvidia-smi shim emits a `JMJWOA-Generic-*`
+        // placeholder name AND ships no `/proc/driver/nvidia/` directory, so
+        // either signal alone is sufficient to reject. Treat any denylisted
+        // row as a poisoned probe and reject the whole result — partial
+        // filtering would let a mixed-row spoof surface a non-placeholder
+        // row as a real GPU.
         const firmwareConfirmsNvidia =
           platform === "spark" || platform === "station" || platform === "jetson";
-        const trusted = firmwareConfirmsNvidia
-          ? parsed
-          : parsed.filter((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
+        let trusted: ParsedGpu[];
+        if (firmwareConfirmsNvidia) {
+          trusted = parsed;
+        } else {
+          if (parsed.some((p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name))) {
+            return null;
+          }
+          if (!nvidiaHostLooksGenuine()) {
+            return null;
+          }
+          trusted = parsed.filter((p: ParsedGpu) => isPlausibleNvidiaGpuName(p.name));
+        }
         if (trusted.length === 0) {
           return null;
         }
@@ -434,11 +427,29 @@ export function detectGpu(): GpuDetection | null {
     const firmwarePlatform = detectNvidiaPlatform();
     const firmwareIsUnifiedMemory =
       firmwarePlatform === "spark" || firmwarePlatform === "jetson";
+    // Reject placeholder names on hosts where firmware does not vouch for an
+    // NVIDIA platform, mirroring the primary path. A WSL2 d3d12/WDDM shim
+    // could in principle emit `JMJWOA-Generic-*` on this fallback too.
+    if (!firmwareIsUnifiedMemory && gpuNames.some((name: string) =>
+      isDenylistedNvidiaGpuName(name),
+    )) {
+      return null;
+    }
     const taggedNames = gpuNames.filter((name: string) =>
       UNIFIED_MEMORY_GPU_TAGS.some((tag) => new RegExp(tag, "i").test(name)),
     );
+    // Tagged-name acceptance on non-firmware-vouched hosts must additionally
+    // pass the trust-tier gate so the same source-boundary policy documented
+    // in gpu-trust.ts applies on the unified-memory fallback.
+    const allowTaggedOnGenericFirmware = nvidiaHostLooksGenuine();
     const unifiedGpuNames =
-      taggedNames.length > 0 ? taggedNames : firmwareIsUnifiedMemory ? gpuNames : [];
+      taggedNames.length > 0
+        ? firmwareIsUnifiedMemory || allowTaggedOnGenericFirmware
+          ? taggedNames
+          : []
+        : firmwareIsUnifiedMemory
+          ? gpuNames
+          : [];
     if (unifiedGpuNames.length > 0) {
       const totalMemoryMB = readHostMemoryMB();
       const count = unifiedGpuNames.length;

@@ -7,9 +7,9 @@ Reads the single-source-of-truth metadata and patches Markdown or MDX tables
 between sentinel comments in target files.
 
 Sentinel pairs:
-  <!-- platform-matrix:begin --> / <!-- platform-matrix:end -->
-  <!-- provider-status:begin --> / <!-- provider-status:end -->
-  {/* provider-status:begin */} / {/* provider-status:end */}
+  <!-- platform-matrix:begin --> / <!-- platform-matrix:end -->  (Markdown only)
+  {/* platform-matrix:begin */} / {/* platform-matrix:end */}  (MDX)
+  {/* provider-status:begin */} / {/* provider-status:end */}  (MDX)
 
 Usage:
     python3 scripts/generate-platform-docs.py                  # patch files in place
@@ -33,10 +33,7 @@ TABLES = [
         "platform-matrix",
         "platforms",
         [
-            # README.md is the patch target. docs/get-started/platform-setup/
-            # index.md pulls the same table in via Sphinx `{include}` so the
-            # generator does not need a second target there.
-            REPO_ROOT / "README.md",
+            REPO_ROOT / "docs" / "get-started" / "prerequisites.mdx",
         ],
     ),
     (

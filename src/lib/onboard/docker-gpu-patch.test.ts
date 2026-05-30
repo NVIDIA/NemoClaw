@@ -444,6 +444,72 @@ describe("docker-gpu-patch", () => {
     }
   });
 
+  it("detects NVIDIA CDI specs in /etc/cdi when docker info reports no dirs (#3575)", () => {
+    // Reproduces the Docker 29 + nvidia-container-toolkit + no daemon.json
+    // case: `docker info` returns an empty CDISpecDirs list, but Docker is
+    // still reading specs from its well-known default /etc/cdi. The detector
+    // should mirror Docker's behavior and surface cdi as available so the
+    // candidate list keeps `cdi` for fallback after `--gpus all` trips the
+    // AMD-CDI bug.
+    const readDir = vi.fn((dirPath: string) =>
+      dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null,
+    );
+    const readFile = vi.fn((filePath: string) =>
+      filePath === "/etc/cdi/nvidia.yaml"
+        ? "cdiVersion: 0.6.0\nkind: nvidia.com/gpu\ndevices:\n  - name: all\n"
+        : null,
+    );
+    expect(
+      dockerReportsNvidiaCdiDevices({
+        dockerCapture: vi.fn(() => ""),
+        readDir,
+        readFile,
+      }),
+    ).toBe(true);
+    expect(readDir).toHaveBeenCalledWith("/etc/cdi");
+  });
+
+  it("returns false when default CDI dirs hold no NVIDIA specs", () => {
+    expect(
+      dockerReportsNvidiaCdiDevices({
+        dockerCapture: vi.fn(() => ""),
+        readDir: vi.fn(() => null),
+        readFile: vi.fn(() => null),
+      }),
+    ).toBe(false);
+  });
+
+  it("falls back to default CDI dirs even when docker info errors", () => {
+    const dockerCapture = vi.fn(() => {
+      throw new Error("docker daemon unreachable");
+    });
+    const readDir = vi.fn((dirPath: string) =>
+      dirPath === "/var/run/cdi" ? ["nvidia.json"] : null,
+    );
+    const readFile = vi.fn((filePath: string) =>
+      filePath === "/var/run/cdi/nvidia.json"
+        ? JSON.stringify({ cdiVersion: "0.6.0", kind: "nvidia.com/gpu" })
+        : null,
+    );
+    expect(dockerReportsNvidiaCdiDevices({ dockerCapture, readDir, readFile })).toBe(true);
+  });
+
+  it("does not re-scan a directory that docker info already reported", () => {
+    const readDir = vi.fn((dirPath: string) =>
+      dirPath === "/etc/cdi" ? ["nvidia.yaml"] : null,
+    );
+    const readFile = vi.fn(() =>
+      "cdiVersion: 0.6.0\nkind: nvidia.com/gpu\n",
+    );
+    dockerReportsNvidiaCdiDevices({
+      dockerCapture: vi.fn(() => JSON.stringify(["/etc/cdi"])),
+      readDir,
+      readFile,
+    });
+    const etcCdiCalls = readDir.mock.calls.filter(([dir]) => dir === "/etc/cdi");
+    expect(etcCdiCalls.length).toBe(1);
+  });
+
   it("recreates the OpenShell-managed container and waits for supervisor exec", () => {
     const dockerCapture = vi.fn((args: readonly string[]) => {
       if (args[0] === "ps") return "old-container-id\n";

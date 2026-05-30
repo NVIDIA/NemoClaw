@@ -56,6 +56,7 @@ export function gpuPassthroughRecoveryLines(
       "    openshell gateway remove nemoclaw",
       "    # For OpenShell releases that still expose lifecycle commands:",
       "    openshell gateway destroy -g nemoclaw",
+      "    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains",
       "    nemoclaw onboard --gpu",
     ];
   }

@@ -148,6 +148,7 @@ describe("handleProviderInferenceState", () => {
       "NVIDIA_API_KEY",
       null,
       [],
+      { allowToolsIncompatible: false },
     );
     expect(calls.deleteEnv).toHaveBeenCalledWith("NVIDIA_API_KEY");
     expect(result).toMatchObject({
@@ -311,6 +312,7 @@ describe("handleProviderInferenceState", () => {
       "COMPATIBLE_API_KEY",
       null,
       [],
+      { allowToolsIncompatible: false },
     );
   });
 
@@ -357,5 +359,35 @@ describe("handleProviderInferenceState", () => {
 
     expect(calls.exit).toHaveBeenCalledWith(0);
     expect(calls.setupInference).not.toHaveBeenCalled();
+  });
+
+  // Regression: #4241. When the provider selection step accepted a no-tools
+  // Ollama model (the user answered "yes" to the override prompt or
+  // NEMOCLAW_OLLAMA_REQUIRE_TOOLS=0 was set), the same flag must reach
+  // setupInference so the second validateOllamaModel pass does not reject the
+  // model on the same condition and bounce the user back to model selection.
+  it("forwards allowToolsIncompatible from provider selection into setupInference (#4241)", async () => {
+    const setupNim = vi.fn(async () => ({
+      ...baseSelection,
+      provider: "ollama-local",
+      model: "tinyllama:1.1b",
+      endpointUrl: "http://127.0.0.1:11434/v1",
+      credentialEnv: null,
+      allowToolsIncompatible: true,
+    }));
+    const { deps, calls } = createDeps({ setupNim });
+
+    await handleProviderInferenceState(baseOptions(deps));
+
+    expect(calls.setupInference).toHaveBeenCalledWith(
+      "my-assistant",
+      "tinyllama:1.1b",
+      "ollama-local",
+      "http://127.0.0.1:11434/v1",
+      null,
+      null,
+      [],
+      { allowToolsIncompatible: true },
+    );
   });
 });

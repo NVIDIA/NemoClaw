@@ -74,8 +74,10 @@ describe("sandbox-create-stream", () => {
   it("streams BuildKit progress lines as build output", async () => {
     const child = new FakeChild();
     const logLine = vi.fn();
+    const traceEvent = vi.fn();
     const promise = streamSandboxCreate("echo create", process.env, {
       logLine,
+      traceEvent,
       spawnImpl: () => child as never,
       heartbeatIntervalMs: 1_000,
       silentPhaseMs: 10_000,
@@ -95,6 +97,62 @@ describe("sandbox-create-stream", () => {
     expect(logLine).toHaveBeenCalledWith("#1 [internal] load build definition from Dockerfile");
     expect(logLine).toHaveBeenCalledWith("#2 CACHED");
     expect(logLine).toHaveBeenCalledWith("#3 DONE 0.1s");
+    expect(traceEvent).toHaveBeenCalledWith(
+      "docker_buildkit_progress",
+      expect.objectContaining({
+        step: 1,
+        detail: "[internal] load build definition from Dockerfile",
+      }),
+    );
+    expect(traceEvent).toHaveBeenCalledWith(
+      "docker_buildkit_progress",
+      expect.objectContaining({ step: 2, detail: "CACHED" }),
+    );
+    expect(traceEvent).toHaveBeenCalledWith(
+      "docker_buildkit_progress",
+      expect.objectContaining({ step: 3, detail: "DONE 0.1s" }),
+    );
+  });
+
+  it("records classic Docker build steps as trace events", async () => {
+    const child = new FakeChild();
+    const traceEvent = vi.fn();
+    const promise = streamSandboxCreate("echo create", process.env, {
+      traceEvent,
+      logLine: vi.fn(),
+      spawnImpl: () => child as never,
+      heartbeatIntervalMs: 1_000,
+      silentPhaseMs: 10_000,
+    });
+
+    child.stdout.emit(
+      "data",
+      Buffer.from(
+        "  Step 1/3 : FROM base\n" +
+          "  Step 2/3 : RUN npm ci\n" +
+          "  Step 3/3 : COPY . /workspace\n" +
+          "Successfully built abc123\n",
+      ),
+    );
+    child.emit("close", 0);
+
+    await expect(promise).resolves.toMatchObject({ status: 0, sawProgress: true });
+    expect(traceEvent).toHaveBeenCalledWith(
+      "sandbox_create_phase",
+      expect.objectContaining({ phase: "build" }),
+    );
+    expect(traceEvent).toHaveBeenCalledWith(
+      "docker_build_step_start",
+      expect.objectContaining({ step: "Step 1/3", index: 1, total: 3, instruction: "FROM base" }),
+    );
+    expect(traceEvent).toHaveBeenCalledWith(
+      "docker_build_step_end",
+      expect.objectContaining({ status: "completed", step: "Step 1/3", instruction: "FROM base" }),
+    );
+    expect(traceEvent).toHaveBeenCalledWith(
+      "docker_build_end",
+      expect.objectContaining({ status: "completed" }),
+    );
   });
 
   it("forces success when the sandbox becomes ready before the stream exits", async () => {

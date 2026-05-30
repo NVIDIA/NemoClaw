@@ -65,5 +65,6 @@ The table is generated from [`ci/platform-matrix.json`](https://github.com/NVIDI
 
 ## Next Steps
 
-- Prepare Windows for NemoClaw (use the `nemoclaw-user-get-started` skill) if you are using Windows.
-- Quickstart (use the `nemoclaw-user-get-started` skill) to install NemoClaw and launch your first sandbox.
+- [Prepare Windows for NemoClaw](windows-preparation.md) if you are using Windows.
+- [Quickstart](../SKILL.md) to install NemoClaw and launch your first sandbox.
+- Agent Skills (use the `nemoclaw-user-agent-skills` skill) to load NemoClaw guidance into an AI coding assistant before setup.

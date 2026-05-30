@@ -227,6 +227,7 @@ jobs:
         env:
           NEMOCLAW_NON_INTERACTIVE: "1"
           NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE: "1"
+          NEMOCLAW_TRACE_DIR: /tmp/nemoclaw-traces
         run: bash test/e2e/test-onboard-inference-smoke.sh
 
       - name: Upload onboard inference smoke logs on failure
@@ -237,6 +238,14 @@ jobs:
           path: |
             /tmp/nemoclaw-e2e-onboard-inference-smoke.log
             /tmp/nemoclaw-e2e-onboard-inference-smoke-node.log
+          if-no-files-found: ignore
+
+      - name: Upload onboard profiling traces
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: onboard-inference-smoke-traces
+          path: /tmp/nemoclaw-traces/
           if-no-files-found: ignore
 
   # ── Gateway drift preflight E2E ─────────────────────────────

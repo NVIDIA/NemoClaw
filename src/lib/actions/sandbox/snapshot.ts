@@ -12,6 +12,7 @@ import { getSandboxDeleteOutcome } from "../../domain/sandbox/destroy";
 import * as policies from "../../policy";
 import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
+import { isShieldsDown } from "../../shields";
 import { isGatewayHealthy } from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
@@ -97,14 +98,16 @@ function renderSnapshotTable(
   }
 }
 
-// Query the running src pod's image reference via `kubectl` inside the
-// gateway container. Returns null on any failure.
+// Resolve the running src pod's image. Docker- and VM-driver sandboxes don't
+// have the legacy cluster container — trust the registered imageTag and fail
+// fast if it's missing. Only the "kubernetes" driver falls back to the
+// kubectl probe inside the gateway container.
 function resolveSrcPodImage(srcName: string, srcEntry?: SandboxEntry | { name: string }): string | null {
   const registeredImage = (srcEntry as { imageTag?: string | null } | undefined)?.imageTag;
   const registeredDriver = (srcEntry as { openshellDriver?: string | null } | undefined)
     ?.openshellDriver;
-  if (registeredDriver === "docker" && registeredImage) {
-    return registeredImage;
+  if (usesGatewayMetadataProbe(registeredDriver)) {
+    return registeredImage ?? null;
   }
 
   const gatewayContainer = `openshell-cluster-${NEMOCLAW_GATEWAY_NAME}`;
@@ -195,9 +198,10 @@ async function autoCreateSandboxFromSource(
     snapshotExit(1);
   }
 
-  // Set up DNS proxy in the new pod (same step onboard runs after sandbox create).
+  // DNS proxy is only meaningful for the kubernetes driver (matches onboard.ts).
   const dnsScript = path.join(ROOT, "scripts", "setup-dns-proxy.sh");
-  if ((srcEntry as { openshellDriver?: string | null }).openshellDriver !== "docker" && fs.existsSync(dnsScript)) {
+  const srcDriver = (srcEntry as { openshellDriver?: string | null }).openshellDriver;
+  if (srcDriver === "kubernetes" && fs.existsSync(dnsScript)) {
     run(["bash", dnsScript, NEMOCLAW_GATEWAY_NAME, dstName], { ignoreError: true });
   }
 
@@ -329,6 +333,11 @@ export async function runSandboxSnapshot(
       const liveNames = parseLiveSandboxNames(isLive.output || "");
       if (!liveNames.has(sandboxName)) {
         console.error(`  Sandbox '${sandboxName}' is not running. Cannot create snapshot.`);
+        snapshotExit(1);
+      }
+      if (!isShieldsDown(sandboxName)) {
+        console.error("  Cannot create snapshot while shields are up.");
+        console.error(`  Run \`${CLI_NAME} ${sandboxName} shields down\` first, then retry.`);
         snapshotExit(1);
       }
       const label = request.name ? ` (--name ${request.name})` : "";

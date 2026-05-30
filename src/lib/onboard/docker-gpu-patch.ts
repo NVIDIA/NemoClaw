@@ -66,6 +66,10 @@ export type DockerGpuPatchDeps = {
   homedir?: () => string;
   now?: () => Date;
   detectSandboxFallbackDns?: () => string | null;
+  /** Injectable directory lister for unit testing CDI spec discovery. */
+  readDir?: (dirPath: string) => string[] | null;
+  /** Injectable file reader for unit testing CDI spec content checks. */
+  readFile?: (filePath: string) => string | null;
 };
 
 export type DockerGpuPatchModeKind = "gpus" | "nvidia-runtime" | "cdi";
@@ -627,15 +631,65 @@ function parseDockerCdiSpecDirs(value: string | null | undefined): string[] {
   }
 }
 
-function isLikelyNvidiaCdiSpecFile(filePath: string): boolean {
-  if (!/\.(json|ya?ml)$/i.test(filePath)) return false;
+/**
+ * Docker's well-known default CDI spec directories. Docker reads CDI specs
+ * from these paths even when `docker info` reports an empty `CDISpecDirs`
+ * (for example, on Docker 29 hosts with `nvidia-container-toolkit` installed
+ * but no `/etc/docker/daemon.json`). Scanning them lets us detect that the
+ * `cdi` GPU mode is viable when the docker-info detection alone would miss
+ * it (NemoClaw issue #3575).
+ */
+export const DEFAULT_DOCKER_CDI_SPEC_DIRS = ["/etc/cdi", "/var/run/cdi"] as const;
+
+function readCdiSpecContent(
+  filePath: string,
+  readFile?: (p: string) => string | null,
+): string | null {
+  if (readFile) return readFile(filePath);
   try {
-    return /nvidia\.com\/gpu|nvidia-container|libcuda|cuda/i.test(
-      fs.readFileSync(filePath, "utf-8"),
-    );
+    return fs.readFileSync(filePath, "utf-8");
   } catch {
-    return false;
+    return null;
   }
+}
+
+function isLikelyNvidiaCdiSpecFile(
+  filePath: string,
+  readFile?: (p: string) => string | null,
+): boolean {
+  if (!/\.(json|ya?ml)$/i.test(filePath)) return false;
+  const content = readCdiSpecContent(filePath, readFile);
+  if (content === null) return false;
+  return /nvidia\.com\/gpu|nvidia-container|libcuda|cuda/i.test(content);
+}
+
+function listDirEntries(
+  dirPath: string,
+  readDir?: (p: string) => string[] | null,
+): string[] | null {
+  if (readDir) return readDir(dirPath);
+  try {
+    return fs.readdirSync(dirPath);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Returns the set of directories to scan for CDI specs: those reported by
+ * `docker info` (if any), plus Docker's well-known defaults. Deduplicated
+ * so a host that surfaces `/etc/cdi` explicitly is not scanned twice.
+ */
+function resolveCdiScanDirs(reportedDirs: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const dir of [...reportedDirs, ...DEFAULT_DOCKER_CDI_SPEC_DIRS]) {
+    const trimmed = dir.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    ordered.push(trimmed);
+  }
+  return ordered;
 }
 
 export function dockerReportsNvidiaCdiDevices(deps: DockerGpuPatchDeps = {}): boolean {
@@ -647,16 +701,14 @@ export function dockerReportsNvidiaCdiDevices(deps: DockerGpuPatchDeps = {}): bo
       timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
     });
   } catch {
-    return false;
+    // `docker info` failed, but the default CDI dirs may still hold a valid
+    // spec (e.g. issue #3575). Continue with the defaults below.
   }
-  for (const dir of parseDockerCdiSpecDirs(raw)) {
-    let entries: string[];
-    try {
-      entries = fs.readdirSync(dir);
-    } catch {
-      continue;
-    }
-    if (entries.some((entry) => isLikelyNvidiaCdiSpecFile(path.join(dir, entry)))) {
+  const reported = parseDockerCdiSpecDirs(raw);
+  for (const dir of resolveCdiScanDirs(reported)) {
+    const entries = listDirEntries(dir, deps.readDir);
+    if (!entries) continue;
+    if (entries.some((entry) => isLikelyNvidiaCdiSpecFile(path.join(dir, entry), deps.readFile))) {
       return true;
     }
   }

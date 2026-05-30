@@ -271,18 +271,38 @@ function providerExistsInGateway(name, _runOpenshell) {
  * Create or update an OpenShell provider in the gateway.
  *
  * Checks whether the provider already exists via `openshell provider get`;
- * uses `create` for new providers and `update` for existing ones.
+ * uses `create` for new providers and `update` for existing ones. When
+ * `options.replaceExisting` is true an existing provider is deleted and
+ * recreated instead of updated — required for provider-type changes that
+ * `provider update` cannot apply (e.g. the Brave Search migration from the
+ * legacy `generic` type to the `brave` profile). The caller must guarantee
+ * the provider is detached from any live sandbox before opting in: OpenShell
+ * rejects `provider delete` on attached providers.
  * @param {string} name - Provider name (e.g. "discord-bridge", "inference").
- * @param {string} type - Provider type ("openai", "anthropic", "generic").
+ * @param {string} type - Provider type ("openai", "anthropic", "generic", "brave").
  * @param {string} credentialEnv - Environment variable name for the credential.
  * @param {string|null} baseUrl - Optional base URL for the provider endpoint.
  * @param {Record<string, string>} env - Environment variables for the openshell command.
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
+ * @param {{replaceExisting?: boolean}} options - Optional replacement controls.
  * @returns {{ ok: boolean, status?: number, message?: string }}
  */
-function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell) {
+function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, options = {}) {
   const exists = providerExistsInGateway(name, _runOpenshell);
-  const action = exists ? "update" : "create";
+  if (exists && options.replaceExisting) {
+    const deleteResult = _runOpenshell(["provider", "delete", name], {
+      ignoreError: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    if (deleteResult.status !== 0) {
+      const output =
+        compactText(redact(`${deleteResult.stderr || ""}`)) ||
+        compactText(redact(`${deleteResult.stdout || ""}`)) ||
+        `Failed to replace provider '${name}'.`;
+      return { ok: false, status: deleteResult.status || 1, message: output };
+    }
+  }
+  const action = exists && !options.replaceExisting ? "update" : "create";
   const args = buildProviderArgs(action, name, type, credentialEnv, baseUrl);
   const runOpts = { ignoreError: true, env, stdio: ["ignore", "pipe", "pipe"] };
   const result = _runOpenshell(args, runOpts);
@@ -300,15 +320,29 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell) 
  * Upsert all messaging providers that have tokens configured.
  * Returns the list of provider names that were successfully created/updated.
  * Exits the process if any upsert fails.
- * @param {Array<{name: string, envKey: string, token: string|null}>} tokenDefs
+ *
+ * Pass `options.replaceExisting` true only when every entry is guaranteed
+ * detached from any live sandbox (post-sandbox-delete on the recreate path);
+ * reuse paths must omit it because `provider delete` fails for attached
+ * providers.
+ * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
+ * @param {{replaceExisting?: boolean}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
  */
-function upsertMessagingProviders(tokenDefs, _runOpenshell) {
+function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   const upserted = [];
-  for (const { name, envKey, token } of tokenDefs) {
+  for (const { name, envKey, token, providerType } of tokenDefs) {
     if (!token) continue;
-    const result = upsertProvider(name, "generic", envKey, null, { [envKey]: token }, _runOpenshell);
+    const result = upsertProvider(
+      name,
+      providerType || "generic",
+      envKey,
+      null,
+      { [envKey]: token },
+      _runOpenshell,
+      { replaceExisting: Boolean(options.replaceExisting) },
+    );
     if (!result.ok) {
       console.error(`\n  ✗ Failed to create messaging provider '${name}': ${result.message}`);
       process.exit(1);
