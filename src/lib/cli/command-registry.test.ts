@@ -17,11 +17,12 @@ import { getRegisteredOclifCommandsMetadata } from "./oclif-metadata";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 68 commands", () => {
+    it("should contain exactly 69 commands", () => {
       // 28 global (22 visible + 6 hidden help/version aliases)
-      // 40 sandbox (34 visible + 6 hidden shields/config), now including
-      // the sandbox:sessions group (root + list + cleanup + rm + download)
-      expect(COMMANDS).toHaveLength(68);
+      // 41 sandbox (35 visible + 6 hidden shields/config), including the
+      // sandbox:sessions group (root + list + cleanup + rm + download) and
+      // sandbox skill remove.
+      expect(COMMANDS).toHaveLength(69);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -53,10 +54,11 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 40 entries", () => {
-      // 34 visible + 6 hidden (shields×3 + config get/set/rotate-token);
-      // 34 visible includes the sessions group (root + list + cleanup + rm + download).
-      expect(sandboxCommands()).toHaveLength(40);
+    it("should return exactly 41 entries", () => {
+      // 35 visible + 6 hidden (shields×3 + config get/set/rotate-token).
+      // 35 visible includes the sessions group (root + list + cleanup + rm +
+      // download) and sandbox skill remove.
+      expect(sandboxCommands()).toHaveLength(41);
     });
 
     it("every entry has scope sandbox", () => {
@@ -67,11 +69,11 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 12 hidden commands (56 visible)", () => {
+    it("should exclude 12 hidden commands (57 visible)", () => {
       // 6 hidden global (help, --help, -h, version, --version, -v) +
-      // 6 hidden sandbox (shields×3, config get/set/rotate-token);
-      // visible totals now include the sessions group (root + list + cleanup + rm + download).
-      expect(visibleCommands()).toHaveLength(56);
+      // 6 hidden sandbox (shields×3, config get/set/rotate-token); visible
+      // totals include the sessions group and sandbox skill remove.
+      expect(visibleCommands()).toHaveLength(57);
     });
 
     it("no visible command has hidden=true", () => {
@@ -170,6 +172,12 @@ describe("command-registry", () => {
       expect(list).not.toContain("nemoclaw <name> config get");
       expect(list).not.toContain("nemoclaw <name> config set");
       expect(list).not.toContain("nemoclaw <name> config rotate-token");
+    });
+
+    it("uses distinct placeholders for sandbox and skill names", () => {
+      const command = COMMANDS.find((entry) => entry.commandId === "sandbox:skill:remove");
+      expect(command?.usage).toBe("nemoclaw <name> skill remove");
+      expect(command?.flags).toBe("<skill>");
     });
   });
 

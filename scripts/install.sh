@@ -2183,6 +2183,30 @@ ensure_docker() {
   fi
 
   if [ "$needs_group_refresh" = "1" ]; then
+    # #4414: in non-interactive mode, self-reactivate group membership via
+    # sg(1) and re-exec the installer so a single curl|bash finishes the
+    # install on a clean Ubuntu VM. Linux only loads group membership at
+    # login, so without this the rest of the script can't talk to the
+    # docker socket. The env-var guard prevents an infinite loop if sg
+    # ran but the docker daemon is still unreachable for some other reason.
+    if installer_non_interactive \
+      && [ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" != "1" ] \
+      && command -v sg >/dev/null 2>&1; then
+      local self="${BASH_SOURCE[0]:-$0}"
+      if [ -n "$self" ] && [ -f "$self" ]; then
+        info "Reactivating docker group membership via 'sg docker' to continue non-interactive install."
+        export NEMOCLAW_DOCKER_GROUP_REACTIVATED=1
+        local cmd
+        printf -v cmd 'exec bash %q' "$self"
+        if [ "${#_NEMOCLAW_INSTALLER_ARGS[@]}" -gt 0 ]; then
+          local arg
+          for arg in "${_NEMOCLAW_INSTALLER_ARGS[@]}"; do
+            printf -v cmd '%s %q' "$cmd" "$arg"
+          done
+        fi
+        exec sg docker -c "$cmd"
+      fi
+    fi
     printf "\n"
     info "Docker group membership is not active in this shell yet. To finish:"
     info "  1) Run: newgrp docker   (or log out and log back in)"
@@ -2363,6 +2387,11 @@ maybe_offer_express_install() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
+  # Capture the original argv so ensure_docker can forward it across a
+  # self re-exec under sg(1) when the docker group needs activating in a
+  # non-interactive run (#4414).
+  _NEMOCLAW_INSTALLER_ARGS=("$@")
+
   # Parse flags
   NON_INTERACTIVE=""
   ACCEPT_THIRD_PARTY_SOFTWARE=""

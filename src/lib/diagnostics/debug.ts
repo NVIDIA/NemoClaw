@@ -4,11 +4,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { platform, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { join } from "node:path";
 
 import { dockerExecFileSync } from "../adapters/docker/exec";
 import { DASHBOARD_PORT } from "../core/ports";
 import { listSandboxes } from "../state/registry";
+import { createTarball as createDiagnosticsTarball } from "./tarball";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -527,29 +528,8 @@ function collectKernelMessages(collectDir: string, opts: DebugOptions = {}): voi
 // Tarball
 // ---------------------------------------------------------------------------
 
-/**
- * Archive the collected diagnostics into a tarball and print the sharing
- * guidance that goes with the generated file.
- */
 export function createTarball(collectDir: string, output: string): boolean {
-  const result = spawnSync("tar", ["czf", output, "-C", dirname(collectDir), basename(collectDir)], {
-    stdio: "inherit",
-    timeout: 60_000,
-  });
-  if (result.status !== 0 || result.signal) {
-    const reason = result.signal
-      ? `killed by signal ${result.signal}`
-      : `exited with code ${result.status ?? "unknown"}`;
-    error(`Failed to create tarball at ${output} (tar ${reason})`);
-    process.exitCode = 1;
-    return false;
-  }
-  info(`Tarball written to ${output}`);
-  warn(
-    "Known secrets are auto-redacted, but please review for any remaining sensitive data before sharing.",
-  );
-  info("Attach this file to your GitHub issue.");
-  return true;
+  return createDiagnosticsTarball(collectDir, output, { info, warn, error });
 }
 
 /**
@@ -582,9 +562,12 @@ export function runDebug(opts: DebugOptions = {}): void {
   // Compiled location: dist/lib/diagnostics/debug.js → repo root is 3 levels up
   const repoDir = join(__dirname, "..", "..", "..");
 
-  // Resolve sandbox name
-  let sandboxName =
-    opts.sandboxName ?? process.env.NEMOCLAW_SANDBOX ?? process.env.SANDBOX_NAME ?? "";
+  // Resolve sandbox name. The CLI wrapper (runDebugCommandWithOptions) is the
+  // sole supported caller; it already trims, validates, and applies the
+  // documented precedence (--sandbox > NEMOCLAW_SANDBOX_NAME > NEMOCLAW_SANDBOX
+  // > SANDBOX_NAME) before calling here. Reading env again would let
+  // whitespace-only values bypass validation, so only trim the option.
+  let sandboxName = opts.sandboxName?.trim() ?? "";
   if (!sandboxName) {
     sandboxName = detectSandboxName();
   }

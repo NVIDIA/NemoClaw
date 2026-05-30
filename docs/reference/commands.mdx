@@ -82,6 +82,8 @@ For NemoClaw-managed environments, use `nemoclaw onboard` when you need to creat
 Avoid `openshell self-update`, `npm update -g openshell`, `openshell gateway start --recreate`, or `openshell sandbox create` directly unless you intend to manage OpenShell separately and then rerun `nemoclaw onboard`.
 </Warning>
 
+Use `--fresh` to ignore any saved onboarding session and restart the wizard from scratch. This is useful after an interrupted `nemoclaw onboard` run when you want to discard saved state instead of continuing it with `--resume`.
+
 The installer detects existing sandbox sessions before onboarding and prints a warning if any are found.
 To make the installer abort instead of continuing, set `NEMOCLAW_SINGLE_SESSION=1`:
 
@@ -346,6 +348,10 @@ The hint is agent-aware. It names the correct TUI command for the sandbox's agen
 Set `NEMOCLAW_NO_CONNECT_HINT=1` to suppress the hint in scripted workflows.
 If the sandbox is running an outdated agent version, a non-blocking warning prints before connecting with a `nemoclaw <name> rebuild` hint.
 If another terminal is already connected to the sandbox, `connect` prints a note with the number of existing sessions before proceeding. Multiple concurrent sessions are allowed.
+
+`connect` does not pull or serve a model itself, but it does inspect `NEMOCLAW_VLLM_MODEL` if you exported it for the managed-vLLM install path.
+An unknown slug or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
+Unset the variable, or supply the missing token, before retrying.
 
 After a host reboot, the OpenShell gateway rotates its SSH host keys.
 `connect` detects the resulting identity drift, prunes stale `openshell-*` entries from `~/.ssh/known_hosts`, and retries automatically.
@@ -898,6 +904,19 @@ nemoclaw <name> sessions download <agent> [<session>] [--out <dir>]
 With no `<sessionKey>`, the entire `sessions/` directory (including `sessions.json` and every transcript, trajectory, lock, topic transcript, and reset archive) is copied.
 With a `<sessionKey>`, only the owned filename shapes for the resolved `sessionId` are copied.
 
+### `nemoclaw <name> skill remove <skill>`
+
+Remove an installed skill from a running sandbox by skill name.
+The command validates the skill name, removes the sandbox upload directory, removes the OpenClaw home-directory mirror when present, and refreshes the agent session index so the remaining skills are rediscovered on the next session.
+
+```bash
+nemoclaw my-assistant skill remove my-skill
+```
+
+Use the skill name from the `SKILL.md` frontmatter, not the local directory name.
+Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
+For non-OpenClaw agents, restart the agent gateway if prompted so the removal takes effect.
+
 ### `nemoclaw <name> rebuild`
 
 Upgrade a sandbox to the current agent version while preserving workspace state.
@@ -1252,6 +1271,9 @@ $ nemoclaw debug [--quick|-q] [--sandbox NAME] [--output PATH|-o PATH]
 | `--output PATH`, `-o PATH` | Write diagnostics tarball to the given path |
 
 If `--output` is set and the tarball cannot be written (for example, the destination directory is missing or read-only), the command exits non-zero so scripts can detect the failure.
+The tarball is written to a temporary sibling and renamed on success, so a pre-existing file at `--output` is preserved when `tar` fails.
+
+When `--sandbox` is supplied explicitly (via flag or one of `NEMOCLAW_SANDBOX_NAME`, `NEMOCLAW_SANDBOX`, `SANDBOX_NAME` — flag wins, then the env vars in that order), the name must match a registered sandbox; if `openshell sandbox list` succeeds it must also appear in the live gateway. An unknown or stale name exits non-zero with an actionable error that names the sandbox and reports the source env var when applicable, and no tarball is written. Without an explicit name, `nemoclaw debug` falls back to the registry's default sandbox (and warns if that default is stale).
 
 ### `nemoclaw credentials list`
 
