@@ -367,7 +367,8 @@ Run `nemoclaw status` for a broader gateway health report.
 ### Invalid sandbox name
 
 Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
-Uppercase letters are automatically lowercased.
+The CLI rejects names that do not match these rules.
+It prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant` and you can rerun with the suggested slug.
 
 Names that collide with global CLI commands are also rejected.
 Reserved names include `onboard`, `list`, `deploy`, `setup`, `start`, `stop`, `status`, `debug`, `uninstall`, `credentials`, and `help`.
@@ -1177,11 +1178,12 @@ Run `fix-coredns.sh` to point CoreDNS at the container gateway IP instead, then 
 ### `k3s` cannot find a freshly built image
 
 After building a new sandbox image, `k3s` inside the gateway container sometimes fails to pull it even though the image exists on the host.
-Destroy and restart the gateway, then re-run setup.
+Remove the gateway registration, stop any leftover host gateway process, then re-run setup.
 
 ```console
-$ openshell gateway destroy
-$ openshell gateway start
+$ openshell gateway remove nemoclaw
+$ sudo pkill -f openshell-gateway
+$ nemoclaw onboard --resume
 ```
 
 ### GPU passthrough on Spark

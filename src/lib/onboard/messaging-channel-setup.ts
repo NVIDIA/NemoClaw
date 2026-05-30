@@ -73,6 +73,12 @@ export async function setupSelectedMessagingChannels(
       console.log(
         `  ✓ ${ch.name} enabled — complete QR pairing from inside the sandbox after rebuild.`,
       );
+      // Surface the post-pair diagnostic hint here too — in-sandbox-qr
+      // channels skipped the shared setupNotes block below by `continue`,
+      // so users would never see the `channels status` guidance otherwise.
+      for (const line of ch.setupNotes ?? []) {
+        console.log(`  ${line}`);
+      }
       continue;
     } else {
       if (!channelHasStaticToken(ch)) continue;
