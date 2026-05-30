@@ -13,11 +13,15 @@ describe("resolveProviderKeyFallback", () => {
     const options = [option("ollama"), option("vllm")];
 
     assert.equal(
-      resolveProviderKeyFallback(options, "install-ollama", { isWindowsHostOllama: false })?.key,
+      resolveProviderKeyFallback(options, "install-ollama", {
+        canUseWindowsHostOllama: false,
+      })?.key,
       "ollama",
     );
     assert.equal(
-      resolveProviderKeyFallback(options, "install-vllm", { isWindowsHostOllama: false })?.key,
+      resolveProviderKeyFallback(options, "install-vllm", {
+        canUseWindowsHostOllama: false,
+      })?.key,
       "vllm",
     );
   });
@@ -27,7 +31,7 @@ describe("resolveProviderKeyFallback", () => {
 
     assert.equal(
       resolveProviderKeyFallback(options, "install-windows-ollama", {
-        isWindowsHostOllama: false,
+        canUseWindowsHostOllama: false,
       })?.key,
       "start-windows-ollama",
     );
@@ -38,13 +42,13 @@ describe("resolveProviderKeyFallback", () => {
 
     assert.equal(
       resolveProviderKeyFallback(options, "install-windows-ollama", {
-        isWindowsHostOllama: true,
+        canUseWindowsHostOllama: true,
       })?.key,
       "ollama",
     );
     assert.equal(
       resolveProviderKeyFallback(options, "start-windows-ollama", {
-        isWindowsHostOllama: true,
+        canUseWindowsHostOllama: true,
       })?.key,
       "ollama",
     );
@@ -55,13 +59,13 @@ describe("resolveProviderKeyFallback", () => {
 
     assert.equal(
       resolveProviderKeyFallback(options, "install-windows-ollama", {
-        isWindowsHostOllama: false,
+        canUseWindowsHostOllama: false,
       }),
       undefined,
     );
     assert.equal(
       resolveProviderKeyFallback(options, "start-windows-ollama", {
-        isWindowsHostOllama: false,
+        canUseWindowsHostOllama: false,
       }),
       undefined,
     );

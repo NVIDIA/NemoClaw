@@ -60,11 +60,34 @@ function startScriptHeredoc(src: string, marker: string): string {
 }
 
 function extractShellFunctionFromSource(src: string, name: string): string {
-  const match = src.match(new RegExp(`${name}\\(\\) \\{([\\s\\S]*?)^\\}`, "m"));
-  if (!match) {
+  const header = `${name}() {`;
+  const start = src.indexOf(header);
+  if (start === -1) {
     throw new Error(`Expected ${name} in scripts/nemoclaw-start.sh`);
   }
-  return `${name}() {${match[1]}\n}`;
+  const bodyStart = start + header.length;
+  const lines = src.slice(bodyStart).split(/(?<=\n)/);
+  let offset = 0;
+  let heredocEnd: string | undefined;
+  for (const line of lines) {
+    const bareLine = line.replace(/\r?\n$/, "");
+    if (heredocEnd) {
+      offset += line.length;
+      if (bareLine === heredocEnd) {
+        heredocEnd = undefined;
+      }
+      continue;
+    }
+    const heredoc = line.match(/<<-?\s*['"]?([A-Za-z_][A-Za-z0-9_]*)['"]?/);
+    if (heredoc) {
+      heredocEnd = heredoc[1];
+    }
+    if (bareLine === "}") {
+      return `${name}() {${src.slice(bodyStart, bodyStart + offset)}\n}`;
+    }
+    offset += line.length;
+  }
+  throw new Error(`Expected closing brace for ${name} in scripts/nemoclaw-start.sh`);
 }
 
 function runEmbeddedPreload(
@@ -308,7 +331,9 @@ describe("nemoclaw-start non-root fallback", () => {
       'refresh_openclaw_provider_placeholders() { :; }',
       'ensure_mutable_openclaw_config_hash() { :; }',
       extractShellFunctionFromSource(src, "needs_gateway_token_for_current_command"),
+      extractShellFunctionFromSource(src, "prepare_gateway_token_for_current_command"),
       'ensure_gateway_token() { echo "SHOULD_NOT_ENSURE"; exit 75; }',
+      'ensure_gateway_token_if_missing() { echo "SHOULD_NOT_ENSURE"; exit 76; }',
       'write_openclaw_config_baseline() { :; }',
       'export_gateway_token() { :; }',
       'write_runtime_shell_env() { :; }',
@@ -353,6 +378,28 @@ describe("nemoclaw-start non-root fallback", () => {
     expect(result.stdout).toContain("yes:/usr/local/bin/openclaw");
     expect(result.stdout).toContain("no:true");
     expect(result.stdout).toContain("no:bash");
+  });
+
+  it("#4517: refreshes startup tokens but only ensures direct OpenClaw command tokens", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const script = [
+      "set -euo pipefail",
+      extractShellFunctionFromSource(src, "needs_gateway_token_for_current_command"),
+      extractShellFunctionFromSource(src, "prepare_gateway_token_for_current_command"),
+      'ensure_gateway_token() { printf "rotate:%s\\n" "${NEMOCLAW_CMD[*]:-<none>}"; }',
+      'ensure_gateway_token_if_missing() { printf "ensure-missing:%s\\n" "${NEMOCLAW_CMD[*]}"; }',
+      'check() { NEMOCLAW_CMD=("$@"); prepare_gateway_token_for_current_command; }',
+      "check",
+      "check openclaw agent --agent main",
+      "check true",
+    ].join("\n");
+
+    const result = spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("rotate:<none>");
+    expect(result.stdout).toContain("ensure-missing:openclaw agent --agent main");
+    expect(result.stdout).not.toContain("true");
   });
 
   it("repairs writable OpenClaw state directories in non-root mode", () => {
@@ -462,6 +509,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
   ) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gateway-token-"));
     const openclawDir = path.join(tmpDir, ".openclaw");
+    const optNemoclaw = path.join(tmpDir, "opt", "nemoclaw");
     const configPath = path.join(openclawDir, "openclaw.json");
     const hashPath = path.join(openclawDir, ".config-hash");
     const proxyEnv = path.join(tmpDir, "proxy-env.sh");
@@ -469,6 +517,10 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     const predictableTmpPath = `${configPath}.tmp`;
     const tmpSymlinkVictim = path.join(tmpDir, "predictable-tmp-victim");
     fs.mkdirSync(openclawDir, { recursive: true });
+    fs.mkdirSync(path.join(optNemoclaw, "node_modules"), { recursive: true });
+    fs.cpSync(JSON5_MODULE, path.join(optNemoclaw, "node_modules", "json5"), {
+      recursive: true,
+    });
     fs.writeFileSync(configPath, configJson);
     fs.writeFileSync(hashPath, "initial-hash\n");
     if (preseedPredictableTmpSymlink) {
@@ -479,10 +531,11 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     const readToken = extractShellFunctionFromSource(src, "_read_gateway_token").replaceAll(
       "/sandbox/.openclaw/openclaw.json",
       configPath,
-    );
+    ).replaceAll("/opt/nemoclaw", optNemoclaw);
     const ensureGatewayToken = extractShellFunctionFromSource(src, "ensure_gateway_token")
       .replaceAll("/sandbox/.openclaw/openclaw.json", configPath)
-      .replaceAll("/sandbox/.openclaw/.config-hash", hashPath);
+      .replaceAll("/sandbox/.openclaw/.config-hash", hashPath)
+      .replaceAll("/opt/nemoclaw", optNemoclaw);
     const configWriteHelperStubs = [
       "prepare_openclaw_config_for_write() { :; }",
       "restore_openclaw_config_after_write() { :; }",
@@ -621,6 +674,53 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(hashAfter).toMatch(/ openclaw\.json\n$/);
   });
 
+  it("#4517: rotates an existing gateway token before writing the runtime shell env", () => {
+    const oldToken = "old-token-before-rebuild";
+    const { result, envFile, configAfter, hashAfter } = runGatewayTokenHarness(
+      JSON.stringify({ gateway: { auth: { token: oldToken } } }),
+      "stale-token",
+      "18790",
+      true,
+    );
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(configAfter.gateway.auth.token).toEqual(expect.any(String));
+    expect(configAfter.gateway.auth.token).not.toBe("");
+    expect(configAfter.gateway.auth.token).not.toBe(oldToken);
+    expect(envFile).toContain(`export OPENCLAW_GATEWAY_TOKEN='${configAfter.gateway.auth.token}'`);
+    expect(envFile).not.toContain(oldToken);
+    expect(envFile).not.toContain("stale-token");
+    expect(hashAfter).not.toBe("initial-hash\n");
+    expect(hashAfter).toMatch(/ openclaw\.json\n$/);
+  });
+
+  it("#4517: rotates an existing gateway token from JSON5 config", () => {
+    const oldToken = "old-json5-token-before-rebuild";
+    const { result, envFile, configAfter, hashAfter } = runGatewayTokenHarness(
+      [
+        "{",
+        "  // OpenClaw config accepts JSON5.",
+        "  gateway: { auth: { token: 'old-json5-token-before-rebuild', }, },",
+        "  model: 'nvidia/nemotron-3-super-120b-a12b',",
+        "}",
+      ].join("\n"),
+      "stale-token",
+      "18790",
+      true,
+    );
+
+    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(configAfter.gateway.auth.token).toEqual(expect.any(String));
+    expect(configAfter.gateway.auth.token).not.toBe("");
+    expect(configAfter.gateway.auth.token).not.toBe(oldToken);
+    expect(configAfter.model).toBe("nvidia/nemotron-3-super-120b-a12b");
+    expect(envFile).toContain(`export OPENCLAW_GATEWAY_TOKEN='${configAfter.gateway.auth.token}'`);
+    expect(envFile).not.toContain(oldToken);
+    expect(envFile).not.toContain("stale-token");
+    expect(hashAfter).not.toBe("initial-hash\n");
+    expect(hashAfter).toMatch(/ openclaw\.json\n$/);
+  });
+
   it("does not write gateway tokens through a preseeded predictable temp symlink", () => {
     const {
       result,
@@ -705,7 +805,7 @@ describe("nemoclaw-start configure guard behavior", () => {
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf '%s\\n' "$*" >> ${JSON.stringify(commandLog)}\nexit 0\n`,
+      `#!/usr/bin/env bash\nprintf 'ARGS=%s URL=%s\\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(commandLog)}\nexit 0\n`,
       { mode: 0o755 },
     );
     const runtimeBlock = `${runtimeShellEnvBlock(src)}\nwrite_runtime_shell_env`.replaceAll(
@@ -726,6 +826,7 @@ describe("nemoclaw-start configure guard behavior", () => {
       '_SECCOMP_GUARD_SCRIPT="/tmp/seccomp-guard.js"',
       '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
       '_SLACK_GUARD_SCRIPT="/nonexistent/slack-guard.js"',
+      'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
       "_TOOL_REDIRECTS=()",
       "set +u",
       runtimeBlock,
@@ -737,7 +838,11 @@ describe("nemoclaw-start configure guard behavior", () => {
     return { tmpDir, fakeBin, proxyEnv, commandLog };
   }
 
-  function runGuardedOpenclaw(setup: ReturnType<typeof writeProxyEnvWithGuard>, args: string[]) {
+  function shellOpenclawCommand(args: string[]) {
+    return ["openclaw", ...args.map((arg) => JSON.stringify(arg))].join(" ");
+  }
+
+  function runGuardedShell(setup: ReturnType<typeof writeProxyEnvWithGuard>, commands: string[]) {
     return spawnSync(
       "bash",
       [
@@ -746,7 +851,7 @@ describe("nemoclaw-start configure guard behavior", () => {
         "-c",
         [
           `source ${JSON.stringify(setup.proxyEnv)}`,
-          ["openclaw", ...args.map((arg) => JSON.stringify(arg))].join(" "),
+          ...commands,
         ].join("; "),
       ],
       {
@@ -755,6 +860,10 @@ describe("nemoclaw-start configure guard behavior", () => {
         timeout: 5000,
       },
     );
+  }
+
+  function runGuardedOpenclaw(setup: ReturnType<typeof writeProxyEnvWithGuard>, args: string[]) {
+    return runGuardedShell(setup, [shellOpenclawCommand(args)]);
   }
 
   it("emits a proxy-env guard that blocks mutating OpenClaw commands and passes read-only commands through", () => {
@@ -790,6 +899,28 @@ describe("nemoclaw-start configure guard behavior", () => {
       expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("agent --agent main -m hello");
       expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("config get foo");
       expect(fs.readFileSync(setup.commandLog, "utf-8")).toContain("channels list");
+    } finally {
+      fs.rmSync(setup.tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("#4462: unsets OPENCLAW_GATEWAY_URL only for devices approve", () => {
+    const setup = writeProxyEnvWithGuard();
+    try {
+      const result = runGuardedShell(setup, [
+        shellOpenclawCommand(["devices", "list", "--json"]),
+        shellOpenclawCommand(["devices", "approve", "request-1", "--json"]),
+        `printf 'SHELL_URL=%s\\n' "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(setup.commandLog)}`,
+        shellOpenclawCommand(["agent", "--agent", "main", "-m", "hello"]),
+      ]);
+
+      expect(result.status).toBe(0);
+      expect(fs.readFileSync(setup.commandLog, "utf-8").trim().split("\n")).toEqual([
+        "ARGS=devices list --json URL=ws://127.0.0.1:18789",
+        "ARGS=devices approve request-1 --json URL=unset",
+        "SHELL_URL=ws://127.0.0.1:18789",
+        "ARGS=agent --agent main -m hello URL=ws://127.0.0.1:18789",
+      ]);
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
     }
@@ -1316,6 +1447,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
     const fakeOpenclaw = path.join(tmpDir, "openclaw");
     const stateFile = path.join(tmpDir, "list-count");
     const approveLog = path.join(tmpDir, "approvals.log");
+    const envLog = path.join(tmpDir, "env.log");
     const pendingJson = JSON.stringify({
       pending: [
         "not-a-device",
@@ -1335,6 +1467,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
       `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  printf 'list:%s\n' "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(envLog)}
   count="$(cat ${JSON.stringify(stateFile)} 2>/dev/null || echo 0)"
   count=$((count + 1))
   echo "$count" > ${JSON.stringify(stateFile)}
@@ -1346,6 +1479,7 @@ if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
   exit 0
 fi
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  printf 'approve:%s:%s\n' "$3" "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(envLog)}
   echo "$3" >> ${JSON.stringify(approveLog)}
   printf '{}\n'
   exit 0
@@ -1367,6 +1501,7 @@ exit 2
         env: {
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
+          OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
           // Cap the slow-mode keepalive (NemoClaw#4263) so the test
           // terminates without waiting out the default 8h deadline.
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "5",
@@ -1387,6 +1522,10 @@ exit 2
         "ok-browser",
         "ok-webchat",
       ]);
+      const envLogLines = fs.readFileSync(envLog, "utf-8").trim().split("\n");
+      expect(envLogLines).toContain("list:ws://127.0.0.1:18789");
+      expect(envLogLines).toContain("approve:ok-browser:unset");
+      expect(envLogLines).toContain("approve:ok-webchat:unset");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
@@ -1858,6 +1997,81 @@ exit 2
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   }, 40_000);
+
+  it("retries a non-zero approve failure without counting it as approved", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-auto-pair-afail-"));
+    const fakeOpenclaw = path.join(tmpDir, "openclaw");
+    const stateFile = path.join(tmpDir, "approve-count");
+    const approveLog = path.join(tmpDir, "approvals.log");
+    const pendingResponse = JSON.stringify({
+      pending: [
+        { requestId: "retry-cli", clientId: "openclaw-cli", clientMode: "cli" },
+      ],
+      paired: [],
+    });
+    const allPaired = JSON.stringify({
+      pending: [],
+      paired: [{ clientId: "openclaw-cli", clientMode: "cli" }],
+    });
+
+    fs.writeFileSync(
+      fakeOpenclaw,
+      `#!/usr/bin/env bash
+set -euo pipefail
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
+  if [ -f ${JSON.stringify(approveLog)} ]; then
+    printf '%s\n' ${JSON.stringify(allPaired)}
+  else
+    printf '%s\n' ${JSON.stringify(pendingResponse)}
+  fi
+  exit 0
+fi
+if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
+  count="$(cat ${JSON.stringify(stateFile)} 2>/dev/null || echo 0)"
+  count=$((count + 1))
+  echo "$count" > ${JSON.stringify(stateFile)}
+  if [ "$count" = "1" ]; then
+    echo "temporary approve failure" >&2
+    exit 7
+  fi
+  echo "$3" >> ${JSON.stringify(approveLog)}
+  printf '{}\n'
+  exit 0
+fi
+echo "unexpected: $*" >&2
+exit 2
+`,
+      { mode: 0o755 },
+    );
+
+    try {
+      const run = spawnSync("python3", ["-c", buildAutoPairScript()], {
+        encoding: "utf-8",
+        env: {
+          ...process.env,
+          OPENCLAW_BIN: fakeOpenclaw,
+          NEMOCLAW_AUTO_PAIR_FAST_DEADLINE_SECS: "600",
+          NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "1",
+          NEMOCLAW_AUTO_PAIR_SLOW_INTERVAL_SECS: "1",
+        },
+        timeout: 20_000,
+      });
+      expect(run.status).toBe(0);
+      expect(run.stdout).toContain(
+        "[auto-pair] approve failed request=retry-cli: temporary approve failure",
+      );
+      expect(run.stdout).toContain(
+        "[auto-pair] approved request=retry-cli client=openclaw-cli mode=cli",
+      );
+      expect(run.stdout).toContain("watcher deadline reached approvals=1");
+      expect(fs.readFileSync(stateFile, "utf-8").trim()).toBe("2");
+      expect(fs.readFileSync(approveLog, "utf-8").trim().split("\n")).toEqual([
+        "retry-cli",
+      ]);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
 
 describe("nemoclaw-start gateway launch signal handling", () => {
@@ -2700,7 +2914,9 @@ describe("Telegram diagnostics (#2766)", () => {
         'refresh_openclaw_provider_placeholders() { :; }',
         'ensure_mutable_openclaw_config_hash() { :; }',
         'needs_gateway_token_for_current_command() { :; }',
+        extractShellFunctionFromSource(src, "prepare_gateway_token_for_current_command"),
         'ensure_gateway_token() { :; }',
+        'ensure_gateway_token_if_missing() { :; }',
         'write_openclaw_config_baseline() { :; }',
         'export_gateway_token() { :; }',
         'write_runtime_shell_env() { :; }',

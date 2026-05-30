@@ -12,6 +12,11 @@ set -euo pipefail
 # are removed on any exit path (set -e, unhandled signal, unexpected error).
 _cleanup_pids=()
 _cleanup_files=()
+# #4414: When re-launched as a staged copy via `curl | bash`, queue the
+# staged tmpfile for removal on EXIT. NEMOCLAW_INSTALLER_STAGED carries
+# the staged path forward so both the loop guard and cleanup use one var.
+[[ "${NEMOCLAW_INSTALLER_STAGED:-}" == /tmp/nemoclaw-installer-* ]] \
+  && _cleanup_files+=("${NEMOCLAW_INSTALLER_STAGED}")
 _global_cleanup() {
   for pid in "${_cleanup_pids[@]:-}"; do
     kill "$pid" 2>/dev/null || true
@@ -1666,7 +1671,8 @@ print_openshell_upgrade_manual_commands() {
   cat <<EOF
   Manual upgrade path:
     ${_CLI_BIN} backup-all
-    openshell gateway destroy -g nemoclaw || openshell gateway destroy
+    openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy
+    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
     ${_CLI_BIN} upgrade-sandboxes --check
 
@@ -2234,21 +2240,26 @@ detect_express_platform() {
 describe_express_install() {
   local platform="$1"
   local inference_summary=""
+  local sandbox_summary=""
   local tier="${NEMOCLAW_POLICY_TIER:-balanced}"
   local policy_summary=""
 
   case "$platform" in
     "DGX Spark")
       inference_summary="managed local Ollama with model qwen3.6:35b"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
       ;;
     "DGX Station")
       inference_summary="managed local vLLM"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
       inference_summary="Windows-host Ollama through host.docker.internal"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     *)
       inference_summary="managed local inference"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
   esac
 
@@ -2271,6 +2282,7 @@ describe_express_install() {
   esac
 
   printf "  Express install will configure %s.\n" "$inference_summary"
+  printf "  Sandbox name: %s.\n" "$sandbox_summary"
   printf "  It runs onboarding non-interactively, but still prompts for sudo when host setup needs it.\n"
   printf "  Sandbox policy: suggested mode, tier '%s'. This uses the %s.\n" "$tier" "$policy_summary"
 }
@@ -2330,6 +2342,7 @@ maybe_offer_express_install() {
       export NEMOCLAW_POLICY_MODE=suggested
       case "$platform" in
         "DGX Spark")
+          export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
           export NEMOCLAW_PROVIDER=install-ollama
           export NEMOCLAW_MODEL=qwen3.6:35b
           ;;
@@ -2476,5 +2489,26 @@ main() {
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then
+  # #4414: When invoked via `curl ... | bash`, BASH_SOURCE is empty and
+  # $0="bash". ensure_docker's sg(1) re-exec (#4419) needs a real script
+  # file to point bash at; without one it falls back to the legacy
+  # newgrp/re-curl path. Stage the installer by re-curling the canonical
+  # URL so the sg(1) re-exec has a file to execute. NEMOCLAW_INSTALLER_STAGED
+  # carries the staged path forward as both loop guard and cleanup key.
+  if [[ -z "${BASH_SOURCE[0]:-}" ]] && [[ -z "${NEMOCLAW_INSTALLER_STAGED:-}" ]]; then
+    _installer_url="${NEMOCLAW_INSTALLER_URL:-https://www.nvidia.com/nemoclaw.sh}"
+    if _staged="$(mktemp /tmp/nemoclaw-installer-XXXXXX 2>/dev/null)" \
+      && curl -fsSL "$_installer_url" -o "$_staged" 2>/dev/null \
+      && [[ -s "$_staged" ]] \
+      && head -1 "$_staged" | grep -qE '^#!.*(sh|bash)' \
+      && bash -n "$_staged" 2>/dev/null; then
+      chmod +x "$_staged"
+      export NEMOCLAW_INSTALLER_STAGED="$_staged"
+      exec bash "$_staged" "$@"
+    fi
+    # Staging failed (mktemp / curl / empty / bad shebang / syntax check) —
+    # fall through to direct main(). The legacy newgrp/re-curl path still applies.
+    rm -f "${_staged:-}" 2>/dev/null
+  fi
   main "$@"
 fi

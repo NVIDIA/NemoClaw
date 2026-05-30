@@ -6,7 +6,10 @@ import {
   prompt,
   saveCredential,
 } from "../credentials/store";
-import { normalizeMessagingChannelConfigValue } from "../messaging-channel-config";
+import {
+  normalizeMessagingChannelConfigValue,
+  resolveMessagingChannelConfigEnvValue,
+} from "../messaging-channel-config";
 import { channelHasStaticToken, type ChannelDef } from "../sandbox/channels";
 import { dispatchHostQrLogin } from "./host-qr-dispatch";
 import {
@@ -16,8 +19,14 @@ import {
 
 type ChannelEntry = { name: string } & ChannelDef;
 
-const getMessagingConfigValue = (envKey: string): string | null =>
-  normalizeMessagingChannelConfigValue(envKey, process.env[envKey]);
+const getMessagingConfigValue = (envKey: string): string | null => {
+  const resolved = resolveMessagingChannelConfigEnvValue(envKey, process.env);
+  if (resolved.value) {
+    if (!process.env[envKey]) process.env[envKey] = resolved.value;
+    return resolved.value;
+  }
+  return normalizeMessagingChannelConfigValue(envKey, process.env[envKey]);
+};
 
 function getExistingMessagingToken(
   ch: ChannelEntry,
@@ -73,6 +82,12 @@ export async function setupSelectedMessagingChannels(
       console.log(
         `  ✓ ${ch.name} enabled — complete QR pairing from inside the sandbox after rebuild.`,
       );
+      // Surface the post-pair diagnostic hint here too — in-sandbox-qr
+      // channels skipped the shared setupNotes block below by `continue`,
+      // so users would never see the `channels status` guidance otherwise.
+      for (const line of ch.setupNotes ?? []) {
+        console.log(`  ${line}`);
+      }
       continue;
     } else {
       if (!channelHasStaticToken(ch)) continue;

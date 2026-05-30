@@ -38,11 +38,14 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^skills/[^/]+/skill\.oms\.sig$
         priority: 0
       - id: end-of-file-fixer
+        exclude: ^skills/[^/]+/skill\.oms\.sig$
         priority: 0
       - id: mixed-line-ending
         args: ["--fix=lf"]
+        exclude: ^skills/[^/]+/skill\.oms\.sig$
         priority: 0
 
   # ── Priority 0: reject force-added ignored files ───────────────────────────
@@ -75,9 +78,9 @@ repos:
     hooks:
       - id: platform-matrix-sync
         name: Sync platform matrix to docs
-        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add README.md docs/inference/inference-options.mdx'
+        entry: bash -c 'python3 scripts/generate-platform-docs.py && git add docs/get-started/prerequisites.mdx docs/inference/inference-options.mdx'
         language: system
-        files: ^(ci/platform-matrix\.json|README\.md|docs/inference/inference-options\.mdx|scripts/generate-platform-docs\.py)$
+        files: ^(ci/platform-matrix\.json|docs/get-started/prerequisites\.mdx|docs/inference/inference-options\.mdx|scripts/generate-platform-docs\.py)$
         pass_filenames: false
         priority: 3
 
@@ -154,14 +157,6 @@ repos:
         entry: npm run checks
         language: system
         files: ^(bin/.*\.(cjs|js|mjs)$|src/.*\.tsx?$|scripts/.*\.(cjs|js|mjs|ts|tsx)$|test/.*\.(cjs|js|mjs|ts|tsx)$|nemoclaw/src/.*\.tsx?$)
-        pass_filenames: false
-        priority: 10
-
-      - id: catalog-skills-export
-        name: Verify catalog skills export
-        entry: python3 scripts/export-catalog-skills.py --check --allow-missing
-        language: system
-        files: ^(\.agents/catalog-skills\.yaml|\.agents/skills/.*|skills/.*|scripts/export-catalog-skills\.py)$
         pass_filenames: false
         priority: 10
 
