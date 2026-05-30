@@ -168,6 +168,12 @@ describe("command-registry", () => {
       expect(list).not.toContain("nemoclaw <name> config set");
       expect(list).not.toContain("nemoclaw <name> config rotate-token");
     });
+
+    it("uses distinct placeholders for sandbox and skill names", () => {
+      const command = COMMANDS.find((entry) => entry.commandId === "sandbox:skill:remove");
+      expect(command?.usage).toBe("nemoclaw <name> skill remove");
+      expect(command?.flags).toBe("<skill>");
+    });
   });
 
   describe("globalCommandTokens()", () => {

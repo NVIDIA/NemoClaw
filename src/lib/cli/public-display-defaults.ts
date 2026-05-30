@@ -373,7 +373,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       "group": "Skills",
       "order": 16.1,
-      "flags": "<name>"
+      "flags": "<skill>"
     }
   ],
   "sandbox:snapshot:create": [

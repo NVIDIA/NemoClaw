@@ -332,24 +332,39 @@ describe("removeSkill (unit — no SSH)", () => {
   });
 
   it("success is false for OpenClaw when mirrorDir removal fails even if uploadDir was removed", () => {
-    // Non-OpenClaw agent: success depends only on uploadDir
-    const nonOcPaths = resolvePaths(
-      { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } },
-      "test-skill",
-    );
-    // Both SSH calls fail (unreachable), so removedUploadDir=false → success=false regardless
-    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
-    const nonOcResult = removeSkill(ctx, nonOcPaths);
-    expect(nonOcResult.success).toBe(false); // uploadDir failed
+    const ctx = { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" };
+    const paths = resolvePaths(null, "test-skill");
+    const result = removeSkill(ctx, paths, {
+      sshExecImpl: (_ctx, command) => ({
+        status: command.includes("$HOME/.openclaw/skills") ? 1 : 0,
+        stdout: "",
+        stderr: "",
+      }),
+    });
 
-    // Validate the formula directly: for OpenClaw, success requires BOTH dirs gone
-    // We can't make uploadDir succeed without a real SSH, so we verify the logic
-    // by asserting removedMirrorDir is false (SSH unreachable) and that
-    // success therefore cannot be true.
-    const ocPaths = resolvePaths(null, "test-skill");
-    const ocResult = removeSkill(ctx, ocPaths);
-    expect(ocResult.removedMirrorDir).toBe(false);
-    expect(ocResult.success).toBe(false); // must be false: isOpenClaw && mirrorDir failed
+    expect(result.removedUploadDir).toBe(true);
+    expect(result.removedMirrorDir).toBe(false);
+    expect(result.success).toBe(false);
+  });
+
+  it("removes OpenClaw upload and mirror dirs, then clears sessions", () => {
+    const ctx = { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" };
+    const paths = resolvePaths(null, "test-skill");
+    const commands: string[] = [];
+    const result = removeSkill(ctx, paths, {
+      sshExecImpl: (_ctx, command) => {
+        commands.push(command);
+        return { status: 0, stdout: "", stderr: "" };
+      },
+    });
+
+    expect(result.success).toBe(true);
+    expect(result.clearedSessions).toBe(true);
+    expect(commands).toEqual([
+      "rm -rf '/sandbox/.openclaw/skills/test-skill'",
+      'rm -rf "$HOME/.openclaw/skills/test-skill"',
+      "printf '{}' > '/sandbox/.openclaw/agents/main/sessions/sessions.json'",
+    ]);
   });
 });
 
@@ -367,6 +382,23 @@ describe("verifyRemove (unit — no SSH)", () => {
     );
     const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
     expect(verifyRemove(ctx, paths)).toBe(false);
+  });
+
+  it("verifies both OpenClaw skill directories are gone", () => {
+    const paths = resolvePaths(null, "test-skill");
+    const ctx = { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" };
+    const commands: string[] = [];
+    const gone = verifyRemove(ctx, paths, {
+      sshExecImpl: (_ctx, command) => {
+        commands.push(command);
+        return { status: 0, stdout: "GONE", stderr: "" };
+      },
+    });
+
+    expect(gone).toBe(true);
+    expect(commands).toEqual([
+      "test ! -e '/sandbox/.openclaw/skills/test-skill' && test ! -e \"$HOME/.openclaw/skills/test-skill\" && echo GONE || echo EXISTS",
+    ]);
   });
 });
 
@@ -386,5 +418,22 @@ describe("checkExisting (unit — no SSH)", () => {
     );
     const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
     expect(checkExisting(ctx, paths)).toBeNull();
+  });
+
+  it("probes skill directories so removal can clean partial uploads", () => {
+    const paths = resolvePaths(null, "test-skill");
+    const ctx = { configFile: "/tmp/ssh.conf", sandboxName: "test-sandbox" };
+    const commands: string[] = [];
+    const exists = checkExisting(ctx, paths, {
+      sshExecImpl: (_ctx, command) => {
+        commands.push(command);
+        return { status: 0, stdout: "EXISTS", stderr: "" };
+      },
+    });
+
+    expect(exists).toBe(true);
+    expect(commands[0]).toContain("test -e '/sandbox/.openclaw/skills/test-skill'");
+    expect(commands[0]).toContain('test -e "$HOME/.openclaw/skills/test-skill"');
+    expect(commands[0]).not.toContain("SKILL.md");
   });
 });

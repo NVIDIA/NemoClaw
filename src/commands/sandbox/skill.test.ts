@@ -79,6 +79,15 @@ describe("SkillRemoveCliCommand", () => {
     });
   });
 
+  it("allows help as a removable skill name", async () => {
+    await SkillRemoveCliCommand.run(["alpha", "help"], rootDir);
+
+    expect(removeSandboxSkill).toHaveBeenCalledWith("alpha", {
+      command: "remove",
+      name: "help",
+    });
+  });
+
   it("requires a skill name before dispatch", async () => {
     await expect(SkillRemoveCliCommand.run(["alpha"], rootDir)).rejects.toThrow(/skill/i);
 

@@ -90,7 +90,7 @@ export async function removeSandboxSkill(
 ): Promise<void> {
   const skillName = request.name;
   const extraArgs = request.extraArgs ?? [];
-  if (skillName === "--help" || skillName === "-h" || skillName === "help") {
+  if (skillName === "--help" || skillName === "-h") {
     printSkillInstallUsage();
     return;
   }
@@ -138,11 +138,13 @@ export async function removeSandboxSkill(
       console.error(
         `  Could not check if skill '${skillName}' exists — sandbox may be unreachable.`,
       );
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
     if (!existsCheck) {
       console.error(`  Skill '${skillName}' is not installed in sandbox '${sandboxName}'.`);
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
 
     const result = skillInstall.removeSkill(ctx, paths);
@@ -160,7 +162,8 @@ export async function removeSandboxSkill(
     } else {
       console.error("  Skill removal could not be verified.");
       console.error("  The sandbox may be unreachable, or the skill directory may still exist.");
-      process.exit(1);
+      process.exitCode = 1;
+      return;
     }
   } finally {
     try {
