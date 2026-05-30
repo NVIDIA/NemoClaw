@@ -70,6 +70,11 @@
 #   TELEGRAM_CHAT_ID_E2E                   — optional: target for real Telegram send
 #   DISCORD_CHANNEL_ID_E2E                 — optional: target for real Discord send
 #   SLACK_CHANNEL_ID_E2E                   — optional: target for real Slack send
+#   NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E=1  — optional: wait for a real Telegram-client DM
+#                                            from an allowed user and verify inbound +
+#                                            outbound gateway breadcrumbs
+#   NEMOCLAW_TELEGRAM_INBOUND_WAIT_SECONDS — optional: wait time for the live inbound
+#                                            proof (default: 90)
 #   NEMOCLAW_OPENSHELL_BIN                 — optional OpenShell binary under test
 #   NEMOCLAW_FRESH=1                       — auto-set to discard interrupted onboard sessions
 #
@@ -499,6 +504,73 @@ sandbox_exec() {
 
   rm -f "$ssh_config"
   echo "$result"
+}
+
+read_gateway_log() {
+  openshell sandbox exec --name "$SANDBOX_NAME" -- cat /tmp/gateway.log 2>/dev/null || true
+}
+
+run_telegram_inbound_reply_probe() {
+  if [ "${NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E:-}" != "1" ]; then
+    return
+  fi
+
+  section "Phase 6a: Live Telegram Inbound Reply Proof"
+
+  local wait_seconds="${NEMOCLAW_TELEGRAM_INBOUND_WAIT_SECONDS:-90}"
+  if ! [[ "$wait_seconds" =~ ^[0-9]+$ ]]; then
+    wait_seconds=90
+  fi
+  if [ "$wait_seconds" -lt 1 ]; then
+    wait_seconds=90
+  fi
+
+  if [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ]; then
+    fail "M19b: Live Telegram inbound proof requires TELEGRAM_BOT_TOKEN_REAL"
+    return
+  fi
+  if [ "$TELEGRAM_ALLOWLIST_ENV_KEY" = "TELEGRAM_ALLOWED_IDS" ]; then
+    fail "M19b: Live Telegram inbound proof must be run with TELEGRAM_AUTHORIZED_CHAT_IDS or TELEGRAM_CHAT_ID to exercise alias compatibility"
+    return
+  fi
+  if [ -z "$TELEGRAM_IDS" ]; then
+    fail "M19b: Live Telegram inbound proof requires a non-empty Telegram allowlist alias"
+    return
+  fi
+
+  local log_before_lines
+  log_before_lines=$(read_gateway_log | wc -l | tr -d ' ')
+  if [ -z "$log_before_lines" ]; then
+    log_before_lines=0
+  fi
+
+  info "Live Telegram inbound proof is using ${TELEGRAM_ALLOWLIST_ENV_KEY}; send a fresh direct message from an allowed Telegram client to the bot now."
+  info "Waiting up to ${wait_seconds}s for inbound getUpdates and outbound sendMessage breadcrumbs in /tmp/gateway.log..."
+
+  local deadline now delta_log saw_inbound saw_outbound
+  deadline=$(( $(date +%s) + wait_seconds ))
+  saw_inbound=0
+  saw_outbound=0
+  while true; do
+    delta_log=$(read_gateway_log | awk -v start="$log_before_lines" 'NR > start')
+    if echo "$delta_log" | grep -qF "[telegram] [default] inbound update received"; then
+      saw_inbound=1
+    fi
+    if echo "$delta_log" | grep -qF "[telegram] [default] outbound sendMessage attempted"; then
+      saw_outbound=1
+    fi
+    if [ "$saw_inbound" = "1" ] && [ "$saw_outbound" = "1" ]; then
+      pass "M19b: Telegram client DM produced inbound getUpdates and outbound reply breadcrumbs"
+      return
+    fi
+    now=$(date +%s)
+    if [ "$now" -ge "$deadline" ]; then
+      break
+    fi
+    sleep 5
+  done
+
+  fail "M19b: Timed out waiting for Telegram inbound/reply breadcrumbs (inbound=${saw_inbound}, outbound=${saw_outbound})"
 }
 
 run_openclaw_message_send() {
@@ -2608,6 +2680,8 @@ else
     fail "M19: Telegram OpenClaw mock message send could not run without fake Telegram"
   fi
 fi
+
+run_telegram_inbound_reply_probe
 
 if [ -n "${DISCORD_BOT_TOKEN_REAL:-}" ] && [ -n "${DISCORD_CHANNEL_ID_E2E:-}" ]; then
   if [ "$dc_status" = "200" ]; then

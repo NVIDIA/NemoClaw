@@ -159,6 +159,7 @@ If applying the preset fails, NemoClaw warns and tells you to re-apply manually 
 Choose the rebuild so the running sandbox image picks up the new channel.
 If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION`, `SLACK_ALLOWED_USERS`, or `SLACK_ALLOWED_CHANNELS`, export them before the rebuild starts.
 Telegram Bot API `sendMessage` calls prove outbound delivery from the bot; to test inbound agent replies, send a message from the Telegram client as an allowed user.
+For a repeatable live Telegram reply check, run `test/e2e/test-messaging-providers.sh` with `TELEGRAM_BOT_TOKEN_REAL`, `TELEGRAM_AUTHORIZED_CHAT_IDS` or `TELEGRAM_CHAT_ID`, and `NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E=1`.
 If you defer the rebuild, apply the change later:
 
 ```console

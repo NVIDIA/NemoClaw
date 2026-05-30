@@ -24,6 +24,7 @@
   var credentialLogged = false;
   var runtimeConfigLogged = false;
   var sendMessageLogged = false;
+  var inboundUpdateLogged = false;
   var inDiagnosticWrite = false;
 
   function sanitize(value) {
@@ -124,6 +125,55 @@
     emit('[telegram] [default] outbound sendMessage attempted; Bot API returned HTTP ' + Number(statusCode || 0));
   }
 
+  function senderAllowlistState(senderId) {
+    if (senderId === undefined || senderId === null) return 'unknown';
+    var configPath = process.env.OPENCLAW_CONFIG_PATH || '/sandbox/.openclaw/openclaw.json';
+    try {
+      var fs = require('fs');
+      var account = readTelegramAccount(JSON.parse(fs.readFileSync(configPath, 'utf8')));
+      if (!account || account.dmPolicy !== 'allowlist') return 'not-applicable';
+      var allowFrom = Array.isArray(account.allowFrom) ? account.allowFrom.map(String) : [];
+      return allowFrom.indexOf(String(senderId)) === -1 ? 'false' : 'true';
+    } catch (_e) {
+      return 'unknown';
+    }
+  }
+
+  function maybeLogTelegramInboundUpdate(info, body) {
+    if (inboundUpdateLogged || telegramApiMethod(info) !== 'getUpdates') return;
+    var payload = null;
+    try {
+      payload = JSON.parse(String(body || ''));
+    } catch (_e) {
+      return;
+    }
+    if (!payload || payload.ok !== true || !Array.isArray(payload.result)) return;
+    for (var i = 0; i < payload.result.length; i += 1) {
+      var update = payload.result[i];
+      if (!update || typeof update !== 'object') continue;
+      var message = update.message || update.edited_message || update.channel_post || update.edited_channel_post;
+      if (!message || typeof message !== 'object') continue;
+      inboundUpdateLogged = true;
+      var chat = message.chat && typeof message.chat === 'object' ? message.chat : {};
+      var from = message.from && typeof message.from === 'object' ? message.from : {};
+      var chatType = typeof chat.type === 'string' ? sanitize(chat.type).replace(/[^A-Za-z0-9_-]/g, '').slice(0, 40) : 'unknown';
+      var updateIdState = update.update_id === undefined || update.update_id === null ? 'missing' : 'present';
+      var messageIdState = message.message_id === undefined || message.message_id === null ? 'missing' : 'present';
+      emit(
+        '[telegram] [default] inbound update received (update_id=' +
+          updateIdState +
+          '; message_id=' +
+          messageIdState +
+          '; chat_type=' +
+          chatType +
+          '; sender_allowlisted=' +
+          senderAllowlistState(from.id) +
+          ')'
+      );
+      return;
+    }
+  }
+
   function readTelegramAccount(config) {
     if (!config || typeof config !== 'object') return null;
     var channel = config.channels && config.channels.telegram;
@@ -199,6 +249,19 @@
         req.once('response', function (res) {
           maybeLogTelegramStartupProbe(info, res && res.statusCode);
           maybeLogTelegramSendMessage(info, res && res.statusCode);
+          if (!inboundUpdateLogged && telegramApiMethod(info) === 'getUpdates' && res && typeof res.on === 'function') {
+            var responseChunks = [];
+            var responseBytes = 0;
+            res.on('data', function (chunk) {
+              if (responseBytes >= 65536) return;
+              var text = Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk || '');
+              responseBytes += Buffer.byteLength(text);
+              if (responseBytes <= 65536) responseChunks.push(text);
+            });
+            res.on('end', function () {
+              maybeLogTelegramInboundUpdate(info, responseChunks.join(''));
+            });
+          }
         });
         req.once('error', function (error) {
           maybeLogTelegramStartupError(info, error);
