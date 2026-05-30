@@ -548,7 +548,7 @@ run_telegram_inbound_reply_probe() {
   info "Waiting up to ${wait_seconds}s for inbound getUpdates and outbound sendMessage breadcrumbs in /tmp/gateway.log..."
 
   local deadline now delta_log saw_inbound saw_outbound
-  deadline=$(( $(date +%s) + wait_seconds ))
+  deadline=$(($(date +%s) + wait_seconds))
   saw_inbound=0
   saw_outbound=0
   while true; do
