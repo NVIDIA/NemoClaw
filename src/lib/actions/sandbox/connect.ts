@@ -263,7 +263,15 @@ function probeSandboxInferenceRoute(
 }
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
-  return sb?.openshellDriver !== "vm";
+  // The legacy repair patches CoreDNS inside an `openshell-cluster-<name>`
+  // container, which only the k3s/kubernetes gateway runs. The docker driver
+  // runs the gateway as `nemoclaw-openshell-gateway` with host networking, and
+  // the vm driver has no cluster container either, so both recover the route via
+  // `openshell inference set` instead of the cluster CoreDNS patch. Mirrors
+  // usesGatewayMetadataProbe (snapshot.ts) and the `!== "docker"` guard on the
+  // snapshot DNS-proxy step. (#3403)
+  const driver = sb?.openshellDriver;
+  return driver !== "vm" && driver !== "docker";
 }
 
 function buildInferenceSetArgs(provider: string, model: string): string[] {

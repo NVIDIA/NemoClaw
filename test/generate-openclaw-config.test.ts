@@ -465,7 +465,7 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.proxy).toMatchObject({
       enabled: true,
       proxyUrl: "http://10.200.0.1:3128",
-      loopbackMode: "proxy",
+      loopbackMode: "gateway-only",
     });
     expect(config.channels.telegram.enabled).toBe(true);
     expect(config.plugins.entries.telegram).toEqual({ enabled: true });
@@ -492,7 +492,7 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.proxy).toEqual({
       enabled: true,
       proxyUrl: "http://10.201.0.9:43128",
-      loopbackMode: "proxy",
+      loopbackMode: "gateway-only",
     });
     expect(config.channels.discord.accounts.default).toMatchObject({
       token: "openshell:resolve:env:DISCORD_BOT_TOKEN",
@@ -575,6 +575,22 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.channels.discord.enabled).toBe(true);
     expect(config.channels.telegram.accounts.default.enabled).toBe(true);
     expect(config.channels.discord.accounts.default.enabled).toBe(true);
+  });
+
+  it("uses Telegram allowed IDs for direct-message allowlisting (#4553)", () => {
+    const allowedUsers = ["8388960805", "8388960806"];
+    const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
+    const allowedIds = Buffer.from(JSON.stringify({ telegram: allowedUsers })).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: allowedIds,
+    });
+    const telegram = config.channels.telegram.accounts.default;
+
+    expect(config.channels.telegram.enabled).toBe(true);
+    expect(config.plugins.entries.telegram).toEqual({ enabled: true });
+    expect(telegram.dmPolicy).toBe("allowlist");
+    expect(telegram.allowFrom).toEqual(allowedUsers);
   });
 
   it("uses Slack allowed IDs for DMs and channel mention allowlisting (#3729)", () => {

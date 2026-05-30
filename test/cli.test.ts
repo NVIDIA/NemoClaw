@@ -279,17 +279,42 @@ function createCloudflaredServiceDir(prefix: string): { sandboxName: string; ser
   return { sandboxName, serviceDir };
 }
 
-function createDebugCommandTestEnv(prefix: string): Record<string, string> {
+function createDebugCommandTestEnv(
+  prefix: string,
+  options: { extraSandboxNames?: string[] } = {},
+): Record<string, string> {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   const localBin = path.join(home, "bin");
   const sandboxName = `${prefix}${process.pid.toString(36)}-${Date.now().toString(36)}`;
   fs.mkdirSync(localBin, { recursive: true });
+  // Register the env-sourced sandbox plus any extra names supplied via the
+  // --sandbox flag so the validation gate accepts them.
+  writeSandboxRegistry(home, sandboxName);
+  if (options.extraSandboxNames && options.extraSandboxNames.length > 0) {
+    const registryPath = path.join(home, ".nemoclaw", "sandboxes.json");
+    const current = JSON.parse(fs.readFileSync(registryPath, "utf-8")) as {
+      sandboxes: Record<string, unknown>;
+      defaultSandbox?: string | null;
+    };
+    for (const extra of options.extraSandboxNames) {
+      current.sandboxes[extra] = {
+        name: extra,
+        model: "test-model",
+        provider: "nvidia-prod",
+        gpuEnabled: false,
+        policies: [],
+      };
+    }
+    fs.writeFileSync(registryPath, JSON.stringify(current), { mode: 0o600 });
+  }
+  const registeredNames = [sandboxName, ...(options.extraSandboxNames ?? [])];
+  const listLines = ["NAME", ...registeredNames.map((name) => `${name}      Ready`)];
   fs.writeFileSync(
     path.join(localBin, "openshell"),
     [
       "#!/bin/sh",
       'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
-      "  echo 'NAME'",
+      ...listLines.map((line) => `  echo ${JSON.stringify(line)}`),
       "  exit 0",
       "fi",
       "echo 'openshell ok'",
@@ -472,13 +497,52 @@ describe("CLI dispatch", () => {
     expect(gateway.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
   });
 
-  it("prints oclif validation failures without stack traces", () => {
-    const r = run("inference set 2>&1");
-    expect(r.code).toBe(2);
-    expect(r.out).toContain("Missing required flag model");
-    expect(r.out).toContain("Missing required flag provider");
-    expect(r.out).not.toContain("FailedFlagValidationError");
-    expect(r.out).not.toContain("node_modules/@oclif/core");
+  it("redirects `inference set` to openshell when provider or model is missing", () => {
+    for (const argv of [
+      "inference set 2>&1",
+      "inference set --provider nvidia-prod 2>&1",
+      "inference set --model nvidia/model 2>&1",
+    ]) {
+      const r = run(argv);
+      expect(r.code, `nemoclaw ${argv}`).toBe(1);
+      expect(r.out, `nemoclaw ${argv}`).toContain("Unknown nemoclaw command: inference set");
+      expect(r.out, `nemoclaw ${argv}`).toContain("This operation belongs to OpenShell.");
+      expect(r.out, `nemoclaw ${argv}`).toContain(
+        "Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
+      );
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("Missing required flag");
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("FailedFlagValidationError");
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("node_modules/@oclif/core");
+    }
+
+    let hermesOut = "";
+    let hermesCode = 0;
+    try {
+      hermesOut = execSync(`node "${HERMES_CLI}" inference set 2>&1`, {
+        encoding: "utf-8",
+        stdio: "pipe",
+        timeout: execTimeout(),
+        env: { ...process.env, HOME: `/tmp/nemoclaw-cli-test-${Date.now()}` },
+      });
+    } catch (err) {
+      const result = readCliErrorOutput(
+        isCliErrorCandidate(err)
+          ? {
+              status: typeof err.status === "number" ? err.status : undefined,
+              stdout: readBufferOrStringProperty(err, "stdout"),
+              stderr: readBufferOrStringProperty(err, "stderr"),
+            }
+          : String(err),
+      );
+      hermesOut = result.out;
+      hermesCode = result.code;
+    }
+    expect(hermesCode).toBe(1);
+    expect(hermesOut).toContain("Unknown nemohermes command: inference set");
+    expect(hermesOut).toContain("This operation belongs to OpenShell.");
+    expect(hermesOut).toContain(
+      "Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
+    );
   });
 
   it("suggests list for a mistyped list command", () => {
@@ -1768,12 +1832,67 @@ describe("CLI dispatch", () => {
   it("debug --sandbox NAME targets the specified sandbox", testTimeoutOptions(30_000), () => {
     const r = runWithEnv(
       "debug --quick --sandbox mybox",
-      createDebugCommandTestEnv("nemoclaw-cli-debug-sandbox-"),
+      createDebugCommandTestEnv("nemoclaw-cli-debug-sandbox-", { extraSandboxNames: ["mybox"] }),
       30000,
     );
     expect(r.code).toBe(0);
     expect(r.out).toContain("Collecting diagnostics for sandbox 'mybox'");
   });
+
+  it("debug --sandbox NAME rejects an unregistered name and exits non-zero", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-debug-unknown-"));
+    writeSandboxRegistry(home);
+    const tarball = path.join(home, "out.tar.gz");
+    const r = runWithEnv(
+      `debug --sandbox does-not-exist --output ${tarball} 2>&1`,
+      { HOME: home },
+      30000,
+    );
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("does-not-exist");
+    expect(r.out).toContain("not registered");
+    expect(fs.existsSync(tarball)).toBe(false);
+  });
+
+  it(
+    "debug --sandbox NAME rejects a stale registry entry missing from the live gateway",
+    testTimeoutOptions(30_000),
+    () => {
+      // Same fixture pattern as createDebugCommandTestEnv but with an openshell
+      // stub whose live list intentionally omits the registry name, mirroring
+      // the bug where the local registry kept a name the gateway no longer
+      // serves.
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-debug-stale-"));
+      const localBin = path.join(home, "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      writeSandboxRegistry(home, "stale-box");
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/bin/sh",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          "  echo 'NAME'",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const tarball = path.join(home, "out.tar.gz");
+      const r = runWithEnv(
+        `debug --sandbox stale-box --output ${tarball} 2>&1`,
+        {
+          HOME: home,
+          PATH: `${localBin}:${process.env.PATH || ""}`,
+        },
+        30000,
+      );
+      expect(r.code).not.toBe(0);
+      expect(r.out).toContain("stale-box");
+      expect(r.out).toContain("not registered");
+      expect(fs.existsSync(tarball)).toBe(false);
+    },
+  );
 
   it("debug --sandbox without a name exits 1", () => {
     const r = run("debug --sandbox");
@@ -1801,10 +1920,42 @@ describe("CLI dispatch", () => {
     fs.mkdirSync(path.join(home, ".nemoclaw"), { recursive: true });
     fs.writeFileSync(
       path.join(home, ".nemoclaw", "sandboxes.json"),
-      JSON.stringify({ sandboxes: {}, defaultSandbox: "ghost" }),
+      JSON.stringify({
+        sandboxes: {
+          mybox: {
+            name: "mybox",
+            model: "test-model",
+            provider: "nvidia-prod",
+            gpuEnabled: false,
+            policies: [],
+          },
+        },
+        defaultSandbox: "ghost",
+      }),
       { mode: 0o600 },
     );
-    const r = runWithEnv("debug --quick --sandbox mybox 2>&1", { HOME: home }, 30000);
+    // Fake openshell so the live-list check sees `mybox`. Without this the
+    // host's real openshell (or absence thereof) decides the assertion.
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/bin/sh",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+        "  echo 'NAME'",
+        "  echo 'mybox      Ready'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    const r = runWithEnv(
+      "debug --quick --sandbox mybox 2>&1",
+      { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` },
+      30000,
+    );
     expect(r.code).toBe(0);
     expect(r.out).not.toContain("default sandbox 'ghost'");
     expect(r.out).not.toContain("--sandbox NAME");
