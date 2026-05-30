@@ -81,6 +81,19 @@ function writeWeChatNpmPackageMetadata(manifest: Record<string, unknown>) {
   fs.writeFileSync(path.join(pluginDir, "package.json"), JSON.stringify(manifest, null, 2));
 }
 
+function writeWeChatNpmPluginMetadata(manifest: Record<string, unknown>) {
+  const pluginDir = path.join(
+    tmpDir,
+    ".openclaw",
+    "npm",
+    "node_modules",
+    "@tencent-weixin",
+    "openclaw-weixin",
+  );
+  fs.mkdirSync(pluginDir, { recursive: true });
+  fs.writeFileSync(path.join(pluginDir, "openclaw.plugin.json"), JSON.stringify(manifest, null, 2));
+}
+
 function wechatExtensionPath(stateDir = path.join(tmpDir, ".openclaw")) {
   return path.join(fs.realpathSync(stateDir), "extensions", "openclaw-weixin");
 }
@@ -129,6 +142,21 @@ describe("generate-openclaw-config.ts: config generation", () => {
   it("sets dangerouslyDisableDeviceAuth to false for loopback URL", () => {
     const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789" });
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
+  });
+
+  it("treats loopback-looking URL userinfo before a remote host as remote", () => {
+    const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789@evil.example" });
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.allowedOrigins).toContain("http://evil.example");
+    expect(config.gateway.controlUi.allowedOrigins).not.toContain(
+      "http://127.0.0.1:18789@evil.example",
+    );
+  });
+
+  it("treats localhost userinfo before a remote host as remote", () => {
+    const config = runConfigScript({ CHAT_UI_URL: "http://localhost@evil.example" });
+    expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
+    expect(config.gateway.controlUi.allowedOrigins).toContain("http://evil.example");
   });
 
   it("sets dangerouslyDisableDeviceAuth to true when env var is '1'", () => {
@@ -238,6 +266,7 @@ describe("generate-openclaw-config.ts: config generation", () => {
     const channels = Buffer.from(JSON.stringify(["whatsapp"])).toString("base64");
     const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     expect(config.channels.whatsapp).toBeDefined();
+    expect(config.channels.whatsapp.enabled).toBeUndefined();
     const account = config.channels.whatsapp.accounts.default;
     expect(account.enabled).toBe(true);
     expect(account.healthMonitor).toEqual({ enabled: false });
@@ -252,7 +281,9 @@ describe("generate-openclaw-config.ts: config generation", () => {
     expect(config.channels.telegram.accounts.default.botToken).toBe(
       "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     );
+    expect(config.channels.telegram.enabled).toBeUndefined();
     expect(config.channels.whatsapp.accounts.default.enabled).toBe(true);
+    expect(config.channels.whatsapp.enabled).toBeUndefined();
     expect(config.channels.whatsapp.accounts.default.botToken).toBeUndefined();
   });
 
@@ -380,6 +411,37 @@ describe("generate-openclaw-config.ts: config generation", () => {
     writeWeChatNpmPackageMetadata({
       name: "@tencent-weixin/openclaw-weixin",
       openclaw: { channels: ["vendor-weixin"] },
+    });
+
+    const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");
+    const wechatConfig = Buffer.from(
+      JSON.stringify({ accountId: "primary", baseUrl: "https://example", userId: "u1" }),
+    ).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_WECHAT_CONFIG_B64: wechatConfig,
+    });
+
+    expect(config.plugins?.installs?.["openclaw-weixin"]).toEqual({
+      source: "npm",
+      spec: "@tencent-weixin/openclaw-weixin@2.4.3",
+      installPath: wechatNpmPackagePath(),
+    });
+    expect(config.plugins?.load?.paths).toEqual([wechatNpmPackagePath()]);
+    expect(config.channels?.["vendor-weixin"]?.accounts?.primary).toEqual({
+      enabled: true,
+    });
+    expect(config.channels?.["openclaw-weixin"]?.accounts?.primary).toEqual({
+      enabled: true,
+    });
+    expect(config.channels?.wechat).toBeUndefined();
+    expect(fs.existsSync(wechatExtensionPath())).toBe(false);
+  });
+
+  it("uses the npm package path when installed WeChat plugin metadata exists without an extension dir", () => {
+    writeWeChatNpmPluginMetadata({
+      id: "openclaw-weixin",
+      channelConfigs: { "vendor-weixin": {} },
     });
 
     const channels = Buffer.from(JSON.stringify(["wechat"])).toString("base64");

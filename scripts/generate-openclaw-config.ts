@@ -123,48 +123,27 @@ function validateDashboardPort(raw: string, envName: string): number {
 
 type ParsedUrl = {
   scheme: string;
-  netloc: string;
   hostname: string;
   port: number | null;
+  origin: string | null;
 };
 
 function parseUrl(rawUrl: string): ParsedUrl {
-  const match = /^([a-z][a-z0-9+.-]*):\/\/([^/?#]*)(?:[/?#].*)?$/i.exec(rawUrl);
-  if (!match) {
-    return { scheme: "", netloc: "", hostname: "", port: null };
+  // Match browser URL semantics for CHAT_UI_URL security decisions. In
+  // particular, userinfo such as "localhost@remote" must not be treated as
+  // the effective host.
+  try {
+    const url = new URL(rawUrl);
+    const port = url.port ? Number(url.port) : null;
+    return {
+      scheme: url.protocol.replace(/:$/, ""),
+      hostname: url.hostname.toLowerCase(),
+      port: port !== null && Number.isSafeInteger(port) ? port : null,
+      origin: url.origin === "null" ? null : url.origin,
+    };
+  } catch {
+    return { scheme: "", hostname: "", port: null, origin: null };
   }
-
-  const scheme = match[1];
-  const netloc = match[2];
-  let hostname = netloc;
-  let portText: string | null = null;
-
-  if (netloc.startsWith("[")) {
-    const end = netloc.indexOf("]");
-    if (end >= 0) {
-      hostname = netloc.slice(1, end);
-      const rest = netloc.slice(end + 1);
-      if (rest.startsWith(":")) {
-        portText = rest.slice(1);
-      }
-    }
-  } else {
-    const colon = netloc.lastIndexOf(":");
-    if (colon >= 0 && netloc.indexOf(":") === colon) {
-      hostname = netloc.slice(0, colon);
-      portText = netloc.slice(colon + 1);
-    }
-  }
-
-  let port: number | null = null;
-  if (portText !== null && /^\d+$/.test(portText)) {
-    const value = Number(portText);
-    if (value >= 0 && value <= 65535) {
-      port = value;
-    }
-  }
-
-  return { scheme, netloc, hostname: hostname.toLowerCase(), port };
 }
 
 function chatUiUrlPort(chatUiUrl: string): number | null {
@@ -184,6 +163,13 @@ function resolveGatewayPort(env: Env, chatUiUrl: string): number {
     return validateDashboardPort(rawDashboardPort, "NEMOCLAW_DASHBOARD_PORT");
   }
   return chatUiUrlPort(chatUiUrl) || DEFAULT_DASHBOARD_PORT;
+}
+
+function hostForOrigin(hostname: string): string {
+  if (hostname.startsWith("[") && hostname.endsWith("]")) {
+    return hostname;
+  }
+  return hostname.includes(":") ? `[${hostname}]` : hostname;
 }
 
 function registryRoots(env: Env): string[] {
@@ -630,7 +616,6 @@ function buildConfig(env: Env = process.env): JsonObject {
     const ch = String(channel);
     if (ch === "whatsapp") {
       channelConfig[ch] = {
-        enabled: true,
         accounts: {
           default: { enabled: true, healthMonitor: { enabled: false } },
         },
@@ -679,7 +664,7 @@ function buildConfig(env: Env = process.env): JsonObject {
         slackAllowedChannels.map((channelId) => [channelId, { ...slackChannelConfig }]),
       );
     }
-    channelConfig[ch] = { enabled: true, accounts: { default: account } };
+    channelConfig[ch] = { accounts: { default: account } };
   }
 
   if (
@@ -700,11 +685,10 @@ function buildConfig(env: Env = process.env): JsonObject {
   const normalizedUrl = normalizeUrlForParse(chatUiUrl);
   const parsed = parseUrl(normalizedUrl);
   const loopbackOrigin = `http://127.0.0.1:${gatewayPort}`;
-  const chatOrigin =
-    parsed.scheme && parsed.netloc ? `${parsed.scheme}://${parsed.netloc}` : loopbackOrigin;
+  const chatOrigin = parsed.origin || loopbackOrigin;
   const portlessOrigin =
     parsed.scheme && parsed.hostname && parsed.port !== null && !isLoopback(parsed.hostname)
-      ? `${parsed.scheme}://${parsed.hostname.includes(":") ? `[${parsed.hostname}]` : parsed.hostname}`
+      ? `${parsed.scheme}://${hostForOrigin(parsed.hostname)}`
       : null;
   const origins = unique([loopbackOrigin, chatOrigin, portlessOrigin].filter(Boolean) as string[]);
 
@@ -883,6 +867,14 @@ function hasInstalledWechatPluginMetadata(): boolean {
   const candidates = [
     join(stateDir, "extensions", "openclaw-weixin", "openclaw.plugin.json"),
     join(stateDir, "extensions", "openclaw-weixin", "package.json"),
+    join(
+      stateDir,
+      "npm",
+      "node_modules",
+      "@tencent-weixin",
+      "openclaw-weixin",
+      "openclaw.plugin.json",
+    ),
     join(stateDir, "npm", "node_modules", "@tencent-weixin", "openclaw-weixin", "package.json"),
   ];
   for (const candidate of candidates) {
