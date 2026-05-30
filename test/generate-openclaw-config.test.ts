@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Functional tests for scripts/generate-openclaw-config.py.
-// Runs the actual Python script with controlled env vars and asserts on
+// Functional tests for scripts/generate-openclaw-config.ts.
+// Runs the actual TypeScript script with controlled env vars and asserts on
 // the generated openclaw.json output.
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -12,7 +12,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
-const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.py");
+const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.ts");
+const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];
 
 /** Minimal env vars required for a valid config generation run. */
 const BASE_ENV: Record<string, string> = {
@@ -40,7 +41,7 @@ function runConfigScriptRaw(envOverrides: Record<string, string> = {}) {
     ...envOverrides,
     HOME: tmpDir,
   };
-  const result = spawnSync("python3", [SCRIPT_PATH], {
+  const result = spawnSync("node", SCRIPT_ARGS, {
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
     env,
@@ -116,7 +117,7 @@ afterEach(() => {
 // ═══════════════════════════════════════════════════════════════════
 // Phase 1: Extraction — behavior-preserving tests
 // ═══════════════════════════════════════════════════════════════════
-describe("generate-openclaw-config.py: config generation", () => {
+describe("generate-openclaw-config.ts: config generation", () => {
   it("generates valid JSON with minimal env vars", () => {
     const config = runConfigScript();
     expect(config).toBeDefined();
@@ -143,6 +144,11 @@ describe("generate-openclaw-config.py: config generation", () => {
   it("sets allowInsecureAuth to false for https scheme", () => {
     const config = runConfigScript({ CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789" });
     expect(config.gateway.controlUi.allowInsecureAuth).toBe(false);
+  });
+
+  it("falls back to text input when NEMOCLAW_INFERENCE_INPUTS is empty", () => {
+    const config = runConfigScript({ NEMOCLAW_INFERENCE_INPUTS: "" });
+    expect(config.models.providers["test-provider"].models[0].input).toEqual(["text"]);
   });
 
   it("includes non-loopback origin in allowedOrigins", () => {
@@ -1156,7 +1162,7 @@ describe("generate-openclaw-config.py: config generation", () => {
 // ═══════════════════════════════════════════════════════════════════
 // Phase 2: Auto-disable device auth for non-loopback URLs
 // ═══════════════════════════════════════════════════════════════════
-describe("generate-openclaw-config.py: non-loopback auto-disable device auth", () => {
+describe("generate-openclaw-config.ts: non-loopback auto-disable device auth", () => {
   it("auto-disables device auth for Brev Launchable URL", () => {
     const config = runConfigScript({
       CHAT_UI_URL: "https://nemoclaw0-xxx.brevlab.com:18789",
@@ -1203,7 +1209,7 @@ describe("generate-openclaw-config.py: non-loopback auto-disable device auth", (
   });
 });
 
-describe("generate-openclaw-config.py: empty-string env vars fall back to defaults", () => {
+describe("generate-openclaw-config.ts: empty-string env vars fall back to defaults", () => {
   it("treats empty CHAT_UI_URL as unset and uses the loopback default", () => {
     const config = runConfigScript({ CHAT_UI_URL: "" });
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(false);
@@ -1239,7 +1245,7 @@ describe("generate-openclaw-config.py: empty-string env vars fall back to defaul
   });
 });
 
-describe("generate-openclaw-config.py: numeric env var validation", () => {
+describe("generate-openclaw-config.ts: numeric env var validation", () => {
   function runCapturingStderr(envOverrides: Record<string, string>): {
     config: any;
     stderr: string;
@@ -1250,7 +1256,7 @@ describe("generate-openclaw-config.py: numeric env var validation", () => {
       ...envOverrides,
       HOME: tmpDir,
     };
-    const result = spawnSync("python3", [SCRIPT_PATH], {
+    const result = spawnSync("node", SCRIPT_ARGS, {
       encoding: "utf-8",
       stdio: ["pipe", "pipe", "pipe"],
       env,
@@ -1308,13 +1314,13 @@ describe("generate-openclaw-config.py: numeric env var validation", () => {
     expect(stderr).toMatch(/NEMOCLAW_MAX_TOKENS must be a positive integer/);
   });
 
-  it("skips NEMOCLAW_CONTEXT_WINDOW that exceeds Python's int-string digit limit", () => {
+  it("skips NEMOCLAW_CONTEXT_WINDOW that exceeds the safe integer guard", () => {
     const { config, stderr } = runCapturingStderr({ NEMOCLAW_CONTEXT_WINDOW: "9".repeat(10000) });
     expect(config.models.providers["test-provider"].models[0].contextWindow).toBe(131072);
     expect(stderr).toMatch(/NEMOCLAW_CONTEXT_WINDOW must be a positive integer/);
   });
 
-  it("skips NEMOCLAW_MAX_TOKENS that exceeds Python's int-string digit limit", () => {
+  it("skips NEMOCLAW_MAX_TOKENS that exceeds the safe integer guard", () => {
     const { config, stderr } = runCapturingStderr({ NEMOCLAW_MAX_TOKENS: "9".repeat(10000) });
     expect(config.models.providers["test-provider"].models[0].maxTokens).toBe(4096);
     expect(stderr).toMatch(/NEMOCLAW_MAX_TOKENS must be a positive integer/);
