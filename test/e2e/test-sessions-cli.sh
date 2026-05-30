@@ -206,10 +206,17 @@ test_sessions_list_empty_after_rm() {
 # ── Main ─────────────────────────────────────────────────────────────────────
 preflight
 onboard_sandbox
-seed_session || skip "seed: skipping post-seed checks because agent never produced a session"
-test_sessions_list_json
-test_sessions_cleanup_dry_run
-test_sessions_download
-test_sessions_rm_agent
-test_sessions_list_empty_after_rm
+if seed_session; then
+  test_sessions_list_json
+  test_sessions_cleanup_dry_run
+  test_sessions_download
+  test_sessions_rm_agent
+  test_sessions_list_empty_after_rm
+else
+  skip "TC-SESS-01: skipped (seed_session failed; agent never produced a session)"
+  skip "TC-SESS-02: skipped (seed_session failed; agent never produced a session)"
+  skip "TC-SESS-03: skipped (seed_session failed; agent never produced a session)"
+  skip "TC-SESS-04: skipped (seed_session failed; agent never produced a session)"
+  skip "TC-SESS-05: skipped (seed_session failed; agent never produced a session)"
+fi
 print_summary

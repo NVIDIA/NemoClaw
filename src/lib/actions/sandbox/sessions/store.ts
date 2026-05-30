@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { agentSessionsStorePath, validateSessionId } from "./paths";
+import { validateSessionId } from "./paths";
 
 export interface SessionStoreEntry {
   sessionId: string;
@@ -46,8 +46,4 @@ export function resolveSessionIdForKey(store: SessionStore, sessionKey: string):
     throw new Error(`Session key '${sessionKey}' not found in sessions store.${suffix}`);
   }
   return validateSessionId(entry.sessionId);
-}
-
-export function storePathForAgent(agentId: string): string {
-  return agentSessionsStorePath(agentId);
 }

@@ -660,7 +660,7 @@ describe("CLI dispatch", () => {
         '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
         `  *"cat '${storePath}'"*) printf '%s' '${sessionsJson}'; exit 0 ;;`,
-        `  *"cd '${sessionsDir}'"*"-name 'def456*'"*) echo "REMOVED=2"; exit 0 ;;`,
+        `  *"cd '${sessionsDir}'"*"-name 'def456.*'"*) echo "REMOVED=2"; exit 0 ;;`,
         "  *) exit 0 ;;",
         "esac",
       ].join("\n"),
@@ -684,7 +684,7 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("2 files removed");
     const calls = fs.readFileSync(openshellLog, "utf8");
     expect(calls).toMatch(/cat '\/sandbox\/\.openclaw\/agents\/main\/sessions\/sessions\.json'/);
-    expect(calls).toMatch(/-name 'def456\*'/);
+    expect(calls).toMatch(/-name 'def456\.\*' -o -name 'def456-topic-\*'/);
   });
 
   it("sandbox sessions rm reports a helpful error when the session key is unknown", () => {

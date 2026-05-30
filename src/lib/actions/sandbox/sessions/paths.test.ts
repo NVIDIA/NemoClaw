@@ -7,6 +7,7 @@ import {
   SANDBOX_OPENCLAW_STATE_DIR,
   agentSessionsDir,
   agentSessionsStorePath,
+  sessionOwnedFilenameFindClause,
   validateAgentId,
   validateSessionId,
   validateSessionKey,
@@ -61,5 +62,15 @@ describe("session path helpers", () => {
     expect(() => validateSessionId("../etc/passwd")).toThrow(/Refusing to operate/);
     expect(() => validateSessionId("session id with space")).toThrow(/Refusing to operate/);
     expect(() => validateSessionId("session*")).toThrow(/Refusing to operate/);
+  });
+
+  it("builds a find clause that matches owned shapes only", () => {
+    const clause = sessionOwnedFilenameFindClause("abc");
+    expect(clause).toBe("\\( -name 'abc.*' -o -name 'abc-topic-*' \\)");
+  });
+
+  it("validates session id when building the find clause", () => {
+    expect(() => sessionOwnedFilenameFindClause("abc*")).toThrow(/Refusing to operate/);
+    expect(() => sessionOwnedFilenameFindClause("abc def")).toThrow(/Refusing to operate/);
   });
 });

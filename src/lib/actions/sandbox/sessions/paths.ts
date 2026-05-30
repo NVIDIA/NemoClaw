@@ -46,3 +46,8 @@ export function validateSessionId(sessionId: string): string {
   }
   return sessionId;
 }
+
+export function sessionOwnedFilenameFindClause(sessionId: string): string {
+  const id = validateSessionId(sessionId);
+  return `\\( -name '${id}.*' -o -name '${id}-topic-*' \\)`;
+}

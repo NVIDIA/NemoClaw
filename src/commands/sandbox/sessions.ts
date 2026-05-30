@@ -1,7 +1,11 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { runSessionsPassthrough } from "../../lib/actions/sandbox/sessions/passthrough";
+import {
+  hasSessionsPassthroughHelpToken,
+  printSessionsPassthroughHelp,
+  runSessionsPassthrough,
+} from "../../lib/actions/sandbox/sessions/passthrough";
 import { NemoClawCommand } from "../../lib/cli/nemoclaw-oclif-command";
 
 export default class SandboxSessionsCommand extends NemoClawCommand {
@@ -20,8 +24,12 @@ export default class SandboxSessionsCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     this.parsed = true;
     const [sandboxName, ...extraArgs] = this.argv;
-    if (!sandboxName || sandboxName.trim() === "") {
-      this.failWithLines(["Missing required sandbox name for sessions."], 2);
+    if (!sandboxName || sandboxName.trim() === "" || sandboxName === "--help" || sandboxName === "-h") {
+      printSessionsPassthroughHelp();
+      return;
+    }
+    if (hasSessionsPassthroughHelpToken(extraArgs)) {
+      printSessionsPassthroughHelp();
       return;
     }
     await runSessionsPassthrough(sandboxName, { extraArgs });

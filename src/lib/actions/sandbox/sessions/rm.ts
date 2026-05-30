@@ -7,8 +7,8 @@ import { ensureLiveSandboxOrExit } from "../gateway-state";
 import {
   agentSessionsDir,
   agentSessionsStorePath,
+  sessionOwnedFilenameFindClause,
   validateAgentId,
-  validateSessionId,
   validateSessionKey,
 } from "./paths";
 import {
@@ -112,11 +112,11 @@ async function removeSingleSession(
   const updatedJson = JSON.stringify(updatedStore);
 
   const safeJson = updatedJson.replace(/'/g, "'\\''");
-  const safeSessionId = validateSessionId(sessionId);
+  const ownedClause = sessionOwnedFilenameFindClause(sessionId);
   const script = [
     `cd ${shellQuote(sessionsDir)} || exit 1`,
-    `count=$(find . -mindepth 1 -maxdepth 1 -type f -name '${safeSessionId}*' | wc -l | tr -d ' ')`,
-    `find . -mindepth 1 -maxdepth 1 -type f -name '${safeSessionId}*' -delete`,
+    `count=$(find . -mindepth 1 -maxdepth 1 -type f ${ownedClause} | wc -l | tr -d ' ')`,
+    `find . -mindepth 1 -maxdepth 1 -type f ${ownedClause} -delete`,
     `printf '%s' '${safeJson}' > ${shellQuote(storePath)}`,
     'echo "REMOVED=$count"',
   ].join("\n");

@@ -10,6 +10,7 @@ import { ensureLiveSandboxOrExit } from "../gateway-state";
 import {
   agentSessionsDir,
   agentSessionsStorePath,
+  sessionOwnedFilenameFindClause,
   validateAgentId,
   validateSessionKey,
 } from "./paths";
@@ -96,6 +97,7 @@ async function downloadSingleSession(
   const store = parseSessionStore(storeText);
   const sessionId = resolveSessionIdForKey(store, sessionKey);
 
+  const ownedClause = sessionOwnedFilenameFindClause(sessionId);
   const listResult = captureOpenshell(
     [
       "sandbox",
@@ -105,7 +107,7 @@ async function downloadSingleSession(
       "--",
       "sh",
       "-c",
-      `cd ${shellQuote(sessionsDir)} 2>/dev/null && find . -mindepth 1 -maxdepth 1 -type f -name ${shellQuote(`${sessionId}*`)} | sed 's|^\\./||'`,
+      `cd ${shellQuote(sessionsDir)} 2>/dev/null && find . -mindepth 1 -maxdepth 1 -type f ${ownedClause} | sed 's|^\\./||'`,
     ],
     { ignoreError: true },
   );
