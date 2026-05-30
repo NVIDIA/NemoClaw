@@ -472,17 +472,23 @@ describe("CLI dispatch", () => {
     expect(gateway.out).not.toContain("Try: nemoclaw <sandbox-name> connect");
   });
 
-  it("redirects bare `inference set` to openshell instead of leaking oclif validation errors (#4544)", () => {
-    const r = run("inference set 2>&1");
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("Unknown nemoclaw command: inference set");
-    expect(r.out).toContain("This operation belongs to OpenShell.");
-    expect(r.out).toContain(
-      "Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
-    );
-    expect(r.out).not.toContain("Missing required flag");
-    expect(r.out).not.toContain("FailedFlagValidationError");
-    expect(r.out).not.toContain("node_modules/@oclif/core");
+  it("redirects `inference set` to openshell when provider or model is missing", () => {
+    for (const argv of [
+      "inference set 2>&1",
+      "inference set --provider nvidia-prod 2>&1",
+      "inference set --model nvidia/model 2>&1",
+    ]) {
+      const r = run(argv);
+      expect(r.code, `nemoclaw ${argv}`).toBe(1);
+      expect(r.out, `nemoclaw ${argv}`).toContain("Unknown nemoclaw command: inference set");
+      expect(r.out, `nemoclaw ${argv}`).toContain("This operation belongs to OpenShell.");
+      expect(r.out, `nemoclaw ${argv}`).toContain(
+        "Run: openshell inference set -g nemoclaw --model <model> --provider <provider>",
+      );
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("Missing required flag");
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("FailedFlagValidationError");
+      expect(r.out, `nemoclaw ${argv}`).not.toContain("node_modules/@oclif/core");
+    }
 
     let hermesOut = "";
     let hermesCode = 0;
