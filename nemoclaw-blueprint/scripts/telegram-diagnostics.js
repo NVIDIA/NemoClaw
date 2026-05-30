@@ -22,6 +22,8 @@
   var startupProbeLogged = false;
   var inferenceLogged = false;
   var credentialLogged = false;
+  var runtimeConfigLogged = false;
+  var sendMessageLogged = false;
   var inDiagnosticWrite = false;
 
   function sanitize(value) {
@@ -76,9 +78,15 @@
     return { hostname: hostname, path: path };
   }
 
-  function isTelegramStartupProbe(info) {
+  function telegramApiMethod(info) {
     if (!info || info.hostname !== 'api.telegram.org') return;
-    return /\/(?:bot[^/]+\/)?(?:getUpdates|getMe|getWebhookInfo)(?:\?|$)/.test(info.path);
+    var match = /\/(?:bot[^/]+\/)?([^/?]+)(?:\?|$)/.exec(info.path || '');
+    return match && match[1] ? match[1] : '';
+  }
+
+  function isTelegramStartupProbe(info) {
+    var method = telegramApiMethod(info);
+    return method === 'getUpdates' || method === 'getMe' || method === 'getWebhookInfo';
   }
 
   function maybeLogTelegramStartupProbe(info, statusCode) {
@@ -110,18 +118,49 @@
     emit('[telegram] [default] Bot API startup probe failed: ' + sanitize(detail).slice(0, 300));
   }
 
-  function readTelegramBotToken(config) {
-    if (!config || typeof config !== 'object') return '';
+  function maybeLogTelegramSendMessage(info, statusCode) {
+    if (sendMessageLogged || telegramApiMethod(info) !== 'sendMessage') return;
+    sendMessageLogged = true;
+    emit('[telegram] [default] outbound sendMessage attempted; Bot API returned HTTP ' + Number(statusCode || 0));
+  }
+
+  function readTelegramAccount(config) {
+    if (!config || typeof config !== 'object') return null;
     var channel = config.channels && config.channels.telegram;
-    if (!channel || typeof channel !== 'object') return '';
+    if (!channel || typeof channel !== 'object') return null;
     var accounts = channel.accounts;
-    if (!accounts || typeof accounts !== 'object') return '';
+    if (!accounts || typeof accounts !== 'object') return null;
     var account = accounts.default || accounts.main;
     if (!account || typeof account !== 'object') {
       var keys = Object.keys(accounts);
       account = keys.length ? accounts[keys[0]] : null;
     }
+    return account && typeof account === 'object' ? account : null;
+  }
+
+  function readTelegramBotToken(config) {
+    var account = readTelegramAccount(config);
     return account && typeof account.botToken === 'string' ? account.botToken : '';
+  }
+
+  function maybeLogRuntimeConfigDiagnostics() {
+    if (runtimeConfigLogged) return;
+    runtimeConfigLogged = true;
+    var configPath = process.env.OPENCLAW_CONFIG_PATH || '/sandbox/.openclaw/openclaw.json';
+    var account = null;
+    try {
+      var fs = require('fs');
+      account = readTelegramAccount(JSON.parse(fs.readFileSync(configPath, 'utf8')));
+    } catch (_e) {
+      return;
+    }
+    if (!account) return;
+    var allowFrom = Array.isArray(account.allowFrom) ? account.allowFrom : [];
+    if (account.dmPolicy === 'allowlist' && allowFrom.length > 0) {
+      emit('[telegram] [default] DM allowlist configured (' + allowFrom.length + ' entr' + (allowFrom.length === 1 ? 'y' : 'ies') + ')');
+      return;
+    }
+    emit('[telegram] [default] DM allowlist is empty; set TELEGRAM_ALLOWED_IDS before rebuild or complete OpenClaw pairing before expecting direct-message replies');
   }
 
   function maybeLogCredentialPlaceholderDiagnostics() {
@@ -157,6 +196,7 @@
       if (info && info.hostname === 'api.telegram.org' && req && typeof req.once === 'function') {
         req.once('response', function (res) {
           maybeLogTelegramStartupProbe(info, res && res.statusCode);
+          maybeLogTelegramSendMessage(info, res && res.statusCode);
         });
         req.once('error', function (error) {
           maybeLogTelegramStartupError(info, error);
@@ -215,6 +255,7 @@
     return '';
   }
   if (!gatewayProcessFlavor()) return;
+  process.nextTick(maybeLogRuntimeConfigDiagnostics);
   var STARTUP_GRACE_MS = Number(process.env.NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS || '') || 15000;
   var noStartupTimer = setTimeout(function () {
     if (providerStarted || startupProbeLogged) return;

@@ -489,6 +489,14 @@ async function promptAndRebuild(sandboxName: string, actionDesc: string): Promis
 // shape and would produce false-negative warnings here.
 const OPENCLAW_BRIDGE_VERIFIABLE_CHANNELS = new Set(["telegram", "discord", "slack"]);
 
+function getDefaultChannelAccount(channelBlock: any): any {
+  const accounts = channelBlock?.accounts;
+  if (!accounts || typeof accounts !== "object") return null;
+  if (accounts.default && typeof accounts.default === "object") return accounts.default;
+  const firstKey = Object.keys(accounts)[0];
+  return firstKey && typeof accounts[firstKey] === "object" ? accounts[firstKey] : null;
+}
+
 // Probe OpenClaw runtime state for a freshly added messaging channel. Runs
 // after `channels add <channel>` triggers a successful rebuild. Reads the
 // baked openclaw.json and tails the gateway log to confirm the bridge module
@@ -516,9 +524,10 @@ function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: strin
     return;
   }
   let channelEnabled = false;
+  let channelBlock: any = null;
   try {
     const cfg = JSON.parse(configProbe.stdout);
-    const channelBlock = cfg?.channels?.[channelName];
+    channelBlock = cfg?.channels?.[channelName];
     channelEnabled = Boolean(channelBlock?.enabled);
   } catch {
     // Malformed config — fall through to the log probe to capture context.
@@ -584,6 +593,21 @@ function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: strin
     console.log(
       `  ${G}✓${R} '${channelName}' bridge startup detected in sandbox runtime log.`,
     );
+    if (channelName === "telegram") {
+      const account = getDefaultChannelAccount(channelBlock);
+      const allowFrom = Array.isArray(account?.allowFrom) ? account.allowFrom : [];
+      if (account?.dmPolicy !== "allowlist" || allowFrom.length === 0) {
+        console.log(
+          `  ${YW}⚠${R} Telegram direct-message allowlist is empty in baked openclaw.json.`,
+        );
+        console.log(
+          "    Set TELEGRAM_ALLOWED_IDS before rebuild, or complete OpenClaw pairing before expecting DM replies.",
+        );
+        console.log(
+          "    Telegram Bot API sendMessage tests outbound delivery only; send from a Telegram client to test inbound agent replies.",
+        );
+      }
+    }
     return;
   }
   console.log(

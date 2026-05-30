@@ -931,6 +931,11 @@ New Telegram bots default to privacy mode enabled, which prevents group messages
 In @BotFather, run `/setprivacy`, choose the bot, and choose **Disable**.
 Then remove the bot from the affected group and add it back; Telegram applies the privacy-mode change to group delivery only after the bot rejoins.
 
+For Telegram direct messages, make sure the rebuilt sandbox has a DM allowlist.
+Set `TELEGRAM_ALLOWED_IDS` before rebuild; `TELEGRAM_AUTHORIZED_CHAT_IDS` and `TELEGRAM_CHAT_ID` are accepted as compatibility aliases.
+Bot API `sendMessage` sends from the bot to a chat, so it only proves outbound Telegram API access.
+To prove inbound agent routing, send a message from the Telegram client as an allowed user and then watch the gateway log for the agent turn and outbound reply.
+
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 
 ```console
