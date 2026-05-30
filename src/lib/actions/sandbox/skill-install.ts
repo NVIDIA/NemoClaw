@@ -301,7 +301,14 @@ export async function installSandboxSkill(
   try {
     const ctx = { configFile: tmpSshConfig, sandboxName };
 
-    // 5. Check if skill already exists (update vs fresh install)
+    // 5. Check if skill already exists (update vs fresh install). This probe is
+    //    advisory for install only: stale SSH config files and transient remote
+    //    shell startup failures can make the stat probe inconclusive even when a
+    //    subsequent upload succeeds. Upload plus verifyInstall() remain the
+    //    source of truth for install success; remove keeps null fatal because it
+    //    is destructive. Once OpenShell exposes a typed stat API or SSH probe
+    //    failures are reliably distinguishable from absent dirs across supported
+    //    versions, remove this fallback and fail before upload.
     const existingCheck = skillInstall.checkExisting(ctx, paths);
     if (existingCheck === null) {
       console.error(
