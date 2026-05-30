@@ -919,6 +919,7 @@ Then remove the bot from the affected group and add it back; Telegram applies th
 
 For Telegram direct messages, make sure the rebuilt sandbox has a DM allowlist.
 Set `TELEGRAM_ALLOWED_IDS` before rebuild; `TELEGRAM_AUTHORIZED_CHAT_IDS` and `TELEGRAM_CHAT_ID` are accepted as compatibility aliases.
+Keep the aliases until QA automation and public repro templates have stopped exporting them for at least one full release.
 Bot API `sendMessage` sends from the bot to a chat, so it only proves outbound Telegram API access.
 To prove inbound agent routing, send a message from the Telegram client as an allowed user and then watch the gateway log for the agent turn and outbound reply.
 

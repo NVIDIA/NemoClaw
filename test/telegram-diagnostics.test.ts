@@ -146,7 +146,7 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
       ${GATEWAY_TITLE_SETUP}
       const fs = require("fs");
       fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
-        channels: { telegram: { enabled: true, accounts: { default: {} } } },
+        channels: { telegram: { enabled: true, accounts: { default: { dmPolicy: "allowlist", allowFrom: [] } } } },
       }));
       require(process.env.DIAGNOSTICS_PATH);
       setTimeout(() => process.exit(0), 100);
@@ -154,6 +154,21 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
     expect(result.status).toBe(0);
     expect(result.stderr).toContain("DM allowlist is empty; set TELEGRAM_ALLOWED_IDS");
+  });
+
+  it("does not warn about an empty allowlist when Telegram is not in allowlist mode", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: {} } } },
+      }));
+      require(process.env.DIAGNOSTICS_PATH);
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("DM allowlist is empty");
   });
 
   it("logs outbound sendMessage attempts without leaking the bot token", () => {

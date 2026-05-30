@@ -47,6 +47,8 @@
 #   TELEGRAM_BOT_TOKEN                     — defaults to fake token
 #   DISCORD_BOT_TOKEN                      — defaults to fake token
 #   TELEGRAM_ALLOWED_IDS                   — comma-separated Telegram user IDs for DM allowlisting
+#   TELEGRAM_AUTHORIZED_CHAT_IDS           — compatibility alias for TELEGRAM_ALLOWED_IDS
+#   TELEGRAM_CHAT_ID                       — compatibility alias for TELEGRAM_ALLOWED_IDS
 #   TELEGRAM_BOT_TOKEN_REAL                — optional: enables Phase 6 real OpenClaw send
 #   DISCORD_BOT_TOKEN_REAL                 — optional: enables Phase 6 real OpenClaw send
 #   SLACK_BOT_TOKEN_REAL                   — optional: enables Phase 6 real OpenClaw send
@@ -402,7 +404,19 @@ TELEGRAM_TOKEN="${TELEGRAM_BOT_TOKEN_REAL:-${TELEGRAM_BOT_TOKEN:-test-fake-teleg
 DISCORD_TOKEN="${DISCORD_BOT_TOKEN_REAL:-${DISCORD_BOT_TOKEN:-test-fake-discord-token-e2e}}"
 SLACK_TOKEN="${SLACK_BOT_TOKEN_REAL:-${SLACK_BOT_TOKEN:-xoxb-fake-slack-token-e2e}}"
 SLACK_APP="${SLACK_APP_TOKEN_REAL:-${SLACK_APP_TOKEN:-xapp-fake-slack-app-token-e2e}}"
-TELEGRAM_IDS="${TELEGRAM_ALLOWED_IDS:-123456789,987654321}"
+if [ -n "${TELEGRAM_ALLOWED_IDS:-}" ]; then
+  TELEGRAM_IDS="$TELEGRAM_ALLOWED_IDS"
+  TELEGRAM_ALLOWLIST_ENV_KEY="TELEGRAM_ALLOWED_IDS"
+elif [ -n "${TELEGRAM_AUTHORIZED_CHAT_IDS:-}" ]; then
+  TELEGRAM_IDS="$TELEGRAM_AUTHORIZED_CHAT_IDS"
+  TELEGRAM_ALLOWLIST_ENV_KEY="TELEGRAM_AUTHORIZED_CHAT_IDS"
+elif [ -n "${TELEGRAM_CHAT_ID:-}" ]; then
+  TELEGRAM_IDS="$TELEGRAM_CHAT_ID"
+  TELEGRAM_ALLOWLIST_ENV_KEY="TELEGRAM_CHAT_ID"
+else
+  TELEGRAM_IDS="123456789,987654321"
+  TELEGRAM_ALLOWLIST_ENV_KEY="TELEGRAM_AUTHORIZED_CHAT_IDS"
+fi
 SLACK_IDS="${SLACK_ALLOWED_USERS-U0AR85ATALW,U09E2ESLACK}"
 # WeChat: pre-seeding WECHAT_BOT_TOKEN + the per-account metadata env vars lets
 # the non-interactive onboard path (src/lib/onboard.ts:8433) treat wechat as
@@ -422,7 +436,19 @@ export TELEGRAM_BOT_TOKEN="$TELEGRAM_TOKEN"
 export DISCORD_BOT_TOKEN="$DISCORD_TOKEN"
 export SLACK_BOT_TOKEN="$SLACK_TOKEN"
 export SLACK_APP_TOKEN="$SLACK_APP"
-export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
+case "$TELEGRAM_ALLOWLIST_ENV_KEY" in
+  TELEGRAM_ALLOWED_IDS)
+    export TELEGRAM_ALLOWED_IDS="$TELEGRAM_IDS"
+    ;;
+  TELEGRAM_AUTHORIZED_CHAT_IDS)
+    unset TELEGRAM_ALLOWED_IDS
+    export TELEGRAM_AUTHORIZED_CHAT_IDS="$TELEGRAM_IDS"
+    ;;
+  TELEGRAM_CHAT_ID)
+    unset TELEGRAM_ALLOWED_IDS TELEGRAM_AUTHORIZED_CHAT_IDS
+    export TELEGRAM_CHAT_ID="$TELEGRAM_IDS"
+    ;;
+esac
 export SLACK_ALLOWED_USERS="$SLACK_IDS"
 export WECHAT_BOT_TOKEN="$WECHAT_TOKEN"
 export WECHAT_ACCOUNT_ID="$WECHAT_ACCOUNT"
@@ -531,6 +557,15 @@ fi
 pass "Docker is running"
 
 info "Telegram token: configured (${#TELEGRAM_TOKEN} chars)"
+telegram_allowed_id_count=0
+if [ -n "$TELEGRAM_IDS" ]; then
+  IFS=',' read -ra _telegram_allowed_ids <<<"$TELEGRAM_IDS"
+  for _tid in "${_telegram_allowed_ids[@]}"; do
+    _tid="${_tid//[[:space:]]/}"
+    [ -n "$_tid" ] && ((telegram_allowed_id_count++))
+  done
+fi
+info "Telegram allowlist source: ${TELEGRAM_ALLOWLIST_ENV_KEY} (${telegram_allowed_id_count} ID(s))"
 info "Discord token: configured (${#DISCORD_TOKEN} chars)"
 info "Slack bot token: configured (${#SLACK_TOKEN} chars)"
 info "Slack app token: configured (${#SLACK_APP} chars)"
@@ -565,7 +600,10 @@ fi
 pass "Pre-cleanup complete"
 
 if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ]; then
-  if ! curl -fsS --max-time 10 https://api.telegram.org/ >/dev/null 2>&1; then
+  if [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ] && [[ "$TELEGRAM_TOKEN" == test-fake-* ]]; then
+    export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+    info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+  elif ! curl -fsS --max-time 10 https://api.telegram.org/ >/dev/null 2>&1; then
     export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
     info "Host cannot reach api.telegram.org; skipping onboarding Telegram reachability probe for fake-token E2E"
   fi
@@ -1540,6 +1578,9 @@ print(','.join(str(i) for i in ids))
     done
     if [ ${#missing_ids[@]} -eq 0 ]; then
       pass "M11c: Telegram allowFrom contains all expected user IDs: $tg_allow_from"
+      if [ "$TELEGRAM_ALLOWLIST_ENV_KEY" != "TELEGRAM_ALLOWED_IDS" ]; then
+        pass "M11c-alias: Telegram allowFrom honored ${TELEGRAM_ALLOWLIST_ENV_KEY} alias"
+      fi
     else
       fail "M11c: Telegram allowFrom ($tg_allow_from) is missing IDs: ${missing_ids[*]} (expected all of: $TELEGRAM_IDS)"
     fi

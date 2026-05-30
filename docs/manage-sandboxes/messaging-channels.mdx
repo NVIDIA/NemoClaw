@@ -52,6 +52,7 @@ For Telegram group chats, disable privacy mode before testing group replies: in 
 After changing privacy mode, remove the bot from each Telegram group and add it back so Telegram applies the new delivery setting to that group.
 `TELEGRAM_ALLOWED_IDS` is a comma-separated list of Telegram user or private-chat IDs for DM access.
 For compatibility with older QA scripts, NemoClaw also treats `TELEGRAM_AUTHORIZED_CHAT_IDS` and `TELEGRAM_CHAT_ID` as aliases, but new automation should use `TELEGRAM_ALLOWED_IDS`.
+Keep these aliases until QA automation and public repro templates have stopped exporting them for at least one full release.
 Group chats stay open by default so rebuilt sandboxes do not silently drop Telegram group messages because of an empty group allowlist.
 Set `TELEGRAM_REQUIRE_MENTION=1` to make the bot reply in Telegram groups only when users mention it.
 Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.

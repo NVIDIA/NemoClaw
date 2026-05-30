@@ -156,11 +156,13 @@
     }
     if (!account) return;
     var allowFrom = Array.isArray(account.allowFrom) ? account.allowFrom : [];
-    if (account.dmPolicy === 'allowlist' && allowFrom.length > 0) {
-      emit('[telegram] [default] DM allowlist configured (' + allowFrom.length + ' entr' + (allowFrom.length === 1 ? 'y' : 'ies') + ')');
-      return;
+    if (account.dmPolicy === 'allowlist') {
+      if (allowFrom.length > 0) {
+        emit('[telegram] [default] DM allowlist configured (' + allowFrom.length + ' entr' + (allowFrom.length === 1 ? 'y' : 'ies') + ')');
+      } else {
+        emit('[telegram] [default] DM allowlist is empty; set TELEGRAM_ALLOWED_IDS before rebuild or complete OpenClaw pairing before expecting direct-message replies');
+      }
     }
-    emit('[telegram] [default] DM allowlist is empty; set TELEGRAM_ALLOWED_IDS before rebuild or complete OpenClaw pairing before expecting direct-message replies');
   }
 
   function maybeLogCredentialPlaceholderDiagnostics() {
