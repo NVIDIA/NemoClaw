@@ -20,56 +20,14 @@ const { sleepSeconds } = require("../core/wait");
 const nimImages = require("../../../bin/lib/nim-images.json");
 
 import { VLLM_PORT } from "../core/ports";
+import {
+  isDenylistedNvidiaGpuName,
+  isPlausibleNvidiaGpuName,
+  nvidiaHostLooksGenuine,
+} from "./gpu-trust";
 
 const UNIFIED_MEMORY_GPU_TAGS = ["GB10", "Thor", "Orin", "Xavier", "Jetson", "Tegra"];
 const NIM_STATUS_PROBE_TIMEOUT_MS = 5000;
-
-// Accept a name as NVIDIA when it advertises the vendor explicitly or matches
-// a known NVIDIA product family. The caller must still cross-check against
-// `detectNvidiaPlatform()` and the trust-tier gate below before trusting the
-// nvidia-smi output — the name alone is insufficient because both real DGX
-// Spark and the observed Windows-on-ARM WSL2 nvidia-smi shim publish
-// placeholder names like "JMJWOA-Generic-GPU".
-const NVIDIA_GPU_NAME_PATTERN =
-  /\bNVIDIA\b|\b(GeForce|Tesla|Quadro|RTX|GTX|TITAN|H100|H200|A100|A40|A10|L40|L4|GB1\d|GB200|GB300|Grace[\s_-]+Hopper)\b/i;
-
-// Placeholder names observed on the Windows-on-ARM WSL2 nvidia-smi shim AND
-// on legitimate NVIDIA unified-memory hardware. The prefix match catches the
-// GPU and NPU placeholder variants the shim emits, plus any future suffix
-// without a code change. Even with an `NVIDIA ` vendor prefix the name alone
-// is not sufficient — the caller must cross-check `detectNvidiaPlatform()`.
-const NVIDIA_GPU_NAME_DENYLIST_PATTERN = /\bJMJWOA-Generic-/i;
-
-// Trust-tier check used after the name denylist on hosts whose firmware does
-// not vouch for an NVIDIA platform. A host is considered genuine when ANY of:
-//   - the platform is not Linux (no userland `nvidia-smi` impersonator is
-//     known to ship inside the Linux kernel namespace on other platforms);
-//   - the architecture is not `arm64` (the observed nvidia-smi shim is
-//     Windows-on-ARM only — Microsoft's WoA is ARM-only by spec, so a Linux
-//     x86_64 host that exposes `nvidia-smi` cannot be this shim);
-//   - `/proc/driver/nvidia/` exists on Linux (real NVIDIA kernel driver
-//     bound; the observed shim never creates this path).
-// The remaining case (ARM64 Linux with no `/proc/driver/nvidia/` populated) is
-// the WoA shim profile and is rejected by the caller.
-const NVIDIA_DRIVER_PROC_PATH = "/proc/driver/nvidia";
-
-function nvidiaHostLooksGenuine(): boolean {
-  if (process.platform !== "linux") return true;
-  if (process.arch !== "arm64") return true;
-  try {
-    return fs.existsSync(NVIDIA_DRIVER_PROC_PATH);
-  } catch {
-    return false;
-  }
-}
-
-function isPlausibleNvidiaGpuName(name: string): boolean {
-  return (
-    !!name &&
-    !NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(name) &&
-    NVIDIA_GPU_NAME_PATTERN.test(name)
-  );
-}
 
 export interface NimModel {
   name: string;
@@ -409,7 +367,7 @@ export function detectGpu(): GpuDetection | null {
         if (firmwareConfirmsNvidia) {
           trusted = parsed;
         } else {
-          if (parsed.some((p: ParsedGpu) => NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(p.name))) {
+          if (parsed.some((p: ParsedGpu) => isDenylistedNvidiaGpuName(p.name))) {
             return null;
           }
           if (!nvidiaHostLooksGenuine()) {
@@ -473,7 +431,7 @@ export function detectGpu(): GpuDetection | null {
     // NVIDIA platform, mirroring the primary path. A WSL2 d3d12/WDDM shim
     // could in principle emit `JMJWOA-Generic-*` on this fallback too.
     if (!firmwareIsUnifiedMemory && gpuNames.some((name: string) =>
-      NVIDIA_GPU_NAME_DENYLIST_PATTERN.test(name),
+      isDenylistedNvidiaGpuName(name),
     )) {
       return null;
     }
@@ -481,8 +439,8 @@ export function detectGpu(): GpuDetection | null {
       UNIFIED_MEMORY_GPU_TAGS.some((tag) => new RegExp(tag, "i").test(name)),
     );
     // Tagged-name acceptance on non-firmware-vouched hosts must additionally
-    // pass the trust-tier gate so the same checks the primary path applies
-    // also hold on the unified-memory fallback.
+    // pass the trust-tier gate so the same source-boundary policy documented
+    // in gpu-trust.ts applies on the unified-memory fallback.
     const allowTaggedOnGenericFirmware = nvidiaHostLooksGenuine();
     const unifiedGpuNames =
       taggedNames.length > 0
