@@ -577,6 +577,22 @@ describe("generate-openclaw-config.py: config generation", () => {
     expect(config.channels.discord.accounts.default.enabled).toBe(true);
   });
 
+  it("uses Telegram allowed IDs for direct-message allowlisting (#4553)", () => {
+    const allowedUsers = ["8388960805", "8388960806"];
+    const channels = Buffer.from(JSON.stringify(["telegram"])).toString("base64");
+    const allowedIds = Buffer.from(JSON.stringify({ telegram: allowedUsers })).toString("base64");
+    const config = runConfigScript({
+      NEMOCLAW_MESSAGING_CHANNELS_B64: channels,
+      NEMOCLAW_MESSAGING_ALLOWED_IDS_B64: allowedIds,
+    });
+    const telegram = config.channels.telegram.accounts.default;
+
+    expect(config.channels.telegram.enabled).toBe(true);
+    expect(config.plugins.entries.telegram).toEqual({ enabled: true });
+    expect(telegram.dmPolicy).toBe("allowlist");
+    expect(telegram.allowFrom).toEqual(allowedUsers);
+  });
+
   it("uses Slack allowed IDs for DMs and channel mention allowlisting (#3729)", () => {
     const allowedUsers = ["U01ABC2DEF3", "U04GHI5JKL6"];
     const channels = Buffer.from(JSON.stringify(["slack"])).toString("base64");
