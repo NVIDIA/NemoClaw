@@ -36,13 +36,17 @@ const BASE_ENV: Record<string, string> = {
 
 let tmpDir: string;
 
-function runConfigScriptRaw(envOverrides: Record<string, string> = {}) {
-  const env: Record<string, string> = {
+function buildTestEnv(envOverrides: Record<string, string> = {}): Record<string, string> {
+  return {
     PATH: process.env.PATH || "/usr/bin:/bin",
     ...BASE_ENV,
     ...envOverrides,
     HOME: tmpDir,
   };
+}
+
+function runConfigScriptRaw(envOverrides: Record<string, string> = {}) {
+  const env = buildTestEnv(envOverrides);
   const result = spawnSync("node", SCRIPT_ARGS, {
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
@@ -54,12 +58,7 @@ function runConfigScriptRaw(envOverrides: Record<string, string> = {}) {
 
 function withConfigEnv<T>(envOverrides: Record<string, string>, fn: () => T): T {
   const originalEnv = { ...process.env };
-  const env: Record<string, string> = {
-    PATH: process.env.PATH || "/usr/bin:/bin",
-    ...BASE_ENV,
-    ...envOverrides,
-    HOME: tmpDir,
-  };
+  const env = buildTestEnv(envOverrides);
   try {
     for (const key of Object.keys(process.env)) {
       delete process.env[key];
