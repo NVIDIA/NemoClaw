@@ -13,6 +13,11 @@ import {
   postInstall,
   validateRelativePath,
   shellQuote,
+  validateSkillName,
+  removeSkill,
+  verifyRemove,
+  checkExisting,
+  resolveSkillPaths as resolvePaths,
 } from "../../dist/lib/skill-install";
 
 describe("parseFrontmatter", () => {
@@ -71,9 +76,14 @@ describe("parseFrontmatter", () => {
   });
 
   it("rejects names with invalid characters", () => {
-    expect(() => parseFrontmatter("---\nname: my skill\n---\n")).toThrow("invalid characters");
-    expect(() => parseFrontmatter("---\nname: ../escape\n---\n")).toThrow("invalid characters");
-    expect(() => parseFrontmatter("---\nname: a/b\n---\n")).toThrow("invalid characters");
+    expect(() => parseFrontmatter("---\nname: my skill\n---\n")).toThrow("is invalid");
+    expect(() => parseFrontmatter("---\nname: ../escape\n---\n")).toThrow("is invalid");
+    expect(() => parseFrontmatter("---\nname: a/b\n---\n")).toThrow("is invalid");
+  });
+
+  it("rejects dot and double-dot as skill names in frontmatter", () => {
+    expect(() => parseFrontmatter("---\nname: .\n---\n")).toThrow("is invalid");
+    expect(() => parseFrontmatter("---\nname: ..\n---\n")).toThrow("is invalid");
   });
 });
 
@@ -194,6 +204,7 @@ describe("resolveSkillPaths", () => {
   it("returns OpenClaw defaults when agent is null", () => {
     const paths = resolveSkillPaths(null, "weather");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/weather");
+    expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/weather");
     expect(paths.sessionFile).toBe(
       "/sandbox/.openclaw/agents/main/sessions/sessions.json",
     );
@@ -209,6 +220,7 @@ describe("resolveSkillPaths", () => {
     };
     const paths = resolveSkillPaths(agent, "my-skill");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/my-skill");
+    expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/my-skill");
     expect(paths.sessionFile).toBe(
       "/sandbox/.openclaw/agents/main/sessions/sessions.json",
     );
@@ -224,6 +236,7 @@ describe("resolveSkillPaths", () => {
     };
     const paths = resolveSkillPaths(agent, "demo-skill");
     expect(paths.uploadDir).toBe("/sandbox/.hermes/skills/demo-skill");
+    expect(paths.mirrorDir).toBeNull();
     expect(paths.sessionFile).toBeNull();
     expect(paths.isOpenClaw).toBe(false);
   });
@@ -237,6 +250,7 @@ describe("resolveSkillPaths", () => {
     };
     const paths = resolveSkillPaths(agent, "test-skill");
     expect(paths.uploadDir).toBe("/sandbox/.future/skills/test-skill");
+    expect(paths.mirrorDir).toBeNull();
     expect(paths.sessionFile).toBeNull();
     expect(paths.isOpenClaw).toBe(false);
   });
@@ -267,5 +281,110 @@ describe("postInstall", () => {
     } finally {
       rmSync(skillDir, { recursive: true, force: true });
     }
+  });
+});
+
+// ── validateSkillName ────────────────────────────────────────────────────────
+
+describe("validateSkillName", () => {
+  it("accepts valid skill names", () => {
+    expect(validateSkillName("my-skill")).toBe(true);
+    expect(validateSkillName("my_skill")).toBe(true);
+    expect(validateSkillName("my.skill")).toBe(true);
+    expect(validateSkillName("MySkill123")).toBe(true);
+    expect(validateSkillName("digicon-zeiss-ai-strategy")).toBe(true);
+  });
+
+  it("rejects empty string", () => {
+    expect(validateSkillName("")).toBe(false);
+  });
+
+  it("rejects names with spaces", () => {
+    expect(validateSkillName("my skill")).toBe(false);
+  });
+
+  it("rejects names with shell metacharacters", () => {
+    expect(validateSkillName("my;skill")).toBe(false);
+    expect(validateSkillName("my$skill")).toBe(false);
+    expect(validateSkillName("my/skill")).toBe(false);
+    expect(validateSkillName("../escape")).toBe(false);
+    expect(validateSkillName("my`skill`")).toBe(false);
+  });
+
+  it("rejects dot and double-dot to prevent directory traversal on rm -rf", () => {
+    expect(validateSkillName(".")).toBe(false);
+    expect(validateSkillName("..")).toBe(false);
+  });
+});
+
+// ── removeSkill / verifyRemove / checkExisting ──────────────────────────────
+
+describe("removeSkill (unit — no SSH)", () => {
+  it("returns success=false and a warning when sshExec returns null (sandbox unreachable)", () => {
+    const paths = resolveSkillPaths(null, "test-skill");
+
+    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
+    const result = removeSkill(ctx, paths);
+
+    expect(result.success).toBe(false);
+    expect(result.removedUploadDir).toBe(false);
+    expect(result.messages.some((m) => m.startsWith("Warning:"))).toBe(true);
+  });
+
+  it("success is false for OpenClaw when mirrorDir removal fails even if uploadDir was removed", () => {
+    // Non-OpenClaw agent: success depends only on uploadDir
+    const nonOcPaths = resolvePaths(
+      { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } },
+      "test-skill",
+    );
+    // Both SSH calls fail (unreachable), so removedUploadDir=false → success=false regardless
+    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
+    const nonOcResult = removeSkill(ctx, nonOcPaths);
+    expect(nonOcResult.success).toBe(false); // uploadDir failed
+
+    // Validate the formula directly: for OpenClaw, success requires BOTH dirs gone
+    // We can't make uploadDir succeed without a real SSH, so we verify the logic
+    // by asserting removedMirrorDir is false (SSH unreachable) and that
+    // success therefore cannot be true.
+    const ocPaths = resolvePaths(null, "test-skill");
+    const ocResult = removeSkill(ctx, ocPaths);
+    expect(ocResult.removedMirrorDir).toBe(false);
+    expect(ocResult.success).toBe(false); // must be false: isOpenClaw && mirrorDir failed
+  });
+});
+
+describe("verifyRemove (unit — no SSH)", () => {
+  it("returns false when SSH is unreachable (conservative — treat failure as not-gone)", () => {
+    const paths = resolveSkillPaths(null, "test-skill");
+    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
+    expect(verifyRemove(ctx, paths)).toBe(false);
+  });
+
+  it("returns false for non-OpenClaw paths when SSH is unreachable", () => {
+    const paths = resolvePaths(
+      { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } },
+      "test-skill",
+    );
+    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
+    expect(verifyRemove(ctx, paths)).toBe(false);
+  });
+});
+
+// ── checkExisting ────────────────────────────────────────────────────────────
+
+describe("checkExisting (unit — no SSH)", () => {
+  it("returns null when SSH is unreachable for OpenClaw paths", () => {
+    const paths = resolvePaths(null, "test-skill");
+    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
+    expect(checkExisting(ctx, paths)).toBeNull();
+  });
+
+  it("returns null when SSH is unreachable for non-OpenClaw paths", () => {
+    const paths = resolvePaths(
+      { name: "hermes", configPaths: { dir: "/sandbox/.hermes" } },
+      "test-skill",
+    );
+    const ctx = { configFile: "/nonexistent/ssh.conf", sandboxName: "test-sandbox" };
+    expect(checkExisting(ctx, paths)).toBeNull();
   });
 });

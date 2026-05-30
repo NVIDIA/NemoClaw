@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 //
-// Skill install logic for `nemoclaw <sandbox> skill install <path>`.
+// Skill install/remove logic for `nemoclaw <sandbox> skill install <path>`
+// and `nemoclaw <sandbox> skill remove <name>`.
 // Validates a local SKILL.md, uploads it to the sandbox via SSH, and
 // performs agent-specific post-install steps (session refresh for
 // OpenClaw). Non-OpenClaw agents get a "restart gateway" hint until a
@@ -15,6 +16,21 @@ import path from "node:path";
 import YAML from "yaml";
 
 import { isRecord } from "./core/json-types";
+
+// ── Skill name validation ────────────────────────────────────────
+
+/**
+ * Validate that a skill name supplied on the CLI is safe to use as a remote path.
+ * Rejects anything that isn't a valid skill name ([A-Za-z0-9._-]).
+ */
+export function validateSkillName(name: string): boolean {
+  return (
+    name.length > 0 &&
+    name !== "." &&
+    name !== ".." &&
+    /^[A-Za-z0-9._-]+$/.test(name)
+  );
+}
 
 // ── Frontmatter parsing ──────────────────────────────────────────
 
@@ -67,9 +83,9 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
     throw new Error("SKILL.md frontmatter is missing required 'name' field");
   }
 
-  if (!/^[A-Za-z0-9._-]+$/.test(nameValue)) {
+  if (!validateSkillName(nameValue)) {
     throw new Error(
-      `SKILL.md name '${nameValue}' contains invalid characters. Only [A-Za-z0-9._-] allowed.`,
+      `SKILL.md name '${nameValue}' is invalid. Use [A-Za-z0-9._-] and do not use '.' or '..'.`,
     );
   }
 
@@ -81,6 +97,8 @@ export function parseFrontmatter(content: string): SkillFrontmatter {
 export interface SkillPaths {
   /** Upload target directory for the skill */
   uploadDir: string;
+  /** OpenClaw-only mirror directory under the remote home dir, or null */
+  mirrorDir: string | null;
   /** OpenClaw-only: session index to clear, or null */
   sessionFile: string | null;
   /** Whether the agent is OpenClaw (drives refresh behavior) */
@@ -105,6 +123,7 @@ export function resolveSkillPaths(
 
   return {
     uploadDir,
+    mirrorDir: isOpenClaw ? `$HOME/.openclaw/skills/${skillName}` : null,
     sessionFile: isOpenClaw ? `${dir}/agents/main/sessions/sessions.json` : null,
     isOpenClaw,
   };
@@ -300,12 +319,27 @@ export function postInstall(
 }
 
 /**
- * Check whether a skill already exists on the sandbox at the upload path.
+ * Check whether a skill already exists on the sandbox at the upload path
+ * or (for OpenClaw) the mirror path. Probing both prevents a partial removal
+ * (uploadDir gone, mirrorDir surviving) from blocking a reinstall.
+ *
+ * Returns:
+ *   true  — skill exists
+ *   false — skill is absent
+ *   null  — SSH probe failed; existence could not be determined
  */
-export function checkExisting(ctx: SshContext, paths: SkillPaths): boolean {
-  const target = shellQuote(`${paths.uploadDir}/SKILL.md`);
-  const result = sshExec(ctx, `test -f ${target} && echo EXISTS`);
-  return result !== null && result.stdout === "EXISTS";
+export function checkExisting(ctx: SshContext, paths: SkillPaths): boolean | null {
+  const checks = [`test -f ${shellQuote(`${paths.uploadDir}/SKILL.md`)}`];
+  if (paths.isOpenClaw && paths.mirrorDir) {
+    checks.push(`test -f "${paths.mirrorDir}/SKILL.md"`);
+  }
+  const result = sshExec(ctx, `{ ${checks.join(" || ")}; } && echo EXISTS || echo ABSENT`);
+  if (result === null || result.status !== 0) {
+    return null;
+  }
+  if (result.stdout === "EXISTS") return true;
+  if (result.stdout === "ABSENT") return false;
+  return null;
 }
 
 /**
@@ -315,4 +349,81 @@ export function verifyInstall(ctx: SshContext, paths: SkillPaths): boolean {
   const target = shellQuote(`${paths.uploadDir}/SKILL.md`);
   const result = sshExec(ctx, `test -f ${target} && echo EXISTS`);
   return result !== null && result.stdout === "EXISTS";
+}
+
+// ── Skill removal ────────────────────────────────────────────────
+
+export interface RemoveResult {
+  success: boolean;
+  removedUploadDir: boolean;
+  removedMirrorDir: boolean;
+  clearedSessions: boolean;
+  messages: string[];
+}
+
+/**
+ * Remove a skill from the sandbox by name.
+ * Deletes the immutable upload directory, the OpenClaw mirror directory
+ * (if applicable), and clears sessions.json so the agent re-discovers
+ * the remaining skills on the next session.
+ *
+ * Only the named skill directory is deleted — other skills are untouched.
+ */
+export function removeSkill(ctx: SshContext, paths: SkillPaths): RemoveResult {
+  const messages: string[] = [];
+
+  // 1. Remove the immutable upload directory (/sandbox/.openclaw/skills/<name>/)
+  const uploadDir = shellQuote(paths.uploadDir);
+  const removeUpload = sshExec(ctx, `rm -rf ${uploadDir}`);
+  const removedUploadDir = removeUpload !== null && removeUpload.status === 0;
+  if (!removedUploadDir) {
+    messages.push(`Warning: failed to remove upload directory ${paths.uploadDir}`);
+  }
+
+  // 2. Remove the OpenClaw mirror ($HOME/.openclaw/skills/<name>/)
+  //    mirrorDir contains $HOME which must expand on the remote shell, so we
+  //    use double quotes (not shellQuote). This is safe because skill names
+  //    are restricted to [A-Za-z0-9._-] by parseFrontmatter / the name
+  //    validation regex, so $HOME expansion is the only variable substitution.
+  let removedMirrorDir = false;
+  if (paths.isOpenClaw && paths.mirrorDir) {
+    const removeMirror = sshExec(ctx, `rm -rf "${paths.mirrorDir}"`);
+    removedMirrorDir = removeMirror !== null && removeMirror.status === 0;
+    if (!removedMirrorDir) {
+      messages.push(`Warning: failed to remove mirror directory ${paths.mirrorDir}`);
+    }
+  }
+
+  // 3. Clear sessions.json so the agent re-discovers the remaining skills.
+  let clearedSessions = false;
+  if (paths.isOpenClaw && paths.sessionFile) {
+    const clearResult = sshExec(ctx, `printf '{}' > ${shellQuote(paths.sessionFile)}`);
+    clearedSessions = clearResult !== null && clearResult.status === 0;
+    if (!clearedSessions) {
+      messages.push("Warning: failed to clear sessions (agent may need manual restart)");
+    }
+  } else if (!paths.isOpenClaw) {
+    messages.push("Restart the agent gateway for the removal to take effect.");
+  }
+
+  return {
+    success: removedUploadDir && (!paths.isOpenClaw || removedMirrorDir),
+    removedUploadDir,
+    removedMirrorDir,
+    clearedSessions,
+    messages,
+  };
+}
+
+/**
+ * Verify the skill directory no longer exists on the sandbox.
+ * For OpenClaw sandboxes, both the upload dir and the mirror dir must be gone.
+ */
+export function verifyRemove(ctx: SshContext, paths: SkillPaths): boolean {
+  const checks = [`test ! -e ${shellQuote(paths.uploadDir)}`];
+  if (paths.isOpenClaw && paths.mirrorDir) {
+    checks.push(`test ! -e "${paths.mirrorDir}"`);
+  }
+  const result = sshExec(ctx, `${checks.join(" && ")} && echo GONE || echo EXISTS`);
+  return result !== null && result.stdout === "GONE";
 }

@@ -8,9 +8,12 @@ export default class SkillCliCommand extends NemoClawCommand {
   static id = "sandbox:skill";
   static strict = false;
   static summary = "Show skill command usage";
-  static description = "Show skill install usage or report unknown skill subcommands.";
-  static usage = ["install <name> <path>"];
-  static examples = ["<%= config.bin %> sandbox skill install alpha ./my-skill"];
+  static description = "Show skill install/remove usage or report unknown skill subcommands.";
+  static usage = ["install <name> <path>", "remove <name> <skill>"];
+  static examples = [
+    "<%= config.bin %> sandbox skill install alpha ./my-skill",
+    "<%= config.bin %> sandbox skill remove alpha my-skill",
+  ];
 
   public async run(): Promise<void> {
     this.parsed = true;

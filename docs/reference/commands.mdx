@@ -825,6 +825,19 @@ Files with unsafe path characters are rejected to prevent shell injection.
 If the skill already exists on the sandbox, the command updates it in place and preserves chat history.
 For new installs, the agent session index is refreshed so the agent discovers the skill on the next session.
 
+### `nemoclaw <name> skill remove <skill>`
+
+Remove an installed skill from a running sandbox by skill name.
+The command validates the skill name, removes the sandbox upload directory, removes the OpenClaw home-directory mirror when present, and refreshes the agent session index so the remaining skills are rediscovered on the next session.
+
+```bash
+nemoclaw my-assistant skill remove my-skill
+```
+
+Use the skill name from the `SKILL.md` frontmatter, not the local directory name.
+Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
+For non-OpenClaw agents, restart the agent gateway if prompted so the removal takes effect.
+
 ### `nemoclaw <name> rebuild`
 
 Upgrade a sandbox to the current agent version while preserving workspace state.

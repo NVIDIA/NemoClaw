@@ -17,10 +17,10 @@ import { getRegisteredOclifCommandsMetadata } from "./oclif-metadata";
 
 describe("command-registry", () => {
   describe("COMMANDS array", () => {
-    it("should contain exactly 63 commands", () => {
+    it("should contain exactly 64 commands", () => {
       // 28 global (22 visible + 6 hidden help/version aliases)
-      // 35 sandbox (29 visible + 6 hidden shields/config)
-      expect(COMMANDS).toHaveLength(63);
+      // 36 sandbox (30 visible + 6 hidden shields/config)
+      expect(COMMANDS).toHaveLength(64);
     });
 
     it("should have no duplicate usage strings", () => {
@@ -52,9 +52,9 @@ describe("command-registry", () => {
   });
 
   describe("sandboxCommands()", () => {
-    it("should return exactly 35 entries", () => {
-      // 29 visible + 6 hidden (shields×3 + config get/set/rotate-token)
-      expect(sandboxCommands()).toHaveLength(35);
+    it("should return exactly 36 entries", () => {
+      // 30 visible + 6 hidden (shields×3 + config get/set/rotate-token)
+      expect(sandboxCommands()).toHaveLength(36);
     });
 
     it("every entry has scope sandbox", () => {
@@ -65,10 +65,10 @@ describe("command-registry", () => {
   });
 
   describe("visibleCommands()", () => {
-    it("should exclude 12 hidden commands (51 visible)", () => {
+    it("should exclude 12 hidden commands (52 visible)", () => {
       // 6 hidden global (help, --help, -h, version, --version, -v) +
       // 6 hidden sandbox (shields×3, config get/set/rotate-token)
-      expect(visibleCommands()).toHaveLength(51);
+      expect(visibleCommands()).toHaveLength(52);
     });
 
     it("no visible command has hidden=true", () => {
