@@ -130,7 +130,7 @@ describe("preflightVllmModelEnv", () => {
     ).toEqual({ ok: true });
   });
 
-  it("fails fast for a gated slug with no Hugging Face token (#4543)", () => {
+  it("fails fast for a gated slug with no Hugging Face token", () => {
     const result = preflightVllmModelEnv({
       NEMOCLAW_VLLM_MODEL: "deepseek-r1-distill-70b",
     } as NodeJS.ProcessEnv);

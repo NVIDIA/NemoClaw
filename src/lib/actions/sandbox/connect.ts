@@ -761,7 +761,6 @@ function exitWithSpawnResult(result: SpawnLikeResult): void {
 // installer's validators up-front so a typo or a gated model with no
 // `HF_TOKEN` fails fast on the host — before any sandbox readiness probe,
 // inference-route reset, or SSH attach — instead of being silently ignored.
-// (#4543)
 function preflightVllmModelEnvOrExit(): void {
   const result = preflightVllmModelEnv();
   if (result.ok) return;

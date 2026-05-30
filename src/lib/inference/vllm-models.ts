@@ -154,7 +154,7 @@ export type PreflightVllmModelResult = { ok: true } | { ok: false; message: stri
  * Running the same `selectVllmModelFromEnv` + `assertGatedModelAccess` checks
  * the installer uses gives the caller a single fail-fast surface and one
  * canonical message to print before any side effects. Returns
- * `{ ok: true }` when the variable is unset or resolves cleanly. (#4543)
+ * `{ ok: true }` when the variable is unset or resolves cleanly.
  */
 export function preflightVllmModelEnv(
   env: NodeJS.ProcessEnv = process.env,
