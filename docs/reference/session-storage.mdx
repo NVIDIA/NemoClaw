@@ -1,0 +1,98 @@
+---
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+title: "Session Storage Layout"
+sidebar-title: "Session Storage"
+description: "Where OpenClaw persists conversation sessions, transcripts, and trajectories inside a NemoClaw sandbox."
+description-agent: "Documents the on-disk layout of OpenClaw session state inside a sandbox: sessions.json, per-session transcripts, trajectory sidecars, lock files, and reset archives. Use when building audit dashboards, replay tooling, or session-management CLI surfaces."
+keywords: ["nemoclaw session storage", "openclaw sessions.json", "agent transcript jsonl", "trajectory jsonl", "audit log paths"]
+content:
+  type: "reference"
+---
+OpenClaw persists each agent's conversation state on disk inside the sandbox.
+NemoClaw orchestrates the sandbox but does not own the schema; the canonical
+layout lives in [OpenClaw's session management reference](https://docs.openclaw.ai/reference/session-management-compaction).
+This page surfaces the parts a NemoClaw operator needs when reading audit data,
+copying transcripts off a sandbox, or recovering from a stuck session.
+
+## Where Sessions Live
+
+State for each agent is rooted at `$OPENCLAW_STATE_DIR/agents/<agentId>/`.
+`OPENCLAW_STATE_DIR` defaults to `~/.openclaw`. Inside the sandbox, the agent
+process runs with `HOME=/sandbox`, so the resolved root is
+`/sandbox/.openclaw/agents/<agentId>/`. The default agent id is `main`.
+
+```text
+/sandbox/.openclaw/agents/<agentId>/sessions/
+├── sessions.json                              # store: sessionKey -> SessionEntry map
+├── <sessionId>.jsonl                          # per-turn transcript (append-only tree)
+├── <sessionId>.trajectory.jsonl               # per-token trajectory sidecar
+├── <sessionId>.jsonl.lock                     # write lock for the active transcript
+├── <sessionId>-topic-<threadId>.jsonl         # Telegram topic transcripts (optional)
+└── <sessionId>.reset.<timestamp>.jsonl        # archived transcripts from prior resets
+```
+
+`sessions.json` is the index. Each key is a canonical `sessionKey` (for
+example `agent:main:main`, `agent:main:telegram:thread`,
+`agent:main:whatsapp:group:<jid>`) and each value carries the current
+`sessionId`, last activity timestamp, token counters, and other metadata.
+Same `sessionKey` in two different agents = two different sessions on disk;
+uniqueness is per-agent only.
+
+## What Each File Carries
+
+| File | Contents | When to consume |
+|---|---|---|
+| `sessions.json` | Map of `sessionKey` to `SessionEntry`. Resolves a routing key to the current `sessionId` on disk. | Lookups before reading or wiping a transcript; checking which session is active for a chat or channel binding. |
+| `<sessionId>.jsonl` | One JSON record per event. `message` records with `role: "assistant"` carry the `thinking` block, `toolCall` blocks, `toolResult` blocks, and `usage` (tokens + cost). | Audit trails and compliance dashboards. The "what the agent said and did" stream. |
+| `<sessionId>.trajectory.jsonl` | Per-token lower-level model trajectory. Tens of megabytes per long session. | Fine-grained replay and visualization. Not needed for audit narratives. |
+| `<sessionId>.jsonl.lock` | Empty marker file held by the gateway while writing the transcript. | Lock contention diagnostics; stale locks blocking new turns. |
+| `<sessionId>.reset.<ts>.jsonl` | Snapshot of the transcript at the moment of a reset, kept per `session.maintenance.resetArchiveRetention`. | Forensic recovery of a session whose store entry was reset. |
+
+`nemoclaw <name> logs` streams `/tmp/gateway.log`, which carries
+`[gateway]` and `[sandbox]` lifecycle events only. Agent reasoning, tool
+calls, and token usage live in the JSONL files above, not in the gateway log.
+
+## Pulling Session Data Out of a Sandbox
+
+Three host commands cover the common needs without manual `kubectl cp`,
+`docker cp`, or `cat` over SSH:
+
+- `nemoclaw <name> sessions list` lists stored sessions for the agent's
+  configured default agent (forwards to `openclaw sessions list`).
+- `nemoclaw <name> sessions download <agent>` copies the whole agent
+  `sessions/` directory to the host (defaults to
+  `./sessions-<sandbox>/agent-<agent>/`).
+- `nemoclaw <name> sessions download <agent> <sessionKey>` resolves the
+  key against `sessions.json` and copies just that session's
+  `<sessionId>.*` files.
+
+`<sessionKey>` is the canonical key as stored in `sessions.json`
+(`agent:<agentId>:<rest>`), not a session id or channel-specific shorthand.
+
+## Recovering From a Stuck Session
+
+When a session has wedged — for example because a write lock survived a
+crash, or a channel bridge handed messages to a session whose transcript
+is corrupted — the host commands to know about are:
+
+- `nemoclaw <name> sessions cleanup --enforce` runs OpenClaw's policy-based
+  store maintenance (age, count, disk-budget cleanup). Use this for stale
+  entries and orphan files, not for "wipe this one session right now."
+- `nemoclaw <name> sessions rm <agent> <sessionKey>` removes a single
+  session's `<sessionId>.*` files and strips the matching entry from
+  `sessions.json`.
+- `nemoclaw <name> sessions rm <agent>` wipes the whole sessions directory
+  for an agent and resets `sessions.json` to `{}`.
+
+The OpenClaw gateway should be idle for the target agent before running
+`sessions rm`. Live writes against `sessions.json` race the gateway writer;
+stop or restart the agent first when in doubt. Removed sessions do not get
+an automatic `<sessionId>.reset.<timestamp>.jsonl` archive — that semantic
+belongs to OpenClaw's in-gateway reset path, not the on-disk wipe.
+
+## Related References
+
+- [OpenClaw — Session management deep dive](https://docs.openclaw.ai/reference/session-management-compaction)
+- [Commands Reference: `nemoclaw <name> sessions`](/reference/commands#nemoclaw-name-sessions)
+- [Best Practices: workspace and credential storage](/security/best-practices)

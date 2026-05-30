@@ -502,6 +502,30 @@ jobs:
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
+  # ── Sessions CLI E2E (#834, #3978, #3979) ───────────────────────────
+  # Exercises the host-side `nemoclaw <name> sessions {list,cleanup,rm,download}`
+  # surface against a live sandbox: pass-through to `openclaw sessions list/cleanup`,
+  # raw rm + sessions.json edit, and openshell-based download of the agent
+  # sessions directory to the host.
+  sessions-cli-e2e:
+    if: >-
+      github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
+       inputs.jobs == '' ||
+       contains(format(',{0},', inputs.jobs), ',sessions-cli-e2e,'))
+    uses: ./.github/workflows/e2e-script.yaml
+    with:
+      ref: ${{ inputs.target_ref || github.ref }}
+      script: test/e2e/test-sessions-cli.sh
+      timeout_minutes: 60
+      artifact_name: "install-log-sessions-cli"
+      artifact_path: |
+        /tmp/nemoclaw-e2e-install.log
+      env_json: '{"NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE":"1","NEMOCLAW_NON_INTERACTIVE":"1","NEMOCLAW_SANDBOX_NAME":"e2e-sessions-cli"}'
+      nvidia_api_key: true
+      github_token: true
+    secrets:
+      NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   # ── Channels stop/start lifecycle E2E (#3462) ───────────────────────
   # Regression coverage for #3453 (stop must disable across rebuild), #3381
   # (start must re-attach from cached credentials).
@@ -1927,6 +1951,7 @@ jobs:
         issue-4462-gateway-pinned-approval-characterization-e2e,
         messaging-compatible-endpoint-e2e,
         channels-add-remove-e2e,
+        sessions-cli-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
@@ -2034,6 +2059,7 @@ jobs:
         issue-4462-gateway-pinned-approval-characterization-e2e,
         messaging-compatible-endpoint-e2e,
         channels-add-remove-e2e,
+        sessions-cli-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,
@@ -2198,6 +2224,7 @@ jobs:
         issue-4462-gateway-pinned-approval-characterization-e2e,
         messaging-compatible-endpoint-e2e,
         channels-add-remove-e2e,
+        sessions-cli-e2e,
         channels-stop-start-e2e,
         brave-search-e2e,
         kimi-inference-compat-e2e,

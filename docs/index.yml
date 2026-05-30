@@ -132,6 +132,9 @@ navigation:
       - page: "Network Policies"
         path: reference/network-policies.mdx
         slug: network-policies
+      - page: "Session Storage Layout"
+        path: reference/session-storage.mdx
+        slug: session-storage
       - page: "Troubleshooting"
         path: reference/troubleshooting.mdx
         slug: troubleshooting

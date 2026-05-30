@@ -362,6 +362,46 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "hidden": true
     }
   ],
+  "sandbox:sessions": [
+    {
+      "group": "Sandbox Management",
+      "order": 17,
+      "flags": "[openclaw-sessions-flags...]",
+      "description": "List OpenClaw conversation sessions in the sandbox"
+    }
+  ],
+  "sandbox:sessions:cleanup": [
+    {
+      "group": "Sandbox Management",
+      "order": 20,
+      "flags": "[openclaw-sessions-cleanup-flags...]",
+      "description": "Run OpenClaw session-store maintenance"
+    }
+  ],
+  "sandbox:sessions:download": [
+    {
+      "group": "Sandbox Management",
+      "order": 22,
+      "flags": "<agent> [<session>] [--out <dir>]",
+      "description": "Copy OpenClaw session files to the host"
+    }
+  ],
+  "sandbox:sessions:list": [
+    {
+      "group": "Sandbox Management",
+      "order": 18,
+      "flags": "[openclaw-sessions-list-flags...]",
+      "description": "List OpenClaw conversation sessions"
+    }
+  ],
+  "sandbox:sessions:rm": [
+    {
+      "group": "Sandbox Management",
+      "order": 21,
+      "flags": "<agent> [<session>]",
+      "description": "Remove OpenClaw conversation sessions"
+    }
+  ],
   "sandbox:skill:install": [
     {
       "group": "Skills",

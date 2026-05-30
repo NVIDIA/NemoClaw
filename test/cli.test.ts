@@ -563,6 +563,165 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Did you mean: nemoclaw alpha connect?");
   });
 
+  it("sandbox sessions list forwards to openclaw sessions list via openshell sandbox exec", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-list-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const openshellLog = path.join(home, "openshell-calls.log");
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  *"sandbox exec --name alpha -- openclaw sessions list --json"*) echo "[]"; exit 0 ;;',
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha sessions list --json", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_HEALTH_POLL_COUNT: "1",
+      NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("[]");
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    expect(calls).toMatch(/sandbox exec --name alpha -- openclaw sessions list --json/);
+  });
+
+  it("sandbox sessions rm <agent> wipes the agent sessions dir via openshell sandbox exec", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-rm-agent-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const openshellLog = path.join(home, "openshell-calls.log");
+    const sessionsDir = "/sandbox/.openclaw/agents/main/sessions";
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  *"test -d '${sessionsDir}'"*) echo "PRESENT"; exit 0 ;;`,
+        `  *"cd '${sessionsDir}'"*"-name '*.jsonl'"*) echo "REMOVED=3"; exit 0 ;;`,
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("sandbox sessions rm alpha main 2>&1", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_HEALTH_POLL_COUNT: "1",
+      NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Wiped agent 'main' sessions directory (3 files removed");
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    expect(calls).toMatch(
+      /sandbox exec --name alpha -- sh -c .*test -d '\/sandbox\/\.openclaw\/agents\/main\/sessions'/,
+    );
+    expect(calls).toMatch(/-name '\*\.jsonl'/);
+  });
+
+  it("sandbox sessions rm <agent> <key> resolves the sessionId and removes matching files", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-rm-key-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const openshellLog = path.join(home, "openshell-calls.log");
+    const sessionsDir = "/sandbox/.openclaw/agents/main/sessions";
+    const storePath = `${sessionsDir}/sessions.json`;
+    const sessionsJson = JSON.stringify({
+      "agent:main:main": { sessionId: "abc123", updatedAt: 1 },
+      "agent:main:telegram:thread": { sessionId: "def456", updatedAt: 2 },
+    });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  *"cat '${storePath}'"*) printf '%s' '${sessionsJson}'; exit 0 ;;`,
+        `  *"cd '${sessionsDir}'"*"-name 'def456*'"*) echo "REMOVED=2"; exit 0 ;;`,
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv(
+      "sandbox sessions rm alpha main agent:main:telegram:thread 2>&1",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "1",
+        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+      },
+    );
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(
+      "Removed session 'agent:main:telegram:thread' (id 'def456') from agent 'main'",
+    );
+    expect(r.out).toContain("2 files removed");
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    expect(calls).toMatch(/cat '\/sandbox\/\.openclaw\/agents\/main\/sessions\/sessions\.json'/);
+    expect(calls).toMatch(/-name 'def456\*'/);
+  });
+
+  it("sandbox sessions rm reports a helpful error when the session key is unknown", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-rm-missing-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const sessionsJson = JSON.stringify({
+      "agent:main:main": { sessionId: "abc123" },
+    });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  *"cat '/sandbox/.openclaw/agents/main/sessions/sessions.json'"*) printf '%s' '${sessionsJson}'; exit 0 ;;`,
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("sandbox sessions rm alpha main agent:main:missing", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_HEALTH_POLL_COUNT: "1",
+      NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("Session key 'agent:main:missing' not found in sessions store");
+    expect(r.out).toContain("agent:main:main");
+  });
+
   it("list exits 0", () => {
     const r = run("list");
     expect(r.code).toBe(0);
