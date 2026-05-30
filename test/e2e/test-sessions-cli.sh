@@ -6,17 +6,16 @@
 # test-sessions-cli.sh
 # NemoClaw `sessions` Subcommand E2E Tests
 #
-# Covers (issues #834, #3978, #3979):
+# Covers:
 #   TC-SESS-01: `nemoclaw <name> sessions list --json` returns valid JSON
 #               from the in-sandbox OpenClaw CLI (pass-through wiring).
 #   TC-SESS-02: `nemoclaw <name> sessions cleanup --dry-run` runs without
 #               mutating state (pass-through wiring).
 #   TC-SESS-03: `nemoclaw <name> sessions download <agent>` copies the
 #               agent's sessions directory to the host with sessions.json
-#               present (issue #3979).
+#               present.
 #   TC-SESS-04: `nemoclaw <name> sessions rm <agent>` wipes the agent's
-#               sessions directory and resets sessions.json to '{}'
-#               (issue #834).
+#               sessions directory and resets sessions.json to '{}'.
 #   TC-SESS-05: After TC-SESS-04, `nemoclaw <name> sessions list --json`
 #               returns an empty array (final-state assertion).
 #

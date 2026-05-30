@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { Args } from "@oclif/core";
+import { Args, Flags } from "@oclif/core";
 
 import { rmSandboxSessions } from "../../../lib/actions/sandbox/sessions/rm";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
@@ -24,10 +24,11 @@ export default class SandboxSessionsRmCommand extends NemoClawCommand {
     "The OpenClaw Gateway should be idle for the target agent before running this command.",
     "Live writes against sessions.json race the gateway writer; restart or stop the agent first.",
   ].join("\n");
-  static usage = ["<name> <agent> [<session>]"];
+  static usage = ["<name> <agent> [<session>] [--force]"];
   static examples = [
     "<%= config.bin %> sandbox sessions rm alpha main",
     "<%= config.bin %> sandbox sessions rm alpha main agent:main:telegram:thread",
+    "<%= config.bin %> sandbox sessions rm alpha main --force",
   ];
   static args = {
     sandboxName: sandboxNameArg,
@@ -42,13 +43,21 @@ export default class SandboxSessionsRmCommand extends NemoClawCommand {
       required: false,
     }),
   };
+  static flags = {
+    force: Flags.boolean({
+      description:
+        "Override the active write-lock refusal. Only use when the lock is known stale (e.g. crashed gateway).",
+      default: false,
+    }),
+  };
 
   public async run(): Promise<void> {
-    const { args } = await this.parse(SandboxSessionsRmCommand);
+    const { args, flags } = await this.parse(SandboxSessionsRmCommand);
     try {
       await rmSandboxSessions(args.sandboxName, {
         agent: args.agent,
         sessionKey: args.session,
+        force: flags.force,
       });
     } catch (error) {
       this.failWithLines([`  ${(error as Error).message}`], 1);

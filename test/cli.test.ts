@@ -614,7 +614,7 @@ describe("CLI dispatch", () => {
         '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
         '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        `  *"test -d '${sessionsDir}'"*) echo "PRESENT"; exit 0 ;;`,
+        `  *"if [ ! -d '${sessionsDir}' ]"*) printf 'PRESENT\\nLOCKS=0\\n'; exit 0 ;;`,
         `  *"cd '${sessionsDir}'"*"-name '*.jsonl'"*) echo "REMOVED=3"; exit 0 ;;`,
         "  *) exit 0 ;;",
         "esac",
@@ -633,9 +633,84 @@ describe("CLI dispatch", () => {
     expect(r.out).toContain("Wiped agent 'main' sessions directory (3 files removed");
     const calls = fs.readFileSync(openshellLog, "utf8");
     expect(calls).toMatch(
-      /sandbox exec --name alpha -- sh -c .*test -d '\/sandbox\/\.openclaw\/agents\/main\/sessions'/,
+      /sandbox exec --name alpha -- sh -c .*if \[ ! -d '\/sandbox\/\.openclaw\/agents\/main\/sessions' \]/,
     );
+    expect(calls).toMatch(/-name '\*\.jsonl\.lock'/);
     expect(calls).toMatch(/-name '\*\.jsonl'/);
+  });
+
+  it("sandbox sessions rm <agent> refuses when an active write lock is present", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-rm-locked-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const openshellLog = path.join(home, "openshell-calls.log");
+    const sessionsDir = "/sandbox/.openclaw/agents/main/sessions";
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  *"if [ ! -d '${sessionsDir}' ]"*) printf 'PRESENT\\nLOCKS=2\\n'; exit 0 ;;`,
+        '  *"REMOVED="*) echo "should-not-be-called"; exit 1 ;;',
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("sandbox sessions rm alpha main 2>&1", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_HEALTH_POLL_COUNT: "1",
+      NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+    });
+
+    expect(r.code).not.toBe(0);
+    expect(r.out).toContain(
+      "Refusing to remove agent 'main': 2 active write lock(s)",
+    );
+    expect(r.out).toContain("re-run with --force");
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    expect(calls).not.toMatch(/REMOVED=/);
+  });
+
+  it("sandbox sessions rm <agent> --force overrides an active write lock", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-rm-force-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const sessionsDir = "/sandbox/.openclaw/agents/main/sessions";
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  *"if [ ! -d '${sessionsDir}' ]"*) printf 'PRESENT\\nLOCKS=1\\n'; exit 0 ;;`,
+        `  *"cd '${sessionsDir}'"*"-name '*.jsonl'"*) echo "REMOVED=4"; exit 0 ;;`,
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("sandbox sessions rm alpha main --force 2>&1", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+      NEMOCLAW_HEALTH_POLL_COUNT: "1",
+      NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Wiped agent 'main' sessions directory (4 files removed");
+    expect(r.out).toContain("Forced past 1 active write lock(s).");
   });
 
   it("sandbox sessions rm <agent> <key> resolves the sessionId and removes matching files", () => {

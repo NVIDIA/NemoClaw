@@ -122,7 +122,8 @@ on:
           credential-sanitization-e2e, telegram-injection-e2e,
           overlayfs-autofix-e2e, device-auth-health-e2e,
           launchable-smoke-e2e, gpu-e2e, gpu-double-onboard-e2e,
-          channels-add-remove-e2e, channels-stop-start-e2e, brave-search-e2e
+          channels-add-remove-e2e, channels-stop-start-e2e, brave-search-e2e,
+          sessions-cli-e2e
         required: false
         type: string
         default: ""

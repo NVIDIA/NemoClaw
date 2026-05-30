@@ -86,10 +86,14 @@ is corrupted — the host commands to know about are:
   for an agent and resets `sessions.json` to `{}`.
 
 The OpenClaw gateway should be idle for the target agent before running
-`sessions rm`. Live writes against `sessions.json` race the gateway writer;
-stop or restart the agent first when in doubt. Removed sessions do not get
-an automatic `<sessionId>.reset.<timestamp>.jsonl` archive — that semantic
-belongs to OpenClaw's in-gateway reset path, not the on-disk wipe.
+`sessions rm`. The command first probes the target scope for an active
+`*.jsonl.lock`; if one is present, it refuses and exits non-zero so the
+host wipe never races the gateway writer. Stop the agent or wait for
+in-flight writes to drain, then retry; pass `--force` only when the lock
+is known stale (for example, after a crashed gateway). Removed sessions
+do not get an automatic `<sessionId>.reset.<timestamp>.jsonl` archive —
+that semantic belongs to OpenClaw's in-gateway reset path, not the
+on-disk wipe.
 
 ## Related References
 

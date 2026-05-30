@@ -398,7 +398,7 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
     {
       "group": "Sandbox Management",
       "order": 21,
-      "flags": "<agent> [<session>]",
+      "flags": "<agent> [<session>] [--force]",
       "description": "Remove OpenClaw conversation sessions"
     }
   ],

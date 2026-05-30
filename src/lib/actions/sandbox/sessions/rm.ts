@@ -20,6 +20,7 @@ import {
 export interface SessionsRmOptions {
   agent: string;
   sessionKey?: string;
+  force?: boolean;
 }
 
 export interface SessionsRmResult {
@@ -37,15 +38,16 @@ export async function rmSandboxSessions(
 ): Promise<SessionsRmResult> {
   const agentId = validateAgentId(opts.agent);
   const sessionKey = opts.sessionKey ? validateSessionKey(opts.sessionKey) : undefined;
+  const force = opts.force === true;
   await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
 
   const sessionsDir = agentSessionsDir(agentId);
   const storePath = agentSessionsStorePath(agentId);
 
   if (!sessionKey) {
-    return wipeWholeAgent(sandboxName, sessionsDir, storePath, agentId);
+    return wipeWholeAgent(sandboxName, sessionsDir, storePath, agentId, force);
   }
-  return removeSingleSession(sandboxName, sessionsDir, storePath, agentId, sessionKey);
+  return removeSingleSession(sandboxName, sessionsDir, storePath, agentId, sessionKey, force);
 }
 
 async function wipeWholeAgent(
@@ -53,6 +55,7 @@ async function wipeWholeAgent(
   sessionsDir: string,
   storePath: string,
   agentId: string,
+  force: boolean,
 ): Promise<SessionsRmResult> {
   const probe = captureOpenshell(
     [
@@ -63,7 +66,11 @@ async function wipeWholeAgent(
       "--",
       "sh",
       "-c",
-      `test -d ${shellQuote(sessionsDir)} && echo PRESENT || echo MISSING`,
+      [
+        `if [ ! -d ${shellQuote(sessionsDir)} ]; then echo MISSING; exit 0; fi`,
+        `locks=$(find ${shellQuote(sessionsDir)} -mindepth 1 -maxdepth 1 -type f -name '*.jsonl.lock' | wc -l | tr -d ' ')`,
+        'printf "PRESENT\\nLOCKS=%s\\n" "$locks"',
+      ].join("\n"),
     ],
     { ignoreError: true },
   );
@@ -71,6 +78,10 @@ async function wipeWholeAgent(
     console.error(`  Sessions directory not found for agent '${agentId}': ${sessionsDir}`);
     console.error(NOT_FOUND_HINT);
     process.exit(1);
+  }
+  const lockCount = parseLockCount(probe.output);
+  if (lockCount > 0 && !force) {
+    failOnActiveLocks(agentId, lockCount, sessionsDir);
   }
 
   const script = [
@@ -91,8 +102,9 @@ async function wipeWholeAgent(
     process.exit(1);
   }
   const filesRemoved = parseRemovedCount(result.output);
+  const forcedSuffix = lockCount > 0 && force ? ` Forced past ${lockCount} active write lock(s).` : "";
   console.error(
-    `  Wiped agent '${agentId}' sessions directory (${filesRemoved} file${filesRemoved === 1 ? "" : "s"} removed; sessions.json reset).`,
+    `  Wiped agent '${agentId}' sessions directory (${filesRemoved} file${filesRemoved === 1 ? "" : "s"} removed; sessions.json reset).${forcedSuffix}`,
   );
   return { scope: "agent", filesRemoved };
 }
@@ -103,6 +115,7 @@ async function removeSingleSession(
   storePath: string,
   agentId: string,
   sessionKey: string,
+  force: boolean,
 ): Promise<SessionsRmResult> {
   const storeText = readSessionStoreText(sandboxName, storePath, agentId);
   const store: SessionStore = parseSessionStore(storeText);
@@ -110,6 +123,30 @@ async function removeSingleSession(
   const updatedStore = { ...store };
   delete updatedStore[sessionKey];
   const updatedJson = JSON.stringify(updatedStore);
+
+  const lockProbe = captureOpenshell(
+    [
+      "sandbox",
+      "exec",
+      "--name",
+      sandboxName,
+      "--",
+      "sh",
+      "-c",
+      `if [ -e ${shellQuote(`${sessionsDir}/${sessionId}.jsonl.lock`)} ]; then echo LOCKED; else echo CLEAR; fi`,
+    ],
+    { ignoreError: true },
+  );
+  if (lockProbe.status !== 0) {
+    console.error(
+      `  Failed to probe write lock for session '${sessionKey}' (id '${sessionId}'): ${lockProbe.output || `exit ${lockProbe.status}`}`,
+    );
+    process.exit(1);
+  }
+  const locked = lockProbe.output.includes("LOCKED");
+  if (locked && !force) {
+    failOnActiveLocks(agentId, 1, sessionsDir, sessionKey, sessionId);
+  }
 
   const safeJson = updatedJson.replace(/'/g, "'\\''");
   const ownedClause = sessionOwnedFilenameFindClause(sessionId);
@@ -133,8 +170,9 @@ async function removeSingleSession(
     process.exit(1);
   }
   const filesRemoved = parseRemovedCount(result.output);
+  const forcedSuffix = locked && force ? " Forced past active write lock." : "";
   console.error(
-    `  Removed session '${sessionKey}' (id '${sessionId}') from agent '${agentId}' (${filesRemoved} file${filesRemoved === 1 ? "" : "s"} removed; sessions.json updated).`,
+    `  Removed session '${sessionKey}' (id '${sessionId}') from agent '${agentId}' (${filesRemoved} file${filesRemoved === 1 ? "" : "s"} removed; sessions.json updated).${forcedSuffix}`,
   );
   return {
     scope: "session",
@@ -142,6 +180,26 @@ async function removeSingleSession(
     removedSessionId: sessionId,
     filesRemoved,
   };
+}
+
+function failOnActiveLocks(
+  agentId: string,
+  lockCount: number,
+  sessionsDir: string,
+  sessionKey?: string,
+  sessionId?: string,
+): never {
+  const scope = sessionKey ? `session '${sessionKey}' (id '${sessionId}')` : `agent '${agentId}'`;
+  console.error(
+    `  Refusing to remove ${scope}: ${lockCount} active write lock(s) (\`*.jsonl.lock\`) present under ${sessionsDir}.`,
+  );
+  console.error(
+    `  The OpenClaw gateway is likely mid-write. Stop the agent (e.g. \`${CLI_NAME} <sandbox> recover\` or restart the gateway), then retry.`,
+  );
+  console.error(
+    "  If you are sure the lock is stale (e.g. after a crashed gateway), re-run with --force to override.",
+  );
+  process.exit(1);
 }
 
 function readSessionStoreText(sandboxName: string, storePath: string, agentId: string): string {
@@ -170,6 +228,11 @@ function readSessionStoreText(sandboxName: string, storePath: string, agentId: s
 
 function parseRemovedCount(output: string): number {
   const match = /REMOVED=(\d+)/.exec(output);
+  return match ? Number.parseInt(match[1], 10) : 0;
+}
+
+function parseLockCount(output: string): number {
+  const match = /LOCKS=(\d+)/.exec(output);
   return match ? Number.parseInt(match[1], 10) : 0;
 }
 
