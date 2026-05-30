@@ -257,6 +257,14 @@ nemoclaw uninstall
 | `--keep-openshell` | Leave OpenShell binaries installed.                  |
 | `--delete-models`  | Also remove NemoClaw-pulled Ollama models.           |
 
+<Note>
+`nemoclaw uninstall` preserves `~/.nemoclaw/rebuild-backups/` (host-side snapshots that `nemoclaw <name> snapshot create` and `nemoclaw backup-all` write), `~/.nemoclaw/backups/` (workspace backups that `scripts/backup-workspace.sh` writes), and `~/.nemoclaw/sandboxes.json` (the sandbox registry) by default.
+Uninstall removes every other entry under `~/.nemoclaw/`.
+Interactive runs prompt before they remove the preserved entries; the default answer keeps them.
+For non-interactive runs (`--yes`, `NEMOCLAW_NON_INTERACTIVE=1`, or a non-TTY shell), set `NEMOCLAW_UNINSTALL_DESTROY_USER_DATA=1` to acknowledge data loss and remove the preserved entries as well.
+See [`nemoclaw uninstall`](/reference/commands#nemoclaw-uninstall) for the full preservation contract.
+</Note>
+
 `nemoclaw uninstall` runs the version-pinned `uninstall.sh` that shipped with your installed CLI, so it does not fetch anything over the network at uninstall time.
 
 If the `nemoclaw` CLI is missing or broken, fall back to the hosted script:

@@ -7,8 +7,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import * as agentRuntime from "../../agent/runtime";
+import { loadAgent } from "../../agent/defs";
+import { compareChannelSets, probeChannelRuntimeStatus } from "../../channel-runtime-status";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { recoverNamedGatewayRuntime } from "../../gateway-runtime-action";
+import { executeSandboxCommandForVerification } from "../../onboard/sandbox-verification-exec";
 import { readCloudflaredState } from "../../tunnel/services";
 import { probeProviderHealth, type ProviderHealthStatus } from "../../inference/health";
 import { probeSandboxInferenceGatewayHealth } from "./process-recovery";
@@ -347,6 +350,102 @@ function ollamaDoctorCheck(currentProvider: string): DoctorCheck {
   };
 }
 
+/**
+ * Compare the registry's enabled-channels list with channels the OpenClaw
+ * runtime actually acknowledged inside the sandbox (config block in
+ * /sandbox/.openclaw/openclaw.json plus a gateway-log mention). Returns
+ * null when the probe doesn't apply (no enabled channels, agent has no
+ * JSON config) so the caller can skip the check entirely instead of
+ * rendering a no-op line. Fixes #4156 — without this, a sandbox where
+ * the OpenClaw runtime silently ignored a configured channel looks healthy
+ * at `doctor` time even though the dashboard shows "No channels found".
+ */
+function channelRuntimeDoctorCheck(
+  sandboxName: string,
+  enabledChannels: string[],
+): DoctorCheck | null {
+  if (enabledChannels.length === 0) return null;
+  let agent: ReturnType<typeof loadAgent>;
+  try {
+    const sb = registry.getSandbox(sandboxName);
+    agent = loadAgent(sb?.agent || "openclaw");
+  } catch {
+    return null;
+  }
+  if (agent.configPaths.format !== "json") return null;
+  const configFilePath = `${agent.configPaths.dir}/${agent.configPaths.configFile}`;
+  const runtime = probeChannelRuntimeStatus({
+    configFilePath,
+    executeSandboxCommand: (script: string) =>
+      executeSandboxCommandForVerification(sandboxName, script),
+  });
+  if (!runtime.ok) {
+    return {
+      group: "Messaging",
+      label: "Runtime channel registry",
+      status: "warn",
+      detail: runtime.detail,
+      hint:
+        `start the sandbox and rerun \`${CLI_NAME} ${sandboxName} doctor\`, ` +
+        `or rebuild with \`${CLI_NAME} ${sandboxName} rebuild\` if the config file is missing`,
+    };
+  }
+  if (runtime.logProbeOk) {
+    // Diff against the log-corroborated runtime view. Catches both the
+    // stale-rebuild path (channel block missing) and the runtime-startup
+    // path (config has it, log doesn't).
+    const { missing: notRunning } = compareChannelSets(enabledChannels, runtime.visibleChannels);
+    if (notRunning.length > 0) {
+      return {
+        group: "Messaging",
+        label: "Runtime channel registry",
+        status: "warn",
+        detail: `not visible to OpenClaw runtime: ${notRunning.join(", ")}`,
+        hint:
+          `the OpenClaw dashboard "Channels" panel will show "No channels found" for ` +
+          `${notRunning.join(", ")}; inspect \`${agent.configPaths.dir}/${agent.configPaths.configFile}\` ` +
+          `and the gateway log with \`${CLI_NAME} ${sandboxName} logs\`, then re-run ` +
+          `\`${CLI_NAME} ${sandboxName} rebuild\` if the channels block needs to be regenerated`,
+      };
+    }
+  } else {
+    // Log unavailable: we can still detect a config-only mismatch
+    // (registry expects telegram but openclaw.json doesn't have it).
+    // Surface that as a warn so a stale rebuild isn't masked by an
+    // unreadable log (CodeRabbit on PR #4182). The log-unavailable
+    // warning below still runs when configMissing is empty.
+    const { missing: configMissing } = compareChannelSets(enabledChannels, runtime.configuredChannels);
+    if (configMissing.length > 0) {
+      return {
+        group: "Messaging",
+        label: "Runtime channel registry",
+        status: "warn",
+        detail: `missing from sandbox config: ${configMissing.join(", ")}`,
+        hint:
+          `\`${agent.configPaths.dir}/${agent.configPaths.configFile}\` is missing the channel block ` +
+          `for ${configMissing.join(", ")}; re-run \`${CLI_NAME} ${sandboxName} rebuild\` so the config is regenerated`,
+      };
+    }
+  }
+  if (!runtime.logProbeOk) {
+    return {
+      group: "Messaging",
+      label: "Runtime channel registry",
+      status: "warn",
+      detail: `${enabledChannels.join(", ")} present in config; gateway log unavailable, runtime startup not confirmed`,
+      hint:
+        `start the sandbox and rerun \`${CLI_NAME} ${sandboxName} doctor\`, or inspect ` +
+        `the gateway log with \`${CLI_NAME} ${sandboxName} logs\``,
+    };
+  }
+  return {
+    group: "Messaging",
+    label: "Runtime channel registry",
+    status: "ok",
+    detail: `${enabledChannels.join(", ")} acknowledged by OpenClaw runtime`,
+  };
+}
+
 function messagingDoctorCheck(sandboxName: string, sb: SandboxEntry): DoctorCheck {
   const registeredChannels = Array.isArray(sb.messagingChannels) ? sb.messagingChannels : [];
   const disabledChannels = new Set(Array.isArray(sb.disabledChannels) ? sb.disabledChannels : []);
@@ -646,6 +745,18 @@ export async function runSandboxDoctor(
       hint: shieldsHint,
     });
     checks.push(messagingDoctorCheck(sandboxName, sb));
+    // #4156: bridge the gap between "configured" and "runtime-visible" — the
+    // existing messaging check above probes provider attachment, not whether
+    // OpenClaw's runtime config actually surfaces each enabled channel.
+    const registeredChannels = Array.isArray(sb.messagingChannels) ? sb.messagingChannels : [];
+    const disabledChannelsSet = new Set(
+      Array.isArray(sb.disabledChannels) ? sb.disabledChannels : [],
+    );
+    const enabledChannels = registeredChannels.filter(
+      (channel: string) => !disabledChannelsSet.has(channel),
+    );
+    const runtimeCheck = channelRuntimeDoctorCheck(sandboxName, enabledChannels);
+    if (runtimeCheck) checks.push(runtimeCheck);
   }
 
   checks.push(ollamaDoctorCheck(currentProvider));
