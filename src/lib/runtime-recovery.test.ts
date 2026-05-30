@@ -89,6 +89,20 @@ describe("runtime recovery helpers", () => {
       ).toEqual([]);
     });
 
+    it("does not treat Ready or Running tokens outside the PHASE column as live", () => {
+      expect(
+        Array.from(
+          parseReadySandboxNames(
+            [
+              "NAME              NAMESPACE  CREATED              PHASE",
+              "alpha             Ready      2026-03-24 10:00:00  Provisioning",
+              "beta              Running    2026-03-24 10:01:00  Error",
+            ].join("\n"),
+          ),
+        ),
+      ).toEqual([]);
+    });
+
     it("treats no-sandboxes output, error lines, and protobuf mismatch as empty", () => {
       expect(Array.from(parseReadySandboxNames("No sandboxes found."))).toEqual([]);
       expect(Array.from(parseReadySandboxNames("Error: something went wrong"))).toEqual([]);
