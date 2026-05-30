@@ -1,6 +1,7 @@
 ---
 name: "nemoclaw-user-get-started"
 description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time. Trigger keywords - nemoclaw quickstart, install nemoclaw openclaw sandbox, nemohermes quickstart, hermes agent nemoclaw, run hermes openshell sandbox, nemoclaw prerequisites, nemoclaw supported platforms, nemoclaw hardware software, nemoclaw windows wsl2 setup, nemoclaw install windows docker desktop."
+license: "Apache-2.0"
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -12,7 +13,13 @@ Follow these steps to get started with NemoClaw and your first sandboxed OpenCla
 
 **Note:**
 
-Make sure you have completed reviewing the Prerequisites (use the `nemoclaw-user-get-started` skill) before following this guide.
+Make sure you have completed reviewing the [Prerequisites](references/prerequisites.md) before following this guide.
+
+**Use Agent Skills:**
+
+NemoClaw ships user skills for AI coding assistants.
+Load them when you want your assistant to walk through installation, inference choices, policy approvals, monitoring, or troubleshooting with NemoClaw-specific guidance.
+Refer to Agent Skills (use the `nemoclaw-user-agent-skills` skill).
 
 ## Install NemoClaw and Onboard OpenClaw Agent
 
@@ -27,12 +34,28 @@ NemoClaw creates a fresh OpenClaw instance inside the sandbox during the onboard
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-The piped installer prompts through your terminal. In headless scripts or CI,
-pass explicit acceptance to the `bash` side of the pipe:
+The third-party software notice runs before Node.js or the NemoClaw CLI is installed.
+The piped installer can prompt through your terminal when a TTY is available.
+In non-TTY contexts, such as CI, an SSH command with piped stdin, or a shell script, pass explicit acceptance to the `bash` side of the pipe:
 
-```console
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
 ```
+
+or pass the installer flag through `bash -s`:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
+```
+
+To run both installation and onboarding without prompts, also set non-interactive mode and the provider variables your chosen inference path requires:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```
+
+Do not place `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` before `curl`.
+In `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 curl ... | bash`, the variable applies only to `curl`, so the installer process cannot see the acceptance.
 
 If you use nvm or fnm to manage Node.js, the installer might not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
@@ -66,7 +89,9 @@ If you export `NEMOCLAW_DISABLE_DEVICE_AUTH` after onboarding finishes, it has n
 
 ### Respond to the Onboard Wizard
 
-After the installer launches `nemoclaw onboard`, the wizard runs preflight checks, starts or reuses the OpenShell gateway, and asks for an inference provider, sandbox name, optional web search, optional messaging channels, and network policy presets.
+After the installer launches `nemoclaw onboard`, the wizard runs preflight checks, starts or reuses the OpenShell gateway, asks for an inference provider and model, collects any required credential, then asks for the sandbox name.
+It prints a review summary before it registers the provider with OpenShell.
+After you confirm, NemoClaw registers inference, prompts for optional web search and messaging channels, builds and starts the sandbox, sets up OpenClaw, then applies the selected network policy tier and presets.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 If existing sandbox sessions are running, the installer warns before onboarding because the setup can rebuild or upgrade sandboxes after the new sandbox launches.
 
@@ -239,8 +264,9 @@ For example, if you picked an OpenAI-compatible endpoint, the summary looks like
   ──────────────────────────────────────────────────
   Provider:      compatible-endpoint
   Model:         openai/openai/gpt-5.5
-  API key:       COMPATIBLE_API_KEY (staged for OpenShell gateway registration)
+  API key:       configured for OpenShell gateway registration
   Web search:    disabled
+  Managed tools: none
   Messaging:     none
   Sandbox name:  my-gpt-claw
   Note:          Sandbox build typically takes 5–15 minutes on this host.
@@ -259,14 +285,18 @@ After you confirm the summary, NemoClaw registers the selected provider with the
 The wizard then asks whether to enable Brave Web Search.
 If you enable it, enter a Brave Search API key when prompted.
 
-The wizard also offers messaging channels such as Telegram, Discord, Slack, and WhatsApp.
+The wizard also offers messaging channels such as Telegram, Discord, Slack, WeChat, and WhatsApp.
 Press a channel number to toggle it, then press Enter to continue.
+If you leave all channels unselected, pressing Enter skips messaging setup.
 If you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
 For example, Slack bot tokens must start with `xoxb-`.
+WeChat and WhatsApp are experimental.
+Review Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) before enabling them.
 
 ### Choose Network Policy Presets
 
 After the sandbox image builds and OpenClaw starts inside the sandbox, NemoClaw asks which network policy tier to apply.
+Web search and messaging selections happen before this point so the sandbox image and the policy suggestions stay aligned.
 The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, and Brave Search when the selected agent supports web search.
 Use the arrow keys or `j` and `k` to move, Space to select, and Enter to confirm.
 
@@ -352,3 +382,4 @@ openclaw tui
 ## Related Skills
 
 - `nemoclaw-user-overview` — NemoClaw Overview (use the `nemoclaw-user-overview` skill) to learn what NemoClaw is and its capabilities
+- `nemoclaw-user-agent-skills` — Agent Skills (use the `nemoclaw-user-agent-skills` skill) to load NemoClaw guidance into an AI coding assistant

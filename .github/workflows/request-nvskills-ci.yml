@@ -1,0 +1,34 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Forwards `/nvskills-ci` PR comments and signature push events to the central
+# NVSkills CI service in NVIDIA/nvskills-ci. Mirrors
+# templates/team-request-workflow.yml from NVIDIA/nvskills-ci@main.
+#
+# Onboarding reference: NVIDIA/nvskills-ci/docs/team-onboarding.md
+# This file must remain CODEOWNERS-protected (see .github/CODEOWNERS).
+#
+# Required repository secret: NVSKILLS_CI_DISPATCH_TOKEN
+
+name: Request NVSkills CI
+
+on:
+  issue_comment:
+    types: [created]
+  push:
+
+jobs:
+  request:
+    if: >
+      (github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        startsWith(github.event.comment.body, '/nvskills-ci')) ||
+      (github.event_name == 'push' &&
+        github.actor == (vars.NVSKILLS_SIGNATURE_PUSH_ACTOR || 'nv-skills-ci[bot]') &&
+        startsWith(github.event.head_commit.message, vars.NVSKILLS_SIGNATURE_COMMIT_TITLE || 'Attach NVSkills validation signatures'))
+    permissions:
+      contents: read
+      pull-requests: read
+    uses: NVIDIA/skills/.github/workflows/team-request.yml@d6c3af084edd278e5524c95e6586fc763835eb62
+    secrets:
+      NVSKILLS_CI_DISPATCH_TOKEN: ${{ secrets.NVSKILLS_CI_DISPATCH_TOKEN }}

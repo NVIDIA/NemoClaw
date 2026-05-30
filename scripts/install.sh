@@ -12,6 +12,11 @@ set -euo pipefail
 # are removed on any exit path (set -e, unhandled signal, unexpected error).
 _cleanup_pids=()
 _cleanup_files=()
+# #4414: When re-launched as a staged copy via `curl | bash`, queue the
+# staged tmpfile for removal on EXIT. NEMOCLAW_INSTALLER_STAGED carries
+# the staged path forward so both the loop guard and cleanup use one var.
+[[ "${NEMOCLAW_INSTALLER_STAGED:-}" == /tmp/nemoclaw-installer-* ]] \
+  && _cleanup_files+=("${NEMOCLAW_INSTALLER_STAGED}")
 _global_cleanup() {
   for pid in "${_cleanup_pids[@]:-}"; do
     kill "$pid" 2>/dev/null || true
@@ -547,7 +552,7 @@ usage() {
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
   printf "    NEMOCLAW_POLICY_PRESETS       Comma-separated policy presets\n"
-  printf "    BRAVE_API_KEY                 Enable Brave Search with this API key (stored in sandbox OpenClaw config)\n"
+  printf "    BRAVE_API_KEY                 Enable Brave Search with this API key (kept behind OpenShell provider rewrite)\n"
   printf "    NEMOCLAW_EXPERIMENTAL=1       Show experimental/local options\n"
   printf "    CHAT_UI_URL                   Chat UI URL to open after setup\n"
   printf "    DISCORD_BOT_TOKEN             Auto-enable Discord policy support\n"
@@ -1666,7 +1671,8 @@ print_openshell_upgrade_manual_commands() {
   cat <<EOF
   Manual upgrade path:
     ${_CLI_BIN} backup-all
-    openshell gateway destroy -g nemoclaw || openshell gateway destroy
+    openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy
+    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
     ${_CLI_BIN} upgrade-sandboxes --check
 
@@ -1823,9 +1829,13 @@ repair_installer_nvidia_cdi_spec() {
     node -e '
       const preflightPath = process.argv[1];
       try {
-        const { assessHost, getNvidiaCdiSpecPath } = require(preflightPath);
+        const { assessHost, getNvidiaCdiSpecPath, isWslDockerDesktopRuntime } = require(preflightPath);
         const host = assessHost();
-        if (host && host.cdiNvidiaGpuSpecMissing) {
+        if (
+          host &&
+          host.cdiNvidiaGpuSpecMissing &&
+          !isWslDockerDesktopRuntime(host)
+        ) {
           process.stdout.write(getNvidiaCdiSpecPath(host));
         }
       } catch {
@@ -2173,6 +2183,30 @@ ensure_docker() {
   fi
 
   if [ "$needs_group_refresh" = "1" ]; then
+    # #4414: in non-interactive mode, self-reactivate group membership via
+    # sg(1) and re-exec the installer so a single curl|bash finishes the
+    # install on a clean Ubuntu VM. Linux only loads group membership at
+    # login, so without this the rest of the script can't talk to the
+    # docker socket. The env-var guard prevents an infinite loop if sg
+    # ran but the docker daemon is still unreachable for some other reason.
+    if installer_non_interactive \
+      && [ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" != "1" ] \
+      && command -v sg >/dev/null 2>&1; then
+      local self="${BASH_SOURCE[0]:-$0}"
+      if [ -n "$self" ] && [ -f "$self" ]; then
+        info "Reactivating docker group membership via 'sg docker' to continue non-interactive install."
+        export NEMOCLAW_DOCKER_GROUP_REACTIVATED=1
+        local cmd
+        printf -v cmd 'exec bash %q' "$self"
+        if [ "${#_NEMOCLAW_INSTALLER_ARGS[@]}" -gt 0 ]; then
+          local arg
+          for arg in "${_NEMOCLAW_INSTALLER_ARGS[@]}"; do
+            printf -v cmd '%s %q' "$cmd" "$arg"
+          done
+        fi
+        exec sg docker -c "$cmd"
+      fi
+    fi
     printf "\n"
     info "Docker group membership is not active in this shell yet. To finish:"
     info "  1) Run: newgrp docker   (or log out and log back in)"
@@ -2230,21 +2264,26 @@ detect_express_platform() {
 describe_express_install() {
   local platform="$1"
   local inference_summary=""
+  local sandbox_summary=""
   local tier="${NEMOCLAW_POLICY_TIER:-balanced}"
   local policy_summary=""
 
   case "$platform" in
     "DGX Spark")
       inference_summary="managed local Ollama with model qwen3.6:35b"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
       ;;
     "DGX Station")
       inference_summary="managed local vLLM"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     "Windows WSL")
       inference_summary="Windows-host Ollama through host.docker.internal"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
     *)
       inference_summary="managed local inference"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
       ;;
   esac
 
@@ -2267,6 +2306,7 @@ describe_express_install() {
   esac
 
   printf "  Express install will configure %s.\n" "$inference_summary"
+  printf "  Sandbox name: %s.\n" "$sandbox_summary"
   printf "  It runs onboarding non-interactively, but still prompts for sudo when host setup needs it.\n"
   printf "  Sandbox policy: suggested mode, tier '%s'. This uses the %s.\n" "$tier" "$policy_summary"
 }
@@ -2326,6 +2366,7 @@ maybe_offer_express_install() {
       export NEMOCLAW_POLICY_MODE=suggested
       case "$platform" in
         "DGX Spark")
+          export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
           export NEMOCLAW_PROVIDER=install-ollama
           export NEMOCLAW_MODEL=qwen3.6:35b
           ;;
@@ -2346,6 +2387,11 @@ maybe_offer_express_install() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
+  # Capture the original argv so ensure_docker can forward it across a
+  # self re-exec under sg(1) when the docker group needs activating in a
+  # non-interactive run (#4414).
+  _NEMOCLAW_INSTALLER_ARGS=("$@")
+
   # Parse flags
   NON_INTERACTIVE=""
   ACCEPT_THIRD_PARTY_SOFTWARE=""
@@ -2472,5 +2518,26 @@ main() {
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then
+  # #4414: When invoked via `curl ... | bash`, BASH_SOURCE is empty and
+  # $0="bash". ensure_docker's sg(1) re-exec (#4419) needs a real script
+  # file to point bash at; without one it falls back to the legacy
+  # newgrp/re-curl path. Stage the installer by re-curling the canonical
+  # URL so the sg(1) re-exec has a file to execute. NEMOCLAW_INSTALLER_STAGED
+  # carries the staged path forward as both loop guard and cleanup key.
+  if [[ -z "${BASH_SOURCE[0]:-}" ]] && [[ -z "${NEMOCLAW_INSTALLER_STAGED:-}" ]]; then
+    _installer_url="${NEMOCLAW_INSTALLER_URL:-https://www.nvidia.com/nemoclaw.sh}"
+    if _staged="$(mktemp /tmp/nemoclaw-installer-XXXXXX 2>/dev/null)" \
+      && curl -fsSL "$_installer_url" -o "$_staged" 2>/dev/null \
+      && [[ -s "$_staged" ]] \
+      && head -1 "$_staged" | grep -qE '^#!.*(sh|bash)' \
+      && bash -n "$_staged" 2>/dev/null; then
+      chmod +x "$_staged"
+      export NEMOCLAW_INSTALLER_STAGED="$_staged"
+      exec bash "$_staged" "$@"
+    fi
+    # Staging failed (mktemp / curl / empty / bad shebang / syntax check) —
+    # fall through to direct main(). The legacy newgrp/re-curl path still applies.
+    rm -f "${_staged:-}" 2>/dev/null
+  fi
   main "$@"
 fi
