@@ -4115,13 +4115,13 @@ describe("ensure_mutable_openclaw_config_hash root-mode step-down", () => {
 
 describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () => {
   // Chain the production helpers in the exact order the root entrypoint
-  // calls them — ensure_mutable_openclaw_config_hash → ensure_gateway_token
-  // → export_gateway_token → write_runtime_shell_env → lock_rc_files →
-  // setup_auth_profile_as_sandbox — against a tmpfs layout that mirrors
-  // /sandbox + /tmp, with uid=0 stubbed and a step-down prefix that
-  // mirrors the CAP_DAC_OVERRIDE-dropped effective ownership of the
-  // mutable config tree. Verifies the six clauses called out in the
-  // round-4 review:
+  // calls them — ensure_mutable_openclaw_config_hash →
+  // prepare_gateway_token_for_current_command → export_gateway_token →
+  // write_runtime_shell_env → lock_rc_files → setup_auth_profile_as_sandbox —
+  // against a tmpfs layout that mirrors /sandbox + /tmp, with uid=0 stubbed
+  // and a step-down prefix that mirrors the CAP_DAC_OVERRIDE-dropped
+  // effective ownership of the mutable config tree. Verifies the
+  // entrypoint acceptance clauses:
   //   1. /sandbox/.openclaw/.config-hash gets a fresh sha256 row.
   //   2. /tmp/nemoclaw-proxy-env.sh exists and exports OPENCLAW_GATEWAY_TOKEN.
   //   3. Stderr never carries "Missing gateway auth token".
@@ -4162,6 +4162,18 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
       .replaceAll("/sandbox/.openclaw/openclaw.json", configPath);
     const ensureToken = extractShellFunctionFromSource(src, "ensure_gateway_token")
       .replaceAll("/sandbox/.openclaw", configDir);
+    const ensureTokenIfMissing = extractShellFunctionFromSource(
+      src,
+      "ensure_gateway_token_if_missing",
+    );
+    const needsToken = extractShellFunctionFromSource(
+      src,
+      "needs_gateway_token_for_current_command",
+    );
+    const prepareToken = extractShellFunctionFromSource(
+      src,
+      "prepare_gateway_token_for_current_command",
+    );
     const exportToken = extractShellFunctionFromSource(src, "export_gateway_token");
     // `extractShellFunctionFromSource` looks for the first `^}` after the
     // signature, which trips on the embedded `<<'GUARDENVEOF'` heredoc inside
@@ -4192,7 +4204,12 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         // wrappers stay no-ops here.
         "prepare_openclaw_config_for_write() { :; }",
         "restore_openclaw_config_after_write() { :; }",
-        "needs_gateway_token_for_current_command() { :; }",
+        // Drive the production gating fn instead of stubbing it: the root
+        // entrypoint enters this branch with `NEMOCLAW_CMD=()`, which sends
+        // `needs_gateway_token_for_current_command` down the `return 0` path
+        // and `prepare_gateway_token_for_current_command` into a real
+        // `ensure_gateway_token` call.
+        "NEMOCLAW_CMD=()",
         // Proxy environment is empty in the test — the function still writes
         // the file because it is hardcoded to do so once entered.
         '_PROXY_URL=""',
@@ -4229,13 +4246,16 @@ describe("direct-root entrypoint composition under CAP_DAC_OVERRIDE drop", () =>
         readToken,
         ensureHash,
         ensureToken,
+        ensureTokenIfMissing,
+        needsToken,
+        prepareToken,
         exportToken,
         writeRuntimeEnv,
         helper,
         setupAuth,
         // Exact production call order from the root path of the entrypoint.
         "ensure_mutable_openclaw_config_hash",
-        "ensure_gateway_token",
+        "prepare_gateway_token_for_current_command",
         "export_gateway_token",
         "write_runtime_shell_env",
         `lock_rc_files ${JSON.stringify(sandboxHome)}`,
