@@ -771,41 +771,6 @@ const { summarizeCurlFailure, summarizeProbeFailure } = httpProbe;
 
 const selectOnboardAgent = createOnboardAgentSelector({ isNonInteractive, note, prompt });
 
-/**
- * Normalize user-provided truthy/falsy aliases for compatible endpoint reasoning mode.
- */
-function normalizeReasoningFlag(value: string | null | undefined): "true" | "false" | null {
-  const normalized = String(value ?? "")
-    .trim()
-    .toLowerCase();
-  if (normalized === "true" || normalized === "1" || normalized === "yes" || normalized === "y") {
-    return "true";
-  }
-  if (normalized === "false" || normalized === "0" || normalized === "no" || normalized === "n") {
-    return "false";
-  }
-  return null;
-}
-
-/**
- * Resolve compatible-endpoint reasoning mode and mirror it into process env for probes/builds.
- */
-async function configureCompatibleEndpointReasoning(
-  storedValue?: string | null,
-): Promise<"true" | "false"> {
-  const configured = normalizeReasoningFlag(storedValue ?? process.env.NEMOCLAW_REASONING);
-  process.env.NEMOCLAW_REASONING = configured ?? "false";
-  return process.env.NEMOCLAW_REASONING as "true" | "false";
-}
-
-/**
- * Drop compatible-endpoint reasoning state when the user switches providers.
- */
-function clearCompatibleEndpointReasoning(): null {
-  delete process.env.NEMOCLAW_REASONING;
-  return null;
-}
-
 const { getTransportRecoveryMessage } = validationRecovery;
 
 // Validation functions — delegated to src/lib/validation.ts
@@ -5394,8 +5359,6 @@ module.exports = {
   printSandboxCreateRecoveryHints,
   promptYesNoOrDefault,
   providerExistsInGateway,
-  normalizeReasoningFlag,
-  configureCompatibleEndpointReasoning,
   parsePolicyPresetEnv,
   parseSandboxStatus,
   pruneStaleSandboxEntry,
