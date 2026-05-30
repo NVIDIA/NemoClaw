@@ -70,6 +70,7 @@ describe("runtime recovery helpers", () => {
               "beta              openshell  2026-03-24 10:01:00  Provisioning",
               "gamma             openshell  2026-03-24 10:02:00  Error",
               "delta             openshell  2026-03-24 10:03:00  Ready",
+              "zeta              openshell  2026-03-24 10:04:00  NotReady",
             ].join("\n"),
           ),
         ),
