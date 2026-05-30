@@ -12,6 +12,8 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 
+import { buildConfig } from "../scripts/generate-openclaw-config.ts";
+
 const SCRIPT_PATH = path.join(import.meta.dirname, "..", "scripts", "generate-openclaw-config.ts");
 const SCRIPT_ARGS = ["--experimental-strip-types", SCRIPT_PATH];
 
@@ -60,6 +62,14 @@ function runConfigScript(envOverrides: Record<string, string> = {}): any {
 
   const configPath = path.join(tmpDir, ".openclaw", "openclaw.json");
   return JSON.parse(fs.readFileSync(configPath, "utf-8"));
+}
+
+function buildConfigDirect(envOverrides: Record<string, string> = {}): any {
+  return buildConfig({
+    ...BASE_ENV,
+    ...envOverrides,
+    HOME: tmpDir,
+  });
 }
 
 function writeWeChatPluginMetadata(manifest: Record<string, unknown>) {
@@ -145,7 +155,7 @@ describe("generate-openclaw-config.ts: config generation", () => {
   });
 
   it("treats loopback-looking URL userinfo before a remote host as remote", () => {
-    const config = runConfigScript({ CHAT_UI_URL: "http://127.0.0.1:18789@evil.example" });
+    const config = buildConfigDirect({ CHAT_UI_URL: "http://127.0.0.1:18789@evil.example" });
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
     expect(config.gateway.controlUi.allowedOrigins).toContain("http://evil.example");
     expect(config.gateway.controlUi.allowedOrigins).not.toContain(
@@ -154,7 +164,7 @@ describe("generate-openclaw-config.ts: config generation", () => {
   });
 
   it("treats localhost userinfo before a remote host as remote", () => {
-    const config = runConfigScript({ CHAT_UI_URL: "http://localhost@evil.example" });
+    const config = buildConfigDirect({ CHAT_UI_URL: "http://localhost@evil.example" });
     expect(config.gateway.controlUi.dangerouslyDisableDeviceAuth).toBe(true);
     expect(config.gateway.controlUi.allowedOrigins).toContain("http://evil.example");
   });
@@ -264,7 +274,7 @@ describe("generate-openclaw-config.ts: config generation", () => {
 
   it("emits a tokenless WhatsApp config block for QR-paired channels", () => {
     const channels = Buffer.from(JSON.stringify(["whatsapp"])).toString("base64");
-    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    const config = buildConfigDirect({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     expect(config.channels.whatsapp).toBeDefined();
     expect(config.channels.whatsapp.enabled).toBeUndefined();
     const account = config.channels.whatsapp.accounts.default;
@@ -277,7 +287,7 @@ describe("generate-openclaw-config.ts: config generation", () => {
 
   it("keeps WhatsApp config alongside token-based channels in the same run", () => {
     const channels = Buffer.from(JSON.stringify(["telegram", "whatsapp"])).toString("base64");
-    const config = runConfigScript({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
+    const config = buildConfigDirect({ NEMOCLAW_MESSAGING_CHANNELS_B64: channels });
     expect(config.channels.telegram.accounts.default.botToken).toBe(
       "openshell:resolve:env:TELEGRAM_BOT_TOKEN",
     );

@@ -31,7 +31,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { dirname, isAbsolute, join, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 
 type Env = Record<string, string | undefined>;
@@ -497,7 +497,7 @@ function decodeJsonEnv(env: Env, name: string, defaultValue: string): any {
   return JSON.parse(Buffer.from(raw, "base64").toString("utf-8"));
 }
 
-function buildConfig(env: Env = process.env): JsonObject {
+export function buildConfig(env: Env = process.env): JsonObject {
   const proxyHost = env.NEMOCLAW_PROXY_HOST || "10.200.0.1";
   const proxyPort = env.NEMOCLAW_PROXY_PORT || "3128";
   const proxyUrl = `http://${proxyHost}:${proxyPort}`;
@@ -950,7 +950,7 @@ function seedWechatAccountsIfAvailable(config: JsonObject): void {
   }
 }
 
-function main(): void {
+export function main(): void {
   const config = buildConfig();
   const configPath = expandUser("~/.openclaw/openclaw.json");
   preserveExistingPluginInstalls(config, configPath);
@@ -960,9 +960,15 @@ function main(): void {
   seedWechatAccountsIfAvailable(config);
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exit(1);
+function isMainModule(): boolean {
+  return process.argv[1] ? import.meta.url === pathToFileURL(resolve(process.argv[1])).href : false;
+}
+
+if (isMainModule()) {
+  try {
+    main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  }
 }
