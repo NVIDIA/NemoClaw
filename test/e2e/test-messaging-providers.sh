@@ -671,10 +671,15 @@ if openshell --version >/dev/null 2>&1; then
 fi
 pass "Pre-cleanup complete"
 
-# Always skip the Telegram reachability probe in E2E: these tests use fake
-# tokens that fail the HTTP 401/404 check even when api.telegram.org is
-# reachable, causing onboard to silently drop the Telegram channel.
-export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] \
+  && [ -z "${TELEGRAM_BOT_TOKEN_REAL:-}" ] \
+  && [[ "$TELEGRAM_TOKEN" == *fake* ]]; then
+  # This E2E normally uses fake tokens to exercise config plumbing, not the
+  # live Telegram API. Keep real-token runs on the onboard validation path.
+  # Remove once onboard has a hermetic fake Telegram API.
+  export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+  info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+fi
 
 # Pre-merge Slack policy into the base sandbox policy.
 #

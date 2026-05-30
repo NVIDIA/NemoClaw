@@ -369,6 +369,13 @@ assert_policy_preset_active() {
   fi
 }
 
+is_fake_telegram_token() {
+  case "${1:-}" in
+    *fake*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 export_fake_channel_env() {
   local suffix="$1"
   export TELEGRAM_BOT_TOKEN="${ORIG_TELEGRAM_BOT_TOKEN:-test-fake-telegram-token-${suffix}}"
@@ -419,10 +426,12 @@ install_for_active_agent() {
   export NEMOCLAW_RECREATE_SANDBOX=1
   export NEMOCLAW_FRESH=1
 
-  # Always skip the Telegram reachability probe in E2E: fake tokens trigger
-  # HTTP 401/404 which the new probe treats as "skip Telegram", breaking the
-  # test even when api.telegram.org is reachable.
-  export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+  if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] && is_fake_telegram_token "$TELEGRAM_BOT_TOKEN"; then
+    # This E2E normally uses fake tokens to exercise config plumbing, not the
+    # live Telegram API. Remove once onboard has a hermetic fake Telegram API.
+    export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+    info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+  fi
 
   info "Running install.sh --non-interactive for ${ACTIVE_AGENT} (${ACTIVE_SANDBOX})..."
   bash install.sh --non-interactive >"$log" 2>&1 &
