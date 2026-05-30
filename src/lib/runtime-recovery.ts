@@ -51,7 +51,8 @@ export function parseReadySandboxNames(listOutput = ""): Set<string> {
     const cols = line.split(/\s+/);
     if (!cols[0]) continue;
     if (isNonSandboxRow(line, cols[0])) continue;
-    if (cols.at(-1) !== "Ready") continue;
+    const isReadyOrRunning = cols.includes("Ready") || cols.includes("Running");
+    if (!isReadyOrRunning || cols.includes("NotReady")) continue;
     names.add(cols[0]);
   }
   return names;

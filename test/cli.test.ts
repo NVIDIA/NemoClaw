@@ -7,12 +7,32 @@ import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 
 import { execTimeout, testTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 const HERMES_CLI = path.join(import.meta.dirname, "..", "bin", "nemohermes.js");
 const PARSER_EXIT_CODE = 2;
+
+function readOpenClawExpectedVersion(): string {
+  const manifestPath = path.join(
+    import.meta.dirname,
+    "..",
+    "agents",
+    "openclaw",
+    "manifest.yaml",
+  );
+  const manifest = parseYaml(fs.readFileSync(manifestPath, "utf8")) as {
+    expected_version?: unknown;
+  };
+  if (typeof manifest.expected_version === "string" && manifest.expected_version.trim()) {
+    return manifest.expected_version;
+  }
+  throw new Error("agents/openclaw/manifest.yaml is missing expected_version");
+}
+
+const OPENCLAW_EXPECTED_VERSION = readOpenClawExpectedVersion();
 
 type CliRunResult = {
   code: number;
@@ -5446,7 +5466,7 @@ describe("CLI dispatch", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("Agent:    OpenClaw v2026.3.11");
     expect(r.out).toContain("Update:");
-    expect(r.out).toContain("v2026.5.18 available");
+    expect(r.out).toContain(`v${OPENCLAW_EXPECTED_VERSION} available`);
     expect(r.out).toContain("Run `nemoclaw alpha rebuild` to upgrade");
     expect(r.out).not.toContain("Agent:    OpenClaw v2026.5.18");
   });

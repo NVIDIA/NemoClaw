@@ -59,20 +59,21 @@ describe("runtime recovery helpers", () => {
   });
 
   describe("parseReadySandboxNames", () => {
-    it("includes only sandboxes whose PHASE is Ready", () => {
+    it("includes sandboxes whose PHASE is Ready or Running", () => {
       expect(
         Array.from(
           parseReadySandboxNames(
             [
               "NAME              NAMESPACE  CREATED              PHASE",
               "alpha             openshell  2026-03-24 10:00:00  Ready",
+              "epsilon           openshell  2026-03-24 10:00:30  Running",
               "beta              openshell  2026-03-24 10:01:00  Provisioning",
               "gamma             openshell  2026-03-24 10:02:00  Error",
               "delta             openshell  2026-03-24 10:03:00  Ready",
             ].join("\n"),
           ),
         ),
-      ).toEqual(["alpha", "delta"]);
+      ).toEqual(["alpha", "epsilon", "delta"]);
     });
 
     it("skips sandboxes that report Error PHASE (stopped container)", () => {
