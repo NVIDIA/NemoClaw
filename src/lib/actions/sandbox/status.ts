@@ -33,13 +33,7 @@ import {
   getActiveSandboxSessions,
 } from "../../state/sandbox-session";
 import { getSandboxDockerHealth } from "./docker-health";
-import {
-  classifyGatewayFailure,
-  classifySandboxContainerFailure,
-  getLayerHeader,
-  isDockerDaemonReachable,
-  type SandboxContainerFailureResult,
-} from "./gateway-failure-classifier";
+import { getLayerHeader } from "./gateway-failure-classifier";
 import type { SandboxGatewayState } from "./gateway-state";
 import {
   getReconciledSandboxGatewayState,
@@ -51,6 +45,21 @@ import {
   isSandboxGatewayRunningForStatus,
   probeSandboxInferenceGatewayHealth,
 } from "./process-recovery";
+import {
+  classifySandboxStatusPreflightFailure,
+  printGatewayFailureLayerHeader,
+  type SandboxStatusFailureLayer,
+} from "./status-preflight";
+
+export {
+  classifySandboxContainerFailureForStatus,
+  classifySandboxStatusPreflightFailure,
+  isDockerDaemonUnreachableForStatus,
+  printGatewayFailureLayerHeader,
+  type ClassifySandboxStatusPreflightFailureDeps,
+  type SandboxStatusFailureLayer,
+  type SandboxStatusPreflightFailure,
+} from "./status-preflight";
 
 type ProbeProviderHealth = (
   provider: string,
@@ -91,11 +100,6 @@ export function maybeGetSandboxStatusInferenceHealth(
     probeProviderHealthImpl,
   );
 }
-
-export type SandboxStatusFailureLayer =
-  | "docker_unreachable"
-  | "sandbox_container_stopped"
-  | "sandbox_dashboard_port_conflict";
 
 export interface SandboxStatusReport {
   schemaVersion: 1;
@@ -208,41 +212,6 @@ async function collectSandboxStatusSnapshot(
   return { sb, lookup, rpcIssue, currentModel, currentProvider, inferenceHealth };
 }
 
-export interface SandboxStatusPreflightFailure {
-  layer: SandboxStatusFailureLayer;
-  dockerUnreachable: boolean;
-}
-
-export interface ClassifySandboxStatusPreflightFailureDeps {
-  dockerProbe?: DockerInfoProbe;
-  sandboxContainerProbe?: SandboxContainerFailureProbe;
-}
-
-/**
- * Classify pre-snapshot failure layers (host docker daemon down, per-sandbox
- * container stopped, dashboard port held by foreign listener). Returns null
- * when none apply, including when the sandbox is not on the docker driver or
- * the registry has no entry. Shared between the human-readable status
- * renderer and the `--json` report so both paths gate the inference probe
- * consistently and the JSON path can surface the same failure layer.
- */
-export async function classifySandboxStatusPreflightFailure(
-  sb: registry.SandboxEntry | null,
-  deps: ClassifySandboxStatusPreflightFailureDeps = {},
-): Promise<SandboxStatusPreflightFailure | null> {
-  if (isDockerDaemonUnreachableForStatus(sb, deps.dockerProbe)) {
-    return { layer: "docker_unreachable", dockerUnreachable: true };
-  }
-  const sandboxFailure = await classifySandboxContainerFailureForStatus(
-    sb,
-    deps.sandboxContainerProbe,
-  );
-  if (sandboxFailure) {
-    return { layer: sandboxFailure.layer, dockerUnreachable: false };
-  }
-  return null;
-}
-
 export async function getSandboxStatusReport(
   sandboxName: string,
 ): Promise<SandboxStatusReport> {
@@ -324,48 +293,6 @@ function maybeEnsureHermesToolGatewayBroker(sb: registry.SandboxEntry | null): v
   } catch {
     /* non-fatal — status should still show sandbox diagnostics */
   }
-}
-
-async function printGatewayFailureLayerHeader(
-  sandboxName: string,
-  alreadyPrintedPreflightLayer: SandboxStatusFailureLayer | null = null,
-): Promise<void> {
-  // The preflight classifier (docker_unreachable, sandbox_container_stopped,
-  // sandbox_dashboard_port_conflict) is more specific than the downstream
-  // gateway-state classifier. When it already emitted a header, skip the
-  // gateway-level fallback entirely to avoid a duplicate `Failure layer:`
-  // line in the user-visible output.
-  if (alreadyPrintedPreflightLayer !== null) return;
-  const failure = await classifyGatewayFailure(sandboxName);
-  console.log(`  ${getLayerHeader(failure.layer)}`);
-}
-
-type DockerInfoProbe = () => boolean;
-
-export function isDockerDaemonUnreachableForStatus(
-  sb: registry.SandboxEntry | null,
-  probe: DockerInfoProbe = isDockerDaemonReachable,
-): boolean {
-  if (!sb || sb.openshellDriver !== "docker") return false;
-  return !probe();
-}
-
-type SandboxContainerFailureProbe = (
-  sandboxName: string,
-  dashboardPort: number | null,
-) => Promise<SandboxContainerFailureResult | null>;
-
-const defaultSandboxContainerFailureProbe: SandboxContainerFailureProbe = (
-  sandboxName,
-  dashboardPort,
-) => classifySandboxContainerFailure(sandboxName, { dashboardPort });
-
-export async function classifySandboxContainerFailureForStatus(
-  sb: registry.SandboxEntry | null,
-  probe: SandboxContainerFailureProbe = defaultSandboxContainerFailureProbe,
-): Promise<SandboxContainerFailureResult | null> {
-  if (!sb || sb.openshellDriver !== "docker") return null;
-  return probe(sb.name, sb.dashboardPort ?? null);
 }
 
 // eslint-disable-next-line complexity
