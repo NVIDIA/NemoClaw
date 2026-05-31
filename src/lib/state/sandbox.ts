@@ -242,6 +242,7 @@ export function validateTarEntries(tarBuffer: Buffer, targetDir: string): TarVal
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
     timeout: 60000,
+    maxBuffer: 256 * 1024 * 1024,
   });
 
   if (result.status !== 0) {
@@ -376,6 +377,7 @@ export function rejectHardLinks(tarBuffer: Buffer): string[] {
     encoding: "utf-8",
     stdio: ["pipe", "pipe", "pipe"],
     timeout: 60000,
+    maxBuffer: 256 * 1024 * 1024,
   });
 
   if (result.status !== 0) {
