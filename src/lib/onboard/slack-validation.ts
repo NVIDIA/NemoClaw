@@ -50,7 +50,7 @@ function skippedSlackValidationResult(): Extract<SlackTokenValidationResult, { o
   return {
     ok: true,
     skipped: true,
-    message: `Live Slack API validation skipped because ${SLACK_AUTH_VALIDATION_SKIP_ENV}=1.`,
+    message: `Live Slack API validation skipped because ${SLACK_AUTH_VALIDATION_SKIP_ENV} is set.`,
   };
 }
 

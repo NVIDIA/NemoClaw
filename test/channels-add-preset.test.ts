@@ -26,6 +26,7 @@ function runScript(scriptBody: string, extraEnv: Record<string, string> = {}): S
       ...process.env,
       HOME: tmpDir,
       NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION: "",
       TELEGRAM_BOT_TOKEN: "test-telegram-token",
       SLACK_BOT_TOKEN: "xoxb-slack-bot-token-for-test",
       SLACK_APP_TOKEN: "xapp-slack-app-token-for-test",

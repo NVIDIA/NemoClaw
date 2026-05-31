@@ -135,7 +135,7 @@ describe("Slack token validation", () => {
     expect(result).toMatchObject({
       ok: true,
       skipped: true,
-      message: expect.stringContaining("NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1"),
+      message: expect.stringContaining("NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION is set"),
     });
     expect(vi.mocked(runCurlProbe)).not.toHaveBeenCalled();
   });
