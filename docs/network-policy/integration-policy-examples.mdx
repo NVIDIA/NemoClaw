@@ -222,10 +222,9 @@ curl -sS --max-time 10 -w '\n%{http_code}\n' https://api.atlassian.com/oauth/tok
 ```
 
 Before approval, the curl probe should report `000` or a local policy denial.
-After explicitly approving curl for `api.atlassian.com` in OpenShell, it should
-return Atlassian's unauthenticated `401` JSON response. That `401` is the
-expected success signal for this manual probe: it proves curl reached
-Atlassian, but no Jira credentials were supplied.
+After explicitly approving curl for `api.atlassian.com` in OpenShell, it should return Atlassian's unauthenticated `401` JSON response.
+That `401` is the expected success signal for this manual probe.
+This manual probe proves curl reached Atlassian, but no Jira credentials were supplied.
 
 Remove access when the task is done:
 
