@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import { runCurlProbe, type CurlProbeResult } from "../adapters/http/probe";
+import type { ChannelDef } from "../sandbox/channels";
+import { getValidatedMessagingTokenByEnvKey } from "./messaging-token";
 
 export type SlackTokenKind = "bot" | "app";
 export type SlackValidationFailureKind = "rejected" | "indeterminate";
@@ -173,4 +175,29 @@ export function formatSlackValidationFailure(
   result: Exclude<SlackTokenValidationResult, { ok: true }>,
 ): string {
   return result.message;
+}
+
+export function filterSlackSelectionByValidation(
+  found: string[],
+  channels: readonly ChannelDef[],
+  warn: (message: string) => void = console.warn,
+): string[] {
+  if (!found.includes("slack")) return found;
+
+  const botToken = getValidatedMessagingTokenByEnvKey(channels, "SLACK_BOT_TOKEN");
+  const appToken = getValidatedMessagingTokenByEnvKey(channels, "SLACK_APP_TOKEN");
+  if (!botToken || !appToken) {
+    warn(
+      "  Slack integration will be disabled for this onboard run because both SLACK_BOT_TOKEN and SLACK_APP_TOKEN are required.",
+    );
+    return found.filter((channel) => channel !== "slack");
+  }
+
+  const validation = validateSlackCredentials({ botToken, appToken });
+  if (validation.ok) return found;
+
+  warn(
+    `  Slack integration will be disabled for this onboard run. ${formatSlackValidationFailure(validation)}`,
+  );
+  return found.filter((channel) => channel !== "slack");
 }

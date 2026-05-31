@@ -552,16 +552,10 @@ import {
   type SandboxGpuConfig,
   type SandboxGpuFlag,
 } from "./onboard/sandbox-gpu-mode";
-import {
-  formatSlackValidationFailure,
-  validateSlackCredentials,
-} from "./onboard/slack-validation";
+import { filterSlackSelectionByValidation } from "./onboard/slack-validation";
 import type { SelectionDrift } from "./onboard/selection-drift";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
-import type {
-  ModelValidationResult,
-  ValidationFailureLike,
-} from "./onboard/types";
+import type { ModelValidationResult, ValidationFailureLike } from "./onboard/types";
 import type { ContainerRuntime } from "./platform";
 import { getChannelTokenKeys, listChannels } from "./sandbox/channels";
 import type { GatewayReuseState } from "./state/gateway";
@@ -5588,27 +5582,6 @@ function getRecordedMessagingChannelsForResume(
 
 const telegramReachabilityDeps = { isNonInteractive, note, promptYesNoOrDefault };
 
-function validateSlackSelection(found: string[]): string[] {
-  if (!found.includes("slack")) return found;
-
-  const botToken = getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "SLACK_BOT_TOKEN");
-  const appToken = getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "SLACK_APP_TOKEN");
-  if (!botToken || !appToken) {
-    console.warn(
-      "  Slack integration will be disabled for this onboard run because both SLACK_BOT_TOKEN and SLACK_APP_TOKEN are required.",
-    );
-    return found.filter((channel) => channel !== "slack");
-  }
-
-  const validation = validateSlackCredentials({ botToken, appToken });
-  if (validation.ok) return found;
-
-  console.warn(
-    `  Slack integration will be disabled for this onboard run. ${formatSlackValidationFailure(validation)}`,
-  );
-  return found.filter((channel) => channel !== "slack");
-}
-
 async function setupMessagingChannels(
   agent: AgentDefinition | null = null,
   existingChannels: string[] | null = null,
@@ -5630,19 +5603,13 @@ async function setupMessagingChannels(
     if (found.length > 0) {
       note(`  [non-interactive] Messaging tokens detected: ${found.join(", ")}`);
       if (found.includes("telegram")) {
-        const telegramToken = getValidatedMessagingTokenByEnvKey(
-          MESSAGING_CHANNELS,
-          "TELEGRAM_BOT_TOKEN",
-        );
+        const telegramToken = getValidatedMessagingTokenByEnvKey(MESSAGING_CHANNELS, "TELEGRAM_BOT_TOKEN");
         if (telegramToken) {
-          const reachability = await checkTelegramReachability(
-            telegramToken,
-            telegramReachabilityDeps,
-          );
+          const reachability = await checkTelegramReachability(telegramToken, telegramReachabilityDeps);
           if (reachability.skipped) found = found.filter((c) => c !== "telegram");
         }
       }
-      found = validateSlackSelection(found);
+      found = filterSlackSelectionByValidation(found, MESSAGING_CHANNELS);
     } else {
       note("  [non-interactive] No messaging tokens configured. Skipping.");
     }
