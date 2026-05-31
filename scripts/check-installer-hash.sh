@@ -7,8 +7,6 @@
 #
 # Checked installers:
 #   1. Ollama installer    — scripts/install.sh      (OLLAMA_INSTALL_SHA256)
-#   2. OpenShell installer — scripts/install-openshell.sh
-#                            (OPENSHELL_INSTALLER_SHA256_0_0_44)
 #
 # Usage:
 #   scripts/check-installer-hash.sh            # exit 0 if current, 1 if stale
@@ -79,11 +77,6 @@ register "Ollama installer" \
   "${REPO_ROOT}/scripts/install.sh" \
   "OLLAMA_INSTALL_SHA256" \
   "https://ollama.com/install.sh"
-
-register "OpenShell v0.0.44 installer" \
-  "${REPO_ROOT}/scripts/install-openshell.sh" \
-  "OPENSHELL_INSTALLER_SHA256_0_0_44" \
-  "https://raw.githubusercontent.com/NVIDIA/OpenShell/v0.0.44/install.sh"
 
 # ---------------------------------------------------------------------------
 # Main

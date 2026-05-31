@@ -188,7 +188,6 @@ export async function startPackageManagedDockerDriverGateway({
     throw new Error(message);
   }
 
-  clearDockerDriverGatewayRuntimeFiles();
   const pollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
   const pollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
   for (let i = 0; i < pollCount; i += 1) {
@@ -202,6 +201,7 @@ export async function startPackageManagedDockerDriverGateway({
     });
     const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
     if (isGatewayHealthy(status, namedInfo, currentInfo) && (await isGatewayTcpReady())) {
+      clearDockerDriverGatewayRuntimeFiles();
       await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
         skip: skipSandboxBridgeReachability,
       });
