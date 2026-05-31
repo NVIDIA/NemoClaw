@@ -825,6 +825,9 @@ export async function addSandboxChannel(
   }
 
   persistChannelTokens(acquired);
+  if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
+    process.exit(1);
+  }
   // Push to the gateway and update the registry NOW so that answering
   // "rebuild later" (or running non-interactively) does not silently
   // discard the change. Pre-fix this was safe because saveCredential()
@@ -833,28 +836,19 @@ export async function addSandboxChannel(
   await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, acquired);
   console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
 
-  applyChannelPresetIfAvailable(sandboxName, canonical);
-
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
   if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
 }
 
-// Must run before promptAndRebuild — the rebuild's backup manifest only
-// captures presets already applied (#3437). Without this, channel bridges
-// boot without egress to their upstream API after rebuild.
 function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
-  const builtinPresets = new Set(policies.listPresets().map((p) => p.name));
-  if (!builtinPresets.has(channelName)) {
-    return true;
-  }
   try {
     const applied = policies.applyPreset(sandboxName, channelName);
     if (!applied) {
       console.error(
-        `  ${YW}⚠${R} Channel '${channelName}' bridge registered but its policy preset failed to apply.`,
+        `  ${YW}⚠${R} Cannot enable channel '${channelName}': policy preset failed to apply.`,
       );
       console.error(
-        `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
+        `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${channelName}`,
       );
       return false;
     }
@@ -864,7 +858,7 @@ function applyChannelPresetIfAvailable(sandboxName: string, channelName: string)
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`  ${YW}⚠${R} Failed to apply '${channelName}' policy preset: ${msg}`);
     console.error(
-      `    Re-apply manually after rebuild with: ${CLI_NAME} ${sandboxName} policy-add ${channelName}`,
+      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${channelName}`,
     );
     return false;
   }

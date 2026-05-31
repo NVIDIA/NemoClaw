@@ -337,24 +337,39 @@ process.exit = (code) => {
     );
   });
 
-  // Negative: when the channel name does not match any built-in preset,
-  // the helper short-circuits via listPresets() and applyPreset is not
-  // invoked at all. This guards against a future channel name that happens
-  // to collide with no preset (or a typo) from spamming "Cannot load preset"
-  // errors out of policies.applyPreset.
-  it("skips applyPreset when no matching built-in preset exists", () => {
-    const script = `${buildPreamble({ presetNamesAvailable: ["npm", "github"] })}
+  // Regression for #4548: a missing preset YAML (applyPreset returns false
+  // because loadPresetForSandbox cannot find the file) must abort the
+  // non-QR add flow BEFORE the registry write, BEFORE the gateway provider
+  // upsert, and BEFORE the rebuild prompt. Previously the channel name
+  // landed in messagingChannels and the sandbox was rebuilt without the
+  // preset, leaving the bridge advertised but not policed.
+  it("aborts non-QR channel before registry and rebuild when preset apply fails (issue #4548)", () => {
+    const script = `${buildPreamble({ applyPresetResult: false })}
 const ctx = module.exports;
+const exitCodes = [];
+const originalExit = process.exit;
+process.exit = (code) => {
+  exitCodes.push(code ?? 0);
+  throw new Error("__EXIT__" + (code ?? 0));
+};
 (async () => {
   try {
     await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
-    process.stdout.write("\\n__RESULT__" + JSON.stringify({
-      appliedCalls: ctx.appliedCalls,
-      callOrder: ctx.callOrder,
-    }) + "\\n");
   } catch (err) {
-    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+    if (!String(err && err.message).startsWith("__EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+      return;
+    }
+  } finally {
+    process.exit = originalExit;
   }
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    appliedCalls: ctx.appliedCalls,
+    callOrder: ctx.callOrder,
+    providerCalls: ctx.providerCalls,
+    registryUpdates: ctx.registryUpdates,
+    exitCodes,
+  }) + "\\n");
 })();
 `;
     const result = runScript(script);
@@ -364,16 +379,25 @@ const ctx = module.exports;
     const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
     assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
 
+    assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(
       payload.appliedCalls,
-      [],
-      `expected applyPreset NOT to be called when no built-in preset matches; got ${JSON.stringify(payload.appliedCalls)}`,
+      [{ sandboxName: "test-sb", presetName: "telegram" }],
+      `expected one failed applyPreset call; got ${JSON.stringify(payload.appliedCalls)}`,
     );
-    // Rebuild should still be triggered — channel registration succeeded,
-    // only the preset path was skipped.
+    assert.deepEqual(
+      payload.providerCalls,
+      [],
+      `preset failure must not register host-side providers; got ${JSON.stringify(payload.providerCalls)}`,
+    );
+    assert.deepEqual(
+      payload.registryUpdates,
+      [],
+      `preset failure must not register telegram in messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
+    );
     assert.ok(
-      payload.callOrder.includes("promptAndRebuild"),
-      `expected promptAndRebuild to still run; got order: ${JSON.stringify(payload.callOrder)}`,
+      !payload.callOrder.includes("promptAndRebuild"),
+      `preset failure must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
   });
 });
