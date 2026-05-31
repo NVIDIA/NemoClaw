@@ -470,6 +470,58 @@ const ctx = module.exports;
     );
   });
 
+  it("can explicitly skip live Slack validation for offline channel add", () => {
+    const script = `${buildPreamble()}
+const ctx = module.exports;
+global.__slackBotProbe = {
+  ok: true,
+  httpStatus: 200,
+  curlStatus: 0,
+  body: '{"ok":false,"error":"invalid_auth"}',
+  stderr: "",
+  message: "",
+};
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "slack" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      slackProbeCalls: ctx.slackProbeCalls,
+      credentialSaveCalls: ctx.credentialSaveCalls,
+      providerCalls: ctx.providerCalls,
+      callOrder: ctx.callOrder,
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script, { NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION: "1" });
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.slackProbeCalls, []);
+    assert.deepEqual(
+      payload.credentialSaveCalls.map((call: { key: string }) => call.key),
+      ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+    );
+    assert.deepEqual(
+      payload.providerCalls.map((call: { envKey: string }) => call.envKey),
+      ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+    );
+    assert.ok(
+      !payload.callOrder.some((entry: string) => entry.startsWith("slackProbe:")),
+      `offline skip mode must not probe Slack; got ${JSON.stringify(payload.callOrder)}`,
+    );
+    assert.ok(
+      payload.callOrder.indexOf("saveCredential:SLACK_APP_TOKEN") <
+        payload.callOrder.indexOf("upsertMessagingProviders"),
+      `token persistence should happen before provider registration; got ${JSON.stringify(payload.callOrder)}`,
+    );
+  });
+
   it("aborts Slack channel add on rejected Slack API validation before persistence or registration", () => {
     const script = `${buildPreamble()}
 const ctx = module.exports;

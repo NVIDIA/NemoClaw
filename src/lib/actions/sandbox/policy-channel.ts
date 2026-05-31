@@ -831,6 +831,9 @@ export async function addSandboxChannel(
       console.error(`  ${validation.message}`);
       process.exit(1);
     }
+    if (validation.message) {
+      console.log(`  ${YW}⚠${R} ${validation.message}`);
+    }
   }
 
   persistChannelTokens(acquired);

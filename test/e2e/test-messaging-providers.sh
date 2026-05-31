@@ -111,6 +111,12 @@ section() {
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+is_fake_slack_token() {
+  case "${1:-}" in
+    xoxb-fake-* | xoxb-test-* | xapp-fake-* | xapp-test-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 is_unresolved_placeholder_rejection() {
   printf '%s\n' "$1" | grep -qiE 'credential_injection_failed|unresolved credential placeholder'
 }
@@ -679,6 +685,15 @@ if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] \
   # Remove once onboard has a hermetic fake Telegram API.
   export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
   info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+fi
+if [ -z "${NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION:-}" ] \
+  && [ -z "${SLACK_BOT_TOKEN_REAL:-}" ] \
+  && [ -z "${SLACK_APP_TOKEN_REAL:-}" ] \
+  && { is_fake_slack_token "$SLACK_TOKEN" || is_fake_slack_token "$SLACK_APP"; }; then
+  # This E2E uses fake Slack tokens to prove placeholder/proxy behavior against
+  # the hermetic fake Slack API. Keep real-token runs on the live validation path.
+  export NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1
+  info "Skipping onboarding Slack auth validation for fake-token E2E"
 fi
 
 # Pre-merge Slack policy into the base sandbox policy.

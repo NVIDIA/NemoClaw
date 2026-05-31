@@ -13,7 +13,7 @@ export type SlackTokenKind = "bot" | "app";
 export type SlackValidationFailureKind = "rejected" | "indeterminate";
 
 export type SlackTokenValidationResult =
-  | { ok: true }
+  | { ok: true; skipped?: boolean; message?: string }
   | {
       ok: false;
       kind: SlackValidationFailureKind;
@@ -25,15 +25,34 @@ export type SlackTokenValidationResult =
     };
 
 export type SlackCredentialValidationResult =
-  | { ok: true }
+  | Extract<SlackTokenValidationResult, { ok: true }>
   | (Exclude<SlackTokenValidationResult, { ok: true }> & { credential: SlackTokenKind });
 
 const SLACK_AUTH_TEST_URL = "https://slack.com/api/auth.test";
 const SLACK_APPS_CONNECTIONS_OPEN_URL = "https://slack.com/api/apps.connections.open";
+export const SLACK_AUTH_VALIDATION_SKIP_ENV = "NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION";
 
 const TRANSIENT_SLACK_ERRORS = new Set(["ratelimited", "request_timeout"]);
 
 const SLACK_CURL_CONFIG_PREFIX = "nemoclaw-slack-probe";
+
+function isTruthyEnvFlag(value: string | undefined): boolean {
+  return value === "1" || value === "true" || value === "yes" || value === "on";
+}
+
+export function shouldSkipSlackAuthValidation(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  return isTruthyEnvFlag(env[SLACK_AUTH_VALIDATION_SKIP_ENV]);
+}
+
+function skippedSlackValidationResult(): Extract<SlackTokenValidationResult, { ok: true }> {
+  return {
+    ok: true,
+    skipped: true,
+    message: `Live Slack API validation skipped because ${SLACK_AUTH_VALIDATION_SKIP_ENV}=1.`,
+  };
+}
 
 function escapeCurlConfigValue(value: string): string {
   return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
@@ -180,6 +199,8 @@ function classifySlackProbeResult(
 }
 
 export function validateSlackBotToken(token: string): SlackTokenValidationResult {
+  if (shouldSkipSlackAuthValidation()) return skippedSlackValidationResult();
+
   return classifySlackProbeResult(
     "bot",
     token,
@@ -188,6 +209,8 @@ export function validateSlackBotToken(token: string): SlackTokenValidationResult
 }
 
 export function validateSlackAppToken(token: string): SlackTokenValidationResult {
+  if (shouldSkipSlackAuthValidation()) return skippedSlackValidationResult();
+
   return classifySlackProbeResult(
     "app",
     token,
@@ -199,6 +222,8 @@ export function validateSlackCredentials(tokens: {
   botToken: string;
   appToken: string;
 }): SlackCredentialValidationResult {
+  if (shouldSkipSlackAuthValidation()) return skippedSlackValidationResult();
+
   const bot = validateSlackBotToken(tokens.botToken);
   if (!bot.ok) return { ...bot, credential: "bot" };
 
@@ -231,7 +256,12 @@ export function filterSlackSelectionByValidation(
   }
 
   const validation = validateSlackCredentials({ botToken, appToken });
-  if (validation.ok) return found;
+  if (validation.ok) {
+    if (validation.skipped && validation.message) {
+      warn(`  ${validation.message}`);
+    }
+    return found;
+  }
 
   warn(
     `  Slack integration will be disabled for this onboard run. ${formatSlackValidationFailure(validation)}`,

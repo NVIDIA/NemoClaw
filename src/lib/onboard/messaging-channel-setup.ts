@@ -146,6 +146,9 @@ async function setupSlackTokens(ch: ChannelEntry, enabled: Set<string>): Promise
     );
     return false;
   }
+  if (validation.skipped && validation.message) {
+    console.log(`  ⚠ ${validation.message}`);
+  }
 
   if (bot.save) {
     saveCredential(ch.envKey, bot.token);

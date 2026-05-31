@@ -1598,14 +1598,20 @@ runner.runCapture = () => "";
 // call — on networks where api.telegram.org is blocked, the non-interactive
 // preflight would otherwise abort the test.
 const httpProbe = require(${httpProbePath});
-httpProbe.runCurlProbe = () => ({
-  ok: true,
-  httpStatus: 200,
-  curlStatus: 0,
-  body: '{"ok":true,"result":{"id":1,"is_bot":true}}',
-  stderr: "",
-  message: "",
-});
+httpProbe.runCurlProbe = (argv) => {
+  const url = String(argv[argv.length - 1] || "");
+  if (url.includes("slack.com/api/")) {
+    throw new Error("Slack live auth probe should be skipped in this offline test");
+  }
+  return {
+    ok: true,
+    httpStatus: 200,
+    curlStatus: 0,
+    body: '{"ok":true,"result":{"id":1,"is_bot":true}}',
+    stderr: "",
+    message: "",
+  };
+};
 
 const { setupMessagingChannels } = require(${onboardPath});
 
@@ -1614,6 +1620,7 @@ const { setupMessagingChannels } = require(${onboardPath});
   process.env.TELEGRAM_BOT_TOKEN = "123456:ABC-test-telegram-token";
   process.env.SLACK_BOT_TOKEN = "xoxb-test-slack-token";
   process.env.SLACK_APP_TOKEN = "xapp-test-slack-app-token";
+  process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
   const result = await setupMessagingChannels();
   console.log(JSON.stringify(result));
 })().catch((error) => {

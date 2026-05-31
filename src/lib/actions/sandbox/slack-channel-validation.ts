@@ -8,7 +8,7 @@ import {
 } from "../../onboard/slack-validation";
 
 export type SlackChannelCredentialValidationResult =
-  | { ok: true }
+  | { ok: true; message?: string }
   | { ok: false; message: string };
 
 function isAcquiredTokenFormatValid(channel: ChannelDef, envKey: string, token: string): boolean {
@@ -44,7 +44,11 @@ export function validateSlackChannelCredentials(
   }
 
   const validation = validateSlackCredentials({ botToken, appToken });
-  if (validation.ok) return { ok: true };
+  if (validation.ok) {
+    return validation.skipped && validation.message
+      ? { ok: true, message: validation.message }
+      : { ok: true };
+  }
 
   return {
     ok: false,

@@ -36,6 +36,7 @@ beforeEach(() => {
   vi.mocked(runCurlProbe).mockReset();
   delete process.env.SLACK_BOT_TOKEN;
   delete process.env.SLACK_APP_TOKEN;
+  delete process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION;
 });
 
 function curlArgs(): string[] {
@@ -123,6 +124,22 @@ describe("Slack token validation", () => {
     ).toMatchObject({ ok: false, credential: "app", error: "missing_scope" });
   });
 
+  it("skips live Slack API probes when explicitly requested", () => {
+    process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
+
+    const result = validateSlackCredentials({
+      botToken: "xoxb-offline-bot",
+      appToken: "xapp-offline-app",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      skipped: true,
+      message: expect.stringContaining("NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1"),
+    });
+    expect(vi.mocked(runCurlProbe)).not.toHaveBeenCalled();
+  });
+
   it.each(["ratelimited", "request_timeout"])(
     "treats documented transient Slack API error %s as indeterminate",
     (error) => {
@@ -195,5 +212,23 @@ describe("Slack token validation", () => {
     expect(result).toEqual(["telegram"]);
     expect(warnings.join("\n")).toContain("Slack integration will be disabled");
     expect(warnings.join("\n")).not.toContain("xoxb-timeout-bot");
+  });
+
+  it("keeps Slack selected in explicit skip mode without probing Slack", () => {
+    process.env.SLACK_BOT_TOKEN = "xoxb-offline-bot";
+    process.env.SLACK_APP_TOKEN = "xapp-offline-app";
+    process.env.NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION = "1";
+    vi.mocked(runCurlProbe).mockReturnValue(probe('{"ok":false,"error":"invalid_auth"}'));
+    const warnings: string[] = [];
+
+    const result = filterSlackSelectionByValidation(
+      ["telegram", "slack"],
+      [KNOWN_CHANNELS.slack],
+      (message) => warnings.push(message),
+    );
+
+    expect(result).toEqual(["telegram", "slack"]);
+    expect(vi.mocked(runCurlProbe)).not.toHaveBeenCalled();
+    expect(warnings.join("\n")).toContain("Live Slack API validation skipped");
   });
 });
