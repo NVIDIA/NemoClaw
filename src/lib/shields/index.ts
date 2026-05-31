@@ -450,13 +450,18 @@ function unlockAgentConfig(
 
   // NC-2227-05: Restore sandbox ownership on locked state directories.
   // Use chown -R to restore the full tree (files within may have been
-  // locked to root:root by a prior shields-up).
-  applyStateDirLockMode(
+  // locked to root:root by a prior shields-up). Surface fan-out issues
+  // so `shields down` cannot report success while a state dir is still
+  // root-owned or read-only.
+  const stateDirUnlockIssues = applyStateDirLockMode(
     stateDirLockExec(sandboxName),
     target.configDir,
     "sandbox:sandbox",
     false,
   );
+  for (const issue of stateDirUnlockIssues) {
+    errors.push(`state dir unlock: ${issue}`);
+  }
 
   if (errors.length > 0) {
     console.error(
