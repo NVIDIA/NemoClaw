@@ -807,11 +807,6 @@ export async function addSandboxChannel(
     process.exit(1);
   }
 
-  if (dryRun) {
-    console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
-    return;
-  }
-
   const presetContent = policies.loadPreset(canonical);
   const presetPolicyKeys =
     presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
@@ -825,6 +820,11 @@ export async function addSandboxChannel(
       `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${canonical}`,
     );
     process.exit(1);
+  }
+
+  if (dryRun) {
+    console.log(`  --dry-run: would enable channel '${canonical}' for '${sandboxName}'.`);
+    return;
   }
 
   // QR-paired channels that own their session inside the sandbox have no
@@ -851,13 +851,6 @@ export async function addSandboxChannel(
     return;
   }
 
-  const acquired: Record<string, string> = {};
-  if (channel.loginMethod === "host-qr") {
-    await acquireHostQrChannel(sandboxName, canonical, channel, acquired);
-  } else {
-    await acquirePasteTokens(canonical, channel, acquired);
-  }
-
   const priorEntry = registry.getSandbox(sandboxName);
   const priorMessagingChannels: string[] = priorEntry?.messagingChannels
     ? [...priorEntry.messagingChannels]
@@ -871,6 +864,13 @@ export async function addSandboxChannel(
   for (const key of channelTokenKeys) {
     const existing = getCredential(key);
     if (existing != null) priorCreds[key] = existing;
+  }
+
+  const acquired: Record<string, string> = {};
+  if (channel.loginMethod === "host-qr") {
+    await acquireHostQrChannel(sandboxName, canonical, channel, acquired);
+  } else {
+    await acquirePasteTokens(canonical, channel, acquired);
   }
 
   persistChannelTokens(acquired);
@@ -916,11 +916,16 @@ async function rollbackChannelAdd(
     console.error(
       `  ${YW}⚠${R} Restoring prior '${canonical}' configuration; new token rotation aborted.`,
     );
+    registry.updateSandbox(sandboxName, {
+      messagingChannels: snapshot.priorMessagingChannels,
+      providerCredentialHashes:
+        Object.keys(snapshot.priorHashes).length > 0 ? snapshot.priorHashes : undefined,
+    });
     clearChannelTokens(channel);
     if (Object.keys(snapshot.priorCreds).length > 0) {
       persistChannelTokens(snapshot.priorCreds);
     }
-    const residual: string[] = [];
+    const residual: string[] = ["gateway-providers"];
     if (Object.keys(snapshot.priorCreds).length > 0) {
       try {
         const priorTokenDefs = Object.entries(snapshot.priorCreds).map(([envKey, token]) => ({
@@ -935,15 +940,9 @@ async function rollbackChannelAdd(
             err instanceof Error ? err.message : String(err)
           }`,
         );
-        residual.push("gateway-providers");
       }
     }
-    registry.updateSandbox(sandboxName, {
-      messagingChannels: snapshot.priorMessagingChannels,
-      providerCredentialHashes:
-        Object.keys(snapshot.priorHashes).length > 0 ? snapshot.priorHashes : undefined,
-    });
-    return { ok: residual.length === 0, residual };
+    return { ok: false, residual };
   }
 
   console.error(

@@ -792,6 +792,85 @@ process.exit = (code) => {
       !payload.callOrder.includes("promptAndRebuild"),
       `re-add failure must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
+    assert.ok(
+      result.stderr.includes("Rollback could not fully clean gateway-providers"),
+      `expected residual-state warning on stderr; got:\n${result.stderr}`,
+    );
+  });
+
+  it("restores prior registry state even when re-upsert during re-add rollback throws", () => {
+    const script = `${buildPreamble({ applyPresetResult: false })}
+registry.getSandbox = () => ({
+  name: "test-sb",
+  agent: "openclaw",
+  messagingChannels: ["telegram"],
+  disabledChannels: [],
+  providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "prior-hash" },
+});
+credentials.getCredential = (key) => key === "TELEGRAM_BOT_TOKEN" ? "prior-telegram-token" : null;
+let upsertCalls = 0;
+onboardProviders.upsertMessagingProviders = (defs) => {
+  upsertCalls += 1;
+  providerCalls.push(...defs);
+  if (upsertCalls >= 2) throw new Error("simulated gateway upsert failure during restore");
+};
+const ctx = module.exports;
+const exitCodes = [];
+const originalExit = process.exit;
+process.exit = (code) => {
+  exitCodes.push(code ?? 0);
+  throw new Error("__EXIT__" + (code ?? 0));
+};
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
+  } catch (err) {
+    if (!String(err && err.message).startsWith("__EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+      return;
+    }
+  } finally {
+    process.exit = originalExit;
+  }
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    appliedCalls: ctx.appliedCalls,
+    callOrder: ctx.callOrder,
+    registryUpdates: ctx.registryUpdates,
+    savedCredentialKeys: ctx.savedCredentialKeys,
+    exitCodes,
+  }) + "\\n");
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.exitCodes, [1]);
+    const lastRegistry = payload.registryUpdates[payload.registryUpdates.length - 1];
+    assert.deepEqual(
+      lastRegistry.updates.messagingChannels,
+      ["telegram"],
+      `registry restoration must precede gateway re-upsert so an upsert failure cannot orphan the channel; got ${JSON.stringify(payload.registryUpdates)}`,
+    );
+    assert.deepEqual(
+      lastRegistry.updates.providerCredentialHashes,
+      { TELEGRAM_BOT_TOKEN: "prior-hash" },
+      `prior credential hashes must be restored before any gateway side effect; got ${JSON.stringify(payload.registryUpdates)}`,
+    );
+    assert.ok(
+      payload.savedCredentialKeys.includes("TELEGRAM_BOT_TOKEN"),
+      `re-add failure must restore on-disk credentials; got ${JSON.stringify(payload.savedCredentialKeys)}`,
+    );
+    assert.ok(
+      result.stderr.includes("Failed to restore gateway providers for 'telegram'"),
+      `expected gateway-provider restoration warning on stderr; got:\n${result.stderr}`,
+    );
+    assert.ok(
+      result.stderr.includes("Rollback could not fully clean gateway-providers"),
+      `expected residual-state warning on stderr; got:\n${result.stderr}`,
+    );
   });
 });
 
@@ -1371,20 +1450,30 @@ global.__testLog = "";
 });
 
 describe("channel preset source-of-truth", () => {
-  it("every channel registered in KNOWN_CHANNELS ships a matching preset YAML on disk", () => {
+  it("every channel registered in KNOWN_CHANNELS ships a preset YAML that parsePresetPolicyKeys() accepts", () => {
     const { knownChannelNames } = require(path.join(repoRoot, "dist", "lib", "sandbox", "channels.js")) as {
       knownChannelNames: () => string[];
     };
-    const presetDir = path.join(repoRoot, "nemoclaw-blueprint", "policies", "presets");
-    const missing: string[] = [];
+    const { loadPreset, parsePresetPolicyKeys } = require(path.join(repoRoot, "dist", "lib", "policy", "index.js")) as {
+      loadPreset: (name: string) => string | null;
+      parsePresetPolicyKeys: (content: string | null | undefined) => string[];
+    };
+    const failures: string[] = [];
     for (const name of knownChannelNames()) {
-      const file = path.join(presetDir, `${name}.yaml`);
-      if (!fs.existsSync(file)) missing.push(file);
+      const content = loadPreset(name);
+      if (content === null) {
+        failures.push(`${name}: preset YAML not found on disk`);
+        continue;
+      }
+      const keys = parsePresetPolicyKeys(content);
+      if (keys.length === 0) {
+        failures.push(`${name}: parsePresetPolicyKeys returned no entries`);
+      }
     }
     assert.deepEqual(
-      missing,
+      failures,
       [],
-      `every channel in KNOWN_CHANNELS must have a matching preset YAML; missing: ${missing.join(", ")}`,
+      `every channel in KNOWN_CHANNELS must ship a parseable preset YAML; failures: ${failures.join("; ")}`,
     );
   });
 });
