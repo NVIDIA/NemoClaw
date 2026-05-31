@@ -55,6 +55,7 @@ function buildPreamble({
   sessionLoadThrows = false,
   sessionUpdateThrows = false,
   sessionMissing = false,
+  presetFileMissing = false,
 }: {
   presetNamesAvailable?: string[];
   applyPresetResult?: boolean;
@@ -65,6 +66,7 @@ function buildPreamble({
   sessionLoadThrows?: boolean;
   sessionUpdateThrows?: boolean;
   sessionMissing?: boolean;
+  presetFileMissing?: boolean;
 } = {}): string {
   const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
   return String.raw`
@@ -117,6 +119,7 @@ const appliedCalls = [];
 const removedCalls = [];
 const callOrder = [];
 policies.listPresets = () => ${JSON.stringify(presetNamesAvailable.map((name) => ({ name })))};
+policies.loadPreset = (name) => ${JSON.stringify(presetFileMissing)} ? null : "network_policies:\n  " + name + ":\n    egress:\n      - host: example.com";
 policies.applyPreset = (sandboxName, presetName) => {
   appliedCalls.push({ sandboxName, presetName });
   callOrder.push("applyPreset:" + presetName);
@@ -337,14 +340,8 @@ process.exit = (code) => {
     );
   });
 
-  // Regression for #4548: a missing preset YAML (applyPreset returns false
-  // because loadPresetForSandbox cannot find the file) must abort the
-  // non-QR add flow BEFORE the registry write, BEFORE the gateway provider
-  // upsert, and BEFORE the rebuild prompt. Previously the channel name
-  // landed in messagingChannels and the sandbox was rebuilt without the
-  // preset, leaving the bridge advertised but not policed.
-  it("aborts non-QR channel before registry and rebuild when preset apply fails (issue #4548)", () => {
-    const script = `${buildPreamble({ applyPresetResult: false })}
+  it("aborts non-QR channel when policy preset YAML is missing", () => {
+    const script = `${buildPreamble({ presetFileMissing: true })}
 const ctx = module.exports;
 const exitCodes = [];
 const originalExit = process.exit;
@@ -382,22 +379,22 @@ process.exit = (code) => {
     assert.deepEqual(payload.exitCodes, [1]);
     assert.deepEqual(
       payload.appliedCalls,
-      [{ sandboxName: "test-sb", presetName: "telegram" }],
-      `expected one failed applyPreset call; got ${JSON.stringify(payload.appliedCalls)}`,
+      [],
+      `missing preset YAML must abort before applyPreset; got ${JSON.stringify(payload.appliedCalls)}`,
     );
     assert.deepEqual(
       payload.providerCalls,
       [],
-      `preset failure must not register host-side providers; got ${JSON.stringify(payload.providerCalls)}`,
+      `missing preset YAML must not register host-side providers; got ${JSON.stringify(payload.providerCalls)}`,
     );
     assert.deepEqual(
       payload.registryUpdates,
       [],
-      `preset failure must not register telegram in messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
+      `missing preset YAML must not register telegram in messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.ok(
       !payload.callOrder.includes("promptAndRebuild"),
-      `preset failure must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
+      `missing preset YAML must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
   });
 });

@@ -793,6 +793,10 @@ export async function addSandboxChannel(
     return;
   }
 
+  if (policies.loadPreset(canonical) === null) {
+    process.exit(1);
+  }
+
   // QR-paired channels that own their session inside the sandbox have no
   // host-side credential to acquire; register the bridge now and let the
   // operator complete pairing after rebuild.
@@ -825,9 +829,6 @@ export async function addSandboxChannel(
   }
 
   persistChannelTokens(acquired);
-  if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
-    process.exit(1);
-  }
   // Push to the gateway and update the registry NOW so that answering
   // "rebuild later" (or running non-interactively) does not silently
   // discard the change. Pre-fix this was safe because saveCredential()
@@ -835,6 +836,10 @@ export async function addSandboxChannel(
   // the rebuild used to drop the queued token.
   await applyChannelAddToGatewayAndRegistry(sandboxName, canonical, acquired);
   console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
+
+  if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
+    process.exit(1);
+  }
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
   if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
