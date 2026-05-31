@@ -465,6 +465,8 @@ const { reportDockerDriverGatewayStartFailure } =
 const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env") =
   require("./onboard/docker-driver-gateway-env");
 const { getDockerDriverGatewayEndpoint } = dockerDriverGatewayEnv;
+const dockerDriverGatewayService: typeof import("./onboard/docker-driver-gateway-service") =
+  require("./onboard/docker-driver-gateway-service");
 const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
   require("./onboard/docker-driver-gateway-runtime-marker");
 const hostGatewayProcess: typeof import("./onboard/host-gateway-process") =
@@ -2409,13 +2411,72 @@ async function startGatewayWithOptions(
   process.env.OPENSHELL_GATEWAY = GATEWAY_NAME;
 }
 
+async function tryStartPackageManagedDockerDriverGateway({
+  exitOnFailure,
+  skipSandboxBridgeReachability,
+  verifySandboxBridgeGatewayReachableOrExit,
+}: {
+  exitOnFailure: boolean;
+  skipSandboxBridgeReachability: boolean;
+  verifySandboxBridgeGatewayReachableOrExit: (
+    exitOnFailure: boolean,
+    options?: { skip?: boolean },
+  ) => Promise<void>;
+}): Promise<boolean> {
+  if (!dockerDriverGatewayService.hasOpenShellGatewayUserService()) return false;
+
+  console.log("  Starting OpenShell Docker-driver gateway via upstream user service...");
+  const serviceStart = dockerDriverGatewayService.startOpenShellGatewayUserService();
+  if (!serviceStart.started) {
+    const detail = serviceStart.reason ? ` (${serviceStart.reason})` : "";
+    if (serviceStart.fallbackAllowed) {
+      console.warn(`  OpenShell gateway user service is unavailable${detail}; using standalone fallback.`);
+      return false;
+    }
+    const message = `OpenShell gateway user service failed to start${detail}.`;
+    console.error(`  ${message}`);
+    console.error("  Check: systemctl --user status openshell-gateway");
+    if (exitOnFailure) process.exit(1);
+    throw new Error(message);
+  }
+
+  clearDockerDriverGatewayRuntimeFiles();
+  const pollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
+  const pollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
+  for (let i = 0; i < pollCount; i += 1) {
+    if (!registerDockerDriverGatewayEndpoint()) {
+      if (i < pollCount - 1) sleepSeconds(pollInterval);
+      continue;
+    }
+    const status = runCaptureOpenshell(["status"], { ignoreError: true });
+    const namedInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {
+      ignoreError: true,
+    });
+    const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
+    if (isGatewayHealthy(status, namedInfo, currentInfo) && (await isGatewayTcpReady())) {
+      await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
+        skip: skipSandboxBridgeReachability,
+      });
+      console.log("  ✓ OpenShell gateway user service is healthy");
+      return true;
+    }
+    if (i < pollCount - 1) sleepSeconds(pollInterval);
+  }
+
+  const message = "OpenShell gateway user service started but did not become healthy.";
+  console.error(`  ${message}`);
+  console.error("  Check: systemctl --user status openshell-gateway");
+  if (exitOnFailure) process.exit(1);
+  throw new Error(message);
+}
+
 async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridgeReachability = false }: { exitOnFailure?: boolean; skipSandboxBridgeReachability?: boolean } = {}): Promise<void> {
-  dockerDriverGatewayEnv.writeDockerGatewayDebEnvOverride(() => getDockerDriverGatewayEnv());
   const gatewayBin = resolveOpenShellGatewayBinary();
   const openshellVersionOutput = runCaptureOpenshell(["--version"], {
     ignoreError: true,
   });
   const gatewayEnv = getDockerDriverGatewayEnv(openshellVersionOutput);
+  dockerDriverGatewayEnv.writeDockerGatewayDebEnvOverride(() => gatewayEnv);
   const stateDir = getDockerDriverGatewayStateDir();
   const runtimeIdentity = gatewayBin ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({ gatewayBin, gatewayEnv, stateDir, sandboxBin: resolveOpenShellSandboxBinary() }) : null;
   const gatewayLaunch = runtimeIdentity?.launch ?? null;
@@ -2424,6 +2485,16 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
   const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const { verifySandboxBridgeGatewayReachableOrExit } =
     require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
+
+  if (
+    await tryStartPackageManagedDockerDriverGateway({
+      exitOnFailure,
+      skipSandboxBridgeReachability,
+      verifySandboxBridgeGatewayReachableOrExit,
+    })
+  ) {
+    return;
+  }
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {

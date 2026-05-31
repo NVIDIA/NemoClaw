@@ -26,11 +26,13 @@ function runWithInstalledVersion(
   options: {
     capability?: boolean;
     driverBins?: boolean | "gateway" | "gateway-vm";
+    gatewayService?: boolean;
     os?: string;
     arch?: string;
   } = {},
 ) {
   const capability = options.capability ?? true;
+  const hostOs = options.os ?? "Linux";
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-ver-"));
   try {
     const fakeBin = path.join(tmp, "bin");
@@ -39,7 +41,7 @@ function runWithInstalledVersion(
     writeExecutable(
       path.join(fakeBin, "uname"),
       `#!/usr/bin/env bash
-if [ "\${1:-}" = "-m" ]; then echo "${options.arch ?? "x86_64"}"; else echo "${options.os ?? "Linux"}"; fi`,
+if [ "\${1:-}" = "-m" ]; then echo "${options.arch ?? "x86_64"}"; else echo "${hostOs}"; fi`,
     );
 
     // Fake openshell that reports the given version
@@ -88,7 +90,13 @@ exit 1`,
 exit 1`,
     );
 
-    if ((options.os ?? "Linux") === "Darwin") {
+    if (hostOs === "Linux" && options.gatewayService !== false) {
+      const serviceDir = path.join(tmp, ".config", "systemd", "user");
+      fs.mkdirSync(serviceDir, { recursive: true });
+      fs.writeFileSync(path.join(serviceDir, "openshell-gateway.service"), "[Service]\n");
+    }
+
+    if (hostOs === "Darwin") {
       writeExecutable(
         path.join(fakeBin, "codesign"),
         `#!/usr/bin/env bash
@@ -112,6 +120,7 @@ exit 0`,
     return spawnSync("bash", [SCRIPT], {
       env: {
         ...process.env,
+        HOME: tmp,
         NEMOCLAW_OPENSHELL_CHANNEL: "stable",
         ...extraEnv,
         PATH: `${fakeBin}:/usr/bin:/bin`,
@@ -126,6 +135,23 @@ exit 0`,
 describe("install-openshell.sh version check", { timeout: 15_000 }, () => {
   it("exits cleanly when openshell 0.0.44 and driver binaries are already installed", () => {
     const result = runWithInstalledVersion("0.0.44");
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/already installed.*0\.0\.44/);
+  });
+
+  it("reinstalls Linux stable OpenShell when the package-managed gateway user service is missing", () => {
+    const result = runWithInstalledVersion("0.0.44", {}, { gatewayService: false });
+    expect(result.status).not.toBe(0);
+    expect(result.stdout).toMatch(/missing the package-managed gateway user service/);
+    expect(result.stdout).toMatch(/Installing OpenShell from release 'v0\.0\.44'/);
+  });
+
+  it("allows standalone Linux installs as an explicit fallback", () => {
+    const result = runWithInstalledVersion(
+      "0.0.44",
+      { NEMOCLAW_OPENSHELL_STANDALONE_INSTALL: "1" },
+      { gatewayService: false },
+    );
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/already installed.*0\.0\.44/);
   });
@@ -474,6 +500,74 @@ exit 0`,
     });
     expect(result.status).not.toBe(0);
     expect(result.stdout).toMatch(/required dev-channel messaging-rewrite build/);
+  });
+
+  it("uses the upstream Linux package installer by default", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-package-"));
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      fs.mkdirSync(fakeBin);
+
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "x86_64"; else echo "Linux"; fi`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+[ -n "$out" ] || exit 1
+cat > "$out" <<'INSTALLER'
+#!/usr/bin/env sh
+mkdir -p "$NEMOCLAW_FAKE_INSTALL_BIN" "$HOME/.config/systemd/user"
+cat > "$NEMOCLAW_FAKE_INSTALL_BIN/openshell" <<'BIN'
+#!/usr/bin/env sh
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.44"; exit 0; fi
+# request-body-credential-rewrite websocket-credential-rewrite
+exit 0
+BIN
+cat > "$NEMOCLAW_FAKE_INSTALL_BIN/openshell-gateway" <<'BIN'
+#!/usr/bin/env sh
+exit 0
+BIN
+cat > "$NEMOCLAW_FAKE_INSTALL_BIN/openshell-sandbox" <<'BIN'
+#!/usr/bin/env sh
+exit 0
+BIN
+printf '[Service]\\n' > "$HOME/.config/systemd/user/openshell-gateway.service"
+chmod 755 "$NEMOCLAW_FAKE_INSTALL_BIN/openshell" "$NEMOCLAW_FAKE_INSTALL_BIN/openshell-gateway" "$NEMOCLAW_FAKE_INSTALL_BIN/openshell-sandbox"
+exit "\${NEMOCLAW_FAKE_INSTALL_STATUS:-0}"
+INSTALLER
+exit 0`,
+      );
+
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          NEMOCLAW_FAKE_INSTALL_BIN: fakeBin,
+          NEMOCLAW_FAKE_INSTALL_STATUS: "17",
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(0);
+      expect(result.stdout).toMatch(/upstream package installer/);
+      expect(result.stdout).toMatch(/installed with upstream package\/service support/);
+      expect(result.stdout).not.toMatch(/Downloading OpenShell release assets/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
   });
 
   it("proceeds to install when openshell is not present", () => {

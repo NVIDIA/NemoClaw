@@ -13,6 +13,7 @@ import {
   getGatewayHttpsEndpoint,
 } from "../core/gateway-address";
 import { GATEWAY_PORT } from "../core/ports";
+import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
 
 export { getGatewayHttpsEndpoint };
 
@@ -133,13 +134,9 @@ function readTextFileIfPresent(filePath: string): string {
 
 export function writeDockerGatewayDebEnvOverride(
   getOverride: () => Record<string, string>,
-): void {
-  const servicePaths = [
-    "/usr/bin/openshell-gateway",
-    "/usr/lib/systemd/user/openshell-gateway.service",
-    "/lib/systemd/user/openshell-gateway.service",
-  ];
-  if (!servicePaths.some((candidate) => fs.existsSync(candidate))) return;
+  opts: Parameters<typeof hasOpenShellGatewayUserService>[0] = {},
+): boolean {
+  if (!hasOpenShellGatewayUserService(opts)) return false;
   const override = getOverride();
   const envDir = path.join(os.homedir(), ".config", "openshell");
   const envFile = path.join(envDir, "gateway.env");
@@ -151,4 +148,5 @@ export function writeDockerGatewayDebEnvOverride(
     mode: 0o600,
   });
   fs.chmodSync(envFile, 0o600);
+  return true;
 }

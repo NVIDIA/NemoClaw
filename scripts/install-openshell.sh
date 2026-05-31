@@ -130,6 +130,21 @@ required_driver_bins_present() {
   esac
 }
 
+openshell_gateway_user_service_present() {
+  [ "$OS" = "Linux" ] || return 1
+  [ -f "${HOME:-}/.config/systemd/user/openshell-gateway.service" ] || \
+    [ -f /etc/systemd/user/openshell-gateway.service ] || \
+    [ -f /usr/local/lib/systemd/user/openshell-gateway.service ] || \
+    [ -f /usr/lib/systemd/user/openshell-gateway.service ] || \
+    [ -f /lib/systemd/user/openshell-gateway.service ]
+}
+
+should_require_openshell_gateway_user_service() {
+  [ "$OS" = "Linux" ] && \
+    [ "$RESOLVED_CHANNEL" != "dev" ] && \
+    [ "${NEMOCLAW_OPENSHELL_STANDALONE_INSTALL:-}" != "1" ]
+}
+
 OPENSHELL_FEATURE_CHECK_ERROR=""
 
 openshell_has_required_messaging_features() {
@@ -275,6 +290,8 @@ if command -v openshell >/dev/null 2>&1; then
         warn "openshell $INSTALLED_VERSION is missing Docker-driver binaries — reinstalling pinned OpenShell ${PIN_VERSION}..."
       elif ! openshell_has_required_messaging_features; then
         fail "${OPENSHELL_FEATURE_CHECK_ERROR:-openshell $INSTALLED_VERSION is missing required messaging credential rewrite support. Install an OpenShell build that includes provider aliases, WebSocket text rewrite, and request-body credential rewrite.}"
+      elif should_require_openshell_gateway_user_service && ! openshell_gateway_user_service_present; then
+        warn "openshell $INSTALLED_VERSION is missing the package-managed gateway user service — reinstalling pinned OpenShell ${PIN_VERSION}..."
       else
         info "openshell already installed: $INSTALLED_VERSION (>= $MIN_VERSION, <= $MAX_VERSION, messaging rewrite capable)"
         exit 0
@@ -286,6 +303,66 @@ if command -v openshell >/dev/null 2>&1; then
 fi
 
 info "Installing OpenShell from release '$RELEASE_TAG'..."
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "$tmpdir"' EXIT
+
+install_with_upstream_package_service() {
+  [ "$OS" = "Linux" ] || return 1
+  [ "$RESOLVED_CHANNEL" != "dev" ] || return 1
+  [ "${NEMOCLAW_OPENSHELL_STANDALONE_INSTALL:-}" != "1" ] || return 1
+  command -v curl >/dev/null 2>&1 || return 1
+
+  local installer="$tmpdir/openshell-install.sh"
+  local installer_url="https://raw.githubusercontent.com/NVIDIA/OpenShell/${RELEASE_TAG}/install.sh"
+  local installer_status=0
+  local installed_bin=""
+  local feature_status=0
+  local breaking_ack="${OPENSHELL_ACK_BREAKING_UPGRADE:-}"
+
+  if [ -z "$breaking_ack" ] && [ -n "${NEMOCLAW_OPENSHELL_UPGRADE_PREPARED:-}" ]; then
+    breaking_ack=1
+  fi
+
+  info "Installing OpenShell ${RELEASE_TAG} with the upstream package installer..."
+  if ! curl -fLsS --retry 3 --max-redirs 5 -o "$installer" "$installer_url"; then
+    warn "upstream package installer could not be downloaded — falling back to standalone binaries"
+    return 1
+  fi
+  chmod 755 "$installer"
+
+  OPENSHELL_VERSION="$RELEASE_TAG" \
+    OPENSHELL_ACK_BREAKING_UPGRADE="$breaking_ack" \
+    sh "$installer" || installer_status=$?
+
+  installed_bin="$(command -v openshell 2>/dev/null || true)"
+  if [ -n "$installed_bin" ] && required_driver_bins_present && openshell_gateway_user_service_present; then
+    if openshell_has_required_messaging_features "$installed_bin"; then
+      if [ "$installer_status" != "0" ]; then
+        warn "upstream installer returned exit ${installer_status} after installing binaries and the gateway user service; NemoClaw will restart the service during onboarding"
+      fi
+      info "$("$installed_bin" --version 2>&1 || echo openshell) installed with upstream package/service support"
+      return 0
+    else
+      feature_status=$?
+      if [ "$feature_status" = "2" ]; then
+        fail "$OPENSHELL_FEATURE_CHECK_ERROR"
+      fi
+      warn "${OPENSHELL_FEATURE_CHECK_ERROR:-upstream package install did not provide the required OpenShell messaging features}"
+    fi
+  fi
+
+  if [ "$installer_status" != "0" ]; then
+    warn "upstream package installer failed (exit ${installer_status}) — falling back to standalone binaries"
+  else
+    warn "upstream package installer did not provide required Docker-driver binaries and user service — falling back to standalone binaries"
+  fi
+  return 1
+}
+
+if install_with_upstream_package_service; then
+  exit 0
+fi
 
 case "$OS" in
   Darwin)
@@ -331,9 +408,6 @@ case "$OS" in
     CHECKSUM_FILES+=("openshell-sandbox-checksums-sha256.txt")
     ;;
 esac
-
-tmpdir="$(mktemp -d)"
-trap 'rm -rf "$tmpdir"' EXIT
 
 download_with_curl() {
   local name
