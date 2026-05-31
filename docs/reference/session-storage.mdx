@@ -78,22 +78,18 @@ is corrupted — the host commands to know about are:
 
 - `nemoclaw <name> sessions cleanup --enforce` runs OpenClaw's policy-based
   store maintenance (age, count, disk-budget cleanup). Use this for stale
-  entries and orphan files, not for "wipe this one session right now."
-- `nemoclaw <name> sessions rm <agent> <sessionKey>` removes a single
-  session's `<sessionId>.*` files and strips the matching entry from
-  `sessions.json`.
-- `nemoclaw <name> sessions rm <agent>` wipes the whole sessions directory
-  for an agent and resets `sessions.json` to `{}`.
+  entries and orphan files, not for "reset this one session right now."
+- `nemoclaw <name> sessions reset <agent> <sessionKey>` invokes the OpenClaw
+  gateway `sessions.reset` RPC for that session. The gateway archives the
+  prior transcript as `<sessionId>.reset.<timestamp>.jsonl`, rebinds the
+  key to a fresh `sessionId`, and emits the lifecycle event so the TUI and
+  any other connected clients refresh.
 
-The OpenClaw gateway should be idle for the target agent before running
-`sessions rm`. The command first probes the target scope for an active
-`*.jsonl.lock`; if one is present, it refuses and exits non-zero so the
-host wipe never races the gateway writer. Stop the agent or wait for
-in-flight writes to drain, then retry; pass `--force` only when the lock
-is known stale (for example, after a crashed gateway). Removed sessions
-do not get an automatic `<sessionId>.reset.<timestamp>.jsonl` archive —
-that semantic belongs to OpenClaw's in-gateway reset path, not the
-on-disk wipe.
+NemoClaw delegates the actual reset to OpenClaw; the host never edits
+`sessions.json` and is not subject to the gateway-writer race. Use
+`--reason new` to register a brand-new session under the same key without
+binding the prior transcript; `--reason reset` (default) preserves the
+archive trail.
 
 ## Next Steps
 

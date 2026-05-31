@@ -20,7 +20,7 @@ describe("command-registry", () => {
     it("should contain exactly 69 commands", () => {
       // 28 global (22 visible + 6 hidden help/version aliases)
       // 41 sandbox (35 visible + 6 hidden shields/config), including the
-      // sandbox:sessions group (root + list + cleanup + rm + download) and
+      // sandbox:sessions group (root + list + cleanup + reset + download) and
       // sandbox skill remove.
       expect(COMMANDS).toHaveLength(69);
     });
@@ -56,7 +56,7 @@ describe("command-registry", () => {
   describe("sandboxCommands()", () => {
     it("should return exactly 41 entries", () => {
       // 35 visible + 6 hidden (shields×3 + config get/set/rotate-token).
-      // 35 visible includes the sessions group (root + list + cleanup + rm +
+      // 35 visible includes the sessions group (root + list + cleanup + reset +
       // download) and sandbox skill remove.
       expect(sandboxCommands()).toHaveLength(41);
     });

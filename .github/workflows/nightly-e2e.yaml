@@ -504,9 +504,9 @@ jobs:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
       BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   # ── Sessions CLI E2E ────────────────────────────────────────────────
-  # Exercises the host-side `nemoclaw <name> sessions {list,cleanup,rm,download}`
+  # Exercises the host-side `nemoclaw <name> sessions {list,cleanup,reset,download}`
   # surface against a live sandbox: pass-through to `openclaw sessions list/cleanup`,
-  # raw rm + sessions.json edit (with active-write-lock refusal), and openshell-based
+  # gateway-delegated `sessions reset` via `openclaw gateway call`, and openshell-based
   # download of the agent sessions directory to the host.
   sessions-cli-e2e:
     if: >-

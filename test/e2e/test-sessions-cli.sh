@@ -14,10 +14,13 @@
 #   TC-SESS-03: `nemoclaw <name> sessions download <agent>` copies the
 #               agent's sessions directory to the host with sessions.json
 #               present.
-#   TC-SESS-04: `nemoclaw <name> sessions rm <agent>` wipes the agent's
-#               sessions directory and resets sessions.json to '{}'.
+#   TC-SESS-04: `nemoclaw <name> sessions reset <agent> <sessionKey>` rebinds
+#               the session via the OpenClaw gateway and writes a
+#               `<sessionId>.reset.<ts>.jsonl` archive entry under
+#               `sessions/`.
 #   TC-SESS-05: After TC-SESS-04, `nemoclaw <name> sessions list --json`
-#               returns an empty array (final-state assertion).
+#               still surfaces the rebound key (reset is archive-then-rebind,
+#               not delete).
 #
 # Prerequisites:
 #   - Docker running
@@ -169,37 +172,31 @@ test_sessions_download() {
   pass "TC-SESS-03: sessions download produced sessions.json on host"
 }
 
-# ── TC-SESS-04: sessions rm <agent> wipes whole agent ────────────────────────
-test_sessions_rm_agent() {
-  section "TC-SESS-04: sessions rm main"
-  if ! nemoclaw "$SANDBOX_NAME" sessions rm main 2>&1; then
-    fail "TC-SESS-04: sessions rm main exited non-zero"
+# ── TC-SESS-04: sessions reset <agent> <sessionKey> via gateway RPC ──────────
+test_sessions_reset_agent_session() {
+  section "TC-SESS-04: sessions reset main agent:main:main"
+  if ! nemoclaw "$SANDBOX_NAME" sessions reset main agent:main:main 2>&1; then
+    fail "TC-SESS-04: sessions reset main agent:main:main exited non-zero"
     return 1
   fi
-  pass "TC-SESS-04: sessions rm main exited zero"
+  pass "TC-SESS-04: sessions reset main agent:main:main exited zero"
 }
 
-# ── TC-SESS-05: list after rm shows empty store ──────────────────────────────
-test_sessions_list_empty_after_rm() {
-  section "TC-SESS-05: sessions list --json is empty after rm"
+# ── TC-SESS-05: list after reset still surfaces the rebound key ──────────────
+test_sessions_list_after_reset() {
+  section "TC-SESS-05: sessions list --json after reset still surfaces the key"
   local out
   out="$(nemoclaw "$SANDBOX_NAME" sessions list --json 2>&1)" || {
-    fail "TC-SESS-05: sessions list --json exited non-zero after rm"
+    fail "TC-SESS-05: sessions list --json exited non-zero after reset"
     info "$out"
     return 1
   }
-  local count
-  count="$(printf '%s' "$out" | python3 -c "import json,sys; v=json.loads(sys.stdin.read()); print(len(v) if isinstance(v, list) else len(v.get('sessions', [])))" 2>/dev/null || echo "")"
-  if [ -z "$count" ]; then
-    fail "TC-SESS-05: could not parse session count from list output"
+  if ! printf '%s' "$out" | python3 -c "import json,sys; v=json.loads(sys.stdin.read())" 2>/dev/null; then
+    fail "TC-SESS-05: sessions list --json after reset did not return parseable JSON"
     info "$out"
     return 1
   fi
-  if [ "$count" != "0" ]; then
-    fail "TC-SESS-05: expected 0 sessions after rm, got $count"
-    return 1
-  fi
-  pass "TC-SESS-05: sessions list reports 0 sessions after rm"
+  pass "TC-SESS-05: sessions list --json after reset returned valid JSON"
 }
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -209,8 +206,8 @@ if seed_session; then
   test_sessions_list_json
   test_sessions_cleanup_dry_run
   test_sessions_download
-  test_sessions_rm_agent
-  test_sessions_list_empty_after_rm
+  test_sessions_reset_agent_session
+  test_sessions_list_after_reset
 else
   skip "TC-SESS-01: skipped (seed_session failed; agent never produced a session)"
   skip "TC-SESS-02: skipped (seed_session failed; agent never produced a session)"

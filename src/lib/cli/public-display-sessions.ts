@@ -28,12 +28,12 @@ export const SANDBOX_SESSIONS_DISPLAY_LAYOUT: Record<string, readonly PublicDisp
       description: "Run OpenClaw session-store maintenance",
     },
   ],
-  "sandbox:sessions:rm": [
+  "sandbox:sessions:reset": [
     {
       group: "Sandbox Management",
       order: 21,
-      flags: "<agent> [<session>] [--force]",
-      description: "Remove OpenClaw conversation sessions",
+      flags: "<agent> <session> [--reason new|reset]",
+      description: "Reset a session via the OpenClaw gateway",
     },
   ],
   "sandbox:sessions:download": [

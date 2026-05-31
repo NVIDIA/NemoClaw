@@ -842,23 +842,22 @@ For the on-disk layout the commands operate on, see [Session Storage Layout](/re
 | `sessions` | List stored sessions for the configured default agent (forwards to `openclaw sessions`). |
 | `sessions list` | Same as the root form. Forwards `--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store` to `openclaw sessions list`. |
 | `sessions cleanup` | Run OpenClaw's policy-driven store maintenance. Forwards `--dry-run`, `--enforce`, `--agent`, `--all-agents`, `--fix-missing`, `--fix-dm-scope`, `--active-key`, `--json`, `--store`. |
-| `sessions rm <agent> [<sessionKey>] [--force]` | Wipe a single session or the whole agent's sessions directory in the sandbox. |
+| `sessions reset <agent> <sessionKey> [--reason new\|reset]` | Reset a single session by invoking the OpenClaw gateway `sessions.reset` RPC. |
 | `sessions download <agent> [<sessionKey>] [--out <dir>]` | Copy session files from the sandbox to the host (defaults to `./sessions-<sandbox>/agent-<agent>/`). |
 
 ```bash
 nemoclaw my-assistant sessions list --json
 nemoclaw my-assistant sessions cleanup --dry-run
-nemoclaw my-assistant sessions rm main
-nemoclaw my-assistant sessions rm main agent:main:telegram:thread
+nemoclaw my-assistant sessions reset main agent:main:main
+nemoclaw my-assistant sessions reset main agent:main:telegram:thread --reason new
 nemoclaw my-assistant sessions download main --out ./out/
 nemoclaw my-assistant sessions download main agent:main:telegram:thread
 ```
 
 `sessions list` and `sessions cleanup` shell out to `openclaw sessions ...` inside the sandbox via `openshell sandbox exec`, so OpenClaw owns the output format and exit code.
-`sessions rm` and `sessions download` are NemoClaw-side helpers: they read `sessions.json` over `openshell sandbox exec`, resolve the supplied `<sessionKey>` to its current `sessionId`, and act on the owned filename shapes for that session in the agent's `sessions/` directory.
-The owned shapes are `<sessionId>.*` (transcript, trajectory, lock, reset archives) and `<sessionId>-topic-*` (topic transcripts); files whose names only share a string prefix with the resolved `sessionId` are not touched.
-With no `<sessionKey>`, `sessions rm` wipes every `*.jsonl` and `*.jsonl.lock` under that agent's directory and resets `sessions.json` to `{}`; `sessions download` copies the whole directory (including `sessions.json` and any orphan files) to the host.
-Before any wipe, `sessions rm` probes the target scope for an active `*.jsonl.lock`; if one is present, the command refuses with a recovery hint and exits non-zero. Stop the agent or wait for in-flight writes to drain, then retry; pass `--force` only when the lock is known stale (for example, after a crashed gateway).
+`sessions reset` goes through `openshell sandbox exec` to `openclaw gateway call sessions.reset`, so the OpenClaw gateway performs the archive-then-recreate; the NemoClaw host never edits `sessions.json` directly. Sessions stay lock-safe because the gateway is the writer.
+`sessions download` reads `sessions.json` over `openshell sandbox exec`, resolves the supplied `<sessionKey>` to its current `sessionId`, and copies the owned filename shapes for that session: `<sessionId>.*` (transcript, trajectory, lock, reset archives) and `<sessionId>-topic-*` (topic transcripts). Files whose names only share a string prefix with the resolved `sessionId` are not touched.
+With no `<sessionKey>`, `sessions download` copies the whole directory (including `sessions.json` and any orphan files) to the host.
 
 ### `nemoclaw <name> sessions list`
 
@@ -872,21 +871,18 @@ Run OpenClaw session-store maintenance in a sandbox.
 Pass-through to `openclaw sessions cleanup` inside the sandbox via `openshell sandbox exec`; all flags accepted by the in-sandbox CLI (e.g. `--dry-run`, `--enforce`, `--agent`, `--all-agents`, `--fix-missing`, `--fix-dm-scope`, `--active-key`, `--json`, `--store`) are forwarded verbatim.
 OpenClaw owns the policy and reporting; NemoClaw only routes the call.
 
-### `nemoclaw <name> sessions rm`
+### `nemoclaw <name> sessions reset`
 
-Remove OpenClaw conversation sessions in a sandbox.
-NemoClaw-side helper: reads `sessions.json` over `openshell sandbox exec`, resolves the optional `<sessionKey>` to its current `sessionId`, and removes the owned filename shapes (`<sessionId>.*` and `<sessionId>-topic-*`) for that session.
+Reset an OpenClaw conversation session by invoking the gateway `sessions.reset` RPC.
+Goes through `openshell sandbox exec` to `openclaw gateway call sessions.reset`, so the gateway owns the archival of the prior transcript (`<sessionId>.reset.<timestamp>.jsonl`), the lock, and the lifecycle event emission. The NemoClaw host never edits `sessions.json`.
 
 ```bash
-nemoclaw <name> sessions rm <agent> [<session>] [--force]
+nemoclaw <name> sessions reset <agent> <session> [--reason new|reset]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--force` | Override the active write-lock refusal. Only use when the lock is known stale (for example, after a crashed gateway). |
-
-With no `<sessionKey>`, every `*.jsonl` and `*.jsonl.lock` under that agent's `sessions/` directory is removed and `sessions.json` is reset to `{}`.
-The command first probes the target scope for an active `*.jsonl.lock`; if one is present, it refuses and exits non-zero. Stop the agent (for example, via `openclaw kill` inside the sandbox) or wait for in-flight writes to drain, then retry; pass `--force` only when the lock is known stale.
+| `--reason` | `reset` (default) keeps the archive trail bound to the key; `new` registers a brand-new session id without binding the prior transcript. |
 
 ### `nemoclaw <name> sessions download`
 
