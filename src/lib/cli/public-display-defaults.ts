@@ -369,6 +369,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "flags": "<path>"
     }
   ],
+  "sandbox:skill:remove": [
+    {
+      "group": "Skills",
+      "order": 16.1,
+      "flags": "<skill>"
+    }
+  ],
   "sandbox:snapshot:create": [
     {
       "group": "Sandbox Management",

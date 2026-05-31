@@ -101,7 +101,7 @@ afterEach(() => {
 
 describe("seed-wechat-accounts.py: gating", () => {
   it("no-ops silently when NEMOCLAW_WECHAT_CONFIG_B64 is unset", () => {
-    // The script now runs unconditionally from generate-openclaw-config.py
+    // The script now runs unconditionally from generate-openclaw-config.mts
     // on every build, so the "no host-side QR login was performed" path is
     // the common case and must stay quiet — no stderr noise, no on-disk
     // state under the plugin state dir.
@@ -278,7 +278,7 @@ describe("seed-wechat-accounts.py: openclaw.json patching (channels.openclaw-wei
 
   it("preserves existing unrelated keys in openclaw.json", () => {
     // The patch must merge into the existing config — clobbering gateway or
-    // other channels would break everything else generate-openclaw-config.py
+    // other channels would break everything else generate-openclaw-config.mts
     // wrote moments earlier.
     writeOpenclawConfig({
       gateway: { port: 9999, marker: "keep-me" },
@@ -297,7 +297,7 @@ describe("seed-wechat-accounts.py: openclaw.json patching (channels.openclaw-wei
   it("restores plugin registration and channel block after a later OpenClaw config rewrite drops them", () => {
     // The Dockerfile invokes this seed script again after OpenClaw doctor and
     // plugin installation because those commands can rewrite openclaw.json
-    // after generate-openclaw-config.py first runs. Re-running the seed must
+    // after generate-openclaw-config.mts first runs. Re-running the seed must
     // be enough to put the upstream WeChat plugin and channel registration
     // back; otherwise the gateway rejects channels.openclaw-weixin as an
     // unknown channel id at startup.
@@ -398,7 +398,7 @@ describe("seed-wechat-accounts.py: openclaw.json patching (channels.openclaw-wei
   });
 
   it("bails (and warns) when openclaw.json is missing — does not invent a config", () => {
-    // generate-openclaw-config.py runs first and is responsible for producing
+    // generate-openclaw-config.mts runs first and is responsible for producing
     // openclaw.json. If it failed silently, we'd rather print a warning than
     // create a half-formed file from this script's narrow vantage point.
     const result = runSeed({
