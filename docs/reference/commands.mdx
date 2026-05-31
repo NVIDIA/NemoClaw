@@ -843,21 +843,20 @@ For the on-disk layout the commands operate on, see [Session Storage Layout](/re
 | `sessions list` | Same as the root form. Forwards `--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store` to `openclaw sessions list`. |
 | `sessions cleanup` | Run OpenClaw's policy-driven store maintenance. Forwards `--dry-run`, `--enforce`, `--agent`, `--all-agents`, `--fix-missing`, `--fix-dm-scope`, `--active-key`, `--json`, `--store`. |
 | `sessions reset <agent> <sessionKey> [--reason new\|reset]` | Reset a single session by invoking the OpenClaw gateway `sessions.reset` RPC. |
-| `sessions download <agent> [<sessionKey>] [--out <dir>]` | Copy session files from the sandbox to the host (defaults to `./sessions-<sandbox>/agent-<agent>/`). |
+| `sessions export-trajectory <agent> <sessionKey> [--output <name>] [--workspace <dir>] [--save-host <dir>] [--json]` | Run `openclaw sessions export-trajectory` inside the sandbox and (optionally) copy the resulting bundle to the host via `openshell sandbox download`. |
 
 ```bash
 nemoclaw my-assistant sessions list --json
 nemoclaw my-assistant sessions cleanup --dry-run
 nemoclaw my-assistant sessions reset main agent:main:main
 nemoclaw my-assistant sessions reset main agent:main:telegram:thread --reason new
-nemoclaw my-assistant sessions download main --out ./out/
-nemoclaw my-assistant sessions download main agent:main:telegram:thread
+nemoclaw my-assistant sessions export-trajectory main agent:main:main
+nemoclaw my-assistant sessions export-trajectory main agent:main:main --save-host ./trajectories/
 ```
 
 `sessions list` and `sessions cleanup` shell out to `openclaw sessions ...` inside the sandbox via `openshell sandbox exec`, so OpenClaw owns the output format and exit code.
 `sessions reset` goes through `openshell sandbox exec` to `openclaw gateway call sessions.reset`, so the OpenClaw gateway performs the archive-then-recreate; the NemoClaw host never edits `sessions.json` directly. Sessions stay lock-safe because the gateway is the writer.
-`sessions download` reads `sessions.json` over `openshell sandbox exec`, resolves the supplied `<sessionKey>` to its current `sessionId`, and copies the owned filename shapes for that session: `<sessionId>.*` (transcript, trajectory, lock, reset archives) and `<sessionId>-topic-*` (topic transcripts). Files whose names only share a string prefix with the resolved `sessionId` are not touched.
-With no `<sessionKey>`, `sessions download` copies the whole directory (including `sessions.json` and any orphan files) to the host.
+`sessions export-trajectory` runs `openclaw sessions export-trajectory --json` inside the sandbox so OpenClaw owns the redaction pipeline and the on-disk bundle shape; pass `--save-host <dir>` to additionally copy the resolved bundle directory to the host via `openshell sandbox download`.
 
 ### `nemoclaw <name> sessions list`
 
@@ -884,21 +883,21 @@ nemoclaw <name> sessions reset <agent> <session> [--reason new|reset]
 |------|-------------|
 | `--reason` | `reset` (default) keeps the archive trail bound to the key; `new` registers a brand-new session id without binding the prior transcript. |
 
-### `nemoclaw <name> sessions download`
+### `nemoclaw <name> sessions export-trajectory`
 
-Download OpenClaw session files from a sandbox to the host.
-Uses `openshell sandbox download` to copy from `/sandbox/.openclaw/agents/<agent>/sessions/` onto the host.
+Export a redacted trajectory bundle for an OpenClaw session.
+Runs `openclaw sessions export-trajectory --json` inside the sandbox via `openshell sandbox exec`, so OpenClaw owns the redaction pipeline and the bundle layout (`.openclaw/trajectory-exports/<output>/`).
 
 ```bash
-nemoclaw <name> sessions download <agent> [<session>] [--out <dir>]
+nemoclaw <name> sessions export-trajectory <agent> <session> [--output <name>] [--workspace <dir>] [--save-host <dir>] [--json]
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--out <dir>` | Host destination directory (created if missing). Defaults to `./sessions-<sandbox>/agent-<agent>/`. |
-
-With no `<sessionKey>`, the entire `sessions/` directory (including `sessions.json` and every transcript, trajectory, lock, topic transcript, and reset archive) is copied.
-With a `<sessionKey>`, only the owned filename shapes for the resolved `sessionId` are copied.
+| `--output <name>` | Bundle directory name inside the sandbox's `.openclaw/trajectory-exports`. OpenClaw assigns a name when omitted. |
+| `--workspace <dir>` | Sandbox workspace root used to resolve the export base directory. |
+| `--save-host <dir>` | Host destination directory; if set, the resolved bundle is downloaded to this path via `openshell sandbox download`. Created if missing. |
+| `--json` | Print the OpenClaw export summary as JSON instead of the text status lines. |
 
 ### `nemoclaw <name> skill remove <skill>`
 

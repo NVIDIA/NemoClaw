@@ -4,24 +4,11 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  SANDBOX_OPENCLAW_STATE_DIR,
-  agentSessionsDir,
-  agentSessionsStorePath,
-  sessionOwnedFilenameFindClause,
   validateAgentId,
-  validateSessionId,
   validateSessionKey,
 } from "../../../../../dist/lib/actions/sandbox/sessions/paths";
 
 describe("session path helpers", () => {
-  it("anchors agent sessions under /sandbox/.openclaw", () => {
-    expect(SANDBOX_OPENCLAW_STATE_DIR).toBe("/sandbox/.openclaw");
-    expect(agentSessionsDir("main")).toBe("/sandbox/.openclaw/agents/main/sessions");
-    expect(agentSessionsStorePath("main")).toBe(
-      "/sandbox/.openclaw/agents/main/sessions/sessions.json",
-    );
-  });
-
   it("accepts a wide range of legitimate agent ids", () => {
     expect(validateAgentId("main")).toBe("main");
     expect(validateAgentId("work_assistant")).toBe("work_assistant");
@@ -51,26 +38,5 @@ describe("session path helpers", () => {
     expect(() => validateSessionKey("agent:main:evil\\")).toThrow(/Invalid session key/);
     expect(() => validateSessionKey("agent:main:\nevil")).toThrow(/Invalid session key/);
     expect(() => validateSessionKey("")).toThrow(/Invalid session key/);
-  });
-
-  it("validates session ids for shell-safe glob usage", () => {
-    expect(validateSessionId("session-abc123")).toBe("session-abc123");
-    expect(validateSessionId("01HZX7QWERTY")).toBe("01HZX7QWERTY");
-  });
-
-  it("rejects session ids that could escape a shell glob", () => {
-    expect(() => validateSessionId("../etc/passwd")).toThrow(/Refusing to operate/);
-    expect(() => validateSessionId("session id with space")).toThrow(/Refusing to operate/);
-    expect(() => validateSessionId("session*")).toThrow(/Refusing to operate/);
-  });
-
-  it("builds a find clause that matches owned shapes only", () => {
-    const clause = sessionOwnedFilenameFindClause("abc");
-    expect(clause).toBe("\\( -name 'abc.*' -o -name 'abc-topic-*' \\)");
-  });
-
-  it("validates session id when building the find clause", () => {
-    expect(() => sessionOwnedFilenameFindClause("abc*")).toThrow(/Refusing to operate/);
-    expect(() => sessionOwnedFilenameFindClause("abc def")).toThrow(/Refusing to operate/);
   });
 });

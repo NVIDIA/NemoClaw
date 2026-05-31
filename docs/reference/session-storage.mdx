@@ -60,12 +60,12 @@ Three host commands cover the common needs without manual `kubectl cp`,
 
 - `nemoclaw <name> sessions list` lists stored sessions for the agent's
   configured default agent (forwards to `openclaw sessions list`).
-- `nemoclaw <name> sessions download <agent>` copies the whole agent
-  `sessions/` directory to the host (defaults to
-  `./sessions-<sandbox>/agent-<agent>/`).
-- `nemoclaw <name> sessions download <agent> <sessionKey>` resolves the
-  key against `sessions.json` and copies just that session's
-  `<sessionId>.*` files.
+- `nemoclaw <name> sessions export-trajectory <agent> <sessionKey>` runs
+  `openclaw sessions export-trajectory --json` inside the sandbox so
+  OpenClaw owns the redaction pipeline. The bundle lands under
+  `.openclaw/trajectory-exports/<name>/` in the sandbox workspace.
+- Add `--save-host <dir>` to also copy the resolved bundle to the host
+  via `openshell sandbox download`.
 
 `<sessionKey>` is the canonical key as stored in `sessions.json`
 (`agent:<agentId>:<rest>`), not a session id or channel-specific shorthand.

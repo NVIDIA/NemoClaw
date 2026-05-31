@@ -11,9 +11,10 @@
 #               from the in-sandbox OpenClaw CLI (pass-through wiring).
 #   TC-SESS-02: `nemoclaw <name> sessions cleanup --dry-run` runs without
 #               mutating state (pass-through wiring).
-#   TC-SESS-03: `nemoclaw <name> sessions download <agent>` copies the
-#               agent's sessions directory to the host with sessions.json
-#               present.
+#   TC-SESS-03: `nemoclaw <name> sessions export-trajectory <agent> <key>`
+#               --save-host writes a redacted trajectory bundle onto the
+#               host through `openclaw sessions export-trajectory` + an
+#               `openshell sandbox download`.
 #   TC-SESS-04: `nemoclaw <name> sessions reset <agent> <sessionKey>` rebinds
 #               the session via the OpenClaw gateway and writes a
 #               `<sessionId>.reset.<ts>.jsonl` archive entry under
@@ -157,19 +158,20 @@ test_sessions_cleanup_dry_run() {
   pass "TC-SESS-02: sessions cleanup --dry-run exited zero"
 }
 
-# ── TC-SESS-03: sessions download <agent> ────────────────────────────────────
-test_sessions_download() {
-  section "TC-SESS-03: sessions download main"
+# ── TC-SESS-03: sessions export-trajectory <agent> <key> --save-host ─────────
+test_sessions_export_trajectory() {
+  section "TC-SESS-03: sessions export-trajectory main agent:main:main --save-host"
   local dest="${DOWNLOAD_DIR}/agent-main"
-  if ! nemoclaw "$SANDBOX_NAME" sessions download main --out "$dest" 2>&1; then
-    fail "TC-SESS-03: sessions download main exited non-zero"
+  mkdir -p "$dest"
+  if ! nemoclaw "$SANDBOX_NAME" sessions export-trajectory main agent:main:main --save-host "$dest" 2>&1; then
+    fail "TC-SESS-03: sessions export-trajectory exited non-zero"
     return 1
   fi
-  if [ ! -f "${dest}/sessions.json" ]; then
-    fail "TC-SESS-03: expected ${dest}/sessions.json on host"
+  if [ -z "$(ls -A "$dest" 2>/dev/null)" ]; then
+    fail "TC-SESS-03: expected bundle files under ${dest} on host"
     return 1
   fi
-  pass "TC-SESS-03: sessions download produced sessions.json on host"
+  pass "TC-SESS-03: sessions export-trajectory --save-host produced bundle on host"
 }
 
 # ── TC-SESS-04: sessions reset <agent> <sessionKey> via gateway RPC ──────────
@@ -205,7 +207,7 @@ onboard_sandbox
 if seed_session; then
   test_sessions_list_json
   test_sessions_cleanup_dry_run
-  test_sessions_download
+  test_sessions_export_trajectory
   test_sessions_reset_agent_session
   test_sessions_list_after_reset
 else

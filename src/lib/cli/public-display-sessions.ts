@@ -36,12 +36,12 @@ export const SANDBOX_SESSIONS_DISPLAY_LAYOUT: Record<string, readonly PublicDisp
       description: "Reset a session via the OpenClaw gateway",
     },
   ],
-  "sandbox:sessions:download": [
+  "sandbox:sessions:export-trajectory": [
     {
       group: "Sandbox Management",
       order: 22,
-      flags: "<agent> [<session>] [--out <dir>]",
-      description: "Copy OpenClaw session files to the host",
+      flags: "<agent> <session> [--output <name>] [--workspace <dir>] [--save-host <dir>] [--json]",
+      description: "Export a redacted OpenClaw session trajectory bundle",
     },
   ],
 };

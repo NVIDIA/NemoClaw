@@ -725,19 +725,20 @@ describe("CLI dispatch", () => {
   });
 
 
-  it("sandbox sessions download <agent> <key> scopes to owned-shape files only", () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-download-key-"));
+  it("sandbox sessions export-trajectory forwards agent + session-key to openclaw and reports the bundle", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-"));
     const localBin = path.join(home, "bin");
     fs.mkdirSync(localBin, { recursive: true });
     writeSandboxRegistry(home);
     const openshellLog = path.join(home, "openshell-calls.log");
-    const sessionsDir = "/sandbox/.openclaw/agents/main/sessions";
-    const storePath = `${sessionsDir}/sessions.json`;
-    const outDir = path.join(home, "out");
-    // Same prefix-collision fixture as rm: `abc` next to `abc2`.
-    const sessionsJson = JSON.stringify({
-      "agent:main:main": { sessionId: "abc", updatedAt: 1 },
-      "agent:main:rival": { sessionId: "abc2", updatedAt: 2 },
+    const summaryPayload = JSON.stringify({
+      outputDir: "/sandbox/workspace/.openclaw/trajectory-exports/abc-bundle",
+      displayPath: ".openclaw/trajectory-exports/abc-bundle",
+      sessionId: "abc",
+      eventCount: 42,
+      runtimeEventCount: 20,
+      transcriptEventCount: 22,
+      files: ["events.jsonl", "metadata.json"],
     });
     fs.writeFileSync(
       path.join(localBin, "openshell"),
@@ -748,8 +749,7 @@ describe("CLI dispatch", () => {
         '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
         '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
         '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
-        `  *"cat '${storePath}'"*) printf '%s' '${sessionsJson}'; exit 0 ;;`,
-        `  *"cd '${sessionsDir}'"*"-name 'abc.*'"*) printf 'abc.jsonl\\nabc.trajectory.jsonl\\n'; exit 0 ;;`,
+        `  *"openclaw sessions export-trajectory"*) printf '%s\\n' '${summaryPayload}'; exit 0 ;;`,
         "  *) exit 0 ;;",
         "esac",
       ].join("\n"),
@@ -757,7 +757,7 @@ describe("CLI dispatch", () => {
     );
 
     const r = runWithEnv(
-      `sandbox sessions download alpha main agent:main:main --out ${JSON.stringify(outDir)} 2>&1`,
+      "sandbox sessions export-trajectory alpha main agent:main:main 2>&1",
       {
         HOME: home,
         PATH: `${localBin}:${process.env.PATH || ""}`,
@@ -768,14 +768,116 @@ describe("CLI dispatch", () => {
 
     expect(r.code).toBe(0);
     expect(r.out).toContain(
-      "Downloaded session 'agent:main:main' (id 'abc')",
+      "Exported trajectory for 'agent:main:main' (id 'abc'): 42 events across 2 file(s).",
     );
+    expect(r.out).toContain(
+      "Bundle (in sandbox): .openclaw/trajectory-exports/abc-bundle",
+    );
+    expect(r.out).not.toContain("Bundle copied to host");
     const calls = fs.readFileSync(openshellLog, "utf8");
-    expect(calls).toMatch(/-name 'abc\.\*' -o -name 'abc-topic-\*'/);
-    expect(calls).not.toMatch(/-name 'abc\*'/);
-    expect(calls).not.toMatch(/'abc2/);
-    expect(calls).toMatch(/sandbox download alpha \S*abc\.jsonl /);
-    expect(calls).toMatch(/sandbox download alpha \S*abc\.trajectory\.jsonl /);
+    expect(calls).toMatch(
+      /sandbox exec --name alpha -- openclaw sessions export-trajectory --agent main --session-key agent:main:main --json/,
+    );
+    expect(calls).not.toMatch(/sandbox download/);
+  });
+
+  it("sandbox sessions export-trajectory --save-host copies the bundle to the host directory", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-save-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const openshellLog = path.join(home, "openshell-calls.log");
+    const hostOut = path.join(home, "trajectories");
+    const summaryPayload = JSON.stringify({
+      outputDir: "/sandbox/workspace/.openclaw/trajectory-exports/abc-bundle",
+      displayPath: ".openclaw/trajectory-exports/abc-bundle",
+      sessionId: "abc",
+      eventCount: 1,
+      runtimeEventCount: 1,
+      transcriptEventCount: 0,
+      files: ["events.jsonl"],
+    });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  *"openclaw sessions export-trajectory"*) printf '%s\\n' '${summaryPayload}'; exit 0 ;;`,
+        '  "sandbox download alpha "*) exit 0 ;;',
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv(
+      `sandbox sessions export-trajectory alpha main agent:main:main --save-host ${JSON.stringify(hostOut)} 2>&1`,
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "1",
+        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+      },
+    );
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`Bundle copied to host: ${hostOut}`);
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    expect(calls).toMatch(
+      /sandbox download alpha \/sandbox\/workspace\/\.openclaw\/trajectory-exports\/abc-bundle\/ \S+\/trajectories/,
+    );
+  });
+
+  it("sandbox sessions export-trajectory --json prints the parsed summary", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-export-json-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const summaryPayload = JSON.stringify({
+      outputDir: "/sandbox/workspace/.openclaw/trajectory-exports/abc-bundle",
+      displayPath: ".openclaw/trajectory-exports/abc-bundle",
+      sessionId: "abc",
+      eventCount: 3,
+      runtimeEventCount: 1,
+      transcriptEventCount: 2,
+      files: ["events.jsonl"],
+    });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  *"openclaw sessions export-trajectory"*) printf '%s\\n' '${summaryPayload}'; exit 0 ;;`,
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv(
+      "sandbox sessions export-trajectory alpha main agent:main:main --json",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "1",
+        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+      },
+    );
+
+    expect(r.code).toBe(0);
+    const parsed = JSON.parse(r.out.trim().split(/\r?\n/).pop() ?? "");
+    expect(parsed.sessionId).toBe("abc");
+    expect(parsed.eventCount).toBe(3);
+    expect(parsed.outputDir).toBe(
+      "/sandbox/workspace/.openclaw/trajectory-exports/abc-bundle",
+    );
   });
 
   it("sandbox sessions reset forwards key + reason to openclaw gateway call sessions.reset", () => {

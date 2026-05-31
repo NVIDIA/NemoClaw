@@ -267,8 +267,9 @@ reviews:
 
         **E2E test recommendation:**
         - `sessions-cli-e2e` — onboard, seed a session, then exercise
-          `sessions list`, `sessions cleanup --dry-run`, `sessions download`,
-          and gateway-delegated `sessions reset`
+          `sessions list`, `sessions cleanup --dry-run`,
+          `sessions export-trajectory --save-host`, and gateway-delegated
+          `sessions reset`
 
         To run selectively:
         ```

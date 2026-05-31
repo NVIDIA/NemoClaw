@@ -1,16 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-export const SANDBOX_OPENCLAW_STATE_DIR = "/sandbox/.openclaw";
-
-export function agentSessionsDir(agentId: string): string {
-  return `${SANDBOX_OPENCLAW_STATE_DIR}/agents/${agentId}/sessions`;
-}
-
-export function agentSessionsStorePath(agentId: string): string {
-  return `${agentSessionsDir(agentId)}/sessions.json`;
-}
-
 const AGENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 export function validateAgentId(agentId: string): string {
@@ -34,20 +24,4 @@ export function validateSessionKey(sessionKey: string): string {
     );
   }
   return trimmed;
-}
-
-const SESSION_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
-
-export function validateSessionId(sessionId: string): string {
-  if (!SESSION_ID_RE.test(sessionId)) {
-    throw new Error(
-      `Refusing to operate on session id '${sessionId}'. Expected an alphanumeric identifier (with '.', '_', '-').`,
-    );
-  }
-  return sessionId;
-}
-
-export function sessionOwnedFilenameFindClause(sessionId: string): string {
-  const id = validateSessionId(sessionId);
-  return `\\( -name '${id}.*' -o -name '${id}-topic-*' \\)`;
 }
