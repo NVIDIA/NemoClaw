@@ -724,9 +724,9 @@ After registering the channel, NemoClaw asks whether to rebuild immediately.
 Running `add` for an already-configured channel simply overwrites the stored credentials where applicable — the operation is idempotent.
 Channel names are trimmed and lowercased before NemoClaw stores credentials, names bridge providers, or prints rebuild messages.
 NemoClaw requires the matching built-in network policy preset YAML to be present.
-If the file is missing, `channels add` exits with a non-zero status before any token prompt, registry write, or rebuild prompt.
-When the file is present, NemoClaw applies the preset to the sandbox before the rebuild so the bridge has egress to its upstream API.
-If the apply itself fails, the command exits with a non-zero status without prompting for rebuild.
+A missing or malformed preset YAML (no `network_policies:` section) aborts `channels add` before any token prompt, registry write, or rebuild prompt.
+With the preset file in place, NemoClaw applies it to the sandbox before the rebuild so the bridge has egress to its upstream API.
+When the apply step itself fails after the registry write, NemoClaw rolls back the bridge providers, the `messagingChannels` entry, and the persisted credentials, then exits without prompting for rebuild.
 Restore the preset YAML and re-run `nemoclaw <name> channels add <channel>`.
 For Telegram, Discord, and Slack, a rebuild triggered by `channels add` also verifies that the selected bridge starts and reports credential, startup, or plugin discovery warnings.
 

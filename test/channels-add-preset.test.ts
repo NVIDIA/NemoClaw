@@ -56,6 +56,7 @@ function buildPreamble({
   sessionUpdateThrows = false,
   sessionMissing = false,
   presetFileMissing = false,
+  presetMissingNetworkPolicies = false,
 }: {
   presetNamesAvailable?: string[];
   applyPresetResult?: boolean;
@@ -67,6 +68,7 @@ function buildPreamble({
   sessionUpdateThrows?: boolean;
   sessionMissing?: boolean;
   presetFileMissing?: boolean;
+  presetMissingNetworkPolicies?: boolean;
 } = {}): string {
   const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
   return String.raw`
@@ -121,7 +123,11 @@ const appliedCalls = [];
 const removedCalls = [];
 const callOrder = [];
 policies.listPresets = () => ${JSON.stringify(presetNamesAvailable.map((name) => ({ name })))};
-policies.loadPreset = (name) => ${JSON.stringify(presetFileMissing)} ? null : "network_policies:\n  " + name + ":\n    egress:\n      - host: example.com";
+policies.loadPreset = (name) => {
+  if (${JSON.stringify(presetFileMissing)}) return null;
+  if (${JSON.stringify(presetMissingNetworkPolicies)}) return "name: " + name + "\ndescription: \"stub preset without network_policies\"\n";
+  return "network_policies:\n  " + name + ":\n    egress:\n      - host: example.com";
+};
 policies.applyPreset = (sandboxName, presetName) => {
   appliedCalls.push({ sandboxName, presetName });
   callOrder.push("applyPreset:" + presetName);
@@ -397,6 +403,67 @@ process.exit = (code) => {
     assert.ok(
       !payload.callOrder.includes("promptAndRebuild"),
       `missing preset YAML must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
+    );
+    assert.ok(
+      result.stderr.includes(`Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram`),
+      `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
+    );
+  });
+
+  it("aborts non-QR channel when policy preset YAML has no network_policies section", () => {
+    const script = `${buildPreamble({ presetMissingNetworkPolicies: true })}
+const ctx = module.exports;
+const exitCodes = [];
+const originalExit = process.exit;
+process.exit = (code) => {
+  exitCodes.push(code ?? 0);
+  throw new Error("__EXIT__" + (code ?? 0));
+};
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
+  } catch (err) {
+    if (!String(err && err.message).startsWith("__EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+      return;
+    }
+  } finally {
+    process.exit = originalExit;
+  }
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    appliedCalls: ctx.appliedCalls,
+    callOrder: ctx.callOrder,
+    providerCalls: ctx.providerCalls,
+    registryUpdates: ctx.registryUpdates,
+    savedCredentialKeys: ctx.savedCredentialKeys,
+    deletedCredentialKeys: ctx.deletedCredentialKeys,
+    exitCodes,
+  }) + "\\n");
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.exitCodes, [1]);
+    assert.deepEqual(payload.appliedCalls, []);
+    assert.deepEqual(payload.providerCalls, []);
+    assert.deepEqual(payload.registryUpdates, []);
+    assert.deepEqual(payload.savedCredentialKeys, []);
+    assert.deepEqual(payload.deletedCredentialKeys, []);
+    assert.ok(
+      !payload.callOrder.includes("promptAndRebuild"),
+      `invalid preset must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
+    );
+    assert.ok(
+      result.stderr.includes("missing a 'network_policies:' section"),
+      `expected diagnostic about missing network_policies section; got:\n${result.stderr}`,
+    );
+    assert.ok(
+      result.stderr.includes("Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram"),
+      `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
     );
   });
 

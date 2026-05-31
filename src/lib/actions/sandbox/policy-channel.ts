@@ -793,7 +793,18 @@ export async function addSandboxChannel(
     return;
   }
 
-  if (policies.loadPreset(canonical) === null) {
+  const presetContent = policies.loadPreset(canonical);
+  const presetEntries =
+    presetContent === null ? null : policies.extractPresetEntries(presetContent);
+  if (presetContent === null || presetEntries === null) {
+    if (presetContent !== null && presetEntries === null) {
+      console.error(
+        `  Preset YAML for channel '${canonical}' is missing a 'network_policies:' section.`,
+      );
+    }
+    console.error(
+      `    Restore the preset YAML and re-run: ${CLI_NAME} ${sandboxName} channels add ${canonical}`,
+    );
     process.exit(1);
   }
 
@@ -841,12 +852,12 @@ export async function addSandboxChannel(
     console.error(
       `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messagingChannels and policy state aligned.`,
     );
+    clearChannelTokens(channel);
     await applyChannelRemoveToGatewayAndRegistry(
       sandboxName,
       canonical,
       getChannelTokenKeys(channel),
     );
-    clearChannelTokens(channel);
     process.exit(1);
   }
 
