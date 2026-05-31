@@ -53,6 +53,9 @@ const {
   isHashVerificationIssue,
   isSha256Hex,
 }: typeof import("./seal") = require("./seal");
+const {
+  applyStateDirLockMode,
+}: typeof import("./state-dir-lock") = require("./state-dir-lock");
 
 const STATE_DIR = resolveNemoclawStateDir();
 
@@ -331,396 +334,18 @@ function isShieldsState(value: unknown): value is ShieldsState {
 }
 
 // ---------------------------------------------------------------------------
-// State directories locked by shields-up.
-//
-// During shields-up, these must be locked so the sandbox user cannot create
-// new entries or modify existing ones. This covers both executable state
-// (skills, hooks, cron jobs, extensions, plugins, agent definitions) and
-// writable agent state entry points such as workspace and memory, so a stale
-// symlink bridge cannot bypass the lockdown.
-//
-// Lock ownership is `root:sandbox` (not `root:root`): the OpenClaw gateway
-// runs as `gateway`, which is a member of the sandbox group via
-// `Dockerfile.base`. Owning these dirs as `root:sandbox` preserves the
-// sandbox group's `r-x` access to descendant files (after `chmod -R go-w`),
-// so plugin discovery can still scan `extensions/<plugin>/` while the
-// sandbox user is denied write through the stripped group/other write
-// bits. The top-level config dir is still owned by `root:root`
-// (lockAgentConfig) — only the high-risk state subtrees switch.
-//
-// The list is a superset: directories that don't exist in a given agent's
-// config dir are silently skipped.
-//
-// Coverage tracks the union of state_dirs declared by every shipped agent
-// manifest (agents/openclaw/manifest.yaml, agents/hermes/manifest.yaml).
-// Runtime-mutable subtrees that must keep being writable while shields are
-// up are intentionally omitted:
-//   - `sessions` (Hermes top-level) and `agents/*/sessions` (OpenClaw) — the
-//     latter is restored via WRITABLE_RUNTIME_SUBPATHS after the lock loop.
-//   - `memories`, `logs`, `cache`, `plans` (Hermes) — runtime mutables.
-//   - `openclaw-weixin` is regenerated from envs at image-build time
-//     (see src/lib/actions/sandbox/rebuild.ts) and is not a manifest state_dir.
-// Any new agent state_dir that holds executable code or credentials must be
-// added here in lockstep with its manifest entry.
+// State-dir lock — adapter between this module's privileged-exec helpers and
+// the lock pipeline in ./state-dir-lock. The inventory of locked dirs, the
+// preflight/mutation/verification logic, and the `agents/*/sessions`
+// carve-out live in that sibling module so this file stays focused on
+// shields state transitions.
 // ---------------------------------------------------------------------------
 
-const HIGH_RISK_STATE_DIRS = [
-  "skills",
-  "hooks",
-  "cron",
-  "agents",
-  "extensions",
-  "plugins", // Hermes equivalent of extensions
-  "workspace",
-  "memory",
-  "credentials",
-  "identity",
-  "devices",
-  "canvas",
-  "telegram",
-  "wechat", // OpenClaw runtime channel state
-  "whatsapp", // OpenClaw + Hermes channel state (Hermes also nests under platforms/)
-  "platforms", // Hermes channel-bridge auth state (whatsapp/, etc.)
-  "weixin", // Hermes iLink WeChat per-account context tokens
-  "pairing", // Hermes device-pairing state
-  "profiles", // Hermes saved profiles
-  "skins", // Hermes UI/personality bundles (code-like)
-];
-
-// Runtime-data subpaths the agent must keep writing to under shields-up.
-// Each entry is a shell glob relative to the agent config dir; after the
-// main lock loop the matching directories are restored to
-// `sandbox:sandbox 2770` so they remain writable inside an otherwise-locked
-// tree.
-const WRITABLE_RUNTIME_SUBPATHS = ["agents/*/sessions"];
-
-function applyStateDirLockMode(
-  sandboxName: string,
-  configDir: string,
-  owner: string,
-  isLocking: boolean,
-): string[] {
-  // Locking (shields-up) strips group + world write. Unlocking (shields-down)
-  // restores the same group-readable/writable + o-rwx mutable-default contract
-  // as startup, plus setgid so the gateway UID — now in the sandbox group via
-  // Dockerfile.base — can write to OpenClaw's mutable config tree (#2681).
-  //
-  // The unlock variant uses `g+rwX,o-rwx` because a prior lock can strip group
-  // access from descendants. Without re-adding group read/write explicitly,
-  // shields-down would leave nested files readable/writable only by owner.
-  const recursiveMode = isLocking ? "go-w" : "g+rwX,o-rwx";
-  const dirMode = isLocking ? "755" : "2770";
-  const clearSetgid = isLocking ? "1" : "0";
-
-  // Preflight: before any chown/chmod runs, scan every high-risk state-dir
-  // root and every workspace-* dir for symlinked roots. A pre-lockdown
-  // agent that swapped e.g. `extensions/` for a symlink to /etc could
-  // otherwise redirect the privileged `chown -R`/`chmod -R` at an
-  // attacker-controlled host path. Doing the symlink check inline in the
-  // mutation script would still leave any earlier (non-symlinked) dirs
-  // already mutated by the time the script reaches the bad entry, so
-  // shields-up could half-lock the tree and then fail. The preflight
-  // returns all symlinked paths up front; we abort lock without touching
-  // anything when any are present.
-  const symlinkedRoots = preflightSymlinkedRoots(sandboxName, configDir);
-  if (isLocking && symlinkedRoots.length > 0) {
-    return symlinkedRoots.map(
-      (path) => `state dir root is a symlink: ${path} (refusing to lock)`,
-    );
-  }
-
-  // Mutation pass — still skips symlinked roots inline as a defense-in-depth
-  // measure in case the preflight and mutation observe different fs state
-  // (the preflight pass already aborted shields-up in the common case).
-  const mainPassResult = runStateDirLockScript(sandboxName, {
-    script: `
-set -u
-config_dir="$1"
-owner="$2"
-recursive_mode="$3"
-dir_mode="$4"
-clear_setgid="$5"
-shift 5
-for dir in "$@"; do
-  path="$config_dir/$dir"
-  if [ -L "$path" ]; then
-    printf 'symlinked-root\\t%s\\n' "$path"
-    continue
-  fi
-  [ -d "$path" ] || continue
-  if ! chown -R "$owner" "$path" 2>/dev/null; then
-    printf 'mutation-failed\\tchown\\t%s\\n' "$path"
-  fi
-  if ! chmod "$dir_mode" "$path" 2>/dev/null; then
-    printf 'mutation-failed\\tchmod-dir\\t%s\\n' "$path"
-  fi
-  if [ "$clear_setgid" = "1" ]; then
-    chmod g-s "$path" 2>/dev/null || true
-  fi
-  if ! chmod -R "$recursive_mode" "$path" 2>/dev/null; then
-    printf 'mutation-failed\\tchmod-recursive\\t%s\\n' "$path"
-  fi
-done
-`,
-    args: [
-      configDir,
-      owner,
-      recursiveMode,
-      dirMode,
-      clearSetgid,
-      ...HIGH_RISK_STATE_DIRS,
-    ],
-  });
-
-  // Multi-agent OpenClaw workspaces are named workspace-<agent>. They are
-  // discovered dynamically because they are configured by openclaw.json.
-  const workspacePassResult = runStateDirLockScript(sandboxName, {
-    script: `
-set -u
-config_dir="$1"
-owner="$2"
-recursive_mode="$3"
-dir_mode="$4"
-clear_setgid="$5"
-for dir in "$config_dir"/workspace-*; do
-  if [ -L "$dir" ]; then
-    printf 'symlinked-root\\t%s\\n' "$dir"
-    continue
-  fi
-  [ -d "$dir" ] || continue
-  if ! chown -R "$owner" "$dir" 2>/dev/null; then
-    printf 'mutation-failed\\tchown\\t%s\\n' "$dir"
-  fi
-  if ! chmod "$dir_mode" "$dir" 2>/dev/null; then
-    printf 'mutation-failed\\tchmod-dir\\t%s\\n' "$dir"
-  fi
-  if [ "$clear_setgid" = "1" ]; then
-    chmod g-s "$dir" 2>/dev/null || true
-  fi
-  if ! chmod -R "$recursive_mode" "$dir" 2>/dev/null; then
-    printf 'mutation-failed\\tchmod-recursive\\t%s\\n' "$dir"
-  fi
-done
-`,
-    args: [configDir, owner, recursiveMode, dirMode, clearSetgid],
-  });
-
-  if (isLocking) {
-    restoreWritableRuntimeSubpaths(sandboxName, configDir);
-  }
-
-  const issues: string[] = [];
-  for (const path of [...mainPassResult.symlinkedRoots, ...workspacePassResult.symlinkedRoots]) {
-    issues.push(`state dir root is a symlink: ${path} (refusing to lock)`);
-  }
-  for (const failure of [...mainPassResult.mutationFailures, ...workspacePassResult.mutationFailures]) {
-    issues.push(`state dir mutation failed (${failure.op}): ${failure.path}`);
-  }
-  if (isLocking) {
-    const verifyIssues = verifyStateDirsLocked(sandboxName, configDir, owner, dirMode);
-    issues.push(...verifyIssues);
-  }
-  return issues;
-}
-
-// Post-lock verification: stat every existing high-risk state-dir root (and
-// every workspace-* root) and confirm the owner + dir mode match what the
-// lock pass should have established. The script-level chown/chmod fallbacks
-// suppress per-call errors so transient kernel/filesystem hiccups don't
-// abort the whole fan-out; the verification pass below is what catches a
-// silent mutation failure and surfaces it as a lock issue so `shields up`
-// does not report success while extensions/agents/etc. remain unreadable.
-function verifyStateDirsLocked(
-  sandboxName: string,
-  configDir: string,
-  expectedOwner: string,
-  expectedDirMode: string,
-): string[] {
-  let stdout = "";
-  try {
-    stdout = privilegedSandboxExecCapture(sandboxName, [
-      "sh",
-      "-c",
-      `
-set -u
-config_dir="$1"
-expected_owner="$2"
-expected_mode="$3"
-shift 3
-check() {
-  path="$1"
-  [ -L "$path" ] && { printf 'verify-symlink\\t%s\\n' "$path"; return; }
-  [ -d "$path" ] || return
-  perms="$(stat -c '%a %U:%G' "$path" 2>/dev/null)" || {
-    printf 'verify-stat-failed\\t%s\\n' "$path"
-    return
-  }
-  mode="\${perms%% *}"
-  owner="\${perms#* }"
-  [ "$mode" = "$expected_mode" ] || printf 'verify-mode\\t%s\\t%s\\t%s\\n' "$path" "$mode" "$expected_mode"
-  [ "$owner" = "$expected_owner" ] || printf 'verify-owner\\t%s\\t%s\\t%s\\n' "$path" "$owner" "$expected_owner"
-}
-for dir in "$@"; do
-  check "$config_dir/$dir"
-done
-for dir in "$config_dir"/workspace-*; do
-  case "$dir" in *"*"*) continue ;; esac
-  check "$dir"
-done
-`,
-      "sh",
-      configDir,
-      expectedOwner,
-      expectedDirMode,
-      ...HIGH_RISK_STATE_DIRS,
-    ]);
-  } catch {
-    return [];
-  }
-  const issues: string[] = [];
-  for (const line of stdout.split("\n")) {
-    const parts = line.split("\t");
-    if (parts[0] === "verify-symlink" && parts[1]) {
-      issues.push(`state dir became a symlink mid-lock: ${parts[1]}`);
-    } else if (parts[0] === "verify-stat-failed" && parts[1]) {
-      issues.push(`state dir stat failed after lock: ${parts[1]}`);
-    } else if (parts[0] === "verify-mode" && parts[1]) {
-      issues.push(`state dir mode=${parts[2]} (expected ${parts[3]}): ${parts[1]}`);
-    } else if (parts[0] === "verify-owner" && parts[1]) {
-      issues.push(`state dir owner=${parts[2]} (expected ${parts[3]}): ${parts[1]}`);
-    }
-  }
-  return issues;
-}
-
-// Probe every high-risk state-dir root and every workspace-* dir for
-// symlinks before any mutation runs. Returns the absolute paths of all
-// symlinked roots; an empty list means it is safe to proceed with the
-// lock fan-out. Best-effort: a failed shell exec returns an empty list,
-// matching the rest of the lock pipeline's "verification below catches
-// the primary config lock" stance.
-function preflightSymlinkedRoots(sandboxName: string, configDir: string): string[] {
-  let stdout = "";
-  try {
-    stdout = privilegedSandboxExecCapture(sandboxName, [
-      "sh",
-      "-c",
-      `
-set -u
-config_dir="$1"
-shift
-for dir in "$@"; do
-  path="$config_dir/$dir"
-  [ -L "$path" ] && printf '%s\\n' "$path"
-done
-for dir in "$config_dir"/workspace-*; do
-  [ -L "$dir" ] && printf '%s\\n' "$dir"
-done
-`,
-      "sh",
-      configDir,
-      ...HIGH_RISK_STATE_DIRS,
-    ]);
-  } catch {
-    return [];
-  }
-  return stdout
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
-}
-
-interface StateDirLockScript {
-  script: string;
-  args: string[];
-}
-
-interface StateDirLockScriptResult {
-  symlinkedRoots: string[];
-  mutationFailures: Array<{ op: string; path: string }>;
-}
-
-// Run a privileged shell script that mutates state-dir permissions and
-// reports any symlinked roots it refused to touch via tab-prefixed stdout
-// lines ("symlinked-root\t<path>"), plus per-op mutation failures
-// ("mutation-failed\t<op>\t<path>"). Returns the parsed result; on any
-// other failure, returns an empty result so the caller can continue with
-// the rest of the lock fan-out.
-function runStateDirLockScript(
-  sandboxName: string,
-  script: StateDirLockScript,
-): StateDirLockScriptResult {
-  let stdout = "";
-  try {
-    stdout = privilegedSandboxExecCapture(sandboxName, [
-      "sh",
-      "-c",
-      script.script,
-      "sh",
-      ...script.args,
-    ]);
-  } catch {
-    return { symlinkedRoots: [], mutationFailures: [] };
-  }
-  const result: StateDirLockScriptResult = {
-    symlinkedRoots: [],
-    mutationFailures: [],
+function stateDirLockExec(sandboxName: string) {
+  return {
+    exec: (cmd: string[]) => privilegedSandboxExec(sandboxName, cmd),
+    capture: (cmd: string[]) => privilegedSandboxExecCapture(sandboxName, cmd),
   };
-  for (const line of stdout.split("\n")) {
-    const parts = line.split("\t");
-    if (parts[0] === "symlinked-root" && parts[1]) {
-      result.symlinkedRoots.push(parts[1]);
-    } else if (parts[0] === "mutation-failed" && parts[1] && parts[2]) {
-      result.mutationFailures.push({ op: parts[1], path: parts[2] });
-    }
-  }
-  return result;
-}
-
-function restoreWritableRuntimeSubpaths(
-  sandboxName: string,
-  configDir: string,
-): void {
-  try {
-    privilegedSandboxExec(sandboxName, [
-      "sh",
-      "-c",
-      `
-set -u
-config_dir="$1"
-shift
-for pattern in "$@"; do
-  case "$pattern" in
-    */*) prefix="\${pattern%/*}"; leaf="\${pattern##*/}" ;;
-    *) prefix=""; leaf="$pattern" ;;
-  esac
-  if [ -n "$prefix" ]; then
-    set -- "$config_dir"/$prefix
-  else
-    set -- "$config_dir"
-  fi
-  for parent in "$@"; do
-    case "$parent" in
-      *"*"*) continue ;;
-    esac
-    [ -L "$parent" ] && continue
-    [ -d "$parent" ] || continue
-    target="$parent/$leaf"
-    [ -L "$target" ] && continue
-    mkdir -p "$target" 2>/dev/null || continue
-    chown -R sandbox:sandbox "$target" 2>/dev/null || true
-    chmod 2770 "$target" 2>/dev/null || true
-    chmod -R g+rwX,o-rwx "$target" 2>/dev/null || true
-  done
-done
-`,
-      "sh",
-      configDir,
-      ...WRITABLE_RUNTIME_SUBPATHS,
-    ]);
-  } catch {
-    // Best effort; sandbox can recreate sessions/ in shields-down if missing.
-  }
 }
 
 function legacyDataDirFor(configDir: string): string {
@@ -826,7 +451,7 @@ function unlockAgentConfig(
   // Use chown -R to restore the full tree (files within may have been
   // locked to root:root by a prior shields-up).
   applyStateDirLockMode(
-    sandboxName,
+    stateDirLockExec(sandboxName),
     target.configDir,
     "sandbox:sandbox",
     false,
@@ -979,12 +604,14 @@ function lockAgentConfig(
     }
   }
 
-  // Lock state directories. Owned by `root:sandbox` so the gateway (in
-  // sandbox group) can still read plugin/agent code while the sandbox user
-  // is denied write through `chmod -R go-w`. See HIGH_RISK_STATE_DIRS doc
-  // above. Top-level configDir stays root:root.
+  // Lock state directories. High-risk dirs use `root:sandbox` ownership so
+  // the gateway (in the sandbox group) can still read plugin/agent code while
+  // the sandbox user is denied write through `chmod -R go-w`. Secret-bearing
+  // dirs (CONFIDENTIALITY_STATE_DIRS in ./state-dir-lock) go to `root:root`
+  // 700/go-rwX so neither the sandbox user nor the gateway can read them
+  // while shields are up. Top-level configDir stays root:root.
   const stateDirLockIssues = applyStateDirLockMode(
-    sandboxName,
+    stateDirLockExec(sandboxName),
     target.configDir,
     "root:sandbox",
     true,
