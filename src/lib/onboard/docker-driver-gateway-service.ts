@@ -3,8 +3,6 @@
 
 import { spawnSync, type SpawnSyncOptions } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
 
 import { sleepSeconds } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
@@ -17,7 +15,6 @@ export interface OpenShellGatewayUserServiceOptions {
   commandExists?: (command: string) => boolean;
   env?: NodeJS.ProcessEnv;
   existsSync?: (filePath: string) => boolean;
-  homeDir?: string;
   platform?: NodeJS.Platform;
   spawnSyncImpl?: SpawnSyncLike;
 }
@@ -55,10 +52,8 @@ export interface PackageManagedDockerDriverGatewayOptions {
   ) => Promise<void>;
 }
 
-export function getOpenShellGatewayUserServicePaths(homeDir = os.homedir()): string[] {
+export function getOpenShellGatewayUserServicePaths(): string[] {
   return [
-    path.join(homeDir, ".config", "systemd", "user", "openshell-gateway.service"),
-    "/etc/systemd/user/openshell-gateway.service",
     "/usr/local/lib/systemd/user/openshell-gateway.service",
     "/usr/lib/systemd/user/openshell-gateway.service",
     "/lib/systemd/user/openshell-gateway.service",
@@ -66,11 +61,11 @@ export function getOpenShellGatewayUserServicePaths(homeDir = os.homedir()): str
 }
 
 export function hasOpenShellGatewayUserService(
-  opts: Pick<OpenShellGatewayUserServiceOptions, "existsSync" | "homeDir" | "platform"> = {},
+  opts: Pick<OpenShellGatewayUserServiceOptions, "existsSync" | "platform"> = {},
 ): boolean {
   if ((opts.platform ?? process.platform) !== "linux") return false;
   const existsSync = opts.existsSync ?? fs.existsSync;
-  return getOpenShellGatewayUserServicePaths(opts.homeDir).some((candidate) => existsSync(candidate));
+  return getOpenShellGatewayUserServicePaths().some((candidate) => existsSync(candidate));
 }
 
 function defaultCommandExists(command: string, env: NodeJS.ProcessEnv): boolean {
@@ -121,7 +116,7 @@ export function startOpenShellGatewayUserService(
     return { attempted: false, fallbackAllowed: true, started: false, reason: "not a Linux host" };
   }
   const existsSync = opts.existsSync ?? fs.existsSync;
-  if (!hasOpenShellGatewayUserService({ existsSync, homeDir: opts.homeDir, platform })) {
+  if (!hasOpenShellGatewayUserService({ existsSync, platform })) {
     return {
       attempted: false,
       fallbackAllowed: true,

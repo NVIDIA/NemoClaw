@@ -21,13 +21,26 @@ function spawnResult(status = 0, stderr = ""): SpawnSyncLikeResult {
 
 describe("docker-driver-gateway-service", () => {
   it("detects the upstream OpenShell user service only on Linux", () => {
-    const homeDir = "/home/nvidia";
     const existsSync = (candidate: string) =>
       candidate === "/usr/lib/systemd/user/openshell-gateway.service";
 
-    expect(hasOpenShellGatewayUserService({ existsSync, homeDir, platform: "linux" })).toBe(true);
-    expect(hasOpenShellGatewayUserService({ existsSync, homeDir, platform: "darwin" })).toBe(false);
-    expect(getOpenShellGatewayUserServicePaths(homeDir)).toContain(
+    expect(hasOpenShellGatewayUserService({ existsSync, platform: "linux" })).toBe(true);
+    expect(hasOpenShellGatewayUserService({ existsSync, platform: "darwin" })).toBe(false);
+    expect(getOpenShellGatewayUserServicePaths()).toEqual([
+      "/usr/local/lib/systemd/user/openshell-gateway.service",
+      "/usr/lib/systemd/user/openshell-gateway.service",
+      "/lib/systemd/user/openshell-gateway.service",
+    ]);
+  });
+
+  it("ignores stale per-user service units so standalone fallback remains available", () => {
+    const existsSync = vi.fn(
+      (candidate: string) =>
+        candidate === "/home/nvidia/.config/systemd/user/openshell-gateway.service",
+    );
+
+    expect(hasOpenShellGatewayUserService({ existsSync, platform: "linux" })).toBe(false);
+    expect(existsSync.mock.calls.flat()).not.toContain(
       "/home/nvidia/.config/systemd/user/openshell-gateway.service",
     );
   });
