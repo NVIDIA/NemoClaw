@@ -55,6 +55,7 @@ const {
 }: typeof import("./seal") = require("./seal");
 const {
   applyStateDirLockMode,
+  preflightStateDirLock,
 }: typeof import("./state-dir-lock") = require("./state-dir-lock");
 
 const STATE_DIR = resolveNemoclawStateDir();
@@ -563,6 +564,18 @@ function lockAgentConfig(
 ): { chattrApplied: boolean; fileHashes: { [path: string]: string } } {
   const errors: string[] = [];
   const filesToLock = [target.configPath, ...(target.sensitiveFiles || [])];
+
+  // Symlink preflight runs before any file or directory mutation: if a
+  // pre-lockdown agent swapped e.g. `extensions/` for a symlink to /etc,
+  // we abort before the privileged chmod/chown touches anything, so the
+  // tree is never half-mutated against an attacker-controlled host path.
+  const preflightIssues = preflightStateDirLock(
+    stateDirLockExec(sandboxName),
+    target.configDir,
+  );
+  if (preflightIssues.length > 0) {
+    throw new Error(`Config not locked: ${preflightIssues.join(", ")}`);
+  }
 
   for (const f of filesToLock) {
     try {

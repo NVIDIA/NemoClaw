@@ -98,6 +98,10 @@ interface StateDirLockScript {
 interface StateDirLockScriptResult {
   symlinkedRoots: string[];
   mutationFailures: Array<{ op: string; path: string }>;
+  // Non-null when the script exec itself failed (kubectl exec hiccup,
+  // privileged-exec timeout, etc.). Fail-closed: the caller surfaces a
+  // lock issue rather than treating the empty output as a clean run.
+  execError: string | null;
 }
 
 interface PreflightResult {
@@ -109,37 +113,47 @@ interface PreflightResult {
   error: string | null;
 }
 
+// Run the symlink preflight against every state-dir root and the
+// `workspace-*` glob, returning issues the caller must surface before
+// touching any config files. Empty list means it is safe to proceed with
+// `applyStateDirLockMode`. Exposed separately so callers can hoist this
+// before chmod/chown on configPath + sensitiveFiles, keeping the "no
+// mutations until preflight clears" invariant.
+export function preflightStateDirLock(
+  privileged: PrivilegedExec,
+  configDir: string,
+): string[] {
+  const allStateDirs = [...HIGH_RISK_STATE_DIRS, ...CONFIDENTIALITY_STATE_DIRS];
+  const preflight = preflightSymlinkedRoots(privileged, configDir, allStateDirs);
+  if (preflight.error !== null) {
+    return [`Symlink preflight failed; refusing to lock: ${preflight.error}`];
+  }
+  return preflight.symlinkedRoots.map(
+    (path) => `state dir root is a symlink: ${path} (refusing to lock)`,
+  );
+}
+
 // Apply lock or unlock mode to every existing high-risk and confidentiality
 // state directory under `configDir`. Returns a list of issues; an empty
 // list means the fan-out completed cleanly.
+//
+// Callers that lock (`isLocking === true`) must invoke
+// `preflightStateDirLock` first and abort on a non-empty result. This
+// function intentionally re-runs symlink checks inline so a mid-lock race
+// (state-dir root becoming a symlink after the hoisted preflight) is still
+// caught, but the hoisted preflight is the one that keeps file mutations
+// from leaking out before validation.
 export function applyStateDirLockMode(
   privileged: PrivilegedExec,
   configDir: string,
   highRiskOwner: string,
   isLocking: boolean,
 ): string[] {
-  const allStateDirs = [...HIGH_RISK_STATE_DIRS, ...CONFIDENTIALITY_STATE_DIRS];
-
-  // Preflight: before any chown/chmod runs, scan every state-dir root and
-  // every workspace-* dir for symlinked roots. A pre-lockdown agent that
-  // swapped e.g. `extensions/` for a symlink to /etc could otherwise
-  // redirect the privileged `chown -R`/`chmod -R` at an attacker-controlled
-  // host path.
-  const preflight = preflightSymlinkedRoots(privileged, configDir, allStateDirs);
-  if (isLocking && preflight.error !== null) {
-    return [`Symlink preflight failed; refusing to lock: ${preflight.error}`];
-  }
-  if (isLocking && preflight.symlinkedRoots.length > 0) {
-    return preflight.symlinkedRoots.map(
-      (path) => `state dir root is a symlink: ${path} (refusing to lock)`,
-    );
-  }
-
   // Locking (shields-up) strips group + world write for HIGH_RISK dirs.
   // Unlocking (shields-down) restores the same group-readable/writable +
   // o-rwx mutable-default contract as startup, plus setgid so the gateway
   // UID — now in the sandbox group via Dockerfile.base — can write to
-  // OpenClaw's mutable config tree (#2681). The unlock variant uses
+  // OpenClaw's mutable config tree. The unlock variant uses
   // `g+rwX,o-rwx` because a prior lock can strip group access from
   // descendants.
   const highRiskRecursiveMode = isLocking ? "go-w" : "g+rwX,o-rwx";
@@ -184,8 +198,15 @@ export function applyStateDirLockMode(
   });
 
   const issues: string[] = [];
-  const allResults = [mainPassResult, workspacePassResult, confidentialityPassResult];
-  for (const result of allResults) {
+  const allResults = [
+    { label: "high-risk", result: mainPassResult },
+    { label: "workspace-*", result: workspacePassResult },
+    { label: "confidentiality", result: confidentialityPassResult },
+  ];
+  for (const { label, result } of allResults) {
+    if (result.execError !== null) {
+      issues.push(`state dir lock ${label} exec failed: ${result.execError}`);
+    }
     for (const path of result.symlinkedRoots) {
       issues.push(`state dir root is a symlink: ${path} (refusing to lock)`);
     }
@@ -211,10 +232,7 @@ export function applyStateDirLockMode(
   // `agents/*/sessions` for the sandbox user would widen the blast radius
   // of whatever broke.
   if (isLocking && issues.length === 0) {
-    const restoreError = restoreWritableRuntimeSubpaths(privileged, configDir);
-    if (restoreError !== null) {
-      issues.push(`runtime-writable subpath restore failed: ${restoreError}`);
-    }
+    issues.push(...restoreWritableRuntimeSubpaths(privileged, configDir));
   }
   return issues;
 }
@@ -247,6 +265,7 @@ for dir in "$@"; do
     printf 'mutation-failed\\tchmod-recursive\\t%s\\n' "$path"
   fi
 done
+exit 0
 `;
 
 const STATE_DIR_LOCK_SCRIPT_WORKSPACE_GLOB = `
@@ -275,6 +294,7 @@ for dir in "$config_dir"/workspace-*; do
     printf 'mutation-failed\\tchmod-recursive\\t%s\\n' "$dir"
   fi
 done
+exit 0
 `;
 
 interface VerifyExpectations {
@@ -347,6 +367,7 @@ if [ "$include_workspace" = "1" ]; then
     check "$dir"
   done
 fi
+exit 0
 `,
       "sh",
       configDir,
@@ -391,11 +412,12 @@ config_dir="$1"
 shift
 for dir in "$@"; do
   path="$config_dir/$dir"
-  [ -L "$path" ] && printf '%s\\n' "$path"
+  if [ -L "$path" ]; then printf '%s\\n' "$path"; fi
 done
 for dir in "$config_dir"/workspace-*; do
-  [ -L "$dir" ] && printf '%s\\n' "$dir"
+  if [ -L "$dir" ]; then printf '%s\\n' "$dir"; fi
 done
+exit 0
 `,
       "sh",
       configDir,
@@ -421,12 +443,17 @@ function runStateDirLockScript(
   let stdout = "";
   try {
     stdout = privileged.capture(["sh", "-c", script.script, "sh", ...script.args]);
-  } catch {
-    return { symlinkedRoots: [], mutationFailures: [] };
+  } catch (err) {
+    return {
+      symlinkedRoots: [],
+      mutationFailures: [],
+      execError: err instanceof Error ? err.message : String(err),
+    };
   }
   const result: StateDirLockScriptResult = {
     symlinkedRoots: [],
     mutationFailures: [],
+    execError: null,
   };
   for (const line of stdout.split("\n")) {
     const parts = line.split("\t");
@@ -439,15 +466,18 @@ function runStateDirLockScript(
   return result;
 }
 
-// Restore runtime-writable subpaths after a successful lock fan-out. Returns
-// null on success, an error message on failure so the caller can surface
-// the failure rather than silently swallowing it.
+// Restore runtime-writable subpaths after a successful lock fan-out.
+// Returns issues for any mkdir/chown/chmod failure observed inside the
+// script (parsed from `restore-failed\t<op>\t<path>` markers) plus a
+// stat-based verification pass that confirms every restored target ends
+// up as `sandbox:sandbox 2770`. Empty list means the carve-out is good.
 function restoreWritableRuntimeSubpaths(
   privileged: PrivilegedExec,
   configDir: string,
-): string | null {
+): string[] {
+  let stdout = "";
   try {
-    privileged.exec([
+    stdout = privileged.capture([
       "sh",
       "-c",
       `
@@ -468,23 +498,55 @@ for pattern in "$@"; do
     case "$parent" in
       *"*"*) continue ;;
     esac
-    [ -L "$parent" ] && continue
-    [ -d "$parent" ] || continue
+    if [ -L "$parent" ]; then continue; fi
+    if [ ! -d "$parent" ]; then continue; fi
     target="$parent/$leaf"
-    [ -L "$target" ] && continue
-    mkdir -p "$target" 2>/dev/null || continue
-    chown -R sandbox:sandbox "$target" 2>/dev/null || true
-    chmod 2770 "$target" 2>/dev/null || true
-    chmod -R g+rwX,o-rwx "$target" 2>/dev/null || true
+    if [ -L "$target" ]; then continue; fi
+    if ! mkdir -p "$target" 2>/dev/null; then
+      printf 'restore-failed\\tmkdir\\t%s\\n' "$target"
+      continue
+    fi
+    if ! chown -R sandbox:sandbox "$target" 2>/dev/null; then
+      printf 'restore-failed\\tchown\\t%s\\n' "$target"
+    fi
+    if ! chmod 2770 "$target" 2>/dev/null; then
+      printf 'restore-failed\\tchmod-dir\\t%s\\n' "$target"
+    fi
+    if ! chmod -R g+rwX,o-rwx "$target" 2>/dev/null; then
+      printf 'restore-failed\\tchmod-recursive\\t%s\\n' "$target"
+    fi
+    perms="$(stat -c '%a %U:%G' "$target" 2>/dev/null)" || {
+      printf 'restore-verify-stat-failed\\t%s\\n' "$target"
+      continue
+    }
+    mode="\${perms%% *}"
+    owner="\${perms#* }"
+    [ "$mode" = "2770" ] || printf 'restore-verify-mode\\t%s\\t%s\\n' "$target" "$mode"
+    [ "$owner" = "sandbox:sandbox" ] || printf 'restore-verify-owner\\t%s\\t%s\\n' "$target" "$owner"
   done
 done
+exit 0
 `,
       "sh",
       configDir,
       ...WRITABLE_RUNTIME_SUBPATHS,
     ]);
   } catch (err) {
-    return err instanceof Error ? err.message : String(err);
+    const msg = err instanceof Error ? err.message : String(err);
+    return [`runtime-writable subpath restore exec failed: ${msg}`];
   }
-  return null;
+  const issues: string[] = [];
+  for (const line of stdout.split("\n")) {
+    const parts = line.split("\t");
+    if (parts[0] === "restore-failed" && parts[1] && parts[2]) {
+      issues.push(`runtime-writable subpath restore failed (${parts[1]}): ${parts[2]}`);
+    } else if (parts[0] === "restore-verify-stat-failed" && parts[1]) {
+      issues.push(`runtime-writable subpath stat failed after restore: ${parts[1]}`);
+    } else if (parts[0] === "restore-verify-mode" && parts[1]) {
+      issues.push(`runtime-writable subpath mode=${parts[2]} (expected 2770): ${parts[1]}`);
+    } else if (parts[0] === "restore-verify-owner" && parts[1]) {
+      issues.push(`runtime-writable subpath owner=${parts[2]} (expected sandbox:sandbox): ${parts[1]}`);
+    }
+  }
+  return issues;
 }

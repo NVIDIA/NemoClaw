@@ -206,8 +206,8 @@ describe("shields-up state-dir lock preserves sandbox-group access + runtime ses
     );
     expect(preflightShell).toBeDefined();
     const script = preflightShell?.[2] ?? "";
-    expect(script).toContain('[ -L "$path" ] && printf');
-    expect(script).toContain('[ -L "$dir" ] && printf');
+    expect(script).toContain('if [ -L "$path" ]; then printf');
+    expect(script).toContain('if [ -L "$dir" ]; then printf');
   });
 
   // A symlinked state-dir root must abort shields-up; otherwise the lock
