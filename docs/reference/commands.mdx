@@ -496,6 +496,40 @@ $ nemoclaw my-assistant exec [--workdir <dir>] [--tty|--no-tty] [--timeout <s>] 
 | `--tty`, `--no-tty` | Allocate or disable a pseudo-terminal; defaults to auto-detection |
 | `--timeout <s>` | Timeout in seconds. Use `0` for no timeout |
 
+### `nemoclaw <name> download`
+
+Download a file or directory out of a running sandbox to the host.
+The command forwards to `openshell sandbox download <name> <sandbox-path> <host-dest>` after a lightweight readiness check, so the file-system semantics — single-file vs. directory copy, target naming, overwrite behaviour — follow OpenShell's transport.
+The host destination directory is created if it does not yet exist; if you omit it, the current working directory is used.
+
+```console
+$ nemoclaw my-assistant download <sandbox-path> [host-dest]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `<sandbox-path>` | Absolute or sandbox-relative path inside the sandbox (a file or a directory). |
+| `[host-dest]` | Host destination directory; defaults to the current working directory. Created if missing. |
+
+Use this command when you need the raw on-disk artefacts from inside a sandbox rather than a NemoClaw- or OpenClaw-curated view of them.
+Typical scenarios:
+
+- Pulling raw OpenClaw session files for offline inspection or replay (`/sandbox/.openclaw/sessions/<agent>/` — see [Session Storage Layout](/reference/session-storage) for the on-disk shape):
+
+  ```console
+  $ nemoclaw my-assistant download /sandbox/.openclaw/sessions/main ./sessions-out/
+  ```
+
+- Pulling an existing trajectory export bundle that you previously created without `--save-host`:
+
+  ```console
+  $ nemoclaw my-assistant download /sandbox/.openclaw/trajectory-exports/<bundle> ./trajectories/
+  ```
+
+- Pulling arbitrary workspace artefacts (logs, configs, generated files) from anywhere inside the sandbox.
+
+Higher-level subcommands such as `sessions export-trajectory --save-host` are convenience wrappers built on the same transport — reach for `download` when you want the raw files without going through OpenClaw's redaction pipeline or bundle layout.
+
 ### `nemoclaw <name> logs`
 
 View sandbox logs.
@@ -855,7 +889,7 @@ nemoclaw my-assistant sessions export-trajectory main agent:main:main --save-hos
 ```
 
 `sessions list` and `sessions cleanup` shell out to `openclaw sessions ...` inside the sandbox via `openshell sandbox exec`, so OpenClaw owns the output format and exit code.
-`sessions reset` goes through `openshell sandbox exec` to `openclaw gateway call sessions.reset`, so the OpenClaw gateway performs the archive-then-recreate; the NemoClaw host never edits `sessions.json` directly. Sessions stay lock-safe because the gateway is the writer.
+`sessions reset` is a thin host-side wrapper around the upstream `openclaw gateway call sessions.reset` RPC: it goes through `openshell sandbox exec` so the OpenClaw gateway still performs the archive-then-recreate, owns the write lock, and emits the lifecycle event. The NemoClaw host never edits `sessions.json` directly, and you can always invoke the upstream RPC by hand from inside the sandbox if you want to skip this wrapper.
 `sessions export-trajectory` runs `openclaw sessions export-trajectory --json` inside the sandbox so OpenClaw owns the redaction pipeline and the on-disk bundle shape; pass `--save-host <dir>` to additionally copy the resolved bundle directory to the host via `openshell sandbox download`.
 
 ### `nemoclaw <name> sessions list`
@@ -873,10 +907,19 @@ OpenClaw owns the policy and reporting; NemoClaw only routes the call.
 ### `nemoclaw <name> sessions reset`
 
 Reset an OpenClaw conversation session by invoking the gateway `sessions.reset` RPC.
-Goes through `openshell sandbox exec` to `openclaw gateway call sessions.reset`, so the gateway owns the archival of the prior transcript (`<sessionId>.reset.<timestamp>.jsonl`), the lock, and the lifecycle event emission. The NemoClaw host never edits `sessions.json`.
+
+The official, upstream-supported way to reset a session is the OpenClaw gateway CLI from inside the sandbox:
 
 ```bash
-nemoclaw <name> sessions reset <agent> <session> [--reason new|reset]
+openclaw gateway call sessions.reset --params '{"key":"<sessionKey>","reason":"reset"}' --json
+```
+
+The upstream RPC params are a closed object: `key` (the canonical `agent:<agentId>:<rest>` session key) and an optional `reason` (`"reset"` or `"new"`); no separate `agent` field is accepted. The gateway parses the target agent out of the key, owns the archival of the prior transcript (`<sessionId>.reset.<timestamp>.jsonl`), holds the write lock on `sessions.json`, and emits the lifecycle event. Any session reset performed outside that RPC — for example, editing `sessions.json` from the host or removing the transcript file directly — risks racing the in-sandbox writer and corrupting the store.
+
+This NemoClaw command is a thin host-side wrapper around that RPC. It accepts `<agent>` and `<sessionKey>` arguments and forwards `{"key": "<sessionKey>", "reason": ...}` verbatim to the gateway via `openshell sandbox exec -- openclaw gateway call sessions.reset --params ... --json`. The `<agent>` argument is used purely for client-side validation: the wrapper rejects the call before it reaches the gateway when `<agent>` disagrees with the agent prefix parsed from `<sessionKey>`, so a typo in the agent id cannot silently route to a different agent's namespace. The NemoClaw host never edits `sessions.json` directly; the wrapper just spares you from typing the JSON params and `openshell sandbox exec` plumbing by hand.
+
+```bash
+nemoclaw <name> sessions reset <agent> <sessionKey> [--reason new|reset]
 ```
 
 | Flag | Description |
@@ -889,7 +932,7 @@ Export a redacted trajectory bundle for an OpenClaw session.
 Runs `openclaw sessions export-trajectory --json` inside the sandbox via `openshell sandbox exec`, so OpenClaw owns the redaction pipeline and the bundle layout (`.openclaw/trajectory-exports/<output>/`).
 
 ```bash
-nemoclaw <name> sessions export-trajectory <agent> <session> [--output <name>] [--workspace <dir>] [--save-host <dir>] [--json]
+nemoclaw <name> sessions export-trajectory <agent> <sessionKey> [--output <name>] [--workspace <dir>] [--save-host <dir>] [--json]
 ```
 
 | Flag | Description |

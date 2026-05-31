@@ -25,3 +25,10 @@ export function validateSessionKey(sessionKey: string): string {
   }
   return trimmed;
 }
+
+const AGENT_SESSION_KEY_RE = /^agent:([A-Za-z0-9][A-Za-z0-9._-]{0,63}):/;
+
+export function parseAgentIdFromSessionKey(sessionKey: string): string | null {
+  const match = AGENT_SESSION_KEY_RE.exec(sessionKey);
+  return match ? match[1] : null;
+}

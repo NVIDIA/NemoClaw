@@ -32,7 +32,7 @@ export const SANDBOX_SESSIONS_DISPLAY_LAYOUT: Record<string, readonly PublicDisp
     {
       group: "Sandbox Management",
       order: 21,
-      flags: "<agent> <session> [--reason new|reset]",
+      flags: "<agent> <sessionKey> [--reason new|reset]",
       description: "Reset a session via the OpenClaw gateway",
     },
   ],
@@ -40,7 +40,7 @@ export const SANDBOX_SESSIONS_DISPLAY_LAYOUT: Record<string, readonly PublicDisp
     {
       group: "Sandbox Management",
       order: 22,
-      flags: "<agent> <session> [--output <name>] [--workspace <dir>] [--save-host <dir>] [--json]",
+      flags: "<agent> <sessionKey> [--output <name>] [--workspace <dir>] [--save-host <dir>] [--json]",
       description: "Export a redacted OpenClaw session trajectory bundle",
     },
   ],

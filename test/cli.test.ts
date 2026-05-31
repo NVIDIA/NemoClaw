@@ -968,6 +968,96 @@ describe("CLI dispatch", () => {
     expect(calls).toMatch(/"reason":"new"/);
   });
 
+  it("sandbox sessions reset forwards a non-main agent's session key to the gateway", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-reset-nonmain-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const openshellLog = path.join(home, "openshell-calls.log");
+    const okPayload = JSON.stringify({
+      result: { ok: true, key: "agent:hermes:main", entry: { sessionId: "hermes-id" } },
+    });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        `  *"openclaw gateway call sessions.reset"*) printf '%s\\n' '${okPayload}'; exit 0 ;;`,
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv(
+      "sandbox sessions reset alpha hermes agent:hermes:main 2>&1",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "1",
+        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+      },
+    );
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(
+      "Reset session 'agent:hermes:main' on agent 'hermes' via the OpenClaw gateway",
+    );
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    // Upstream `sessions.reset` schema is closed (key + reason only); the
+    // gateway parses the agent out of the key, so the wrapper must NOT add a
+    // separate `agent` param or the gateway will reject with INVALID_PARAMS.
+    expect(calls).toMatch(
+      /sandbox exec --name alpha -- openclaw gateway call sessions\.reset --params \{"key":"agent:hermes:main","reason":"reset"\} --json/,
+    );
+    expect(calls).not.toMatch(/"agent":/);
+  });
+
+  it("sandbox sessions reset refuses when <agent> disagrees with the session key's agent prefix", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-reset-mismatch-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const openshellLog = path.join(home, "openshell-calls.log");
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  *"openclaw gateway call sessions.reset"*) echo "should not be invoked" >&2; exit 99 ;;',
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv(
+      "sandbox sessions reset alpha main agent:hermes:main 2>&1",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "1",
+        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+      },
+    );
+
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(
+      "Refusing to invoke sessions.reset: session key 'agent:hermes:main' is scoped to agent 'hermes', not 'main'.",
+    );
+    // Wrapper short-circuits before any openshell call, so the log file is
+    // never created.
+    expect(fs.existsSync(openshellLog)).toBe(false);
+  });
+
   it("sandbox sessions reset surfaces gateway-reported errors", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sessions-reset-err-"));
     const localBin = path.join(home, "bin");
@@ -1007,6 +1097,87 @@ describe("CLI dispatch", () => {
     );
     expect(r.out).toContain("INVALID_REQUEST");
     expect(r.out).toContain("Unknown session key");
+  });
+
+  it("sandbox download forwards sandbox path + host destination to openshell sandbox download", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-download-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const openshellLog = path.join(home, "openshell-calls.log");
+    const hostDest = path.join(home, "downloads");
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  "sandbox download alpha "*) exit 0 ;;',
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv(
+      `sandbox download alpha /sandbox/workspace/notes.md ${JSON.stringify(hostDest)} 2>&1`,
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "1",
+        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+      },
+    );
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(
+      `Downloaded '/sandbox/workspace/notes.md' from sandbox 'alpha' to '${hostDest}'.`,
+    );
+    expect(fs.existsSync(hostDest)).toBe(true);
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    expect(calls).toMatch(
+      new RegExp(`sandbox download alpha /sandbox/workspace/notes\\.md ${hostDest.replace(/\//g, "\\/")}`),
+    );
+  });
+
+  it("sandbox download defaults the host destination to the current working directory", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-sandbox-download-cwd-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home);
+    const openshellLog = path.join(home, "openshell-calls.log");
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        `printf '%s\\n' "$*" >> ${JSON.stringify(openshellLog)}`,
+        'case "$*" in',
+        '  "sandbox get alpha") printf "Name: alpha\\nPhase: Ready\\n"; exit 0 ;;',
+        '  "sandbox list") echo "alpha Ready"; exit 0 ;;',
+        '  "gateway info -g nemoclaw") printf "Gateway: nemoclaw\\n"; exit 0 ;;',
+        '  "sandbox download alpha "*) exit 0 ;;',
+        "  *) exit 0 ;;",
+        "esac",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv(
+      "sandbox download alpha /sandbox/workspace/notes.md 2>&1",
+      {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+        NEMOCLAW_HEALTH_POLL_COUNT: "1",
+        NEMOCLAW_HEALTH_POLL_INTERVAL: "0",
+      },
+    );
+
+    expect(r.code).toBe(0);
+    const calls = fs.readFileSync(openshellLog, "utf8");
+    expect(calls).toMatch(/sandbox download alpha \/sandbox\/workspace\/notes\.md /);
   });
 
   it("list exits 0", () => {

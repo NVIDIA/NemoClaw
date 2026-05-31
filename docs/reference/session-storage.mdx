@@ -55,7 +55,7 @@ calls, and token usage live in the JSONL files above, not in the gateway log.
 
 ## Pulling Session Data Out of a Sandbox
 
-Three host commands cover the common needs without manual `kubectl cp`,
+Four host commands cover the common needs without manual `kubectl cp`,
 `docker cp`, or `cat` over SSH:
 
 - `nemoclaw <name> sessions list` lists stored sessions for the agent's
@@ -66,6 +66,14 @@ Three host commands cover the common needs without manual `kubectl cp`,
   `.openclaw/trajectory-exports/<name>/` in the sandbox workspace.
 - Add `--save-host <dir>` to also copy the resolved bundle to the host
   via `openshell sandbox download`.
+- `nemoclaw <name> download <sandbox-path> [host-dest]` pulls a raw file
+  or directory straight out of the sandbox (no redaction, no bundle
+  layout). Use this when you want the on-disk artefacts described above
+  as they exist in the sandbox — for example
+  `nemoclaw my-assistant download /sandbox/.openclaw/sessions/main ./sessions-out/`
+  to copy an agent's whole session directory, or a single
+  `<sessionId>.jsonl` / `.trajectory.jsonl` / archived `.reset.<ts>.`
+  file. See [`nemoclaw <name> download`](/reference/commands#nemoclaw-name-download) for argument and destination semantics.
 
 `<sessionKey>` is the canonical key as stored in `sessions.json`
 (`agent:<agentId>:<rest>`), not a session id or channel-specific shorthand.
@@ -79,17 +87,25 @@ is corrupted — the host commands to know about are:
 - `nemoclaw <name> sessions cleanup --enforce` runs OpenClaw's policy-based
   store maintenance (age, count, disk-budget cleanup). Use this for stale
   entries and orphan files, not for "reset this one session right now."
-- `nemoclaw <name> sessions reset <agent> <sessionKey>` invokes the OpenClaw
-  gateway `sessions.reset` RPC for that session. The gateway archives the
-  prior transcript as `<sessionId>.reset.<timestamp>.jsonl`, rebinds the
-  key to a fresh `sessionId`, and emits the lifecycle event so the TUI and
-  any other connected clients refresh.
+- `nemoclaw <name> sessions reset <agent> <sessionKey>` is a host-side
+  wrapper that invokes the OpenClaw gateway `sessions.reset` RPC for that
+  session. The gateway archives the prior transcript as
+  `<sessionId>.reset.<timestamp>.jsonl`, rebinds the key to a fresh
+  `sessionId`, and emits the lifecycle event so the TUI and any other
+  connected clients refresh.
 
-NemoClaw delegates the actual reset to OpenClaw; the host never edits
-`sessions.json` and is not subject to the gateway-writer race. Use
-`--reason new` to register a brand-new session under the same key without
-binding the prior transcript; `--reason reset` (default) preserves the
-archive trail.
+The upstream, supported CLI surface for resetting a session is
+`openclaw gateway call sessions.reset --params '{"key":"<sessionKey>","reason":"reset"}'`
+from inside the sandbox; the upstream RPC params are a closed object
+(`key`, optional `reason`) and the gateway parses the target agent out
+of the key. The NemoClaw command just spares you from typing the JSON
+params and `openshell sandbox exec` plumbing by hand, and uses its own
+`<agent>` argument purely for client-side consistency checking against
+the session-key prefix. NemoClaw delegates the actual reset to OpenClaw
+— the host never edits `sessions.json` and is not subject to the
+gateway-writer race. Use `--reason new` to register a brand-new session
+under the same key without binding the prior transcript; `--reason reset`
+(default) preserves the archive trail.
 
 ## Next Steps
 

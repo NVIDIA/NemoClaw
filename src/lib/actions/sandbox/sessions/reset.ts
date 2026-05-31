@@ -4,7 +4,7 @@
 import { CLI_NAME } from "../../../cli/branding";
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
 import { ensureLiveSandboxOrExit } from "../gateway-state";
-import { validateAgentId, validateSessionKey } from "./paths";
+import { parseAgentIdFromSessionKey, validateAgentId, validateSessionKey } from "./paths";
 
 export type SessionsResetReason = "reset" | "new";
 
@@ -34,8 +34,18 @@ export async function resetSandboxSession(
   sandboxName: string,
   opts: SessionsResetOptions,
 ): Promise<SessionsResetResult> {
-  validateAgentId(opts.agent);
+  const agent = validateAgentId(opts.agent);
   const sessionKey = validateSessionKey(opts.sessionKey);
+  const keyAgent = parseAgentIdFromSessionKey(sessionKey);
+  if (keyAgent !== null && keyAgent !== agent) {
+    console.error(
+      `  Refusing to invoke sessions.reset: session key '${sessionKey}' is scoped to agent '${keyAgent}', not '${agent}'.`,
+    );
+    console.error(
+      `  Either drop the '${agent}' argument or pass a session key under that agent (e.g. agent:${agent}:...).`,
+    );
+    process.exit(1);
+  }
   const reason: SessionsResetReason = opts.reason === "new" ? "new" : "reset";
   await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
 

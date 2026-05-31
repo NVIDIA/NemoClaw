@@ -260,10 +260,10 @@ reviews:
     - path: "src/lib/actions/sandbox/sessions/**"
       instructions: &e2e-sessions-cli |
         This file is part of the host-side OpenClaw sessions management
-        surface (`nemoclaw <name> sessions list|cleanup|rm|download`).
-        Changes affect session store reads, owned-shape file matching,
-        write-lock detection, and `sessions.json` rewrites inside a running
-        sandbox.
+        surface (`nemoclaw <name> sessions list|cleanup|reset|export-trajectory`).
+        Changes affect session store reads, gateway-delegated `sessions.reset`
+        wiring, redacted trajectory export bundles, and the path/agent/session
+        validators shared by those commands.
 
         **E2E test recommendation:**
         - `sessions-cli-e2e` — onboard, seed a session, then exercise

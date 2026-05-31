@@ -233,6 +233,14 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "flags": "[--json]"
     }
   ],
+  "sandbox:download": [
+    {
+      "group": "Sandbox Management",
+      "order": 4.6,
+      "description": "Download a file or directory from the sandbox to the host",
+      "flags": "<sandbox-path> [host-dest]"
+    }
+  ],
   "sandbox:exec": [
     {
       "group": "Sandbox Management",
