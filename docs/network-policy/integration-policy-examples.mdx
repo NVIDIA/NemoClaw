@@ -216,9 +216,9 @@ When validating it manually, avoid plain `curl -s` against `auth.atlassian.com`.
 Atlassian can return an empty redirect body even when the request succeeds.
 Use a body-visible API probe instead:
 
-```console
-$ node -e "require('https').get('https://api.atlassian.com', r => console.log(r.statusCode))"
-$ curl -sS --max-time 10 -w '\n%{http_code}\n' https://api.atlassian.com/oauth/token/accessible-resources
+```bash
+node -e "require('https').get('https://api.atlassian.com', r => console.log(r.statusCode))"
+curl -sS --max-time 10 -w '\n%{http_code}\n' https://api.atlassian.com/oauth/token/accessible-resources
 ```
 
 Before approval, the curl probe should report `000` or a local policy denial.
