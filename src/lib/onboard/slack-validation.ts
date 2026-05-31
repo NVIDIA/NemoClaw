@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+
 import { runCurlProbe, type CurlProbeResult } from "../adapters/http/probe";
 import type { ChannelDef } from "../sandbox/channels";
 import { getValidatedMessagingTokenByEnvKey } from "./messaging-token";
@@ -27,16 +31,39 @@ export type SlackCredentialValidationResult =
 const SLACK_AUTH_TEST_URL = "https://slack.com/api/auth.test";
 const SLACK_APPS_CONNECTIONS_OPEN_URL = "https://slack.com/api/apps.connections.open";
 
-const TRANSIENT_SLACK_ERRORS = new Set([
-  "fatal_error",
-  "internal_error",
-  "rate_limited",
-  "request_timeout",
-  "service_unavailable",
-  "timeout",
-]);
+const TRANSIENT_SLACK_ERRORS = new Set(["ratelimited", "request_timeout"]);
 
-function slackApiArgs(token: string, url: string): string[] {
+const SLACK_CURL_CONFIG_PREFIX = "nemoclaw-slack-probe";
+
+function escapeCurlConfigValue(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function slackCurlConfig(token: string): string {
+  const authorization = escapeCurlConfigValue(`Authorization: Bearer ${token}`);
+  return [
+    `header = "${authorization}"`,
+    'header = "Content-Type: application/x-www-form-urlencoded"',
+    "",
+  ].join("\n");
+}
+
+function writeSlackCurlConfig(token: string): { configPath: string; cleanup: () => void } {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `${SLACK_CURL_CONFIG_PREFIX}-`));
+  const configPath = path.join(dir, "curl.conf");
+  try {
+    fs.writeFileSync(configPath, slackCurlConfig(token), { mode: 0o600 });
+  } catch (error) {
+    fs.rmSync(dir, { recursive: true, force: true });
+    throw error;
+  }
+  return {
+    configPath,
+    cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
+  };
+}
+
+function slackApiArgs(configPath: string, url: string): string[] {
   return [
     "-sS",
     "--connect-timeout",
@@ -45,14 +72,21 @@ function slackApiArgs(token: string, url: string): string[] {
     "10",
     "-X",
     "POST",
-    "-H",
-    `Authorization: Bearer ${token}`,
-    "-H",
-    "Content-Type: application/x-www-form-urlencoded",
+    "--config",
+    configPath,
     "--data",
     "",
     url,
   ];
+}
+
+function runSlackApiProbe(token: string, url: string): CurlProbeResult {
+  const { configPath, cleanup } = writeSlackCurlConfig(token);
+  try {
+    return runCurlProbe(slackApiArgs(configPath, url));
+  } finally {
+    cleanup();
+  }
 }
 
 function redactToken(text: string, token: string): string {
@@ -97,6 +131,9 @@ function classifySlackProbeResult(
   result: CurlProbeResult,
 ): SlackTokenValidationResult {
   const label = slackLabel(tokenKind);
+  // Transport failures, unreadable bodies, and documented transient Slack errors
+  // are outside NemoClaw's credential source of truth, so callers fail closed
+  // without saving or enabling unvalidated Slack credentials.
   if (result.curlStatus !== 0 || result.httpStatus === 0) {
     return validationFailure(
       tokenKind,
@@ -146,7 +183,7 @@ export function validateSlackBotToken(token: string): SlackTokenValidationResult
   return classifySlackProbeResult(
     "bot",
     token,
-    runCurlProbe(slackApiArgs(token, SLACK_AUTH_TEST_URL)),
+    runSlackApiProbe(token, SLACK_AUTH_TEST_URL),
   );
 }
 
@@ -154,7 +191,7 @@ export function validateSlackAppToken(token: string): SlackTokenValidationResult
   return classifySlackProbeResult(
     "app",
     token,
-    runCurlProbe(slackApiArgs(token, SLACK_APPS_CONNECTIONS_OPEN_URL)),
+    runSlackApiProbe(token, SLACK_APPS_CONNECTIONS_OPEN_URL),
   );
 }
 

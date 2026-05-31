@@ -529,6 +529,66 @@ process.exit = (code) => {
       `rejected Slack credentials must not register providers; got ${JSON.stringify(payload.callOrder)}`,
     );
   });
+
+  it("aborts Slack channel add on indeterminate Slack API validation before persistence or registration", () => {
+    const script = `${buildPreamble()}
+const ctx = module.exports;
+global.__slackBotProbe = {
+  ok: false,
+  httpStatus: 0,
+  curlStatus: 28,
+  body: "",
+  stderr: "operation timed out",
+  message: "curl failed (exit 28): operation timed out",
+};
+const exitCodes = [];
+const originalExit = process.exit;
+process.exit = (code) => {
+  exitCodes.push(code ?? 0);
+  throw new Error("__EXIT__" + (code ?? 0));
+};
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "slack" });
+  } catch (err) {
+    if (!String(err && err.message).startsWith("__EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+      return;
+    }
+  } finally {
+    process.exit = originalExit;
+  }
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    exitCodes,
+    credentialSaveCalls: ctx.credentialSaveCalls,
+    providerCalls: ctx.providerCalls,
+    registryUpdates: ctx.registryUpdates,
+    appliedCalls: ctx.appliedCalls,
+    callOrder: ctx.callOrder,
+  }) + "\\n");
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.exitCodes, [1]);
+    assert.deepEqual(payload.credentialSaveCalls, []);
+    assert.deepEqual(payload.providerCalls, []);
+    assert.deepEqual(payload.registryUpdates, []);
+    assert.deepEqual(payload.appliedCalls, []);
+    assert.ok(
+      !payload.callOrder.some((entry: string) => entry.startsWith("saveCredential:")),
+      `indeterminate Slack credentials must not be persisted; got ${JSON.stringify(payload.callOrder)}`,
+    );
+    assert.ok(
+      !payload.callOrder.includes("upsertMessagingProviders"),
+      `indeterminate Slack credentials must not register providers; got ${JSON.stringify(payload.callOrder)}`,
+    );
+  });
 });
 
 // Regression: `channels add` was updating the registry but NOT

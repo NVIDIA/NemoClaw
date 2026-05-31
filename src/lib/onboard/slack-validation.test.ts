@@ -1,9 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import fs from "node:fs";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { ProbeResult } from "./types";
+import { KNOWN_CHANNELS } from "../sandbox/channels";
 
 vi.mock("../adapters/http/probe", () => ({
   runCurlProbe: vi.fn(),
@@ -11,6 +14,7 @@ vi.mock("../adapters/http/probe", () => ({
 
 import { runCurlProbe } from "../adapters/http/probe";
 import {
+  filterSlackSelectionByValidation,
   validateSlackAppToken,
   validateSlackBotToken,
   validateSlackCredentials,
@@ -30,17 +34,38 @@ function probe(body: string, overrides: Partial<ProbeResult> = {}): ProbeResult 
 
 beforeEach(() => {
   vi.mocked(runCurlProbe).mockReset();
+  delete process.env.SLACK_BOT_TOKEN;
+  delete process.env.SLACK_APP_TOKEN;
 });
+
+function curlArgs(): string[] {
+  return vi.mocked(runCurlProbe).mock.calls[0][0];
+}
+
+function curlConfigPath(args: string[]): string {
+  const index = args.indexOf("--config");
+  expect(index).toBeGreaterThanOrEqual(0);
+  return args[index + 1];
+}
 
 describe("Slack token validation", () => {
   it("validates bot tokens with auth.test", () => {
-    vi.mocked(runCurlProbe).mockReturnValue(probe('{"ok":true,"user_id":"U123"}'));
+    let configPath = "";
+    let configText = "";
+    vi.mocked(runCurlProbe).mockImplementation((args) => {
+      configPath = curlConfigPath(args);
+      configText = fs.readFileSync(configPath, "utf8");
+      expect(fs.statSync(configPath).mode & 0o777).toBe(0o600);
+      return probe('{"ok":true,"user_id":"U123"}');
+    });
 
     expect(validateSlackBotToken("xoxb-valid-bot")).toEqual({ ok: true });
-    expect(vi.mocked(runCurlProbe).mock.calls[0][0]).toContain("https://slack.com/api/auth.test");
-    expect(vi.mocked(runCurlProbe).mock.calls[0][0]).toContain(
-      "Authorization: Bearer xoxb-valid-bot",
-    );
+    const args = curlArgs();
+    expect(args).toContain("https://slack.com/api/auth.test");
+    expect(args.join("\n")).not.toContain("xoxb-valid-bot");
+    expect(args.join("\n")).not.toContain("Authorization: Bearer");
+    expect(configText).toContain("Authorization: Bearer xoxb-valid-bot");
+    expect(fs.existsSync(configPath)).toBe(false);
   });
 
   it.each(["invalid_auth", "token_revoked", "not_authed"])(
@@ -56,12 +81,13 @@ describe("Slack token validation", () => {
   );
 
   it("validates app tokens with apps.connections.open", () => {
-    vi.mocked(runCurlProbe).mockReturnValue(probe('{"ok":true,"url":"wss://wss-primary.slack.com/link"}'));
+    vi.mocked(runCurlProbe).mockReturnValue(
+      probe('{"ok":true,"url":"wss://wss-primary.slack.com/link"}'),
+    );
 
     expect(validateSlackAppToken("xapp-valid-app")).toEqual({ ok: true });
-    expect(vi.mocked(runCurlProbe).mock.calls[0][0]).toContain(
-      "https://slack.com/api/apps.connections.open",
-    );
+    expect(curlArgs()).toContain("https://slack.com/api/apps.connections.open");
+    expect(curlArgs().join("\n")).not.toContain("xapp-valid-app");
   });
 
   it.each(["invalid_auth", "missing_scope", "not_allowed_token_type"])(
@@ -97,6 +123,37 @@ describe("Slack token validation", () => {
     ).toMatchObject({ ok: false, credential: "app", error: "missing_scope" });
   });
 
+  it.each(["ratelimited", "request_timeout"])(
+    "treats documented transient Slack API error %s as indeterminate",
+    (error) => {
+      vi.mocked(runCurlProbe).mockReturnValue(probe(JSON.stringify({ ok: false, error })));
+
+      const result = validateSlackBotToken("xoxb-transient-bot");
+
+      expect(result).toMatchObject({ ok: false, kind: "indeterminate", error });
+    },
+  );
+
+  it("does not treat undocumented Slack API errors as transient based only on the error body", () => {
+    vi.mocked(runCurlProbe).mockReturnValue(
+      probe('{"ok":false,"error":"internal_error"}'),
+    );
+
+    const result = validateSlackBotToken("xoxb-internal-error");
+
+    expect(result).toMatchObject({ ok: false, kind: "rejected", error: "internal_error" });
+  });
+
+  it("treats unreadable Slack API responses as indeterminate", () => {
+    vi.mocked(runCurlProbe).mockReturnValue(probe("not json"));
+
+    expect(validateSlackBotToken("xoxb-valid-looking")).toMatchObject({
+      ok: false,
+      kind: "indeterminate",
+      tokenKind: "bot",
+    });
+  });
+
   it("treats network failures as indeterminate without leaking token material", () => {
     const token = "xoxb-sensitive-token-value";
     vi.mocked(runCurlProbe).mockReturnValue(
@@ -113,5 +170,30 @@ describe("Slack token validation", () => {
 
     expect(result).toMatchObject({ ok: false, kind: "indeterminate", tokenKind: "bot" });
     if (!result.ok) expect(result.message).not.toContain(token);
+  });
+
+  it("drops Slack selections when live validation is indeterminate", () => {
+    process.env.SLACK_BOT_TOKEN = "xoxb-timeout-bot";
+    process.env.SLACK_APP_TOKEN = "xapp-timeout-app";
+    vi.mocked(runCurlProbe).mockReturnValue(
+      probe("", {
+        ok: false,
+        httpStatus: 0,
+        curlStatus: 28,
+        stderr: "operation timed out",
+        message: "curl failed (exit 28): operation timed out",
+      }),
+    );
+    const warnings: string[] = [];
+
+    const result = filterSlackSelectionByValidation(
+      ["telegram", "slack"],
+      [KNOWN_CHANNELS.slack],
+      (message) => warnings.push(message),
+    );
+
+    expect(result).toEqual(["telegram"]);
+    expect(warnings.join("\n")).toContain("Slack integration will be disabled");
+    expect(warnings.join("\n")).not.toContain("xoxb-timeout-bot");
   });
 });

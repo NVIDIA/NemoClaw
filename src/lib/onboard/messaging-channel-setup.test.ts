@@ -168,6 +168,35 @@ describe("setupSelectedMessagingChannels", () => {
     expect(output).not.toContain("xapp-fake-app-token");
   });
 
+  it("does not save prompted Slack credentials when Slack API validation is indeterminate", async () => {
+    delete process.env.SLACK_BOT_TOKEN;
+    delete process.env.SLACK_APP_TOKEN;
+    vi.mocked(prompt)
+      .mockResolvedValueOnce("xoxb-timeout-bot-token")
+      .mockResolvedValueOnce("xapp-timeout-app-token");
+    vi.mocked(validateSlackCredentials).mockReturnValueOnce({
+      ok: false,
+      kind: "indeterminate",
+      tokenKind: "bot",
+      credential: "bot",
+      httpStatus: 0,
+      curlStatus: 28,
+      message: "Slack bot token could not be validated because Slack API was unreachable.",
+    });
+    const enabled = new Set(["slack"]);
+
+    await setupSelectedMessagingChannels(
+      ["slack"],
+      enabled,
+      [{ name: "slack", ...KNOWN_CHANNELS.slack }],
+    );
+
+    expect(enabled.has("slack")).toBe(false);
+    expect(saveCredential).not.toHaveBeenCalled();
+    expect(process.env.SLACK_BOT_TOKEN).toBeUndefined();
+    expect(process.env.SLACK_APP_TOKEN).toBeUndefined();
+  });
+
   it("ignores existing Slack tokens that pass format but fail Slack API validation", async () => {
     process.env.SLACK_BOT_TOKEN = "xoxb-existing-invalid";
     process.env.SLACK_APP_TOKEN = "xapp-existing-valid";

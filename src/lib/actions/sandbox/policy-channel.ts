@@ -28,6 +28,7 @@ import { runOpenshell } from "../../adapters/openshell/runtime";
 import { shellQuote } from "../../runner";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
+import { validateSlackChannelCredentials } from "./slack-channel-validation";
 import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
 import {
   type ChannelDef,
@@ -40,10 +41,6 @@ import {
   persistChannelTokens,
 } from "../../sandbox/channels";
 import type { HostQrLoginResult } from "../../host-qr-handlers";
-import {
-  formatSlackValidationFailure,
-  validateSlackCredentials,
-} from "../../onboard/slack-validation";
 
 type ChannelMutationOptions = {
   channel?: string;
@@ -639,50 +636,6 @@ async function acquirePasteTokens(
   }
 }
 
-function isAcquiredTokenFormatValid(channel: ChannelDef, envKey: string, token: string): boolean {
-  if (envKey === channel.envKey) return !channel.tokenFormat || channel.tokenFormat.test(token);
-  if (envKey === channel.appTokenEnvKey) {
-    return !channel.appTokenFormat || channel.appTokenFormat.test(token);
-  }
-  return false;
-}
-
-function validateSlackChannelCredentials(
-  channel: ChannelDef,
-  acquired: Record<string, string>,
-): void {
-  if (!channel.envKey || !channel.appTokenEnvKey) {
-    console.error("  Slack channel definition is missing required token keys.");
-    process.exit(1);
-  }
-
-  const botToken = acquired[channel.envKey];
-  const appToken = acquired[channel.appTokenEnvKey];
-  if (!botToken || !appToken) {
-    console.error("  Slack requires both SLACK_BOT_TOKEN and SLACK_APP_TOKEN.");
-    process.exit(1);
-  }
-
-  for (const [envKey, token] of Object.entries(acquired)) {
-    if (!isAcquiredTokenFormatValid(channel, envKey, token)) {
-      const hint =
-        envKey === channel.appTokenEnvKey
-          ? channel.appTokenFormatHint || "Check the token and try again."
-          : channel.tokenFormatHint || "Check the token and try again.";
-      console.error(`  Invalid ${envKey} format. ${hint}`);
-      process.exit(1);
-    }
-  }
-
-  const validation = validateSlackCredentials({ botToken, appToken });
-  if (validation.ok) return;
-
-  console.error(
-    `  Slack credential validation failed. ${formatSlackValidationFailure(validation)}`,
-  );
-  process.exit(1);
-}
-
 // Host-QR token acquisition for WeChat (the only channel with
 // `loginMethod: "host-qr"` today). Drives the iLink QR handshake on the
 // host, captures the bot token and the non-secret per-account metadata
@@ -873,7 +826,11 @@ export async function addSandboxChannel(
   }
 
   if (canonical === "slack") {
-    validateSlackChannelCredentials(channel, acquired);
+    const validation = validateSlackChannelCredentials(channel, acquired);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      process.exit(1);
+    }
   }
 
   persistChannelTokens(acquired);
