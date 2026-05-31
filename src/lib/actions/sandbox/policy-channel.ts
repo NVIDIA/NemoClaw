@@ -883,17 +883,12 @@ export async function addSandboxChannel(
   console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
 
   if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
-    const rollback = await rollbackChannelAdd(sandboxName, channel, canonical, {
+    await rollbackChannelAdd(sandboxName, channel, canonical, {
       wasAlreadyEnabled,
       priorMessagingChannels,
       priorHashes,
       priorCreds,
     });
-    if (!rollback.ok) {
-      console.error(
-        `  ${YW}⚠${R} Rollback could not fully clean ${rollback.residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
-      );
-    }
     process.exit(1);
   }
 
@@ -926,6 +921,9 @@ async function rollbackChannelAdd(
       persistChannelTokens(snapshot.priorCreds);
     }
     const residual: string[] = ["gateway-providers"];
+    console.error(
+      `  ${YW}⚠${R} Rollback could not fully clean ${residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
+    );
     if (Object.keys(snapshot.priorCreds).length > 0) {
       try {
         const priorTokenDefs = Object.entries(snapshot.priorCreds).map(([envKey, token]) => ({
@@ -949,12 +947,18 @@ async function rollbackChannelAdd(
     `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messagingChannels and policy state aligned.`,
   );
   clearChannelTokens(channel);
-  return applyChannelRemoveToGatewayAndRegistry(
+  const result = await applyChannelRemoveToGatewayAndRegistry(
     sandboxName,
     canonical,
     getChannelTokenKeys(channel),
     { bestEffort: true },
   );
+  if (!result.ok) {
+    console.error(
+      `  ${YW}⚠${R} Rollback could not fully clean ${result.residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
+    );
+  }
+  return result;
 }
 
 function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {

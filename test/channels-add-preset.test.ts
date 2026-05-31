@@ -525,7 +525,7 @@ process.exit = (code) => {
     );
   });
 
-  it("aborts QR-paired WhatsApp before registry write when its preset YAML is missing (issue #4548 repro)", () => {
+  it("aborts QR-paired WhatsApp before registry write when its preset YAML is missing", () => {
     const script = `${buildPreamble({ presetFileMissing: true })}
 const ctx = module.exports;
 const exitCodes = [];
@@ -566,7 +566,7 @@ process.exit = (code) => {
     assert.deepEqual(
       payload.registryUpdates,
       [],
-      `missing whatsapp.yaml must not flip messagingChannels (#4548); got ${JSON.stringify(payload.registryUpdates)}`,
+      `missing whatsapp.yaml must not flip messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
     );
     assert.ok(
       !payload.callOrder.includes("promptAndRebuild"),

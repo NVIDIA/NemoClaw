@@ -167,7 +167,7 @@ The command accepts mixed-case input such as `Telegram`, then stores and prints 
 `channels add` requires the matching built-in network policy preset YAML to be present.
 A missing or malformed preset YAML (no `network_policies:` section) aborts the command before any token prompt, registry write, or rebuild prompt, so the sandbox never advertises a channel without a matching network policy.
 With the preset file in place, `channels add` applies it to the sandbox before the rebuild so the bridge has egress to its upstream API.
-When the apply step itself fails after the registry write on a fresh add, NemoClaw rolls back the bridge providers, the `messagingChannels` entry, and the persisted credentials, then exits without prompting for a rebuild.
+When the apply step itself fails after the registry write on a fresh add, NemoClaw attempts to roll back the bridge providers, the `messagingChannels` entry, and the persisted credentials, then exits without prompting for a rebuild; if any gateway-side step (provider detach or delete) fails the rollback continues and prints a `Rollback could not fully clean <surfaces>` warning so the operator can clean up manually.
 When the same failure happens on a re-add of an already-enabled channel, NemoClaw restores the prior `messagingChannels` entry and the on-disk credentials and attempts to re-upsert the prior bridge providers, but flags `gateway-providers` as residual because the in-flight upsert may have left the gateway with the new token; verify the gateway bridge before relying on the channel.
 Restore the preset YAML and re-run `nemoclaw <sandbox> channels add <channel>`.
 Choose the rebuild so the running sandbox image picks up the new channel.
