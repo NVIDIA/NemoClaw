@@ -45,6 +45,7 @@ MAX_VERSION="0.0.44"
 # (see #3404). The hardcoded value is the fallback for offline runs.
 PIN_VERSION="$MAX_VERSION"
 DEV_MIN_VERSION="0.0.44"
+OPENSHELL_INSTALLER_SHA256_0_0_44="fabb30f4ad7af2b14e4994420ba10ecbf4a195236166199abe90daeb671c6d70"
 
 CHANNEL="${NEMOCLAW_OPENSHELL_CHANNEL:-auto}"
 case "$CHANNEL" in
@@ -307,6 +308,34 @@ info "Installing OpenShell from release '$RELEASE_TAG'..."
 tmpdir="$(mktemp -d)"
 trap 'rm -rf "$tmpdir"' EXIT
 
+file_sha256() {
+  local file="$1"
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$file" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$file" | awk '{print $1}'
+  else
+    return 1
+  fi
+}
+
+verify_file_sha256() {
+  local file="$1" expected="$2" label="$3" actual
+  if ! actual="$(file_sha256 "$file")"; then
+    fail "No SHA-256 tool available (sha256sum/shasum)"
+  fi
+  if [ "$actual" != "$expected" ]; then
+    fail "$label checksum verification failed. Expected $expected but got $actual."
+  fi
+}
+
+openshell_installer_sha256() {
+  case "$RELEASE_TAG" in
+    v0.0.44) printf '%s\n' "$OPENSHELL_INSTALLER_SHA256_0_0_44" ;;
+    *) return 1 ;;
+  esac
+}
+
 install_with_upstream_package_service() {
   [ "$OS" = "Linux" ] || return 1
   [ "$RESOLVED_CHANNEL" != "dev" ] || return 1
@@ -315,6 +344,7 @@ install_with_upstream_package_service() {
 
   local installer="$tmpdir/openshell-install.sh"
   local installer_url="https://raw.githubusercontent.com/NVIDIA/OpenShell/${RELEASE_TAG}/install.sh"
+  local expected_installer_sha=""
   local installer_status=0
   local installed_bin=""
   local feature_status=0
@@ -324,23 +354,31 @@ install_with_upstream_package_service() {
     breaking_ack=1
   fi
 
+  if ! expected_installer_sha="$(openshell_installer_sha256)"; then
+    warn "no pinned checksum for upstream OpenShell package installer ${RELEASE_TAG} — falling back to standalone binaries"
+    return 1
+  fi
+
   info "Installing OpenShell ${RELEASE_TAG} with the upstream package installer..."
-  if ! curl -fLsS --retry 3 --max-redirs 5 -o "$installer" "$installer_url"; then
+  if ! curl --proto '=https' --tlsv1.2 -fLsS --retry 3 --retry-delay 1 --retry-all-errors --max-redirs 5 -o "$installer" "$installer_url"; then
     warn "upstream package installer could not be downloaded — falling back to standalone binaries"
     return 1
   fi
+  verify_file_sha256 "$installer" "$expected_installer_sha" "upstream OpenShell package installer"
   chmod 755 "$installer"
 
   OPENSHELL_VERSION="$RELEASE_TAG" \
     OPENSHELL_ACK_BREAKING_UPGRADE="$breaking_ack" \
     sh "$installer" || installer_status=$?
 
+  if [ "$installer_status" != "0" ]; then
+    warn "upstream package installer failed (exit ${installer_status}) — falling back to standalone binaries"
+    return 1
+  fi
+
   installed_bin="$(command -v openshell 2>/dev/null || true)"
   if [ -n "$installed_bin" ] && required_driver_bins_present && openshell_gateway_user_service_present; then
     if openshell_has_required_messaging_features "$installed_bin"; then
-      if [ "$installer_status" != "0" ]; then
-        warn "upstream installer returned exit ${installer_status} after installing binaries and the gateway user service; NemoClaw will restart the service during onboarding"
-      fi
       info "$("$installed_bin" --version 2>&1 || echo openshell) installed with upstream package/service support"
       return 0
     else
@@ -352,11 +390,7 @@ install_with_upstream_package_service() {
     fi
   fi
 
-  if [ "$installer_status" != "0" ]; then
-    warn "upstream package installer failed (exit ${installer_status}) — falling back to standalone binaries"
-  else
-    warn "upstream package installer did not provide required Docker-driver binaries and user service — falling back to standalone binaries"
-  fi
+  warn "upstream package installer did not provide required Docker-driver binaries and user service — falling back to standalone binaries"
   return 1
 }
 

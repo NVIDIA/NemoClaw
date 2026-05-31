@@ -428,6 +428,7 @@ exit 0`,
         env: {
           ...process.env,
           HOME: tmp,
+          NEMOCLAW_OPENSHELL_STANDALONE_INSTALL: "1",
           NEMOCLAW_OPENSHELL_CHANNEL: "stable",
           PATH: `${fakeBin}:${activeBin}:/usr/bin:/bin`,
         },
@@ -548,13 +549,19 @@ exit "\${NEMOCLAW_FAKE_INSTALL_STATUS:-0}"
 INSTALLER
 exit 0`,
       );
+      writeExecutable(
+        path.join(fakeBin, "sha256sum"),
+        `#!/usr/bin/env bash
+printf '%s  %s\\n' 'fabb30f4ad7af2b14e4994420ba10ecbf4a195236166199abe90daeb671c6d70' "\${1:-}"
+exit 0`,
+      );
 
       const result = spawnSync("bash", [SCRIPT], {
         env: {
           ...process.env,
           HOME: tmp,
           NEMOCLAW_FAKE_INSTALL_BIN: fakeBin,
-          NEMOCLAW_FAKE_INSTALL_STATUS: "17",
+          NEMOCLAW_FAKE_INSTALL_STATUS: "0",
           NEMOCLAW_OPENSHELL_CHANNEL: "stable",
           PATH: `${fakeBin}:/usr/bin:/bin`,
         },
@@ -565,6 +572,129 @@ exit 0`,
       expect(result.stdout).toMatch(/upstream package installer/);
       expect(result.stdout).toMatch(/installed with upstream package\/service support/);
       expect(result.stdout).not.toMatch(/Downloading OpenShell release assets/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed when the upstream Linux package installer checksum mismatches", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-package-hash-"));
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      fs.mkdirSync(fakeBin);
+
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "x86_64"; else echo "Linux"; fi`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+[ -n "$out" ] || exit 1
+printf '%s\\n' '#!/usr/bin/env sh' 'exit 0' > "$out"
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "sha256sum"),
+        `#!/usr/bin/env bash
+printf '%s  %s\\n' '0000000000000000000000000000000000000000000000000000000000000000' "\${1:-}"
+exit 0`,
+      );
+
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
+      expect(result.stderr).toMatch(/upstream OpenShell package installer checksum verification failed/);
+      expect(result.stdout).not.toMatch(/Downloading OpenShell release assets/);
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back when the upstream Linux package installer exits nonzero", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openshell-package-nonzero-"));
+    try {
+      const fakeBin = path.join(tmp, "bin");
+      fs.mkdirSync(fakeBin);
+
+      writeExecutable(
+        path.join(fakeBin, "uname"),
+        `#!/usr/bin/env bash
+if [ "\${1:-}" = "-m" ]; then echo "x86_64"; else echo "Linux"; fi`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "curl"),
+        `#!/usr/bin/env bash
+out=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then
+    shift
+    out="$1"
+  fi
+  shift || true
+done
+[ -n "$out" ] || exit 1
+cat > "$out" <<'INSTALLER'
+#!/usr/bin/env sh
+mkdir -p "$NEMOCLAW_FAKE_INSTALL_BIN" "$HOME/.config/systemd/user"
+cat > "$NEMOCLAW_FAKE_INSTALL_BIN/openshell" <<'BIN'
+#!/usr/bin/env sh
+if [ "\${1:-}" = "--version" ]; then echo "openshell 0.0.44"; exit 0; fi
+# request-body-credential-rewrite websocket-credential-rewrite
+exit 0
+BIN
+cat > "$NEMOCLAW_FAKE_INSTALL_BIN/openshell-gateway" <<'BIN'
+#!/usr/bin/env sh
+exit 0
+BIN
+cat > "$NEMOCLAW_FAKE_INSTALL_BIN/openshell-sandbox" <<'BIN'
+#!/usr/bin/env sh
+exit 0
+BIN
+printf '[Service]\\n' > "$HOME/.config/systemd/user/openshell-gateway.service"
+chmod 755 "$NEMOCLAW_FAKE_INSTALL_BIN/openshell" "$NEMOCLAW_FAKE_INSTALL_BIN/openshell-gateway" "$NEMOCLAW_FAKE_INSTALL_BIN/openshell-sandbox"
+exit 17
+INSTALLER
+exit 0`,
+      );
+      writeExecutable(
+        path.join(fakeBin, "sha256sum"),
+        `#!/usr/bin/env bash
+printf '%s  %s\\n' 'fabb30f4ad7af2b14e4994420ba10ecbf4a195236166199abe90daeb671c6d70' "\${1:-}"
+exit 0`,
+      );
+
+      const result = spawnSync("bash", [SCRIPT], {
+        env: {
+          ...process.env,
+          HOME: tmp,
+          NEMOCLAW_FAKE_INSTALL_BIN: fakeBin,
+          NEMOCLAW_OPENSHELL_CHANNEL: "stable",
+          PATH: `${fakeBin}:/usr/bin:/bin`,
+        },
+        encoding: "utf8",
+      });
+
+      expect(result.status, `${result.stdout}\n${result.stderr}`).not.toBe(0);
+      expect(result.stdout).toMatch(/upstream package installer failed \(exit 17\).*falling back to standalone binaries/);
+      expect(result.stdout).not.toMatch(/installed with upstream package\/service support/);
     } finally {
       fs.rmSync(tmp, { recursive: true, force: true });
     }
