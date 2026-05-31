@@ -605,6 +605,68 @@ describe("CLI dispatch", () => {
     expect(r.out).not.toContain("Unknown command: liost");
   });
 
+  it("fails fast on gated NEMOCLAW_VLLM_MODEL without HF token before sandbox side effects", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-vllm-preflight-"));
+    try {
+      const localBin = path.join(home, "bin");
+      fs.mkdirSync(localBin, { recursive: true });
+      writeSandboxRegistry(home);
+      const openshellLog = path.join(home, "openshell-calls.log");
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          `printf "%s\\n" "$*" >> ${JSON.stringify(openshellLog)}`,
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const childEnv: Record<string, string> = {};
+      for (const [key, value] of Object.entries(process.env)) {
+        if (value !== undefined) childEnv[key] = value;
+      }
+      delete childEnv.HF_TOKEN;
+      delete childEnv.HUGGING_FACE_HUB_TOKEN;
+      childEnv.HOME = home;
+      childEnv.PATH = `${localBin}:${process.env.PATH || ""}`;
+      childEnv.NEMOCLAW_HEALTH_POLL_COUNT = "1";
+      childEnv.NEMOCLAW_HEALTH_POLL_INTERVAL = "0";
+      childEnv.NEMOCLAW_VLLM_MODEL = "deepseek-r1-distill-70b";
+
+      let code = 0;
+      let out = "";
+      try {
+        execSync(`node "${CLI}" alpha connect 2>&1`, {
+          encoding: "utf-8",
+          stdio: "pipe",
+          timeout: execTimeout(),
+          env: childEnv,
+        });
+      } catch (err) {
+        const e = err as {
+          status?: number;
+          stdout?: string | Buffer;
+          stderr?: string | Buffer;
+        };
+        code = typeof e.status === "number" ? e.status : 1;
+        out = `${e.stdout ?? ""}${e.stderr ?? ""}`;
+      }
+
+      expect(code).toBe(1);
+      expect(out).toMatch(/gated on Hugging Face/);
+      expect(out).toMatch(/HF_TOKEN/);
+      expect(out).toMatch(/HUGGING_FACE_HUB_TOKEN/);
+      expect(out).toContain(
+        "NEMOCLAW_VLLM_MODEL is consumed by the managed-vLLM install path",
+      );
+      const calls = fs.existsSync(openshellLog) ? fs.readFileSync(openshellLog, "utf8") : "";
+      expect(calls).not.toMatch(/\bsandbox\s+(get|connect|list)\b/);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
   it("explains sandbox connect command order when the sandbox name is last", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-connect-order-"));
     const localBin = path.join(home, "bin");
