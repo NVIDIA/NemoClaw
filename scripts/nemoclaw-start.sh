@@ -1869,7 +1869,7 @@ openclaw() {
   # upgrades through the gateway without requesting the upgraded scopes for
   # the approval command itself. Other commands keep OPENCLAW_GATEWAY_URL.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
-    ( unset OPENCLAW_GATEWAY_URL; command openclaw "$@" )
+    ( unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" )
     return $?
   fi
   case "$1" in
