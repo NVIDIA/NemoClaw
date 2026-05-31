@@ -594,7 +594,7 @@ proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; \
 cfg['proxy'] = { \
     'enabled': True, \
     'proxyUrl': f'http://{proxy_host}:{proxy_port}', \
-    'loopbackMode': 'proxy', \
+    'loopbackMode': 'gateway-only', \
 }; \
 json.dump(cfg, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"
