@@ -29,6 +29,18 @@ export function isAffirmativeAnswer(value: string | null | undefined): boolean {
   );
 }
 
+export function selectFromNumberedMenu<T>(
+  rawChoice: string,
+  defaultIdx: number,
+  options: T[],
+): T {
+  if (getNavigationChoice(rawChoice) === "exit") {
+    exitOnboardFromPrompt();
+  }
+  const idx = Number.parseInt(rawChoice || String(defaultIdx), 10) - 1;
+  return options[idx] || options[defaultIdx - 1];
+}
+
 export interface PromptHelperDeps {
   isNonInteractive(): boolean;
   note(message: string): void;
