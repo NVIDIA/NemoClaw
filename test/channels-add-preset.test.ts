@@ -57,6 +57,7 @@ function buildPreamble({
   sessionMissing = false,
   presetFileMissing = false,
   presetMissingNetworkPolicies = false,
+  presetMalformedYaml = false,
 }: {
   presetNamesAvailable?: string[];
   applyPresetResult?: boolean;
@@ -69,6 +70,7 @@ function buildPreamble({
   sessionMissing?: boolean;
   presetFileMissing?: boolean;
   presetMissingNetworkPolicies?: boolean;
+  presetMalformedYaml?: boolean;
 } = {}): string {
   const j = (p: string) => JSON.stringify(path.join(repoRoot, "dist", "lib", p));
   return String.raw`
@@ -126,6 +128,7 @@ policies.listPresets = () => ${JSON.stringify(presetNamesAvailable.map((name) =>
 policies.loadPreset = (name) => {
   if (${JSON.stringify(presetFileMissing)}) return null;
   if (${JSON.stringify(presetMissingNetworkPolicies)}) return "name: " + name + "\ndescription: \"stub preset without network_policies\"\n";
+  if (${JSON.stringify(presetMalformedYaml)}) return "network_policies:\n  - [unclosed\n";
   return "network_policies:\n  " + name + ":\n    egress:\n      - host: example.com";
 };
 policies.applyPreset = (sandboxName, presetName) => {
@@ -458,11 +461,119 @@ process.exit = (code) => {
       `invalid preset must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
     assert.ok(
-      result.stderr.includes("missing a 'network_policies:' section"),
-      `expected diagnostic about missing network_policies section; got:\n${result.stderr}`,
+      result.stderr.includes("has no parseable entries under 'network_policies:'"),
+      `expected diagnostic about unparseable network_policies section; got:\n${result.stderr}`,
     );
     assert.ok(
       result.stderr.includes("Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram"),
+      `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
+    );
+  });
+
+  it("aborts non-QR channel when policy preset YAML body is malformed", () => {
+    const script = `${buildPreamble({ presetMalformedYaml: true })}
+const ctx = module.exports;
+const exitCodes = [];
+const originalExit = process.exit;
+process.exit = (code) => {
+  exitCodes.push(code ?? 0);
+  throw new Error("__EXIT__" + (code ?? 0));
+};
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
+  } catch (err) {
+    if (!String(err && err.message).startsWith("__EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+      return;
+    }
+  } finally {
+    process.exit = originalExit;
+  }
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    appliedCalls: ctx.appliedCalls,
+    callOrder: ctx.callOrder,
+    providerCalls: ctx.providerCalls,
+    registryUpdates: ctx.registryUpdates,
+    savedCredentialKeys: ctx.savedCredentialKeys,
+    exitCodes,
+  }) + "\\n");
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.exitCodes, [1]);
+    assert.deepEqual(payload.appliedCalls, []);
+    assert.deepEqual(payload.providerCalls, []);
+    assert.deepEqual(payload.registryUpdates, []);
+    assert.deepEqual(payload.savedCredentialKeys, []);
+    assert.ok(
+      !payload.callOrder.includes("promptAndRebuild"),
+      `malformed preset must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
+    );
+    assert.ok(
+      result.stderr.includes("has no parseable entries under 'network_policies:'"),
+      `expected parse-failure diagnostic; got:\n${result.stderr}`,
+    );
+    assert.ok(
+      result.stderr.includes("Restore the preset YAML and re-run: nemoclaw test-sb channels add telegram"),
+      `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
+    );
+  });
+
+  it("aborts QR-paired WhatsApp before registry write when its preset YAML is missing (issue #4548 repro)", () => {
+    const script = `${buildPreamble({ presetFileMissing: true })}
+const ctx = module.exports;
+const exitCodes = [];
+const originalExit = process.exit;
+process.exit = (code) => {
+  exitCodes.push(code ?? 0);
+  throw new Error("__EXIT__" + (code ?? 0));
+};
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "whatsapp" });
+  } catch (err) {
+    if (!String(err && err.message).startsWith("__EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+      return;
+    }
+  } finally {
+    process.exit = originalExit;
+  }
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    appliedCalls: ctx.appliedCalls,
+    callOrder: ctx.callOrder,
+    providerCalls: ctx.providerCalls,
+    registryUpdates: ctx.registryUpdates,
+    exitCodes,
+  }) + "\\n");
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.exitCodes, [1]);
+    assert.deepEqual(payload.appliedCalls, []);
+    assert.deepEqual(payload.providerCalls, []);
+    assert.deepEqual(
+      payload.registryUpdates,
+      [],
+      `missing whatsapp.yaml must not flip messagingChannels (#4548); got ${JSON.stringify(payload.registryUpdates)}`,
+    );
+    assert.ok(
+      !payload.callOrder.includes("promptAndRebuild"),
+      `missing whatsapp preset must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
+    );
+    assert.ok(
+      result.stderr.includes("Restore the preset YAML and re-run: nemoclaw test-sb channels add whatsapp"),
       `expected restore-and-re-run hint on stderr; got:\n${result.stderr}`,
     );
   });
@@ -607,6 +718,79 @@ process.exit = (code) => {
     assert.ok(
       !payload.callOrder.includes("promptAndRebuild"),
       `rollback path must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
+    );
+  });
+
+  it("restores prior channel config when re-add applyPreset fails on an already-enabled channel", () => {
+    const script = `${buildPreamble({ applyPresetResult: false })}
+registry.getSandbox = () => ({
+  name: "test-sb",
+  agent: "openclaw",
+  messagingChannels: ["telegram"],
+  disabledChannels: [],
+  providerCredentialHashes: { TELEGRAM_BOT_TOKEN: "prior-hash" },
+});
+credentials.getCredential = (key) => key === "TELEGRAM_BOT_TOKEN" ? "prior-telegram-token" : null;
+const ctx = module.exports;
+const exitCodes = [];
+const originalExit = process.exit;
+process.exit = (code) => {
+  exitCodes.push(code ?? 0);
+  throw new Error("__EXIT__" + (code ?? 0));
+};
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
+  } catch (err) {
+    if (!String(err && err.message).startsWith("__EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+      return;
+    }
+  } finally {
+    process.exit = originalExit;
+  }
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    appliedCalls: ctx.appliedCalls,
+    callOrder: ctx.callOrder,
+    providerCalls: ctx.providerCalls,
+    registryUpdates: ctx.registryUpdates,
+    deletedCredentialKeys: ctx.deletedCredentialKeys,
+    savedCredentialKeys: ctx.savedCredentialKeys,
+    exitCodes,
+  }) + "\\n");
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.exitCodes, [1]);
+    assert.deepEqual(payload.appliedCalls, [{ sandboxName: "test-sb", presetName: "telegram" }]);
+    const lastRegistry = payload.registryUpdates[payload.registryUpdates.length - 1];
+    assert.deepEqual(
+      lastRegistry.updates.messagingChannels,
+      ["telegram"],
+      `re-add failure must keep prior 'telegram' in messagingChannels; got ${JSON.stringify(payload.registryUpdates)}`,
+    );
+    assert.deepEqual(
+      lastRegistry.updates.providerCredentialHashes,
+      { TELEGRAM_BOT_TOKEN: "prior-hash" },
+      `re-add failure must restore prior credential hashes; got ${JSON.stringify(payload.registryUpdates)}`,
+    );
+    assert.ok(
+      payload.savedCredentialKeys.includes("TELEGRAM_BOT_TOKEN"),
+      `re-add failure must restore prior credentials via saveCredential; got ${JSON.stringify(payload.savedCredentialKeys)}`,
+    );
+    const upsertNames = (payload.providerCalls as Array<{ name: string }>).map((d) => d.name);
+    assert.ok(
+      upsertNames.length >= 2,
+      `expected initial and restorative upsertMessagingProviders calls; got ${JSON.stringify(payload.providerCalls)}`,
+    );
+    assert.ok(
+      !payload.callOrder.includes("promptAndRebuild"),
+      `re-add failure must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
   });
 });

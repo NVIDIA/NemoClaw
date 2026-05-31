@@ -167,7 +167,7 @@ The command accepts mixed-case input such as `Telegram`, then stores and prints 
 `channels add` requires the matching built-in network policy preset YAML to be present.
 A missing or malformed preset YAML (no `network_policies:` section) aborts the command before any token prompt, registry write, or rebuild prompt, so the sandbox never advertises a channel without a matching network policy.
 With the preset file in place, `channels add` applies it to the sandbox before the rebuild so the bridge has egress to its upstream API.
-When the apply step itself fails after the registry write, NemoClaw rolls back the bridge providers, the `messagingChannels` entry, and the persisted credentials, then exits without prompting for rebuild.
+When the apply step itself fails after the registry write, NemoClaw rolls back the bridge providers, the `messagingChannels` entry, and the persisted credentials, then exits without prompting for a rebuild.
 Restore the preset YAML and re-run `nemoclaw <sandbox> channels add <channel>`.
 Choose the rebuild so the running sandbox image picks up the new channel.
 For Telegram, Discord, and Slack, `channels add` also checks the rebuilt runtime for the selected bridge and reports startup, credential, or missing-plugin warnings before returning.

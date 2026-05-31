@@ -813,12 +813,12 @@ export async function addSandboxChannel(
   }
 
   const presetContent = policies.loadPreset(canonical);
-  const presetEntries =
-    presetContent === null ? null : policies.extractPresetEntries(presetContent);
-  if (presetContent === null || presetEntries === null) {
-    if (presetContent !== null && presetEntries === null) {
+  const presetPolicyKeys =
+    presetContent === null ? [] : policies.parsePresetPolicyKeys(presetContent);
+  if (presetContent === null || presetPolicyKeys.length === 0) {
+    if (presetContent !== null && presetPolicyKeys.length === 0) {
       console.error(
-        `  Preset YAML for channel '${canonical}' is missing a 'network_policies:' section.`,
+        `  Preset YAML for channel '${canonical}' has no parseable entries under 'network_policies:'.`,
       );
     }
     console.error(
@@ -858,6 +858,21 @@ export async function addSandboxChannel(
     await acquirePasteTokens(canonical, channel, acquired);
   }
 
+  const priorEntry = registry.getSandbox(sandboxName);
+  const priorMessagingChannels: string[] = priorEntry?.messagingChannels
+    ? [...priorEntry.messagingChannels]
+    : [];
+  const wasAlreadyEnabled = priorMessagingChannels.includes(canonical);
+  const priorHashes: Record<string, string> = {
+    ...((priorEntry?.providerCredentialHashes as Record<string, string>) || {}),
+  };
+  const channelTokenKeys = getChannelTokenKeys(channel);
+  const priorCreds: Record<string, string> = {};
+  for (const key of channelTokenKeys) {
+    const existing = getCredential(key);
+    if (existing != null) priorCreds[key] = existing;
+  }
+
   persistChannelTokens(acquired);
   // Push to the gateway and update the registry NOW so that answering
   // "rebuild later" (or running non-interactively) does not silently
@@ -868,16 +883,12 @@ export async function addSandboxChannel(
   console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
 
   if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
-    console.error(
-      `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messagingChannels and policy state aligned.`,
-    );
-    clearChannelTokens(channel);
-    const rollback = await applyChannelRemoveToGatewayAndRegistry(
-      sandboxName,
-      canonical,
-      getChannelTokenKeys(channel),
-      { bestEffort: true },
-    );
+    const rollback = await rollbackChannelAdd(sandboxName, channel, canonical, {
+      wasAlreadyEnabled,
+      priorMessagingChannels,
+      priorHashes,
+      priorCreds,
+    });
     if (!rollback.ok) {
       console.error(
         `  ${YW}⚠${R} Rollback could not fully clean ${rollback.residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
@@ -888,6 +899,63 @@ export async function addSandboxChannel(
 
   const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
   if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
+}
+
+async function rollbackChannelAdd(
+  sandboxName: string,
+  channel: ChannelDef,
+  canonical: string,
+  snapshot: {
+    wasAlreadyEnabled: boolean;
+    priorMessagingChannels: string[];
+    priorHashes: Record<string, string>;
+    priorCreds: Record<string, string>;
+  },
+): Promise<{ ok: boolean; residual: string[] }> {
+  if (snapshot.wasAlreadyEnabled) {
+    console.error(
+      `  ${YW}⚠${R} Restoring prior '${canonical}' configuration; new token rotation aborted.`,
+    );
+    clearChannelTokens(channel);
+    if (Object.keys(snapshot.priorCreds).length > 0) {
+      persistChannelTokens(snapshot.priorCreds);
+    }
+    const residual: string[] = [];
+    if (Object.keys(snapshot.priorCreds).length > 0) {
+      try {
+        const priorTokenDefs = Object.entries(snapshot.priorCreds).map(([envKey, token]) => ({
+          name: bridgeProviderName(sandboxName, canonical, envKey),
+          envKey,
+          token,
+        }));
+        onboardProviders.upsertMessagingProviders(priorTokenDefs, runOpenshell);
+      } catch (err) {
+        console.error(
+          `  ${YW}⚠${R} Failed to restore gateway providers for '${canonical}': ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        );
+        residual.push("gateway-providers");
+      }
+    }
+    registry.updateSandbox(sandboxName, {
+      messagingChannels: snapshot.priorMessagingChannels,
+      providerCredentialHashes:
+        Object.keys(snapshot.priorHashes).length > 0 ? snapshot.priorHashes : undefined,
+    });
+    return { ok: residual.length === 0, residual };
+  }
+
+  console.error(
+    `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messagingChannels and policy state aligned.`,
+  );
+  clearChannelTokens(channel);
+  return applyChannelRemoveToGatewayAndRegistry(
+    sandboxName,
+    canonical,
+    getChannelTokenKeys(channel),
+    { bestEffort: true },
+  );
 }
 
 function applyChannelPresetIfAvailable(sandboxName: string, channelName: string): boolean {
