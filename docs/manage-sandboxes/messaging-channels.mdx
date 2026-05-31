@@ -164,8 +164,11 @@ $ nemoclaw my-assistant channels add whatsapp
 It prompts for Telegram, Discord, and Slack tokens, runs an interactive host-side QR scan for WeChat, and collects nothing for WhatsApp because pairing happens in-sandbox after rebuild.
 It registers bridge providers with the OpenShell gateway when tokens were captured, records the channel in the sandbox registry, and asks whether to rebuild immediately.
 The command accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase channel name.
-`channels add` requires the matching built-in network policy preset YAML to be present; if the file is missing the command exits with a non-zero status before any token prompt, registry write, or rebuild prompt, so the sandbox is never left advertising a channel without a matching network policy.
-If the file is present, `channels add` applies the preset to the sandbox automatically before the rebuild so the bridge has egress to its upstream API; if the apply itself fails, the command exits with a non-zero status without prompting for rebuild — restore the preset YAML and re-run `nemoclaw <sandbox> channels add <channel>`.
+`channels add` requires the matching built-in network policy preset YAML to be present.
+If the file is missing, the command exits with a non-zero status before any token prompt, registry write, or rebuild prompt, so the sandbox is never left advertising a channel without a matching network policy.
+If the file is present, `channels add` applies the preset to the sandbox automatically before the rebuild so the bridge has egress to its upstream API.
+If the apply itself fails, the command exits with a non-zero status without prompting for rebuild.
+Restore the preset YAML and re-run `nemoclaw <sandbox> channels add <channel>`.
 Choose the rebuild so the running sandbox image picks up the new channel.
 For Telegram, Discord, and Slack, `channels add` also checks the rebuilt runtime for the selected bridge and reports startup, credential, or missing-plugin warnings before returning.
 If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION`, `SLACK_ALLOWED_USERS`, or `SLACK_ALLOWED_CHANNELS`, export them before the rebuild starts.

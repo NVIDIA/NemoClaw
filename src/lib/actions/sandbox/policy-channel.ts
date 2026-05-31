@@ -838,6 +838,15 @@ export async function addSandboxChannel(
   console.log(`  ${G}✓${R} Registered ${canonical} bridge with the OpenShell gateway.`);
 
   if (!applyChannelPresetIfAvailable(sandboxName, canonical)) {
+    console.error(
+      `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messagingChannels and policy state aligned.`,
+    );
+    await applyChannelRemoveToGatewayAndRegistry(
+      sandboxName,
+      canonical,
+      getChannelTokenKeys(channel),
+    );
+    clearChannelTokens(channel);
     process.exit(1);
   }
 

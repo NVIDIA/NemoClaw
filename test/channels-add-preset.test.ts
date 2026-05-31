@@ -88,9 +88,11 @@ const gatewayRuntime = require(${j("gateway-runtime-action.js")});
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({ recovered: true });
 
 const credentials = require(${j("credentials/store.js")});
+const savedCredentialKeys = [];
+const deletedCredentialKeys = [];
 credentials.getCredential = (key) => process.env[key] || null;
-credentials.saveCredential = () => true;
-credentials.deleteCredential = () => true;
+credentials.saveCredential = (key) => { savedCredentialKeys.push(key); return true; };
+credentials.deleteCredential = (key) => { deletedCredentialKeys.push(key); return true; };
 credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + msg); };
 
 const onboard = require(${j("onboard.js")});
@@ -180,7 +182,7 @@ console.log = (...args) => {
 
 const channelModule = require(${j("actions/sandbox/policy-channel.js")});
 
-module.exports = { channelModule, appliedCalls, removedCalls, callOrder, providerCalls, registryUpdates, sessionUpdates, getSessionState: () => sessionState };
+module.exports = { channelModule, appliedCalls, removedCalls, callOrder, providerCalls, registryUpdates, sessionUpdates, savedCredentialKeys, deletedCredentialKeys, getSessionState: () => sessionState };
 `;
 }
 
@@ -395,6 +397,73 @@ process.exit = (code) => {
     assert.ok(
       !payload.callOrder.includes("promptAndRebuild"),
       `missing preset YAML must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
+    );
+  });
+
+  it("rolls back providers, registry, and credentials when applyPreset fails after a successful loadPreset", () => {
+    const script = `${buildPreamble({ applyPresetResult: false })}
+const ctx = module.exports;
+const exitCodes = [];
+const originalExit = process.exit;
+process.exit = (code) => {
+  exitCodes.push(code ?? 0);
+  throw new Error("__EXIT__" + (code ?? 0));
+};
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
+  } catch (err) {
+    if (!String(err && err.message).startsWith("__EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+      return;
+    }
+  } finally {
+    process.exit = originalExit;
+  }
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    appliedCalls: ctx.appliedCalls,
+    callOrder: ctx.callOrder,
+    providerCalls: ctx.providerCalls,
+    registryUpdates: ctx.registryUpdates,
+    savedCredentialKeys: ctx.savedCredentialKeys,
+    deletedCredentialKeys: ctx.deletedCredentialKeys,
+    sessionUpdates: ctx.sessionUpdates,
+    exitCodes,
+  }) + "\\n");
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.exitCodes, [1]);
+    assert.deepEqual(
+      payload.appliedCalls,
+      [{ sandboxName: "test-sb", presetName: "telegram" }],
+      `expected one failed applyPreset call; got ${JSON.stringify(payload.appliedCalls)}`,
+    );
+    assert.ok(
+      payload.registryUpdates.length === 2,
+      `expected one add update and one rollback update; got ${JSON.stringify(payload.registryUpdates)}`,
+    );
+    assert.deepEqual(payload.registryUpdates[0].updates.messagingChannels, ["telegram"]);
+    assert.deepEqual(payload.registryUpdates[1].updates.messagingChannels, []);
+    assert.deepEqual(
+      payload.deletedCredentialKeys,
+      ["TELEGRAM_BOT_TOKEN"],
+      `expected rollback to clear persisted credentials; got ${JSON.stringify(payload.deletedCredentialKeys)}`,
+    );
+    assert.deepEqual(
+      payload.sessionUpdates,
+      [],
+      `applyPreset returned false before syncSessionPolicyPresetsWithRegistry; session must stay untouched; got ${JSON.stringify(payload.sessionUpdates)}`,
+    );
+    assert.ok(
+      !payload.callOrder.includes("promptAndRebuild"),
+      `apply failure must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
   });
 });
@@ -970,6 +1039,25 @@ global.__testLog = "";
     assert.ok(
       !payload.logs.some((line: string) => line.includes("was not marked enabled in baked openclaw.json")),
       `WhatsApp should not trigger OpenClaw-shaped warning; got:\n${payload.logs.join("\n")}`,
+    );
+  });
+});
+
+describe("channel preset source-of-truth", () => {
+  it("every channel registered in KNOWN_CHANNELS ships a matching preset YAML on disk", () => {
+    const { knownChannelNames } = require(path.join(repoRoot, "dist", "lib", "sandbox", "channels.js")) as {
+      knownChannelNames: () => string[];
+    };
+    const presetDir = path.join(repoRoot, "nemoclaw-blueprint", "policies", "presets");
+    const missing: string[] = [];
+    for (const name of knownChannelNames()) {
+      const file = path.join(presetDir, `${name}.yaml`);
+      if (!fs.existsSync(file)) missing.push(file);
+    }
+    assert.deepEqual(
+      missing,
+      [],
+      `every channel in KNOWN_CHANNELS must have a matching preset YAML; missing: ${missing.join(", ")}`,
     );
   });
 });
