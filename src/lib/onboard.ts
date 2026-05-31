@@ -464,7 +464,6 @@ const { reportDockerDriverGatewayStartFailure } = require("./onboard/docker-driv
 const dockerDriverGatewayEnv: typeof import("./onboard/docker-driver-gateway-env") =
   require("./onboard/docker-driver-gateway-env");
 const { getDockerDriverGatewayEndpoint } = dockerDriverGatewayEnv;
-const dockerDriverGatewayService: typeof import("./onboard/docker-driver-gateway-service") = require("./onboard/docker-driver-gateway-service");
 const dockerDriverGatewayRuntimeMarker: typeof import("./onboard/docker-driver-gateway-runtime-marker") =
   require("./onboard/docker-driver-gateway-runtime-marker");
 const hostGatewayProcess: typeof import("./onboard/host-gateway-process") =
@@ -2422,12 +2421,9 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
   const driftGatewayBin = runtimeIdentity?.driftGatewayBin ?? gatewayBin;
   const driftGatewayEnv = runtimeIdentity?.desiredEnv ?? gatewayEnv;
   const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
-  const { verifySandboxBridgeGatewayReachableOrExit } =
-    require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
+  const { verifySandboxBridgeGatewayReachableOrExit } = require("./onboard/gateway-sandbox-reachability") as typeof import("./onboard/gateway-sandbox-reachability");
 
-  if (await dockerDriverGatewayService.startPackageManagedDockerDriverGateway({ clearDockerDriverGatewayRuntimeFiles, exitOnFailure, gatewayName: GATEWAY_NAME, registerDockerDriverGatewayEndpoint, runCaptureOpenshell, skipSandboxBridgeReachability, verifySandboxBridgeGatewayReachableOrExit })) {
-    return;
-  }
+  if (await dockerDriverGatewayEnv.startPackageManagedDockerDriverGateway({ clearDockerDriverGatewayRuntimeFiles, exitOnFailure, gatewayName: GATEWAY_NAME, registerDockerDriverGatewayEndpoint, runCaptureOpenshell, skipSandboxBridgeReachability, verifySandboxBridgeGatewayReachableOrExit })) return;
 
   const gatewayStatus = runCaptureOpenshell(["status"], { ignoreError: true });
   const gwInfo = runCaptureOpenshell(["gateway", "info", "-g", GATEWAY_NAME], {

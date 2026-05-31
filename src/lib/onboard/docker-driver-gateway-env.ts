@@ -16,6 +16,7 @@ import { GATEWAY_PORT } from "../core/ports";
 import { hasOpenShellGatewayUserService } from "./docker-driver-gateway-service";
 
 export { getGatewayHttpsEndpoint };
+export { startPackageManagedDockerDriverGateway } from "./docker-driver-gateway-service";
 
 export const DOCKER_DRIVER_GATEWAY_RUNTIME_ENV_KEYS = [
   "OPENSHELL_DRIVERS",
