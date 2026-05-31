@@ -3,11 +3,12 @@
 
 import { spawnSync, type SpawnSyncOptions } from "node:child_process";
 import fs from "node:fs";
+import path from "node:path";
 
 import { sleepSeconds } from "../core/wait";
 import { isGatewayHealthy } from "../state/gateway";
 import { envInt } from "./env";
-import { isGatewayTcpReady } from "./gateway-tcp-readiness";
+import { isDockerDriverGatewayHttpReady } from "./gateway-http-readiness";
 
 export const OPENSHELL_GATEWAY_USER_SERVICE = "openshell-gateway";
 
@@ -43,13 +44,24 @@ export interface PackageManagedDockerDriverGatewayOptions {
   clearDockerDriverGatewayRuntimeFiles: () => void;
   exitOnFailure: boolean;
   gatewayName: string;
+  hasOpenShellGatewayUserService?: () => boolean;
+  healthPollCount?: number;
+  healthPollInterval?: number;
+  isDockerDriverGatewayReady?: () => Promise<boolean>;
   registerDockerDriverGatewayEndpoint: () => boolean;
   runCaptureOpenshell: (args: string[], opts?: { ignoreError?: boolean }) => string;
+  sleepSeconds?: (seconds: number) => void;
   skipSandboxBridgeReachability: boolean;
+  startOpenShellGatewayUserService?: () => OpenShellGatewayUserServiceStartResult;
   verifySandboxBridgeGatewayReachableOrExit: (
     exitOnFailure: boolean,
     options?: { skip?: boolean },
   ) => Promise<void>;
+}
+
+interface OpenShellGatewayUserServiceIdentity {
+  execStart: string;
+  fragmentPath: string;
 }
 
 export function getOpenShellGatewayUserServicePaths(): string[] {
@@ -92,7 +104,7 @@ function userManagerLooksUnavailable(reason: string): boolean {
 function runSystemctlUser(
   args: string[],
   opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
-): { ok: boolean; reason?: string } {
+): { ok: boolean; reason?: string; stdout?: string } {
   const result = opts.spawnSyncImpl("systemctl", ["--user", ...args], {
     encoding: "utf-8",
     env: opts.env,
@@ -105,7 +117,65 @@ function runSystemctlUser(
     const detail = text(result.stderr).trim() || text(result.stdout).trim() || `exit ${String(result.status)}`;
     return { ok: false, reason: detail };
   }
-  return { ok: true };
+  return { ok: true, stdout: text(result.stdout) };
+}
+
+function parseSystemctlShowProperties(output: string): Record<string, string> {
+  const properties: Record<string, string> = {};
+  for (const line of output.split(/\r?\n/)) {
+    const separator = line.indexOf("=");
+    if (separator <= 0) continue;
+    properties[line.slice(0, separator)] = line.slice(separator + 1).trim();
+  }
+  return properties;
+}
+
+function isTrustedOpenShellGatewayUserServiceIdentity(
+  identity: OpenShellGatewayUserServiceIdentity,
+): boolean {
+  const fragmentPath = path.normalize(identity.fragmentPath.trim());
+  const trustedUnit = getOpenShellGatewayUserServicePaths().some(
+    (candidate) => path.normalize(candidate) === fragmentPath,
+  );
+  if (!trustedUnit) return false;
+  return /\bopenshell-gateway\b/.test(identity.execStart);
+}
+
+function readTrustedOpenShellGatewayUserServiceIdentity(
+  opts: Required<Pick<OpenShellGatewayUserServiceOptions, "env" | "spawnSyncImpl">>,
+): { fallbackAllowed: boolean; ok: boolean; reason?: string } {
+  const result = runSystemctlUser(
+    ["show", OPENSHELL_GATEWAY_USER_SERVICE, "--property=FragmentPath", "--property=ExecStart"],
+    opts,
+  );
+  if (!result.ok) {
+    return {
+      fallbackAllowed: userManagerLooksUnavailable(result.reason ?? ""),
+      ok: false,
+      reason: `systemctl --user show ${OPENSHELL_GATEWAY_USER_SERVICE} failed: ${result.reason}`,
+    };
+  }
+
+  const properties = parseSystemctlShowProperties(result.stdout ?? "");
+  const identity = {
+    execStart: properties.ExecStart ?? "",
+    fragmentPath: properties.FragmentPath ?? "",
+  };
+  if (!identity.fragmentPath || !identity.execStart) {
+    return {
+      fallbackAllowed: true,
+      ok: false,
+      reason: "service identity is incomplete",
+    };
+  }
+  if (!isTrustedOpenShellGatewayUserServiceIdentity(identity)) {
+    return {
+      fallbackAllowed: true,
+      ok: false,
+      reason: `service identity is not the package-managed OpenShell gateway (${identity.fragmentPath})`,
+    };
+  }
+  return { fallbackAllowed: false, ok: true };
 }
 
 export function startOpenShellGatewayUserService(
@@ -137,8 +207,30 @@ export function startOpenShellGatewayUserService(
   }
 
   const spawnSyncImpl = opts.spawnSyncImpl ?? spawnSync;
+  for (const args of [["daemon-reload"]]) {
+    const result = runSystemctlUser(args, { env, spawnSyncImpl });
+    if (!result.ok) {
+      const reason = `systemctl --user ${args.join(" ")} failed: ${result.reason}`;
+      return {
+        attempted: true,
+        fallbackAllowed: userManagerLooksUnavailable(result.reason ?? ""),
+        reason,
+        started: false,
+      };
+    }
+  }
+
+  const identity = readTrustedOpenShellGatewayUserServiceIdentity({ env, spawnSyncImpl });
+  if (!identity.ok) {
+    return {
+      attempted: true,
+      fallbackAllowed: identity.fallbackAllowed,
+      reason: identity.reason,
+      started: false,
+    };
+  }
+
   for (const args of [
-    ["daemon-reload"],
     ["enable", OPENSHELL_GATEWAY_USER_SERVICE],
     ["restart", OPENSHELL_GATEWAY_USER_SERVICE],
   ]) {
@@ -147,7 +239,7 @@ export function startOpenShellGatewayUserService(
       const reason = `systemctl --user ${args.join(" ")} failed: ${result.reason}`;
       return {
         attempted: true,
-        fallbackAllowed: args[0] === "daemon-reload" && userManagerLooksUnavailable(result.reason ?? ""),
+        fallbackAllowed: userManagerLooksUnavailable(result.reason ?? ""),
         reason,
         started: false,
       };
@@ -161,15 +253,21 @@ export async function startPackageManagedDockerDriverGateway({
   clearDockerDriverGatewayRuntimeFiles,
   exitOnFailure,
   gatewayName,
+  hasOpenShellGatewayUserService: hasOpenShellGatewayUserServiceImpl = hasOpenShellGatewayUserService,
+  healthPollCount,
+  healthPollInterval,
+  isDockerDriverGatewayReady = isDockerDriverGatewayHttpReady,
   registerDockerDriverGatewayEndpoint,
   runCaptureOpenshell,
+  sleepSeconds: sleepSecondsImpl = sleepSeconds,
   skipSandboxBridgeReachability,
+  startOpenShellGatewayUserService: startOpenShellGatewayUserServiceImpl = startOpenShellGatewayUserService,
   verifySandboxBridgeGatewayReachableOrExit,
 }: PackageManagedDockerDriverGatewayOptions): Promise<boolean> {
-  if (!hasOpenShellGatewayUserService()) return false;
+  if (!hasOpenShellGatewayUserServiceImpl()) return false;
 
   console.log("  Starting OpenShell Docker-driver gateway via upstream user service...");
-  const serviceStart = startOpenShellGatewayUserService();
+  const serviceStart = startOpenShellGatewayUserServiceImpl();
   if (!serviceStart.started) {
     const detail = serviceStart.reason ? ` (${serviceStart.reason})` : "";
     if (serviceStart.fallbackAllowed) {
@@ -183,11 +281,11 @@ export async function startPackageManagedDockerDriverGateway({
     throw new Error(message);
   }
 
-  const pollCount = envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
-  const pollInterval = envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
+  const pollCount = healthPollCount ?? envInt("NEMOCLAW_HEALTH_POLL_COUNT", 30);
+  const pollInterval = healthPollInterval ?? envInt("NEMOCLAW_HEALTH_POLL_INTERVAL", 2);
   for (let i = 0; i < pollCount; i += 1) {
     if (!registerDockerDriverGatewayEndpoint()) {
-      if (i < pollCount - 1) sleepSeconds(pollInterval);
+      if (i < pollCount - 1) sleepSecondsImpl(pollInterval);
       continue;
     }
     const status = runCaptureOpenshell(["status"], { ignoreError: true });
@@ -195,7 +293,7 @@ export async function startPackageManagedDockerDriverGateway({
       ignoreError: true,
     });
     const currentInfo = runCaptureOpenshell(["gateway", "info"], { ignoreError: true });
-    if (isGatewayHealthy(status, namedInfo, currentInfo) && (await isGatewayTcpReady())) {
+    if (isGatewayHealthy(status, namedInfo, currentInfo) && (await isDockerDriverGatewayReady())) {
       clearDockerDriverGatewayRuntimeFiles();
       await verifySandboxBridgeGatewayReachableOrExit(exitOnFailure, {
         skip: skipSandboxBridgeReachability,
@@ -203,7 +301,7 @@ export async function startPackageManagedDockerDriverGateway({
       console.log("  ✓ OpenShell gateway user service is healthy");
       return true;
     }
-    if (i < pollCount - 1) sleepSeconds(pollInterval);
+    if (i < pollCount - 1) sleepSecondsImpl(pollInterval);
   }
 
   const message = "OpenShell gateway user service started but did not become healthy.";
