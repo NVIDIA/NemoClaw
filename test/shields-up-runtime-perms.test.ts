@@ -31,7 +31,21 @@ Module._load = function patchedLoad(request, parent, isMain) {
         if (command[0] === "lsattr") {
           return "----i----------------- " + command.at(-1) + "\n";
         }
+        if (command[0] === "sha256sum") {
+          return (
+            "0000000000000000000000000000000000000000000000000000000000000001  " +
+            command.at(-1) +
+            "\n"
+          );
+        }
         return "";
+      },
+    };
+  }
+  if (request === "../sandbox/privileged-exec") {
+    return {
+      privilegedSandboxExecArgv(_sandboxName, cmd) {
+        return [...cmd];
       },
     };
   }
@@ -76,8 +90,6 @@ Module._load = function patchedLoad(request, parent, isMain) {
           typeof command[2] === "string" &&
           !command[2].includes("symlinked-root")
         ) {
-          // Preflight script: report a symlinked root so the caller
-          // refuses to lock without mutating any state dir.
           return symlinkedPath + "\n";
         }
         if (command[0] === "stat" && command[1] === "-c") {
@@ -88,7 +100,21 @@ Module._load = function patchedLoad(request, parent, isMain) {
         if (command[0] === "lsattr") {
           return "----i----------------- " + command.at(-1) + "\n";
         }
+        if (command[0] === "sha256sum") {
+          return (
+            "0000000000000000000000000000000000000000000000000000000000000001  " +
+            command.at(-1) +
+            "\n"
+          );
+        }
         return "";
+      },
+    };
+  }
+  if (request === "../sandbox/privileged-exec") {
+    return {
+      privilegedSandboxExecArgv(_sandboxName, cmd) {
+        return [...cmd];
       },
     };
   }
@@ -225,11 +251,16 @@ Module._load = function patchedLoad(request, parent, isMain) {
           typeof command[2] === "string" &&
           !command[2].includes("symlinked-root")
         ) {
-          // Preflight script: report /sandbox/.openclaw/extensions as
-          // symlinked so the caller refuses to mutate.
           return "/sandbox/.openclaw/extensions\n";
         }
         return "";
+      },
+    };
+  }
+  if (request === "../sandbox/privileged-exec") {
+    return {
+      privilegedSandboxExecArgv(_sandboxName, cmd) {
+        return [...cmd];
       },
     };
   }
@@ -387,7 +418,7 @@ try {
     fs.rmSync(fixture, { recursive: true, force: true });
   });
 
-  // Defence in depth: if a malicious agent points `agents/<id>` at /etc or
+  // Defense in depth: if a malicious agent points `agents/<id>` at /etc or
   // any other host path before shields-up runs, the privileged restore
   // helper must not mkdir/chown/chmod through that symlink. The script
   // must drop symlinked parents (and symlinked targets) before touching

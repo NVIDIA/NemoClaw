@@ -350,6 +350,18 @@ function isShieldsState(value: unknown): value is ShieldsState {
 //
 // The list is a superset: directories that don't exist in a given agent's
 // config dir are silently skipped.
+//
+// Coverage tracks the union of state_dirs declared by every shipped agent
+// manifest (agents/openclaw/manifest.yaml, agents/hermes/manifest.yaml).
+// Runtime-mutable subtrees that must keep being writable while shields are
+// up are intentionally omitted:
+//   - `sessions` (Hermes top-level) and `agents/*/sessions` (OpenClaw) — the
+//     latter is restored via WRITABLE_RUNTIME_SUBPATHS after the lock loop.
+//   - `memories`, `logs`, `cache`, `plans` (Hermes) — runtime mutables.
+//   - `openclaw-weixin` is regenerated from envs at image-build time
+//     (see src/lib/actions/sandbox/rebuild.ts) and is not a manifest state_dir.
+// Any new agent state_dir that holds executable code or credentials must be
+// added here in lockstep with its manifest entry.
 // ---------------------------------------------------------------------------
 
 const HIGH_RISK_STATE_DIRS = [
@@ -366,6 +378,13 @@ const HIGH_RISK_STATE_DIRS = [
   "devices",
   "canvas",
   "telegram",
+  "wechat", // OpenClaw runtime channel state
+  "whatsapp", // OpenClaw + Hermes channel state (Hermes also nests under platforms/)
+  "platforms", // Hermes channel-bridge auth state (whatsapp/, etc.)
+  "weixin", // Hermes iLink WeChat per-account context tokens
+  "pairing", // Hermes device-pairing state
+  "profiles", // Hermes saved profiles
+  "skins", // Hermes UI/personality bundles (code-like)
 ];
 
 // Runtime-data subpaths the agent must keep writing to under shields-up.
@@ -410,10 +429,10 @@ function applyStateDirLockMode(
     );
   }
 
-  // Mutation pass — still skips symlinked roots inline as a defence-in-depth
+  // Mutation pass — still skips symlinked roots inline as a defense-in-depth
   // measure in case the preflight and mutation observe different fs state
   // (the preflight pass already aborted shields-up in the common case).
-  runStateDirLockScript(sandboxName, {
+  const mainPassResult = runStateDirLockScript(sandboxName, {
     script: `
 set -u
 config_dir="$1"
@@ -429,10 +448,18 @@ for dir in "$@"; do
     continue
   fi
   [ -d "$path" ] || continue
-  chown -R "$owner" "$path" 2>/dev/null || true
-  chmod "$dir_mode" "$path" 2>/dev/null || true
-  [ "$clear_setgid" = "1" ] && chmod g-s "$path" 2>/dev/null || true
-  chmod -R "$recursive_mode" "$path" 2>/dev/null || true
+  if ! chown -R "$owner" "$path" 2>/dev/null; then
+    printf 'mutation-failed\\tchown\\t%s\\n' "$path"
+  fi
+  if ! chmod "$dir_mode" "$path" 2>/dev/null; then
+    printf 'mutation-failed\\tchmod-dir\\t%s\\n' "$path"
+  fi
+  if [ "$clear_setgid" = "1" ]; then
+    chmod g-s "$path" 2>/dev/null || true
+  fi
+  if ! chmod -R "$recursive_mode" "$path" 2>/dev/null; then
+    printf 'mutation-failed\\tchmod-recursive\\t%s\\n' "$path"
+  fi
 done
 `,
     args: [
@@ -447,7 +474,7 @@ done
 
   // Multi-agent OpenClaw workspaces are named workspace-<agent>. They are
   // discovered dynamically because they are configured by openclaw.json.
-  runStateDirLockScript(sandboxName, {
+  const workspacePassResult = runStateDirLockScript(sandboxName, {
     script: `
 set -u
 config_dir="$1"
@@ -461,10 +488,18 @@ for dir in "$config_dir"/workspace-*; do
     continue
   fi
   [ -d "$dir" ] || continue
-  chown -R "$owner" "$dir" 2>/dev/null || true
-  chmod "$dir_mode" "$dir" 2>/dev/null || true
-  [ "$clear_setgid" = "1" ] && chmod g-s "$dir" 2>/dev/null || true
-  chmod -R "$recursive_mode" "$dir" 2>/dev/null || true
+  if ! chown -R "$owner" "$dir" 2>/dev/null; then
+    printf 'mutation-failed\\tchown\\t%s\\n' "$dir"
+  fi
+  if ! chmod "$dir_mode" "$dir" 2>/dev/null; then
+    printf 'mutation-failed\\tchmod-dir\\t%s\\n' "$dir"
+  fi
+  if [ "$clear_setgid" = "1" ]; then
+    chmod g-s "$dir" 2>/dev/null || true
+  fi
+  if ! chmod -R "$recursive_mode" "$dir" 2>/dev/null; then
+    printf 'mutation-failed\\tchmod-recursive\\t%s\\n' "$dir"
+  fi
 done
 `,
     args: [configDir, owner, recursiveMode, dirMode, clearSetgid],
@@ -473,7 +508,89 @@ done
   if (isLocking) {
     restoreWritableRuntimeSubpaths(sandboxName, configDir);
   }
-  return [];
+
+  const issues: string[] = [];
+  for (const path of [...mainPassResult.symlinkedRoots, ...workspacePassResult.symlinkedRoots]) {
+    issues.push(`state dir root is a symlink: ${path} (refusing to lock)`);
+  }
+  for (const failure of [...mainPassResult.mutationFailures, ...workspacePassResult.mutationFailures]) {
+    issues.push(`state dir mutation failed (${failure.op}): ${failure.path}`);
+  }
+  if (isLocking) {
+    const verifyIssues = verifyStateDirsLocked(sandboxName, configDir, owner, dirMode);
+    issues.push(...verifyIssues);
+  }
+  return issues;
+}
+
+// Post-lock verification: stat every existing high-risk state-dir root (and
+// every workspace-* root) and confirm the owner + dir mode match what the
+// lock pass should have established. The script-level chown/chmod fallbacks
+// suppress per-call errors so transient kernel/filesystem hiccups don't
+// abort the whole fan-out; the verification pass below is what catches a
+// silent mutation failure and surfaces it as a lock issue so `shields up`
+// does not report success while extensions/agents/etc. remain unreadable.
+function verifyStateDirsLocked(
+  sandboxName: string,
+  configDir: string,
+  expectedOwner: string,
+  expectedDirMode: string,
+): string[] {
+  let stdout = "";
+  try {
+    stdout = privilegedSandboxExecCapture(sandboxName, [
+      "sh",
+      "-c",
+      `
+set -u
+config_dir="$1"
+expected_owner="$2"
+expected_mode="$3"
+shift 3
+check() {
+  path="$1"
+  [ -L "$path" ] && { printf 'verify-symlink\\t%s\\n' "$path"; return; }
+  [ -d "$path" ] || return
+  perms="$(stat -c '%a %U:%G' "$path" 2>/dev/null)" || {
+    printf 'verify-stat-failed\\t%s\\n' "$path"
+    return
+  }
+  mode="\${perms%% *}"
+  owner="\${perms#* }"
+  [ "$mode" = "$expected_mode" ] || printf 'verify-mode\\t%s\\t%s\\t%s\\n' "$path" "$mode" "$expected_mode"
+  [ "$owner" = "$expected_owner" ] || printf 'verify-owner\\t%s\\t%s\\t%s\\n' "$path" "$owner" "$expected_owner"
+}
+for dir in "$@"; do
+  check "$config_dir/$dir"
+done
+for dir in "$config_dir"/workspace-*; do
+  case "$dir" in *"*"*) continue ;; esac
+  check "$dir"
+done
+`,
+      "sh",
+      configDir,
+      expectedOwner,
+      expectedDirMode,
+      ...HIGH_RISK_STATE_DIRS,
+    ]);
+  } catch {
+    return [];
+  }
+  const issues: string[] = [];
+  for (const line of stdout.split("\n")) {
+    const parts = line.split("\t");
+    if (parts[0] === "verify-symlink" && parts[1]) {
+      issues.push(`state dir became a symlink mid-lock: ${parts[1]}`);
+    } else if (parts[0] === "verify-stat-failed" && parts[1]) {
+      issues.push(`state dir stat failed after lock: ${parts[1]}`);
+    } else if (parts[0] === "verify-mode" && parts[1]) {
+      issues.push(`state dir mode=${parts[2]} (expected ${parts[3]}): ${parts[1]}`);
+    } else if (parts[0] === "verify-owner" && parts[1]) {
+      issues.push(`state dir owner=${parts[2]} (expected ${parts[3]}): ${parts[1]}`);
+    }
+  }
+  return issues;
 }
 
 // Probe every high-risk state-dir root and every workspace-* dir for
@@ -518,15 +635,21 @@ interface StateDirLockScript {
   args: string[];
 }
 
+interface StateDirLockScriptResult {
+  symlinkedRoots: string[];
+  mutationFailures: Array<{ op: string; path: string }>;
+}
+
 // Run a privileged shell script that mutates state-dir permissions and
 // reports any symlinked roots it refused to touch via tab-prefixed stdout
-// lines ("symlinked-root\t<path>"). Returns the parsed list of skipped
-// paths; on any other failure, returns an empty list so the caller can
-// continue with the rest of the lock fan-out.
+// lines ("symlinked-root\t<path>"), plus per-op mutation failures
+// ("mutation-failed\t<op>\t<path>"). Returns the parsed result; on any
+// other failure, returns an empty result so the caller can continue with
+// the rest of the lock fan-out.
 function runStateDirLockScript(
   sandboxName: string,
   script: StateDirLockScript,
-): string[] {
+): StateDirLockScriptResult {
   let stdout = "";
   try {
     stdout = privilegedSandboxExecCapture(sandboxName, [
@@ -537,14 +660,21 @@ function runStateDirLockScript(
       ...script.args,
     ]);
   } catch {
-    return [];
+    return { symlinkedRoots: [], mutationFailures: [] };
   }
-  const skipped: string[] = [];
+  const result: StateDirLockScriptResult = {
+    symlinkedRoots: [],
+    mutationFailures: [],
+  };
   for (const line of stdout.split("\n")) {
-    const [tag, path] = line.split("\t");
-    if (tag === "symlinked-root" && path) skipped.push(path);
+    const parts = line.split("\t");
+    if (parts[0] === "symlinked-root" && parts[1]) {
+      result.symlinkedRoots.push(parts[1]);
+    } else if (parts[0] === "mutation-failed" && parts[1] && parts[2]) {
+      result.mutationFailures.push({ op: parts[1], path: parts[2] });
+    }
   }
-  return skipped;
+  return result;
 }
 
 function restoreWritableRuntimeSubpaths(
