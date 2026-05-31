@@ -366,7 +366,12 @@ async function applyChannelRemoveToGatewayAndRegistry(
   sandboxName: string,
   channelName: string,
   channelTokenKeys: string[],
-): Promise<void> {
+  options: { bestEffort?: boolean } = {},
+): Promise<{ ok: boolean; residual: string[] }> {
+  const bestEffort = Boolean(options.bestEffort);
+  const residual: string[] = [];
+  let gatewayReachable = true;
+
   if (channelTokenKeys.length > 0) {
     const recovery = await recoverNamedGatewayRuntime();
     if (!recovery.recovered) {
@@ -376,7 +381,9 @@ async function applyChannelRemoveToGatewayAndRegistry(
       console.error(
         "  Re-run after starting the gateway, or run 'openshell gateway start --name nemoclaw'.",
       );
-      process.exit(1);
+      if (!bestEffort) process.exit(1);
+      gatewayReachable = false;
+      residual.push("gateway-providers");
     }
   }
 
@@ -389,28 +396,33 @@ async function applyChannelRemoveToGatewayAndRegistry(
   // previous run may have already detached, or the channel may have been
   // configured for a sandbox that is no longer alive.
   const detachFailures: Array<{ name: string; output: string }> = [];
-  for (const envKey of channelTokenKeys) {
-    const name = bridgeProviderName(sandboxName, channelName, envKey);
-    const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (result.status !== 0) {
-      const output = `${result.stdout || ""}${result.stderr || ""}`;
-      if (!/\bNotFound\b|not found|not attached/i.test(output)) {
-        detachFailures.push({ name, output: output.trim() });
+  if (gatewayReachable) {
+    for (const envKey of channelTokenKeys) {
+      const name = bridgeProviderName(sandboxName, channelName, envKey);
+      const result = runOpenshell(["sandbox", "provider", "detach", sandboxName, name], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.status !== 0) {
+        const output = `${result.stdout || ""}${result.stderr || ""}`;
+        if (!/\bNotFound\b|not found|not attached/i.test(output)) {
+          detachFailures.push({ name, output: output.trim() });
+        }
       }
     }
-  }
-  if (detachFailures.length > 0) {
-    console.error(
-      `  Failed to detach bridge provider(s) from sandbox '${sandboxName}': ${detachFailures.map((f) => f.name).join(", ")}.`,
-    );
-    for (const f of detachFailures) {
-      console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+    if (detachFailures.length > 0) {
+      console.error(
+        `  Failed to detach bridge provider(s) from sandbox '${sandboxName}': ${detachFailures.map((f) => f.name).join(", ")}.`,
+      );
+      for (const f of detachFailures) {
+        console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+      }
+      if (!bestEffort) {
+        console.error("  Registry not updated; re-run after resolving the gateway error.");
+        process.exit(1);
+      }
+      if (!residual.includes("gateway-providers")) residual.push("gateway-providers");
     }
-    console.error("  Registry not updated; re-run after resolving the gateway error.");
-    process.exit(1);
   }
 
   // Capture each delete's outcome. If any non-NotFound failure surfaces
@@ -420,30 +432,35 @@ async function applyChannelRemoveToGatewayAndRegistry(
   // can't easily recover. Surface the underlying openshell output so the
   // operator can see exactly why the delete was rejected.
   const deleteFailures: Array<{ name: string; output: string }> = [];
-  for (const envKey of channelTokenKeys) {
-    const name = bridgeProviderName(sandboxName, channelName, envKey);
-    const result = runOpenshell(["provider", "delete", name], {
-      ignoreError: true,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    if (result.status !== 0) {
-      const output = `${result.stdout || ""}${result.stderr || ""}`;
-      // Treat "not found" as success-equivalent — a previous run may
-      // have already deleted the provider.
-      if (!/\bNotFound\b|not found/i.test(output)) {
-        deleteFailures.push({ name, output: output.trim() });
+  if (gatewayReachable) {
+    const detachFailedSet = new Set(detachFailures.map((f) => f.name));
+    for (const envKey of channelTokenKeys) {
+      const name = bridgeProviderName(sandboxName, channelName, envKey);
+      if (!bestEffort && detachFailedSet.has(name)) continue;
+      const result = runOpenshell(["provider", "delete", name], {
+        ignoreError: true,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      if (result.status !== 0) {
+        const output = `${result.stdout || ""}${result.stderr || ""}`;
+        if (!/\bNotFound\b|not found/i.test(output)) {
+          deleteFailures.push({ name, output: output.trim() });
+        }
       }
     }
-  }
-  if (deleteFailures.length > 0) {
-    console.error(
-      `  Failed to delete bridge provider(s) from the OpenShell gateway: ${deleteFailures.map((f) => f.name).join(", ")}.`,
-    );
-    for (const f of deleteFailures) {
-      console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+    if (deleteFailures.length > 0) {
+      console.error(
+        `  Failed to delete bridge provider(s) from the OpenShell gateway: ${deleteFailures.map((f) => f.name).join(", ")}.`,
+      );
+      for (const f of deleteFailures) {
+        console.error(`    [${f.name}] ${f.output.split("\n").join("\n      ")}`);
+      }
+      if (!bestEffort) {
+        console.error("  Registry not updated; re-run after resolving the gateway error.");
+        process.exit(1);
+      }
+      if (!residual.includes("gateway-providers")) residual.push("gateway-providers");
     }
-    console.error("  Registry not updated; re-run after resolving the gateway error.");
-    process.exit(1);
   }
 
   const entry = registry.getSandbox(sandboxName);
@@ -459,6 +476,8 @@ async function applyChannelRemoveToGatewayAndRegistry(
         Object.keys(providerCredentialHashes).length > 0 ? providerCredentialHashes : undefined,
     });
   }
+
+  return { ok: residual.length === 0, residual };
 }
 
 async function promptAndRebuild(sandboxName: string, actionDesc: string): Promise<boolean> {
@@ -853,11 +872,17 @@ export async function addSandboxChannel(
       `  ${YW}⚠${R} Rolling back '${canonical}' bridge registration to keep messagingChannels and policy state aligned.`,
     );
     clearChannelTokens(channel);
-    await applyChannelRemoveToGatewayAndRegistry(
+    const rollback = await applyChannelRemoveToGatewayAndRegistry(
       sandboxName,
       canonical,
       getChannelTokenKeys(channel),
+      { bestEffort: true },
     );
+    if (!rollback.ok) {
+      console.error(
+        `  ${YW}⚠${R} Rollback could not fully clean ${rollback.residual.join(", ")}; run '${CLI_NAME} ${sandboxName} channels remove ${canonical}' once the gateway is reachable.`,
+      );
+    }
     process.exit(1);
   }
 

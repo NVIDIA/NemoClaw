@@ -533,6 +533,82 @@ process.exit = (code) => {
       `apply failure must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
     );
   });
+
+  it("completes rollback registry update and reports residual gateway state when openshell detach fails", () => {
+    const script = `${buildPreamble({ applyPresetResult: false })}
+openshellRuntime.runOpenshell = (args) => {
+  if (Array.isArray(args) && args[0] === "sandbox" && args[1] === "provider" && args[2] === "detach") {
+    return { status: 1, stdout: "", stderr: "permission denied" };
+  }
+  return { status: 0, stdout: "", stderr: "" };
+};
+const ctx = module.exports;
+const exitCodes = [];
+const originalExit = process.exit;
+const stderrChunks = [];
+const originalConsoleError = console.error;
+console.error = (...args) => {
+  stderrChunks.push(args.map((a) => (typeof a === "string" ? a : JSON.stringify(a))).join(" ") + "\\n");
+  originalConsoleError.apply(console, args);
+};
+process.exit = (code) => {
+  exitCodes.push(code ?? 0);
+  throw new Error("__EXIT__" + (code ?? 0));
+};
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "telegram" });
+  } catch (err) {
+    if (!String(err && err.message).startsWith("__EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+      return;
+    }
+  } finally {
+    process.exit = originalExit;
+    console.error = originalConsoleError;
+  }
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    appliedCalls: ctx.appliedCalls,
+    callOrder: ctx.callOrder,
+    providerCalls: ctx.providerCalls,
+    registryUpdates: ctx.registryUpdates,
+    deletedCredentialKeys: ctx.deletedCredentialKeys,
+    exitCodes,
+    stderrCombined: stderrChunks.join(""),
+  }) + "\\n");
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.exitCodes, [1]);
+    assert.deepEqual(payload.appliedCalls, [{ sandboxName: "test-sb", presetName: "telegram" }]);
+    assert.ok(
+      payload.registryUpdates.length === 2,
+      `expected registry add + rollback even when openshell detach fails; got ${JSON.stringify(payload.registryUpdates)}`,
+    );
+    assert.deepEqual(payload.registryUpdates[1].updates.messagingChannels, []);
+    assert.deepEqual(
+      payload.deletedCredentialKeys,
+      ["TELEGRAM_BOT_TOKEN"],
+      `expected local credentials cleared before gateway rollback; got ${JSON.stringify(payload.deletedCredentialKeys)}`,
+    );
+    assert.ok(
+      payload.stderrCombined.includes("Rollback could not fully clean gateway-providers"),
+      `expected residual-state warning on stderr; got:\n${payload.stderrCombined}`,
+    );
+    assert.ok(
+      payload.stderrCombined.includes(`'nemoclaw test-sb channels remove telegram'`),
+      `expected manual cleanup hint on stderr; got:\n${payload.stderrCombined}`,
+    );
+    assert.ok(
+      !payload.callOrder.includes("promptAndRebuild"),
+      `rollback path must not prompt for rebuild; got order: ${JSON.stringify(payload.callOrder)}`,
+    );
+  });
 });
 
 // Regression: `channels add` was updating the registry but NOT
