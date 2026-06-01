@@ -160,6 +160,7 @@ NemoClaw ships preset policy files in `nemoclaw-blueprint/policies/presets/` for
 |---|---|---|
 | `brave` | Brave Search API. | Agent can issue search queries. |
 | `brew` | Homebrew (Linuxbrew) package manager. The sandbox base image includes the `brew` binary; this preset opens network egress to GitHub and the Homebrew formulae index so `brew install` can fetch bottles. | Allows installing arbitrary Homebrew packages, which may contain malicious code. |
+| `claude-code` | Claude Code CLI API, telemetry, and crash-report endpoints. | Allows a separately installed Claude Code CLI to reach Anthropic and telemetry hosts with its own credentials. Do not use this preset for NemoClaw inference routing. |
 | `discord` | Discord REST API, WebSocket gateway, CDN. | CDN endpoint (`cdn.discordapp.com`) allows GET to any path. WebSocket uses `access: full` (no inspection). |
 | `github` | GitHub and GitHub REST API. | Gives agent read/write access to repositories and issues via `git`. |
 | `huggingface` | Hugging Face Hub (download-only) and inference router. | Allows downloading arbitrary models and datasets. POST is restricted to the inference router only. |
@@ -458,7 +459,7 @@ The agent never receives the provider API key.
 | Default | The agent talks to `inference.local`. The host owns the credential and upstream endpoint. |
 | What you can change | You cannot configure this architecture. The system always enforces it. |
 | Risk if bypassed | If the agent could reach an inference endpoint directly (by adding it to the network policy), it would need an API key. Since the sandbox does not contain credentials, this acts as defense-in-depth. However, adding an inference provider's host to the network policy without going through OpenShell routing could let the agent use a stolen or hardcoded key. |
-| Recommendation | Do not add inference provider hosts (such as `api.openai.com` or `api.anthropic.com`) to the network policy. Use OpenShell inference routing instead. |
+| Recommendation | Do not add inference provider hosts (such as `api.openai.com` or `api.anthropic.com`) to the network policy for NemoClaw model traffic. Use OpenShell inference routing instead. The `claude-code` preset is a separate opt-in exception for running the Claude Code CLI with its own credentials, not a way to configure NemoClaw inference. |
 
 ### Provider Trust Tiers
 
@@ -529,7 +530,7 @@ The following patterns weaken security without providing meaningful benefit.
 | Adding endpoints to the baseline policy for one-off requests | Adding an endpoint to the baseline policy makes it permanently reachable across all sandbox instances. | Use operator approval. Approved endpoints persist within the sandbox instance but reset when you destroy and recreate the sandbox. |
 | Relying solely on the entrypoint for capability drops | The entrypoint drops dangerous capabilities using `capsh`, but this is best-effort. If `capsh` is unavailable or `CAP_SETPCAP` is not in the bounding set, the container runs with the default capability set. | Pass `--cap-drop=ALL` at the container runtime level as defense-in-depth. |
 | Leaving `/sandbox/.openclaw` writable on sensitive workloads | This directory contains the OpenClaw gateway configuration. A writable `.openclaw` lets the agent disable CORS, redirect inference routing, or weaken gateway protections. | Lock config for always-on assistants handling sensitive data. |
-| Adding inference provider hosts to the network policy | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. |
+| Adding inference provider hosts to the network policy for NemoClaw inference | Direct network access to an inference host bypasses credential isolation and usage tracking. | Use OpenShell inference routing instead of adding hosts like `api.openai.com` or `api.anthropic.com` to the network policy. Apply `claude-code` only when intentionally running the separate Claude Code CLI inside the sandbox. |
 | Disabling device auth for remote deployments | Without device auth, any device on the network can connect to the gateway without pairing. Combined with a cloudflared tunnel, this makes the dashboard publicly accessible and unauthenticated. | Keep `NEMOCLAW_DISABLE_DEVICE_AUTH` at its default (`0`). Only set it to `1` for local headless or development environments. |
 
 ## Known Limitations

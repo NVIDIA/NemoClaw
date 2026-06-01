@@ -167,8 +167,12 @@ $ nemoclaw my-assistant channels add whatsapp
 It prompts for Telegram, Discord, and Slack tokens, runs an interactive host-side QR scan for WeChat, and collects nothing for WhatsApp because pairing happens in-sandbox after rebuild.
 It registers bridge providers with the OpenShell gateway when tokens were captured, records the channel in the sandbox registry, and asks whether to rebuild immediately.
 The command accepts mixed-case input such as `Telegram`, then stores and prints the canonical lowercase channel name.
-If a matching built-in network policy preset exists, `channels add` applies it to the sandbox automatically before the rebuild so the bridge has egress to its upstream API.
-If applying the preset fails, NemoClaw warns and tells you to re-apply manually with `nemoclaw <sandbox> policy-add <channel>` after the rebuild.
+`channels add` requires the matching built-in network policy preset YAML to be present.
+A missing or malformed preset YAML (no `network_policies:` section) aborts the command before any token prompt, registry write, or rebuild prompt, so the sandbox never advertises a channel without a matching network policy.
+With the preset file in place, `channels add` applies it to the sandbox before the rebuild so the bridge has egress to its upstream API.
+When the apply step itself fails after the registry write on a fresh add, NemoClaw attempts to roll back the bridge providers, the `messagingChannels` entry, and any staged environment credentials, then exits without prompting for a rebuild; if any gateway-side step (provider detach or delete) fails the rollback continues and prints a `Rollback could not fully clean <surfaces>` warning so the operator can clean up manually.
+When the same failure happens on a re-add of an already-enabled channel, NemoClaw restores the prior `messagingChannels` entry, restores staged environment credentials when available, restores registry credential hashes, and attempts to re-upsert the prior bridge providers, but flags `gateway-providers` as residual because the in-flight upsert may have left the gateway with the new token; verify the gateway bridge before relying on the channel.
+Restore the preset YAML and re-run `nemoclaw <sandbox> channels add <channel>`.
 Choose the rebuild so the running sandbox image picks up the new channel.
 For Telegram, Discord, and Slack, `channels add` also checks the rebuilt runtime for the selected bridge and reports startup, credential, or missing-plugin warnings before returning.
 If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION`, `SLACK_ALLOWED_USERS`, or `SLACK_ALLOWED_CHANNELS`, export them before the rebuild starts.

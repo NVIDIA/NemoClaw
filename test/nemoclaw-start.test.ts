@@ -317,6 +317,48 @@ describe("nemoclaw-start non-root fallback", () => {
     }
   });
 
+  // #4503: the Docker HEALTHCHECK reports healthy on curl-exit-7 only when the
+  // /tmp/nemoclaw-gateway-local marker is ABSENT (gateway delivered out of this
+  // container's namespace). To avoid masking a slow in-container startup, the
+  // entrypoint must drop that marker early on the gateway-serving path — and
+  // must NOT drop it when only running a one-shot command.
+  it("drops the in-container gateway healthcheck marker only on the gateway-serving path (#4503)", () => {
+    const src = fs.readFileSync(START_SCRIPT, "utf-8");
+    const start = src.indexOf('NEMOCLAW_CMD=("$@")');
+    const end = src.indexOf("_chat_ui_url_port()", start);
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error("Expected NEMOCLAW_CMD assignment and the gateway marker block");
+    }
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-gw-marker-"));
+    const markerPath = path.join(tmpDir, "nemoclaw-gateway-local");
+    const snippet = src
+      .slice(start, end)
+      .replaceAll("/tmp/nemoclaw-gateway-local", markerPath);
+
+    function runScenario(setArgs: string) {
+      const script = ["#!/usr/bin/env bash", "set -euo pipefail", setArgs, snippet].join("\n");
+      return spawnSync("bash", ["-c", script], { encoding: "utf-8", timeout: 5000 });
+    }
+
+    try {
+      // Gateway-serving path: no trailing command, so the marker is dropped.
+      fs.rmSync(markerPath, { force: true });
+      const serving = runScenario("set --");
+      expect(serving.status).toBe(0);
+      expect(fs.existsSync(markerPath)).toBe(true);
+
+      // One-shot command path: the marker must stay absent so the out-of-
+      // namespace healthcheck branch never strict-checks a non-gateway
+      // container.
+      fs.rmSync(markerPath, { force: true });
+      const oneShot = runScenario("set -- openclaw agent --agent main");
+      expect(oneShot.status).toBe(0);
+      expect(fs.existsSync(markerPath)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("executes explicit non-root commands before gateway startup setup", () => {
     const src = fs.readFileSync(START_SCRIPT, "utf-8");
     const script = [

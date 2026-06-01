@@ -837,7 +837,7 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 # can detect and restart unhealthy containers in standalone deployments.
 # Ref: https://github.com/NVIDIA/NemoClaw/issues/1430
 #
-# Two-stage probe so Docker health does not contradict the NemoClaw delivery
+# Layered probe so Docker health does not contradict the NemoClaw delivery
 # chain on runtimes where the dashboard port lives in a different network
 # namespace (e.g. DGX Spark / aarch64 with OpenShell-managed forwarding).
 # The reporter saw `nemoclaw status` Ready + the host forward succeed while
@@ -846,27 +846,31 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 #
 #   1. Direct in-container probe (HTTP 200) — definitive when it works,
 #      preserves the original Compose/standalone health signal.
-#   2. ONLY on curl exit 7 ("Couldn't connect"), fall back to verifying
-#      ALL of:
-#        - the OpenClaw gateway process started by nemoclaw-start is
-#          still alive (via pgrep --ignore-ancestors), AND
-#        - the gateway log file exists and is non-empty (proves the
-#          process started and emitted its banner; rules out cases
-#          where the gateway never came up).
-#      Exit 7 means the in-container TCP connect was refused by the
-#      kernel because nothing is bound to the dashboard port inside
-#      this network namespace — the namespace-mismatch shape reported
-#      in #3975. A connect timeout (curl exit 28) is treated as a real
-#      failure: a listener exists but is not responding (wedged HTTP
-#      server), and we want Docker to restart in that case.
-#
-# Tradeoff: this fallback also fires in a standalone deployment where the
-# gateway process is alive but the configured dashboard port is wrong or
-# the listener never came up. We accept that residual risk because it
-# requires a misconfiguration the start-period (45s) already gives the
-# wizard a chance to fix, and the existing host-side delivery chain
-# probes (verify-deployment.ts, host port forward, sandbox status) still
-# catch it from outside.
+#   2. A connect timeout (curl exit 28) or HTTP 4xx/5xx (curl exit 22) is a
+#      real bad signal: a listener exists but is wedged or answered with a
+#      failure inside this container, so Docker should restart it.
+#   3. ONLY on curl exit 7 ("Couldn't connect" — the kernel refused the
+#      in-container TCP connect because nothing is bound to the dashboard
+#      port in THIS network namespace) the meaning depends on whether this
+#      container is the one running the OpenClaw gateway:
+#        a. If nemoclaw-start launched the gateway in this container it
+#           drops the /tmp/nemoclaw-gateway-local marker (see
+#           scripts/nemoclaw-start.sh). The gateway is local but its port
+#           may be forwarded out of this namespace (#3975), so confirm the
+#           gateway came up: the process is still alive (pgrep
+#           --ignore-ancestors) AND the gateway log is non-empty. A
+#           standalone deployment whose gateway never started fails here so
+#           Docker restarts it (#1430).
+#        b. If the marker is ABSENT the OpenClaw gateway is delivered
+#           outside this container (OpenShell docker-driver deployments run
+#           it on the host / in a host-side process chain — #4503). An
+#           in-container curl/pgrep cannot observe an out-of-namespace
+#           gateway, so a process-name fallback here produced false
+#           "unhealthy" while `nemoclaw status` and OpenShell reported the
+#           sandbox Ready. We must not drive Docker health off a signal we
+#           cannot prove: report healthy and defer to NemoClaw/OpenShell's
+#           host-side delivery-chain monitoring (verify-deployment.ts, host
+#           port forward, sandbox status).
 #
 # The process pattern matches both `openclaw gateway run` (the launcher
 # command nemoclaw-start runs) and `openclaw-gateway` (the re-execed
@@ -879,9 +883,6 @@ RUN if [ "$NEMOCLAW_DARWIN_VM_COMPAT" = "1" ]; then \
 # without --ignore-ancestors `pgrep -f` would happily report it as the
 # live gateway even after the real process exited (procps 4.0+ supports
 # this flag; the base image pins procps to 2:4.0.4-9).
-#
-# We deliberately do not fall back on HTTP 4xx/5xx — those mean the gateway
-# answered with a failure inside this container, which is a real bad signal.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
     CMD port="${NEMOCLAW_DASHBOARD_PORT:-${OPENCLAW_GATEWAY_PORT:-}}"; \
         if [ -z "$port" ]; then \
@@ -891,6 +892,7 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=45s --retries=3 \
         curl -sf --max-time 3 "http://127.0.0.1:${port}/health" > /dev/null 2>&1 || rc=$?; \
         if [ "$rc" = 0 ]; then exit 0; fi; \
         if [ "$rc" != 7 ]; then exit 1; fi; \
+        [ -f /tmp/nemoclaw-gateway-local ] || exit 0; \
         pgrep --ignore-ancestors -f 'openclaw[ -]gateway' > /dev/null 2>&1 || exit 1; \
         [ -s /tmp/gateway.log ]
 
