@@ -50,6 +50,7 @@ import * as policies from "../../policy";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import * as sandboxVersion from "../../sandbox/version";
 import { redact } from "../../security/redact";
+import * as shields from "../../shields";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
@@ -60,8 +61,8 @@ import {
 } from "../../state/sandbox-session";
 import { removeSandboxRegistryEntry } from "./destroy";
 import { executeSandboxCommand } from "./process-recovery";
-import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
 import { buildRebuildRecreateOnboardOpts } from "./rebuild-gpu-opt-out";
+import { openRebuildShieldsWindow, printRebuildShieldsRecovery, relockRebuildShieldsWindow } from "./rebuild-shields";
 
 /**
  * Emit timestamped rebuild diagnostics when verbose rebuild logging is enabled.
@@ -840,6 +841,23 @@ export async function rebuildSandbox(
     } else {
       console.log(
         `  ${D}Post-upgrade structure check skipped (doctor returned ${doctorResult?.status ?? "null"})${R}`,
+      );
+    }
+
+    // #4538: `openclaw doctor --fix` enforces a single-user 700/600 state
+    // layout, which silently tightens NemoClaw's mutable config contract
+    // (setgid + group-writable /sandbox/.openclaw and group-writable
+    // openclaw.json). Restore it immediately so the gateway UID can still
+    // persist config edits after rebuild. No-op for shields-up sandboxes.
+    log("Restoring mutable OpenClaw config permissions after post-upgrade doctor --fix");
+    const permRepair = shields.repairMutableConfigPerms(sandboxName);
+    if (!permRepair.applied) {
+      log(`Mutable config permission repair skipped: ${permRepair.reason}`);
+    } else if (permRepair.verified) {
+      console.log(`  ${G}\u2713${R} Mutable config permissions restored`);
+    } else {
+      console.error(
+        `  ${YW}\u26a0${R} Mutable config permission repair incomplete: ${permRepair.errors.join("; ")}`,
       );
     }
 

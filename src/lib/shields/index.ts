@@ -53,6 +53,14 @@ const {
   isHashVerificationIssue,
   isSha256Hex,
 }: typeof import("./seal") = require("./seal");
+const {
+  inspectMutableConfigPerms: inspectMutableConfigPermsCore,
+  repairMutableConfigPerms: repairMutableConfigPermsCore,
+}: typeof import("./mutable-config-perms") = require("./mutable-config-perms");
+type MutableConfigPermsInspection =
+  import("./mutable-config-perms").MutableConfigPermsInspection;
+type MutableConfigRepairResult =
+  import("./mutable-config-perms").MutableConfigRepairResult;
 
 const STATE_DIR = resolveNemoclawStateDir();
 
@@ -603,6 +611,41 @@ function unlockAgentConfig(
   if (issues.length > 0) {
     throw new Error(`Config not unlocked: ${issues.join(", ")}`);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Mutable-config permission repair / diagnostics (#4538)
+//
+// Sandbox-bound wrappers around the pure contract logic in
+// ./mutable-config-perms.ts. See that module for the full rationale: in short,
+// `openclaw doctor --fix` tightens NemoClaw's mutable config tree (setgid +
+// group-writable 2770/660) back to single-user 700/600, which blocks the
+// gateway UID from persisting config edits. These detect the drift and restore
+// the contract without weakening an active shields-up lock.
+// ---------------------------------------------------------------------------
+
+function inspectMutableConfigPerms(
+  sandboxName: string,
+): MutableConfigPermsInspection {
+  validateName(sandboxName, "sandbox name");
+  const target = resolveAgentConfig(sandboxName);
+  return inspectMutableConfigPermsCore(
+    target,
+    getShieldsPosture(sandboxName, true).mode,
+    (p) => privilegedSandboxExecCapture(sandboxName, ["stat", "-c", "%a %U:%G", p]),
+  );
+}
+
+function repairMutableConfigPerms(
+  sandboxName: string,
+): MutableConfigRepairResult {
+  validateName(sandboxName, "sandbox name");
+  const target = resolveAgentConfig(sandboxName);
+  return repairMutableConfigPermsCore(
+    target,
+    getShieldsPosture(sandboxName, true).mode,
+    () => unlockAgentConfig(sandboxName, target),
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -1558,16 +1601,18 @@ function isShieldsDown(sandboxName: string, allowInlineRecovery = false): boolea
 // ---------------------------------------------------------------------------
 
 export {
-  shieldsDown,
-  shieldsUp,
-  shieldsStatus,
-  isShieldsDown,
-  getShieldsPosture,
-  killTimer,
-  deriveShieldsMode,
-  parseDuration,
-  lockAgentConfig,
-  unlockAgentConfig,
-  MAX_TIMEOUT_SECONDS,
   DEFAULT_TIMEOUT_SECONDS,
+  deriveShieldsMode,
+  getShieldsPosture,
+  inspectMutableConfigPerms,
+  isShieldsDown,
+  killTimer,
+  lockAgentConfig,
+  MAX_TIMEOUT_SECONDS,
+  parseDuration,
+  repairMutableConfigPerms,
+  shieldsDown,
+  shieldsStatus,
+  shieldsUp,
+  unlockAgentConfig,
 };

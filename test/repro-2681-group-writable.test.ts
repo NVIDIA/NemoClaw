@@ -148,6 +148,59 @@ describe("mutable agent config permissions", () => {
     }
   });
 
+  it("re-normalizes a tree that `openclaw doctor --fix` tightened to 700/600 (#4538)", () => {
+    // OpenClaw's `doctor --fix` enforces a single-user 700/600 state layout,
+    // which silently breaks NemoClaw's group-writable mutable contract so the
+    // gateway UID can no longer persist config edits. A (re)start must restore
+    // the setgid + group-writable contract.
+    const tmpDir = mkdtempOnPosixFs("nemoclaw-4538-doctor-fix-");
+    const configDir = path.join(tmpDir, ".openclaw");
+    const nestedDir = path.join(configDir, "agents", "main");
+    const configFile = path.join(configDir, "openclaw.json");
+    const hashFile = path.join(configDir, ".config-hash");
+
+    try {
+      fs.mkdirSync(nestedDir, { recursive: true });
+      fs.writeFileSync(configFile, "{}\n");
+      fs.writeFileSync(hashFile, "deadbeef\n");
+      // Simulate the post-`doctor --fix` single-user 700/600 layout.
+      fs.chmodSync(configFile, 0o600);
+      fs.chmodSync(hashFile, 0o600);
+      fs.chmodSync(nestedDir, 0o700);
+      fs.chmodSync(configDir, 0o700);
+
+      // Sanity-check the starting (tightened) state.
+      expect(modeBits(configDir) & 0o7777).toBe(0o700);
+      expect(modeBits(configFile) & 0o7777).toBe(0o600);
+
+      const result = spawnSync(
+        "bash",
+        [
+          "-c",
+          [
+            "set -euo pipefail",
+            'id() { if [ "${1:-}" = "-u" ]; then printf "1000"; else command id "$@"; fi; }',
+            'stat() { if [ "${1:-}" = "-c" ] && [ "${2:-}" = "%U" ]; then printf "sandbox\\n"; else command stat "$@"; fi; }',
+            normalizeMutableConfigPermsFor(configDir),
+            "normalize_mutable_config_perms",
+          ].join("\n"),
+        ],
+        { encoding: "utf-8", timeout: 5000 },
+      );
+
+      expect(result.status).toBe(0);
+      // Mutable contract restored: setgid + group rwx dir, group rw files.
+      expect(modeBits(configDir) & 0o7777).toBe(0o2770);
+      expect(modeBits(configFile) & 0o7777).toBe(0o660);
+      expect(modeBits(hashFile) & 0o7777).toBe(0o660);
+      expect(modeBits(configDir) & 0o2000).toBe(0o2000);
+      expect(modeBits(nestedDir) & 0o2000).toBe(0o2000);
+      expect(modeBits(nestedDir) & 0o070).toBe(0o070);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("shields-down restores OpenClaw group-writable file modes and setgid dirs", () => {
     const commands: string[][] = [];
     withMockedDockerExecFileSync(commands, () => {
