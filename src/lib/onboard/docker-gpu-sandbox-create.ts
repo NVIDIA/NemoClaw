@@ -19,7 +19,7 @@ import {
   shouldApplyDockerGpuPatch,
   waitForOpenShellSupervisorReconnect,
 } from "./docker-gpu-patch";
-import { getSandboxFailurePhase, isSandboxInErrorPhase } from "../state/gateway";
+import { getSandboxFailurePhase } from "../state/gateway";
 
 type DockerGpuSandboxCreateDeps = Pick<
   DockerGpuPatchDeps,
@@ -194,8 +194,8 @@ export function createDockerGpuSandboxCreatePatch(
         const list = options.deps.runCaptureOpenshell(["sandbox", "list"], {
           ignoreError: true,
         });
-        if (isSandboxInErrorPhase(list, sandboxName)) {
-          const phase = getSandboxFailurePhase(list, sandboxName) ?? "a terminal failure";
+        const phase = getSandboxFailurePhase(list, sandboxName);
+        if (phase) {
           console.error("");
           console.error(`  Skipping GPU proof: sandbox '${sandboxName}' is in ${phase} phase.`);
           printDockerGpuProofFailure(

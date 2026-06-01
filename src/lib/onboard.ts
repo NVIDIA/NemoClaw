@@ -3687,7 +3687,6 @@ async function createSandbox(
     timeoutSecs: sandboxReadyTimeoutSecs,
     runCaptureOpenshell,
     isSandboxReady,
-    isSandboxInErrorPhase: gatewayState.isSandboxInErrorPhase,
     getSandboxFailurePhase: gatewayState.getSandboxFailurePhase,
     sleep: sleepSeconds,
   });

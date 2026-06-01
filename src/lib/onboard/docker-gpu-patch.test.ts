@@ -29,7 +29,6 @@ import {
 import { waitForCreatedSandboxReadyWithTrace } from "../../../dist/lib/onboard/sandbox-readiness-tracing";
 import {
   getSandboxFailurePhase,
-  isSandboxInErrorPhase,
   isSandboxReady,
 } from "../../../dist/lib/state/gateway";
 
@@ -795,17 +794,14 @@ describe("docker-gpu-patch sandbox DNS fallback (#3579)", () => {
 describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
   it("detects terminal failure phases in `openshell sandbox list` output", () => {
     const errorList = "my-sandbox   Error   2s ago";
-    expect(isSandboxInErrorPhase(errorList, "my-sandbox")).toBe(true);
     expect(getSandboxFailurePhase(errorList, "my-sandbox")).toBe("Error");
+    expect(getSandboxFailurePhase("my-sandbox   CrashLoopBackOff   3s ago", "my-sandbox"))
+      .toBe("CrashLoopBackOff");
+    expect(getSandboxFailurePhase("my-sandbox   Failed   3s ago", "my-sandbox")).toBe("Failed");
 
-    expect(
-      isSandboxInErrorPhase("my-sandbox   CrashLoopBackOff   3s ago", "my-sandbox"),
-    ).toBe(true);
-    expect(isSandboxInErrorPhase("my-sandbox   Failed   3s ago", "my-sandbox")).toBe(true);
-
-    expect(isSandboxInErrorPhase("my-sandbox   Ready   3s ago", "my-sandbox")).toBe(false);
-    expect(isSandboxInErrorPhase("other   Error   3s ago", "my-sandbox")).toBe(false);
-    expect(isSandboxInErrorPhase("", "my-sandbox")).toBe(false);
+    expect(getSandboxFailurePhase("my-sandbox   Ready   3s ago", "my-sandbox")).toBeNull();
+    expect(getSandboxFailurePhase("other   Error   3s ago", "my-sandbox")).toBeNull();
+    expect(getSandboxFailurePhase("", "my-sandbox")).toBeNull();
   });
 
   it("short-circuits the readiness wait when the sandbox enters Error phase", () => {
@@ -824,8 +820,7 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
       timeoutSecs: 600,
       runCaptureOpenshell,
       isSandboxReady,
-      isSandboxInErrorPhase,
-      getSandboxFailurePhase: () => "Error",
+      getSandboxFailurePhase,
       sleep,
     });
 

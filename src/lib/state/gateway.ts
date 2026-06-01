@@ -71,17 +71,6 @@ const TERMINAL_SANDBOX_FAILURE_PHASES = new Set([
 ]);
 
 /**
- * Return true when the sandbox row in `openshell sandbox list` output reports
- * a terminal failure phase (e.g. Error, Failed, CrashLoopBackOff). Returns
- * false when the row is missing or in any live/transient phase.
- */
-export function isSandboxInErrorPhase(output: string, sandboxName: string): boolean {
-  const cols = parseSandboxRow(output, sandboxName);
-  if (!cols) return false;
-  return cols.some((col) => TERMINAL_SANDBOX_FAILURE_PHASES.has(col));
-}
-
-/**
  * Return the failure phase token from `openshell sandbox list` if the row
  * is in a terminal failure phase, otherwise null. Useful for distinguishing
  * "Error" from "Failed"/"CrashLoopBackOff" in user-facing diagnostics.

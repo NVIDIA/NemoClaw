@@ -83,7 +83,6 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
    * (e.g. Error / Failed / CrashLoopBackOff) rather than burning the full
    * timeout window before reporting "did not become ready" (#4316).
    */
-  isSandboxInErrorPhase?: (output: string, sandboxName: string) => boolean;
   getSandboxFailurePhase?: (output: string, sandboxName: string) => string | null;
   sleep: (seconds: number) => void;
 }): CreatedSandboxReadinessResult {
@@ -92,7 +91,6 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
     timeoutSecs,
     runCaptureOpenshell,
     isSandboxReady,
-    isSandboxInErrorPhase,
     getSandboxFailurePhase,
     sleep,
   } = options;
@@ -104,8 +102,8 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
         addTraceEvent("ready", { attempt: i + 1 });
         return { ready: true, reason: "ready", failurePhase: null };
       }
-      if (isSandboxInErrorPhase?.(list, sandboxName)) {
-        const failurePhase = getSandboxFailurePhase?.(list, sandboxName) ?? null;
+      const failurePhase = getSandboxFailurePhase?.(list, sandboxName) ?? null;
+      if (failurePhase) {
         addTraceEvent("terminal_failure_phase", { attempt: i + 1, failure_phase: failurePhase });
         return { ready: false, reason: "terminal_failure_phase", failurePhase };
       }
