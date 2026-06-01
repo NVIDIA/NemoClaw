@@ -62,7 +62,8 @@ export function normalizeRoutedEndpointUrl(
   if (/localhost|127\.0\.0\.1/.test(url)) {
     try {
       const parsed = new URL(url);
-      return `${HOST_GATEWAY_URL}:${parsed.port}${parsed.pathname}`;
+      const port = parsed.port ? `:${parsed.port}` : "";
+      return `${HOST_GATEWAY_URL}${port}${parsed.pathname}${parsed.search}${parsed.hash}`;
     } catch {
       return url;
     }

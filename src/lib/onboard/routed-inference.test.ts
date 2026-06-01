@@ -35,6 +35,12 @@ describe("normalizeRoutedEndpointUrl (#4564)", () => {
     );
   });
 
+  it("omits the colon when the endpoint has no explicit port and preserves query/hash", () => {
+    expect(normalizeRoutedEndpointUrl("http://localhost/v1?x=1#frag")).toBe(
+      "http://host.openshell.internal/v1?x=1#frag",
+    );
+  });
+
   it("leaves an already-aliased endpoint untouched", () => {
     expect(normalizeRoutedEndpointUrl("http://host.openshell.internal:4000/v1")).toBe(
       "http://host.openshell.internal:4000/v1",
