@@ -36,6 +36,11 @@ export type OnboardRuntimeTransitionOptions = {
   metadata?: Record<string, unknown> | null;
 };
 
+function safeResumeConflictValue(conflict: ResumeConfigConflict, value: string | null): string | null {
+  if (conflict.field === "fromDockerfile" && value) return "<path>";
+  return value;
+}
+
 export type OnboardRuntimeUpdateOptions = {
   state?: OnboardMachineState | null;
   metadata?: Record<string, unknown> | null;
@@ -250,8 +255,8 @@ export class OnboardRuntime {
       state: session.machine.state,
       metadata: {
         field: conflict.field,
-        recorded: conflict.recorded,
-        requested: conflict.requested,
+        recorded: safeResumeConflictValue(conflict, conflict.recorded),
+        requested: safeResumeConflictValue(conflict, conflict.requested),
       },
     });
     return session;

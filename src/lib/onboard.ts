@@ -6521,7 +6521,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
       });
       if (resumeConflicts.length > 0) {
         for (const conflict of resumeConflicts) {
-          await onboardRuntimeBoundary.recordResumeConflict(conflict);
+          try { await onboardRuntimeBoundary.recordResumeConflict(conflict); } catch {}
           if (conflict.field === "sandbox") {
             console.error(
               `  Resumable state belongs to sandbox '${conflict.recorded}', not '${conflict.requested}'.`,

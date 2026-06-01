@@ -184,7 +184,7 @@ onboardModule.onboard({
   nonInteractive: true,
   acceptThirdPartySoftware: true,
   sandboxName: "requested-sandbox",
-  fromDockerfile: "Dockerfile.requested",
+  fromDockerfile: "https://alice:secret@example.com/Dockerfile?token=super-secret",
   noGpu: true,
 }).then(
   () => {
@@ -247,9 +247,10 @@ describe("onboard entrypoint lifecycle events", () => {
 
   it("emits one resume.conflict event for each resume mismatch before exiting", () => {
     const payload = runResumeConflictEntrypoint();
-    const repoRoot = path.join(import.meta.dirname, "..");
 
     assert.equal(payload.exitCode, 1);
+    assert.equal(JSON.stringify(payload.events).includes("super-secret"), false);
+    assert.equal(JSON.stringify(payload.events).includes("alice:secret"), false);
     assert.deepEqual(
       payload.events.map((event) => ({
         type: event.type,
@@ -271,7 +272,7 @@ describe("onboard entrypoint lifecycle events", () => {
           state: "init",
           field: "fromDockerfile",
           recorded: null,
-          requested: path.join(repoRoot, "Dockerfile.requested"),
+          requested: "<path>",
         },
       ],
     );
