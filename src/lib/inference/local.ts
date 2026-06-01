@@ -175,6 +175,26 @@ export interface ValidationResult {
   ok: boolean;
   message?: string;
   diagnostic?: string;
+  /**
+   * Set when the failure points at the Ollama daemon / model runner itself,
+   * not the chosen model. Callers escape the Ollama-model loop instead of
+   * asking for another tag that would hit the same failure. (#4365)
+   */
+  daemonFailure?: boolean;
+}
+
+/**
+ * Recognises Ollama probe errors that mean the daemon's model runner crashed,
+ * stopped, or otherwise died (rather than the chosen model being unsuitable).
+ * Picking a different model would loop on the same failure, so the wizard
+ * escapes back to provider selection. (#4365)
+ */
+export function isOllamaRunnerCrash(errText: string | null | undefined): boolean {
+  const text = String(errText || "");
+  if (!text) return false;
+  return /\brunner\b[\s\S]{0,80}\b(?:stopped|terminated|crashed|exited|died|killed)\b/i.test(
+    text,
+  );
 }
 
 export interface LocalProviderHealthStatus {
@@ -994,6 +1014,7 @@ export function validateOllamaModel(
         return {
           ok: false,
           message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
+          ...(isOllamaRunnerCrash(errText) ? { daemonFailure: true } : {}),
         };
       }
     }

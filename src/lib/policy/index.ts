@@ -221,11 +221,12 @@ function getPresetValidationWarning(presetName: string): string | null {
       'node -e "require(\'https\').get(\'https://api.atlassian.com\', r => console.log(r.statusCode))"',
       "curl is intentionally not in the preset binary allowlist. Avoid plain",
       "curl -s probes for auth.atlassian.com: Atlassian can return an empty",
-      "redirect body, which looks the same as a blocked request. Use an",
-      "observable status probe instead:",
-      "curl -sS -o /dev/null -w '%{http_code}' --max-time 10 https://auth.atlassian.com",
-      "Before approval, expect 000 or a local policy denial; after approval,",
-      "expect an HTTP status such as 301 or 200.",
+      "redirect body, which looks the same as a blocked request. Use a",
+      "body-visible API probe instead:",
+      "curl -sS --max-time 10 -w '\\n%{http_code}\\n' https://api.atlassian.com/oauth/token/accessible-resources",
+      "Before approval, expect 000 or a local policy denial. After explicitly",
+      "approving curl for api.atlassian.com, expect Atlassian's 401 JSON",
+      "response, which proves curl reached the service without Jira credentials.",
     ].join("\n  ");
   }
 

@@ -28,6 +28,8 @@ import { runOpenshell } from "../../adapters/openshell/runtime";
 import { shellQuote } from "../../runner";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
+import { validateSlackChannelCredentials } from "./slack-channel-validation";
+import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
 import {
   type ChannelDef,
   KNOWN_CHANNELS,
@@ -516,9 +518,10 @@ function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: strin
     return;
   }
   let channelEnabled = false;
+  let channelBlock: any = null;
   try {
     const cfg = JSON.parse(configProbe.stdout);
-    const channelBlock = cfg?.channels?.[channelName];
+    channelBlock = cfg?.channels?.[channelName];
     channelEnabled = Boolean(channelBlock?.enabled);
   } catch {
     // Malformed config — fall through to the log probe to capture context.
@@ -584,6 +587,9 @@ function verifyChannelBridgeAfterRebuild(sandboxName: string, channelName: strin
     console.log(
       `  ${G}✓${R} '${channelName}' bridge startup detected in sandbox runtime log.`,
     );
+    if (channelName === "telegram") {
+      printTelegramDirectMessageAllowlistWarning(channelBlock, console.log, `${YW}⚠${R}`);
+    }
     return;
   }
   console.log(
@@ -801,6 +807,12 @@ export async function addSandboxChannel(
     console.log(
       `  ${G}✓${R} Enabled ${canonical} channel. Complete QR pairing from inside the sandbox after rebuild.`,
     );
+    // Show post-pair guidance (e.g. the channels status hint for WhatsApp)
+    // here because the in-sandbox QR branch returns before the shared note
+    // loop the non-QR branches use.
+    for (const line of channel.setupNotes ?? []) {
+      console.log(`  ${line}`);
+    }
     const rebuilt = await promptAndRebuild(sandboxName, `add '${canonical}'`);
     if (rebuilt) verifyChannelBridgeAfterRebuild(sandboxName, canonical);
     return;
@@ -811,6 +823,17 @@ export async function addSandboxChannel(
     await acquireHostQrChannel(sandboxName, canonical, channel, acquired);
   } else {
     await acquirePasteTokens(canonical, channel, acquired);
+  }
+
+  if (canonical === "slack") {
+    const validation = validateSlackChannelCredentials(channel, acquired);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      process.exit(1);
+    }
+    if (validation.message) {
+      console.log(`  ${YW}⚠${R} ${validation.message}`);
+    }
   }
 
   persistChannelTokens(acquired);

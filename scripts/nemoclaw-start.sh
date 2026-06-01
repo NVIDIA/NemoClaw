@@ -1164,16 +1164,71 @@ install_telegram_diagnostics() {
   printf '[channels] Telegram diagnostics installed (NODE_OPTIONS updated)\n' >&2
 }
 
+# ── WhatsApp compact-QR preload (scan-friendly in-sandbox pairing) ───
+# The upstream @openclaw/whatsapp QR renders at full size and overflows DGX
+# Spark terminals (NemoClaw#4522). This preload forces qrcode-terminal into
+# the same `{ small: true }` half-block mode the host-side WeChat path uses.
+# Unlike the diagnostics/guard preloads it is NOT added to the global
+# NODE_OPTIONS — the gateway never renders the pairing QR. The openclaw()
+# guard injects it for the single `channels login --channel whatsapp`
+# invocation, so we only need the file present in the sandbox.
+_WHATSAPP_QR_COMPACT_SCRIPT="/tmp/nemoclaw-whatsapp-qr-compact.js"
+_WHATSAPP_QR_COMPACT_SOURCE="/usr/local/lib/nemoclaw/preloads/whatsapp-qr-compact.js"
+
+install_whatsapp_qr_compact() {
+  local config_file="/sandbox/.openclaw/openclaw.json"
+
+  # Only install when WhatsApp is configured in the baked OpenClaw config.
+  if ! grep -q '"whatsapp"' "$config_file" 2>/dev/null; then
+    return 0
+  fi
+
+  # Source file is absent on older base images; skip rather than fail the boot.
+  if [ ! -f "$_WHATSAPP_QR_COMPACT_SOURCE" ]; then
+    return 0
+  fi
+
+  printf '[channels] Installing WhatsApp compact-QR renderer (scan-friendly pairing)\n' >&2
+  emit_sandbox_sourced_file "$_WHATSAPP_QR_COMPACT_SCRIPT" <"$_WHATSAPP_QR_COMPACT_SOURCE"
+}
+
 _read_gateway_token() {
-  python3 - <<'PYTOKEN'
-import json
-try:
-    with open('/sandbox/.openclaw/openclaw.json') as f:
-        cfg = json.load(f)
-    print(cfg.get('gateway', {}).get('auth', {}).get('token', ''))
-except Exception:
-    print('')
-PYTOKEN
+  node - <<'NODETOKEN'
+const fs = require("fs");
+
+const configPath = "/sandbox/.openclaw/openclaw.json";
+
+function loadJson5() {
+  try {
+    const JSON5 = require("/opt/nemoclaw/node_modules/json5");
+    if (JSON5 && typeof JSON5.parse === "function") {
+      return JSON5;
+    }
+  } catch {
+    // Fall through to the caller's empty-token behavior.
+  }
+  return undefined;
+}
+
+function parseConfig(text) {
+  try {
+    return JSON.parse(text);
+  } catch (jsonError) {
+    const JSON5 = loadJson5();
+    if (!JSON5) {
+      throw jsonError;
+    }
+    return JSON5.parse(text);
+  }
+}
+
+try {
+  const cfg = parseConfig(fs.readFileSync(configPath, "utf8"));
+  console.log(cfg?.gateway?.auth?.token || "");
+} catch {
+  console.log("");
+}
+NODETOKEN
 }
 
 ensure_gateway_token() {
@@ -1187,62 +1242,111 @@ ensure_gateway_token() {
     return 1
   fi
 
-  if [ -n "$(_read_gateway_token)" ]; then
-    return 0
-  fi
-
   if [ "$(id -u)" -eq 0 ]; then
     prepare_openclaw_config_for_write "$config_file" "$hash_file"
   fi
 
   local _write_rc=0
-  python3 - "$config_file" <<'PYTOKEN' || _write_rc=$?
-import json
-import os
-import secrets
-import sys
-import tempfile
+  node - "$config_file" <<'NODETOKEN' || _write_rc=$?
+const crypto = require("crypto");
+const fs = require("fs");
+const pathModule = require("path");
 
-path = sys.argv[1]
-try:
-    with open(path) as f:
-        cfg = json.load(f)
-    auth = cfg.setdefault('gateway', {}).setdefault('auth', {})
-    if not auth.get('token'):
-        auth['token'] = secrets.token_urlsafe(32)
-        dir_path = os.path.dirname(path)
-        fd, tmp_path = tempfile.mkstemp(prefix='.openclaw.', suffix='.tmp', dir=dir_path, text=True)
-        try:
-            os.fchmod(fd, 0o600)
-            with os.fdopen(fd, 'w') as f:
-                fd = None
-                json.dump(cfg, f, indent=2)
-                f.flush()
-                os.fsync(f.fileno())
-            os.replace(tmp_path, path)
-            dir_flags = os.O_RDONLY
-            if hasattr(os, 'O_DIRECTORY'):
-                dir_flags |= os.O_DIRECTORY
-            dir_fd = os.open(dir_path, dir_flags)
-            try:
-                os.fsync(dir_fd)
-            finally:
-                os.close(dir_fd)
-        except Exception:
-            if fd is not None:
-                try:
-                    os.close(fd)
-                except OSError:
-                    pass
-            try:
-                os.unlink(tmp_path)
-            except OSError:
-                pass
-            raise
-except Exception as exc:
-    print(f'[SECURITY] Failed to ensure OpenClaw gateway token: {exc}', file=sys.stderr)
-    sys.exit(1)
-PYTOKEN
+const path = process.argv[2];
+
+function loadJson5() {
+  const candidate = "/opt/nemoclaw/node_modules/json5";
+  const JSON5 = require(candidate);
+  if (!JSON5 || typeof JSON5.parse !== "function") {
+    throw new Error(`JSON5 parser at ${candidate} is missing parse()`);
+  }
+  return JSON5;
+}
+
+function parseConfig(text) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return loadJson5().parse(text);
+  }
+}
+
+function tokenUrlSafe(bytes) {
+  return crypto
+    .randomBytes(bytes)
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/g, "");
+}
+
+function makeTempPath(dirPath) {
+  for (let i = 0; i < 16; i += 1) {
+    const suffix = crypto.randomBytes(12).toString("hex");
+    const tmpPath = pathModule.join(dirPath, `.openclaw.${process.pid}.${suffix}.tmp`);
+    try {
+      const fd = fs.openSync(tmpPath, fs.constants.O_CREAT | fs.constants.O_EXCL | fs.constants.O_WRONLY, 0o600);
+      return { fd, tmpPath };
+    } catch (error) {
+      if (error && error.code === "EEXIST") {
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw new Error("unable to allocate temporary OpenClaw config path");
+}
+
+try {
+  const cfg = parseConfig(fs.readFileSync(path, "utf8"));
+  const gateway = cfg.gateway && typeof cfg.gateway === "object" ? cfg.gateway : (cfg.gateway = {});
+  const auth = gateway.auth && typeof gateway.auth === "object" ? gateway.auth : (gateway.auth = {});
+  auth.token = tokenUrlSafe(32);
+
+  const dirPath = pathModule.dirname(path);
+  let fd;
+  let tmpPath;
+  try {
+    ({ fd, tmpPath } = makeTempPath(dirPath));
+    fs.fchmodSync(fd, 0o600);
+    fs.writeFileSync(fd, JSON.stringify(cfg, null, 2));
+    fs.fsyncSync(fd);
+    fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(tmpPath, path);
+
+    let dirFlags = fs.constants.O_RDONLY;
+    if (fs.constants.O_DIRECTORY) {
+      dirFlags |= fs.constants.O_DIRECTORY;
+    }
+    const dirFd = fs.openSync(dirPath, dirFlags);
+    try {
+      fs.fsyncSync(dirFd);
+    } finally {
+      fs.closeSync(dirFd);
+    }
+  } catch (error) {
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // Ignore cleanup failure and report the original error below.
+      }
+    }
+    if (tmpPath) {
+      try {
+        fs.unlinkSync(tmpPath);
+      } catch {
+        // Ignore cleanup failure and report the original error below.
+      }
+    }
+    throw error;
+  }
+} catch (error) {
+  console.error(`[SECURITY] Failed to ensure OpenClaw gateway token: ${error.message || error}`);
+  process.exit(1);
+}
+NODETOKEN
 
   if [ "$_write_rc" -eq 0 ] && [ -f "$hash_file" ]; then
     (cd "$(dirname "$config_file")" && sha256sum "$(basename "$config_file")" >"$hash_file") || _write_rc=$?
@@ -1253,6 +1357,15 @@ PYTOKEN
   fi
 
   [ "$_write_rc" -eq 0 ] || return "$_write_rc"
+  printf '[token] Gateway auth token refreshed for startup\n' >&2
+}
+
+ensure_gateway_token_if_missing() {
+  if [ -n "$(_read_gateway_token)" ]; then
+    return 0
+  fi
+
+  ensure_gateway_token
 }
 
 export_gateway_token() {
@@ -1278,6 +1391,17 @@ needs_gateway_token_for_current_command() {
     openclaw) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+prepare_gateway_token_for_current_command() {
+  if [ ${#NEMOCLAW_CMD[@]} -eq 0 ]; then
+    ensure_gateway_token
+    return $?
+  fi
+
+  if needs_gateway_token_for_current_command; then
+    ensure_gateway_token_if_missing
+  fi
 }
 
 # Write an auth profile JSON for the NVIDIA API key so the gateway can authenticate.
@@ -1440,18 +1564,21 @@ RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 # `openclaw devices approve <scope-upgrade>` can request the upgraded scopes
 # for its own connection and return the same pending-scope error it is trying
 # to resolve. List calls must stay gateway-pinned so we inspect the live
-# gateway, but approval calls temporarily remove OPENCLAW_GATEWAY_URL to use
-# OpenClaw's local pairing fallback. Remove this when OpenClaw approve can
-# complete scope upgrades through the gateway using only operator.pairing.
-def run(*args, strip_gateway_url=False):
+# gateway, but approval calls temporarily remove OPENCLAW_GATEWAY_URL,
+# OPENCLAW_GATEWAY_PORT, and OPENCLAW_GATEWAY_TOKEN to use OpenClaw's local
+# pairing fallback. Remove this when OpenClaw approve can complete scope
+# upgrades through the gateway using only operator.pairing.
+def run(*args, strip_gateway_env=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
     # no timeout would hold a hung `openclaw devices list/approve` past
     # the fast→slow transition and the 8h deadline check.
     env = None
-    if strip_gateway_url:
+    if strip_gateway_env:
         env = os.environ.copy()
         env.pop('OPENCLAW_GATEWAY_URL', None)
+        env.pop('OPENCLAW_GATEWAY_PORT', None)
+        env.pop('OPENCLAW_GATEWAY_TOKEN', None)
     try:
         proc = subprocess.run(
             args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS, env=env,
@@ -1504,7 +1631,7 @@ while time.time() < DEADLINE:
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
                 continue
             arc, aout, aerr = run(
-                OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_url=True,
+                OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_env=True,
             )
             # rc=124 is the timeout sentinel from run() — do NOT add the
             # request to HANDLED on a transient timeout, so the next poll
@@ -1771,9 +1898,10 @@ openclaw() {
   # NemoClaw#4462: keep user-initiated device approval usable from an
   # interactive sandbox shell until upstream OpenClaw can approve scope
   # upgrades through the gateway without requesting the upgraded scopes for
-  # the approval command itself. Other commands keep OPENCLAW_GATEWAY_URL.
+  # the approval command itself. Approval calls temporarily drop the gateway
+  # URL/port/token; other commands keep the full gateway environment.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
-    ( unset OPENCLAW_GATEWAY_URL; command openclaw "$@" )
+    ( unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" )
     return $?
   fi
   case "$1" in
@@ -1854,6 +1982,58 @@ openclaw() {
             echo "WeChat captures its token via a host-side QR during the host-side" >&2
             echo "'channels add wechat' flow — no in-sandbox login step." >&2
             return 1
+          fi
+          # NemoClaw-supported WhatsApp pairing (NemoClaw#4522): validate the
+          # gateway environment up front so a gateway close (e.g. the reported
+          # "1008 abnormal closure") is diagnosed separately from QR rendering,
+          # and force compact QR output so the code fits on the screen.
+          if [ "$_login_help" != "1" ] && [ "$_login_channel" = "whatsapp" ]; then
+            if [ -z "${OPENCLAW_GATEWAY_URL:-}" ]; then
+              echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL is not set in this shell." >&2
+              echo "Pairing talks to the OpenClaw gateway; without the gateway URL the login will" >&2
+              echo "close immediately (this is a gateway/env problem, not a QR problem)." >&2
+              echo "" >&2
+              echo "Reconnect with 'openshell sandbox connect <sandbox>' and retry. If it persists," >&2
+              echo "exit the sandbox and rebuild with 'nemoclaw <sandbox> rebuild'." >&2
+              return 1
+            fi
+            # The OpenClaw gateway is a WebSocket endpoint (set to
+            # ws://127.0.0.1:<port> at boot). Reject a malformed scheme up front
+            # so a typo'd/clobbered URL is reported as a gateway/env problem
+            # rather than failing inside the login as an ambiguous close.
+            case "${OPENCLAW_GATEWAY_URL}" in
+              ws://*|wss://*) ;;
+              *)
+                echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL='${OPENCLAW_GATEWAY_URL}' is not a ws:// gateway URL." >&2
+                echo "The OpenClaw gateway is a WebSocket endpoint (e.g. ws://127.0.0.1:<port>); a malformed value" >&2
+                echo "would fail the login in a way that looks like a QR/pairing problem (this is a gateway/env problem)." >&2
+                echo "" >&2
+                echo "Reconnect with 'openshell sandbox connect <sandbox>' and retry. If it persists," >&2
+                echo "exit the sandbox and rebuild with 'nemoclaw <sandbox> rebuild'." >&2
+                return 1
+                ;;
+            esac
+            echo "[whatsapp] Pairing via gateway ${OPENCLAW_GATEWAY_URL}." >&2
+            echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
+            # Literal path: this guard body is emitted inside a single-quoted
+            # heredoc, so shell variables are intentionally not expanded here.
+            # Keep in sync with _WHATSAPP_QR_COMPACT_SCRIPT above.
+            _whatsapp_qr_compact="/tmp/nemoclaw-whatsapp-qr-compact.js"
+            if [ -f "$_whatsapp_qr_compact" ]; then
+              NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_whatsapp_qr_compact" command openclaw "$@"
+            else
+              command openclaw "$@"
+            fi
+            _whatsapp_login_exit=$?
+            if [ "$_whatsapp_login_exit" -ne 0 ]; then
+              echo "" >&2
+              echo "[whatsapp] Pairing exited with code ${_whatsapp_login_exit} before it completed." >&2
+              echo "[whatsapp] A gateway close (e.g. '1008 abnormal closure') is a gateway/session" >&2
+              echo "issue, not a QR-size issue — the QR above rendered independently of the gateway." >&2
+              echo "[whatsapp] Re-run 'openclaw channels login --channel whatsapp' to retry. If it keeps" >&2
+              echo "closing, exit the sandbox and run 'nemoclaw <sandbox> channels status --channel whatsapp'." >&2
+            fi
+            return $_whatsapp_login_exit
           fi
           ;;
         *)
@@ -2452,9 +2632,7 @@ if [ "$(id -u)" -ne 0 ]; then
   apply_cors_override
   refresh_openclaw_provider_placeholders
   ensure_mutable_openclaw_config_hash
-  if needs_gateway_token_for_current_command; then
-    ensure_gateway_token
-  fi
+  prepare_gateway_token_for_current_command
   # Capture baseline for next start's recovery — only after overrides and
   # placeholder refresh have produced the post-startup config the user
   # actually runs with.
@@ -2474,6 +2652,7 @@ if [ "$(id -u)" -ne 0 ]; then
   write_openclaw_config_baseline
   install_telegram_diagnostics
   install_slack_channel_guard
+  install_whatsapp_qr_compact
   verify_no_slack_secrets_on_disk
 
   # Ensure writable state directories exist and are owned by the current user.
@@ -2516,7 +2695,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_WHATSAPP_QR_COMPACT_SCRIPT"
 
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
@@ -2595,9 +2774,7 @@ apply_cors_override
 configure_messaging_channels
 refresh_openclaw_provider_placeholders
 ensure_mutable_openclaw_config_hash
-if needs_gateway_token_for_current_command; then
-  ensure_gateway_token
-fi
+prepare_gateway_token_for_current_command
 # Capture baseline for next start's recovery — only after overrides and
 # placeholder refresh have produced the post-startup config the user
 # actually runs with.
@@ -2612,6 +2789,7 @@ lock_rc_files "$_SANDBOX_HOME"
 # Install channel-specific preloads before starting OpenClaw.
 install_telegram_diagnostics
 install_slack_channel_guard
+install_whatsapp_qr_compact
 verify_no_slack_secrets_on_disk
 
 # Write auth profile as sandbox user and recursively re-tighten any
@@ -2726,7 +2904,7 @@ seed_default_workspace_templates_as_sandbox
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT"
+validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_WHATSAPP_QR_COMPACT_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs

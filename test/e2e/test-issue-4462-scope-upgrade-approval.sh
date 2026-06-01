@@ -374,26 +374,53 @@ approve_request() {
   local request_id="$1"
   local label="$2"
   local allow_already_approved="${3:-0}"
-  local output rc approve_json approved_id before_url after_url state_after_approve approved_after_approve pending_after_approve
+  local output rc approve_json approved_id before_url before_port before_token after_url after_port after_token approve_env state_after_approve approved_after_approve pending_after_approve
   output=$(sandbox_exec_sh_script 90 '
-set -u
-request_id="$1"
-if [ ! -r /tmp/nemoclaw-proxy-env.sh ]; then
-  echo "missing /tmp/nemoclaw-proxy-env.sh" >&2
-  exit 2
-fi
-# shellcheck source=/dev/null
-. /tmp/nemoclaw-proxy-env.sh
-printf "__URL_BEFORE__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
-set +e
-approve_output="$(openclaw devices approve "$request_id" --json 2>&1)"
-approve_rc=$?
-set -e
-printf "__APPROVE_RC__=%s\n" "$approve_rc"
-printf "__APPROVE_OUTPUT_BEGIN__\n%s\n__APPROVE_OUTPUT_END__\n" "$approve_output"
-printf "__URL_AFTER__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
-exit "$approve_rc"
-' "$request_id" 2>&1)
+	set -u
+	request_id="$1"
+	real_openclaw="$(command -v openclaw || true)"
+	if [ -z "$real_openclaw" ]; then
+	  echo "missing real openclaw binary" >&2
+	  exit 2
+	fi
+	if [ ! -r /tmp/nemoclaw-proxy-env.sh ]; then
+	  echo "missing /tmp/nemoclaw-proxy-env.sh" >&2
+	  exit 2
+	fi
+	# shellcheck source=/dev/null
+	. /tmp/nemoclaw-proxy-env.sh
+	probe_dir="$(mktemp -d /tmp/nemoclaw-approve-env.XXXXXX)"
+	probe_log="$probe_dir/env.log"
+	cat >"$probe_dir/openclaw" <<'"'"'PROBESH'"'"'
+#!/bin/sh
+token_state="$([ "${OPENCLAW_GATEWAY_TOKEN+x}" = x ] && printf set || printf unset)"
+printf "__APPROVE_SUBPROCESS_ENV__=%s:%s:%s\n" "${OPENCLAW_GATEWAY_URL-unset}" "${OPENCLAW_GATEWAY_PORT-unset}" "$token_state" >>"$NEMOCLAW_4462_APPROVE_ENV_LOG"
+exec "$NEMOCLAW_4462_REAL_OPENCLAW" "$@"
+PROBESH
+	chmod +x "$probe_dir/openclaw"
+	export NEMOCLAW_4462_REAL_OPENCLAW="$real_openclaw"
+	export NEMOCLAW_4462_APPROVE_ENV_LOG="$probe_log"
+	PATH="$probe_dir:$PATH"
+	printf "__URL_BEFORE__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+	printf "__PORT_BEFORE__=%s\n" "${OPENCLAW_GATEWAY_PORT-unset}"
+	printf "__TOKEN_BEFORE__=%s\n" "$([ "${OPENCLAW_GATEWAY_TOKEN+x}" = x ] && printf set || printf unset)"
+	set +e
+	approve_output="$(openclaw devices approve "$request_id" --json 2>&1)"
+	approve_rc=$?
+	set -e
+	printf "__APPROVE_RC__=%s\n" "$approve_rc"
+	printf "__APPROVE_OUTPUT_BEGIN__\n%s\n__APPROVE_OUTPUT_END__\n" "$approve_output"
+	if [ -r "$probe_log" ]; then
+	  cat "$probe_log"
+	else
+	  printf "__APPROVE_SUBPROCESS_ENV__=missing:missing:missing\n"
+	fi
+	printf "__URL_AFTER__=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
+	printf "__PORT_AFTER__=%s\n" "${OPENCLAW_GATEWAY_PORT-unset}"
+	printf "__TOKEN_AFTER__=%s\n" "$([ "${OPENCLAW_GATEWAY_TOKEN+x}" = x ] && printf set || printf unset)"
+	rm -rf "$probe_dir"
+	exit "$approve_rc"
+	' "$request_id" 2>&1)
   rc=$?
   {
     printf '=== approve %s request=%s rc=%s ===\n' "$label" "$request_id" "$rc"
@@ -416,13 +443,30 @@ exit "$approve_rc"
     return 1
   fi
   before_url=$(sed -n 's/^__URL_BEFORE__=//p' <<<"$output" | tail -1)
+  before_port=$(sed -n 's/^__PORT_BEFORE__=//p' <<<"$output" | tail -1)
+  before_token=$(sed -n 's/^__TOKEN_BEFORE__=//p' <<<"$output" | tail -1)
   after_url=$(sed -n 's/^__URL_AFTER__=//p' <<<"$output" | tail -1)
+  after_port=$(sed -n 's/^__PORT_AFTER__=//p' <<<"$output" | tail -1)
+  after_token=$(sed -n 's/^__TOKEN_AFTER__=//p' <<<"$output" | tail -1)
+  approve_env=$(sed -n 's/^__APPROVE_SUBPROCESS_ENV__=//p' <<<"$output" | tail -1)
   if [[ "$before_url" != ws://127.0.0.1:* ]] && [[ "$before_url" != ws://localhost:* ]]; then
     fail "${label}: proxy env did not expose a loopback OPENCLAW_GATEWAY_URL before approve (${before_url:-empty})"
     return 1
   fi
+  if [ -z "$before_port" ] || [ "$before_port" = "unset" ] || [ "$before_token" != "set" ]; then
+    fail "${label}: proxy env did not expose OPENCLAW_GATEWAY_PORT/TOKEN before approve (port=${before_port:-empty} token_state=${before_token:-empty})"
+    return 1
+  fi
   if [ "$after_url" != "$before_url" ]; then
     fail "${label}: devices approve leaked OPENCLAW_GATEWAY_URL mutation into caller shell (${before_url} -> ${after_url})"
+    return 1
+  fi
+  if [ "$after_port" != "$before_port" ] || [ "$after_token" != "$before_token" ]; then
+    fail "${label}: devices approve leaked gateway port/token mutation into caller shell (port ${before_port} -> ${after_port}; token changed=$([ "$after_token" != "$before_token" ] && printf yes || printf no))"
+    return 1
+  fi
+  if [ "$approve_env" != "unset:unset:unset" ]; then
+    fail "${label}: devices approve subprocess retained gateway env (${approve_env:-empty})"
     return 1
   fi
   approve_json=$(sed -n '/^__APPROVE_OUTPUT_BEGIN__$/,/^__APPROVE_OUTPUT_END__$/p' <<<"$output" | sed '1d;$d' | extract_json_doc 2>/dev/null) || approve_json=""
@@ -742,7 +786,7 @@ fi
 . /tmp/nemoclaw-proxy-env.sh
 printf "OPENCLAW_GATEWAY_URL=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
 type openclaw 2>/dev/null | sed -n "1,12p"
-grep -F "unset OPENCLAW_GATEWAY_URL; command openclaw" /tmp/nemoclaw-proxy-env.sh >/dev/null \
+grep -F "unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw" /tmp/nemoclaw-proxy-env.sh >/dev/null \
   && echo "APPROVE_GUARD_PRESENT"
 ' 2>&1)
 guard_rc=$?
