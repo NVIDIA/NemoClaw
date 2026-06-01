@@ -6,27 +6,10 @@ import path from "node:path";
 
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import { isErrnoException } from "../core/errno";
-import { DEFAULT_GATEWAY_NAME } from "./gateway-name";
+import { DEFAULT_GATEWAY_NAME, validateGatewayName } from "./gateway-name";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
-import {
-  NAME_ALLOWED_FORMAT,
-  NAME_MAX_LENGTH,
-  NAME_VALID_PATTERN,
-} from "../name-validation";
 
-function validateGatewayNameField(value: string): void {
-  if (typeof value !== "string" || value.length === 0) {
-    throw new Error(`gatewayName is required. Allowed format: ${NAME_ALLOWED_FORMAT}.`);
-  }
-  if (value.length > NAME_MAX_LENGTH) {
-    throw new Error(
-      `gatewayName too long (max ${NAME_MAX_LENGTH} chars). Allowed format: ${NAME_ALLOWED_FORMAT}.`,
-    );
-  }
-  if (!NAME_VALID_PATTERN.test(value)) {
-    throw new Error(`Invalid gatewayName: '${value}'. Allowed format: ${NAME_ALLOWED_FORMAT}.`);
-  }
-}
+export { getSandboxGatewayName } from "./gateway-name";
 
 export interface CustomPolicyEntry {
   name: string;
@@ -211,39 +194,6 @@ export function getSandbox(name: string): SandboxEntry | null {
   return data.sandboxes[name] || null;
 }
 
-/**
- * Resolve the OpenShell gateway name a sandbox is bound to. Returns `null`
- * for unknown sandboxes (so callers cannot transitively act on the singleton
- * with a stale or mistyped name) and for entries whose persisted value fails
- * validation (defense-in-depth against corrupt on-disk state). For sandboxes
- * that exist but predate the `gatewayName` field, falls back to
- * {@link DEFAULT_GATEWAY_NAME} as a legacy backfill. All diagnostics are
- * written to `stderr` via `console.warn` so JSON / non-interactive callers
- * keep stdout clean.
- */
-export function getSandboxGatewayName(name: string): string | null {
-  const entry = getSandbox(name);
-  if (!entry) {
-    console.warn(`  Gateway-name lookup for unknown sandbox '${name}' returned null.`);
-    return null;
-  }
-  if (entry.gatewayName === undefined) {
-    console.warn(
-      `  Sandbox '${name}' has no recorded gatewayName; using '${DEFAULT_GATEWAY_NAME}' from the singleton default.`,
-    );
-    return DEFAULT_GATEWAY_NAME;
-  }
-  try {
-    validateGatewayNameField(entry.gatewayName);
-    return entry.gatewayName;
-  } catch {
-    console.warn(
-      `  Sandbox '${name}' has an invalid recorded gatewayName; returning null.`,
-    );
-    return null;
-  }
-}
-
 export function getDefault(): string | null {
   const data = load();
   if (data.defaultSandbox && data.sandboxes[data.defaultSandbox]) {
@@ -254,7 +204,7 @@ export function getDefault(): string | null {
 }
 
 export function registerSandbox(entry: SandboxEntry): void {
-  if (entry.gatewayName !== undefined) validateGatewayNameField(entry.gatewayName);
+  if (entry.gatewayName !== undefined) validateGatewayName(entry.gatewayName);
   withLock(() => {
     const data = load();
     data.sandboxes[entry.name] = {
@@ -305,7 +255,7 @@ export function registerSandbox(entry: SandboxEntry): void {
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
   if (Object.prototype.hasOwnProperty.call(updates, "gatewayName"))
-    validateGatewayNameField(updates.gatewayName as string);
+    validateGatewayName(updates.gatewayName as string);
   return withLock(() => {
     const data = load();
     if (!data.sandboxes[name]) return false;

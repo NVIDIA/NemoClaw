@@ -21,6 +21,7 @@ import { renderBox } from "../cli/banner";
 import { AGENT_PRODUCT_NAME, CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
 import { isRecord } from "../core/json-types";
 import { DASHBOARD_PORT } from "../core/ports";
+import { DEFAULT_GATEWAY_NAME } from "../state/gateway-name";
 import { buildSubprocessEnv } from "../subprocess-env";
 
 // ---------------------------------------------------------------------------
@@ -466,7 +467,7 @@ export function stopSandboxChannels(sandboxName: string): void {
   reportStopResult(fallbackResult);
 }
 
-const GATEWAY_CLUSTER_CONTAINER = "openshell-cluster-nemoclaw";
+const GATEWAY_CLUSTER_CONTAINER = `openshell-cluster-${DEFAULT_GATEWAY_NAME}`;
 
 const GATEWAY_STOP_SCRIPT = String.raw`
 set -eu

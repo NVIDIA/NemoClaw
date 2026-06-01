@@ -3,6 +3,7 @@
 
 import { recoverNamedGatewayRuntime } from "../actions/global";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../cli/branding";
+import { DEFAULT_GATEWAY_NAME } from "../state/gateway-name";
 
 // Suffixes that mark per-sandbox messaging integrations in the gateway's
 // provider list. These are managed by `channels`, not `credentials`.
@@ -34,7 +35,7 @@ export function credentialsGatewayRecoveryFailureLines(kind: "query" | "reach"):
   const action = kind === "query" ? "query" : "reach";
   return [
     `  Could not ${action} the ${CLI_DISPLAY_NAME} OpenShell gateway. Is it running?`,
-    `  Run 'openshell gateway start --name nemoclaw' or '${CLI_NAME} onboard' first.`,
+    `  Run 'openshell gateway start --name ${DEFAULT_GATEWAY_NAME}' or '${CLI_NAME} onboard' first.`,
   ];
 }
 

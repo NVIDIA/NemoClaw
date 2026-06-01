@@ -101,6 +101,12 @@ export function createSandboxRegistryMetadataHelpers(
     // Migrate legacy reused entries that predate per-sandbox gateway tracking
     // by recording the port-resolved gateway name on first reuse. When existing
     // entries already carry a binding, preserve it untouched.
+    //
+    // Removal boundary: drop this branch once every on-disk registry has been
+    // migrated through at least one onboard reuse (paired with the legacy
+    // backfill in `getSandboxGatewayName`). A future PR introducing a
+    // registry schema version field is the recommended trigger for that
+    // cleanup.
     const gatewayMigration =
       existingEntry && existingEntry.gatewayName === undefined
         ? { gatewayName: getGatewayName(dashboardPort) }
