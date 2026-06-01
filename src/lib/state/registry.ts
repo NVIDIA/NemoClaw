@@ -8,7 +8,25 @@ import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import { isErrnoException } from "../core/errno";
 import { DEFAULT_GATEWAY_NAME } from "./gateway-name";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
-import { validateName } from "../runner";
+import {
+  NAME_ALLOWED_FORMAT,
+  NAME_MAX_LENGTH,
+  NAME_VALID_PATTERN,
+} from "../name-validation";
+
+function validateGatewayNameField(value: string): void {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`gatewayName is required. Allowed format: ${NAME_ALLOWED_FORMAT}.`);
+  }
+  if (value.length > NAME_MAX_LENGTH) {
+    throw new Error(
+      `gatewayName too long (max ${NAME_MAX_LENGTH} chars). Allowed format: ${NAME_ALLOWED_FORMAT}.`,
+    );
+  }
+  if (!NAME_VALID_PATTERN.test(value)) {
+    throw new Error(`Invalid gatewayName: '${value}'. Allowed format: ${NAME_ALLOWED_FORMAT}.`);
+  }
+}
 
 export interface CustomPolicyEntry {
   name: string;
@@ -217,7 +235,7 @@ export function getDefault(): string | null {
 }
 
 export function registerSandbox(entry: SandboxEntry): void {
-  if (entry.gatewayName) validateName(entry.gatewayName, "gatewayName");
+  if (entry.gatewayName) validateGatewayNameField(entry.gatewayName);
   withLock(() => {
     const data = load();
     data.sandboxes[entry.name] = {
@@ -267,7 +285,7 @@ export function registerSandbox(entry: SandboxEntry): void {
 }
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
-  if (updates.gatewayName) validateName(updates.gatewayName, "gatewayName");
+  if (updates.gatewayName) validateGatewayNameField(updates.gatewayName);
   return withLock(() => {
     const data = load();
     if (!data.sandboxes[name]) return false;
