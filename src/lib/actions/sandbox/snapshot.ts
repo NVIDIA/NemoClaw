@@ -14,6 +14,7 @@ import { ROOT, run, shellQuote, validateName } from "../../runner";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { isShieldsDown } from "../../shields";
 import { isGatewayHealthy } from "../../state/gateway";
+import { DEFAULT_GATEWAY_NAME as NEMOCLAW_GATEWAY_NAME } from "../../state/gateway-name";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import * as sandboxState from "../../state/sandbox";
@@ -26,8 +27,6 @@ const G = useColor ? (trueColor ? "\x1b[38;2;118;185;0m" : "\x1b[38;5;148m") : "
 const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
-
-import { DEFAULT_GATEWAY_NAME as NEMOCLAW_GATEWAY_NAME } from "../../state/gateway-name";
 
 export type SnapshotRequest =
   | { kind: "help" }

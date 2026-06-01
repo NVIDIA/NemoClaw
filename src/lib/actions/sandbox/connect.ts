@@ -37,13 +37,12 @@ import {
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { runSetupDnsProxy } from "../dns";
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
+import { DEFAULT_GATEWAY_NAME as NEMOCLAW_GATEWAY_NAME } from "../../state/gateway-name";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
 import {
   applyOpenShellVmDnsMonkeypatch,
   shouldApplyVmDnsMonkeypatch,
 } from "./vm-dns-monkeypatch";
-
-import { DEFAULT_GATEWAY_NAME as NEMOCLAW_GATEWAY_NAME } from "../../state/gateway-name";
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;

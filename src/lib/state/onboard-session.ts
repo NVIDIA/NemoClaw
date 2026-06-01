@@ -26,6 +26,7 @@ import {
 import { isOnboardMachineState } from "../onboard/machine/transitions";
 import type { OnboardMachineState } from "../onboard/machine/types";
 import { redactSensitiveText, redactUrl } from "../security/redact";
+import { DEFAULT_GATEWAY_NAME } from "./gateway-name";
 
 export const SESSION_VERSION = 1;
 export const MACHINE_SNAPSHOT_VERSION = 1;
@@ -308,7 +309,7 @@ function parseWechatConfig(value: unknown): WechatConfig | null {
 function parseSessionMetadata(value: SessionJsonValue | undefined): SessionMetadata | undefined {
   if (!isObject(value)) return undefined;
   return {
-    gatewayName: readString(value.gatewayName) ?? "nemoclaw",
+    gatewayName: readString(value.gatewayName) ?? DEFAULT_GATEWAY_NAME,
     fromDockerfile: readString(value.fromDockerfile),
   };
 }
@@ -490,7 +491,7 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     telegramConfig: parseTelegramConfig(overrides.telegramConfig),
     wechatConfig: parseWechatConfig(overrides.wechatConfig),
     metadata: {
-      gatewayName: overrides.metadata?.gatewayName ?? "nemoclaw",
+      gatewayName: overrides.metadata?.gatewayName ?? DEFAULT_GATEWAY_NAME,
       fromDockerfile: overrides.metadata?.fromDockerfile ?? null,
     },
     machine: parseMachineSnapshot(overrides.machine as SessionJsonValue | undefined) ??

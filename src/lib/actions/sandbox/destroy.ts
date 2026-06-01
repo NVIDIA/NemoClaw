@@ -23,6 +23,7 @@ import { stopStaleDashboardListeners } from "../../onboard/stale-gateway-cleanup
 import { stopHostGatewayProcesses } from "../../onboard/host-gateway-process";
 import { parseLiveSandboxNames } from "../../runtime-recovery";
 import { killTimer as defaultKillShieldsTimer } from "../../shields/timer-control";
+import { DEFAULT_GATEWAY_NAME as NEMOCLAW_GATEWAY_NAME } from "../../state/gateway-name";
 import type { Session } from "../../state/onboard-session";
 import * as onboardSession from "../../state/onboard-session";
 import { resolveNemoclawStateDir } from "../../state/paths";
@@ -78,7 +79,6 @@ type RemoveShieldsStateDeps = {
   warn?: (message: string) => void;
 };
 
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
 const DASHBOARD_FORWARD_PORT = String(DASHBOARD_PORT);
 
 function cleanupGatewayAfterLastSandbox(): void {

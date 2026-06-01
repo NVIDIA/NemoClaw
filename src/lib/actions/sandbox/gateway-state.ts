@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { parseSandboxPhase } from "../../state/gateway";
+import { DEFAULT_GATEWAY_NAME } from "../../state/gateway-name";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
@@ -215,7 +216,7 @@ export function reconcileMissingAgainstNamedGateway(
 ): SandboxGatewayState {
   const lifecycle = getNamedGatewayLifecycleState();
   if (lifecycle.state === "connected_other") {
-    runOpenshell(["gateway", "select", "nemoclaw"], {
+    runOpenshell(["gateway", "select", DEFAULT_GATEWAY_NAME], {
       ignoreError: true,
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
@@ -257,7 +258,7 @@ export function printWrongGatewayActiveGuidance(
   activeGateway: string | null | undefined,
   writer: (message: string) => void = console.error,
 ): void {
-  const other = activeGateway && activeGateway !== "nemoclaw" ? activeGateway : "another gateway";
+  const other = activeGateway && activeGateway !== DEFAULT_GATEWAY_NAME ? activeGateway : "another gateway";
   writer(
     `  Sandbox '${sandboxName}' is registered against the ${CLI_DISPLAY_NAME} gateway, but the currently active OpenShell gateway is '${other}'. Your sandbox has NOT been removed.`,
   );

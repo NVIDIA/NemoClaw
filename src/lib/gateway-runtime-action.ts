@@ -7,9 +7,10 @@ const { startGatewayForRecovery } = require("./onboard") as {
 import { OPENSHELL_OPERATION_TIMEOUT_MS, OPENSHELL_PROBE_TIMEOUT_MS } from "./adapters/openshell/timeouts";
 import { stripAnsi } from "./adapters/openshell/client";
 import { captureOpenshell, runOpenshell } from "./adapters/openshell/runtime";
+import { DEFAULT_GATEWAY_NAME } from "./state/gateway-name";
 
 function hasNamedGateway(output = ""): boolean {
-  return stripAnsi(output).includes("Gateway: nemoclaw");
+  return stripAnsi(output).includes(`Gateway: ${DEFAULT_GATEWAY_NAME}`);
 }
 
 function getActiveGatewayName(output = ""): string | null {
@@ -19,7 +20,7 @@ function getActiveGatewayName(output = ""): string | null {
 
 export function getNamedGatewayLifecycleState() {
   const status = captureOpenshell(["status"], { timeout: OPENSHELL_PROBE_TIMEOUT_MS });
-  const gatewayInfo = captureOpenshell(["gateway", "info", "-g", "nemoclaw"], {
+  const gatewayInfo = captureOpenshell(["gateway", "info", "-g", DEFAULT_GATEWAY_NAME], {
     timeout: OPENSHELL_PROBE_TIMEOUT_MS,
   });
   const cleanStatus = stripAnsi(status.output);
@@ -29,7 +30,7 @@ export function getNamedGatewayLifecycleState() {
   const refusing = /Connection refused|client error \(Connect\)|tcp connect error/i.test(
     cleanStatus,
   );
-  if (connected && activeGateway === "nemoclaw" && named) {
+  if (connected && activeGateway === DEFAULT_GATEWAY_NAME && named) {
     return {
       state: "healthy_named",
       status: status.output,
@@ -37,7 +38,7 @@ export function getNamedGatewayLifecycleState() {
       activeGateway,
     };
   }
-  if (activeGateway === "nemoclaw" && named && refusing) {
+  if (activeGateway === DEFAULT_GATEWAY_NAME && named && refusing) {
     return {
       state: "named_unreachable",
       status: status.output,
@@ -45,7 +46,7 @@ export function getNamedGatewayLifecycleState() {
       activeGateway,
     };
   }
-  if (activeGateway === "nemoclaw" && named) {
+  if (activeGateway === DEFAULT_GATEWAY_NAME && named) {
     return {
       state: "named_unhealthy",
       status: status.output,
@@ -93,13 +94,13 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
     return { recovered: false, before, after: before, attempted: false };
   }
 
-  runOpenshell(["gateway", "select", "nemoclaw"], {
+  runOpenshell(["gateway", "select", DEFAULT_GATEWAY_NAME], {
     ignoreError: true,
     timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
   });
   let after = getNamedGatewayLifecycleState();
   if (after.state === "healthy_named") {
-    process.env.OPENSHELL_GATEWAY = "nemoclaw";
+    process.env.OPENSHELL_GATEWAY = DEFAULT_GATEWAY_NAME;
     return { recovered: true, before, after, attempted: true, via: "select" };
   }
 
@@ -115,13 +116,13 @@ export async function recoverNamedGatewayRuntime(options: RecoverNamedGatewayRun
       // Fall through to the lifecycle re-check below so we preserve the
       // existing recovery result shape and emit the correct classification.
     }
-    runOpenshell(["gateway", "select", "nemoclaw"], {
+    runOpenshell(["gateway", "select", DEFAULT_GATEWAY_NAME], {
       ignoreError: true,
       timeout: OPENSHELL_OPERATION_TIMEOUT_MS,
     });
     after = getNamedGatewayLifecycleState();
     if (after.state === "healthy_named") {
-      process.env.OPENSHELL_GATEWAY = "nemoclaw";
+      process.env.OPENSHELL_GATEWAY = DEFAULT_GATEWAY_NAME;
       return { recovered: true, before, after, attempted: true, via: "start" };
     }
   }
