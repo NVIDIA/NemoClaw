@@ -58,6 +58,30 @@ export function isSandboxReady(output: string, sandboxName: string): boolean {
 }
 
 /**
+ * Enumerate sandbox names from `openshell sandbox list` whose state column
+ * indicates a live workload ("Ready" or "Running" and not "NotReady"). Used
+ * by the preflight cleanup decision to refuse a gateway-recreate that would
+ * SIGKILL live sandbox containers — the singleton-gateway design means
+ * recreating the gateway destroys the shared `openshell-cluster-*` container
+ * holding every sandbox. See #4422.
+ */
+export function listLiveSandboxNames(output: string): string[] {
+  if (typeof output !== "string") return [];
+  const clean = stripAnsi(output);
+  const names: string[] = [];
+  for (const line of clean.split("\n")) {
+    const cols = line.trim().split(/\s+/);
+    if (cols.length < 2) continue;
+    const name = cols[0];
+    if (!name) continue;
+    if ((cols.includes("Ready") || cols.includes("Running")) && !cols.includes("NotReady")) {
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+/**
  * Determine whether stale NemoClaw gateway output indicates a previous
  * session that should be cleaned up before the port preflight check.
  */

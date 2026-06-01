@@ -437,7 +437,7 @@ const {
   preflightDashboardPortRangeAvailability,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
-const { applyPreflightGatewayCleanup } =
+const { runPreflightGatewayCleanup } =
   require("./onboard/preflight-gateway-cleanup-decision") as typeof import("./onboard/preflight-gateway-cleanup-decision");
 const { verifyGatewayContainerRunning } =
   require("./onboard/gateway-container-running") as typeof import("./onboard/gateway-container-running");
@@ -1989,13 +1989,13 @@ async function preflight(
     exitProcess: (code) => process.exit(code),
   });
 
-  gatewayReuseState = applyPreflightGatewayCleanup({
+  gatewayReuseState = runPreflightGatewayCleanup({
     gatewayReuseState,
-    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
-    cliDisplayName: cliDisplayName(),
-    dashboardPort: DASHBOARD_PORT,
-    log: console.log,
+    isLinuxDockerDriverGatewayEnabled,
+    runCaptureOpenshell,
     runOpenshell,
+    cliName,
+    cliDisplayName,
     destroyGateway,
     destroyGatewayForReuse,
   });
