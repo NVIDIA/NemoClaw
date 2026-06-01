@@ -553,12 +553,10 @@ import {
   type SandboxGpuConfig,
   type SandboxGpuFlag,
 } from "./onboard/sandbox-gpu-mode";
+import { filterSlackSelectionByValidation } from "./onboard/slack-validation";
 import type { SelectionDrift } from "./onboard/selection-drift";
 import { formatOnboardConfigSummary, formatSandboxBuildEstimateNote } from "./onboard/summary";
-import type {
-  ModelValidationResult,
-  ValidationFailureLike,
-} from "./onboard/types";
+import type { ModelValidationResult, ValidationFailureLike } from "./onboard/types";
 import type { ContainerRuntime } from "./platform";
 import { getChannelTokenKeys, listChannels } from "./sandbox/channels";
 import type { GatewayReuseState } from "./state/gateway";
@@ -5612,6 +5610,7 @@ async function setupMessagingChannels(
           if (reachability.skipped) found = found.filter((c) => c !== "telegram");
         }
       }
+      found = filterSlackSelectionByValidation(found, MESSAGING_CHANNELS);
     } else {
       note("  [non-interactive] No messaging tokens configured. Skipping.");
     }

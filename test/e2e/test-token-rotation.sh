@@ -156,6 +156,12 @@ is_fake_telegram_token() {
     *) return 1 ;;
   esac
 }
+is_fake_slack_token() {
+  case "${1:-}" in
+    xoxb-fake-* | xoxb-test-* | xapp-fake-* | xapp-test-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 # ── Phase 0: Install NemoClaw with token A ────────────────────────
 
@@ -171,6 +177,13 @@ if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] \
   # live Telegram API. Remove once onboard has a hermetic fake Telegram API.
   export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
   info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+fi
+if [ -z "${NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION:-}" ] \
+  && { is_fake_slack_token "$SLACK_BOT_TOKEN_A" || is_fake_slack_token "$SLACK_BOT_TOKEN_B" || is_fake_slack_token "$SLACK_APP_TOKEN_A" || is_fake_slack_token "$SLACK_APP_TOKEN_B"; }; then
+  # This E2E normally uses fake Slack tokens to exercise rotation plumbing, not
+  # the live Slack API.
+  export NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1
+  info "Skipping onboarding Slack auth validation for fake-token E2E"
 fi
 
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN_A"
