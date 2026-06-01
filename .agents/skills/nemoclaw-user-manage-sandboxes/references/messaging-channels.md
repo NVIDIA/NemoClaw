@@ -41,7 +41,9 @@ Telegram uses a bot token from [BotFather](https://t.me/BotFather).
 Open Telegram, send `/newbot` to [@BotFather](https://t.me/BotFather), follow the prompts, and copy the token.
 For Telegram group chats, disable privacy mode before testing group replies: in @BotFather, run `/setprivacy`, choose the bot, then choose **Disable**.
 After changing privacy mode, remove the bot from each Telegram group and add it back so Telegram applies the new delivery setting to that group.
-`TELEGRAM_ALLOWED_IDS` is a comma-separated list of Telegram user IDs for DM access.
+`TELEGRAM_ALLOWED_IDS` is a comma-separated list of Telegram user or private-chat IDs for DM access.
+For compatibility with older QA scripts, NemoClaw also treats `TELEGRAM_AUTHORIZED_CHAT_IDS` and `TELEGRAM_CHAT_ID` as aliases, but new automation should use `TELEGRAM_ALLOWED_IDS`.
+Keep these aliases until QA automation and public repro templates have stopped exporting them for at least one full release.
 Group chats stay open by default so rebuilt sandboxes do not silently drop Telegram group messages because of an empty group allowlist.
 Set `TELEGRAM_REQUIRE_MENTION=1` to make the bot reply in Telegram groups only when users mention it.
 Pairing and `TELEGRAM_ALLOWED_IDS` still govern direct messages.
@@ -78,12 +80,15 @@ Review your organization's terms-of-service, compliance, and data-residency cons
 WhatsApp (experimental) Web does not use a host-side token or OpenShell credential provider.
 NemoClaw advertises WhatsApp for both OpenClaw and Hermes sandboxes, and each agent completes pairing with its own in-sandbox command.
 Pairing happens inside the sandbox after the rebuild completes and creates mutable session credentials there.
-Run `openshell term` and then use the agent-specific pairing command to render the QR code in the terminal:
+Connect to the sandbox and then use the agent-specific pairing command to render the QR code in the terminal:
 
 ```console
 $ openclaw channels login --channel whatsapp  # OpenClaw sandboxes
 $ hermes whatsapp                             # Hermes sandboxes
 ```
+
+For OpenClaw sandboxes, NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR code in a compact terminal form so it fits in smaller terminal windows.
+If pairing exits with a gateway close such as `1008`, rerun the login command once and then check `nemoclaw <sandbox> channels status --channel whatsapp` so you can diagnose the gateway/session path separately from QR rendering.
 
 Session credentials are generated and stored inside durable agent state (`whatsapp` for OpenClaw, `platforms/whatsapp` for Hermes), so they survive rebuilds without re-pairing.
 This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
@@ -158,6 +163,8 @@ If applying the preset fails, NemoClaw warns and tells you to re-apply manually 
 Choose the rebuild so the running sandbox image picks up the new channel.
 For Telegram, Discord, and Slack, `channels add` also checks the rebuilt runtime for the selected bridge and reports startup, credential, or missing-plugin warnings before returning.
 If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION`, `SLACK_ALLOWED_USERS`, or `SLACK_ALLOWED_CHANNELS`, export them before the rebuild starts.
+Telegram Bot API `sendMessage` calls prove outbound delivery from the bot; to test inbound agent replies, send a message from the Telegram client as an allowed user.
+For a repeatable live Telegram reply check, run `test/e2e/test-messaging-providers.sh` with `TELEGRAM_BOT_TOKEN_REAL`, `TELEGRAM_AUTHORIZED_CHAT_IDS` or `TELEGRAM_CHAT_ID`, and `NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E=1`.
 If you defer the rebuild, apply the change later:
 
 ```console

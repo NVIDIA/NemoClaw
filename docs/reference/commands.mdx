@@ -1153,6 +1153,10 @@ Under the `nemohermes` alias, it uses the registered Hermes sandbox when exactly
 $ nemoclaw inference set --provider <provider> --model <model> [--sandbox <name>] [--no-verify]
 ```
 
+Pass both `--provider` and `--model` when you want NemoClaw to update the OpenShell inference route and sync the selected sandbox's agent config.
+If you only want the lower-level OpenShell route operation, run `openshell inference set -g nemoclaw --model <model> --provider <provider>` directly.
+When either flag is missing, `nemoclaw inference set` prints that OpenShell command instead of an oclif flag-validation error.
+
 Supported provider names are `nvidia-prod`, `nvidia-nim`, `nvidia-router`, `openai-api`, `anthropic-prod`, `compatible-anthropic-endpoint`, `gemini-api`, `compatible-endpoint`, `hermes-provider`, `ollama-local`, and `vllm-local`.
 Use `--no-verify` only when OpenShell cannot verify the provider at switch time but you have already confirmed the provider and credential.
 
@@ -1479,7 +1483,7 @@ These flags change defaults for commands that manage existing sandboxes.
 |----------|--------|--------|
 | `NEMOCLAW_CLEANUP_GATEWAY` | `1`, `true`, or `yes` to enable; `0`, `false`, or `no` to disable | Sets the default for whether `nemoclaw <name> destroy` removes the shared gateway when destroying the last sandbox. Command-line `--cleanup-gateway` and `--no-cleanup-gateway` still take precedence. |
 | `NEMOCLAW_DISABLE_INFERENCE_ROUTE_REPAIR` | `1` to enable | Skips the automatic DNS-proxy repair for stale `inference.local` routes during `nemoclaw <name> connect` and `nemoclaw <name> connect --probe-only`. Use only as a troubleshooting escape hatch. |
-| `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE` | `1` to opt in | Applies in two cases: (1) sandboxes that were locked before the SHA-256 content seal landed (no `fileHashes` in shields state), and (2) partial seals where the locked file set grew after the existing seal was captured (some entries sealed, some missing). In both cases the existing on-disk bytes for the unsealed files have no independently verified baseline. By default, `shields up` refuses to capture a seal and asks you to rebuild the sandbox for a known-good baseline. Set this to `1` to accept the current bytes as the trusted baseline and let the seal be captured anyway. Once captured, subsequent `shields status` runs detect any future drift. |
+| `NEMOCLAW_SHIELDS_ACCEPT_LEGACY_BASELINE` | `1` to opt in | Allows advanced immutable-config verification to trust the current on-disk bytes for older or partial content baselines. Use only after you have rebuilt or manually inspected the sandbox state and accepted that the baseline is operator-approved. |
 
 ## NemoHermes Alias
 

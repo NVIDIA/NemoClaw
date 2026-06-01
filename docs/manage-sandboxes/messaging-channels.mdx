@@ -89,12 +89,15 @@ Review your organization's terms-of-service, compliance, and data-residency cons
 WhatsApp (experimental) Web does not use a host-side token or OpenShell credential provider.
 NemoClaw advertises WhatsApp for both OpenClaw and Hermes sandboxes, and each agent completes pairing with its own in-sandbox command.
 Pairing happens inside the sandbox after the rebuild completes and creates mutable session credentials there.
-Run `openshell term` and then use the agent-specific pairing command to render the QR code in the terminal:
+Connect to the sandbox and then use the agent-specific pairing command to render the QR code in the terminal:
 
 ```console
 $ openclaw channels login --channel whatsapp  # OpenClaw sandboxes
 $ hermes whatsapp                             # Hermes sandboxes
 ```
+
+For OpenClaw sandboxes, NemoClaw validates the gateway URL before pairing and renders the WhatsApp QR code in a compact terminal form so it fits in smaller terminal windows.
+If pairing exits with a gateway close such as `1008`, rerun the login command once and then check `nemoclaw <sandbox> channels status --channel whatsapp` so you can diagnose the gateway/session path separately from QR rendering.
 
 Session credentials are generated and stored inside durable agent state (`whatsapp` for OpenClaw, `platforms/whatsapp` for Hermes), so they survive rebuilds without re-pairing.
 This is the runtime tradeoff of enabling WhatsApp without a host bridge: a paired sandbox can use that WhatsApp account until you unpair it or clear the durable state.
