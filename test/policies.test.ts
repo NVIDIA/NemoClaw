@@ -493,8 +493,8 @@ describe("policies", () => {
       const warning = policies.getPresetValidationWarning("jira");
 
       expect(warning).toContain("curl -s");
-      expect(warning).toContain("curl -sS -o /dev/null -w '%{http_code}'");
-      expect(warning).toContain("000");
+      expect(warning).toContain("api.atlassian.com/oauth/token/accessible-resources");
+      expect(warning).toContain("401 JSON");
       expect(warning).toContain("Node HTTPS");
       expect(warning).toContain("https://api.atlassian.com");
     });

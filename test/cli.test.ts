@@ -7,12 +7,32 @@ import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parse as parseYaml } from "yaml";
 
 import { execTimeout, testTimeout, testTimeoutOptions } from "./helpers/timeouts";
 
 const CLI = path.join(import.meta.dirname, "..", "bin", "nemoclaw.js");
 const HERMES_CLI = path.join(import.meta.dirname, "..", "bin", "nemohermes.js");
 const PARSER_EXIT_CODE = 2;
+
+function readOpenClawExpectedVersion(): string {
+  const manifestPath = path.join(
+    import.meta.dirname,
+    "..",
+    "agents",
+    "openclaw",
+    "manifest.yaml",
+  );
+  const manifest = parseYaml(fs.readFileSync(manifestPath, "utf8")) as {
+    expected_version?: unknown;
+  };
+  if (typeof manifest.expected_version === "string" && manifest.expected_version.trim()) {
+    return manifest.expected_version;
+  }
+  throw new Error("agents/openclaw/manifest.yaml is missing expected_version");
+}
+
+const OPENCLAW_EXPECTED_VERSION = readOpenClawExpectedVersion();
 
 type CliRunResult = {
   code: number;
@@ -120,6 +140,8 @@ type SandboxEntry = {
   gpuEnabled: boolean;
   policies: string[];
   agent?: string;
+  openshellDriver?: string | null;
+  agentVersion?: string | null;
 };
 
 function writeRecordingCommand(
@@ -2577,6 +2599,47 @@ describe("CLI dispatch", () => {
       value: "124",
     });
   });
+
+  for (const driver of ["docker", "vm"] as const) {
+    it(`gates host alias commands on the ${driver} driver without targeting the legacy gateway container`, testTimeoutOptions(30_000), () => {
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), `nemoclaw-cli-hosts-${driver}-`),
+      );
+      const localBin = path.join(home, "bin");
+      const dockerLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      // Record any docker invocation so we can prove the gate fires before
+      // the legacy `docker exec openshell-cluster-nemoclaw kubectl` path.
+      writeHostAliasDockerStub(localBin, dockerLog, [
+        { ip: "10.0.0.5", hostnames: ["old.local"] },
+      ]);
+      writeSandboxRegistry(home, "alpha", { openshellDriver: driver });
+
+      const env = { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` };
+      const list = runWithEnv("alpha hosts-list", env);
+      const add = runWithEnv("alpha hosts-add searxng.local 192.168.1.105", env);
+      const remove = runWithEnv("alpha hosts-remove searxng.local", env);
+
+      for (const result of [list, add, remove]) {
+        expect(result.code).toBe(1);
+        expect(result.out).toContain(
+          `Host aliases are not supported on the '${driver}' driver sandbox 'alpha'.`,
+        );
+      }
+
+      // Even the dry-run preview must not reach the legacy resource read.
+      const dryRun = runWithEnv(
+        "alpha hosts-add searxng.local 192.168.1.105 --dry-run",
+        env,
+      );
+      expect(dryRun.code).toBe(1);
+      expect(dryRun.out).not.toContain("/spec/podTemplate/spec/hostAliases");
+
+      // The gate runs before any docker exec, so the legacy gateway container
+      // is never targeted.
+      expect(fs.existsSync(dockerLog)).toBe(false);
+    });
+  }
 
   it("supports oclif-native sandbox command forms", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-native-sandbox-"));
@@ -5625,6 +5688,68 @@ describe("CLI dispatch", () => {
     expect(inferenceGetIdx).toBeGreaterThan(sandboxGetIdx);
   });
 
+  it("status reports the live sandbox agent version instead of cached host metadata", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-agent-drift-"));
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, {
+      model: "configured-model",
+      provider: "nvidia-prod",
+      agentVersion: "2026.5.18",
+    });
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Sandbox:'",
+        "  echo",
+        "  echo '  Id: abc'",
+        "  echo '  Name: alpha'",
+        "  echo '  Namespace: openshell'",
+        "  echo '  Phase: Ready'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Host openshell-alpha'",
+        "  echo '  HostName 127.0.0.1'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo",
+        "  echo '  Provider: nvidia-prod'",
+        "  echo '  Model: live-model'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "exec" ] && [ "$3" = "--name" ] && [ "$4" = "alpha" ]; then',
+        "  echo '__NEMOCLAW_SANDBOX_EXEC_STARTED__'",
+        "  echo 'RUNNING'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "ssh"),
+      ["#!/usr/bin/env bash", "echo 'OpenClaw 2026.3.11 (old)'", "exit 0"].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Agent:    OpenClaw v2026.3.11");
+    expect(r.out).toContain("Update:");
+    expect(r.out).toContain(`v${OPENCLAW_EXPECTED_VERSION} available`);
+    expect(r.out).toContain("Run `nemoclaw alpha rebuild` to upgrade");
+    expect(r.out).not.toContain("Agent:    OpenClaw v2026.5.18");
+  });
+
   it(
     "does not treat a different connected gateway as a healthy nemoclaw gateway",
     () => {
@@ -6087,7 +6212,7 @@ describe("CLI dispatch", () => {
     testTimeout(10_000),
   );
 
-  it("auto-cleans an orphan registry entry on status when the named gateway is healthy", () => {
+  it("preserves an orphan registry entry on passive status when the named gateway is healthy", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-orphan-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -6141,12 +6266,15 @@ describe("CLI dispatch", () => {
 
     expect(statusResult.code).toBe(1);
     expect(statusResult.out).not.toContain("Inference: healthy");
-    expect(statusResult.out).toContain("is not present in the live OpenShell gateway");
-    expect(statusResult.out).toContain("Removed stale local registry entry");
+    expect(statusResult.out).toContain(
+      "registered locally, but is not present in the live OpenShell gateway",
+    );
+    expect(statusResult.out).toContain("No local registry entry was removed");
+    expect(statusResult.out).not.toContain("Removed stale local registry entry");
 
     const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
-    expect(saved.sandboxes.alpha).toBeUndefined();
-    expect(saved.defaultSandbox).toBeNull();
+    expect(saved.sandboxes.alpha).toBeDefined();
+    expect(saved.defaultSandbox).toBe("alpha");
   });
 });
 
@@ -6543,12 +6671,26 @@ describe("list shows live gateway inference", () => {
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
           "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "my-agent" ]; then',
+          "  echo 'Sandbox: my-agent'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "my-agent" ]; then',
+          "  echo 'Host openshell-my-agent'",
+          "  echo '  HostName 127.0.0.1'",
+          "  exit 0",
+          "fi",
           'if [ "$1" = "--version" ]; then',
           '  echo "openshell 0.0.24"',
           "  exit 0",
           "fi",
           "exit 0",
         ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "ssh"),
+        ["#!/usr/bin/env bash", "echo 'OpenClaw 2026.3.11 (old)'", "exit 0"].join("\n"),
         { mode: 0o755 },
       );
 
@@ -6602,12 +6744,26 @@ describe("list shows live gateway inference", () => {
           '  echo "my-agent   Running   openclaw"',
           "  exit 0",
           "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "my-agent" ]; then',
+          "  echo 'Sandbox: my-agent'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "my-agent" ]; then',
+          "  echo 'Host openshell-my-agent'",
+          "  echo '  HostName 127.0.0.1'",
+          "  exit 0",
+          "fi",
           'if [ "$1" = "--version" ]; then',
           '  echo "openshell 0.0.24"',
           "  exit 0",
           "fi",
           "exit 0",
         ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "ssh"),
+        ["#!/usr/bin/env bash", "echo 'OpenClaw 9999.12.31 (new)'", "exit 0"].join("\n"),
         { mode: 0o755 },
       );
 
@@ -6618,6 +6774,74 @@ describe("list shows live gateway inference", () => {
 
       expect(r.code).toBe(0);
       expect(r.out).toContain("up to date");
+    },
+  );
+
+  it(
+    "upgrade-sandboxes --check probes running sandboxes before trusting cached metadata (#4429)",
+    testTimeoutOptions(),
+    () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-upgrade-probe-"));
+      const localBin = path.join(home, "bin");
+      const nemoclawDir = path.join(home, ".nemoclaw");
+      fs.mkdirSync(localBin, { recursive: true });
+      fs.mkdirSync(nemoclawDir, { recursive: true });
+
+      fs.writeFileSync(
+        path.join(nemoclawDir, "sandboxes.json"),
+        JSON.stringify({
+          sandboxes: {
+            "my-agent": {
+              name: "my-agent",
+              model: "nvidia/nemotron-3-super-120b-a12b",
+              provider: "nvidia-prod",
+              gpuEnabled: false,
+              policies: [],
+              agentVersion: "2026.5.18",
+            },
+          },
+          defaultSandbox: "my-agent",
+        }),
+        { mode: 0o600 },
+      );
+
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "list" ]; then',
+          '  echo "my-agent   Running   openclaw"',
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "my-agent" ]; then',
+          "  echo 'Sandbox: my-agent'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "ssh-config" ] && [ "$3" = "my-agent" ]; then',
+          "  echo 'Host openshell-my-agent'",
+          "  echo '  HostName 127.0.0.1'",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "ssh"),
+        ["#!/usr/bin/env bash", "echo 'OpenClaw 2026.3.11 (old)'", "exit 0"].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("upgrade-sandboxes --check 2>&1", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(r.code).toBe(0);
+      expect(r.out).toContain("my-agent");
+      expect(r.out).toContain("2026.3.11");
+      expect(r.out).toMatch(/stale|need upgrading/i);
+      expect(r.out).not.toContain("All sandboxes are up to date.");
     },
   );
 

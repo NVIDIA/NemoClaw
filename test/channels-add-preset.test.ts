@@ -26,9 +26,10 @@ function runScript(scriptBody: string, extraEnv: Record<string, string> = {}): S
       ...process.env,
       HOME: tmpDir,
       NEMOCLAW_NON_INTERACTIVE: "1",
+      NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION: "",
       TELEGRAM_BOT_TOKEN: "test-telegram-token",
-      SLACK_BOT_TOKEN: "slack-bot-token-for-test",
-      SLACK_APP_TOKEN: "slack-app-token-for-test",
+      SLACK_BOT_TOKEN: "xoxb-slack-bot-token-for-test",
+      SLACK_APP_TOKEN: "xapp-slack-app-token-for-test",
       DISCORD_BOT_TOKEN: "test-discord-token",
       ...extraEnv,
     },
@@ -86,8 +87,13 @@ const gatewayRuntime = require(${j("gateway-runtime-action.js")});
 gatewayRuntime.recoverNamedGatewayRuntime = async () => ({ recovered: true });
 
 const credentials = require(${j("credentials/store.js")});
+const credentialSaveCalls = [];
 credentials.getCredential = (key) => process.env[key] || null;
-credentials.saveCredential = () => true;
+credentials.saveCredential = (key, value) => {
+  credentialSaveCalls.push({ key, value });
+  callOrder.push("saveCredential:" + key);
+  return true;
+};
 credentials.deleteCredential = () => true;
 credentials.prompt = async (msg) => { throw new Error("unexpected prompt: " + msg); };
 
@@ -96,7 +102,10 @@ onboard.isNonInteractive = () => true;
 
 const onboardProviders = require(${j("onboard/providers.js")});
 const providerCalls = [];
-onboardProviders.upsertMessagingProviders = (defs) => { providerCalls.push(...defs); };
+onboardProviders.upsertMessagingProviders = (defs) => {
+  providerCalls.push(...defs);
+  callOrder.push("upsertMessagingProviders");
+};
 
 const registry = require(${j("state/registry.js")});
 const registryUpdates = [];
@@ -128,6 +137,27 @@ policies.removePreset = (sandboxName, presetName) => {
   return true;
 };
 policies.getAppliedPresets = () => ${JSON.stringify(appliedPresets)};
+
+const httpProbe = require(${j("adapters/http/probe.js")});
+const slackProbeCalls = [];
+const slackProbeOk = (body = '{"ok":true}') => ({
+  ok: true,
+  httpStatus: 200,
+  curlStatus: 0,
+  body,
+  stderr: "",
+  message: "",
+});
+httpProbe.runCurlProbe = (argv) => {
+  const url = argv[argv.length - 1];
+  if (typeof url === "string" && url.includes("slack.com/api/")) {
+    slackProbeCalls.push(argv);
+    callOrder.push(url.includes("auth.test") ? "slackProbe:bot" : "slackProbe:app");
+    if (url.includes("auth.test")) return global.__slackBotProbe || slackProbeOk();
+    if (url.includes("apps.connections.open")) return global.__slackAppProbe || slackProbeOk('{"ok":true,"url":"wss://wss-primary.slack.com/link"}');
+  }
+  return slackProbeOk();
+};
 
 // Stub onboardSession so the new policyPresets-sync helper has something
 // to read/write. The test asserts on sessionUpdates to verify the
@@ -177,7 +207,18 @@ console.log = (...args) => {
 
 const channelModule = require(${j("actions/sandbox/policy-channel.js")});
 
-module.exports = { channelModule, appliedCalls, removedCalls, callOrder, providerCalls, registryUpdates, sessionUpdates, getSessionState: () => sessionState };
+module.exports = {
+  channelModule,
+  appliedCalls,
+  removedCalls,
+  callOrder,
+  providerCalls,
+  registryUpdates,
+  sessionUpdates,
+  credentialSaveCalls,
+  slackProbeCalls,
+  getSessionState: () => sessionState,
+};
 `;
 }
 
@@ -374,6 +415,231 @@ const ctx = module.exports;
     assert.ok(
       payload.callOrder.includes("promptAndRebuild"),
       `expected promptAndRebuild to still run; got order: ${JSON.stringify(payload.callOrder)}`,
+    );
+  });
+
+  it("validates Slack credentials before persisting tokens or registering providers", () => {
+    const script = `${buildPreamble()}
+const ctx = module.exports;
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "slack" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      slackProbeCalls: ctx.slackProbeCalls,
+      credentialSaveCalls: ctx.credentialSaveCalls,
+      providerCalls: ctx.providerCalls,
+      callOrder: ctx.callOrder,
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.equal(payload.slackProbeCalls.length, 2, "expected bot and app Slack probes");
+    assert.ok(
+      payload.slackProbeCalls[0].includes("https://slack.com/api/auth.test"),
+      `expected auth.test first; got ${JSON.stringify(payload.slackProbeCalls)}`,
+    );
+    assert.ok(
+      payload.slackProbeCalls[1].includes("https://slack.com/api/apps.connections.open"),
+      `expected apps.connections.open second; got ${JSON.stringify(payload.slackProbeCalls)}`,
+    );
+    assert.deepEqual(
+      payload.credentialSaveCalls.map((call: { key: string }) => call.key),
+      ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+    );
+    assert.deepEqual(
+      payload.providerCalls.map((call: { envKey: string }) => call.envKey),
+      ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+    );
+    assert.ok(
+      payload.callOrder.indexOf("slackProbe:app") <
+        payload.callOrder.indexOf("saveCredential:SLACK_BOT_TOKEN"),
+      `Slack validation must complete before token persistence; got ${JSON.stringify(payload.callOrder)}`,
+    );
+    assert.ok(
+      payload.callOrder.indexOf("saveCredential:SLACK_APP_TOKEN") <
+        payload.callOrder.indexOf("upsertMessagingProviders"),
+      `token persistence should happen before provider registration; got ${JSON.stringify(payload.callOrder)}`,
+    );
+  });
+
+  it("can explicitly skip live Slack validation for offline channel add", () => {
+    const script = `${buildPreamble()}
+const ctx = module.exports;
+global.__slackBotProbe = {
+  ok: true,
+  httpStatus: 200,
+  curlStatus: 0,
+  body: '{"ok":false,"error":"invalid_auth"}',
+  stderr: "",
+  message: "",
+};
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "slack" });
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({
+      slackProbeCalls: ctx.slackProbeCalls,
+      credentialSaveCalls: ctx.credentialSaveCalls,
+      providerCalls: ctx.providerCalls,
+      callOrder: ctx.callOrder,
+    }) + "\\n");
+  } catch (err) {
+    process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+  }
+})();
+`;
+    const result = runScript(script, { NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION: "1" });
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.slackProbeCalls, []);
+    assert.deepEqual(
+      payload.credentialSaveCalls.map((call: { key: string }) => call.key),
+      ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+    );
+    assert.deepEqual(
+      payload.providerCalls.map((call: { envKey: string }) => call.envKey),
+      ["SLACK_BOT_TOKEN", "SLACK_APP_TOKEN"],
+    );
+    assert.ok(
+      !payload.callOrder.some((entry: string) => entry.startsWith("slackProbe:")),
+      `offline skip mode must not probe Slack; got ${JSON.stringify(payload.callOrder)}`,
+    );
+    assert.ok(
+      payload.callOrder.indexOf("saveCredential:SLACK_APP_TOKEN") <
+        payload.callOrder.indexOf("upsertMessagingProviders"),
+      `token persistence should happen before provider registration; got ${JSON.stringify(payload.callOrder)}`,
+    );
+  });
+
+  it("aborts Slack channel add on rejected Slack API validation before persistence or registration", () => {
+    const script = `${buildPreamble()}
+const ctx = module.exports;
+global.__slackBotProbe = {
+  ok: true,
+  httpStatus: 200,
+  curlStatus: 0,
+  body: '{"ok":false,"error":"invalid_auth"}',
+  stderr: "",
+  message: "",
+};
+const exitCodes = [];
+const originalExit = process.exit;
+process.exit = (code) => {
+  exitCodes.push(code ?? 0);
+  throw new Error("__EXIT__" + (code ?? 0));
+};
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "slack" });
+  } catch (err) {
+    if (!String(err && err.message).startsWith("__EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+      return;
+    }
+  } finally {
+    process.exit = originalExit;
+  }
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    exitCodes,
+    credentialSaveCalls: ctx.credentialSaveCalls,
+    providerCalls: ctx.providerCalls,
+    registryUpdates: ctx.registryUpdates,
+    appliedCalls: ctx.appliedCalls,
+    callOrder: ctx.callOrder,
+  }) + "\\n");
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.exitCodes, [1]);
+    assert.deepEqual(payload.credentialSaveCalls, []);
+    assert.deepEqual(payload.providerCalls, []);
+    assert.deepEqual(payload.registryUpdates, []);
+    assert.deepEqual(payload.appliedCalls, []);
+    assert.ok(
+      !payload.callOrder.some((entry: string) => entry.startsWith("saveCredential:")),
+      `rejected Slack credentials must not be persisted; got ${JSON.stringify(payload.callOrder)}`,
+    );
+    assert.ok(
+      !payload.callOrder.includes("upsertMessagingProviders"),
+      `rejected Slack credentials must not register providers; got ${JSON.stringify(payload.callOrder)}`,
+    );
+  });
+
+  it("aborts Slack channel add on indeterminate Slack API validation before persistence or registration", () => {
+    const script = `${buildPreamble()}
+const ctx = module.exports;
+global.__slackBotProbe = {
+  ok: false,
+  httpStatus: 0,
+  curlStatus: 28,
+  body: "",
+  stderr: "operation timed out",
+  message: "curl failed (exit 28): operation timed out",
+};
+const exitCodes = [];
+const originalExit = process.exit;
+process.exit = (code) => {
+  exitCodes.push(code ?? 0);
+  throw new Error("__EXIT__" + (code ?? 0));
+};
+(async () => {
+  try {
+    await ctx.channelModule.addSandboxChannel("test-sb", { channel: "slack" });
+  } catch (err) {
+    if (!String(err && err.message).startsWith("__EXIT__")) {
+      process.stdout.write("\\n__RESULT__" + JSON.stringify({ error: err.message, stack: err.stack }) + "\\n");
+      return;
+    }
+  } finally {
+    process.exit = originalExit;
+  }
+  process.stdout.write("\\n__RESULT__" + JSON.stringify({
+    exitCodes,
+    credentialSaveCalls: ctx.credentialSaveCalls,
+    providerCalls: ctx.providerCalls,
+    registryUpdates: ctx.registryUpdates,
+    appliedCalls: ctx.appliedCalls,
+    callOrder: ctx.callOrder,
+  }) + "\\n");
+})();
+`;
+    const result = runScript(script);
+    assert.equal(result.status, 0, `script failed: ${result.stderr}\n${result.stdout}`);
+    const marker = result.stdout.lastIndexOf("__RESULT__");
+    assert.ok(marker >= 0, `no __RESULT__ marker in stdout:\n${result.stdout}`);
+    const payload = JSON.parse(result.stdout.slice(marker + "__RESULT__".length).trim());
+    assert.ok(!payload.error, `unexpected error: ${payload.error}\n${payload.stack || ""}`);
+
+    assert.deepEqual(payload.exitCodes, [1]);
+    assert.deepEqual(payload.credentialSaveCalls, []);
+    assert.deepEqual(payload.providerCalls, []);
+    assert.deepEqual(payload.registryUpdates, []);
+    assert.deepEqual(payload.appliedCalls, []);
+    assert.ok(
+      !payload.callOrder.some((entry: string) => entry.startsWith("saveCredential:")),
+      `indeterminate Slack credentials must not be persisted; got ${JSON.stringify(payload.callOrder)}`,
+    );
+    assert.ok(
+      !payload.callOrder.includes("upsertMessagingProviders"),
+      `indeterminate Slack credentials must not register providers; got ${JSON.stringify(payload.callOrder)}`,
     );
   });
 });
