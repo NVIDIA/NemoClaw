@@ -6,7 +6,8 @@
 OpenClaw's doctor repair uses the official catalog's unversioned plugin specs.
 That can drift to a newer external messaging plugin than the host OpenClaw
 runtime. NemoClaw pins the runtime with OPENCLAW_VERSION, so build-time channel
-activation must pin external messaging plugins to that same version.
+activation must force explicit npm installs for external messaging plugins and
+pin them to that same version.
 """
 
 from __future__ import annotations
@@ -90,7 +91,7 @@ def plugin_specs(channels: Iterable[str], openclaw_version: str) -> list[str]:
     for channel in channels:
         package_name = EXTERNAL_CHANNEL_PACKAGES.get(channel)
         if package_name:
-            specs.append(f"{package_name}@{openclaw_version}")
+            specs.append(f"npm:{package_name}@{openclaw_version}")
     return specs
 
 
@@ -137,7 +138,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     for spec in specs:
-        run_command(["openclaw", "plugins", "install", spec])
+        run_command(["openclaw", "plugins", "install", spec, "--pin"])
 
     doctor_env = os.environ.copy()
     doctor_env.update(env_overrides)
