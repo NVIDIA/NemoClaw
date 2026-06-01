@@ -263,7 +263,7 @@ export function printWrongGatewayActiveGuidance(
     `  Sandbox '${sandboxName}' is registered against the ${CLI_DISPLAY_NAME} gateway, but the currently active OpenShell gateway is '${other}'. Your sandbox has NOT been removed.`,
   );
   writer("  Switch gateways and retry:");
-  writer("      openshell gateway select nemoclaw");
+  writer(`      openshell gateway select ${DEFAULT_GATEWAY_NAME}`);
   writer(`  Then re-run: ${CLI_NAME} ${sandboxName} connect`);
 }
 
@@ -279,7 +279,7 @@ export function printGatewayLifecycleHint(
       `  The selected ${CLI_DISPLAY_NAME} gateway is no longer configured or its metadata/runtime has been lost.`,
     );
     writer(
-      "  Start the gateway again with `openshell gateway start --name nemoclaw` before expecting existing sandboxes to reconnect.",
+      `  Start the gateway again with \`openshell gateway start --name ${DEFAULT_GATEWAY_NAME}\` before expecting existing sandboxes to reconnect.`,
     );
     writer(
       "  If the gateway has to be rebuilt from scratch, recreate the affected sandbox afterward.",
@@ -288,14 +288,14 @@ export function printGatewayLifecycleHint(
   }
   if (
     /Connection refused|client error \(Connect\)|tcp connect error/i.test(cleanOutput) &&
-    /Gateway:\s+nemoclaw/i.test(cleanOutput)
+    new RegExp(`Gateway:\\s+${DEFAULT_GATEWAY_NAME}`, "i").test(cleanOutput)
   ) {
     writer(
-      "  The selected NemoClaw gateway exists in metadata, but its API is refusing connections after restart.",
+      `  The selected ${CLI_DISPLAY_NAME} gateway exists in metadata, but its API is refusing connections after restart.`,
     );
     writer("  This usually means the gateway runtime did not come back cleanly after the restart.");
     writer(
-      "  Retry `openshell gateway start --name nemoclaw`; if it stays in this state, rebuild the gateway before expecting existing sandboxes to reconnect.",
+      `  Retry \`openshell gateway start --name ${DEFAULT_GATEWAY_NAME}\`; if it stays in this state, rebuild the gateway before expecting existing sandboxes to reconnect.`,
     );
     return;
   }
@@ -364,7 +364,7 @@ export async function getReconciledSandboxGatewayState(
     }
     if (
       /Connection refused|client error \(Connect\)|tcp connect error/i.test(latestStatus) &&
-      /Gateway:\s+nemoclaw/i.test(latestStatus)
+      new RegExp(`Gateway:\\s+${DEFAULT_GATEWAY_NAME}`, "i").test(latestStatus)
     ) {
       return {
         state: "gateway_unreachable_after_restart",
@@ -475,7 +475,7 @@ export async function ensureLiveSandboxOrExit(
       console.error(lookup.output);
     }
     console.error(
-      "  Retry `openshell gateway start --name nemoclaw` and verify `openshell status` is healthy before reconnecting.",
+      `  Retry \`openshell gateway start --name ${DEFAULT_GATEWAY_NAME}\` and verify \`openshell status\` is healthy before reconnecting.`,
     );
     console.error(
       "  If the gateway never becomes healthy, rebuild the gateway and then recreate the affected sandbox.",
@@ -490,7 +490,7 @@ export async function ensureLiveSandboxOrExit(
       console.error(lookup.output);
     }
     console.error(
-      "  Start the gateway again with `openshell gateway start --name nemoclaw` before retrying.",
+      `  Start the gateway again with \`openshell gateway start --name ${DEFAULT_GATEWAY_NAME}\` before retrying.`,
     );
     console.error(
       "  If the gateway had to be rebuilt from scratch, recreate the affected sandbox afterward.",
