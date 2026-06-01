@@ -124,4 +124,123 @@ describe("telegram-diagnostics: startup-grace breadcrumb (#4314, #4390)", () => 
     expect(result.status).toBe(0);
     expect(result.stderr).not.toMatch(/bridge did not start within/);
   });
+
+  it("logs Telegram DM allowlist state without exposing IDs", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: { dmPolicy: "allowlist", allowFrom: ["8388960805"] } } } },
+      }));
+      require(process.env.DIAGNOSTICS_PATH);
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("DM allowlist configured (1 entry)");
+    expect(result.stderr).not.toContain("8388960805");
+  });
+
+  it("logs an actionable warning when Telegram DM allowlist is empty", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: { dmPolicy: "allowlist", allowFrom: [] } } } },
+      }));
+      require(process.env.DIAGNOSTICS_PATH);
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("DM allowlist is empty; set TELEGRAM_ALLOWED_IDS");
+  });
+
+  it("does not warn about an empty allowlist when Telegram is not in allowlist mode", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: {} } } },
+      }));
+      require(process.env.DIAGNOSTICS_PATH);
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain("DM allowlist is empty");
+  });
+
+  it("logs outbound sendMessage attempts without leaking the bot token", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      const { EventEmitter } = require("events");
+      const http = require("http");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: { dmPolicy: "allowlist", allowFrom: ["123"] } } } },
+      }));
+      http.request = function () {
+        const req = new EventEmitter();
+        req.end = function () {
+          process.nextTick(() => req.emit("response", { statusCode: 200 }));
+        };
+        return req;
+      };
+      require(process.env.DIAGNOSTICS_PATH);
+      http.request({ hostname: "api.telegram.org", path: "/bot123456:SECRET/sendMessage" }).end();
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain("outbound sendMessage attempted; Bot API returned HTTP 200");
+    expect(result.stderr).not.toContain("123456:SECRET");
+  });
+
+  it("logs inbound getUpdates metadata without exposing Telegram IDs or message text", () => {
+    const driver = `
+      ${GATEWAY_TITLE_SETUP}
+      const fs = require("fs");
+      const { EventEmitter } = require("events");
+      const http = require("http");
+      fs.writeFileSync(process.env.OPENCLAW_CONFIG_PATH, JSON.stringify({
+        channels: { telegram: { enabled: true, accounts: { default: { dmPolicy: "allowlist", allowFrom: ["8388960805"] } } } },
+      }));
+      http.request = function () {
+        const req = new EventEmitter();
+        req.end = function () {
+          const res = new EventEmitter();
+          res.statusCode = 200;
+          process.nextTick(() => {
+            req.emit("response", res);
+            res.emit("data", JSON.stringify({
+              ok: true,
+              result: [{
+                update_id: 111111,
+                message: {
+                  message_id: 42,
+                  from: { id: 8388960805 },
+                  chat: { id: 8388960805, type: "private" },
+                  text: "hello bot please reply",
+                },
+              }],
+            }));
+            res.emit("end");
+          });
+        };
+        return req;
+      };
+      require(process.env.DIAGNOSTICS_PATH);
+      http.request({ hostname: "api.telegram.org", path: "/bot123456:SECRET/getUpdates" }).end();
+      setTimeout(() => process.exit(0), 100);
+    `;
+    const { result } = runDriver(driver, { NEMOCLAW_TELEGRAM_STARTUP_GRACE_MS: "1000" });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain(
+      "inbound update received (update_id=present; message_id=present; chat_type=private; sender_allowlisted=true)",
+    );
+    expect(result.stderr).not.toContain("8388960805");
+    expect(result.stderr).not.toContain("hello bot please reply");
+    expect(result.stderr).not.toContain("123456:SECRET");
+  });
 });

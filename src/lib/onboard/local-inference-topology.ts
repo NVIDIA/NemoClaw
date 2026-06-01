@@ -1,20 +1,12 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { dockerInfo } from "../adapters/docker/info";
-import {
-  type ContainerRuntime,
-  containerCanReachHostLoopback,
-  inferContainerRuntime,
-} from "../platform";
+import { detectContainerRuntimeFromDockerInfo } from "../adapters/docker/runtime";
+import { type ContainerRuntime, containerCanReachHostLoopback } from "../platform";
 import { ensureOllamaLoopbackSystemdOverride } from "./ollama-systemd";
 
-const DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS = 1500;
-
 export function getContainerRuntime(): ContainerRuntime {
-  return inferContainerRuntime(
-    dockerInfo({ ignoreError: true, timeout: DOCKER_INFO_RUNTIME_PROBE_TIMEOUT_MS }),
-  );
+  return detectContainerRuntimeFromDockerInfo();
 }
 
 function describeContainerRuntime(runtime: ContainerRuntime): string {

@@ -19,6 +19,7 @@ import { D, G, R, YW } from "../../cli/terminal-style";
 import * as agentRuntime from "../../agent/runtime";
 import { parseGatewayInference } from "../../inference/config";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
+import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import {
   ensureOllamaAuthProxy,
   probeOllamaAuthProxyHealth,
@@ -263,7 +264,15 @@ function probeSandboxInferenceRoute(
 }
 
 function shouldUseLegacyDnsProxyRepair(sb: SandboxEntry | null): boolean {
-  return sb?.openshellDriver !== "vm";
+  // The legacy repair patches CoreDNS inside an `openshell-cluster-<name>`
+  // container, which only the k3s/kubernetes gateway runs. The docker driver
+  // runs the gateway as `nemoclaw-openshell-gateway` with host networking, and
+  // the vm driver has no cluster container either, so both recover the route via
+  // `openshell inference set` instead of the cluster CoreDNS patch. Mirrors
+  // usesGatewayMetadataProbe (snapshot.ts) and the `!== "docker"` guard on the
+  // snapshot DNS-proxy step. (#3403)
+  const driver = sb?.openshellDriver;
+  return driver !== "vm" && driver !== "docker";
 }
 
 function buildInferenceSetArgs(provider: string, model: string): string[] {
@@ -751,6 +760,7 @@ export async function connectSandbox(
   sandboxName: string,
   { probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
+  preflightVllmModelEnvOrExit();
   const { isSandboxReady, parseSandboxStatus } = require("../../onboard");
   await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
 

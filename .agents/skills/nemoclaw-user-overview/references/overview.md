@@ -23,6 +23,7 @@ NemoClaw provides the following product capabilities.
 | Feature | Description |
 |---------|-------------|
 | Guided onboarding | Validates credentials, selects providers, and creates a working sandbox in one command. |
+| Agent skills | Packages NemoClaw documentation as user skills so AI coding assistants can guide setup, inference configuration, policy management, monitoring, deployment, security review, and troubleshooting. |
 | Hardened blueprint | A security-first Dockerfile with capability drops, least-privilege network rules, and declarative policy. |
 | State management | Safe migration of agent state across machines with credential stripping and integrity verification. |
 | Messaging channels | OpenShell-managed processes connect Telegram, Discord, Slack, and similar platforms to the sandboxed agent. NemoClaw configures channels during onboarding; OpenShell supplies the native constructs, credential flow, and runtime supervision. |
@@ -60,4 +61,5 @@ Navigate to the following topics to learn more about NemoClaw and how to install
 - [Architecture Overview](how-it-works.md) to understand how NemoClaw works.
 - [Ecosystem](ecosystem.md) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
 - Quickstart (use the `nemoclaw-user-get-started` skill) to install NemoClaw and run your first sandboxed agent.
+- Agent Skills (use the `nemoclaw-user-agent-skills` skill) to load NemoClaw guidance into an AI coding assistant.
 - Inference Options (use the `nemoclaw-user-configure-inference` skill) to check the inference providers that NemoClaw supports and how inference routing works.
