@@ -116,6 +116,24 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
   });
 }
 
+/**
+ * Format the user-facing readiness failure message based on whether the
+ * waiter short-circuited on a terminal sandbox phase or actually timed out.
+ * Keeps the message branching close to the readiness contract so callers
+ * (notably onboard.ts) stay thin (#4316 codebase-growth guardrail).
+ */
+export function formatCreatedSandboxReadinessFailureMessage(
+  sandboxName: string,
+  readiness: CreatedSandboxReadinessResult,
+  timeoutSecs: number,
+): string {
+  if (readiness.reason === "terminal_failure_phase") {
+    const phase = readiness.failurePhase ?? "a terminal failure";
+    return `  Sandbox '${sandboxName}' entered ${phase} phase before it became ready (waited up to ${timeoutSecs}s).`;
+  }
+  return `  Sandbox '${sandboxName}' was created but did not become ready within ${timeoutSecs}s.`;
+}
+
 export function waitForDashboardReadyWithTrace(options: {
   sandboxName: string;
   port: string | number;

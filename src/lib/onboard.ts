@@ -3622,12 +3622,7 @@ async function createSandbox(
     openshellSandboxCommand: sandboxStartupCommand,
     timeoutSecs: sandboxReadyTimeoutSecs,
     backend: effectiveSandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
-    deps: {
-      runOpenshell,
-      runCaptureOpenshell,
-      sleep: sleepSeconds,
-      dockerCapture: docker.dockerCapture,
-    },
+    deps: { runOpenshell, runCaptureOpenshell, sleep: sleepSeconds, dockerCapture: docker.dockerCapture },
   });
   const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
     readyCheck: () => {
@@ -3705,13 +3700,8 @@ async function createSandbox(
       sandboxName,
       { backupPath: restoreBackupPath },
     );
-    const failurePhase = readiness.failurePhase;
-    const readinessFailureMessage =
-      readiness.reason === "terminal_failure_phase"
-        ? `  Sandbox '${sandboxName}' entered ${failurePhase ?? "a terminal failure"} phase before it became ready (waited up to ${sandboxReadyTimeoutSecs}s).`
-        : `  Sandbox '${sandboxName}' was created but did not become ready within ${sandboxReadyTimeoutSecs}s.`;
     console.error("");
-    console.error(readinessFailureMessage);
+    console.error(sandboxReadinessTracing.formatCreatedSandboxReadinessFailureMessage(sandboxName, readiness, sandboxReadyTimeoutSecs));
     if (diagnostics) {
       console.error(`  Diagnostics saved: ${diagnostics.dir}`);
       if (diagnostics.summaryLines.length > 0) {
