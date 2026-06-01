@@ -5,6 +5,6 @@
  * Shell-quote a value for safe interpolation into bash -c strings.
  * Wraps in single quotes and escapes embedded single quotes.
  */
-export function shellQuote(value: string): string {
+export function shellQuote(value: unknown): string {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
 }

@@ -1,6 +1,7 @@
 ---
 name: "nemoclaw-user-manage-sandboxes"
-description: "Explains operational tasks after the quickstart: listing sandboxes, status and health checks, logs, diagnostics, port forwards, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall. Trigger keywords - manage nemoclaw sandboxes, nemoclaw status, nemoclaw list, nemoclaw dashboard port, nemoclaw rebuild, nemoclaw upgrade sandboxes, nemoclaw uninstall, nemoclaw shields, shields up, shields down, shields status, sandbox mutability, sandbox runtime configuration, sandbox lockdown, nemoclaw backup, nemoclaw restore, workspace backup, openshell sandbox download upload, nemoclaw messaging channels, nemoclaw telegram, nemoclaw discord, nemoclaw slack, nemoclaw wechat, nemoclaw whatsapp, openshell channel messaging, nemoclaw workspace files, soul.md, user.md, identity.md, agents.md, sandbox persistence."
+description: "Explains operational tasks after the quickstart: listing sandboxes, status and health checks, logs, diagnostics, port forwards, multiple sandboxes, credential reset, rebuilds, network presets, upgrades, and uninstall. Trigger keywords - manage nemoclaw sandboxes, nemoclaw status, nemoclaw list, nemoclaw dashboard port, nemoclaw rebuild, nemoclaw upgrade sandboxes, nemoclaw uninstall, sandbox mutability, sandbox runtime configuration, sandbox rebuild, nemoclaw backup, nemoclaw restore, workspace backup, openshell sandbox download upload, nemoclaw messaging channels, nemoclaw telegram, nemoclaw discord, nemoclaw slack, nemoclaw wechat, nemoclaw whatsapp, openshell channel messaging, nemoclaw workspace files, soul.md, user.md, identity.md, agents.md, sandbox persistence."
+license: "Apache-2.0"
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -229,7 +230,7 @@ Aborts before the destroy step are non-destructive.
 The flow refuses to proceed past preflight if a credential is missing or past backup if required manifest-defined state cannot be copied, so a failed run leaves the original sandbox intact and ready to retry.
 When a backup command reports partial archive output, NemoClaw keeps the usable entries and reports only the manifest-defined paths that could not be archived.
 
-See Backup and Restore (use the `nemoclaw-user-manage-sandboxes` skill) for the full list of state-preservation guarantees, snapshot retention, and instructions for manual backups when the auto-flow is not enough.
+See [Backup and Restore](references/backup-restore.md) for the full list of state-preservation guarantees, snapshot retention, and instructions for manual backups when the auto-flow is not enough.
 
 **If the rebuild aborts with `Missing credential: <KEY>`:**
 
@@ -262,15 +263,24 @@ If the `nemoclaw` CLI is missing or broken, fall back to the hosted script:
 curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash
 ```
 
+The same `--yes`, `--keep-openshell`, and `--delete-models` flags listed above also apply to the hosted script. Pass them after `bash -s --`.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/NVIDIA/NemoClaw/refs/heads/main/uninstall.sh | bash -s -- --yes --delete-models
+```
+
 For a full comparison of the two forms, including what they fetch, what they trust, and when to prefer each, see `nemoclaw uninstall` vs. the hosted `uninstall.sh` (use the `nemoclaw-user-reference` skill).
 
 ## References
 
-- **Load [references/runtime-controls.md](references/runtime-controls.md)** when an operator needs to temporarily lower or restore the sandbox security posture, or when a user is trying to figure out whether a config change needs a rebuild. Single page that answers 'what can I change at runtime vs. what requires a rebuild' for NemoClaw sandboxes, and documents the operator-only shields lockdown commands (shields up, shields down with timeout/reason/policy, shields status).
+- **[references/runtime-controls.md](references/runtime-controls.md)** — Single page that answers what can change at runtime versus what requires a rebuild for NemoClaw sandboxes.
 - **Load [references/backup-restore.md](references/backup-restore.md)** when downloading workspace files from a sandbox, uploading restored files into a new sandbox, or preserving sandbox state across rebuilds. Backs up and restores OpenClaw workspace files before destructive operations such as sandbox rebuilds.
 - **Load [references/messaging-channels.md](references/messaging-channels.md)** when setting up messaging channels, chat interfaces, or integrations without relying on nemoclaw tunnel start for bridges. Explains how Telegram, Discord, Slack, WeChat, and WhatsApp reach sandboxed OpenClaw and Hermes agents through OpenShell-managed processes and NemoClaw channel commands.
 - **Load [references/workspace-files.md](references/workspace-files.md)** when users ask about `SOUL.md`, `USER.md`, `IDENTITY.md`, `AGENTS.md`, or other workspace files, or when preparing to back up or restore workspace state. Explains what workspace personality and configuration files are, where they live, and how they persist across sandbox restarts.
 
 ## Related Skills
 
+- [Set Up Messaging Channels](references/messaging-channels.md) to connect Telegram, Discord, or Slack.
+- [Workspace Files](references/workspace-files.md) for persistent OpenClaw files inside the sandbox.
+- [Backup and Restore](references/backup-restore.md) for snapshot and restore workflows.
 - `nemoclaw-user-monitor-sandbox` — Monitor Sandbox Activity (use the `nemoclaw-user-monitor-sandbox` skill) for observability tools

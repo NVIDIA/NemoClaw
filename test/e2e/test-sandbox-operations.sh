@@ -24,6 +24,8 @@ export NEMOCLAW_E2E_DEFAULT_TIMEOUT=1800
 SCRIPT_DIR_TIMEOUT="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
 # shellcheck source=test/e2e/e2e-timeout.sh
 source "${SCRIPT_DIR_TIMEOUT}/e2e-timeout.sh"
+# shellcheck source=test/e2e/lib/openclaw-json.sh
+source "${SCRIPT_DIR_TIMEOUT}/lib/openclaw-json.sh"
 
 # ── Config ───────────────────────────────────────────────────────────────────
 SANDBOX_A="test-sbx-a"
@@ -347,61 +349,48 @@ test_sbx_01_list_sandboxes() {
 #
 #   1. Uses `openclaw agent --json`, which calls routeLogsToStderr() in
 #      openclaw/src/commands/agent-via-gateway.ts:57 so stdout is a clean
-#      JSON envelope. Stderr is dropped (2>/dev/null) so any prompt-echo
-#      or wrapped error there cannot satisfy the assertion.
+#      JSON envelope. Merged stdout/stderr is preserved for failure
+#      diagnostics, but assertions only read JSON payload text.
 #   2. The expected token (the integer 42) is not a literal substring of
 #      the prompt, so an error path that quoted the prompt back cannot
 #      false-positive the grep — which is what masked the openclaw 4.9
 #      SSRF regression from the prior `Say exactly: HELLO_E2E` assertion.
-#   3. Asserts on `result.payloads[].text` from the JSON envelope, not on
-#      merged stdout/stderr.
-#   4. Pins `--thinking off` so the first-turn smoke contract is not delayed
-#      by model-catalog inferred reasoning defaults.
+#   3. Asserts on parsed model reply text from the JSON envelope, not on
+#      merged stdout/stderr or a single brittle envelope shape.
+#   4. Relies on generated `thinkingDefault: off` config so the first-turn
+#      smoke contract is not delayed by model-catalog inferred reasoning
+#      defaults without depending on transient CLI flags.
 test_sbx_02_connect_chat() {
   log "=== TC-SBX-02: Connect & Chat ==="
   require_sandbox "$SANDBOX_A" "TC-SBX-02" || return
 
   log "  Sending one-shot message to agent via SSH (openclaw agent --json)..."
-  local session_id raw ssh_cfg
+  local session_id raw ssh_cfg rc
   session_id="e2e-sbx-02-$(date +%s)-$$"
-  # Use a direct ssh invocation rather than sandbox_exec(): sandbox_exec_for
-  # merges stderr into stdout via 2>&1 so it can log non-zero exits, which
-  # would pollute the JSON document we need to parse below. Drop stderr at
-  # the source so node deprecation warnings (UNDICI-EHPA, etc.) and
-  # progress-bar bytes from openclaw cannot trip up json.load().
+  # Use a direct ssh invocation rather than sandbox_exec() so the JSON envelope
+  # is easy to parse while still preserving stderr in failure output.
   ssh_cfg="$(mktemp)"
   if ! openshell sandbox ssh-config "$SANDBOX_A" >"$ssh_cfg" 2>/dev/null; then
     rm -f "$ssh_cfg"
     fail "TC-SBX-02: Connect & Chat" "Failed to fetch SSH config for '$SANDBOX_A'"
     return
   fi
+  rc=0
   raw=$(run_with_timeout 90 ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${SANDBOX_A}" \
-    "openclaw agent --agent main --json --thinking off --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
-    2>/dev/null) || true
+    "openclaw agent --agent main --json --session-id '${session_id}' -m 'What is 6 multiplied by 7? Reply with only the integer, no extra words.'" \
+    2>&1) || rc=$?
   rm -f "$ssh_cfg"
 
   local reply
-  reply=$(echo "$raw" | python3 -c "
-import json, sys
-try:
-    doc = json.load(sys.stdin)
-except Exception:
-    sys.exit(0)
-result = doc.get('result') or {}
-parts = []
-for p in result.get('payloads') or []:
-    if isinstance(p, dict) and isinstance(p.get('text'), str):
-        parts.append(p['text'])
-print('\n'.join(parts))
-" 2>/dev/null) || true
+  reply=$(printf '%s' "$raw" | parse_openclaw_agent_text 2>/dev/null) || true
 
-  if [[ -n "$reply" ]] && echo "$reply" | grep -qE "(^|[^0-9])42([^0-9]|$)"; then
+  if [[ $rc -eq 0 && -n "$reply" ]] && echo "$reply" | grep -qE "(^|[^0-9])42([^0-9]|$)"; then
     pass "TC-SBX-02: Agent computed 6×7=42 through openclaw → inference.local"
   else
-    fail "TC-SBX-02: Connect & Chat" "Expected '42' in agent reply; reply='${reply:0:200}'; raw stdout='${raw:0:200}'"
+    fail "TC-SBX-02: Connect & Chat" "Expected '42' in agent reply (rc=$rc); reply='${reply:0:200}'; raw output='${raw:0:200}'"
   fi
 }
 

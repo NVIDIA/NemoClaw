@@ -466,7 +466,7 @@ process.exit(0);
 
       writeOpenClawRegistry("alpha");
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
 
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(true);
@@ -544,7 +544,7 @@ process.exit(0);
 
       writeOpenClawRegistry("alpha");
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
 
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
@@ -564,8 +564,128 @@ process.exit(0);
         .map((line) => JSON.parse(line).cmd as string);
       const cleanupCommand = loggedCommands.find((cmd) => cmd.includes("rm -rf"));
       expect(cleanupCommand).toContain("/sandbox/.openclaw/workspace");
+      expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
       expect(cleanupCommand).toContain("/sandbox/.openclaw/extensions");
+      expect(cleanupCommand).toContain("! -name 'nemoclaw'");
+      expect(cleanupCommand).toContain("! -name 'openclaw-weixin'");
       expect(cleanupCommand).not.toContain("/sandbox/.openclaw/agents");
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves fresh image-managed OpenClaw extensions while restoring user extensions", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-openclaw-extension-restore-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const sshLog = path.join(fixture, "ssh-log.jsonl");
+      const extensionsDir = path.join(openclawDir, "extensions");
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.join(extensionsDir, "nemoclaw"), { recursive: true });
+      fs.mkdirSync(path.join(extensionsDir, "openclaw-weixin"), { recursive: true });
+      fs.mkdirSync(path.join(extensionsDir, "stale-user-extension"), { recursive: true });
+      fs.writeFileSync(path.join(extensionsDir, "nemoclaw", "marker.txt"), "fresh-nemoclaw\n");
+      fs.writeFileSync(path.join(extensionsDir, "openclaw-weixin", "marker.txt"), "fresh-weixin\n");
+      fs.writeFileSync(
+        path.join(extensionsDir, "stale-user-extension", "marker.txt"),
+        "stale\n",
+      );
+
+      const manifest = writeBackup("alpha", "2026-05-19T12-00-00-000Z", {
+        stateDirs: ["extensions"],
+        backedUpDirs: ["extensions"],
+      });
+      const backupExtensionsDir = path.join(String(manifest.backupPath), "extensions");
+      fs.mkdirSync(path.join(backupExtensionsDir, "nemoclaw"), { recursive: true });
+      fs.mkdirSync(path.join(backupExtensionsDir, "openclaw-weixin"), { recursive: true });
+      fs.mkdirSync(path.join(backupExtensionsDir, "user-extension"), { recursive: true });
+      fs.writeFileSync(path.join(backupExtensionsDir, "nemoclaw", "marker.txt"), "old-nemoclaw\n");
+      fs.writeFileSync(
+        path.join(backupExtensionsDir, "openclaw-weixin", "marker.txt"),
+        "old-weixin\n",
+      );
+      fs.writeFileSync(path.join(backupExtensionsDir, "user-extension", "marker.txt"), "restored\n");
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const path = require("node:path");
+const { spawnSync } = require("node:child_process");
+const cmd = process.argv[process.argv.length - 1] || "";
+fs.appendFileSync(${JSON.stringify(sshLog)}, JSON.stringify({ cmd }) + "\\n");
+function readStdin() {
+  const chunks = [];
+  for (;;) {
+    const buf = Buffer.alloc(65536);
+    const n = fs.readSync(0, buf, 0, buf.length, null);
+    if (n === 0) break;
+    chunks.push(buf.subarray(0, n));
+  }
+  return Buffer.concat(chunks);
+}
+if (cmd.includes("/sandbox/.openclaw/extensions") && cmd.includes("-exec rm -rf")) {
+  const extensionsDir = ${JSON.stringify(extensionsDir)};
+  fs.mkdirSync(extensionsDir, { recursive: true });
+  for (const entry of fs.readdirSync(extensionsDir)) {
+    if (entry === "nemoclaw" || entry === "openclaw-weixin") continue;
+    fs.rmSync(path.join(extensionsDir, entry), { recursive: true, force: true });
+  }
+  process.exit(0);
+}
+if (cmd.includes("tar --no-same-owner -xf -")) {
+  const r = spawnSync("tar", ["--no-same-owner", "-xf", "-", "-C", ${JSON.stringify(openclawDir)}], {
+    input: readStdin(),
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  if (r.stderr) fs.writeSync(2, r.stderr);
+  process.exit(r.status || 0);
+}
+if (cmd.includes("chown") || cmd.includes("[ -d ")) {
+  process.exit(0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const restore = sandboxState.restoreSandboxState("alpha", String(manifest.backupPath));
+      expect(restore.success).toBe(true);
+      expect(restore.restoredDirs).toEqual(["extensions"]);
+      expect(
+        fs.readFileSync(path.join(extensionsDir, "nemoclaw", "marker.txt"), "utf-8"),
+      ).toBe("fresh-nemoclaw\n");
+      expect(
+        fs.readFileSync(path.join(extensionsDir, "openclaw-weixin", "marker.txt"), "utf-8"),
+      ).toBe("fresh-weixin\n");
+      expect(fs.existsSync(path.join(extensionsDir, "stale-user-extension"))).toBe(false);
+      expect(
+        fs.readFileSync(path.join(extensionsDir, "user-extension", "marker.txt"), "utf-8"),
+      ).toBe("restored\n");
+
+      const loggedCommands = fs
+        .readFileSync(sshLog, "utf-8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line).cmd as string);
+      const cleanupCommand = loggedCommands.find((cmd) => cmd.includes("/sandbox/.openclaw/extensions"));
+      expect(cleanupCommand).not.toContain("rm -rf -- /sandbox/.openclaw/extensions");
+      expect(cleanupCommand).toContain("! -name 'nemoclaw'");
+      expect(cleanupCommand).toContain("! -name 'openclaw-weixin'");
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -622,12 +742,127 @@ process.exit(0);
 
       writeOpenClawRegistry("alpha");
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
 
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(true);
       expect(backup.backedUpDirs).toEqual(existingDirs);
       expect(backup.error).toBeUndefined();
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("accepts extension npm .bin symlinks that resolve inside node_modules", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-npm-bin-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["extensions"];
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.join(openclawDir, "extensions"), { recursive: true });
+
+      const auditLines = [
+        "l\t/sandbox/.openclaw/extensions/nemoclaw/node_modules/.bin/json5\t../json5/lib/cli.js",
+        "l\t/sandbox/.openclaw/extensions/nemoclaw/node_modules/.bin/yaml\t../yaml/bin.mjs",
+        "l\t/sandbox/.openclaw/extensions/nemoclaw/node_modules/.bin/node-which\t../which/bin/node-which",
+      ].join("\n");
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+const openclawDir = ${JSON.stringify(openclawDir)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("tar -cf -")) {
+  const r = spawnSync("tar", ["-cf", "-", "-C", openclawDir, ...existingDirs], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  process.exit(r.status || 0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(true);
+      expect(backup.error).toBeUndefined();
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects extension npm .bin symlinks that escape node_modules", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-npm-bin-escape-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["extensions"];
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.mkdirSync(path.join(openclawDir, "extensions"), { recursive: true });
+
+      const auditLines = [
+        "l\t/sandbox/.openclaw/extensions/nemoclaw/node_modules/.bin/leak\t../../../../openclaw.json",
+      ].join("\n");
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(false);
+      expect(backup.error).toMatch(/node_modules\/\.bin\/leak/);
+      expect(backup.error).toMatch(/openclaw\.json/);
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -675,7 +910,7 @@ process.exit(0);
 
       writeOpenClawRegistry("alpha");
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
 
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
@@ -731,7 +966,7 @@ process.exit(0);
 
       writeOpenClawRegistry("alpha");
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
 
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
@@ -791,7 +1026,7 @@ process.exit(0);
 
       writeOpenClawRegistry("alpha");
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
 
       const backup = sandboxState.backupSandboxState("alpha");
       expect(backup.success).toBe(false);
@@ -799,6 +1034,134 @@ process.exit(0);
       expect(backup.failedDirs).toEqual(["agents", "workspace"]);
       expect(backup.manifest?.backedUpDirs).toEqual(["extensions"]);
       expect(fs.existsSync(path.join(backup.manifest!.backupPath, "workspace"))).toBe(false);
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("treats audit-find exit 1 with empty stdout as a successful audit", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-perm-denied-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["agents", "extensions", "workspace"];
+      fs.mkdirSync(binDir, { recursive: true });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const { spawnSync } = require("node:child_process");
+const fs = require("node:fs");
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  // Simulate a permission-denied subdir: when the audit cmd lacks the
+  // \`|| true\` tolerance wrapper (pre-fix shape), exit non-zero so the
+  // caller treats it as audit failure. The post-fix shape wraps each
+  // \`find\` with \`|| true\` and joins with \`;\`, so the audit cmd as a
+  // whole exits 0 even though a remote \`find\` would have exited 1.
+  if (!cmd.includes("|| true")) {
+    process.stderr.write("find: '/sandbox/.openclaw/extensions/nemoclaw': Permission denied\\n");
+    process.exit(1);
+  }
+  process.exit(0);
+}
+if (cmd.includes("tar -cf -")) {
+  const r = spawnSync("tar", ["-cf", "-", "-C", ${JSON.stringify(openclawDir)}, ...existingDirs], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (r.stdout) fs.writeSync(1, r.stdout);
+  process.exit(r.status || 0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(true);
+      expect(backup.error).toBeUndefined();
+      expect(backup.backedUpDirs).toEqual(existingDirs);
+    } finally {
+      if (oldOpenshell === undefined) {
+        delete process.env.NEMOCLAW_OPENSHELL_BIN;
+      } else {
+        process.env.NEMOCLAW_OPENSHELL_BIN = oldOpenshell;
+      }
+      process.env.PATH = oldPath;
+      fs.rmSync(fixture, { recursive: true, force: true });
+    }
+  });
+
+  it("still rejects violations from readable dirs even if a sibling find exits non-zero", () => {
+    const fixture = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-audit-mixed-perm-"));
+    const oldPath = process.env.PATH;
+    const oldOpenshell = process.env.NEMOCLAW_OPENSHELL_BIN;
+    try {
+      const binDir = path.join(fixture, "bin");
+      const openclawDir = path.join(fixture, "sandbox-root", ".openclaw");
+      const existingDirs = ["agents", "workspace"];
+      fs.mkdirSync(binDir, { recursive: true });
+      for (const d of existingDirs) fs.mkdirSync(path.join(openclawDir, d), { recursive: true });
+
+      // `agents` simulates perm-denied (no rows emitted); `workspace` emits
+      // a symlink that is not in the audit allow-list, which must still be
+      // caught even when a sibling find exits non-zero.
+      const auditLines = [
+        "l\t/sandbox/.openclaw/workspace/leak\t../openclaw.json",
+      ].join("\n");
+
+      const openshell = writeFakeOpenshell(binDir);
+      writeExecutable(
+        path.join(binDir, "ssh"),
+        `#!/usr/bin/env node
+const cmd = process.argv[process.argv.length - 1] || "";
+const existingDirs = ${JSON.stringify(existingDirs)};
+if (cmd.includes("[ -d ")) {
+  process.stdout.write(existingDirs.join("\\n") + "\\n");
+  process.exit(0);
+}
+if (cmd.includes("find ")) {
+  // Match real-shell behaviour: without the \`|| true\` tolerance wrapper
+  // the perm-denied sibling \`find\` would have aborted the chain. The
+  // post-fix audit cmd still emits the violation stdout because \`;\`
+  // joins each per-dir block so the readable sibling's output is
+  // preserved.
+  if (!cmd.includes("|| true")) {
+    process.stderr.write("find: '/sandbox/.openclaw/agents/main': Permission denied\\n");
+    process.exit(1);
+  }
+  process.stdout.write(${JSON.stringify(auditLines)} + "\\n");
+  process.exit(0);
+}
+process.exit(0);
+`,
+      );
+
+      writeOpenClawRegistry("alpha");
+      process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
+
+      const backup = sandboxState.backupSandboxState("alpha");
+      expect(backup.success).toBe(false);
+      expect(backup.error).toMatch(/workspace\/leak/);
     } finally {
       if (oldOpenshell === undefined) {
         delete process.env.NEMOCLAW_OPENSHELL_BIN;
@@ -906,7 +1269,7 @@ process.exit(0);
       );
 
       process.env.NEMOCLAW_OPENSHELL_BIN = openshell;
-      process.env.PATH = `${binDir}${path.delimiter}${oldPath || ""}`;
+      process.env.PATH = `${binDir}:${oldPath || ""}`;
 
       const backup = sandboxState.backupSandboxState("hermes", { name: "hermes-state" });
       expect(backup.success).toBe(true);

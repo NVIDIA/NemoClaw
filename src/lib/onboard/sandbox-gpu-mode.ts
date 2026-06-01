@@ -9,6 +9,7 @@ export type SandboxGpuFlag = "enable" | "disable" | null;
 export type SandboxGpuConfig = {
   mode: SandboxGpuMode;
   hostGpuDetected: boolean;
+  hostGpuPlatform: GpuDetection["platform"] | null;
   sandboxGpuEnabled: boolean;
   sandboxGpuDevice: string | null;
   errors: string[];
@@ -40,8 +41,6 @@ export function resolveSandboxGpuMode(args: {
   flag?: SandboxGpuFlag;
 }): SandboxGpuMode {
   let mode: SandboxGpuMode = args.envMode ?? "auto";
-  // GPU sandbox passthrough does not currently work on Jetson; disable by default
-  if (args.gpu?.platform === "jetson" && args.envMode === null) mode = "0";
   if (args.flag === "enable") mode = "1";
   if (args.flag === "disable") mode = "0";
   return mode;
@@ -82,6 +81,7 @@ export function resolveSandboxGpuConfig(
   return {
     mode,
     hostGpuDetected,
+    hostGpuPlatform: gpu?.platform ?? null,
     sandboxGpuEnabled: mode === "1" || (mode === "auto" && hostGpuDetected),
     sandboxGpuDevice,
     errors,

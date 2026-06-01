@@ -44,8 +44,8 @@ This repo ships agent skills under `.agents/skills/`, organized into three audie
 | Run all hooks manually | `npx prek run --all-files` |
 | Type-check CLI | `npm run typecheck:cli` |
 | Auto-format | `make format` |
-| Build docs | `make docs` |
-| Serve docs locally | `make docs-live` |
+| Build docs | `npm run docs` |
+| Serve docs locally | `npm run docs:live` |
 
 ## Key Architecture Decisions
 

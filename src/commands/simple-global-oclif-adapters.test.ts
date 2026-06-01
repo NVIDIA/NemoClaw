@@ -15,6 +15,17 @@ const mocks = vi.hoisted(() => {
       this.exitCode = exitCode;
     }
   }
+  class DashboardUrlCommandError extends Error {
+    lines: readonly string[];
+    exitCode: number;
+
+    constructor(lines: string | readonly string[], exitCode = 1) {
+      const normalized = Array.isArray(lines) ? lines : [lines];
+      super(normalized.join("\n"));
+      this.lines = normalized;
+      this.exitCode = exitCode;
+    }
+  }
 
   return {
     buildVersionedUninstallUrl: vi.fn((version: string) => `https://example.test/${version}/uninstall.sh`),
@@ -25,6 +36,7 @@ const mocks = vi.hoisted(() => {
     resolveOpenshell: vi.fn(() => "/usr/bin/openshell"),
     runDebugCommandWithOptions: vi.fn(),
     runDeployAction: vi.fn().mockResolvedValue(undefined),
+    runDashboardUrlCommand: vi.fn(() => undefined),
     runGatewayTokenCommand: vi.fn(() => undefined),
     runStartCommand: vi.fn().mockResolvedValue(undefined),
     runStopCommand: vi.fn(),
@@ -34,6 +46,7 @@ const mocks = vi.hoisted(() => {
     spawnSync: vi.fn(),
     startAll: vi.fn(),
     stopAll: vi.fn(),
+    DashboardUrlCommandError,
     GatewayTokenCommandError,
   };
 });
@@ -46,6 +59,10 @@ vi.mock("../lib/diagnostics/debug-command", () => ({
 vi.mock("../lib/gateway-token-command", () => ({
   GatewayTokenCommandError: mocks.GatewayTokenCommandError,
   runGatewayTokenCommand: mocks.runGatewayTokenCommand,
+}));
+vi.mock("../lib/dashboard-url-command", () => ({
+  DashboardUrlCommandError: mocks.DashboardUrlCommandError,
+  runDashboardUrlCommand: mocks.runDashboardUrlCommand,
 }));
 vi.mock("../lib/actions/global", () => ({
   runDeployAction: mocks.runDeployAction,
@@ -68,6 +85,7 @@ vi.mock("../lib/core/version", () => ({ getVersion: mocks.getVersion }));
 
 import DebugCliCommand from "./debug";
 import DeployCliCommand from "./deploy";
+import DashboardUrlCliCommand, { setDashboardUrlRuntimeBridgeFactoryForTest } from "./sandbox/dashboard-url";
 import GatewayTokenCliCommand, { setGatewayTokenRuntimeBridgeFactoryForTest } from "./sandbox/gateway/token";
 import DeprecatedStartCommand from "./start";
 import DeprecatedStopCommand from "./stop";
@@ -124,6 +142,28 @@ describe("simple global oclif adapters", () => {
       "alpha",
       { quiet: true },
       { fetchToken: mocks.fetchGatewayAuthTokenFromSandbox, getSandboxAgent },
+    );
+  });
+
+  it("maps dashboard-url flags to the dashboard URL action", async () => {
+    const getSandbox = vi.fn(() => ({ agent: "openclaw", dashboardPort: 18789 }));
+    const getAccessUrl = vi.fn(() => "http://127.0.0.1:18789");
+    setDashboardUrlRuntimeBridgeFactoryForTest(() => ({
+      fetchGatewayAuthTokenFromSandbox: mocks.fetchGatewayAuthTokenFromSandbox,
+      getSandbox,
+      getAccessUrl,
+    }));
+
+    await DashboardUrlCliCommand.run(["alpha", "--quiet"], rootDir);
+
+    expect(mocks.runDashboardUrlCommand).toHaveBeenCalledWith(
+      "alpha",
+      { quiet: true },
+      expect.objectContaining({
+        fetchToken: mocks.fetchGatewayAuthTokenFromSandbox,
+        getSandbox,
+        getAccessUrl,
+      }),
     );
   });
 

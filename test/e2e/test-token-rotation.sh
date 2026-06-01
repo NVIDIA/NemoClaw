@@ -150,6 +150,13 @@ cleanup() {
 }
 trap cleanup EXIT
 
+is_fake_telegram_token() {
+  case "${1:-}" in
+    *fake*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # ── Phase 0: Install NemoClaw with token A ────────────────────────
 
 section "Phase 0: Install NemoClaw and first onboard with token A"
@@ -157,6 +164,14 @@ section "Phase 0: Install NemoClaw and first onboard with token A"
 # Pre-clean
 openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
+
+if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] \
+  && { is_fake_telegram_token "$TELEGRAM_BOT_TOKEN_A" || is_fake_telegram_token "$TELEGRAM_BOT_TOKEN_B"; }; then
+  # This E2E normally uses fake tokens to exercise rotation plumbing, not the
+  # live Telegram API. Remove once onboard has a hermetic fake Telegram API.
+  export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+  info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+fi
 
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN_A"
 export DISCORD_BOT_TOKEN="$DISCORD_BOT_TOKEN_A"
@@ -324,7 +339,7 @@ process.exit('SLACK_APP_TOKEN' in h ? 0 : 1);
     echo "$ONBOARD_OUTPUT" | tail -30
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated"; then
+  if grep -q "credential(s) rotated" <<<"$ONBOARD_OUTPUT"; then
     pass "Credential rotation detected"
   else
     fail "Credential rotation not detected in onboard output"
@@ -335,31 +350,31 @@ process.exit('SLACK_APP_TOKEN' in h ? 0 : 1);
   # Rotation message must name only the telegram-bridge provider — Discord
   # token is unchanged, so a stray discord-bridge entry would indicate a
   # false-positive in detectMessagingCredentialRotation.
-  if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated:.*telegram-bridge"; then
+  if grep -q "credential(s) rotated:.*telegram-bridge" <<<"$ONBOARD_OUTPUT"; then
     pass "Rotation message identifies telegram-bridge"
   else
     fail "Rotation message did not identify telegram-bridge"
     info "Onboard output:"
-    echo "$ONBOARD_OUTPUT" | grep "credential(s) rotated" || true
+    grep "credential(s) rotated" <<<"$ONBOARD_OUTPUT" || true
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated:.*discord-bridge"; then
+  if grep -q "credential(s) rotated:.*discord-bridge" <<<"$ONBOARD_OUTPUT"; then
     fail "Rotation message unexpectedly named discord-bridge (Discord token did not change)"
     info "Onboard output:"
-    echo "$ONBOARD_OUTPUT" | grep "credential(s) rotated" || true
+    grep "credential(s) rotated" <<<"$ONBOARD_OUTPUT" || true
   else
     pass "Rotation message did not name discord-bridge (Discord unchanged)"
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -qE "credential\(s\) rotated:.*slack-(bridge|app)"; then
+  if grep -qE "credential\(s\) rotated:.*slack-(bridge|app)" <<<"$ONBOARD_OUTPUT"; then
     fail "Rotation message unexpectedly named slack-bridge/slack-app (Slack tokens did not change)"
     info "Onboard output:"
-    echo "$ONBOARD_OUTPUT" | grep "credential(s) rotated" || true
+    grep "credential(s) rotated" <<<"$ONBOARD_OUTPUT" || true
   else
     pass "Rotation message did not name slack-bridge or slack-app (Slack unchanged)"
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "Rebuilding sandbox"; then
+  if grep -q "Rebuilding sandbox" <<<"$ONBOARD_OUTPUT"; then
     pass "Sandbox rebuild triggered by rotation"
   else
     fail "Sandbox rebuild not triggered"
@@ -385,7 +400,7 @@ process.exit('SLACK_APP_TOKEN' in h ? 0 : 1);
     echo "$ONBOARD_OUTPUT" | tail -30
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "reusing it"; then
+  if grep -q "reusing it" <<<"$ONBOARD_OUTPUT"; then
     pass "Sandbox reused when tokens unchanged"
   else
     fail "Sandbox was not reused (unexpected rebuild)"
@@ -410,7 +425,7 @@ process.exit('SLACK_APP_TOKEN' in h ? 0 : 1);
     echo "$ONBOARD_OUTPUT" | tail -30
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated"; then
+  if grep -q "credential(s) rotated" <<<"$ONBOARD_OUTPUT"; then
     pass "Credential rotation detected"
   else
     fail "Credential rotation not detected in onboard output"
@@ -419,31 +434,31 @@ process.exit('SLACK_APP_TOKEN' in h ? 0 : 1);
   fi
 
   # Symmetric assertion to Phase 2: only the discord-bridge entry should appear.
-  if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated:.*discord-bridge"; then
+  if grep -q "credential(s) rotated:.*discord-bridge" <<<"$ONBOARD_OUTPUT"; then
     pass "Rotation message identifies discord-bridge"
   else
     fail "Rotation message did not identify discord-bridge"
     info "Onboard output:"
-    echo "$ONBOARD_OUTPUT" | grep "credential(s) rotated" || true
+    grep "credential(s) rotated" <<<"$ONBOARD_OUTPUT" || true
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated:.*telegram-bridge"; then
+  if grep -q "credential(s) rotated:.*telegram-bridge" <<<"$ONBOARD_OUTPUT"; then
     fail "Rotation message unexpectedly named telegram-bridge (Telegram token did not change)"
     info "Onboard output:"
-    echo "$ONBOARD_OUTPUT" | grep "credential(s) rotated" || true
+    grep "credential(s) rotated" <<<"$ONBOARD_OUTPUT" || true
   else
     pass "Rotation message did not name telegram-bridge (Telegram unchanged)"
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -qE "credential\(s\) rotated:.*slack-(bridge|app)"; then
+  if grep -qE "credential\(s\) rotated:.*slack-(bridge|app)" <<<"$ONBOARD_OUTPUT"; then
     fail "Rotation message unexpectedly named slack-bridge/slack-app (Slack tokens did not change)"
     info "Onboard output:"
-    echo "$ONBOARD_OUTPUT" | grep "credential(s) rotated" || true
+    grep "credential(s) rotated" <<<"$ONBOARD_OUTPUT" || true
   else
     pass "Rotation message did not name slack-bridge or slack-app (Slack unchanged)"
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "Rebuilding sandbox"; then
+  if grep -q "Rebuilding sandbox" <<<"$ONBOARD_OUTPUT"; then
     pass "Sandbox rebuild triggered by rotation"
   else
     fail "Sandbox rebuild not triggered"
@@ -469,7 +484,7 @@ process.exit('SLACK_APP_TOKEN' in h ? 0 : 1);
     echo "$ONBOARD_OUTPUT" | tail -30
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "reusing it"; then
+  if grep -q "reusing it" <<<"$ONBOARD_OUTPUT"; then
     pass "Sandbox reused when tokens unchanged"
   else
     fail "Sandbox was not reused (unexpected rebuild)"
@@ -494,7 +509,7 @@ process.exit('SLACK_APP_TOKEN' in h ? 0 : 1);
     echo "$ONBOARD_OUTPUT" | tail -30
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated"; then
+  if grep -q "credential(s) rotated" <<<"$ONBOARD_OUTPUT"; then
     pass "Credential rotation detected"
   else
     fail "Credential rotation not detected in onboard output"
@@ -503,39 +518,39 @@ process.exit('SLACK_APP_TOKEN' in h ? 0 : 1);
   fi
 
   # Both slack-bridge (bot token) and slack-app (app token) should rotate.
-  if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated:.*slack-bridge"; then
+  if grep -q "credential(s) rotated:.*slack-bridge" <<<"$ONBOARD_OUTPUT"; then
     pass "Rotation message identifies slack-bridge"
   else
     fail "Rotation message did not identify slack-bridge"
     info "Onboard output:"
-    echo "$ONBOARD_OUTPUT" | grep "credential(s) rotated" || true
+    grep "credential(s) rotated" <<<"$ONBOARD_OUTPUT" || true
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated:.*slack-app"; then
+  if grep -q "credential(s) rotated:.*slack-app" <<<"$ONBOARD_OUTPUT"; then
     pass "Rotation message identifies slack-app"
   else
     fail "Rotation message did not identify slack-app"
     info "Onboard output:"
-    echo "$ONBOARD_OUTPUT" | grep "credential(s) rotated" || true
+    grep "credential(s) rotated" <<<"$ONBOARD_OUTPUT" || true
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated:.*telegram-bridge"; then
+  if grep -q "credential(s) rotated:.*telegram-bridge" <<<"$ONBOARD_OUTPUT"; then
     fail "Rotation message unexpectedly named telegram-bridge (Telegram token did not change)"
     info "Onboard output:"
-    echo "$ONBOARD_OUTPUT" | grep "credential(s) rotated" || true
+    grep "credential(s) rotated" <<<"$ONBOARD_OUTPUT" || true
   else
     pass "Rotation message did not name telegram-bridge (Telegram unchanged)"
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "credential(s) rotated:.*discord-bridge"; then
+  if grep -q "credential(s) rotated:.*discord-bridge" <<<"$ONBOARD_OUTPUT"; then
     fail "Rotation message unexpectedly named discord-bridge (Discord token did not change)"
     info "Onboard output:"
-    echo "$ONBOARD_OUTPUT" | grep "credential(s) rotated" || true
+    grep "credential(s) rotated" <<<"$ONBOARD_OUTPUT" || true
   else
     pass "Rotation message did not name discord-bridge (Discord unchanged)"
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "Rebuilding sandbox"; then
+  if grep -q "Rebuilding sandbox" <<<"$ONBOARD_OUTPUT"; then
     pass "Sandbox rebuild triggered by Slack rotation"
   else
     fail "Sandbox rebuild not triggered"
@@ -561,7 +576,7 @@ process.exit('SLACK_APP_TOKEN' in h ? 0 : 1);
     echo "$ONBOARD_OUTPUT" | tail -30
   fi
 
-  if echo "$ONBOARD_OUTPUT" | grep -q "reusing it"; then
+  if grep -q "reusing it" <<<"$ONBOARD_OUTPUT"; then
     pass "Sandbox reused when tokens unchanged"
   else
     fail "Sandbox was not reused (unexpected rebuild)"

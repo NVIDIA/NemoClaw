@@ -122,6 +122,10 @@ function isCommandFile(repoPath: string): boolean {
   return repoPath.startsWith("src/commands/");
 }
 
+function isMessagingManifestFile(repoPath: string): boolean {
+  return repoPath.startsWith("src/lib/messaging/manifest/");
+}
+
 function isActionFile(repoPath: string): boolean {
   if (repoPath.startsWith("src/lib/actions/")) return true;
   return /(^|\/)[^/]+-actions?\.ts$/.test(repoPath);
@@ -262,6 +266,51 @@ function checkNoBinLibShimImport(absPath: string, repoPath: string, violations: 
   }
 }
 
+function checkMessagingManifestFile(
+  absPath: string,
+  repoPath: string,
+  violations: Violation[],
+): void {
+  const forbiddenFragments = [
+    "gateway",
+    "state/registry",
+    "credentials",
+    "node:fs",
+    "node:child_process",
+    "child_process",
+    "adapters/openshell",
+    "src/commands",
+    "lib/actions",
+  ];
+
+  for (const ref of collectImportRefs(absPath)) {
+    if (ref.specifier === "fs" || ref.specifier.startsWith("fs/")) {
+      addViolation(
+        violations,
+        repoPath,
+        ref.line,
+        ref.column,
+        "messaging-manifest-purity",
+        "messaging manifest modules must not import fs",
+      );
+      continue;
+    }
+    const target = resolveInternalImport(absPath, ref.specifier);
+    const haystack = `${ref.specifier}\n${target ?? ""}`;
+    const fragment = forbiddenFragments.find((candidate) => haystack.includes(candidate));
+    if (fragment) {
+      addViolation(
+        violations,
+        repoPath,
+        ref.line,
+        ref.column,
+        "messaging-manifest-purity",
+        `messaging manifest modules must not import ${fragment}`,
+      );
+    }
+  }
+}
+
 function checkCommandFile(absPath: string, repoPath: string, violations: Violation[]): void {
   const sourceFile = sourceFileFor(absPath);
   let commandClassCount = 0;
@@ -305,6 +354,9 @@ export function findLayerImportBoundaryViolations(root = SRC_ROOT): Violation[] 
     if (isDomainFile(repoPath)) checkDomainFile(absPath, repoPath, violations);
     if (isActionFile(repoPath)) checkActionFile(absPath, repoPath, violations);
     if (isAdapterFile(repoPath)) checkAdapterFile(absPath, repoPath, violations);
+    if (isMessagingManifestFile(repoPath)) {
+      checkMessagingManifestFile(absPath, repoPath, violations);
+    }
     if (isCommandFile(repoPath)) checkCommandFile(absPath, repoPath, violations);
   }
   return violations;

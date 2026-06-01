@@ -25,6 +25,7 @@ filesystem_policy:
     - /dev/null
     - /sandbox/.openclaw
     - /sandbox/.nemoclaw
+    - /home/linuxbrew
 
 landlock:
   compatibility: best_effort

@@ -5,26 +5,11 @@ import { Args } from "@oclif/core";
 
 import { dryRunFlag } from "../cli/common-flags";
 
-type HostsRuntimeBridge = {
-  addSandboxHostAlias: (sandboxName: string, args?: string[]) => void;
-  listSandboxHostAliases: (sandboxName: string) => void;
-  removeSandboxHostAlias: (sandboxName: string, args?: string[]) => void;
-};
-
 type HostAliasFailure = {
   name?: string;
   lines?: readonly string[];
   exitCode?: number;
 };
-
-let runtimeBridgeFactory = (): HostsRuntimeBridge => {
-  const actions = require("../actions/sandbox/host-aliases") as HostsRuntimeBridge;
-  return actions;
-};
-
-export function getHostsRuntimeBridge(): HostsRuntimeBridge {
-  return runtimeBridgeFactory();
-}
 
 export function isHostAliasFailure(error: unknown): error is Required<HostAliasFailure> {
   return (
@@ -39,15 +24,6 @@ export function isHostAliasFailure(error: unknown): error is Required<HostAliasF
 const sandboxNameArg = Args.string({ name: "sandbox", description: "Sandbox name", required: true });
 const hostnameArg = Args.string({ name: "hostname", description: "Host alias name", required: true });
 const ipArg = Args.string({ name: "ip", description: "IP address", required: true });
-
-export function buildHostAliasArgs(
-  values: Array<string | undefined>,
-  flags: { "dry-run"?: boolean },
-): string[] {
-  const args = values.filter((value): value is string => Boolean(value));
-  if (flags["dry-run"]) args.push("--dry-run");
-  return args;
-}
 
 export const hostAliasSandboxArgs = {
   sandboxName: sandboxNameArg,

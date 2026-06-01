@@ -54,6 +54,7 @@ describe("agent definitions", () => {
       "wechat",
       "whatsapp",
     ]);
+    expect(openclaw.inferenceProviderOptions).toEqual([]);
     expect(openclaw.legacyPaths?.startScript).toContain("scripts/nemoclaw-start.sh");
   });
 
@@ -71,6 +72,19 @@ describe("agent definitions", () => {
     });
     expect(hermes.inferenceProviderOptions).toEqual(["hermesProvider"]);
     expect(hermes.healthProbe.url).toBe("http://localhost:8642/health");
+    expect(hermes.dashboard).toEqual({
+      kind: "api",
+      label: "OpenAI-compatible API",
+      path: "/v1",
+    });
+    expect(hermes.dashboardUi).toEqual({
+      label: "Web dashboard",
+      port: 9119,
+      path: "/",
+      enableEnv: "NEMOCLAW_HERMES_DASHBOARD",
+      portEnv: "NEMOCLAW_HERMES_DASHBOARD_PORT",
+      tuiEnv: "NEMOCLAW_HERMES_DASHBOARD_TUI",
+    });
     expect(hermes.messagingPlatforms).toEqual([
       "telegram",
       "discord",
@@ -93,6 +107,12 @@ describe("agent definitions", () => {
     expect(errorSpy).toHaveBeenCalledWith(
       expect.stringContaining("session references unknown agent 'missing-agent'"),
     );
+  });
+
+  it("treats an explicit agent flag as overriding NEMOCLAW_AGENT", () => {
+    process.env.NEMOCLAW_AGENT = "hermes";
+
+    expect(resolveAgentName({ agentFlag: "openclaw" })).toBe("openclaw");
   });
 
   it("rejects non-object manifest payloads", () => {
@@ -129,6 +149,24 @@ describe("agent definitions", () => {
     );
 
     expect(() => loadAgent(agentName)).toThrow(/health_probe\.port/);
+  });
+
+  it("rejects invalid dashboard_ui.port values in manifests", () => {
+    const agentName = `invalid-dashboard-ui-port-${String(Date.now())}`;
+    writeTempAgentManifest(
+      agentName,
+      [
+        `name: ${agentName}`,
+        "display_name: Broken Dashboard UI",
+        "dashboard_ui:",
+        "  label: Web dashboard",
+        "  port: 1023",
+        "  enable_env: NEMOCLAW_TEST_DASHBOARD",
+        "  port_env: NEMOCLAW_TEST_DASHBOARD_PORT",
+      ].join("\n"),
+    );
+
+    expect(() => loadAgent(agentName)).toThrow(/dashboard_ui\.port/);
   });
 
   it("rejects invalid inference provider options in manifests", () => {

@@ -1,7 +1,6 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import type { PublicCommandDisplayEntry } from "../../../lib/cli/command-display";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import { listSandboxPolicies } from "../../../lib/actions/sandbox/policy-channel";
@@ -14,15 +13,6 @@ export default class SandboxPolicyListCommand extends NemoClawCommand {
   static description = "List built-in and custom policy presets and show which are applied.";
   static usage = ["<name>"];
   static examples = ["<%= config.bin %> sandbox policy list alpha"];
-  static publicDisplay = [
-    {
-      usage: "nemoclaw <name> policy-list",
-      description: "List presets (● = applied)",
-      group: "Policy Presets",
-      scope: "sandbox",
-      order: 19,
-    },
-  ] satisfies readonly PublicCommandDisplayEntry[];
   static args = {
     sandboxName: sandboxNameArg,
   };

@@ -10,6 +10,7 @@
 #   TC-DIAG-04: nemoclaw --version (semver output, exit 0)
 #   TC-DIAG-02: nemoclaw debug --quick (fast, non-empty archive)
 #   TC-DIAG-01: nemoclaw debug --output (tarball, no credentials in archive)
+#   TC-DIAG-06: nemoclaw debug --sandbox <unknown> rejected; registered name accepted
 #   TC-DIAG-05: /nemoclaw status inside sandbox (model + provider)
 #   TC-DIAG-03: credentials list (no values) + credentials reset
 #
@@ -293,6 +294,65 @@ test_diag_01_debug_tarball() {
 }
 
 # =============================================================================
+# TC-DIAG-06: debug --sandbox NAME validation
+# Registered names succeed; unknown names exit non-zero, name the sandbox,
+# and leave no partial tarball.
+# =============================================================================
+test_diag_06_debug_sandbox_validation() {
+  log "=== TC-DIAG-06: debug --sandbox NAME validation ==="
+
+  local debug_dir
+  debug_dir=$(mktemp -d)
+
+  local good_output="${debug_dir}/known.tar.gz"
+  local good_rc=0 good_log=""
+  good_log=$(${TIMEOUT_CMD:+$TIMEOUT_CMD 30} nemoclaw debug --quick --sandbox "$SANDBOX_NAME" --output "$good_output" 2>&1) || good_rc=$?
+  log "  Registered name exit=$good_rc"
+  if [[ $good_rc -eq 0 ]] && [[ -s "$good_output" ]]; then
+    pass "TC-DIAG-06: Registered --sandbox produced non-empty archive"
+  else
+    fail "TC-DIAG-06: Registered name" "exit=$good_rc, output=${good_log:0:300}"
+  fi
+
+  # Unique per-run name avoids collisions when another e2e job leaves a
+  # sandbox with a shared "does-not-exist" placeholder behind.
+  local bad_name
+  bad_name="nemoclaw-e2e-missing-$$-$(date +%s)-${RANDOM}"
+  local bad_output="${debug_dir}/unknown.tar.gz"
+  local bad_rc=0 bad_log=""
+  bad_log=$(${TIMEOUT_CMD:+$TIMEOUT_CMD 30} nemoclaw debug --quick --sandbox "$bad_name" --output "$bad_output" 2>&1) || bad_rc=$?
+  log "  Unknown name exit=$bad_rc"
+
+  if [[ $bad_rc -ne 0 ]]; then
+    pass "TC-DIAG-06: Unknown --sandbox exits non-zero"
+  else
+    fail "TC-DIAG-06: Unknown name exit code" "expected non-zero, got 0"
+  fi
+
+  if echo "$bad_log" | grep -q "$bad_name"; then
+    pass "TC-DIAG-06: Error message names the unknown sandbox"
+  else
+    fail "TC-DIAG-06: Error message" "did not mention '$bad_name'"
+  fi
+
+  if echo "$bad_log" | grep -qi "not registered"; then
+    pass "TC-DIAG-06: Error message reports 'not registered'"
+  else
+    fail "TC-DIAG-06: Error message" "missing 'not registered' guidance"
+  fi
+
+  if [[ ! -e "$bad_output" ]]; then
+    pass "TC-DIAG-06: No partial tarball written for unknown sandbox"
+  else
+    local size
+    size=$(stat -c '%s' "$bad_output" 2>/dev/null || stat -f '%z' "$bad_output" 2>/dev/null || echo "?")
+    fail "TC-DIAG-06: Tarball cleanup" "partial tarball persisted at $bad_output (${size} bytes)"
+  fi
+
+  rm -rf "$debug_dir"
+}
+
+# =============================================================================
 # TC-DIAG-05: Sandbox inference config visible inside sandbox
 # =============================================================================
 test_diag_05_sandbox_config() {
@@ -440,6 +500,7 @@ main() {
   fi
 
   test_diag_01_debug_tarball
+  test_diag_06_debug_sandbox_validation
   test_diag_05_sandbox_config
   test_diag_03_credentials # modifies state — runs last
 

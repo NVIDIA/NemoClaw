@@ -132,6 +132,11 @@ describe("translatePublicSandboxArgv", () => {
       "sandbox:doctor",
       ["alpha", "--json"],
     );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "dashboard-url", ["--quiet"]),
+      "sandbox:dashboard-url",
+      ["alpha", "--quiet"],
+    );
   });
 
   it("translates legacy hyphenated actions to native oclif argv", () => {
@@ -205,6 +210,11 @@ describe("translatePublicSandboxArgv", () => {
       translatePublicSandboxArgv("alpha", "snapshot", ["restore", "latest"]),
       "sandbox:snapshot:restore",
       ["alpha", "latest"],
+    );
+    expectNative(
+      translatePublicSandboxArgv("alpha", "skill", ["remove", "my-skill"]),
+      "sandbox:skill:remove",
+      ["alpha", "my-skill"],
     );
   });
 

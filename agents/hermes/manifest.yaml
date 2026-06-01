@@ -16,7 +16,7 @@ homepage: "https://github.com/NousResearch/hermes-agent"
 install_method: curl  # curl install.sh | bash
 binary_path: /usr/local/bin/hermes
 version_command: "hermes --version"
-expected_version: "2026.4.23"
+expected_version: "2026.5.16"
 gateway_command: "hermes gateway run"
 
 # ── Health probe ────────────────────────────────────────────────
@@ -40,6 +40,13 @@ dashboard:
   kind: api                    # "ui" or "api"
   label: "OpenAI-compatible API"
   path: "/v1"                  # appended to the base URL when displayed
+dashboard_ui:
+  label: "Web dashboard"
+  port: 9119
+  path: "/"
+  enable_env: NEMOCLAW_HERMES_DASHBOARD
+  port_env: NEMOCLAW_HERMES_DASHBOARD_PORT
+  tui_env: NEMOCLAW_HERMES_DASHBOARD_TUI
 forward_ports:
   - 8642
 

@@ -12140,9 +12140,9 @@
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
           "line": 215,
-          "text": "Installer hard-failed on sticky OpenShell 0.0.40 instead of reinstalling pinned 0.0.39 (#3474)",
+          "text": "Installer hard-failed on sticky OpenShell 0.0.45 instead of reinstalling pinned 0.0.44 (#3474)",
           "polarity": "fail",
-          "normalized_id": "installer.hard.failed.on.sticky.openshell.0.0.40.instead.of.reinstalling.pinned.0.0.39.3474",
+          "normalized_id": "installer.hard.failed.on.sticky.openshell.0.0.45.instead.of.reinstalling.pinned.0.0.44.3474",
           "mapping_status": "retired"
         },
         {
@@ -12164,49 +12164,49 @@
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
           "line": 222,
-          "text": "Expected installer to download pinned OpenShell v0.0.39",
+          "text": "Expected installer to download pinned OpenShell v0.0.44",
           "polarity": "fail",
-          "normalized_id": "expected.installer.to.download.pinned.openshell.v0.0.39",
+          "normalized_id": "expected.installer.to.download.pinned.openshell.v0.0.44",
           "mapping_status": "retired"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
           "line": 224,
-          "text": "Installer downloaded pinned OpenShell v0.0.39",
+          "text": "Installer downloaded pinned OpenShell v0.0.44",
           "polarity": "pass",
-          "normalized_id": "installer.downloaded.pinned.openshell.v0.0.39",
+          "normalized_id": "installer.downloaded.pinned.openshell.v0.0.44",
           "mapping_status": "mapped"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
           "line": 227,
-          "text": "Installer downloaded OpenShell v0.0.40 despite NemoClaw max 0.0.39",
+          "text": "Installer downloaded OpenShell v0.0.45 despite NemoClaw max 0.0.44",
           "polarity": "fail",
-          "normalized_id": "installer.downloaded.openshell.v0.0.40.despite.nemoclaw.max.0.0.39",
+          "normalized_id": "installer.downloaded.openshell.v0.0.45.despite.nemoclaw.max.0.0.44",
           "mapping_status": "retired"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
           "line": 229,
-          "text": "Installer did not download too-new OpenShell v0.0.40",
+          "text": "Installer did not download too-new OpenShell v0.0.45",
           "polarity": "pass",
-          "normalized_id": "installer.did.not.download.too.new.openshell.v0.0.40",
+          "normalized_id": "installer.did.not.download.too.new.openshell.v0.0.45",
           "mapping_status": "mapped"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
           "line": 232,
-          "text": "openshell binary was not replaced with pinned 0.0.39",
+          "text": "openshell binary was not replaced with pinned 0.0.44",
           "polarity": "fail",
-          "normalized_id": "openshell.binary.was.not.replaced.with.pinned.0.0.39",
+          "normalized_id": "openshell.binary.was.not.replaced.with.pinned.0.0.44",
           "mapping_status": "retired"
         },
         {
           "script": "test/e2e/test-openshell-version-pin.sh",
           "line": 234,
-          "text": "Sticky openshell 0.0.40 was replaced with pinned 0.0.39",
+          "text": "Sticky openshell 0.0.45 was replaced with pinned 0.0.44",
           "polarity": "pass",
-          "normalized_id": "sticky.openshell.0.0.40.was.replaced.with.pinned.0.0.39",
+          "normalized_id": "sticky.openshell.0.0.45.was.replaced.with.pinned.0.0.44",
           "mapping_status": "mapped"
         }
       ]

@@ -29,6 +29,17 @@ type SandboxResource = {
 
 type BuildHostAliases = (resource: SandboxResource) => HostAlias[];
 
+export type AddSandboxHostAliasOptions = {
+  hostname?: string;
+  ip?: string;
+  dryRun?: boolean;
+};
+
+export type RemoveSandboxHostAliasOptions = {
+  hostname?: string;
+  dryRun?: boolean;
+};
+
 export class HostAliasesCommandError extends Error {
   readonly lines: readonly string[];
   readonly exitCode: number;
@@ -58,10 +69,13 @@ function normalizeHostAliasHostname(hostname: string): string {
 }
 
 function runKubectlInClusterRaw(args: string[]): string {
-  return dockerExecFileSync([K3S_CONTAINER, "kubectl", "-n", "openshell", ...args], {
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: HOST_ALIAS_KUBECTL_TIMEOUT_MS,
-  });
+  return dockerExecFileSync(
+    ["exec", K3S_CONTAINER, "kubectl", "-n", "openshell", ...args],
+    {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: HOST_ALIAS_KUBECTL_TIMEOUT_MS,
+    },
+  );
 }
 
 function throwKubectlError(action: string, error: unknown): never {
@@ -189,11 +203,13 @@ export function listSandboxHostAliases(sandboxName: string): void {
   }
 }
 
-export function addSandboxHostAlias(sandboxName: string, args: string[] = []): void {
-  const dryRun = args.includes("--dry-run");
-  const values = args.filter((arg) => !arg.startsWith("-"));
-  const [rawHostname, ip] = values;
-  if (!rawHostname || !ip || values.length !== 2) {
+export function addSandboxHostAlias(
+  sandboxName: string,
+  options: AddSandboxHostAliasOptions = {},
+): void {
+  const dryRun = Boolean(options.dryRun);
+  const { hostname: rawHostname, ip } = options;
+  if (!rawHostname || !ip) {
     hostAliasesFail(`  Usage: ${CLI_NAME} <sandbox> hosts-add <hostname> <ip> [--dry-run]`);
   }
   const hostname = normalizeHostAliasHostname(rawHostname);
@@ -229,11 +245,13 @@ export function addSandboxHostAlias(sandboxName: string, args: string[] = []): v
   console.log(`  Added host alias ${hostname} -> ${ip}`);
 }
 
-export function removeSandboxHostAlias(sandboxName: string, args: string[] = []): void {
-  const dryRun = args.includes("--dry-run");
-  const values = args.filter((arg) => !arg.startsWith("-"));
-  const [rawHostname] = values;
-  if (!rawHostname || values.length !== 1) {
+export function removeSandboxHostAlias(
+  sandboxName: string,
+  options: RemoveSandboxHostAliasOptions = {},
+): void {
+  const dryRun = Boolean(options.dryRun);
+  const { hostname: rawHostname } = options;
+  if (!rawHostname) {
     hostAliasesFail(`  Usage: ${CLI_NAME} <sandbox> hosts-remove <hostname> [--dry-run]`);
   }
   const hostname = normalizeHostAliasHostname(rawHostname);

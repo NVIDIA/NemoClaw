@@ -13,14 +13,34 @@ import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import type { CaptureResult } from "../runner";
 import { buildSubprocessEnv } from "../subprocess-env";
+import {
+  applyOllamaRuntimeContextWindow as applyOllamaRuntimeContextWindowWithHost,
+  MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW,
+  parsePositiveInteger,
+  probeOllamaRuntimeModelStatus as probeOllamaRuntimeModelStatusWithHost,
+  resetOllamaRuntimeContextWindowAutoState,
+  resolveOllamaRuntimeContextWindow as resolveOllamaRuntimeContextWindowWithHost,
+} from "./ollama-runtime-context";
+import type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
+export type { OllamaRuntimeModelStatus } from "./ollama-runtime-context";
 
 const { shellQuote, runCapture, runCaptureEx } = require("../runner");
 
 import { OLLAMA_PORT, OLLAMA_PROXY_PORT, VLLM_PORT } from "../core/ports";
 import { sleepSeconds } from "../core/wait";
+import {
+  anyRegistryModelFits,
+  effectiveGpuMemoryMB,
+  fittableOllamaModelTags,
+  largestFittableOllamaModelTag,
+  modelFitsAvailableMemory,
+  OLLAMA_MODEL_REGISTRY,
+  SMALLEST_OLLAMA_MODEL_TAG,
+} from "./ollama-model-registry";
 
-const { containerCanReachHostLoopback, inferContainerRuntime, isWsl } = require("../platform");
-const { dockerInfo } = require("../adapters/docker/info");
+const { containerCanReachHostLoopback, isWsl } = require("../platform");
+const { detectContainerRuntimeFromDockerInfo } =
+  require("../adapters/docker/runtime") as typeof import("../adapters/docker/runtime");
 const { detectNvidiaPlatform } = require("./nim");
 
 /**
@@ -32,7 +52,7 @@ const { detectNvidiaPlatform } = require("./nim");
 let _ollamaContainerPort: number | null = null;
 export function getOllamaContainerPort(): number {
   if (_ollamaContainerPort !== null) return _ollamaContainerPort;
-  const runtime = inferContainerRuntime(dockerInfo({ ignoreError: true }));
+  const runtime = detectContainerRuntimeFromDockerInfo();
   _ollamaContainerPort = containerCanReachHostLoopback(runtime) ? OLLAMA_PORT : OLLAMA_PROXY_PORT;
   return _ollamaContainerPort;
 }
@@ -43,12 +63,33 @@ export function resetOllamaContainerPortCache(): void {
 export const HOST_GATEWAY_URL = "http://host.openshell.internal";
 export const LOCAL_INFERENCE_SANDBOX_HOST_URL_ENV = "NEMOCLAW_LOCAL_INFERENCE_SANDBOX_HOST_URL";
 export const CONTAINER_REACHABILITY_IMAGE = "curlimages/curl:8.10.1";
-export const DEFAULT_OLLAMA_MODEL = "nemotron-3-nano:30b";
-export const QWEN3_6_OLLAMA_MODEL = "qwen3.6:35b";
-export const SMALL_OLLAMA_MODEL = "qwen2.5:7b";
-export const LARGE_OLLAMA_MIN_MEMORY_MB = 32768;
+// These tags are convenience aliases for callers that want to refer to a
+// specific bootstrap model by role rather than by string. The canonical
+// metadata (memory requirements, download sizes) lives in
+// `ollama-model-registry.ts`; the assertion below makes module load fail
+// loudly if a registry edit drops a tag a caller still references by
+// name, so the two stay in sync.
+function assertRegistryTag(tag: string): string {
+  if (!OLLAMA_MODEL_REGISTRY.some((entry) => entry.tag === tag)) {
+    throw new Error(
+      `Tag '${tag}' is not in OLLAMA_MODEL_REGISTRY. Update the registry first.`,
+    );
+  }
+  return tag;
+}
+
+export const SMALL_OLLAMA_MODEL = SMALLEST_OLLAMA_MODEL_TAG;
+export const DEFAULT_OLLAMA_MODEL = assertRegistryTag("nemotron-3-nano:30b");
+export const QWEN3_6_OLLAMA_MODEL = assertRegistryTag("qwen3.6:35b");
 
 export type RunCaptureFn = (cmd: string | string[], opts?: { ignoreError?: boolean }) => string;
+
+export {
+  getInstalledOllamaVersion,
+  getRunningOllamaDaemonVersion,
+  isOllamaVersionAtLeast,
+  MIN_OLLAMA_VERSION,
+} from "./ollama-version";
 
 export type RunCaptureExFn = (cmd: string[]) => CaptureResult;
 
@@ -120,12 +161,40 @@ export interface GpuInfo {
   // does not get sized as if it were confirmed NVIDIA / Apple Silicon
   // (#3510).
   type?: string;
+  // Currently free GPU memory at probe time. Populated by `detectGpu` from
+  // `nvidia-smi memory.free`, `MemAvailable` on unified-memory hosts, or
+  // `vm_stat` reclaimable pages on macOS. Used by the bootstrap-model
+  // selector so an idle 128 GiB Spark and a 128 GiB Spark with another
+  // GPU workload eating 116 GiB do not get the same model recommendation.
+  // Absent => the selector falls back to `totalMemoryMB`, preserving the
+  // previous behaviour.
+  availableMemoryMB?: number;
 }
 
 export interface ValidationResult {
   ok: boolean;
   message?: string;
   diagnostic?: string;
+  /**
+   * Set when the failure points at the Ollama daemon / model runner itself,
+   * not the chosen model. Callers escape the Ollama-model loop instead of
+   * asking for another tag that would hit the same failure. (#4365)
+   */
+  daemonFailure?: boolean;
+}
+
+/**
+ * Recognises Ollama probe errors that mean the daemon's model runner crashed,
+ * stopped, or otherwise died (rather than the chosen model being unsuitable).
+ * Picking a different model would loop on the same failure, so the wizard
+ * escapes back to provider selection. (#4365)
+ */
+export function isOllamaRunnerCrash(errText: string | null | undefined): boolean {
+  const text = String(errText || "");
+  if (!text) return false;
+  return /\brunner\b[\s\S]{0,80}\b(?:stopped|terminated|crashed|exited|died|killed)\b/i.test(
+    text,
+  );
 }
 
 export interface LocalProviderHealthStatus {
@@ -184,6 +253,23 @@ function defaultLoadOllamaProxyToken(): string | null {
 
 function runLocalCurlProbe(argv: string[]): CurlProbeResult {
   return runCurlProbe(argv, { env: buildSubprocessEnv(), replaceEnv: true });
+}
+
+// A 200 response on `/api/tags` alone is not enough to call Ollama healthy —
+// a captive HTTP_PROXY, a stale listener, or a stub on the loopback port can
+// all answer with arbitrary 2xx bodies that look healthy at the curl-status
+// level. The authoritative signal is the Ollama wire format itself:
+// `{ "models": [...] }`. An empty array is fine — that just means no models
+// pulled yet — but a body that doesn't parse as JSON-with-array-`models` did
+// not come from Ollama and the probe should not call it healthy. (#4275)
+function isValidOllamaTagsResponseBody(body: string): boolean {
+  if (!body) return false;
+  try {
+    const parsed = JSON.parse(body);
+    return parsed !== null && typeof parsed === "object" && Array.isArray(parsed.models);
+  } catch {
+    return false;
+  }
 }
 
 export function validateOllamaPortConfiguration(): ValidationResult {
@@ -333,6 +419,21 @@ export function probeOllamaAuthProxyHealth(
     probeLabel: "auth proxy",
   };
   if (result.ok) {
+    // A 200 from the proxy alone is not a healthy signal — the proxy may be
+    // serving a captive HTTP_PROXY page, or its upstream Ollama backend may
+    // be down but the proxy returned a stub. Confirm with the wire format. (#4275)
+    if (!isValidOllamaTagsResponseBody(result.body)) {
+      return {
+        ...base,
+        ok: false,
+        failureLabel: "unhealthy",
+        detail:
+          `Ollama auth proxy returned HTTP ${result.httpStatus} on ${endpoint} but the body ` +
+          `is not a valid /api/tags response. The proxy is reachable but its upstream Ollama ` +
+          `backend is not, or an HTTP proxy is intercepting the loopback. ` +
+          `Restart \`ollama serve\` and check HTTP_PROXY/NO_PROXY.`,
+      };
+    }
     return { ...base, ok: true, detail: `Ollama auth proxy is reachable on ${endpoint}.` };
   }
   if (result.httpStatus === 401) {
@@ -393,6 +494,25 @@ export function probeLocalProviderHealth(
   const attachProbeLabel = probeLabel ? { probeLabel } : {};
 
   if (result.ok) {
+    // For ollama-local, a 200 is necessary but not sufficient: a captive
+    // HTTP_PROXY, a stale listener on 11434, or any other HTTP responder
+    // can return 200 with an arbitrary body. Treat the probe as healthy
+    // only when the response is the Ollama /api/tags JSON shape. (#4275)
+    if (provider === "ollama-local" && !isValidOllamaTagsResponseBody(result.body)) {
+      return {
+        ok: false,
+        providerLabel,
+        endpoint,
+        failureLabel: "unhealthy",
+        detail:
+          `${providerLabel} responded on ${endpoint} with HTTP ${result.httpStatus} but the ` +
+          `body is not a valid /api/tags response. The listener may not be Ollama (e.g. a ` +
+          `stale process or an HTTP proxy intercepting the loopback). Restart \`ollama serve\` ` +
+          `and verify HTTP_PROXY/NO_PROXY.`,
+        ...attachProbeLabel,
+        ...attachSubprobes,
+      };
+    }
     return {
       ok: true,
       providerLabel,
@@ -623,6 +743,46 @@ export function parseOllamaTags(output: string | null | undefined): string[] {
   }
 }
 
+export { MAX_AUTODETECTED_OLLAMA_CONTEXT_WINDOW, parsePositiveInteger };
+
+export function probeOllamaRuntimeModelStatus(
+  model: string,
+  runCaptureImpl?: RunCaptureFn,
+): OllamaRuntimeModelStatus {
+  return probeOllamaRuntimeModelStatusWithHost(model, getResolvedOllamaHost, runCaptureImpl);
+}
+
+export function resolveOllamaRuntimeContextWindow(
+  model: string,
+  currentContextWindow: string | null | undefined = null,
+  runCaptureImpl?: RunCaptureFn,
+): number | null {
+  return resolveOllamaRuntimeContextWindowWithHost(
+    model,
+    currentContextWindow,
+    getResolvedOllamaHost,
+    runCaptureImpl,
+  );
+}
+
+export { resetOllamaRuntimeContextWindowAutoState };
+
+export function applyOllamaRuntimeContextWindow(selectedModel: string): void {
+  applyOllamaRuntimeContextWindowWithHost(selectedModel, getResolvedOllamaHost);
+}
+
+function formatOllamaCpuOnlyDiagnostic(model: string, status: OllamaRuntimeModelStatus): string {
+  const observed: string[] = [];
+  if (status.processor) observed.push(`processor=${status.processor}`);
+  if (status.sizeVram !== undefined) observed.push(`size_vram=${status.sizeVram}`);
+  const observedText = observed.length > 0 ? ` (${observed.join(", ")})` : "";
+  return (
+    `Selected Ollama model '${model}' answered the local probe, but Ollama reports it is loaded on CPU only${observedText}. ` +
+    "DGX Spark should use the CUDA v13 backend; check `ollama ps`, `sudo systemctl cat ollama`, " +
+    "and `journalctl -u ollama.service --since \"10 min ago\" | grep -iE \"gpu|cuda|vram|compute|library\"`, then retry onboarding."
+  );
+}
+
 export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   const capture = runCaptureImpl ?? runCapture;
   const host = getResolvedOllamaHost();
@@ -654,26 +814,60 @@ export function getOllamaModelOptions(runCaptureImpl?: RunCaptureFn): string[] {
   return parseOllamaList(listOutput);
 }
 
-function isLargeOllamaCapableGpu(gpu: GpuInfo | null): boolean {
-  // Only confirmed-NVIDIA and Apple-Silicon devices get the large-model
-  // default.  Other detection outcomes (null, missing `type`, or a partial
-  // result that fell through the NVIDIA path with type set to something
-  // else) fall back to the smaller model so we never download a 22 GB
-  // model onto a host whose acceleration is unconfirmed (#3510).
-  return (
-    !!gpu &&
-    (gpu.type === "nvidia" || gpu.type === "apple") &&
-    gpu.totalMemoryMB >= LARGE_OLLAMA_MIN_MEMORY_MB
-  );
+export function getBootstrapOllamaModelOptions(gpu: GpuInfo | null): string[] {
+  // Delegate to the registry so the menu reflects what the host can
+  // actually load right now. Only confirmed-NVIDIA and Apple-Silicon
+  // devices get larger options; ambiguous device types fall back to the
+  // smallest model so a partial GPU detection cannot promote a host to a
+  // 22 GB model.
+  return fittableOllamaModelTags(gpu);
 }
 
-export function getBootstrapOllamaModelOptions(gpu: GpuInfo | null): string[] {
-  const options = [SMALL_OLLAMA_MODEL];
-  if (isLargeOllamaCapableGpu(gpu)) {
-    options.push(DEFAULT_OLLAMA_MODEL);
-    options.push(QWEN3_6_OLLAMA_MODEL);
+/**
+ * Resolve the non-interactive Ollama model selection. When the caller has
+ * passed an explicit `NEMOCLAW_MODEL` / recovered-session model that the
+ * registry knows is too big for the host's currently available memory,
+ * log a warning and fall back to the largest fittable registry entry so
+ * onboarding does not pull a model the runner will crash on. Unknown
+ * model tags (user-supplied values the registry has never seen) are
+ * respected as-is — the runner's own validation surfaces the failure if
+ * the choice was wrong.
+ */
+export function resolveNonInteractiveOllamaModel(
+  requestedModel: string | null,
+  recoveredModel: string | null,
+  gpu: GpuInfo | null,
+  log: (message: string) => void = (m) => console.warn(m),
+  runCaptureImpl?: RunCaptureFn,
+): string {
+  const explicit = requestedModel || recoveredModel;
+  if (explicit && !modelFitsAvailableMemory(explicit, gpu)) {
+    const fallback = largestFittableOllamaModelTag(gpu);
+    log(
+      `  ! Requested Ollama model '${explicit}' is unlikely to fit currently available GPU memory; ` +
+        `falling back to '${fallback}'. Override by freeing memory and re-running, or unset NEMOCLAW_MODEL.`,
+    );
+    if (!anyRegistryModelFits(gpu)) {
+      warnNoBootstrapModelFits(gpu, log);
+    }
+    return fallback;
   }
-  return options;
+  if (!explicit && !anyRegistryModelFits(gpu)) {
+    warnNoBootstrapModelFits(gpu, log);
+  }
+  return explicit || getDefaultOllamaModel(gpu, runCaptureImpl);
+}
+
+function warnNoBootstrapModelFits(
+  gpu: GpuInfo | null,
+  log: (message: string) => void,
+): void {
+  const memory = effectiveGpuMemoryMB(gpu);
+  log(
+    `  ! No known Ollama bootstrap model fits the host's currently available GPU memory` +
+      `${memory ? ` (~${memory} MB free)` : ""}. Proceeding with the smallest known model; ` +
+      "the runner may still reject the load — free memory and re-run if it does.",
+  );
 }
 
 export function getDefaultOllamaModel(
@@ -682,12 +876,23 @@ export function getDefaultOllamaModel(
 ): string {
   const models = getOllamaModelOptions(runCaptureImpl);
   if (models.length === 0) {
-    if (isLargeOllamaCapableGpu(gpu)) {
-      return QWEN3_6_OLLAMA_MODEL;
-    }
-    return SMALL_OLLAMA_MODEL;
+    // No installed models — pick the largest registry entry that fits the
+    // host's currently available memory.
+    return largestFittableOllamaModelTag(gpu);
   }
-  return models.includes(DEFAULT_OLLAMA_MODEL) ? DEFAULT_OLLAMA_MODEL : models[0];
+  // Filter the installed list to entries we either don't know (unmanaged
+  // user pulls — let the runner validate) or that fit the registry's
+  // memory requirement at probe time. If everything has been filtered out,
+  // fall back to the largest registry entry that fits so the wizard never
+  // suggests a model the host can't load.
+  const fittingInstalled = models.filter((tag) => modelFitsAvailableMemory(tag, gpu));
+  const pool = fittingInstalled.length > 0 ? fittingInstalled : null;
+  if (pool === null) {
+    return largestFittableOllamaModelTag(gpu);
+  }
+  return pool.includes(DEFAULT_OLLAMA_MODEL) && modelFitsAvailableMemory(DEFAULT_OLLAMA_MODEL, gpu)
+    ? DEFAULT_OLLAMA_MODEL
+    : pool[0];
 }
 
 export function getOllamaWarmupCommand(model: string, keepAlive = "15m"): string[] {
@@ -741,17 +946,19 @@ export function validateOllamaModel(
   runCaptureImpl?: RunCaptureFn,
   isSparkImpl?: () => boolean,
   runCaptureExImpl?: RunCaptureExFn,
+  options: { allowToolsIncompatible?: boolean } = {},
 ): ValidationResult {
   const capture = runCaptureImpl ?? runCapture;
   const captureEx = runCaptureExImpl ?? runCaptureEx;
   const isSpark = isSparkImpl ?? (() => detectNvidiaPlatform() === "spark");
+  const sparkHost = isSpark();
   const probeCmd = getOllamaProbeCommand(model);
   const probeResult = captureEx(probeCmd);
   let output = probeResult.stdout;
   // On DGX Spark (128 GB unified memory), loading a large model from disk can take >2 min.
   // Only retry with a 300 s timeout when the initial probe genuinely timed out — fast
   // failures (connection refused, Ollama not running) surface immediately. (#3251)
-  if (isSpark() && probeResult.timedOut) {
+  if (sparkHost && probeResult.timedOut) {
     const retryResult = captureEx(getOllamaProbeCommand(model, 300));
     output = retryResult.stdout;
   }
@@ -769,43 +976,86 @@ export function validateOllamaModel(
     if (parsed && typeof parsed.error === "string" && parsed.error.trim()) {
       const errText = parsed.error.trim();
       if (/does not support tools/i.test(errText)) {
-        return {
-          ok: false,
-          message:
-            `Selected Ollama model '${model}' does not support tool calling, which ` +
-            `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
-            `model's capabilities and pick one whose list includes 'tools'.`,
-        };
-      }
-      // Ollama checks available RAM instead of total; false positive on DGX Spark
-      // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
-      const memMatch = errText.match(
-        /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
-      );
-      if (memMatch && isSpark()) {
-        const requiresGiB = parseFloat(memMatch[1]);
-        const freeOut = capture(["free", "-m"], { ignoreError: true });
-        if (freeOut) {
-          const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
-          if (memLine) {
-            const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
-            const totalGiB = totalMB / 1024;
-            if (totalGiB >= requiresGiB) {
-              return { ok: true };
+        if (options.allowToolsIncompatible !== true) {
+          return {
+            ok: false,
+            message:
+              `Selected Ollama model '${model}' does not support tool calling, which ` +
+              `NemoClaw agents require. Run \`ollama show <model>\` to inspect a ` +
+              `model's capabilities and pick one whose list includes 'tools'.`,
+          };
+        }
+        // Override accepted — log and fall through to the Spark CPU-only
+        // runtime check below so it still enforces. (#4241)
+        console.warn(
+          `  ⚠ Ollama model '${model}' confirmed not to support tools; ` +
+            `continuing because the no-tools override was accepted.`,
+        );
+      } else {
+        // Ollama checks available RAM instead of total; false positive on DGX Spark
+        // unified-memory hosts where GPU and CPU share the same 128 GB pool. (#3251)
+        const memMatch = errText.match(
+          /model requires more system memory \(([0-9.]+)\s*GiB\) than is available \([0-9.]+\s*GiB\)/i,
+        );
+        if (memMatch && sparkHost) {
+          const requiresGiB = parseFloat(memMatch[1]);
+          const freeOut = capture(["free", "-m"], { ignoreError: true });
+          if (freeOut) {
+            const memLine = freeOut.split("\n").find((l: string) => l.includes("Mem:"));
+            if (memLine) {
+              const totalMB = parseInt(memLine.trim().split(/\s+/)[1], 10) || 0;
+              const totalGiB = totalMB / 1024;
+              if (totalGiB >= requiresGiB) {
+                return { ok: true };
+              }
             }
           }
         }
+        return {
+          ok: false,
+          message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
+          ...(isOllamaRunnerCrash(errText) ? { daemonFailure: true } : {}),
+        };
       }
-      return {
-        ok: false,
-        message: `Selected Ollama model '${model}' failed the local probe: ${errText}`,
-      };
     }
   } catch {
     /* ignored */
   }
 
+  if (sparkHost) {
+    const runtimeStatus = probeOllamaRuntimeModelStatus(model, capture);
+    if (runtimeStatus.cpuOnly) {
+      return {
+        ok: false,
+        message: formatOllamaCpuOnlyDiagnostic(model, runtimeStatus),
+      };
+    }
+  }
+
   return { ok: true };
+}
+
+// Helpers for threading the user's "use this no-tools Ollama model anyway"
+// override (see #4241) through onboard validators so they don't loop the
+// wizard back to model selection after the user already accepted.
+
+export function buildOllamaProbeOptions(allowToolsIncompatible: boolean): {
+  skipResponsesProbe: true;
+  requireChatCompletionsToolCalling: boolean;
+  allowHostDockerInternal: boolean;
+} {
+  return {
+    skipResponsesProbe: true,
+    requireChatCompletionsToolCalling: !allowToolsIncompatible,
+    allowHostDockerInternal: getResolvedOllamaHost() === OLLAMA_HOST_DOCKER_INTERNAL,
+  };
+}
+
+export function validateOllamaModelWithToolsOverride(
+  model: string,
+  allowToolsIncompatible: boolean,
+): ValidationResult {
+  return validateOllamaModel(model, undefined, undefined, undefined, { allowToolsIncompatible });
 }
 
 // ─── Tools-capability probe (issue #2667) ─────────────────────────

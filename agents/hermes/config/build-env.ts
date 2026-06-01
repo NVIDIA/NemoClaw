@@ -28,6 +28,10 @@ export type WechatConfig = {
   userId?: string;
 };
 
+export type SlackConfig = {
+  allowedChannels?: string[];
+};
+
 export type HermesBuildSettings = {
   model: string;
   baseUrl: string;
@@ -43,6 +47,7 @@ export type HermesBuildSettings = {
     discordGuilds: DiscordGuilds;
     telegramConfig: TelegramConfig;
     wechatConfig: WechatConfig;
+    slackConfig: SlackConfig;
   };
 };
 
@@ -79,6 +84,7 @@ export function readHermesBuildSettings(env: NodeJS.ProcessEnv): HermesBuildSett
         "e30=",
       ),
       wechatConfig: readBase64Json<WechatConfig>(env, "NEMOCLAW_WECHAT_CONFIG_B64", "e30="),
+      slackConfig: readBase64Json<SlackConfig>(env, "NEMOCLAW_SLACK_CONFIG_B64", "e30="),
     },
   };
 }

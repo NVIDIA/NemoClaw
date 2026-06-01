@@ -4,32 +4,6 @@
 import { Args } from "@oclif/core";
 
 import { dryRunFlag, forceFlag, yesFlag } from "../cli/common-flags";
-import type { PolicyAddOptions, PolicyRemoveOptions } from "../domain/policy-channel";
-
-type PolicyRuntimeBridge = {
-  sandboxPolicyAdd: (sandboxName: string, options?: PolicyAddOptions) => Promise<void>;
-  sandboxPolicyRemove: (sandboxName: string, options?: PolicyRemoveOptions) => Promise<void>;
-};
-
-let runtimeBridgeFactory = (): PolicyRuntimeBridge => {
-  const actions = require("../actions/sandbox/policy-channel") as {
-    addSandboxPolicy: PolicyRuntimeBridge["sandboxPolicyAdd"];
-    removeSandboxPolicy: PolicyRuntimeBridge["sandboxPolicyRemove"];
-  };
-  return {
-    sandboxPolicyAdd: actions.addSandboxPolicy,
-    sandboxPolicyRemove: actions.removeSandboxPolicy,
-  };
-};
-
-export function setPolicyRuntimeBridgeFactoryForTest(factory: () => PolicyRuntimeBridge): void {
-  runtimeBridgeFactory = factory;
-}
-
-export function getPolicyRuntimeBridge(): PolicyRuntimeBridge {
-  return runtimeBridgeFactory();
-}
-
 const sandboxNameArg = Args.string({
   name: "sandbox",
   description: "Sandbox name",

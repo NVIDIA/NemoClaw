@@ -32,11 +32,15 @@
     "reason": "Internal installer sentinel exported only during OpenShell gateway replacement so onboard restores the pre-upgrade sandbox backup. Not user-facing."
   },
   {
-    "name": "NEMOCLAW_WECHAT_QUIET",
-    "reason": "Internal diagnostic quiet flag for the unreleased WeChat channel path. WeChat docs are intentionally suppressed until the feature is ready for public documentation."
-  },
-  {
     "name": "NEMOCLAW_TEST_NO_SLEEP",
     "reason": "Test sentinel that bypasses real-time sleep() calls in onboard inference probes. Set to '1' only by Vitest tests; never user-set."
+  },
+  {
+    "name": "NEMOCLAW_E2E_FAILURE_INJECTION",
+    "reason": "Internal E2E-only sentinel that enables deterministic onboarding fault injection for resume/repair scripts. Never user-set in production."
+  },
+  {
+    "name": "NEMOCLAW_E2E_FORCE_FAIL_AT_STEP",
+    "reason": "Internal E2E-only selector naming the onboarding step where deterministic fault injection should exit. Used only with NEMOCLAW_E2E_FAILURE_INJECTION in test scripts."
   }
 ]

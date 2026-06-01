@@ -12,6 +12,11 @@ set -euo pipefail
 # are removed on any exit path (set -e, unhandled signal, unexpected error).
 _cleanup_pids=()
 _cleanup_files=()
+# #4414: When re-launched as a staged copy via `curl | bash`, queue the
+# staged tmpfile for removal on EXIT. NEMOCLAW_INSTALLER_STAGED carries
+# the staged path forward so both the loop guard and cleanup use one var.
+[[ "${NEMOCLAW_INSTALLER_STAGED:-}" == /tmp/nemoclaw-installer-* ]] \
+  && _cleanup_files+=("${NEMOCLAW_INSTALLER_STAGED}")
 _global_cleanup() {
   for pid in "${_cleanup_pids[@]:-}"; do
     kill "$pid" 2>/dev/null || true
@@ -466,41 +471,22 @@ print_done() {
   printf "  ${C_GREEN}${C_BOLD}%s${C_RESET}  ${C_DIM}(%ss)${C_RESET}\n" "$_CLI_DISPLAY" "$elapsed"
   printf "\n"
   if [[ "$ONBOARD_RAN" == true ]]; then
-    local sandbox_name agent_name
-    sandbox_name="$(resolve_default_sandbox_name)"
+    local agent_name
     agent_name="$(resolve_onboarded_agent)"
     if [[ "$_needs_cli_refresh" == true ]]; then
       printf "  ${C_YELLOW}%s installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
       printf "  ${C_DIM}Onboarding completed; refresh PATH before using the CLI from this terminal.${C_RESET}\n"
+      printf "\n"
+      printf "  ${C_GREEN}For this terminal:${C_RESET}\n"
+      print_cli_path_refresh_actions
     else
       if [[ "$agent_name" == "openclaw" || -z "$agent_name" ]]; then
         printf "  ${C_GREEN}Your OpenClaw Sandbox is live.${C_RESET}\n"
       else
         printf "  ${C_GREEN}Your %s Sandbox is live.${C_RESET}\n" "$(agent_display_name "$agent_name")"
       fi
-      printf "  ${C_DIM}Sandbox in, break things, and tell us what you find.${C_RESET}\n"
+      printf "  ${C_DIM}Use the Start chatting section above for browser and terminal options.${C_RESET}\n"
     fi
-    printf "\n"
-    printf "  ${C_GREEN}Next:${C_RESET}\n"
-    if [[ "$_needs_cli_refresh" == true ]]; then
-      print_cli_path_refresh_actions
-    else
-      printf "  %s$%s source %s\n" "$C_GREEN" "$C_RESET" "$(detect_shell_profile)"
-    fi
-    printf "  %s$%s %s %s connect\n" "$C_GREEN" "$C_RESET" "$_CLI_BIN" "$sandbox_name"
-    local agent_cmd
-    case "$agent_name" in
-      hermes)
-        agent_cmd="hermes"
-        ;;
-      "" | openclaw)
-        agent_cmd="openclaw tui"
-        ;;
-      *)
-        agent_cmd="$agent_name"
-        ;;
-    esac
-    printf "  %ssandbox@%s$%s %s\n" "$C_GREEN" "$sandbox_name" "$C_RESET" "$agent_cmd"
   elif [[ "$NEMOCLAW_READY_NOW" == true ]]; then
     if [[ "$_needs_cli_refresh" == true ]]; then
       printf "  ${C_YELLOW}%s CLI is installed, but this shell needs PATH refresh before '%s' will run.${C_RESET}\n" "$_CLI_DISPLAY" "$_CLI_BIN"
@@ -566,7 +552,7 @@ usage() {
   printf "    NEMOCLAW_MODEL                Inference model to configure\n"
   printf "    NEMOCLAW_POLICY_MODE          suggested | custom | skip\n"
   printf "    NEMOCLAW_POLICY_PRESETS       Comma-separated policy presets\n"
-  printf "    BRAVE_API_KEY                 Enable Brave Search with this API key (stored in sandbox OpenClaw config)\n"
+  printf "    BRAVE_API_KEY                 Enable Brave Search with this API key (kept behind OpenShell provider rewrite)\n"
   printf "    NEMOCLAW_EXPERIMENTAL=1       Show experimental/local options\n"
   printf "    CHAT_UI_URL                   Chat UI URL to open after setup\n"
   printf "    DISCORD_BOT_TOKEN             Auto-enable Discord policy support\n"
@@ -1000,6 +986,26 @@ prefer_user_local_openshell() {
   fi
 }
 
+# Run scripts/install-openshell.sh during install_nemoclaw when appropriate.
+# - mode=force:      always invoke (GitHub-clone branch — fresh install path)
+# - mode=if-missing: invoke only when openshell is absent from PATH
+#                    (source-checkout branch — preserves developer autonomy
+#                    over their own openshell version)
+# Both modes defer when NEMOCLAW_DEFER_OPENSHELL_INSTALL=1 so the pre-upgrade
+# backup flow can run before any version bump.
+maybe_install_openshell_during_install() {
+  local mode="${1:-force}"
+  if truthy_env "${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-}"; then
+    info "Deferring OpenShell CLI installation until after pre-upgrade backup."
+    return 0
+  fi
+  if [[ "$mode" == "if-missing" ]] && command_exists openshell; then
+    return 0
+  fi
+  spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
+  prefer_user_local_openshell
+}
+
 ensure_cli_shim() {
   local cli_bin="${1:-$_CLI_BIN}"
   local npm_bin shim_path node_path node_dir cli_path expected_shim
@@ -1384,6 +1390,16 @@ install_nemoclaw() {
     spin "Building ${_CLI_DISPLAY} CLI modules" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm run --if-present build:cli"
     spin "Building ${_CLI_DISPLAY} plugin" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\"/nemoclaw && npm install --ignore-scripts && npm run build"
     spin "Linking ${_CLI_DISPLAY} CLI" bash -c "cd \"$NEMOCLAW_SOURCE_ROOT\" && npm link"
+
+    # Bootstrap OpenShell when the source checkout is being used as a fresh
+    # install entrypoint (e.g. `git clone … && bash install.sh`) and the host
+    # has no openshell on PATH. Skipping here previously left the user at a
+    # circular preflight error ("Run the NemoClaw installer or
+    # scripts/install-openshell.sh") even though they were running the
+    # installer. A developer who already has a managed openshell on PATH
+    # keeps their existing binary — install-openshell.sh is only invoked
+    # when openshell is genuinely missing. See #3989.
+    maybe_install_openshell_during_install if-missing
   else
     if [[ -f "$package_json" ]]; then
       info "Installer payload is not a persistent source checkout — installing from GitHub…"
@@ -1423,11 +1439,10 @@ install_nemoclaw() {
     # onboard, so any later skip of onboard (preflight blocking,
     # interrupted session) leaves openshell stale below blueprint's
     # min_openshell_version even though the new NemoClaw declared a higher
-    # floor. The source-checkout branch intentionally skips this — a developer
-    # running ./scripts/install.sh manages their own openshell. The script is
-    # idempotent on the happy path. See #2272.
-    spin "Installing OpenShell CLI" bash "${NEMOCLAW_SOURCE_ROOT}/scripts/install-openshell.sh"
-    prefer_user_local_openshell
+    # floor. The source-checkout branch invokes the same helper in
+    # `if-missing` mode so developers keep autonomy when openshell is already
+    # on PATH. The script is idempotent on the happy path. See #2272, #3989.
+    maybe_install_openshell_during_install force
   fi
 
   refresh_path
@@ -1576,6 +1591,54 @@ resolve_existing_cli_runner() {
   return 1
 }
 
+prepare_current_cli_for_preupgrade_backup() {
+  local old_defer="${NEMOCLAW_DEFER_OPENSHELL_INSTALL:-__unset__}"
+  info "Preparing current ${_CLI_DISPLAY} CLI for legacy OpenShell backup retry…"
+  export NEMOCLAW_DEFER_OPENSHELL_INSTALL=1
+  install_nemoclaw
+  if [[ "$old_defer" == "__unset__" ]]; then
+    unset NEMOCLAW_DEFER_OPENSHELL_INSTALL
+  else
+    export NEMOCLAW_DEFER_OPENSHELL_INSTALL="$old_defer"
+  fi
+  verify_nemoclaw
+}
+
+resolve_prepared_cli_runner() {
+  if [[ -n "${_CLI_PATH:-}" && -x "$_CLI_PATH" ]] && is_real_nemoclaw_cli "$_CLI_PATH" "$_CLI_BIN"; then
+    printf "%s" "$_CLI_PATH"
+    return 0
+  fi
+  resolve_existing_cli_runner
+}
+
+run_preupgrade_backup() {
+  local old_cli_runner="$1" old_openshell_version="$2"
+
+  if "$old_cli_runner" backup-all 2>&1; then
+    return 0
+  fi
+
+  if ! legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
+    return 1
+  fi
+
+  warn "Pre-upgrade backup with the existing ${_CLI_BIN} CLI failed."
+  warn "Retrying with the current ${_CLI_DISPLAY} CLI before retiring the legacy OpenShell gateway."
+  if ! prepare_current_cli_for_preupgrade_backup; then
+    warn "Could not prepare the current ${_CLI_DISPLAY} CLI for backup retry."
+    return 1
+  fi
+
+  local retry_cli_runner=""
+  if ! retry_cli_runner="$(resolve_prepared_cli_runner)"; then
+    warn "Could not locate the current ${_CLI_BIN} CLI for backup retry."
+    return 1
+  fi
+
+  "$retry_cli_runner" backup-all 2>&1
+}
+
 installed_openshell_version() {
   command_exists openshell || return 1
   openshell --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
@@ -1608,7 +1671,8 @@ print_openshell_upgrade_manual_commands() {
   cat <<EOF
   Manual upgrade path:
     ${_CLI_BIN} backup-all
-    openshell gateway destroy -g nemoclaw || openshell gateway destroy
+    openshell gateway remove nemoclaw || openshell gateway destroy -g nemoclaw || openshell gateway destroy
+    sudo pkill -f openshell-gateway  # if a privileged host gateway process remains
     curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_OPENSHELL_UPGRADE_PREPARED=1 bash
     ${_CLI_BIN} upgrade-sandboxes --check
 
@@ -1734,7 +1798,7 @@ preinstall_backup_and_retire_legacy_gateway() {
   fi
 
   info "Backing up ${sandbox_count} sandbox(es) before upgrading OpenShell…"
-  if ! "$old_cli_runner" backup-all 2>&1; then
+  if ! run_preupgrade_backup "$old_cli_runner" "$old_openshell_version"; then
     if legacy_openshell_gateway_upgrade_needed "$old_openshell_version"; then
       error "Pre-upgrade backup failed. Aborting before retiring the legacy OpenShell gateway."
     fi
@@ -1765,9 +1829,13 @@ repair_installer_nvidia_cdi_spec() {
     node -e '
       const preflightPath = process.argv[1];
       try {
-        const { assessHost, getNvidiaCdiSpecPath } = require(preflightPath);
+        const { assessHost, getNvidiaCdiSpecPath, isWslDockerDesktopRuntime } = require(preflightPath);
         const host = assessHost();
-        if (host && host.cdiNvidiaGpuSpecMissing) {
+        if (
+          host &&
+          host.cdiNvidiaGpuSpecMissing &&
+          !isWslDockerDesktopRuntime(host)
+        ) {
           process.stdout.write(getNvidiaCdiSpecPath(host));
         }
       } catch {
@@ -1791,9 +1859,15 @@ repair_installer_nvidia_cdi_spec() {
 
   local sudo_cmd=()
   info "Generating missing NVIDIA CDI device spec at ${spec_path}."
+  info "NVIDIA GPU passthrough uses CDI specs so Docker/OpenShell can request nvidia.com/gpu devices."
+  info "Docker is configured for CDI, but the nvidia.com/gpu spec is missing."
+  info "Without it, OpenShell gateway startup would fail before the sandbox can use the GPU."
+  info "NemoClaw will first enable NVIDIA's CDI refresh service."
+  info "If that service does not generate the spec, NemoClaw will run nvidia-ctk cdi generate directly."
   if [[ "$(id -u)" -ne 0 ]]; then
     sudo_cmd=(sudo)
-    info "This host is missing NVIDIA CDI device specs. The next steps use sudo to repair them."
+    info "You may be asked for your password to authorize these host-level admin changes."
+    info "NemoClaw does not store your password."
     if ! sudo -v; then
       warn "Could not obtain sudo credentials for NVIDIA CDI device spec generation."
       return 0
@@ -2093,7 +2167,10 @@ ensure_docker() {
   # need to run usermod.
   if ! id -nG "$current_user" 2>/dev/null | tr ' ' '\n' | grep -qx docker; then
     info "Your user '$current_user' is not in the docker group."
-    info "The next step uses sudo to add you to the group so docker works without sudo. You may be prompted for your password."
+    info "NemoClaw needs Docker access. On personal Linux development machines, adding your user to the docker group is the standard way to run Docker without sudo."
+    info "Docker group members can control the daemon with root-level impact, so grant this access only to trusted local accounts; on shared or managed systems, use your organization's approved Docker access path."
+    info "Background: https://docs.docker.com/engine/security/#docker-daemon-attack-surface"
+    info "You may be prompted for your password."
     sudo usermod -aG docker "$current_user"
     needs_group_refresh=1
   fi
@@ -2106,6 +2183,30 @@ ensure_docker() {
   fi
 
   if [ "$needs_group_refresh" = "1" ]; then
+    # #4414: in non-interactive mode, self-reactivate group membership via
+    # sg(1) and re-exec the installer so a single curl|bash finishes the
+    # install on a clean Ubuntu VM. Linux only loads group membership at
+    # login, so without this the rest of the script can't talk to the
+    # docker socket. The env-var guard prevents an infinite loop if sg
+    # ran but the docker daemon is still unreachable for some other reason.
+    if installer_non_interactive \
+      && [ "${NEMOCLAW_DOCKER_GROUP_REACTIVATED:-}" != "1" ] \
+      && command -v sg >/dev/null 2>&1; then
+      local self="${BASH_SOURCE[0]:-$0}"
+      if [ -n "$self" ] && [ -f "$self" ]; then
+        info "Reactivating docker group membership via 'sg docker' to continue non-interactive install."
+        export NEMOCLAW_DOCKER_GROUP_REACTIVATED=1
+        local cmd
+        printf -v cmd 'exec bash %q' "$self"
+        if [ "${#_NEMOCLAW_INSTALLER_ARGS[@]}" -gt 0 ]; then
+          local arg
+          for arg in "${_NEMOCLAW_INSTALLER_ARGS[@]}"; do
+            printf -v cmd '%s %q' "$cmd" "$arg"
+          done
+        fi
+        exec sg docker -c "$cmd"
+      fi
+    fi
     printf "\n"
     info "Docker group membership is not active in this shell yet. To finish:"
     info "  1) Run: newgrp docker   (or log out and log back in)"
@@ -2160,6 +2261,56 @@ detect_express_platform() {
 # non-interactive + provider/model env vars when accepted. Skipped when
 # the user already passed --non-interactive, set NEMOCLAW_PROVIDER, or has
 # no TTY.
+describe_express_install() {
+  local platform="$1"
+  local inference_summary=""
+  local sandbox_summary=""
+  local tier="${NEMOCLAW_POLICY_TIER:-balanced}"
+  local policy_summary=""
+
+  case "$platform" in
+    "DGX Spark")
+      inference_summary="managed local Ollama with model qwen3.6:35b"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
+      ;;
+    "DGX Station")
+      inference_summary="managed local vLLM"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
+      ;;
+    "Windows WSL")
+      inference_summary="Windows-host Ollama through host.docker.internal"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
+      ;;
+    *)
+      inference_summary="managed local inference"
+      sandbox_summary="${NEMOCLAW_SANDBOX_NAME:-my-assistant}"
+      ;;
+  esac
+
+  case "$tier" in
+    balanced)
+      policy_summary="base sandbox policy plus npm, pypi, huggingface, brew, brave when supported"
+      policy_summary="${policy_summary}, and local-inference access when needed"
+      ;;
+    restricted)
+      policy_summary="base sandbox policy, plus local-inference access when needed"
+      ;;
+    open)
+      policy_summary="base sandbox policy plus broad third-party presets"
+      policy_summary="${policy_summary}, and local-inference access when needed"
+      ;;
+    *)
+      policy_summary="base sandbox policy plus tier presets supported by the active agent"
+      policy_summary="${policy_summary}, and local-inference access when needed"
+      ;;
+  esac
+
+  printf "  Express install will configure %s.\n" "$inference_summary"
+  printf "  Sandbox name: %s.\n" "$sandbox_summary"
+  printf "  It runs onboarding non-interactively, but still prompts for sudo when host setup needs it.\n"
+  printf "  Sandbox policy: suggested mode, tier '%s'. This uses the %s.\n" "$tier" "$policy_summary"
+}
+
 maybe_offer_express_install() {
   local platform
   platform="$(detect_express_platform)"
@@ -2184,14 +2335,16 @@ maybe_offer_express_install() {
   local reply=""
   if [ -t 0 ]; then
     info "Detected ${platform}."
-    printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
+    describe_express_install "$platform"
+    printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply; then
       info "Skipping express install (unable to read from TTY)."
       return 0
     fi
   elif { exec 3</dev/tty; } 2>/dev/null; then
     info "Detected ${platform}."
-    printf "  Run express install (auto-configures inference and applies suggested security policy)? [Y/n]: "
+    describe_express_install "$platform"
+    printf "  Run express install with these settings? [Y/n]: "
     if ! IFS= read -r reply <&3; then
       exec 3<&-
       info "Skipping express install (unable to read from TTY)."
@@ -2213,6 +2366,7 @@ maybe_offer_express_install() {
       export NEMOCLAW_POLICY_MODE=suggested
       case "$platform" in
         "DGX Spark")
+          export NEMOCLAW_SANDBOX_NAME="${NEMOCLAW_SANDBOX_NAME:-my-spark-assistant}"
           export NEMOCLAW_PROVIDER=install-ollama
           export NEMOCLAW_MODEL=qwen3.6:35b
           ;;
@@ -2233,6 +2387,11 @@ maybe_offer_express_install() {
 # Main
 # ---------------------------------------------------------------------------
 main() {
+  # Capture the original argv so ensure_docker can forward it across a
+  # self re-exec under sg(1) when the docker group needs activating in a
+  # non-interactive run (#4414).
+  _NEMOCLAW_INSTALLER_ARGS=("$@")
+
   # Parse flags
   NON_INTERACTIVE=""
   ACCEPT_THIRD_PARTY_SOFTWARE=""
@@ -2276,6 +2435,8 @@ main() {
   export NEMOCLAW_NON_INTERACTIVE="${NON_INTERACTIVE}"
   export NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE="${ACCEPT_THIRD_PARTY_SOFTWARE}"
 
+  print_banner
+
   # Fail-fast license-acceptance check (#2671). Headless curl|bash still exits
   # before phase 1 so it cannot leave a half-install behind. Piped installs from
   # a real terminal are different: stdin is the script pipe, but /dev/tty can
@@ -2284,15 +2445,14 @@ main() {
 
   ensure_docker
 
-  # Offer express install on supported platforms (DGX Spark / Station). Runs
-  # AFTER the third-party notice so the user has explicitly accepted the
+  # Offer express install on supported platforms (DGX Spark / Station / WSL).
+  # Runs AFTER the third-party notice so the user has explicitly accepted the
   # license before opting into the unattended path. Express only sets the
   # provider/model/policy + non-interactive vars; license acceptance is
   # already recorded by preflight above.
   maybe_offer_express_install
 
   _INSTALL_START=$SECONDS
-  print_banner
   bash "${SCRIPT_DIR}/setup-jetson.sh"
 
   step 1 "Node.js"
@@ -2358,5 +2518,26 @@ main() {
 }
 
 if [[ "${BASH_SOURCE[0]:-}" == "$0" ]] || { [[ -z "${BASH_SOURCE[0]:-}" ]] && { [[ "$0" == "bash" ]] || [[ "$0" == "-bash" ]]; }; }; then
+  # #4414: When invoked via `curl ... | bash`, BASH_SOURCE is empty and
+  # $0="bash". ensure_docker's sg(1) re-exec (#4419) needs a real script
+  # file to point bash at; without one it falls back to the legacy
+  # newgrp/re-curl path. Stage the installer by re-curling the canonical
+  # URL so the sg(1) re-exec has a file to execute. NEMOCLAW_INSTALLER_STAGED
+  # carries the staged path forward as both loop guard and cleanup key.
+  if [[ -z "${BASH_SOURCE[0]:-}" ]] && [[ -z "${NEMOCLAW_INSTALLER_STAGED:-}" ]]; then
+    _installer_url="${NEMOCLAW_INSTALLER_URL:-https://www.nvidia.com/nemoclaw.sh}"
+    if _staged="$(mktemp /tmp/nemoclaw-installer-XXXXXX 2>/dev/null)" \
+      && curl -fsSL "$_installer_url" -o "$_staged" 2>/dev/null \
+      && [[ -s "$_staged" ]] \
+      && head -1 "$_staged" | grep -qE '^#!.*(sh|bash)' \
+      && bash -n "$_staged" 2>/dev/null; then
+      chmod +x "$_staged"
+      export NEMOCLAW_INSTALLER_STAGED="$_staged"
+      exec bash "$_staged" "$@"
+    fi
+    # Staging failed (mktemp / curl / empty / bad shebang / syntax check) —
+    # fall through to direct main(). The legacy newgrp/re-curl path still applies.
+    rm -f "${_staged:-}" 2>/dev/null
+  fi
   main "$@"
 fi

@@ -19,6 +19,11 @@ import { rejectSymlinksOnPath } from "../state/config-io";
 const UNSAFE_HOME_PATHS = new Set(["/tmp", "/var/tmp", "/dev/shm", "/"]);
 
 type CredentialInput = string | null | undefined;
+export type CredentialPromptIntent =
+  | { kind: "credential"; value: string }
+  | { kind: "back" }
+  | { kind: "exit" }
+  | { kind: "help" };
 
 // Credential env keys NemoClaw knows how to round-trip. listCredentialKeys()
 // projects the in-process env through this set; entries not in the set are
@@ -126,6 +131,15 @@ export function normalizeCredentialValue(value: CredentialInput): string {
   return value.replace(/\r/g, "").trim();
 }
 
+export function getCredentialPromptIntent(value: CredentialInput): CredentialPromptIntent {
+  const normalized = normalizeCredentialValue(value);
+  const navigation = normalized.toLowerCase();
+  if (navigation === "back") return { kind: "back" };
+  if (navigation === "exit" || navigation === "quit") return { kind: "exit" };
+  if (navigation === "?" || navigation === "help") return { kind: "help" };
+  return { kind: "credential", value: normalized };
+}
+
 /**
  * Stage a credential for the current process. The OpenShell upsert that
  * follows in onboarding (`openshell provider create/update --credential KEY`)
@@ -134,7 +148,7 @@ export function normalizeCredentialValue(value: CredentialInput): string {
  *
  * NOTE for tests: this mutates `process.env` directly (not via vitest's
  * `vi.stubEnv`), so callers that pollute the env in a unit test must
- * clean up themselves — see `test/credentials.test.ts` for the
+ * clean up themselves — see the credentials tests for the
  * `clearTrackedEnv` pattern.
  */
 export function saveCredential(key: string, value: CredentialInput): void {
@@ -643,17 +657,24 @@ export function prompt(question: string, opts: { secret?: boolean } = {}): Promi
   });
 }
 
+export async function readCredentialPrompt(
+  question: string,
+  promptImpl: typeof prompt = prompt,
+): Promise<CredentialPromptIntent> {
+  return getCredentialPromptIntent(await promptImpl(question, { secret: true }));
+}
+
 /**
  * Ensure `NVIDIA_API_KEY` is staged for this process. Returns immediately
  * if it is already in env, otherwise prompts interactively (validating
  * the `nvapi-` prefix) and stages the result. Onboarding registers the
  * value with the OpenShell gateway later in the flow.
  */
-export async function ensureApiKey(): Promise<void> {
+export async function ensureApiKey(): Promise<CredentialPromptIntent> {
   let key = getCredential("NVIDIA_API_KEY");
   if (key) {
     process.env.NVIDIA_API_KEY = key;
-    return;
+    return { kind: "credential", value: key };
   }
 
   console.log("");
@@ -668,7 +689,13 @@ export async function ensureApiKey(): Promise<void> {
   console.log("");
 
   while (true) {
-    key = normalizeCredentialValue(await prompt("  NVIDIA API Key: ", { secret: true }));
+    const input = getCredentialPromptIntent(await prompt("  NVIDIA API Key: ", { secret: true }));
+    if (input.kind === "help") {
+      console.log("  Type back to choose a different provider, or exit to quit.");
+      continue;
+    }
+    if (input.kind !== "credential") return input;
+    key = input.value;
 
     if (!key) {
       console.error("  NVIDIA API Key is required.");
@@ -689,4 +716,5 @@ export async function ensureApiKey(): Promise<void> {
   console.log("  Key staged for the OpenShell gateway. It is held in process memory only;");
   console.log("  onboarding registers it with the gateway and nothing is written to disk.");
   console.log("");
+  return { kind: "credential", value: key };
 }

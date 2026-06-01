@@ -8,11 +8,12 @@ import { ROOT } from "../../runner";
 import {
   captureOpenshellCommand,
   captureOpenshellCommandAsync,
+  captureSandboxSshConfigCommand,
   getInstalledOpenshellVersion,
   runOpenshellCommand,
 } from "./client";
-import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 import { resolveOpenshell } from "./resolve";
+import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
 
 type CommandArgs = string[];
 
@@ -50,6 +51,17 @@ export function runOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
 
 export function captureOpenshell(args: CommandArgs, opts: RunnerOptions = {}) {
   return captureOpenshellCommand(getOpenshellBinary(), args, {
+    cwd: ROOT,
+    env: opts.env,
+    ignoreError: opts.ignoreError,
+    timeout: opts.timeout,
+    errorLine: console.error,
+    exit: (code: number) => process.exit(code),
+  });
+}
+
+export function captureSandboxSshConfig(sandboxName: string, opts: RunnerOptions = {}) {
+  return captureSandboxSshConfigCommand(getOpenshellBinary(), sandboxName, {
     cwd: ROOT,
     env: opts.env,
     ignoreError: opts.ignoreError,

@@ -10,6 +10,7 @@ import { describe, it, expect } from "vitest";
 const repoRoot = path.join(import.meta.dirname, "..");
 const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
 const credentialsPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "credentials", "store.js"));
+const onboardSourcePath = path.join(repoRoot, "src", "lib", "onboard.ts");
 
 type RunResult = {
   result: boolean;
@@ -236,5 +237,24 @@ describe("promptYesNoOrDefault (interactive)", () => {
     expect(out.exitCode).toBe(0);
     expect(out.result).toBe(false);
     expect(out.promptCalls).toEqual(["  Apply this configuration? [Y/n]: "]);
+  });
+});
+
+describe("under-provisioned runtime prompt defaults (#4236)", () => {
+  it("defaults the preflight warning prompt to abort for interactive runs", () => {
+    const source = fs.readFileSync(onboardSourcePath, "utf-8");
+    expect(source).toMatch(
+      /promptYesNoOrDefault\(\s*"  Continue with onboarding\?",\s*null,\s*false\s*\)/,
+    );
+    expect(source).not.toMatch(
+      /promptYesNoOrDefault\(\s*"  Continue with onboarding\?",\s*null,\s*true\s*\)/,
+    );
+  });
+
+  it("keeps non-interactive runs warning-only so automation can continue", () => {
+    const source = fs.readFileSync(onboardSourcePath, "utf-8");
+    expect(source).toContain(
+      "WARNING: Non-interactive mode is continuing despite under-provisioned runtime.",
+    );
   });
 });

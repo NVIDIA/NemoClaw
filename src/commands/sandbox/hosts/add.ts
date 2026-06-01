@@ -1,11 +1,10 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { addSandboxHostAlias } from "../../../lib/actions/sandbox/host-aliases";
 import { NemoClawCommand } from "../../../lib/cli/nemoclaw-oclif-command";
 
 import {
-  buildHostAliasArgs,
-  getHostsRuntimeBridge,
   hostAliasAddArgs,
   hostAliasMutationFlags,
   isHostAliasFailure,
@@ -24,10 +23,11 @@ export default class HostsAddCommand extends NemoClawCommand {
   public async run(): Promise<void> {
     const { args, flags } = await this.parse(HostsAddCommand);
     try {
-      getHostsRuntimeBridge().addSandboxHostAlias(
-        args.sandboxName,
-        buildHostAliasArgs([args.hostname, args.ip], flags),
-      );
+      addSandboxHostAlias(args.sandboxName, {
+        hostname: args.hostname,
+        ip: args.ip,
+        dryRun: flags["dry-run"] === true,
+      });
     } catch (error) {
       if (isHostAliasFailure(error)) {
         this.failWithLines(error.lines, error.exitCode);

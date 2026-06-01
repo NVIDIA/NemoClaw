@@ -3,7 +3,10 @@
 
 preset:
   name: brew
-  description: "Homebrew (Linuxbrew) package manager access"
+  # The brew binary is preinstalled in the sandbox base image (#3913), so this
+  # preset only needs to grant the network egress used by `brew install` to
+  # fetch formulae and bottles.
+  description: "Homebrew (Linuxbrew) package manager access (brew binary preinstalled in base image)"
 
 network_policies:
   brew:
@@ -36,6 +39,7 @@ network_policies:
     binaries:
       - { path: /usr/bin/curl }
       - { path: /usr/bin/git }
+      - { path: /usr/local/bin/brew }
       - { path: /home/linuxbrew/.linuxbrew/bin/brew }
       - { path: /home/linuxbrew/.linuxbrew/bin/* }
       - { path: /home/linuxbrew/.linuxbrew/Homebrew/bin/* }

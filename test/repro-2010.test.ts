@@ -60,13 +60,48 @@ function buildGatewayYaml(presetNames: string[]): string {
 }
 
 /**
- * Call getGatewayPresets() in a subprocess with a stubbed runCapture
- * that returns the given YAML (or throws if null).
+ * Build a fake gateway YAML that includes both built-in presets and the
+ * given custom preset entries — used to assert custom preset matching. (#3590)
  */
-function callGetGatewayPresets(gatewayYaml: string | null): string[] | null {
+function buildGatewayYamlWithCustom(
+  presetNames: string[],
+  customPresets: Array<{ name: string; content: string }>,
+): string {
+  const names = JSON.stringify(presetNames);
+  const custom = JSON.stringify(customPresets);
+  const { stdout } = runScript(`
+    const parts = ["version: 1", "", "network_policies:"];
+    for (const name of ${names}) {
+      const content = policies.loadPreset(name);
+      if (!content) continue;
+      const entries = policies.extractPresetEntries(content);
+      if (!entries) continue;
+      parts.push(entries);
+    }
+    for (const c of ${custom}) {
+      const entries = policies.extractPresetEntries(c.content);
+      if (!entries) continue;
+      parts.push(entries);
+    }
+    process.stdout.write("Version: 3\\nHash: abc123\\nUpdated: 2026-01-01\\n---\\n" + parts.join("\\n"));
+  `);
+  return stdout;
+}
+
+/**
+ * Call getGatewayPresets() in a subprocess with a stubbed runCapture
+ * that returns the given YAML (or throws if null). Optionally include
+ * registry-recorded custom presets so the matching loop sees them. (#3590)
+ */
+function callGetGatewayPresets(
+  gatewayYaml: string | null,
+  customPresets: Array<{ name: string; content: string }> = [],
+): string[] | null {
   const yamlArg = gatewayYaml !== null ? JSON.stringify(gatewayYaml) : "null";
+  const customArg = JSON.stringify(customPresets);
   const { stdout } = runScript(`
     const yaml = ${yamlArg};
+    const customPresets = ${customArg};
     // Replace the closed-over runCapture by re-requiring the module cache entry
     const mod = require.cache[${JSON.stringify(POLICIES_PATH)}];
     // Stub: replace getGatewayPresets with one that uses our fake runCapture
@@ -95,15 +130,21 @@ function callGetGatewayPresets(gatewayYaml: string | null): string[] | null {
     }
     const keys = new Set(Object.keys(gp));
     const matched = [];
+    const matchContent = (content) => {
+      const e = policies.extractPresetEntries(content); if (!e) return false;
+      let pp;
+      try { pp = YAML.parse("network_policies:\\n" + e); } catch { return false; }
+      const np = pp && pp.network_policies;
+      if (!np || typeof np !== "object") return false;
+      const pk = Object.keys(np);
+      return pk.length > 0 && pk.every(k => keys.has(k));
+    };
     for (const preset of policies.listPresets()) {
       const c = policies.loadPreset(preset.name); if (!c) continue;
-      const e = policies.extractPresetEntries(c); if (!e) continue;
-      let pp;
-      try { pp = YAML.parse("network_policies:\\n" + e); } catch { continue; }
-      const np = pp && pp.network_policies;
-      if (!np || typeof np !== "object") continue;
-      const pk = Object.keys(np);
-      if (pk.length > 0 && pk.every(k => keys.has(k))) matched.push(preset.name);
+      if (matchContent(c)) matched.push(preset.name);
+    }
+    for (const entry of customPresets) {
+      if (matchContent(entry.content)) matched.push(entry.name);
     }
     process.stdout.write(JSON.stringify(matched));
     runner.runCapture = origRunCapture;
@@ -141,6 +182,34 @@ describe("issue #2010 — policy state inconsistency", () => {
       const yaml = "Version: 1\n---\nversion: 1\nfilesystem_policy:\n  read_only: true";
       const result = callGetGatewayPresets(yaml);
       expect(result).toEqual([]);
+    });
+
+    it("includes a custom preset whose network_policies are enforced on the gateway (#3590)", () => {
+      const custom = [
+        {
+          name: "slack-files-upload",
+          content: `preset:
+  name: slack-files-upload
+  description: "Slack file upload URL access"
+
+network_policies:
+  slack-files-upload:
+    name: slack-files-upload
+    endpoints:
+      - host: files.slack.com
+        port: 443
+        protocol: rest
+        enforcement: enforce
+        tls: terminate
+        rules:
+          - allow: { method: POST, path: "/upload/**" }
+`,
+        },
+      ];
+      const yaml = buildGatewayYamlWithCustom(["telegram"], custom);
+      const result = callGetGatewayPresets(yaml, custom);
+      expect(result).toContain("telegram");
+      expect(result).toContain("slack-files-upload");
     });
   });
 

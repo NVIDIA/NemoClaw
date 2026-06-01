@@ -58,7 +58,7 @@ describe("global cli action facade", () => {
     await runSetupAction(["--fresh"]);
     await runSetupSparkAction(["--name", "alpha"]);
     await runDeployAction("gpu-alpha");
-    runBackupAllAction();
+    await runBackupAllAction();
     await runGarbageCollectImagesAction({ dryRun: true });
     showRootHelp();
     showVersion();

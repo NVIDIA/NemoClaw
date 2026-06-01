@@ -508,16 +508,35 @@ else
   fail "[LOCAL] Direct Ollama: empty response"
 fi
 
-# 5b: Inference through sandbox → provider route → Ollama. The Docker GPU
-# patch uses host networking so the sandbox can reconnect to OpenShell after
-# recreation; in that mode NemoClaw bakes a direct loopback Ollama URL into
-# OpenClaw to avoid OpenShell's inference.local TCP relay path.
+# 5b: Inference through sandbox → provider route → Ollama. When the Docker GPU
+# patch preserves the original sandbox network, inference still goes through
+# inference.local; use docker exec only to avoid depending on OpenShell exec
+# after the container is recreated. Host-network GPU patch runs are the only
+# mode where OpenClaw is configured with a direct loopback Ollama URL.
 SANDBOX_INFERENCE_URL="https://inference.local/v1/chat/completions"
 SANDBOX_INFERENCE_EXEC="openshell"
+SANDBOX_INFERENCE_DOCKER_EXEC_ENV=()
 if grep -Fq "OpenClaw local inference will use direct sandbox URL" "$INSTALL_LOG"; then
   OLLAMA_HOST_PORT="${NEMOCLAW_OLLAMA_PORT:-11434}"
   SANDBOX_INFERENCE_URL="http://127.0.0.1:${OLLAMA_HOST_PORT}/v1/chat/completions"
   SANDBOX_INFERENCE_EXEC="docker"
+elif grep -Fq "Docker-driver GPU patch active" "$INSTALL_LOG"; then
+  SANDBOX_INFERENCE_EXEC="docker"
+fi
+if [ "$SANDBOX_INFERENCE_EXEC" = "docker" ] && [[ "$SANDBOX_INFERENCE_URL" == https://inference.local/* ]]; then
+  INFERENCE_PROXY_HOST="${NEMOCLAW_PROXY_HOST:-10.200.0.1}"
+  INFERENCE_PROXY_PORT="${NEMOCLAW_PROXY_PORT:-3128}"
+  INFERENCE_PROXY_URL="http://${INFERENCE_PROXY_HOST}:${INFERENCE_PROXY_PORT}"
+  INFERENCE_NO_PROXY="localhost,127.0.0.1,::1,${INFERENCE_PROXY_HOST}"
+  SANDBOX_INFERENCE_DOCKER_EXEC_ENV=(
+    --env "HTTP_PROXY=${INFERENCE_PROXY_URL}"
+    --env "HTTPS_PROXY=${INFERENCE_PROXY_URL}"
+    --env "NO_PROXY=${INFERENCE_NO_PROXY}"
+    --env "http_proxy=${INFERENCE_PROXY_URL}"
+    --env "https_proxy=${INFERENCE_PROXY_URL}"
+    --env "no_proxy=${INFERENCE_NO_PROXY}"
+  )
+  info "[LOCAL] Docker GPU inference proof will use OpenShell proxy ${INFERENCE_PROXY_URL}"
 fi
 info "[LOCAL] Sandbox inference test → ${SANDBOX_INFERENCE_URL} → Ollama on GPU..."
 sandbox_probe_failure=""
@@ -525,35 +544,60 @@ sandbox_response=""
 TIMEOUT_CMD=""
 command -v timeout >/dev/null 2>&1 && TIMEOUT_CMD="timeout 120"
 sandbox_payload=$(python3 -c 'import json, sys; print(json.dumps({"model": sys.argv[1], "messages": [{"role": "user", "content": "Reply with exactly one word: PONG"}], "max_tokens": 200}))' "$CONFIGURED_MODEL")
-sandbox_curl_cmd=$(printf "curl -s --max-time 90 %q -H %q -d %q" \
+sandbox_curl_cmd=$(printf "curl -skS --max-time 90 %q -H %q -d %q" \
   "$SANDBOX_INFERENCE_URL" \
   "Content-Type: application/json" \
   "$sandbox_payload")
-if [ "$SANDBOX_INFERENCE_EXEC" = "docker" ]; then
-  sandbox_container_id=$(docker ps --quiet \
-    --filter "label=openshell.ai/managed-by=openshell" \
-    --filter "label=openshell.ai/sandbox-name=${SANDBOX_NAME}" \
-    | head -n 1)
-  if [ -n "$sandbox_container_id" ]; then
-    info "[LOCAL] Using docker exec for Docker GPU sandbox inference proof (${sandbox_container_id:0:12})..."
-    sandbox_response=$($TIMEOUT_CMD docker exec "$sandbox_container_id" sh -lc "$sandbox_curl_cmd" 2>&1) || true
+
+run_sandbox_inference_probe() {
+  sandbox_probe_failure=""
+  sandbox_response=""
+  if [ "$SANDBOX_INFERENCE_EXEC" = "docker" ]; then
+    sandbox_container_id=$(docker ps --quiet \
+      --filter "label=openshell.ai/managed-by=openshell" \
+      --filter "label=openshell.ai/sandbox-name=${SANDBOX_NAME}" \
+      | head -n 1)
+    if [ -n "$sandbox_container_id" ]; then
+      info "[LOCAL] Using docker exec for Docker GPU sandbox inference proof (${sandbox_container_id:0:12})..."
+      sandbox_response=$($TIMEOUT_CMD docker exec "${SANDBOX_INFERENCE_DOCKER_EXEC_ENV[@]}" "$sandbox_container_id" sh -lc "$sandbox_curl_cmd" 2>&1) || true
+    else
+      sandbox_probe_failure="OpenShell-managed Docker container not found for ${SANDBOX_NAME}"
+    fi
   else
-    sandbox_probe_failure="OpenShell-managed Docker container not found for ${SANDBOX_NAME}"
+    sandbox_response=$($TIMEOUT_CMD openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$sandbox_curl_cmd" 2>&1) || true
   fi
-else
-  sandbox_response=$($TIMEOUT_CMD openshell sandbox exec -n "$SANDBOX_NAME" -- sh -lc "$sandbox_curl_cmd" 2>&1) || true
-fi
+}
+
+pong_ok=false
+sandbox_content=""
+for sandbox_attempt in 1 2 3; do
+  run_sandbox_inference_probe
+  if [ -n "$sandbox_probe_failure" ]; then
+    break
+  fi
+  if [ -n "$sandbox_response" ]; then
+    sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
+    if echo "$sandbox_content" | grep -qi "PONG"; then
+      pong_ok=true
+      break
+    fi
+    info "Sandbox inference attempt ${sandbox_attempt}/3: got '${sandbox_content:0:80}'"
+    info "Sandbox inference raw response (first 400 chars): ${sandbox_response:0:400}"
+  else
+    info "Sandbox inference attempt ${sandbox_attempt}/3: empty response"
+  fi
+  [ "$sandbox_attempt" -lt 3 ] || break
+  sleep 5
+done
 
 if [ -n "$sandbox_probe_failure" ]; then
   fail "[LOCAL] Sandbox inference: ${sandbox_probe_failure}"
+elif $pong_ok; then
+  pass "[LOCAL] Sandbox inference: Ollama responded through sandbox"
+  info "Full path proven: sandbox → ${SANDBOX_INFERENCE_URL} → Ollama GPU (:11434)"
 elif [ -n "$sandbox_response" ]; then
-  sandbox_content=$(echo "$sandbox_response" | parse_chat_content 2>/dev/null) || true
-  if echo "$sandbox_content" | grep -qi "PONG"; then
-    pass "[LOCAL] Sandbox inference: Ollama responded through sandbox"
-    info "Full path proven: sandbox → ${SANDBOX_INFERENCE_URL} → Ollama GPU (:11434)"
-  else
-    fail "[LOCAL] Sandbox inference: expected PONG, got: ${sandbox_content:0:200}"
-  fi
+  fail "[LOCAL] Sandbox inference: expected PONG after 3 attempts, got: ${sandbox_content:0:200}"
+  info "Sandbox inference final raw response (first 800 chars): ${sandbox_response:0:800}"
 else
   fail "[LOCAL] Sandbox inference: no response from ${SANDBOX_INFERENCE_URL} inside sandbox"
 fi

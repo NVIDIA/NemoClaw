@@ -1,6 +1,7 @@
 ---
 name: "nemoclaw-user-get-started"
 description: "Installs NemoClaw, launches a sandbox, and runs the first agent prompt. Use when onboarding, installing, or launching a NemoClaw sandbox for the first time. Trigger keywords - nemoclaw quickstart, install nemoclaw openclaw sandbox, nemohermes quickstart, hermes agent nemoclaw, run hermes openshell sandbox, nemoclaw prerequisites, nemoclaw supported platforms, nemoclaw hardware software, nemoclaw windows wsl2 setup, nemoclaw install windows docker desktop."
+license: "Apache-2.0"
 ---
 
 <!-- SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved. -->
@@ -12,7 +13,13 @@ Follow these steps to get started with NemoClaw and your first sandboxed OpenCla
 
 **Note:**
 
-Make sure you have completed reviewing the Prerequisites (use the `nemoclaw-user-get-started` skill) before following this guide.
+Make sure you have completed reviewing the [Prerequisites](references/prerequisites.md) before following this guide.
+
+**Use Agent Skills:**
+
+NemoClaw ships user skills for AI coding assistants.
+Load them when you want your assistant to walk through installation, inference choices, policy approvals, monitoring, or troubleshooting with NemoClaw-specific guidance.
+Refer to Agent Skills (use the `nemoclaw-user-agent-skills` skill).
 
 ## Install NemoClaw and Onboard OpenClaw Agent
 
@@ -27,12 +34,28 @@ NemoClaw creates a fresh OpenClaw instance inside the sandbox during the onboard
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-The piped installer prompts through your terminal. In headless scripts or CI,
-pass explicit acceptance to the `bash` side of the pipe:
+The third-party software notice runs before Node.js or the NemoClaw CLI is installed.
+The piped installer can prompt through your terminal when a TTY is available.
+In non-TTY contexts, such as CI, an SSH command with piped stdin, or a shell script, pass explicit acceptance to the `bash` side of the pipe:
 
-```console
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
 ```
+
+or pass the installer flag through `bash -s`:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash -s -- --yes-i-accept-third-party-software
+```
+
+To run both installation and onboarding without prompts, also set non-interactive mode and the provider variables your chosen inference path requires:
+
+```bash
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | NEMOCLAW_NON_INTERACTIVE=1 NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 bash
+```
+
+Do not place `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1` before `curl`.
+In `NEMOCLAW_ACCEPT_THIRD_PARTY_SOFTWARE=1 curl ... | bash`, the variable applies only to `curl`, so the installer process cannot see the acceptance.
 
 If you use nvm or fnm to manage Node.js, the installer might not update your current shell's PATH.
 If `nemoclaw` is not found after install, run `source ~/.bashrc` (or `source ~/.zshrc` for zsh) or open a new terminal.
@@ -49,7 +72,8 @@ $ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 On DGX Spark, DGX Station, and Windows WSL, an interactive installer offers express install after you accept the third-party software notice.
-Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, applies the suggested security policy, and selects the managed local inference path for that platform.
+Express install switches onboarding to non-interactive mode, allows `sudo` password prompts for required host changes, and selects the managed local inference path for that platform.
+Unless `NEMOCLAW_POLICY_TIER` is set, it applies sandbox policy in `suggested` mode with the `balanced` tier by default, using the base sandbox policy plus supported package, model, web-search, and local-inference presets.
 On WSL, express install selects the Windows-host Ollama setup path.
 Set `NEMOCLAW_NO_EXPRESS=1` to skip the express prompt, or set `NEMOCLAW_PROVIDER` before launching the installer when you want to choose a provider yourself.
 
@@ -65,7 +89,9 @@ If you export `NEMOCLAW_DISABLE_DEVICE_AUTH` after onboarding finishes, it has n
 
 ### Respond to the Onboard Wizard
 
-After the installer launches `nemoclaw onboard`, the wizard runs preflight checks, starts or reuses the OpenShell gateway, and asks for an inference provider, sandbox name, optional web search, optional messaging channels, and network policy presets.
+After the installer launches `nemoclaw onboard`, the wizard runs preflight checks, starts or reuses the OpenShell gateway, asks for an inference provider and model, collects any required credential, then asks for the sandbox name.
+It prints a review summary before it registers the provider with OpenShell.
+After you confirm, NemoClaw registers inference, prompts for optional web search and messaging channels, builds and starts the sandbox, sets up OpenClaw, then applies the selected network policy tier and presets.
 At any prompt, press Enter to accept the default shown in `[brackets]`, type `back` to return to the previous prompt, or type `exit` to quit.
 If existing sandbox sessions are running, the installer warns before onboarding because the setup can rebuild or upgrade sandboxes after the new sandbox launches.
 
@@ -219,11 +245,11 @@ $ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-inte
 The router listens on the host at port `4000`.
 The sandbox still calls `https://inference.local/v1`, so do not point in-sandbox tools at the host router port directly.
 
-**Experimental: Local NIM and Local vLLM:**
+**Local NIM and Local vLLM:**
 
 - **Local NVIDIA NIM** appears when `NEMOCLAW_EXPERIMENTAL=1` is set and the host has a NIM-capable GPU. NemoClaw pulls and manages a NIM container.
 - **Local vLLM (already running)** appears whenever NemoClaw detects a vLLM server on `localhost:8000`. No flag is required for the menu entry. NemoClaw auto-detects the loaded model.
-- **Local vLLM (managed install/start)** requires `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. NemoClaw pulls and starts a vLLM container on supported DGX Spark, DGX Station, and Linux NVIDIA GPU hosts.
+- **Local vLLM (managed install/start)** appears by default on DGX Spark and DGX Station. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. NemoClaw pulls and starts a vLLM container on supported hosts.
 
 For setup, refer to Use a Local Inference Server (use the `nemoclaw-user-configure-inference` skill).
 
@@ -238,8 +264,9 @@ For example, if you picked an OpenAI-compatible endpoint, the summary looks like
   ──────────────────────────────────────────────────
   Provider:      compatible-endpoint
   Model:         openai/openai/gpt-5.5
-  API key:       COMPATIBLE_API_KEY (staged for OpenShell gateway registration)
+  API key:       configured for OpenShell gateway registration
   Web search:    disabled
+  Managed tools: none
   Messaging:     none
   Sandbox name:  my-gpt-claw
   Note:          Sandbox build typically takes 5–15 minutes on this host.
@@ -258,14 +285,18 @@ After you confirm the summary, NemoClaw registers the selected provider with the
 The wizard then asks whether to enable Brave Web Search.
 If you enable it, enter a Brave Search API key when prompted.
 
-The wizard also offers messaging channels such as Telegram, Discord, Slack, and WhatsApp.
+The wizard also offers messaging channels such as Telegram, Discord, Slack, WeChat, and WhatsApp.
 Press a channel number to toggle it, then press Enter to continue.
+If you leave all channels unselected, pressing Enter skips messaging setup.
 If you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
 For example, Slack bot tokens must start with `xoxb-`.
+WeChat and WhatsApp are experimental.
+Review Messaging Channels (use the `nemoclaw-user-manage-sandboxes` skill) before enabling them.
 
 ### Choose Network Policy Presets
 
 After the sandbox image builds and OpenClaw starts inside the sandbox, NemoClaw asks which network policy tier to apply.
+Web search and messaging selections happen before this point so the sandbox image and the policy suggestions stay aligned.
 The default **Balanced** tier includes common development presets such as npm, PyPI, Hugging Face, Homebrew, and Brave Search when the selected agent supports web search.
 Use the arrow keys or `j` and `k` to move, Space to select, and Enter to confirm.
 
@@ -280,17 +311,31 @@ The example below shows the result if you picked an OpenAI-compatible endpoint d
 
 ```text
 ──────────────────────────────────────────────────
-Sandbox      my-gpt-claw (Landlock + seccomp + netns)
-Model        openai/openai/gpt-5.5 (Other OpenAI-compatible endpoint)
-──────────────────────────────────────────────────
-Run:         nemoclaw my-gpt-claw connect
-Status:      nemoclaw my-gpt-claw status
-Logs:        nemoclaw my-gpt-claw logs --follow
-──────────────────────────────────────────────────
+NemoClaw is ready
 
-To change settings later:
-  Model:       nemoclaw inference get
-               nemoclaw inference set --model <model> --provider <provider> --sandbox my-gpt-claw
+Sandbox:  my-gpt-claw
+Model:    openai/openai/gpt-5.5 (Other OpenAI-compatible endpoint)
+
+Start chatting
+
+  Browser:
+    http://127.0.0.1:18789/
+
+  Terminal:
+    nemoclaw my-gpt-claw connect
+    then run: openclaw tui
+
+Authenticated dashboard URL, if needed:
+  nemoclaw my-gpt-claw dashboard-url --quiet
+
+Manage later
+
+  Status:      nemoclaw my-gpt-claw status
+  Logs:        nemoclaw my-gpt-claw logs --follow
+  Model:       nemoclaw inference set --model <model> --provider <provider> --sandbox my-gpt-claw
+  Policies:    nemoclaw my-gpt-claw policy-add
+  Credentials: nemoclaw credentials reset <KEY> && nemoclaw onboard
+──────────────────────────────────────────────────
 
 [INFO]  === Installation complete ===
 ```
@@ -307,21 +352,16 @@ The onboard wizard starts a background port forward to the sandbox dashboard, th
 The default host port is `18789`.
 If that port is already taken, NemoClaw uses the next free dashboard port, such as `18790`, and prints that port in the final URL.
 If the chosen port becomes occupied after the sandbox build starts, onboarding rolls back the newly-created sandbox and asks you to retry instead of printing an unreachable dashboard URL.
-The gateway token is redacted from displayed output; retrieve it explicitly when the browser asks for authentication.
+The install transcript does not print the gateway token.
+If the browser requires authentication, use the `dashboard-url --quiet` command to print a complete URL explicitly.
 
 ```text
-──────────────────────────────────────────────────
-OpenClaw UI (auth token redacted from displayed URLs)
-Port 18790 must be forwarded before opening these URLs.
-Dashboard: http://127.0.0.1:18790/
-Token:       nemoclaw my-gpt-claw gateway-token --quiet
-             append  #token=<token> locally if the browser asks for auth.
-──────────────────────────────────────────────────
+nemoclaw my-gpt-claw dashboard-url --quiet
 ```
 
 Open the dashboard URL in your browser.
-If the browser asks for authentication, run the printed `gateway-token --quiet` command and append `#token=<token>` locally.
-Treat the token like a password.
+If the browser asks for authentication, run `nemoclaw my-gpt-claw dashboard-url --quiet` and open the returned URL.
+Treat the authenticated URL like a password.
 
 ### Chat with the Agent from the Terminal
 
@@ -329,12 +369,8 @@ Connect to the sandbox and use the OpenClaw CLI.
 
 ```bash
 nemoclaw my-assistant connect
-```
-
-In the sandbox shell, send a single message and print the response.
-
-```bash
-openclaw agent --agent main --local -m "hello" --session-id test
+# inside the sandbox:
+openclaw tui
 ```
 
 ## References
@@ -346,3 +382,4 @@ openclaw agent --agent main --local -m "hello" --session-id test
 ## Related Skills
 
 - `nemoclaw-user-overview` — NemoClaw Overview (use the `nemoclaw-user-overview` skill) to learn what NemoClaw is and its capabilities
+- `nemoclaw-user-agent-skills` — Agent Skills (use the `nemoclaw-user-agent-skills` skill) to load NemoClaw guidance into an AI coding assistant
