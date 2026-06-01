@@ -1164,6 +1164,34 @@ install_telegram_diagnostics() {
   printf '[channels] Telegram diagnostics installed (NODE_OPTIONS updated)\n' >&2
 }
 
+# ── WhatsApp compact-QR preload (scan-friendly in-sandbox pairing) ───
+# The upstream @openclaw/whatsapp QR renders at full size and overflows DGX
+# Spark terminals (NemoClaw#4522). This preload forces qrcode-terminal into
+# the same `{ small: true }` half-block mode the host-side WeChat path uses.
+# Unlike the diagnostics/guard preloads it is NOT added to the global
+# NODE_OPTIONS — the gateway never renders the pairing QR. The openclaw()
+# guard injects it for the single `channels login --channel whatsapp`
+# invocation, so we only need the file present in the sandbox.
+_WHATSAPP_QR_COMPACT_SCRIPT="/tmp/nemoclaw-whatsapp-qr-compact.js"
+_WHATSAPP_QR_COMPACT_SOURCE="/usr/local/lib/nemoclaw/preloads/whatsapp-qr-compact.js"
+
+install_whatsapp_qr_compact() {
+  local config_file="/sandbox/.openclaw/openclaw.json"
+
+  # Only install when WhatsApp is configured in the baked OpenClaw config.
+  if ! grep -q '"whatsapp"' "$config_file" 2>/dev/null; then
+    return 0
+  fi
+
+  # Source file is absent on older base images; skip rather than fail the boot.
+  if [ ! -f "$_WHATSAPP_QR_COMPACT_SOURCE" ]; then
+    return 0
+  fi
+
+  printf '[channels] Installing WhatsApp compact-QR renderer (scan-friendly pairing)\n' >&2
+  emit_sandbox_sourced_file "$_WHATSAPP_QR_COMPACT_SCRIPT" <"$_WHATSAPP_QR_COMPACT_SOURCE"
+}
+
 _read_gateway_token() {
   node - <<'NODETOKEN'
 const fs = require("fs");
@@ -1955,6 +1983,58 @@ openclaw() {
             echo "'channels add wechat' flow — no in-sandbox login step." >&2
             return 1
           fi
+          # NemoClaw-supported WhatsApp pairing (NemoClaw#4522): validate the
+          # gateway environment up front so a gateway close (e.g. the reported
+          # "1008 abnormal closure") is diagnosed separately from QR rendering,
+          # and force compact QR output so the code fits on the screen.
+          if [ "$_login_help" != "1" ] && [ "$_login_channel" = "whatsapp" ]; then
+            if [ -z "${OPENCLAW_GATEWAY_URL:-}" ]; then
+              echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL is not set in this shell." >&2
+              echo "Pairing talks to the OpenClaw gateway; without the gateway URL the login will" >&2
+              echo "close immediately (this is a gateway/env problem, not a QR problem)." >&2
+              echo "" >&2
+              echo "Reconnect with 'openshell sandbox connect <sandbox>' and retry. If it persists," >&2
+              echo "exit the sandbox and rebuild with 'nemoclaw <sandbox> rebuild'." >&2
+              return 1
+            fi
+            # The OpenClaw gateway is a WebSocket endpoint (set to
+            # ws://127.0.0.1:<port> at boot). Reject a malformed scheme up front
+            # so a typo'd/clobbered URL is reported as a gateway/env problem
+            # rather than failing inside the login as an ambiguous close.
+            case "${OPENCLAW_GATEWAY_URL}" in
+              ws://*|wss://*) ;;
+              *)
+                echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL='${OPENCLAW_GATEWAY_URL}' is not a ws:// gateway URL." >&2
+                echo "The OpenClaw gateway is a WebSocket endpoint (e.g. ws://127.0.0.1:<port>); a malformed value" >&2
+                echo "would fail the login in a way that looks like a QR/pairing problem (this is a gateway/env problem)." >&2
+                echo "" >&2
+                echo "Reconnect with 'openshell sandbox connect <sandbox>' and retry. If it persists," >&2
+                echo "exit the sandbox and rebuild with 'nemoclaw <sandbox> rebuild'." >&2
+                return 1
+                ;;
+            esac
+            echo "[whatsapp] Pairing via gateway ${OPENCLAW_GATEWAY_URL}." >&2
+            echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
+            # Literal path: this guard body is emitted inside a single-quoted
+            # heredoc, so shell variables are intentionally not expanded here.
+            # Keep in sync with _WHATSAPP_QR_COMPACT_SCRIPT above.
+            _whatsapp_qr_compact="/tmp/nemoclaw-whatsapp-qr-compact.js"
+            if [ -f "$_whatsapp_qr_compact" ]; then
+              NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require $_whatsapp_qr_compact" command openclaw "$@"
+            else
+              command openclaw "$@"
+            fi
+            _whatsapp_login_exit=$?
+            if [ "$_whatsapp_login_exit" -ne 0 ]; then
+              echo "" >&2
+              echo "[whatsapp] Pairing exited with code ${_whatsapp_login_exit} before it completed." >&2
+              echo "[whatsapp] A gateway close (e.g. '1008 abnormal closure') is a gateway/session" >&2
+              echo "issue, not a QR-size issue — the QR above rendered independently of the gateway." >&2
+              echo "[whatsapp] Re-run 'openclaw channels login --channel whatsapp' to retry. If it keeps" >&2
+              echo "closing, exit the sandbox and run 'nemoclaw <sandbox> channels status --channel whatsapp'." >&2
+            fi
+            return $_whatsapp_login_exit
+          fi
           ;;
         *)
           echo "Error: 'openclaw channels $2' cannot modify channels inside the sandbox." >&2
@@ -2572,6 +2652,7 @@ if [ "$(id -u)" -ne 0 ]; then
   write_openclaw_config_baseline
   install_telegram_diagnostics
   install_slack_channel_guard
+  install_whatsapp_qr_compact
   verify_no_slack_secrets_on_disk
 
   # Ensure writable state directories exist and are owned by the current user.
@@ -2614,7 +2695,7 @@ if [ "$(id -u)" -ne 0 ]; then
   # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
   # (both are trust-boundary files; tampering would let the sandbox user
   # inject code into any Node process via NODE_OPTIONS).
-  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT"
+  validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_WHATSAPP_QR_COMPACT_SCRIPT"
 
   # Start gateway in background, auto-pair, then wait
   nohup "$OPENCLAW" gateway run --port "${_DASHBOARD_PORT}" >/tmp/gateway.log 2>&1 &
@@ -2708,6 +2789,7 @@ lock_rc_files "$_SANDBOX_HOME"
 # Install channel-specific preloads before starting OpenClaw.
 install_telegram_diagnostics
 install_slack_channel_guard
+install_whatsapp_qr_compact
 verify_no_slack_secrets_on_disk
 
 # Write auth profile as sandbox user and recursively re-tighten any
@@ -2822,7 +2904,7 @@ seed_default_workspace_templates_as_sandbox
 # Pass the HTTP proxy-fix path so it is validated alongside proxy-env.sh
 # (both are trust-boundary files; tampering would let the sandbox user
 # inject code into any Node process via NODE_OPTIONS).
-validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT"
+validate_tmp_permissions "$_SANDBOX_SAFETY_NET" "$_PROXY_FIX_SCRIPT" "$_NEMOTRON_FIX_SCRIPT" "$_WS_FIX_SCRIPT" "$_SECCOMP_GUARD_SCRIPT" "$_CIAO_GUARD_SCRIPT" "$_TELEGRAM_DIAGNOSTICS_SCRIPT" "$_SLACK_GUARD_SCRIPT" "$_WHATSAPP_QR_COMPACT_SCRIPT"
 
 # Start the gateway as the 'gateway' user.
 # SECURITY: The sandbox user cannot kill this process because it runs

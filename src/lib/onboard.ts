@@ -339,6 +339,7 @@ const {
   exitOnboardFromPrompt,
   getNavigationChoice,
   isAffirmativeAnswer,
+  selectFromNumberedMenuOrExit,
   step,
   ...onboardPromptHelpers
 }: typeof import("./onboard/prompt-helpers") = require("./onboard/prompt-helpers");
@@ -3747,17 +3748,17 @@ async function createSandbox(
   });
 
   if (effectiveSandboxGpuConfig.sandboxGpuEnabled) {
-    try {
-      verifyDirectSandboxGpu(sandboxName);
-    } catch (error) {
-      dockerGpuPatch.printDockerGpuProofFailure(
-        sandboxName,
-        error,
-        dockerGpuCreatePatch.selectedMode(),
-        { runCaptureOpenshell },
-      );
-      throw error;
-    }
+    // Runs the GPU proof, then (when the Docker GPU patch recreated the
+    // container) gates on host-network local inference reachability (#4509).
+    dockerGpuLocalInference.verifyGpuSandboxAfterReady(effectiveSandboxGpuConfig, provider, {
+      sandboxName,
+      dockerDriverGateway: isLinuxDockerDriverGatewayEnabled(),
+      useDockerGpuPatch,
+      verifyDirectSandboxGpu,
+      selectedMode: dockerGpuCreatePatch.selectedMode,
+      runCaptureOpenshell,
+      log: console.log,
+    });
   }
 
   // Release any stale forward on the dashboard port before claiming it for the new sandbox.
@@ -4264,8 +4265,7 @@ async function setupNim(
         const defaultIdx =
           (envProviderIdx >= 0 ? envProviderIdx : options.findIndex((o) => o.key === "build")) + 1;
         const choice = await prompt(`  Choose [${defaultIdx}]: `);
-        const idx = parseInt(choice || String(defaultIdx), 10) - 1;
-        selected = options[idx] || options[defaultIdx - 1];
+        selected = selectFromNumberedMenuOrExit(choice, defaultIdx, options);
       }
 
       if (!selected) {
@@ -4741,8 +4741,7 @@ async function setupNim(
             console.log("");
 
             const modelChoice = await prompt(`  Choose model [1]: `);
-            const midx = parseInt(modelChoice || "1", 10) - 1;
-            sel = models[midx] || models[0];
+            sel = selectFromNumberedMenuOrExit(modelChoice, 1, models);
           }
           model = sel.name;
 
@@ -5818,9 +5817,7 @@ async function selectPolicyTier(): Promise<string> {
     const answer = await prompt(
       `  Select tier [1-${allTiers.length}] (default: ${allTiers.indexOf(defaultTier) + 1} ${defaultTier.name}): `,
     );
-    const idx =
-      answer.trim() === "" ? allTiers.indexOf(defaultTier) : parseInt(answer.trim(), 10) - 1;
-    const chosen = allTiers[idx] || defaultTier;
+    const chosen = selectFromNumberedMenuOrExit(answer, allTiers.indexOf(defaultTier) + 1, allTiers);
     console.log(`  Tier: ${chosen.label}`);
     return chosen.name;
   }
