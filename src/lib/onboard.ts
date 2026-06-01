@@ -6326,7 +6326,6 @@ const onboardRuntimeBoundary = new OnboardRuntimeBoundary({
   maybeForceE2eStepFailure,
 });
 
-const recordOnboardStarted = onboardRuntimeBoundary.recordOnboardStarted.bind(onboardRuntimeBoundary);
 const startRecordedStep = onboardRuntimeBoundary.startRecordedStep.bind(onboardRuntimeBoundary);
 const recordStepComplete = onboardRuntimeBoundary.recordStepComplete.bind(onboardRuntimeBoundary);
 const recordStepSkipped = onboardRuntimeBoundary.recordStepSkipped.bind(onboardRuntimeBoundary);
@@ -6619,9 +6618,7 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         }),
       );
     }
-
-    await recordOnboardStarted(resume);
-
+    await onboardRuntimeBoundary.recordOnboardStarted(resume);
     // Backstop for the resume path: a session may exist (so the early guard
     // skipped because resume === true) but never have recorded a sandboxName
     // — sandbox creation could have failed before that step ran. Without a
