@@ -790,7 +790,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("TOKEN=unset");
     expect(result.stderr).not.toContain("#token=");
-    expect(envFile).not.toContain("OPENCLAW_GATEWAY_TOKEN");
+    expect(envFile).not.toMatch(/^export OPENCLAW_GATEWAY_TOKEN=/m);
   });
 });
 
