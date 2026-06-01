@@ -215,8 +215,7 @@ describe("OnboardRuntime", () => {
     await runtime.emitResumeConflict({
       field: "fromDockerfile",
       recorded: "/workspace/Dockerfile",
-      requested: "/tmp/Dockerfile",
-      metadata: { endpoint: "https://alice:secret@example.com/v1?token=super-secret" },
+      requested: "https://alice:secret@example.com/v1?token=super-secret",
     });
 
     expect(getSession().machine.state).toBe("provider_selection");
