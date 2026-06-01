@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -502,6 +502,19 @@ describe("advisory file locking", () => {
     expect(defaultSandbox).toBe(null);
   });
 
+});
+
+describe("gatewayName persistence and resolution", () => {
+  // Silence accessor diagnostics globally for this block; specific tests that
+  // assert on log content install their own targeted spies.
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+  afterEach(() => {
+    warnSpy.mockRestore();
+  });
+
   it("persists gatewayName when supplied at registration", () => {
     registry.registerSandbox({ name: "alpha", gatewayName: "nemoclaw" });
     const sb = registry.getSandbox("alpha");
@@ -522,18 +535,13 @@ describe("advisory file locking", () => {
   });
 
   it("getSandboxGatewayName returns null for unknown sandbox names so callers cannot transitively act on the singleton", () => {
-    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
-    try {
-      expect(registry.getSandboxGatewayName("does-not-exist")).toBeNull();
-      expect(logSpy).toHaveBeenCalled();
-      expect(
-        logSpy.mock.calls.some(([msg]: unknown[]) =>
-          typeof msg === "string" && msg.includes("unknown sandbox 'does-not-exist'"),
-        ),
-      ).toBe(true);
-    } finally {
-      logSpy.mockRestore();
-    }
+    expect(registry.getSandboxGatewayName("does-not-exist")).toBeNull();
+    expect(warnSpy).toHaveBeenCalled();
+    expect(
+      warnSpy.mock.calls.some(([msg]: unknown[]) =>
+        typeof msg === "string" && msg.includes("unknown sandbox 'does-not-exist'"),
+      ),
+    ).toBe(true);
   });
 
   it("getSandboxGatewayName returns null with a warning when the persisted value is invalid", () => {
@@ -546,18 +554,13 @@ describe("advisory file locking", () => {
       defaultSandbox: "alpha",
     });
     fs.writeFileSync(regFile, corrupt);
-    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      expect(registry.getSandboxGatewayName("alpha")).toBeNull();
-      expect(warnSpy).toHaveBeenCalled();
-      expect(
-        warnSpy.mock.calls.some(([msg]: unknown[]) =>
-          typeof msg === "string" && msg.includes("invalid recorded gatewayName"),
-        ),
-      ).toBe(true);
-    } finally {
-      warnSpy.mockRestore();
-    }
+    expect(registry.getSandboxGatewayName("alpha")).toBeNull();
+    expect(warnSpy).toHaveBeenCalled();
+    expect(
+      warnSpy.mock.calls.some(([msg]: unknown[]) =>
+        typeof msg === "string" && msg.includes("invalid recorded gatewayName"),
+      ),
+    ).toBe(true);
   });
 
   it("rejects malformed gatewayName at the registry boundary", () => {
@@ -589,7 +592,6 @@ describe("advisory file locking", () => {
     expect(() => registry.updateSandbox("alpha", { gatewayName: "" })).toThrow(
       /gatewayName/,
     );
-    // Sanity check: a valid update still succeeds.
     expect(registry.updateSandbox("alpha", { gatewayName: "nemoclaw-8081" })).toBe(true);
     expect(registry.getSandboxGatewayName("alpha")).toBe("nemoclaw-8081");
   });

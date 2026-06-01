@@ -217,19 +217,18 @@ export function getSandbox(name: string): SandboxEntry | null {
  * with a stale or mistyped name) and for entries whose persisted value fails
  * validation (defense-in-depth against corrupt on-disk state). For sandboxes
  * that exist but predate the `gatewayName` field, falls back to
- * {@link DEFAULT_GATEWAY_NAME} as a legacy backfill. Unknown sandboxes and
- * legacy entries log at info level so unexpected fallbacks remain
- * observable; corrupt values log at warning level since they indicate
- * tampering or schema drift.
+ * {@link DEFAULT_GATEWAY_NAME} as a legacy backfill. All diagnostics are
+ * written to `stderr` via `console.warn` so JSON / non-interactive callers
+ * keep stdout clean.
  */
 export function getSandboxGatewayName(name: string): string | null {
   const entry = getSandbox(name);
   if (!entry) {
-    console.log(`  Gateway-name lookup for unknown sandbox '${name}' returned null.`);
+    console.warn(`  Gateway-name lookup for unknown sandbox '${name}' returned null.`);
     return null;
   }
   if (entry.gatewayName === undefined) {
-    console.log(
+    console.warn(
       `  Sandbox '${name}' has no recorded gatewayName; using '${DEFAULT_GATEWAY_NAME}' from the singleton default.`,
     );
     return DEFAULT_GATEWAY_NAME;
