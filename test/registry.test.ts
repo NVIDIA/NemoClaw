@@ -524,4 +524,29 @@ describe("advisory file locking", () => {
   it("getSandboxGatewayName returns null for unknown sandbox names so callers surface the lookup failure", () => {
     expect(registry.getSandboxGatewayName("does-not-exist")).toBeNull();
   });
+
+  it("rejects malformed gatewayName at the registry boundary", () => {
+    // gatewayName is fed into openshell CLI args and Docker container names.
+    // Reject anything the existing name policy refuses so future lifecycle
+    // consumers can trust the stored value.
+    expect(() =>
+      registry.registerSandbox({ name: "alpha", gatewayName: "../escape" }),
+    ).toThrow(/gatewayName/);
+    expect(() =>
+      registry.registerSandbox({ name: "alpha", gatewayName: "has space" }),
+    ).toThrow(/gatewayName/);
+    expect(() =>
+      registry.registerSandbox({ name: "alpha", gatewayName: ";rm" }),
+    ).toThrow(/gatewayName/);
+  });
+
+  it("rejects malformed gatewayName in updateSandbox too", () => {
+    registry.registerSandbox({ name: "alpha", gatewayName: "nemoclaw" });
+    expect(() => registry.updateSandbox("alpha", { gatewayName: "../escape" })).toThrow(
+      /gatewayName/,
+    );
+    // Sanity check: a valid update still succeeds.
+    expect(registry.updateSandbox("alpha", { gatewayName: "nemoclaw-8081" })).toBe(true);
+    expect(registry.getSandboxGatewayName("alpha")).toBe("nemoclaw-8081");
+  });
 });

@@ -19,6 +19,7 @@ import {
   writeSandboxConfig,
 } from "../sandbox/config";
 import { appendAuditEntry } from "../shields/audit";
+import { DEFAULT_GATEWAY_NAME } from "../state/gateway-name";
 import * as onboardSession from "../state/onboard-session";
 import * as registry from "../state/registry";
 import type { SandboxEntry } from "../state/registry";
@@ -300,7 +301,7 @@ function openshellInferenceSetArgs(options: {
     "inference",
     "set",
     "-g",
-    "nemoclaw",
+    DEFAULT_GATEWAY_NAME,
     "--provider",
     options.provider,
     "--model",

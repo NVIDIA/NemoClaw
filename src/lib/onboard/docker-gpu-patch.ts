@@ -14,6 +14,7 @@ import {
   dockerRunDetached,
   dockerStop,
 } from "../adapters/docker";
+import { DEFAULT_GATEWAY_NAME } from "../state/gateway-name";
 import { envInt } from "./env";
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
@@ -1253,7 +1254,7 @@ export function collectDockerGpuPatchDiagnostics(
     const captures: Array<[string, string[]]> = [
       ["openshell-sandbox-get.txt", ["sandbox", "get", sandboxName]],
       ["openshell-sandbox-list.txt", ["sandbox", "list"]],
-      ["openshell-logs.txt", ["doctor", "logs", "--name", "nemoclaw"]],
+      ["openshell-logs.txt", ["doctor", "logs", "--name", DEFAULT_GATEWAY_NAME]],
     ];
     for (const [fileName, args] of captures) {
       try {

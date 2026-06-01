@@ -14,7 +14,10 @@ export interface SandboxRegistryMetadataDeps {
 }
 
 export interface SandboxRegistryMetadataHelpers {
-  getSandboxRuntimeRegistryFields(config: SandboxGpuConfig): Pick<
+  getSandboxRuntimeRegistryFields(
+    config: SandboxGpuConfig,
+    gatewayName?: string,
+  ): Pick<
     SandboxEntry,
     | "gpuEnabled"
     | "hostGpuDetected"
@@ -23,6 +26,7 @@ export interface SandboxRegistryMetadataHelpers {
     | "sandboxGpuDevice"
     | "openshellDriver"
     | "openshellVersion"
+    | "gatewayName"
   >;
   hasSandboxGpuDrift(sandboxName: string, config: SandboxGpuConfig): boolean;
   updateReusedSandboxMetadata(
@@ -39,7 +43,10 @@ export interface SandboxRegistryMetadataHelpers {
 export function createSandboxRegistryMetadataHelpers(
   deps: SandboxRegistryMetadataDeps,
 ): SandboxRegistryMetadataHelpers {
-  function getSandboxRuntimeRegistryFields(config: SandboxGpuConfig): Pick<
+  function getSandboxRuntimeRegistryFields(
+    config: SandboxGpuConfig,
+    gatewayName?: string,
+  ): Pick<
     SandboxEntry,
     | "gpuEnabled"
     | "hostGpuDetected"
@@ -48,6 +55,7 @@ export function createSandboxRegistryMetadataHelpers(
     | "sandboxGpuDevice"
     | "openshellDriver"
     | "openshellVersion"
+    | "gatewayName"
   > {
     // OpenShell's Docker-driver gateway always starts with OPENSHELL_DRIVERS=docker,
     // including on macOS arm64 (#3454). Recording "vm" for darwin here makes later
@@ -63,6 +71,7 @@ export function createSandboxRegistryMetadataHelpers(
       openshellVersion: deps.getInstalledOpenshellVersion(
         deps.runCaptureOpenshell(["--version"], { ignoreError: true }),
       ),
+      ...(gatewayName ? { gatewayName } : {}),
     };
   }
 

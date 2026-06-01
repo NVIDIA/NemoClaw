@@ -8,6 +8,7 @@ import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import { isErrnoException } from "../core/errno";
 import { DEFAULT_GATEWAY_NAME } from "./gateway-name";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
+import { validateName } from "../runner";
 
 export interface CustomPolicyEntry {
   name: string;
@@ -216,6 +217,7 @@ export function getDefault(): string | null {
 }
 
 export function registerSandbox(entry: SandboxEntry): void {
+  if (entry.gatewayName) validateName(entry.gatewayName, "gatewayName");
   withLock(() => {
     const data = load();
     data.sandboxes[entry.name] = {
@@ -265,6 +267,7 @@ export function registerSandbox(entry: SandboxEntry): void {
 }
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
+  if (updates.gatewayName) validateName(updates.gatewayName, "gatewayName");
   return withLock(() => {
     const data = load();
     if (!data.sandboxes[name]) return false;
