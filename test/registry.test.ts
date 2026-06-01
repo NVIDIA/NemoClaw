@@ -521,10 +521,10 @@ describe("advisory file locking", () => {
     expect(registry.getSandboxGatewayName("alpha")).toBe("nemoclaw-8081");
   });
 
-  it("getSandboxGatewayName falls back to the singleton default for unknown sandbox names and emits an info log", () => {
+  it("getSandboxGatewayName returns null for unknown sandbox names so callers cannot transitively act on the singleton", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     try {
-      expect(registry.getSandboxGatewayName("does-not-exist")).toBe("nemoclaw");
+      expect(registry.getSandboxGatewayName("does-not-exist")).toBeNull();
       expect(logSpy).toHaveBeenCalled();
       expect(
         logSpy.mock.calls.some(([msg]: unknown[]) =>
@@ -536,10 +536,11 @@ describe("advisory file locking", () => {
     }
   });
 
-  it("getSandboxGatewayName falls back with a warning when the persisted value is invalid", () => {
+  it("getSandboxGatewayName returns null with a warning when the persisted value is invalid", () => {
     // Corrupt on-disk state: caller hand-edited sandboxes.json or a future
-    // version persisted an invalid value. Defense-in-depth — return the
-    // singleton default rather than feeding the bad value to lifecycle code.
+    // version persisted an invalid value. Defense-in-depth — return null so
+    // lifecycle code refuses rather than transitively act on the singleton
+    // with a bad persisted name.
     const corrupt = JSON.stringify({
       sandboxes: { alpha: { name: "alpha", gatewayName: "../escape" } },
       defaultSandbox: "alpha",
@@ -547,7 +548,7 @@ describe("advisory file locking", () => {
     fs.writeFileSync(regFile, corrupt);
     const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
-      expect(registry.getSandboxGatewayName("alpha")).toBe("nemoclaw");
+      expect(registry.getSandboxGatewayName("alpha")).toBeNull();
       expect(warnSpy).toHaveBeenCalled();
       expect(
         warnSpy.mock.calls.some(([msg]: unknown[]) =>

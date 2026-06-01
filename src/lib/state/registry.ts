@@ -212,21 +212,21 @@ export function getSandbox(name: string): SandboxEntry | null {
 }
 
 /**
- * Resolve the OpenShell gateway name a sandbox is bound to. Always returns a
- * usable gateway name so callers do not need null-handling. Falls back to
- * {@link DEFAULT_GATEWAY_NAME} when the sandbox is missing, when the entry
- * predates the `gatewayName` field (legacy backfill), or when the persisted
- * value fails validation (defense-in-depth against corrupt on-disk state).
- * Missing sandboxes and legacy entries log at info level so unexpected
- * fallbacks remain observable; corrupt values log at warning level.
+ * Resolve the OpenShell gateway name a sandbox is bound to. Returns `null`
+ * for unknown sandboxes (so callers cannot transitively act on the singleton
+ * with a stale or mistyped name) and for entries whose persisted value fails
+ * validation (defense-in-depth against corrupt on-disk state). For sandboxes
+ * that exist but predate the `gatewayName` field, falls back to
+ * {@link DEFAULT_GATEWAY_NAME} as a legacy backfill. Unknown sandboxes and
+ * legacy entries log at info level so unexpected fallbacks remain
+ * observable; corrupt values log at warning level since they indicate
+ * tampering or schema drift.
  */
-export function getSandboxGatewayName(name: string): string {
+export function getSandboxGatewayName(name: string): string | null {
   const entry = getSandbox(name);
   if (!entry) {
-    console.log(
-      `  Gateway-name lookup for unknown sandbox '${name}' resolved to '${DEFAULT_GATEWAY_NAME}'.`,
-    );
-    return DEFAULT_GATEWAY_NAME;
+    console.log(`  Gateway-name lookup for unknown sandbox '${name}' returned null.`);
+    return null;
   }
   if (entry.gatewayName === undefined) {
     console.log(
@@ -239,9 +239,9 @@ export function getSandboxGatewayName(name: string): string {
     return entry.gatewayName;
   } catch {
     console.warn(
-      `  Sandbox '${name}' has an invalid recorded gatewayName; falling back to '${DEFAULT_GATEWAY_NAME}'.`,
+      `  Sandbox '${name}' has an invalid recorded gatewayName; returning null.`,
     );
-    return DEFAULT_GATEWAY_NAME;
+    return null;
   }
 }
 
