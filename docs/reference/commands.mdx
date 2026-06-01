@@ -349,6 +349,10 @@ Set `NEMOCLAW_NO_CONNECT_HINT=1` to suppress the hint in scripted workflows.
 If the sandbox is running an outdated agent version, a non-blocking warning prints before connecting with a `nemoclaw <name> rebuild` hint.
 If another terminal is already connected to the sandbox, `connect` prints a note with the number of existing sessions before proceeding. Multiple concurrent sessions are allowed.
 
+`connect` does not pull or serve a model itself, but it does inspect `NEMOCLAW_VLLM_MODEL` if you exported it for the managed-vLLM install path.
+An unknown slug or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
+Unset the variable, or supply the missing token, before retrying.
+
 After a host reboot, the OpenShell gateway rotates its SSH host keys.
 `connect` detects the resulting identity drift, prunes stale `openshell-*` entries from `~/.ssh/known_hosts`, and retries automatically.
 You no longer need to re-run `nemoclaw onboard` after a reboot in this case.

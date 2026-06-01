@@ -790,7 +790,7 @@ describe("nemoclaw-start gateway token export (#1114)", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toContain("TOKEN=unset");
     expect(result.stderr).not.toContain("#token=");
-    expect(envFile).not.toContain("OPENCLAW_GATEWAY_TOKEN");
+    expect(envFile).not.toMatch(/^export OPENCLAW_GATEWAY_TOKEN=/m);
   });
 });
 
@@ -805,7 +805,7 @@ describe("nemoclaw-start configure guard behavior", () => {
     fs.mkdirSync(fakeBin);
     fs.writeFileSync(
       path.join(fakeBin, "openclaw"),
-      `#!/usr/bin/env bash\nprintf 'ARGS=%s URL=%s\\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(commandLog)}\nexit 0\n`,
+      `#!/usr/bin/env bash\nprintf 'ARGS=%s URL=%s PORT=%s TOKEN=%s\\n' "$*" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(commandLog)}\nexit 0\n`,
       { mode: 0o755 },
     );
     const runtimeBlock = `${runtimeShellEnvBlock(src)}\nwrite_runtime_shell_env`.replaceAll(
@@ -827,6 +827,8 @@ describe("nemoclaw-start configure guard behavior", () => {
       '_CIAO_GUARD_SCRIPT="/tmp/ciao-guard.js"',
       '_SLACK_GUARD_SCRIPT="/nonexistent/slack-guard.js"',
       'export OPENCLAW_GATEWAY_URL="ws://127.0.0.1:18789"',
+      'export OPENCLAW_GATEWAY_PORT="18789"',
+      'export OPENCLAW_GATEWAY_TOKEN="test-gateway-token"',
       "_TOOL_REDIRECTS=()",
       "set +u",
       runtimeBlock,
@@ -904,7 +906,7 @@ describe("nemoclaw-start configure guard behavior", () => {
     }
   });
 
-  it("#4462: unsets OPENCLAW_GATEWAY_URL only for devices approve", () => {
+  it("#4462: unsets OPENCLAW_GATEWAY_URL, PORT, and TOKEN for devices approve", () => {
     const setup = writeProxyEnvWithGuard();
     try {
       const result = runGuardedShell(setup, [
@@ -916,10 +918,10 @@ describe("nemoclaw-start configure guard behavior", () => {
 
       expect(result.status).toBe(0);
       expect(fs.readFileSync(setup.commandLog, "utf-8").trim().split("\n")).toEqual([
-        "ARGS=devices list --json URL=ws://127.0.0.1:18789",
-        "ARGS=devices approve request-1 --json URL=unset",
+        "ARGS=devices list --json URL=ws://127.0.0.1:18789 PORT=18789 TOKEN=test-gateway-token",
+        "ARGS=devices approve request-1 --json URL=unset PORT=unset TOKEN=unset",
         "SHELL_URL=ws://127.0.0.1:18789",
-        "ARGS=agent --agent main -m hello URL=ws://127.0.0.1:18789",
+        "ARGS=agent --agent main -m hello URL=ws://127.0.0.1:18789 PORT=18789 TOKEN=test-gateway-token",
       ]);
     } finally {
       fs.rmSync(setup.tmpDir, { recursive: true, force: true });
@@ -1467,7 +1469,7 @@ describe("nemoclaw-start auto-pair client whitelisting (#117)", () => {
       `#!/usr/bin/env bash
 set -euo pipefail
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
-  printf 'list:%s\n' "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(envLog)}
+  printf 'list:%s:%s:%s\n' "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(envLog)}
   count="$(cat ${JSON.stringify(stateFile)} 2>/dev/null || echo 0)"
   count=$((count + 1))
   echo "$count" > ${JSON.stringify(stateFile)}
@@ -1479,7 +1481,7 @@ if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "list" ]; then
   exit 0
 fi
 if [ "\${1:-}" = "devices" ] && [ "\${2:-}" = "approve" ]; then
-  printf 'approve:%s:%s\n' "$3" "\${OPENCLAW_GATEWAY_URL-unset}" >> ${JSON.stringify(envLog)}
+  printf 'approve:%s:%s:%s:%s\n' "$3" "\${OPENCLAW_GATEWAY_URL-unset}" "\${OPENCLAW_GATEWAY_PORT-unset}" "\${OPENCLAW_GATEWAY_TOKEN-unset}" >> ${JSON.stringify(envLog)}
   echo "$3" >> ${JSON.stringify(approveLog)}
   printf '{}\n'
   exit 0
@@ -1502,6 +1504,8 @@ exit 2
           ...process.env,
           OPENCLAW_BIN: fakeOpenclaw,
           OPENCLAW_GATEWAY_URL: "ws://127.0.0.1:18789",
+          OPENCLAW_GATEWAY_PORT: "18789",
+          OPENCLAW_GATEWAY_TOKEN: "test-gateway-token",
           // Cap the slow-mode keepalive (NemoClaw#4263) so the test
           // terminates without waiting out the default 8h deadline.
           NEMOCLAW_AUTO_PAIR_DEADLINE_SECS: "5",
@@ -1523,9 +1527,9 @@ exit 2
         "ok-webchat",
       ]);
       const envLogLines = fs.readFileSync(envLog, "utf-8").trim().split("\n");
-      expect(envLogLines).toContain("list:ws://127.0.0.1:18789");
-      expect(envLogLines).toContain("approve:ok-browser:unset");
-      expect(envLogLines).toContain("approve:ok-webchat:unset");
+      expect(envLogLines).toContain("list:ws://127.0.0.1:18789:18789:test-gateway-token");
+      expect(envLogLines).toContain("approve:ok-browser:unset:unset:unset");
+      expect(envLogLines).toContain("approve:ok-webchat:unset:unset:unset");
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

@@ -8,6 +8,7 @@ import {
   VLLM_MODELS,
   assertGatedModelAccess,
   buildVllmServeCommand,
+  preflightVllmModelEnv,
   selectVllmModelFromEnv,
 } from "../../../dist/lib/inference/vllm-models";
 
@@ -97,5 +98,57 @@ describe("vllm model registry", () => {
     expect(cmd).toContain("--reasoning-parser deepseek_r1");
     expect(cmd).toContain("--tool-call-parser hermes");
     expect(cmd).not.toContain("--reasoning-parser qwen3");
+  });
+});
+
+describe("preflightVllmModelEnv", () => {
+  it("succeeds when NEMOCLAW_VLLM_MODEL is unset", () => {
+    expect(preflightVllmModelEnv({} as NodeJS.ProcessEnv)).toEqual({ ok: true });
+  });
+
+  it("succeeds for a recognised non-gated slug", () => {
+    expect(
+      preflightVllmModelEnv({ NEMOCLAW_VLLM_MODEL: "qwen3.6-27b" } as NodeJS.ProcessEnv),
+    ).toEqual({ ok: true });
+  });
+
+  it("succeeds for a gated slug when HF_TOKEN is set", () => {
+    expect(
+      preflightVllmModelEnv({
+        NEMOCLAW_VLLM_MODEL: "deepseek-r1-distill-70b",
+        HF_TOKEN: "hf_abc",
+      } as NodeJS.ProcessEnv),
+    ).toEqual({ ok: true });
+  });
+
+  it("succeeds for a gated slug when HUGGING_FACE_HUB_TOKEN is set", () => {
+    expect(
+      preflightVllmModelEnv({
+        NEMOCLAW_VLLM_MODEL: "deepseek-r1-distill-70b",
+        HUGGING_FACE_HUB_TOKEN: "hf_abc",
+      } as NodeJS.ProcessEnv),
+    ).toEqual({ ok: true });
+  });
+
+  it("fails fast for a gated slug with no Hugging Face token", () => {
+    const result = preflightVllmModelEnv({
+      NEMOCLAW_VLLM_MODEL: "deepseek-r1-distill-70b",
+    } as NodeJS.ProcessEnv);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toMatch(/gated on Hugging Face/);
+      expect(result.message).toMatch(/HF_TOKEN/);
+      expect(result.message).toMatch(/HUGGING_FACE_HUB_TOKEN/);
+    }
+  });
+
+  it("fails fast for an unknown slug", () => {
+    const result = preflightVllmModelEnv({
+      NEMOCLAW_VLLM_MODEL: "made-up-model",
+    } as NodeJS.ProcessEnv);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toMatch(/Unknown NEMOCLAW_VLLM_MODEL='made-up-model'/);
+    }
   });
 });

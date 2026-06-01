@@ -133,6 +133,42 @@ export function assertGatedModelAccess(
   );
 }
 
+export type PreflightVllmModelResult = { ok: true } | { ok: false; message: string };
+
+/**
+ * Combined preflight for callers that hold a `NEMOCLAW_VLLM_MODEL` reference
+ * but do not themselves invoke the vLLM installer — for example
+ * `nemoclaw <name> connect`, which simply attaches to a running sandbox.
+ *
+ * The variable steers the express-vLLM install path, so on every other code
+ * path the natural behaviour is to ignore it. Silent-ignore hides two real
+ * user mistakes:
+ *
+ *   1. typos in the slug (`deepseek-r1-distill-70b` vs an old marketing
+ *      name), surfaced later as the wrong model being served and a confused
+ *      user; and
+ *   2. requesting a gated model (DeepSeek-R1 Distill Llama 70B) without
+ *      exporting `HF_TOKEN` / `HUGGING_FACE_HUB_TOKEN`, which downstream
+ *      explodes as a 401 from Hugging Face partway through the pull.
+ *
+ * Running the same `selectVllmModelFromEnv` + `assertGatedModelAccess` checks
+ * the installer uses gives the caller a single fail-fast surface and one
+ * canonical message to print before any side effects. Returns
+ * `{ ok: true }` when the variable is unset or resolves cleanly.
+ */
+export function preflightVllmModelEnv(
+  env: NodeJS.ProcessEnv = process.env,
+): PreflightVllmModelResult {
+  try {
+    const model = selectVllmModelFromEnv(env);
+    if (!model) return { ok: true };
+    assertGatedModelAccess(model, env);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, message: (err as Error).message };
+  }
+}
+
 const SHARED_VLLM_ARGS: readonly string[] = [
   "--gpu-memory-utilization",
   "0.7",

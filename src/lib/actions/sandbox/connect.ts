@@ -19,6 +19,7 @@ import { D, G, R, YW } from "../../cli/terminal-style";
 import * as agentRuntime from "../../agent/runtime";
 import { parseGatewayInference } from "../../inference/config";
 import { findReachableOllamaHost, probeLocalProviderHealth } from "../../inference/local";
+import { preflightVllmModelEnvOrExit } from "./connect-vllm-preflight";
 import {
   ensureOllamaAuthProxy,
   probeOllamaAuthProxyHealth,
@@ -759,6 +760,7 @@ export async function connectSandbox(
   sandboxName: string,
   { probeOnly = false }: SandboxConnectOptions = {},
 ): Promise<void> {
+  preflightVllmModelEnvOrExit();
   const { isSandboxReady, parseSandboxStatus } = require("../../onboard");
   await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
 
