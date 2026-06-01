@@ -10,6 +10,7 @@ import {
   PREFLIGHT_LIVE_SANDBOX_REFUSAL_HEADER,
   applyPreflightGatewayCleanup,
   preflightGatewayCleanupDecision,
+  runPreflightGatewayCleanup,
 } from "./preflight-gateway-cleanup-decision";
 
 describe("preflightGatewayCleanupDecision", () => {
@@ -210,6 +211,85 @@ describe("applyPreflightGatewayCleanup", () => {
       expect(ctx.destroyGatewayForReuse).not.toHaveBeenCalled();
       expect(ctx.runOpenshell).not.toHaveBeenCalled();
       expect(ctx.exitProcess).not.toHaveBeenCalled();
+    }
+  });
+});
+
+describe("runPreflightGatewayCleanup", () => {
+  function makeDeps(overrides: {
+    gatewayReuseState: GatewayReuseState;
+    isDockerDriverGatewayEnabled: boolean;
+    sandboxListOutput?: string;
+  }) {
+    const runCaptureOpenshell = vi.fn((args: string[], _opts: { ignoreError: true }) => {
+      expect(args).toEqual(["sandbox", "list"]);
+      return overrides.sandboxListOutput ?? "";
+    });
+    const runOpenshell = vi.fn(() => ({ status: 0 }));
+    const destroyGateway = vi.fn(() => true);
+    const destroyGatewayForReuse = vi.fn<
+      (
+        destroy: () => boolean,
+        success: string,
+        failure: string,
+      ) => GatewayReuseState
+    >(() => "missing");
+    return {
+      runCaptureOpenshell,
+      runOpenshell,
+      destroyGateway,
+      destroyGatewayForReuse,
+      deps: {
+        gatewayReuseState: overrides.gatewayReuseState,
+        isLinuxDockerDriverGatewayEnabled: () => overrides.isDockerDriverGatewayEnabled,
+        runCaptureOpenshell,
+        runOpenshell,
+        cliName: () => "nemoclaw",
+        cliDisplayName: () => "NemoClaw",
+        destroyGateway,
+        destroyGatewayForReuse,
+      },
+    };
+  }
+
+  it("queries sandbox list and defers when no live sandboxes exist on the Docker-driver path", () => {
+    const ctx = makeDeps({
+      gatewayReuseState: "stale",
+      isDockerDriverGatewayEnabled: true,
+      sandboxListOutput: "NAME    STATUS    AGE\nsandbox-a   Provisioning   10s\n",
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("unexpected exit");
+    }) as never);
+    try {
+      const next = runPreflightGatewayCleanup(ctx.deps);
+      expect(next).toBe("stale");
+      expect(ctx.runCaptureOpenshell).toHaveBeenCalledTimes(1);
+      expect(ctx.destroyGateway).not.toHaveBeenCalled();
+      expect(exitSpy).not.toHaveBeenCalled();
+    } finally {
+      exitSpy.mockRestore();
+    }
+  });
+
+  it("refuses through process.exit(1) when sandbox list reports a live sandbox", () => {
+    const ctx = makeDeps({
+      gatewayReuseState: "stale",
+      isDockerDriverGatewayEnabled: true,
+      sandboxListOutput: "NAME    STATUS    AGE\nsandbox-a   Ready    5m\n",
+    });
+    const exitSpy = vi.spyOn(process, "exit").mockImplementation((() => {
+      throw new Error("exit");
+    }) as never);
+    try {
+      expect(() => runPreflightGatewayCleanup(ctx.deps)).toThrow("exit");
+      expect(exitSpy).toHaveBeenCalledWith(1);
+      expect(ctx.runCaptureOpenshell).toHaveBeenCalledWith(["sandbox", "list"], {
+        ignoreError: true,
+      });
+      expect(ctx.destroyGateway).not.toHaveBeenCalled();
+    } finally {
+      exitSpy.mockRestore();
     }
   });
 });

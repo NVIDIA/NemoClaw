@@ -21,7 +21,7 @@ export const PREFLIGHT_LIVE_SANDBOX_REFUSAL_HEADER =
 //                        while one or more sandboxes are live (Ready/Running).
 //                        The singleton-gateway design (`GATEWAY_NAME = "nemoclaw"`)
 //                        means the shared cluster container holds every sandbox,
-//                        so recreating the gateway SIGKILLs them. See #4422.
+//                        so recreating the gateway SIGKILLs them.
 //   - "defer"          — Docker-driver path: postpone the recreate to step [2/8]
 //                        when no live sandboxes are at risk.
 //   - "destroy-legacy" — pre-Docker-driver path: destroy immediately so the

@@ -51,19 +51,22 @@ export function parseSandboxStatus(output: string, sandboxName: string): string 
  * sandbox stays in "Running" phase which is functionally equivalent to
  * "Ready" — the agent is live and the gateway is reachable inside.
  */
-export function isSandboxReady(output: string, sandboxName: string): boolean {
-  const cols = parseSandboxRow(output, sandboxName);
-  if (!cols) return false;
+function isLiveSandboxRow(cols: readonly string[]): boolean {
   return (cols.includes("Ready") || cols.includes("Running")) && !cols.includes("NotReady");
 }
 
+export function isSandboxReady(output: string, sandboxName: string): boolean {
+  const cols = parseSandboxRow(output, sandboxName);
+  if (!cols) return false;
+  return isLiveSandboxRow(cols);
+}
+
 /**
- * Enumerate sandbox names from `openshell sandbox list` whose state column
- * indicates a live workload ("Ready" or "Running" and not "NotReady"). Used
- * by the preflight cleanup decision to refuse a gateway-recreate that would
- * SIGKILL live sandbox containers — the singleton-gateway design means
- * recreating the gateway destroys the shared `openshell-cluster-*` container
- * holding every sandbox. See #4422.
+ * Enumerate sandbox names from `openshell sandbox list` output whose state
+ * column indicates a live workload — "Ready" or "Running" and not "NotReady".
+ * The singleton-gateway design means recreating the gateway destroys the
+ * shared `openshell-cluster-*` container holding every sandbox, so the
+ * preflight cleanup decision uses this set to refuse destructive recreates.
  */
 export function listLiveSandboxNames(output: string): string[] {
   if (typeof output !== "string") return [];
@@ -74,9 +77,7 @@ export function listLiveSandboxNames(output: string): string[] {
     if (cols.length < 2) continue;
     const name = cols[0];
     if (!name) continue;
-    if ((cols.includes("Ready") || cols.includes("Running")) && !cols.includes("NotReady")) {
-      names.push(name);
-    }
+    if (isLiveSandboxRow(cols)) names.push(name);
   }
   return names;
 }

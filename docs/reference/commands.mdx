@@ -1325,6 +1325,7 @@ All ports must be non-privileged integers between 1024 and 65535.
 
 If a port value is not a valid integer or falls outside the allowed range, the CLI exits with an error.
 `NEMOCLAW_GATEWAY_PORT` also cannot overlap the configured dashboard, vLLM, Ollama, or Ollama proxy ports, and cannot use the dashboard auto-allocation range `18789` through `18799` or the default inference/proxy ports `8000`, `11434`, and `11435`.
+`NEMOCLAW_GATEWAY_PORT` relocates the singleton OpenShell gateway; it does not spawn a second gateway alongside an existing one. Onboarding refuses to change the port while any sandbox is `Ready` or `Running` and prints the names you must stop first. See [troubleshooting](/reference/troubleshooting#port-conflicts) for the recovery steps and [#3053](https://github.com/NVIDIA/NemoClaw/issues/3053) for concurrent-instance support.
 On non-WSL hosts, `NEMOCLAW_OLLAMA_PORT` and `NEMOCLAW_OLLAMA_PROXY_PORT` must be different.
 If you run Ollama on port 11435, set `NEMOCLAW_OLLAMA_PROXY_PORT` to another free port before onboarding.
 
