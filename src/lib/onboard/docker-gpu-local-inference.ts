@@ -40,6 +40,11 @@ type DockerGpuLocalInferenceOptions = {
   log?: (message: string) => void;
 };
 
+/**
+ * True only on the Linux Docker-driver GPU patch path with
+ * `NEMOCLAW_DOCKER_GPU_PATCH_NETWORK=host`, i.e. when the recreated sandbox
+ * uses host networking and local inference is wired to the direct loopback URL.
+ */
 export function shouldUseDockerGpuPatchHostNetwork(
   config: DockerGpuLocalInferenceConfig,
   options: DockerGpuLocalInferenceOptions,
@@ -115,11 +120,16 @@ export type DockerGpuHostNetworkInferenceVerification =
       recovery: string[];
     };
 
+/** Flatten a docker run result's stderr/stdout into a single trimmed string. */
 function resultText(result: DockerRunResult | null | undefined): string {
   if (!result) return "";
   return `${String(result.stderr || "")} ${String(result.stdout || "")}`.trim();
 }
 
+/**
+ * Inspect a container and return its `HostConfig.NetworkMode`, or `null` when
+ * the inspect output is empty or unparseable.
+ */
 function inspectContainerNetworkMode(
   containerId: string,
   dockerCaptureFn: NonNullable<DockerGpuHostNetworkInferenceVerifyDeps["dockerCapture"]>,
@@ -138,6 +148,7 @@ function inspectContainerNetworkMode(
   }
 }
 
+/** Returns true when `curl` is on PATH inside the container (probe tooling). */
 function containerHasCurl(
   containerId: string,
   dockerRunFn: NonNullable<DockerGpuHostNetworkInferenceVerifyDeps["dockerRun"]>,
@@ -157,6 +168,11 @@ function containerHasCurl(
   }
 }
 
+/**
+ * Probe the direct loopback inference endpoint from inside the container with
+ * bounded retries. Returns `{ ok: true }` on the first 2xx, otherwise `ok:
+ * false` with the last failure detail.
+ */
 function probeContainerInferenceEndpoint(
   containerId: string,
   endpoint: string,
@@ -291,7 +307,11 @@ export function verifyDockerGpuHostNetworkLocalInference(
   // Soft-skip with a visible warning instead, preserving prior behavior where
   // there was no gate at all (#4509 review follow-up).
   if (!containerHasCurl(containerId, dockerRunFn)) {
-    options.log?.(
+    // Always surface this skip: it is the operator's only explanation for why
+    // the reachability proof did not run. Fall back to console.warn when no
+    // logger is wired so the warning is never silently dropped.
+    const warn = options.log ?? ((message: string) => console.warn(message));
+    warn(
       `  ⚠ Skipping host-network local inference reachability check: curl is not available in ${containerId}.`,
     );
     return { status: "skipped", reason: "probe-tool-unavailable" };
@@ -323,6 +343,11 @@ export function verifyDockerGpuHostNetworkLocalInference(
   return { status: "ok", provider, containerId, networkMode, endpoint };
 }
 
+/**
+ * Print a failed host-network inference verification result as actionable
+ * operator output: the message, provider, container, network mode, endpoint,
+ * truncated detail, and recovery hints. Defaults to `console.error`.
+ */
 export function printDockerGpuHostNetworkInferenceVerificationFailure(
   verification: Extract<DockerGpuHostNetworkInferenceVerification, { status: "failed" }>,
   log: (message: string) => void = (message) => console.error(message),

@@ -224,6 +224,29 @@ describe("verifyDockerGpuHostNetworkLocalInference", () => {
     expect(dockerRun).toHaveBeenCalledTimes(1);
     expect(log).toHaveBeenCalledWith(expect.stringContaining("curl is not available"));
   });
+
+  it("surfaces the curl-missing skip warning even without a logger", () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const result = verifyDockerGpuHostNetworkLocalInference(
+        GPU_CONFIG,
+        "ollama-local",
+        hostNetworkOptions({
+          // No log provided — the warning must still reach the operator.
+          deps: {
+            findContainerIds: () => ["container-xyz"],
+            dockerCapture: vi.fn(() => inspectWithNetworkMode("host")),
+            dockerRun: vi.fn(() => ({ status: 1 })),
+            sleep: vi.fn(),
+          },
+        }),
+      );
+      expect(result).toEqual({ status: "skipped", reason: "probe-tool-unavailable" });
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("curl is not available"));
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
 });
 
 describe("verifyGpuSandboxAfterReady", () => {
