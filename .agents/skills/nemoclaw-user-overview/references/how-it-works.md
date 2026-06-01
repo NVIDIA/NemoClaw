@@ -2,9 +2,9 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # NemoClaw Architecture Overview
 
-This page explains how NemoClaw runs OpenClaw inside an OpenShell sandbox and how the gateway connects the agent to inference, integrations, and policy.
+This page explains how NemoClaw runs supported agents inside an OpenShell sandbox and how the gateway connects the agent to inference, integrations, and policy.
 
-NemoClaw does not replace OpenClaw or OpenShell.
+NemoClaw does not replace OpenShell or your chosen agent runtime.
 It packages them into a repeatable setup with a host CLI, a versioned blueprint, default policies, inference setup, plugin configuration, and state helpers.
 You can use that setup directly or adapt it for your own OpenShell integration.
 
@@ -23,7 +23,7 @@ The diagram has the following components:
 | Users and operators | Start from the CLI, installer, dashboard, or an end-user channel. |
 | NemoClaw control | Collects configuration, runs onboarding, prepares the blueprint, and asks OpenShell to create or update resources. |
 | OpenShell gateway | Owns sandbox lifecycle, networking, policy enforcement, inference routing, and integration egress. |
-| NemoClaw sandbox | Runs OpenClaw with the NemoClaw plugin, the selected blueprint contents, and supporting tools. |
+| NemoClaw sandbox | Runs the onboarded agent with the selected blueprint contents and supporting tools. OpenClaw sandboxes also load the NemoClaw plugin. |
 | Inference | Receives model requests through the gateway, using NVIDIA endpoints, NIM, or compatible APIs. |
 | Integrations | Reach messaging services, MCP servers, GitHub, package indexes, or model hubs through gateway-managed egress. |
 | State and artifacts | Store configuration, credentials, logs, workspace files, policies, and transcripts outside the running agent process. |
@@ -64,7 +64,7 @@ This separation keeps the sandbox plugin small while allowing host orchestration
 
 ## Sandbox Creation
 
-When you run `nemoclaw onboard`, NemoClaw creates an OpenShell sandbox that runs OpenClaw in an isolated container.
+When you run `nemoclaw onboard`, NemoClaw creates an OpenShell sandbox that runs your selected agent in an isolated container.
 The host CLI and blueprint runner orchestrate this process through the OpenShell CLI:
 
 1. NemoClaw resolves the blueprint, checks version compatibility, and verifies the digest.
@@ -99,6 +99,6 @@ For details on the baseline rules, refer to Network Policies (use the `nemoclaw-
 ## Next Steps
 
 - Read [Ecosystem](ecosystem.md) for stack-level relationships and NemoClaw versus OpenShell-only paths.
-- Follow the Quickstart (use the `nemoclaw-user-get-started` skill) to launch your first sandbox.
+- Follow the Quickstart with OpenClaw (use the `nemoclaw-user-get-started` skill) or Quickstart with Hermes (use the `nemoclaw-user-get-started` skill) to launch your first sandbox.
 - Refer to the Architecture (use the `nemoclaw-user-reference` skill) for the full technical structure, including file layouts and the blueprint lifecycle.
 - Refer to Inference Options (use the `nemoclaw-user-configure-inference` skill) for detailed provider configuration.

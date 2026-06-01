@@ -31,9 +31,9 @@
   },
   {
     "id": "docs-manage-sandboxes-runtime-controls-003",
-    "question": "I'm responding to an incident or risky agent behavior. Help me use `shields up`, `shields down`, and `shields status` correctly so I can tighten or inspect controls without confusion.",
+    "question": "I'm responding to an incident or risky agent behavior. Help me tighten or inspect sandbox runtime controls without confusion.",
     "expected_skill": "nemoclaw-user-manage-sandboxes",
-    "ground_truth": "A NemoClaw-specific answer that helps the user use `shields up`, `shields down`, and `shields status` correctly and gives enough concrete guidance, decision criteria, verification steps, or risk framing to tighten or inspect controls without confusion."
+    "ground_truth": "A NemoClaw-specific answer that helps the user tighten or inspect sandbox runtime controls and gives enough concrete guidance, decision criteria, verification steps, or risk framing to avoid accidental downtime or data loss."
   },
   {
     "id": "docs-manage-sandboxes-backup-restore-001",

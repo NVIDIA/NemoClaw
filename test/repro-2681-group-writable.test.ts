@@ -175,11 +175,28 @@ describe("mutable agent config permissions", () => {
     expect(commands).toContainEqual(["chmod", "660", "/sandbox/.openclaw/openclaw.json"]);
     expect(commands).toContainEqual(["chmod", "660", "/sandbox/.openclaw/.config-hash"]);
     expect(commands).toContainEqual(["chmod", "2770", "/sandbox/.openclaw"]);
-    expect(commands).toContainEqual(["chmod", "2770", "/sandbox/.openclaw/workspace"]);
-    expect(commands).toContainEqual(["chmod", "-R", "g+rwX,o-rwx", "/sandbox/.openclaw/workspace"]);
-    expect(commands.find((command) => command[0] === "sh" && command[1] === "-c")).toEqual(
-      expect.arrayContaining(["/sandbox/.openclaw", "sandbox:sandbox", "g+rwX,o-rwx", "2770"]),
+    // The consolidated state-dir unlock script restores ownership and mode on
+    // every high-risk state dir (including `workspace`) inside a single
+    // `sh -c` invocation; the workspace-* glob is handled by a second
+    // `sh -c`. Both are asserted via the `arrayContaining` check below.
+    const shellInvocations = commands.filter(
+      (command) => command[0] === "sh" && command[1] === "-c",
     );
+    expect(
+      shellInvocations.some((command) =>
+        command.includes("/sandbox/.openclaw") &&
+        command.includes("sandbox:sandbox") &&
+        command.includes("g+rwX,o-rwx") &&
+        command.includes("2770") &&
+        command.includes("workspace"),
+      ),
+    ).toBe(true);
+    expect(
+      shellInvocations.some(
+        (command) =>
+          typeof command[2] === "string" && command[2].includes('workspace-*'),
+      ),
+    ).toBe(true);
   });
 
   it("shields-down restores Hermes sticky group-writable config root without group-writable config files", () => {
@@ -275,7 +292,7 @@ process.stdout.write(JSON.stringify(calls));
         command[0] === "sh" &&
         command[1] === "-c" &&
         command.includes("/sandbox/.openclaw") &&
-        command.includes("root:root") &&
+        command.includes("root:sandbox") &&
         command.includes("go-w") &&
         command.includes("755"),
     );
