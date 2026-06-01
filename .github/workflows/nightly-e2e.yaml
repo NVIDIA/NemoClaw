@@ -498,6 +498,7 @@ jobs:
       github_token: true
     secrets:
       NVIDIA_API_KEY: ${{ secrets.NVIDIA_API_KEY }}
+      BRAVE_API_KEY: ${{ secrets.BRAVE_API_KEY }}
   channels-add-remove-e2e:
     if: >-
       github.repository == 'NVIDIA/NemoClaw' && (github.event_name != 'workflow_dispatch' ||
