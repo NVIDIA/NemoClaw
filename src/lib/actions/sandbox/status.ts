@@ -72,7 +72,7 @@ export interface SandboxStatusReport {
   phase: string | null;
   gatewayState: string;
   inferenceHealth: ProviderHealthStatus | null;
-  rpcIssue: { kind: "image_drift" | "protobuf_mismatch" } | null;
+  rpcIssue: { kind: "image_drift" | "host_process_drift" | "protobuf_mismatch" } | null;
   hostGpuDetected: boolean;
   sandboxGpuEnabled: boolean;
   sandboxGpuMode: string | null;
