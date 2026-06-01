@@ -80,12 +80,7 @@ function normalizeDriver(driver: unknown): string | null {
 // without pretending a one-time /etc/hosts edit inside the direct container
 // would survive a sandbox restart or rebuild.
 function assertLegacyGatewayHostAliasSupport(sandboxName: string): void {
-  let driver: string | null = null;
-  try {
-    driver = normalizeDriver(registry.getSandbox(sandboxName)?.openshellDriver);
-  } catch {
-    driver = null;
-  }
+  const driver = normalizeDriver(registry.getSandbox(sandboxName)?.openshellDriver);
   if (driver && DIRECT_CONTAINER_DRIVERS.has(driver)) {
     hostAliasesFail([
       `  Host aliases are not supported on the '${driver}' driver sandbox '${sandboxName}'.`,
