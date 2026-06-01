@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
-import { getGatewayName } from "../state/gateway-name";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { getSandboxAgentRegistryFields } from "./sandbox-agent";
@@ -12,6 +11,14 @@ export interface SandboxRegistryMetadataDeps {
   isLinuxDockerDriverGatewayEnabled(): boolean;
   getInstalledOpenshellVersion(versionOutput?: string | null): string | null;
   runCaptureOpenshell(args: string[], opts?: Record<string, unknown>): string | null;
+  /**
+   * Resolve the active OpenShell gateway name for this process. Injected so
+   * the legacy-reuse backfill records the active gateway binding without
+   * reaching for `getGatewayName(dashboardPort)` — `dashboardPort` is the
+   * chat-UI forward, not the gateway port, and would produce a wrong
+   * binding once the resolver flips to per-port names.
+   */
+  getActiveGatewayName(): string;
 }
 
 export interface SandboxRegistryMetadataHelpers {
@@ -109,7 +116,7 @@ export function createSandboxRegistryMetadataHelpers(
     // cleanup.
     const gatewayMigration =
       existingEntry && existingEntry.gatewayName === undefined
-        ? { gatewayName: getGatewayName(dashboardPort) }
+        ? { gatewayName: deps.getActiveGatewayName() }
         : {};
     registry.updateSandbox(sandboxName, {
       ...selectionUpdates,

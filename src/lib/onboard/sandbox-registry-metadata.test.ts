@@ -37,11 +37,12 @@ function restorePlatform(): void {
   }
 }
 
-function makeHelpers(opts: { dockerDriverEnabled: boolean }) {
+function makeHelpers(opts: { dockerDriverEnabled: boolean; activeGatewayName?: string }) {
   return createSandboxRegistryMetadataHelpers({
     isLinuxDockerDriverGatewayEnabled: () => opts.dockerDriverEnabled,
     getInstalledOpenshellVersion: () => "0.0.42",
     runCaptureOpenshell: () => null,
+    getActiveGatewayName: () => opts.activeGatewayName ?? "nemoclaw",
   });
 }
 
@@ -140,5 +141,24 @@ describe("updateReusedSandboxMetadata gatewayName migration", () => {
     helpers.updateReusedSandboxMetadata("alpha", null, "m", "p", 8090);
 
     expect(registry.getSandbox("alpha")?.gatewayName).toBe("nemoclaw-8081");
+  });
+
+  it("backfills using the active gateway name even when dashboardPort and gateway port differ", () => {
+    // Regression guard: the helper used to call `getGatewayName(dashboardPort)`
+    // which would derive a wrong binding once the resolver flips to per-port
+    // names — `dashboardPort` is the chat-UI forward, not the gateway port.
+    // The deps-injected `getActiveGatewayName()` must win.
+    registry.registerSandbox({ name: "legacy", model: "m", provider: "p" });
+
+    const helpers = makeHelpers({
+      dockerDriverEnabled: true,
+      activeGatewayName: "nemoclaw-8081",
+    });
+    // Pass a dashboardPort that is obviously not the gateway port (e.g. a UI
+    // forward port like 9081). The migration must record the injected
+    // gateway name, not anything derived from this port.
+    helpers.updateReusedSandboxMetadata("legacy", null, "m", "p", 9081);
+
+    expect(registry.getSandbox("legacy")?.gatewayName).toBe("nemoclaw-8081");
   });
 });

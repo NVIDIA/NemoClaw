@@ -2755,8 +2755,8 @@ const { getSandboxRuntimeRegistryFields, hasSandboxGpuDrift, updateReusedSandbox
     isLinuxDockerDriverGatewayEnabled,
     getInstalledOpenshellVersion,
     runCaptureOpenshell,
+    getActiveGatewayName: () => GATEWAY_NAME,
   });
-
 
 // ── Step 5: Sandbox ──────────────────────────────────────────────
 
