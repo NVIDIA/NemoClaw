@@ -3,7 +3,7 @@
 # Prepare Windows for NemoClaw
 
 You can run NemoClaw inside Windows Subsystem for Linux (WSL 2) on Windows.
-Complete these steps before following the Quickstart (use the `nemoclaw-user-get-started` skill).
+Complete these steps before following the [Quickstart](../SKILL.md).
 Linux and macOS users do not need this page and can go directly to the Quickstart.
 
 **Note:**
@@ -15,7 +15,7 @@ This guide has been tested on x86-64.
 Verify the following before you begin:
 
 - Windows 10 (build 19041 or later) or Windows 11.
-- Hardware requirements are the same as the Quickstart (use the `nemoclaw-user-get-started` skill).
+- Hardware requirements are the same as the [Quickstart](../SKILL.md).
 
 ## Option: Use the Bootstrap Script
 
@@ -29,6 +29,8 @@ The command downloads the script to a temporary file before running it.
 `-ExecutionPolicy Bypass` applies only to that PowerShell process and avoids local policy blocking the downloaded script.
 Run it from Windows, not from inside WSL.
 The script requests Administrator privileges when needed, enables the required WSL 2 Windows features, installs or opens Ubuntu 24.04, and installs and starts Docker Desktop.
+When Ubuntu needs first-run account setup, the script opens a handoff window and waits for that account to exist before it changes Docker settings.
+It enables Docker Desktop WSL integration for the target distro, restarts Docker Desktop only when Docker was already running, and leaves your global default WSL distro unchanged.
 If the target Ubuntu distro is already registered, the script confirms it uses WSL 2, converts it from WSL 1 when needed, and verifies Docker is reachable from WSL.
 If Windows requires a reboot after enabling WSL features, the script prompts for the reboot and registers a one-time continuation for the next sign-in.
 If Docker Desktop shows first-run prompts, complete them and return to the PowerShell window.
@@ -45,7 +47,7 @@ When Windows preparation is complete, it opens Ubuntu and prints the standard in
 curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
-If the bootstrap script reports that Docker is not reachable from Ubuntu, open Docker Desktop Settings and confirm that WSL integration is enabled for Ubuntu (Settings > Resources > WSL integration), then rerun the script.
+If the bootstrap script reports that Docker is not reachable from Ubuntu, open Docker Desktop Settings and confirm that WSL integration is enabled for Ubuntu (Settings > Resources > WSL integration), make sure Docker Desktop is running, then rerun the script.
 
 If the bootstrap script reports that `winget.exe` is not available (common on Windows Server or stripped Windows installs), install **App Installer** from the Microsoft Store (which provides `winget`), or download and install Docker Desktop manually from [docker.com](https://www.docker.com/products/docker-desktop/).
 Rerun the bootstrap script after Docker Desktop is installed; the script skips the install step once it detects Docker Desktop is present.
@@ -137,7 +139,7 @@ Use one instance, or move one of them to a different port before running `nemocl
 
 Your Windows environment is ready.
 If you used the bootstrap script, follow the installer command it printed inside Ubuntu.
-If you prepared Windows manually, open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with the Quickstart (use the `nemoclaw-user-get-started` skill) to install NemoClaw and launch your first sandbox.
+If you prepared Windows manually, open a WSL terminal (type `wsl` in PowerShell, or open Ubuntu from Windows Terminal) and continue with the [Quickstart](../SKILL.md) to install NemoClaw and launch your first sandbox.
 
 All NemoClaw commands run inside WSL, not in PowerShell.
 

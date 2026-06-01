@@ -367,7 +367,8 @@ Run `nemoclaw status` for a broader gateway health report.
 ### Invalid sandbox name
 
 Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
-Uppercase letters are automatically lowercased.
+The CLI rejects names that do not match these rules.
+It prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant` and you can rerun with the suggested slug.
 
 Names that collide with global CLI commands are also rejected.
 Reserved names include `onboard`, `list`, `deploy`, `setup`, `start`, `stop`, `status`, `debug`, `uninstall`, `credentials`, and `help`.
@@ -409,6 +410,9 @@ Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headro
 On macOS Apple Silicon, the build can stall part-way through with no progress and no error, leaving the wizard waiting indefinitely.
 
 Preflight inspects `docker info` for `NCPU` and `MemTotal` and prints a warning when the runtime falls below 4 vCPU or 8 GiB.
+In interactive onboarding, the warning prompt defaults to abort, so pressing Enter stops the run before the sandbox build reaches the likely stall point.
+Type `y` only when you intentionally want to continue on the smaller runtime.
+Non-interactive onboarding prints the warning and continues.
 On Colima, raise the resources before re-running onboard:
 
 ```console
@@ -794,15 +798,14 @@ Older QA plans used that helper for a Dockerfile "Patch-4" test that corrupted t
 The old Patch-4 fail-closed test no longer applies because NemoClaw no longer patches OpenClaw's compiled `replaceConfigFile` source at image build time.
 
 Current sandboxes use a mutable-default config model instead.
-Before lockdown, `/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow.
-After lockdown, `nemoclaw <sandbox> shields up` intentionally locks the config tree as root-owned read-only state; runtime config mutations should fail cleanly or route users to the supported host-side NemoClaw command.
+Before a reviewed host-side lockdown, `/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow.
+After lockdown, runtime config mutations should fail cleanly or route users to the supported host-side NemoClaw command.
 
-To validate this area now, use the shields/config lifecycle tests instead of looking for `rcf_patch.py`:
+To validate this area now, use the config lifecycle tests instead of looking for `rcf_patch.py`:
 
 ```console
 $ npm run build:cli
 $ npm test -- test/repro-2681-group-writable.test.ts
-$ bash test/e2e/test-shields-config.sh
 ```
 
 ### `openclaw config set` or `unset` is blocked inside the sandbox
@@ -927,6 +930,14 @@ For Telegram group chats, first check BotFather privacy mode.
 New Telegram bots default to privacy mode enabled, which prevents group messages from reaching `getUpdates` even when the user mentions the bot.
 In @BotFather, run `/setprivacy`, choose the bot, and choose **Disable**.
 Then remove the bot from the affected group and add it back; Telegram applies the privacy-mode change to group delivery only after the bot rejoins.
+
+For Telegram direct messages, make sure the rebuilt sandbox has a DM allowlist.
+Set `TELEGRAM_ALLOWED_IDS` before rebuild; `TELEGRAM_AUTHORIZED_CHAT_IDS` and `TELEGRAM_CHAT_ID` are accepted as compatibility aliases.
+Keep the aliases until QA automation and public repro templates have stopped exporting them for at least one full release.
+Bot API `sendMessage` sends from the bot to a chat, so it only proves outbound Telegram API access.
+To prove inbound agent routing, send a message from the Telegram client as an allowed user and then watch the gateway log for the agent turn and outbound reply.
+For a reproducible live check that also exercises an alias, run `test/e2e/test-messaging-providers.sh` with `TELEGRAM_BOT_TOKEN_REAL`, either `TELEGRAM_AUTHORIZED_CHAT_IDS` or `TELEGRAM_CHAT_ID`, and `NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E=1`; when prompted, send a fresh direct message from that Telegram client.
+The check waits for `[telegram] [default] inbound update received` and `[telegram] [default] outbound sendMessage attempted` in `/tmp/gateway.log`.
 
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 
@@ -1175,11 +1186,12 @@ Run `fix-coredns.sh` to point CoreDNS at the container gateway IP instead, then 
 ### `k3s` cannot find a freshly built image
 
 After building a new sandbox image, `k3s` inside the gateway container sometimes fails to pull it even though the image exists on the host.
-Destroy and restart the gateway, then re-run setup.
+Remove the gateway registration, stop any leftover host gateway process, then re-run setup.
 
 ```console
-$ openshell gateway destroy
-$ openshell gateway start
+$ openshell gateway remove nemoclaw
+$ sudo pkill -f openshell-gateway
+$ nemoclaw onboard --resume
 ```
 
 ### GPU passthrough on Spark
