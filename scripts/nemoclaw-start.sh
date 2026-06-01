@@ -1870,7 +1870,8 @@ openclaw() {
   # NemoClaw#4462: keep user-initiated device approval usable from an
   # interactive sandbox shell until upstream OpenClaw can approve scope
   # upgrades through the gateway without requesting the upgraded scopes for
-  # the approval command itself. Other commands keep OPENCLAW_GATEWAY_URL.
+  # the approval command itself. Approval calls temporarily drop the gateway
+  # URL/port/token; other commands keep the full gateway environment.
   if [ "${1:-}" = "devices" ] && [ "${2:-}" = "approve" ]; then
     ( unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw "$@" )
     return $?
