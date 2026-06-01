@@ -26,8 +26,13 @@ import {
 import * as registry from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { shellQuote } from "../../runner";
+import {
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
+import { validateSlackChannelCredentials } from "./slack-channel-validation";
 import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
 import {
   type ChannelDef,
@@ -267,7 +272,18 @@ export function listSandboxPolicies(sandboxName: string) {
 
   if (gatewayPresets === null) {
     console.log("");
-    console.log("  ⚠ Could not query gateway — showing local state only.");
+    // A null gateway result can be a transient Docker daemon outage rather
+    // than a gateway-only problem. Name the runtime outage so the user
+    // restarts Docker instead of assuming their local policy state drifted
+    // (#4428).
+    if (isDockerRuntimeDown(sandboxName)) {
+      printDockerRuntimeDownGuidance(sandboxName, {
+        writer: console.log,
+        retryCommand: "policy-list",
+      });
+    } else {
+      console.log("  ⚠ Could not query gateway — showing local state only.");
+    }
   }
   console.log("");
 }
@@ -873,6 +889,17 @@ export async function addSandboxChannel(
     await acquirePasteTokens(canonical, channel, acquired);
   }
 
+  if (canonical === "slack") {
+    const validation = validateSlackChannelCredentials(channel, acquired);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      process.exit(1);
+    }
+    if (validation.message) {
+      console.log(`  ${YW}⚠${R} ${validation.message}`);
+    }
+  }
+
   persistChannelTokens(acquired);
   // Push to the gateway and update the registry NOW so that answering
   // "rebuild later" (or running non-interactively) does not silently
@@ -931,7 +958,9 @@ async function rollbackChannelAdd(
           envKey,
           token,
         }));
-        onboardProviders.upsertMessagingProviders(priorTokenDefs, runOpenshell);
+        onboardProviders.upsertMessagingProviders(priorTokenDefs, runOpenshell, {
+          bestEffort: true,
+        });
       } catch (err) {
         console.error(
           `  ${YW}⚠${R} Failed to restore gateway providers for '${canonical}': ${

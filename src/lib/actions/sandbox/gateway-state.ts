@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
-import { parseSandboxPhase } from "../../state/gateway";
+import { isTerminalSandboxPhase, parseSandboxPhase } from "../../state/gateway";
 import {
   getNamedGatewayLifecycleState,
   recoverNamedGatewayRuntime,
@@ -36,6 +36,10 @@ import {
   OPENSHELL_PROBE_TIMEOUT_MS,
 } from "../../adapters/openshell/timeouts";
 import * as registry from "../../state/registry";
+import {
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 
 export type SandboxGatewayState = {
   state: string;
@@ -393,6 +397,14 @@ export async function ensureLiveSandboxOrExit(
   if (lookup.state === "present") {
     const phase = parseSandboxPhase(lookup.output || "");
     if (!allowNonReadyPhase && phase && phase !== "Ready" && phase !== "Running") {
+      // Don't steer toward rebuild when the host Docker daemon is down: the
+      // sandbox is fine and recreating it cannot succeed until Docker is back
+      // (#4428). Terminal phases (Failed/Error/...) are settled failures and
+      // keep the rebuild guidance so a genuine failure is never masked.
+      if (!isTerminalSandboxPhase(phase) && isDockerRuntimeDown(sandboxName)) {
+        printDockerRuntimeDownGuidance(sandboxName);
+        process.exit(1);
+      }
       console.error(`  Sandbox '${sandboxName}' is stuck in '${phase}' phase.`);
       console.error(
         "  This usually happens when a process crash inside the sandbox prevented clean startup.",

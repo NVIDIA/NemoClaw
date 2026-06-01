@@ -28,6 +28,11 @@ import { LOCAL_INFERENCE_TIMEOUT_SECS } from "../../onboard/env";
 import { isWsl } from "../../platform";
 import { ROOT } from "../../runner";
 import * as sandboxVersion from "../../sandbox/version";
+import {
+  isTerminalSandboxPhase,
+  parseSandboxPhase,
+  TERMINAL_SANDBOX_PHASES,
+} from "../../state/gateway";
 import type { SandboxEntry } from "../../state/registry";
 import * as registry from "../../state/registry";
 import {
@@ -36,6 +41,10 @@ import {
 } from "../../state/sandbox-session";
 import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { runSetupDnsProxy } from "../dns";
+import {
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 import { ensureLiveSandboxOrExit, printGatewayLifecycleHint } from "./gateway-state";
 import { checkAndRecoverSandboxProcesses } from "./process-recovery";
 import {
@@ -206,6 +215,15 @@ function failConnectReadinessGatewayUnavailable(
 
 function outputShowsGatewayUnavailable(output = ""): boolean {
   return GATEWAY_UNAVAILABLE_RE.test(output);
+}
+
+// Fail fast with Docker-outage guidance instead of polling to the readiness
+// timeout. Only fires for Docker-driver sandboxes whose `docker info` is
+// failing (#4428).
+function failConnectReadinessDockerRuntimeDown(sandboxName: string): never {
+  console.error("");
+  printDockerRuntimeDownGuidance(sandboxName, { writer: console.error, retryCommand: "connect" });
+  process.exit(1);
 }
 
 function failIfGatewayBlocksConnectReadiness(sandboxName: string): void {
@@ -762,7 +780,25 @@ export async function connectSandbox(
 ): Promise<void> {
   preflightVllmModelEnvOrExit();
   const { isSandboxReady, parseSandboxStatus } = require("../../onboard");
-  await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+  const live = await ensureLiveSandboxOrExit(sandboxName, { allowNonReadyPhase: true });
+
+  // Fast-fail on a Docker daemon outage before the probe-only health check and
+  // the session/recovery probes below (each can spawn 15s `openshell sandbox
+  // exec`/`ssh-config` calls) and before the readiness wait loop. When Docker
+  // is down and the sandbox is not yet ready, connect cannot make progress;
+  // surface the outage immediately so the user is not left waiting tens of
+  // seconds (or killed by an external `timeout`). Terminal phases keep their
+  // normal handling below (#4428).
+  const livePhase = parseSandboxPhase(live.output || "");
+  if (
+    livePhase &&
+    livePhase !== "Ready" &&
+    livePhase !== "Running" &&
+    !isTerminalSandboxPhase(livePhase) &&
+    isDockerRuntimeDown(sandboxName)
+  ) {
+    failConnectReadinessDockerRuntimeDown(sandboxName);
+  }
 
   if (probeOnly) {
     return runSandboxConnectProbe(sandboxName);
@@ -840,20 +876,20 @@ export async function connectSandbox(
     if (!listCommandFailed && status && /^unknown$/i.test(status)) {
       failIfGatewayBlocksConnectReadiness(sandboxName);
     }
-    const TERMINAL = new Set([
-      "Failed",
-      "Error",
-      "CrashLoopBackOff",
-      "ImagePullBackOff",
-      "Unknown",
-      "Evicted",
-    ]);
-    if (status && TERMINAL.has(status)) {
+    if (status && TERMINAL_SANDBOX_PHASES.has(status)) {
       console.error("");
       console.error(`  Sandbox '${sandboxName}' is in '${status}' state.`);
       console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
       console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
       process.exit(1);
+    }
+
+    // Probe-disagreement safety net: `sandbox get` may have reported Ready/no
+    // phase (so the early guard was skipped) while `sandbox list` shows a
+    // non-terminal status. Status is non-terminal here, so re-check Docker and
+    // fail fast rather than entering the readiness loop (#4428).
+    if (isDockerRuntimeDown(sandboxName)) {
+      failConnectReadinessDockerRuntimeDown(sandboxName);
     }
 
     console.log(`  Waiting for sandbox '${sandboxName}' to be ready...`);
@@ -882,12 +918,17 @@ export async function connectSandbox(
         failIfGatewayBlocksConnectReadiness(sandboxName);
       }
       if (cur !== "unknown") everSeen = true;
-      if (TERMINAL.has(cur)) {
+      if (TERMINAL_SANDBOX_PHASES.has(cur)) {
         console.error("");
         console.error(`  Sandbox '${sandboxName}' entered '${cur}' state.`);
         console.error(`  Run:  ${CLI_NAME} ${sandboxName} logs --follow`);
         console.error(`  Run:  ${CLI_NAME} ${sandboxName} status`);
         process.exit(1);
+      }
+      // Catch a Docker daemon that dies mid-wait so we stop polling instead of
+      // running out the full readiness timeout (#4428).
+      if (isDockerRuntimeDown(sandboxName)) {
+        failConnectReadinessDockerRuntimeDown(sandboxName);
       }
       if (!everSeen && elapsed >= 30) {
         console.error("");

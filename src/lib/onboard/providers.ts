@@ -319,19 +319,22 @@ function upsertProvider(name, type, credentialEnv, baseUrl, env, _runOpenshell, 
 /**
  * Upsert all messaging providers that have tokens configured.
  * Returns the list of provider names that were successfully created/updated.
- * Exits the process if any upsert fails.
+ * Exits the process if any upsert fails unless `options.bestEffort` is true.
  *
  * Pass `options.replaceExisting` true only when every entry is guaranteed
  * detached from any live sandbox (post-sandbox-delete on the recreate path);
  * reuse paths must omit it because `provider delete` fails for attached
- * providers.
+ * providers. Pass `options.bestEffort` only from rollback paths that must
+ * continue restoring registry state and report residual gateway work instead
+ * of terminating the CLI.
  * @param {Array<{name: string, envKey: string, token: string|null, providerType?: string}>} tokenDefs
  * @param {Function} _runOpenshell - Injected runOpenshell from onboard.ts.
- * @param {{replaceExisting?: boolean}} options - Forwarded to every upsertProvider call.
+ * @param {{replaceExisting?: boolean, bestEffort?: boolean}} options - Forwarded to every upsertProvider call.
  * @returns {string[]} Provider names that were upserted.
  */
 function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
   const upserted = [];
+  const failures = [];
   for (const { name, envKey, token, providerType } of tokenDefs) {
     if (!token) continue;
     const result = upsertProvider(
@@ -344,10 +347,17 @@ function upsertMessagingProviders(tokenDefs, _runOpenshell, options = {}) {
       { replaceExisting: Boolean(options.replaceExisting) },
     );
     if (!result.ok) {
+      if (options.bestEffort) {
+        failures.push(`${name}: ${result.message}`);
+        continue;
+      }
       console.error(`\n  ✗ Failed to create messaging provider '${name}': ${result.message}`);
       process.exit(1);
     }
     upserted.push(name);
+  }
+  if (failures.length > 0) {
+    throw new Error(failures.join("; "));
   }
   return upserted;
 }
