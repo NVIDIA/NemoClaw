@@ -14,7 +14,6 @@ import {
   hasStaleGateway,
   hasActiveGatewayInfo,
   getReportedGatewayName,
-  listLiveSandboxNames,
   shouldSelectNamedGatewayForReuse,
   parseSandboxPhase,
 } from "../src/lib/state/gateway.js";
@@ -222,43 +221,6 @@ describe("isGatewayHealthy", () => {
     // be treated as empty after stripping, triggering the ARM64 fallback.
     const ansiOnly = "\x1b[0m\x1b[32m";
     expect(isGatewayHealthy(ansiOnly, GW_INFO_NAMED, GW_INFO_ACTIVE)).toBe(true);
-  });
-});
-
-describe("listLiveSandboxNames", () => {
-  it("returns names of Ready and Running sandboxes only", () => {
-    const output = [
-      "NAME           STATUS     AGE",
-      "sandbox-a      Ready      5m",
-      "sandbox-b      Running    2m",
-      "sandbox-c      Provisioning  10s",
-      "sandbox-d      NotReady   1m",
-      "sandbox-e      Failed     30s",
-    ].join("\n");
-    expect(listLiveSandboxNames(output)).toEqual(["sandbox-a", "sandbox-b"]);
-  });
-
-  it("treats NotReady as not live even when Ready also appears on the row", () => {
-    // Defensive: prefer the negative signal so a sandbox in transitional state
-    // isn't counted as live and accidentally blocks a legitimate recreate.
-    const output = "sandbox-x   Ready NotReady  3m";
-    expect(listLiveSandboxNames(output)).toEqual([]);
-  });
-
-  it("strips ANSI escapes before parsing", () => {
-    const output =
-      "\x1b[1mNAME           STATUS     AGE\x1b[0m\nsandbox-a      \x1b[32mReady\x1b[0m      5m";
-    expect(listLiveSandboxNames(output)).toEqual(["sandbox-a"]);
-  });
-
-  it("returns an empty array for empty / non-string input", () => {
-    expect(listLiveSandboxNames("")).toEqual([]);
-    expect(listLiveSandboxNames(undefined as unknown as string)).toEqual([]);
-  });
-
-  it("returns an empty array when no rows match", () => {
-    const output = ["NAME   STATUS   AGE", "sandbox-a   Provisioning   10s"].join("\n");
-    expect(listLiveSandboxNames(output)).toEqual([]);
   });
 });
 

@@ -8,7 +8,11 @@
  * returns a typed result — no I/O, no side effects.
  */
 
-const GATEWAY_NAME = "nemoclaw";
+import { DEFAULT_GATEWAY_NAME, getGatewayName } from "./gateway-name";
+
+export { DEFAULT_GATEWAY_NAME, getGatewayName };
+
+const GATEWAY_NAME = DEFAULT_GATEWAY_NAME;
 
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
@@ -51,35 +55,10 @@ export function parseSandboxStatus(output: string, sandboxName: string): string 
  * sandbox stays in "Running" phase which is functionally equivalent to
  * "Ready" — the agent is live and the gateway is reachable inside.
  */
-function isLiveSandboxRow(cols: readonly string[]): boolean {
-  return (cols.includes("Ready") || cols.includes("Running")) && !cols.includes("NotReady");
-}
-
 export function isSandboxReady(output: string, sandboxName: string): boolean {
   const cols = parseSandboxRow(output, sandboxName);
   if (!cols) return false;
-  return isLiveSandboxRow(cols);
-}
-
-/**
- * Enumerate sandbox names from `openshell sandbox list` output whose state
- * column indicates a live workload — "Ready" or "Running" and not "NotReady".
- * The singleton-gateway design means recreating the gateway destroys the
- * shared `openshell-cluster-*` container holding every sandbox, so the
- * preflight cleanup decision uses this set to refuse destructive recreates.
- */
-export function listLiveSandboxNames(output: string): string[] {
-  if (typeof output !== "string") return [];
-  const clean = stripAnsi(output);
-  const names: string[] = [];
-  for (const line of clean.split("\n")) {
-    const cols = line.trim().split(/\s+/);
-    if (cols.length < 2) continue;
-    const name = cols[0];
-    if (!name) continue;
-    if (isLiveSandboxRow(cols)) names.push(name);
-  }
-  return names;
+  return (cols.includes("Ready") || cols.includes("Running")) && !cols.includes("NotReady");
 }
 
 /**

@@ -437,7 +437,7 @@ const {
   preflightDashboardPortRangeAvailability,
 } = require("./onboard/dashboard-port") as typeof import("./onboard/dashboard-port");
 const { destroyGatewayForReuse } = require("./onboard/gateway-cleanup") as typeof import("./onboard/gateway-cleanup");
-const { runPreflightGatewayCleanup } =
+const { applyPreflightGatewayCleanup } =
   require("./onboard/preflight-gateway-cleanup-decision") as typeof import("./onboard/preflight-gateway-cleanup-decision");
 const { verifyGatewayContainerRunning } =
   require("./onboard/gateway-container-running") as typeof import("./onboard/gateway-container-running");
@@ -571,7 +571,7 @@ const USE_COLOR = !process.env.NO_COLOR && !!process.stdout.isTTY;
 const DIM = USE_COLOR ? "\x1b[2m" : "";
 const RESET = USE_COLOR ? "\x1b[0m" : "";
 let OPENSHELL_BIN: string | null = null;
-const GATEWAY_NAME = "nemoclaw";
+const GATEWAY_NAME = gatewayState.getGatewayName(GATEWAY_PORT);
 const OPENCLAW_LAUNCH_AGENT_PLIST = "~/Library/LaunchAgents/ai.openclaw.gateway.plist";
 
 const BRAVE_SEARCH_HELP_URL = "https://brave.com/search/api/";
@@ -1989,13 +1989,13 @@ async function preflight(
     exitProcess: (code) => process.exit(code),
   });
 
-  gatewayReuseState = runPreflightGatewayCleanup({
+  gatewayReuseState = applyPreflightGatewayCleanup({
     gatewayReuseState,
-    isLinuxDockerDriverGatewayEnabled,
-    runCaptureOpenshell,
+    isDockerDriverGatewayEnabled: isLinuxDockerDriverGatewayEnabled(),
+    cliDisplayName: cliDisplayName(),
+    dashboardPort: DASHBOARD_PORT,
+    log: console.log,
     runOpenshell,
-    cliName,
-    cliDisplayName,
     destroyGateway,
     destroyGatewayForReuse,
   });
