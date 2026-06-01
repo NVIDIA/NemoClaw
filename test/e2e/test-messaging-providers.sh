@@ -916,11 +916,17 @@ else
   fail "M-WA6b: WhatsApp compact-QR preload has unexpected owner/mode: ${whatsapp_qr_preload_stat} (#4522)"
 fi
 
-whatsapp_qr_guard_wiring=$(sandbox_exec "grep -c -- 'nemoclaw-whatsapp-qr-compact.js' /tmp/nemoclaw-proxy-env.sh 2>/dev/null || echo 0")
+# Assert on the actual NODE_OPTIONS injection line, not just the filename: the
+# filename also appears in the install banner and the literal path assignment,
+# so a filename-only grep would still pass if the `--require` wiring regressed.
+# The guard body is emitted inside a single-quoted heredoc, so the proxy-env
+# file contains the literal token `--require $_whatsapp_qr_compact`. Escape `$`
+# so the host shell does not expand it before sandbox_exec ships the command.
+whatsapp_qr_guard_wiring=$(sandbox_exec "grep -cF -- '--require \$_whatsapp_qr_compact' /tmp/nemoclaw-proxy-env.sh 2>/dev/null || echo 0")
 if [ "${whatsapp_qr_guard_wiring:-0}" -ge 1 ] 2>/dev/null; then
-  pass "M-WA6c: openclaw() guard references compact-QR preload for WhatsApp login (#4522)"
+  pass "M-WA6c: openclaw() guard injects compact-QR preload via NODE_OPTIONS for WhatsApp login (#4522)"
 else
-  fail "M-WA6c: openclaw() guard missing compact-QR preload wiring for WhatsApp login (#4522)"
+  fail "M-WA6c: openclaw() guard missing compact-QR preload --require injection for WhatsApp login (#4522)"
 fi
 
 # M1: Verify Telegram provider exists in gateway
