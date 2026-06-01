@@ -212,17 +212,37 @@ export function getSandbox(name: string): SandboxEntry | null {
 }
 
 /**
- * Resolve the OpenShell gateway name a sandbox is bound to. Returns the
- * persisted value when set, or backfills the singleton
- * {@link DEFAULT_GATEWAY_NAME} for legacy entries that predate the
- * `gatewayName` field. Returns `null` when the sandbox does not exist so the
- * caller surfaces a clean lookup failure instead of silently treating a typo
- * as the default gateway.
+ * Resolve the OpenShell gateway name a sandbox is bound to. Always returns a
+ * usable gateway name so callers do not need null-handling. Falls back to
+ * {@link DEFAULT_GATEWAY_NAME} when the sandbox is missing, when the entry
+ * predates the `gatewayName` field (legacy backfill), or when the persisted
+ * value fails validation (defense-in-depth against corrupt on-disk state).
+ * Missing sandboxes and legacy entries log at info level so unexpected
+ * fallbacks remain observable; corrupt values log at warning level.
  */
-export function getSandboxGatewayName(name: string): string | null {
+export function getSandboxGatewayName(name: string): string {
   const entry = getSandbox(name);
-  if (!entry) return null;
-  return entry.gatewayName || DEFAULT_GATEWAY_NAME;
+  if (!entry) {
+    console.log(
+      `  Gateway-name lookup for unknown sandbox '${name}' resolved to '${DEFAULT_GATEWAY_NAME}'.`,
+    );
+    return DEFAULT_GATEWAY_NAME;
+  }
+  if (entry.gatewayName === undefined) {
+    console.log(
+      `  Sandbox '${name}' has no recorded gatewayName; using '${DEFAULT_GATEWAY_NAME}' from the singleton default.`,
+    );
+    return DEFAULT_GATEWAY_NAME;
+  }
+  try {
+    validateGatewayNameField(entry.gatewayName);
+    return entry.gatewayName;
+  } catch {
+    console.warn(
+      `  Sandbox '${name}' has an invalid recorded gatewayName; falling back to '${DEFAULT_GATEWAY_NAME}'.`,
+    );
+    return DEFAULT_GATEWAY_NAME;
+  }
 }
 
 export function getDefault(): string | null {
@@ -235,7 +255,7 @@ export function getDefault(): string | null {
 }
 
 export function registerSandbox(entry: SandboxEntry): void {
-  if (entry.gatewayName) validateGatewayNameField(entry.gatewayName);
+  if (entry.gatewayName !== undefined) validateGatewayNameField(entry.gatewayName);
   withLock(() => {
     const data = load();
     data.sandboxes[entry.name] = {
@@ -285,7 +305,8 @@ export function registerSandbox(entry: SandboxEntry): void {
 }
 
 export function updateSandbox(name: string, updates: Partial<SandboxEntry>): boolean {
-  if (updates.gatewayName) validateGatewayNameField(updates.gatewayName);
+  if (Object.prototype.hasOwnProperty.call(updates, "gatewayName"))
+    validateGatewayNameField(updates.gatewayName as string);
   return withLock(() => {
     const data = load();
     if (!data.sandboxes[name]) return false;

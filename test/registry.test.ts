@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -521,8 +521,42 @@ describe("advisory file locking", () => {
     expect(registry.getSandboxGatewayName("alpha")).toBe("nemoclaw-8081");
   });
 
-  it("getSandboxGatewayName returns null for unknown sandbox names so callers surface the lookup failure", () => {
-    expect(registry.getSandboxGatewayName("does-not-exist")).toBeNull();
+  it("getSandboxGatewayName falls back to the singleton default for unknown sandbox names and emits an info log", () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      expect(registry.getSandboxGatewayName("does-not-exist")).toBe("nemoclaw");
+      expect(logSpy).toHaveBeenCalled();
+      expect(
+        logSpy.mock.calls.some(([msg]: unknown[]) =>
+          typeof msg === "string" && msg.includes("unknown sandbox 'does-not-exist'"),
+        ),
+      ).toBe(true);
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
+  it("getSandboxGatewayName falls back with a warning when the persisted value is invalid", () => {
+    // Corrupt on-disk state: caller hand-edited sandboxes.json or a future
+    // version persisted an invalid value. Defense-in-depth — return the
+    // singleton default rather than feeding the bad value to lifecycle code.
+    const corrupt = JSON.stringify({
+      sandboxes: { alpha: { name: "alpha", gatewayName: "../escape" } },
+      defaultSandbox: "alpha",
+    });
+    fs.writeFileSync(regFile, corrupt);
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(registry.getSandboxGatewayName("alpha")).toBe("nemoclaw");
+      expect(warnSpy).toHaveBeenCalled();
+      expect(
+        warnSpy.mock.calls.some(([msg]: unknown[]) =>
+          typeof msg === "string" && msg.includes("invalid recorded gatewayName"),
+        ),
+      ).toBe(true);
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it("rejects malformed gatewayName at the registry boundary", () => {
@@ -538,11 +572,20 @@ describe("advisory file locking", () => {
     expect(() =>
       registry.registerSandbox({ name: "alpha", gatewayName: ";rm" }),
     ).toThrow(/gatewayName/);
+    expect(() =>
+      registry.registerSandbox({ name: "alpha", gatewayName: "" }),
+    ).toThrow(/gatewayName/);
   });
 
-  it("rejects malformed gatewayName in updateSandbox too", () => {
+  it("rejects malformed and empty gatewayName in updateSandbox too", () => {
     registry.registerSandbox({ name: "alpha", gatewayName: "nemoclaw" });
     expect(() => registry.updateSandbox("alpha", { gatewayName: "../escape" })).toThrow(
+      /gatewayName/,
+    );
+    // Explicit empty string is a deliberate write — reject it so the field
+    // cannot be cleared into an invalid state. Persisted absence is fine; the
+    // accessor backfills the singleton default for legacy entries.
+    expect(() => registry.updateSandbox("alpha", { gatewayName: "" })).toThrow(
       /gatewayName/,
     );
     // Sanity check: a valid update still succeeds.

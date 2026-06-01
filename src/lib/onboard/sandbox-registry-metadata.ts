@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 import type { AgentDefinition } from "../agent/defs";
+import { DEFAULT_GATEWAY_NAME } from "../state/gateway-name";
 import type { SandboxEntry } from "../state/registry";
 import * as registry from "../state/registry";
 import { getSandboxAgentRegistryFields } from "./sandbox-agent";
@@ -97,11 +98,19 @@ export function createSandboxRegistryMetadataHelpers(
     const existingEntry = registry.getSandbox(sandboxName);
     const agentVersionKnown = existingEntry?.agentVersion !== null;
     const selectionUpdates = selectionVerified ? { model, provider } : {};
+    // Migrate legacy reused entries that predate per-sandbox gateway tracking
+    // by recording the singleton gateway name on first reuse. When existing
+    // entries already carry a binding, preserve it untouched.
+    const gatewayMigration =
+      existingEntry && existingEntry.gatewayName === undefined
+        ? { gatewayName: DEFAULT_GATEWAY_NAME }
+        : {};
     registry.updateSandbox(sandboxName, {
       ...selectionUpdates,
       dashboardPort,
       ...getSandboxAgentRegistryFields(agent, agentVersionKnown),
       ...(sandboxGpuConfig ? getSandboxRuntimeRegistryFields(sandboxGpuConfig) : {}),
+      ...gatewayMigration,
     });
     registry.setDefault(sandboxName);
   }
