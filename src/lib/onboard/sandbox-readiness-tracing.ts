@@ -132,6 +132,15 @@ export function formatCreatedSandboxReadinessFailureMessage(
   return `  Sandbox '${sandboxName}' was created but did not become ready within ${timeoutSecs}s.`;
 }
 
+export function printReadinessFailure(
+  readiness: CreatedSandboxReadinessResult,
+  sandboxName: string,
+  timeoutSecs: number,
+  logError: (message: string) => void = (message) => console.error(message),
+): void {
+  logError(formatCreatedSandboxReadinessFailureMessage(sandboxName, readiness, timeoutSecs));
+}
+
 export function waitForDashboardReadyWithTrace(options: {
   sandboxName: string;
   port: string | number;

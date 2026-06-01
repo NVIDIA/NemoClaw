@@ -3700,7 +3700,7 @@ async function createSandbox(
       { backupPath: restoreBackupPath },
     );
     console.error("");
-    console.error(sandboxReadinessTracing.formatCreatedSandboxReadinessFailureMessage(sandboxName, readiness, sandboxReadyTimeoutSecs));
+    sandboxReadinessTracing.printReadinessFailure(readiness, sandboxName, sandboxReadyTimeoutSecs);
     if (diagnostics) {
       console.error(`  Diagnostics saved: ${diagnostics.dir}`);
       if (diagnostics.summaryLines.length > 0) {
