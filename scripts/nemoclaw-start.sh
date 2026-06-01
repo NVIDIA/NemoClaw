@@ -1997,6 +1997,22 @@ openclaw() {
               echo "exit the sandbox and rebuild with 'nemoclaw <sandbox> rebuild'." >&2
               return 1
             fi
+            # The OpenClaw gateway is a WebSocket endpoint (set to
+            # ws://127.0.0.1:<port> at boot). Reject a malformed scheme up front
+            # so a typo'd/clobbered URL is reported as a gateway/env problem
+            # rather than failing inside the login as an ambiguous close.
+            case "${OPENCLAW_GATEWAY_URL}" in
+              ws://*|wss://*) ;;
+              *)
+                echo "Error: WhatsApp pairing cannot start — OPENCLAW_GATEWAY_URL='${OPENCLAW_GATEWAY_URL}' is not a ws:// gateway URL." >&2
+                echo "The OpenClaw gateway is a WebSocket endpoint (e.g. ws://127.0.0.1:<port>); a malformed value" >&2
+                echo "would fail the login in a way that looks like a QR/pairing problem (this is a gateway/env problem)." >&2
+                echo "" >&2
+                echo "Reconnect with 'openshell sandbox connect <sandbox>' and retry. If it persists," >&2
+                echo "exit the sandbox and rebuild with 'nemoclaw <sandbox> rebuild'." >&2
+                return 1
+                ;;
+            esac
             echo "[whatsapp] Pairing via gateway ${OPENCLAW_GATEWAY_URL}." >&2
             echo "[whatsapp] On your phone: WhatsApp > Linked devices > Link a device, then scan the QR below." >&2
             # Literal path: this guard body is emitted inside a single-quoted
