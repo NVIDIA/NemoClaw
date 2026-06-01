@@ -26,6 +26,10 @@ import {
 import * as registry from "../../state/registry";
 import { runOpenshell } from "../../adapters/openshell/runtime";
 import { shellQuote } from "../../runner";
+import {
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
 import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
@@ -267,7 +271,18 @@ export function listSandboxPolicies(sandboxName: string) {
 
   if (gatewayPresets === null) {
     console.log("");
-    console.log("  ⚠ Could not query gateway — showing local state only.");
+    // A null gateway result can be a transient Docker daemon outage rather
+    // than a gateway-only problem. Name the runtime outage so the user
+    // restarts Docker instead of assuming their local policy state drifted
+    // (#4428).
+    if (isDockerRuntimeDown(sandboxName)) {
+      printDockerRuntimeDownGuidance(sandboxName, {
+        writer: console.log,
+        retryCommand: "policy-list",
+      });
+    } else {
+      console.log("  ⚠ Could not query gateway — showing local state only.");
+    }
   }
   console.log("");
 }
