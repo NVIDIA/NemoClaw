@@ -3622,7 +3622,7 @@ async function createSandbox(
     openshellSandboxCommand: sandboxStartupCommand,
     timeoutSecs: sandboxReadyTimeoutSecs,
     backend: effectiveSandboxGpuConfig.hostGpuPlatform === "jetson" ? "jetson" : "generic",
-    deps: { runOpenshell, runCaptureOpenshell, sleep: sleepSeconds, dockerCapture: docker.dockerCapture },
+    deps: { runOpenshell, runCaptureOpenshell, sleep: sleepSeconds },
   });
   const createResult = await streamSandboxCreate(createCommand, sandboxEnv, {
     readyCheck: () => {
