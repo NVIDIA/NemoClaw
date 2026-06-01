@@ -2,12 +2,14 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 title: "NVIDIA NemoClaw"
-sidebar-title: "NVIDIA NemoClaw Developer Guide"
+sidebar-title: "Home"
 description: "NemoClaw is an open-source reference stack for running sandboxed AI agents more safely, with a single command and packaged agent skills."
 keywords: "NemoClaw, OpenClaw, Hermes, OpenShell, AI agents, agent skills, sandboxing, inference routing"
+layout: overview
 position: 1
 ---
 
+import { AgentOnly, guidePath } from "./_components/AgentGuide";
 import { BadgeLinks } from "./_components/BadgeLinks";
 import { CommandTerminal } from "./_components/CommandTerminal";
 
@@ -56,8 +58,8 @@ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 
 | Agent | Guide |
 |-------|-------|
-| OpenClaw (default) | [Quickstart with OpenClaw](/get-started/quickstart) |
-| Hermes | [Quickstart with Hermes](/get-started/quickstart-hermes) |
+| OpenClaw (default) | [Quickstart with OpenClaw](/user-guide/openclaw/get-started/quickstart) |
+| Hermes | [Quickstart with Hermes](/user-guide/hermes/get-started/quickstart-hermes) |
 
 ## Use NemoClaw User Skills
 
@@ -66,7 +68,7 @@ The skills turn these docs into task-focused guidance that your assistant can ap
 
 <Cards>
 
-<Card title="Set Up Agent Skills" href="/resources/agent-skills">
+<Card title="Set Up Agent Skills" href={guidePath("/resources/agent-skills")}>
 
 Clone the skills or add them to your assistant so NemoClaw guidance is available directly in chat.
 
@@ -82,98 +84,99 @@ Clone the skills or add them to your assistant so NemoClaw guidance is available
 <div className="explore-cards">
 <Cards>
 
-<Card title="Overview" href="/about/overview">
+<Card title="Overview" href={guidePath("/about/overview")}>
 
 Learn what NemoClaw is, what capabilities it provides, and when to use it.
 
 <Badge intent="tip" minimal outlined>Concept</Badge>
 </Card>
 
-<Card title="Architecture Overview" href="/about/how-it-works">
+<Card title="Architecture Overview" href={guidePath("/about/how-it-works")}>
 
-Understand the host CLI, plugin, blueprint, sandbox lifecycle, and protection layers.
-
-<Badge intent="tip" minimal outlined>Concept</Badge>
-</Card>
-
-<Card title="Ecosystem" href="/about/ecosystem">
-
-Learn how OpenClaw, OpenShell, and NemoClaw fit together.
+Understand the host CLI, blueprint, sandbox lifecycle, and protection layers.
 
 <Badge intent="tip" minimal outlined>Concept</Badge>
 </Card>
 
-<Card title="Release Notes" href="/about/release-notes">
+<Card title="Ecosystem" href={guidePath("/about/ecosystem")}>
+
+<AgentOnly variant="openclaw">Learn how OpenClaw, OpenShell, and NemoClaw fit together.</AgentOnly>
+<AgentOnly variant="hermes">Learn how Hermes, OpenShell, and NemoClaw fit together.</AgentOnly>
+
+<Badge intent="tip" minimal outlined>Concept</Badge>
+</Card>
+
+<Card title="Release Notes" href={guidePath("/about/release-notes")}>
 
 Track NemoClaw release changes and component version policy.
 
 <Badge intent="tip" minimal outlined>Reference</Badge>
 </Card>
 
-<Card title="Get Started" href="/get-started/prerequisites">
+<Card title="Get Started" href={guidePath("/get-started/prerequisites")}>
 
 Install NemoClaw, verify prerequisites, and run your first sandboxed agent.
 
 <Badge intent="tip" minimal outlined>Guide</Badge>
 </Card>
 
-<Card title="Agent Skills" href="/resources/agent-skills">
+<Card title="Agent Skills" href={guidePath("/resources/agent-skills")}>
 
 Use NemoClaw's packaged agent skills to guide coding assistants through common workflows.
 
 <Badge intent="tip" minimal outlined>Resource</Badge>
 </Card>
 
-<Card title="Inference" href="/inference/inference-options">
+<Card title="Inference" href={guidePath("/inference/inference-options")}>
 
 Choose how NemoClaw routes model requests and configures inference providers.
 
 <Badge intent="tip" minimal outlined>Guide</Badge>
 </Card>
 
-<Card title="Manage Sandboxes" href="/manage-sandboxes/lifecycle">
+<Card title="Manage Sandboxes" href={guidePath("/manage-sandboxes/lifecycle")}>
 
 Create, inspect, update, and clean up NemoClaw sandboxes.
 
 <Badge intent="tip" minimal outlined>Guide</Badge>
 </Card>
 
-<Card title="Network Policy" href="/network-policy/approve-network-requests">
+<Card title="Network Policy" href={guidePath("/network-policy/approve-network-requests")}>
 
 Approve, deny, and customize sandbox network access.
 
 <Badge intent="tip" minimal outlined>Guide</Badge>
 </Card>
 
-<Card title="Deployment" href="/deployment/deploy-to-remote-gpu">
+<Card title="Deployment" href={guidePath("/deployment/deploy-to-remote-gpu")}>
 
 Deploy NemoClaw to remote GPU instances and manage deployment-specific setup.
 
 <Badge intent="tip" minimal outlined>Guide</Badge>
 </Card>
 
-<Card title="Monitoring" href="/monitoring/monitor-sandbox-activity">
+<Card title="Monitoring" href={guidePath("/monitoring/monitor-sandbox-activity")}>
 
 Inspect sandbox health, logs, and agent behavior during runtime.
 
 <Badge intent="tip" minimal outlined>Guide</Badge>
 </Card>
 
-<Card title="Security" href="/security/best-practices">
+<Card title="Security" href={guidePath("/security/best-practices")}>
 
 Review sandbox controls, credential handling, and security trade-offs.
 
 <Badge intent="tip" minimal outlined>Guide</Badge>
 </Card>
 
-<Card title="Reference" href="/reference/architecture">
+<Card title="Reference" href={guidePath("/reference/architecture")}>
 
 Look up architecture details, CLI commands, policies, and troubleshooting guidance.
 
 <Badge intent="tip" minimal outlined>Reference</Badge>
 </Card>
 
-<Card title="Architecture Details" href="/reference/architecture">
+<Card title="Architecture Details" href={guidePath("/reference/architecture")}>
 
 Learn about the NemoClaw architecture, plugin structure, and blueprint design in detail.
 
