@@ -3,7 +3,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { parseGatewayCallEnvelope } from "./gateway-rpc";
+import { parseGatewayCallEnvelope } from "./gateway-rpc-envelope";
 
 describe("parseGatewayCallEnvelope", () => {
   it("parses a single-line success envelope", () => {

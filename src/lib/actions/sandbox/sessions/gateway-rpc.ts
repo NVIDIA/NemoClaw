@@ -3,16 +3,17 @@
 
 import { CLI_NAME } from "../../../cli/branding";
 import { captureOpenshell } from "../../../adapters/openshell/runtime";
+import {
+  type GatewayCallEnvelope,
+  parseGatewayCallEnvelope,
+} from "./gateway-rpc-envelope";
 
-export interface GatewayCallSuccess<T = unknown> {
-  result: T;
-}
-
-export interface GatewayCallFailure {
-  error: { code?: string | number; message?: string };
-}
-
-export type GatewayCallEnvelope<T = unknown> = Partial<GatewayCallSuccess<T> & GatewayCallFailure>;
+export {
+  type GatewayCallEnvelope,
+  type GatewayCallFailure,
+  type GatewayCallSuccess,
+  parseGatewayCallEnvelope,
+} from "./gateway-rpc-envelope";
 
 export interface GatewayCallOptions {
   sandboxName: string;
@@ -23,27 +24,6 @@ export interface GatewayCallOptions {
 export interface GatewayCallResult<T = unknown> {
   envelope: GatewayCallEnvelope<T>;
   rawOutput: string;
-}
-
-export function parseGatewayCallEnvelope<T = unknown>(
-  output: string,
-): GatewayCallEnvelope<T> | null {
-  const trimmed = output.trim();
-  if (!trimmed) return null;
-  for (const line of trimmed.split(/\r?\n/).reverse()) {
-    const candidate = line.trim();
-    if (!candidate.startsWith("{") || !candidate.endsWith("}")) continue;
-    try {
-      return JSON.parse(candidate) as GatewayCallEnvelope<T>;
-    } catch {
-      continue;
-    }
-  }
-  try {
-    return JSON.parse(trimmed) as GatewayCallEnvelope<T>;
-  } catch {
-    return null;
-  }
 }
 
 export function callOpenclawGateway<T = unknown>(
