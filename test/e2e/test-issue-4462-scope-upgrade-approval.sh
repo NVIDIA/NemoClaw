@@ -742,7 +742,7 @@ fi
 . /tmp/nemoclaw-proxy-env.sh
 printf "OPENCLAW_GATEWAY_URL=%s\n" "${OPENCLAW_GATEWAY_URL-unset}"
 type openclaw 2>/dev/null | sed -n "1,12p"
-grep -F "unset OPENCLAW_GATEWAY_URL; command openclaw" /tmp/nemoclaw-proxy-env.sh >/dev/null \
+grep -F "unset OPENCLAW_GATEWAY_URL OPENCLAW_GATEWAY_PORT OPENCLAW_GATEWAY_TOKEN; command openclaw" /tmp/nemoclaw-proxy-env.sh >/dev/null \
   && echo "APPROVE_GUARD_PRESENT"
 ' 2>&1)
 guard_rc=$?
