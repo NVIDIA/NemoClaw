@@ -49,7 +49,8 @@ export interface SandboxEntry {
    * OpenShell gateway name this sandbox is bound to. Optional for backward
    * compatibility — legacy entries created before per-sandbox gateway tracking
    * resolve to {@link DEFAULT_GATEWAY_NAME} via {@link getSandboxGatewayName}.
-   * Tracked in NemoClaw#3053; currently every sandbox uses the singleton name.
+   * Currently every sandbox uses the singleton name; the field exists so
+   * follow-up work can record per-port gateway names without a schema change.
    */
   gatewayName?: string;
 }
@@ -192,14 +193,17 @@ export function getSandbox(name: string): SandboxEntry | null {
 }
 
 /**
- * Resolve the OpenShell gateway name a sandbox is bound to, backfilling the
- * singleton {@link DEFAULT_GATEWAY_NAME} for legacy entries that predate the
- * `gatewayName` field. Callers should prefer this over reading
- * `entry.gatewayName` directly so the backfill stays in one place.
+ * Resolve the OpenShell gateway name a sandbox is bound to. Returns the
+ * persisted value when set, or backfills the singleton
+ * {@link DEFAULT_GATEWAY_NAME} for legacy entries that predate the
+ * `gatewayName` field. Returns `null` when the sandbox does not exist so the
+ * caller surfaces a clean lookup failure instead of silently treating a typo
+ * as the default gateway.
  */
-export function getSandboxGatewayName(name: string): string {
+export function getSandboxGatewayName(name: string): string | null {
   const entry = getSandbox(name);
-  return entry?.gatewayName || DEFAULT_GATEWAY_NAME;
+  if (!entry) return null;
+  return entry.gatewayName || DEFAULT_GATEWAY_NAME;
 }
 
 export function getDefault(): string | null {

@@ -511,7 +511,7 @@ describe("advisory file locking", () => {
   it("getSandboxGatewayName backfills the singleton name for legacy entries", () => {
     // Legacy entries created before per-sandbox gateway tracking lack the
     // `gatewayName` field; the accessor must transparently return the
-    // singleton default so callers never see undefined. NemoClaw#3053.
+    // singleton default so callers never see undefined.
     registry.registerSandbox({ name: "legacy" });
     expect(registry.getSandboxGatewayName("legacy")).toBe("nemoclaw");
   });
@@ -521,7 +521,7 @@ describe("advisory file locking", () => {
     expect(registry.getSandboxGatewayName("alpha")).toBe("nemoclaw-8081");
   });
 
-  it("getSandboxGatewayName falls back to the singleton for unknown sandbox names", () => {
-    expect(registry.getSandboxGatewayName("does-not-exist")).toBe("nemoclaw");
+  it("getSandboxGatewayName returns null for unknown sandbox names so callers surface the lookup failure", () => {
+    expect(registry.getSandboxGatewayName("does-not-exist")).toBeNull();
   });
 });

@@ -16,12 +16,11 @@ describe("getGatewayName", () => {
     expect(getGatewayName(8080)).toBe(DEFAULT_GATEWAY_NAME);
   });
 
-  it("returns the singleton name for non-default ports until per-port names land (NemoClaw#3053)", () => {
+  it("returns the singleton name for non-default ports until per-port names land", () => {
     // Today NemoClaw runs a single gateway regardless of which port is
-    // configured. The follow-up work that flips this resolver to per-port
-    // names so concurrent NemoClaw instances can coexist on a single host is
-    // tracked in NemoClaw#3053. Lock the current behaviour so the call-site
-    // refactor lands first without behavioural drift.
+    // configured. Lock the current behaviour so the call-site refactor lands
+    // first without behavioural drift; the follow-up resolver swap can flip
+    // the per-port branch in one place.
     expect(getGatewayName(8081)).toBe(DEFAULT_GATEWAY_NAME);
     expect(getGatewayName(8990)).toBe(DEFAULT_GATEWAY_NAME);
     expect(getGatewayName(65535)).toBe(DEFAULT_GATEWAY_NAME);

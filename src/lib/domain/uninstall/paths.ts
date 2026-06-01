@@ -3,7 +3,9 @@
 
 import path from "node:path";
 
-export const DEFAULT_GATEWAY_NAME = "nemoclaw";
+import { DEFAULT_GATEWAY_NAME } from "../../state/gateway-name";
+
+export { DEFAULT_GATEWAY_NAME };
 export const NEMOCLAW_PROVIDERS = [
   "nvidia-nim",
   "vllm-local",

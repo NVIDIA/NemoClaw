@@ -30,7 +30,7 @@ import * as shields from "../../shields";
 import { buildStatusCommandDeps } from "../../status-command-deps";
 import { B, D, G, R, RD, YW } from "../../cli/terminal-style";
 
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
+import { DEFAULT_GATEWAY_NAME as NEMOCLAW_GATEWAY_NAME } from "../../state/gateway-name";
 
 type DoctorStatus = "ok" | "warn" | "fail" | "info";
 

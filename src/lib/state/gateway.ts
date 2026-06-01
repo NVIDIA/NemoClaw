@@ -12,8 +12,6 @@ import { DEFAULT_GATEWAY_NAME, getGatewayName } from "./gateway-name";
 
 export { DEFAULT_GATEWAY_NAME, getGatewayName };
 
-const GATEWAY_NAME = DEFAULT_GATEWAY_NAME;
-
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 
 function stripAnsi(value: string): string {
@@ -69,7 +67,7 @@ export function hasStaleGateway(gwInfoOutput: string): boolean {
   const clean = typeof gwInfoOutput === "string" ? stripAnsi(gwInfoOutput) : "";
   return (
     clean.length > 0 &&
-    clean.includes(`Gateway: ${GATEWAY_NAME}`) &&
+    clean.includes(`Gateway: ${DEFAULT_GATEWAY_NAME}`) &&
     !clean.includes("No gateway metadata found")
   );
 }
@@ -101,7 +99,7 @@ export function hasActiveGatewayInfo(activeGatewayInfoOutput = ""): boolean {
   );
 }
 
-export function isSelectedGateway(statusOutput = "", gatewayName = GATEWAY_NAME): boolean {
+export function isSelectedGateway(statusOutput = "", gatewayName = DEFAULT_GATEWAY_NAME): boolean {
   return getReportedGatewayName(statusOutput) === gatewayName;
 }
 
@@ -117,12 +115,12 @@ export function isGatewayHealthy(
   const activeInfo = hasActiveGatewayInfo(activeGatewayInfoOutput);
 
   // Primary path: status reports connected and gateway name matches
-  if (connected && activeGatewayName === GATEWAY_NAME) return true;
+  if (connected && activeGatewayName === DEFAULT_GATEWAY_NAME) return true;
 
   // Fallback: status is empty (ARM64/non-TTY) but gateway info confirms
   // the named gateway exists and has an active endpoint
   const statusEmpty = typeof statusOutput === 'string' && stripAnsi(statusOutput).trim().length === 0;
-  if (statusEmpty && namedGatewayKnown && activeInfo && activeGatewayName === GATEWAY_NAME) return true;
+  if (statusEmpty && namedGatewayKnown && activeInfo && activeGatewayName === DEFAULT_GATEWAY_NAME) return true;
 
   return false;
 }
@@ -139,10 +137,10 @@ export function getGatewayReuseState(
   const activeGatewayName =
     getReportedGatewayName(statusOutput) || getReportedGatewayName(activeGatewayInfoOutput);
   const activeInfo = hasActiveGatewayInfo(activeGatewayInfoOutput);
-  if (connected && activeGatewayName === GATEWAY_NAME) {
+  if (connected && activeGatewayName === DEFAULT_GATEWAY_NAME) {
     return "active-unnamed";
   }
-  if ((connected || activeInfo) && activeGatewayName && activeGatewayName !== GATEWAY_NAME) {
+  if ((connected || activeInfo) && activeGatewayName && activeGatewayName !== DEFAULT_GATEWAY_NAME) {
     return "foreign-active";
   }
   if (hasStaleGateway(gwInfoOutput)) {

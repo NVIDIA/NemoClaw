@@ -43,7 +43,7 @@ import {
   shouldApplyVmDnsMonkeypatch,
 } from "./vm-dns-monkeypatch";
 
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
+import { DEFAULT_GATEWAY_NAME as NEMOCLAW_GATEWAY_NAME } from "../../state/gateway-name";
 
 export type SandboxConnectOptions = {
   probeOnly?: boolean;

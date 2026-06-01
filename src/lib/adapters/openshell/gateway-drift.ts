@@ -4,12 +4,11 @@
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { isOpenShellProtobufSchemaMismatch } from "../../runtime-recovery";
 import { isGatewayHealthy } from "../../state/gateway";
+import { DEFAULT_GATEWAY_NAME } from "../../state/gateway-name";
 import { dockerContainerInspectFormat } from "../docker";
 import { stripAnsi } from "./client";
 import { captureOpenshell, getInstalledOpenshellVersionOrNull } from "./runtime";
 import { OPENSHELL_PROBE_TIMEOUT_MS } from "./timeouts";
-
-const DEFAULT_GATEWAY_NAME = "nemoclaw";
 
 export type GatewayClusterImageDrift = {
   containerName: string;

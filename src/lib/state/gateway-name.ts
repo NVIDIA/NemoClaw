@@ -7,8 +7,8 @@
  * NemoClaw currently runs a singleton gateway: every onboard uses the literal
  * `"nemoclaw"` name regardless of which port the gateway binds to. That
  * invariant makes concurrent NemoClaw instances on a single host impossible
- * — changing `NEMOCLAW_GATEWAY_PORT` relocates the singleton instead of
- * spawning a second instance. Tracked in NemoClaw#3053.
+ * — changing the gateway port relocates the singleton instead of spawning a
+ * second instance.
  *
  * This module owns the canonical name and exposes a `port`-aware resolver so
  * follow-up work can derive per-port names (e.g. `"nemoclaw-8081"`) without

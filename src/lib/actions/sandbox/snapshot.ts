@@ -27,7 +27,7 @@ const B = useColor ? "\x1b[1m" : "";
 const D = useColor ? "\x1b[2m" : "";
 const R = useColor ? "\x1b[0m" : "";
 
-const NEMOCLAW_GATEWAY_NAME = "nemoclaw";
+import { DEFAULT_GATEWAY_NAME as NEMOCLAW_GATEWAY_NAME } from "../../state/gateway-name";
 
 export type SnapshotRequest =
   | { kind: "help" }
