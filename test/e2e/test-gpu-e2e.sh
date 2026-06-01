@@ -310,6 +310,21 @@ else
   fail "Onboard GPU proof missing: cuInit(0)"
 fi
 
+# 4d.1: Host-network local inference reachability gate (#4509). When the GPU
+# patch wires OpenClaw to the direct 127.0.0.1 sandbox URL, onboard must prove
+# the recreated host-network container can actually reach that endpoint before
+# declaring success — instead of leaving an unreachable loopback to surface as
+# an opaque ECONNREFUSED during the first agent prompt.
+if grep -Fq "OpenClaw local inference will use direct sandbox URL" "$INSTALL_LOG"; then
+  if grep -Fq "GPU host-network local inference reachable from sandbox" "$INSTALL_LOG"; then
+    pass "Onboard proved host-network local inference reachable before success"
+  else
+    fail "Onboard did not prove host-network local inference reachability (#4509 gate missing)"
+  fi
+else
+  skip "Host-network direct sandbox URL not active; inference reachability gate not exercised"
+fi
+
 # 4e: Inference provider is ollama-local
 if inf_check=$(openshell inference get 2>&1); then
   if echo "$inf_check" | grep -qi "ollama"; then

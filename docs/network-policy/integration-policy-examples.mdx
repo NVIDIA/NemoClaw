@@ -214,16 +214,17 @@ $ nemoclaw my-assistant policy-add jira --yes
 The `jira` preset intentionally allows Node.js access to Atlassian Cloud and does not allow `curl`.
 When validating it manually, avoid plain `curl -s` against `auth.atlassian.com`.
 Atlassian can return an empty redirect body even when the request succeeds.
-Use an explicit status probe instead:
+Use a body-visible API probe instead:
 
-```console
-$ node -e "require('https').get('https://api.atlassian.com', r => console.log(r.statusCode))"
-$ curl -sS -o /dev/null -w '%{http_code}' --max-time 10 https://auth.atlassian.com
+```bash
+node -e "require('https').get('https://api.atlassian.com', r => console.log(r.statusCode))"
+curl -sS --max-time 10 -w '\n%{http_code}\n' https://api.atlassian.com/oauth/token/accessible-resources
 ```
 
 Before approval, the curl probe should report `000` or a local policy denial.
-After approving the blocked request in OpenShell, it should report an HTTP
-status such as `301` or `200`.
+After explicitly approving curl for `api.atlassian.com` in OpenShell, it should return Atlassian's unauthenticated `401` JSON response.
+That `401` is the expected success signal for this manual probe.
+This manual probe proves curl reached Atlassian, but no Jira credentials were supplied.
 
 Remove access when the task is done:
 
@@ -251,7 +252,7 @@ Use these presets when an agent workflow installs packages or downloads model as
 | Workflow | Preset |
 |----------|--------|
 | npm or Yarn packages | `npm` |
-| Python packages from PyPI | `pypi` |
+| Python packages from PyPI with `pip`, Python, or `uv` | `pypi` |
 | Homebrew packages | `brew` |
 | Hugging Face model or dataset access | `huggingface` |
 
@@ -272,6 +273,9 @@ $ nemoclaw my-assistant policy-remove pypi --yes
 $ nemoclaw my-assistant policy-remove brew --yes
 $ nemoclaw my-assistant policy-remove huggingface --yes
 ```
+
+The `pypi` preset allows Python, `pip`, virtual-environment Python and `pip`, and `/usr/local/bin/uv` to reach PyPI endpoints.
+If `uv` is installed somewhere else in the sandbox, add a custom preset for that binary path instead of broadening the maintained preset locally.
 
 ### Homebrew Specifics
 
