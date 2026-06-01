@@ -6,22 +6,23 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
 
-// Use a temp HOME so tests do not touch the real ~/.nemoclaw registry.
-// HOME must be set before loading the registry module (it reads HOME at
-// require time), so we use createRequire instead of a static import.
+// Use a temp HOME so tests do not touch the real ~/.nemoclaw registry. Both
+// the helper and the registry modules read HOME at require time, so HOME must
+// be set before they load. Static ESM imports are hoisted ahead of any module
+// body statement, so both modules must be loaded via `createRequire` after
+// the HOME mutation runs. Same pattern as `vm-dns-monkeypatch.test.ts`.
 const tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-meta-"));
 const originalHome = process.env.HOME;
 process.env.HOME = tmpHome;
 
-// Import the compiled module: sandbox-registry-metadata.ts pulls in state/registry,
-// which transitively requires the JS-only `./platform` helper that vitest cannot
-// resolve from TS source. Same pattern as `vm-dns-monkeypatch.test.ts`.
-import { createSandboxRegistryMetadataHelpers } from "../../../dist/lib/onboard/sandbox-registry-metadata";
-import type { SandboxGpuConfig } from "./sandbox-gpu-mode";
-
 const require = createRequire(import.meta.url);
-const registry = require("../../../dist/lib/state/registry");
+const registry: typeof import("../state/registry") = require(
+  "../../../dist/lib/state/registry",
+);
+const { createSandboxRegistryMetadataHelpers }: typeof import("./sandbox-registry-metadata") =
+  require("../../../dist/lib/onboard/sandbox-registry-metadata");
 const regFile = path.join(tmpHome, ".nemoclaw", "sandboxes.json");
 
 const ORIGINAL_PLATFORM = Object.getOwnPropertyDescriptor(process, "platform");
@@ -121,12 +122,12 @@ describe("updateReusedSandboxMetadata gatewayName migration", () => {
     // field; reuse must record the active singleton name so future lifecycle
     // callers can resolve a stable binding.
     registry.registerSandbox({ name: "legacy", model: "m", provider: "p" });
-    expect(registry.getSandbox("legacy").gatewayName).toBeUndefined();
+    expect(registry.getSandbox("legacy")?.gatewayName).toBeUndefined();
 
     const helpers = makeHelpers({ dockerDriverEnabled: true });
     helpers.updateReusedSandboxMetadata("legacy", null, "m2", "p2", 8081);
 
-    expect(registry.getSandbox("legacy").gatewayName).toBe("nemoclaw");
+    expect(registry.getSandbox("legacy")?.gatewayName).toBe("nemoclaw");
   });
 
   it("preserves an existing gatewayName binding on reuse", () => {
@@ -138,6 +139,6 @@ describe("updateReusedSandboxMetadata gatewayName migration", () => {
     const helpers = makeHelpers({ dockerDriverEnabled: true });
     helpers.updateReusedSandboxMetadata("alpha", null, "m", "p", 8090);
 
-    expect(registry.getSandbox("alpha").gatewayName).toBe("nemoclaw-8081");
+    expect(registry.getSandbox("alpha")?.gatewayName).toBe("nemoclaw-8081");
   });
 });

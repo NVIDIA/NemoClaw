@@ -19,6 +19,10 @@ const registry = require("../dist/lib/state/registry");
 const regFile = path.join(tmpDir, ".nemoclaw", "sandboxes.json");
 
 beforeEach(() => {
+  // Ensure the registry parent dir exists so tests that write `regFile`
+  // directly (e.g. the corrupt-state path) do not race ahead of the lazy
+  // dir creation done by `ensureConfigDir` on the first registry write.
+  fs.mkdirSync(path.dirname(regFile), { recursive: true });
   if (fs.existsSync(regFile)) fs.unlinkSync(regFile);
 });
 
