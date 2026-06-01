@@ -204,10 +204,10 @@ RUN set -eu; \
 # OpenClaw's web_fetch SSRF guard blocks *.internal hostnames before the
 # OpenShell L7 proxy sees the request. NemoClaw users legitimately reach
 # host-local approved services through host.openshell.internal after the
-# OpenShell policy explicitly allows that host:port. Allow only this exact
-# hostname, only inside an OpenShell sandbox, and only at the hostname-only
-# check used by trusted env-proxy mode. Direct DNS-pinned/private-IP paths
-# remain blocked, and metadata/link-local/private IP literals are unchanged.
+# OpenShell policy explicitly allows that host:port. Add this exact hostname
+# only to the web_fetch trusted-env-proxy policy, only inside an OpenShell
+# sandbox. The generic SSRF helper and strict/direct DNS-pinned paths remain
+# unmodified, so metadata/link-local/private IP literals are unchanged.
 #
 # === Removal criteria ===
 # Patch 1: drop when OpenClaw deprecates withStrictGuardedFetchMode or
@@ -215,9 +215,9 @@ RUN set -eu; \
 # Patch 2: drop when OpenClaw fixes assertExplicitProxyAllowed to skip the
 #   target hostname allowlist for the proxy hostname check (or exposes config
 #   to disable the check).
-# Patch 2b: drop when OpenClaw ships a reviewed host-gateway SSRF policy
-#   surface that can allow host.openshell.internal without allowing broader
-#   private/special-use hostnames.
+# Patch 2b: drop when OpenClaw ships a reviewed web_fetch trusted-proxy SSRF
+#   policy surface that can allow host.openshell.internal without allowing
+#   broader private/special-use hostnames.
 #
 # SYNC WITH OPENCLAW: these patches classify the compiled OpenClaw dist at
 # build time. They apply the legacy patch when the old target exists, skip
@@ -302,31 +302,37 @@ RUN set -eu; \
             patch_fail "Patch 2 cannot safely skip"; \
         fi; \
     fi; \
-    # --- Patch 2b: allow OpenShell host gateway hostname in trusted proxy mode --- \
-    ssrf_hostname_files="$(grep -RIlE --include='*.js' 'function assertHostnameAllowedWithPolicy\(hostname, policy\)' "$OC_DIST" || true)"; \
-    if [ -n "$ssrf_hostname_files" ]; then \
+    # --- Patch 2b: allow OpenShell host gateway only through web_fetch trusted env proxy --- \
+    # Reviewed against openclaw@2026.5.22 dist: fetchWithWebToolsNetworkGuard \
+    # passes useEnvProxy into withTrustedEnvProxyGuardedFetchMode(resolved), and \
+    # the SSRF guard consumes policy.allowedHostnames to skip private-network \
+    # checks for an exact normalized hostname. hostnameAllowlist only gates \
+    # hostname pattern matching and does not bypass .internal/private blocking. \
+    web_guard_files="$(grep -RIlE --include='*.js' 'function fetchWithWebToolsNetworkGuard\(params\)' "$OC_DIST" || true)"; \
+    if [ -n "$web_guard_files" ]; then \
         patched_host_gateway=0; \
-        for f in $ssrf_hostname_files; do \
-            if grep -q 'nemoclaw: OpenShell host gateway' "$f"; then \
+        for f in $web_guard_files; do \
+            if grep -q 'nemoclaw: OpenShell host gateway for web_fetch trusted env proxy' "$f"; then \
                 echo "INFO: Patch 2b already present in $f"; \
             else \
-                grep -q 'normalizeHostname' "$f" || patch_fail "Patch 2b target $f is missing normalizeHostname"; \
-                sed -i -E 's|(function assertHostnameAllowedWithPolicy\(hostname, policy\) \{)|\1 const normalizedHost = normalizeHostname(hostname); if (process.env.OPENSHELL_SANDBOX === "1" \&\& normalizedHost === "host.openshell.internal") return normalizedHost; /* nemoclaw: OpenShell host gateway via trusted proxy, see Dockerfile */ |' "$f"; \
-                grep -Eq 'assertHostnameAllowedWithPolicy\(hostname, policy\) \{ const normalizedHost = normalizeHostname\(hostname\); if \(process\.env\.OPENSHELL_SANDBOX === "1" && normalizedHost === "host\.openshell\.internal"\) return normalizedHost; /\* nemoclaw: OpenShell host gateway' "$f" \
+                grep -q 'withTrustedEnvProxyGuardedFetchMode(resolved)' "$f" \
+                    || patch_fail "Patch 2b target $f is missing reviewed trusted env-proxy web_fetch call"; \
+                sed -i -E 's|return fetchWithSsrFGuard\(useEnvProxy \? withTrustedEnvProxyGuardedFetchMode\(resolved\) : withStrictGuardedFetchMode\(resolved\)\);|const hostGatewayPolicy = process.env.OPENSHELL_SANDBOX === "1" \&\& useEnvProxy \&\& new URL(resolved.url).hostname === "host.openshell.internal" ? { ...resolved.policy, allowedHostnames: [...resolved.policy?.allowedHostnames ?? [], "host.openshell.internal"] } : resolved.policy; return fetchWithSsrFGuard(useEnvProxy ? withTrustedEnvProxyGuardedFetchMode({ ...resolved, policy: hostGatewayPolicy }) : withStrictGuardedFetchMode(resolved)); /* nemoclaw: OpenShell host gateway for web_fetch trusted env proxy, see Dockerfile */|' "$f"; \
+                grep -Fq 'process.env.OPENSHELL_SANDBOX === "1" && useEnvProxy && new URL(resolved.url).hostname === "host.openshell.internal"' "$f" \
                     || patch_fail "Patch 2b verification failed for $f"; \
                 patched_host_gateway=1; \
             fi; \
         done; \
         if [ "$patched_host_gateway" = "1" ]; then \
-            echo "INFO: Patch 2b applied to OpenClaw ${OC_VERSION} host-gateway hostname validator"; \
+            echo "INFO: Patch 2b applied to OpenClaw ${OC_VERSION} web_fetch trusted-proxy host-gateway policy"; \
         fi; \
     else \
-        internal_hostname_blocks="$(grep -RIlE --include='*.js' '\.internal|Blocked hostname or private/internal/special-use IP address|assertHostnameAllowedWithPolicy' "$OC_DIST" || true)"; \
-        if [ -z "$internal_hostname_blocks" ]; then \
-            echo "INFO: OpenClaw ${OC_VERSION} has no host-gateway hostname validator; Patch 2b not needed"; \
+        web_fetch_proxy_refs="$(grep -RIlE --include='*.js' 'web_fetch|useEnvProxy|useTrustedEnvProxy|withTrustedEnvProxyGuardedFetchMode\(resolved\)' "$OC_DIST" || true)"; \
+        if [ -z "$web_fetch_proxy_refs" ]; then \
+            echo "INFO: OpenClaw ${OC_VERSION} has no web_fetch trusted env-proxy callsite; Patch 2b not needed"; \
         else \
-            echo "ERROR: Patch 2b target missing but internal-hostname SSRF blocks remain:" >&2; \
-            printf '%s\n' "$internal_hostname_blocks" | head -n 5 >&2; \
+            echo "ERROR: Patch 2b target missing but web_fetch/trusted-proxy references remain:" >&2; \
+            printf '%s\n' "$web_fetch_proxy_refs" | head -n 5 >&2; \
             patch_fail "Patch 2b cannot safely skip"; \
         fi; \
     fi; \
@@ -412,12 +418,14 @@ COPY scripts/nemoclaw-start.sh /usr/local/bin/nemoclaw-start
 # needs to read these files to install runtime preloads under /tmp.
 COPY nemoclaw-blueprint/scripts/*.js /usr/local/lib/nemoclaw/preloads/
 COPY scripts/codex-acp-wrapper.sh /usr/local/bin/nemoclaw-codex-acp
-COPY scripts/generate-openclaw-config.py /usr/local/lib/nemoclaw/generate-openclaw-config.py
+COPY scripts/generate-openclaw-config.mts /usr/local/lib/nemoclaw/generate-openclaw-config.mts
+COPY scripts/openclaw-build-messaging-plugins.py /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py
 COPY scripts/seed-wechat-accounts.py /usr/local/lib/nemoclaw/seed-wechat-accounts.py
 COPY nemoclaw-blueprint/openclaw-plugins/ /usr/local/share/nemoclaw/openclaw-plugins/
 RUN chmod 755 /usr/local/bin/nemoclaw-start /usr/local/bin/nemoclaw-codex-acp \
         /usr/local/lib/nemoclaw/sandbox-init.sh \
-        /usr/local/lib/nemoclaw/generate-openclaw-config.py \
+        /usr/local/lib/nemoclaw/generate-openclaw-config.mts \
+        /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py \
         /usr/local/lib/nemoclaw/seed-wechat-accounts.py \
     && if [ -d /usr/local/lib/nemoclaw/preloads ]; then find /usr/local/lib/nemoclaw/preloads -type f -name '*.js' -exec chmod 644 {} +; fi \
     && chmod 755 /usr/local/share/nemoclaw \
@@ -507,9 +515,9 @@ ARG NEMOCLAW_PROXY_PORT=3128
 # baked into the image.
 ARG NEMOCLAW_WEB_SEARCH_ENABLED=0
 
-# SECURITY: Promote build-args to env vars so the Python script reads them
-# via os.environ, never via string interpolation into Python source code.
-# Direct ARG interpolation into python3 -c is a code injection vector (C-2).
+# SECURITY: Promote build-args to env vars so the TypeScript script reads them
+# via process.env, never via string interpolation into executable source code.
+# Direct ARG interpolation into inline source is a code injection vector (C-2).
 ENV NEMOCLAW_MODEL=${NEMOCLAW_MODEL} \
     NEMOCLAW_PROVIDER_KEY=${NEMOCLAW_PROVIDER_KEY} \
     NEMOCLAW_PRIMARY_MODEL_REF=${NEMOCLAW_PRIMARY_MODEL_REF} \
@@ -551,17 +559,17 @@ USER sandbox
 # Build args (NEMOCLAW_MODEL, CHAT_UI_URL) customize per deployment.
 #
 # Generate openclaw.json from environment variables. Config generation logic
-# lives in scripts/generate-openclaw-config.py — see that file for the full
+# lives in scripts/generate-openclaw-config.mts — see that file for the full
 # list of env vars and derivation rules.
 #
 # OpenClaw's managed proxy config activates process-wide HTTP_PROXY/HTTPS_PROXY
 # for child npm processes. During image build the OpenShell gateway is not
 # available at the runtime sandbox proxy address yet, so defer the final proxy
 # block until after build-time OpenClaw doctor/plugin commands complete.
-RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 python3 /usr/local/lib/nemoclaw/generate-openclaw-config.py
+RUN NEMOCLAW_OPENCLAW_MANAGED_PROXY=0 node --experimental-strip-types /usr/local/lib/nemoclaw/generate-openclaw-config.mts
 
 # hadolint ignore=DL3059,DL4006
-RUN openclaw doctor --fix --non-interactive
+RUN python3 /usr/local/lib/nemoclaw/openclaw-build-messaging-plugins.py
 
 # Lock down npm: no further registry traffic in this image. Everything past
 # this point must resolve from local sources only.
@@ -610,7 +618,7 @@ proxy_port = os.environ.get('NEMOCLAW_PROXY_PORT') or '3128'; \
 cfg['proxy'] = { \
     'enabled': True, \
     'proxyUrl': f'http://{proxy_host}:{proxy_port}', \
-    'loopbackMode': 'proxy', \
+    'loopbackMode': 'gateway-only', \
 }; \
 json.dump(cfg, open(path, 'w'), indent=2); \
 os.chmod(path, 0o600)"

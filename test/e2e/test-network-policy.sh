@@ -18,6 +18,7 @@
 #   TC-NET-09: SSRF validation (dangerous IPs rejected)
 #   TC-NET-10: OpenClaw web_fetch can reach approved host gateway target,
 #              while OpenShell still denies unapproved host gateway ports
+#   TC-NET-11: Homebrew preset installs and runs a formula end-to-end
 #
 # Prerequisites:
 #   - Docker running
@@ -37,6 +38,8 @@ source "${SCRIPT_DIR_TIMEOUT}/lib/install-path-refresh.sh"
 # ── Config ───────────────────────────────────────────────────────────────────
 SANDBOX_NAME="e2e-net-policy"
 LOG_FILE="test-network-policy-$(date +%Y%m%d-%H%M%S).log"
+SANDBOX_EXEC_TIMEOUT_SECONDS=120
+PACKAGE_MANAGER_SANDBOX_TIMEOUT_SECONDS=300
 
 # ── Colors ───────────────────────────────────────────────────────────────────
 GREEN='\033[0;32m'
@@ -174,6 +177,7 @@ EOF
 # Execute a command inside the sandbox via SSH.
 sandbox_exec() {
   local cmd="$1"
+  local timeout_seconds="${2:-$SANDBOX_EXEC_TIMEOUT_SECONDS}"
   local ssh_cfg
   ssh_cfg="$(mktemp)"
   if ! openshell sandbox ssh-config "$SANDBOX_NAME" >"$ssh_cfg" 2>/dev/null; then
@@ -183,7 +187,7 @@ sandbox_exec() {
     return 1
   fi
   local result ssh_exit=0
-  result=$(run_with_timeout 120 ssh -F "$ssh_cfg" \
+  result=$(run_with_timeout "$timeout_seconds" ssh -F "$ssh_cfg" \
     -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     -o ConnectTimeout=10 -o LogLevel=ERROR \
     "openshell-${SANDBOX_NAME}" "$cmd" 2>&1) || ssh_exit=$?
@@ -318,6 +322,101 @@ test_net_02_whitelist_access() {
     pass "TC-NET-02: PyPI reachable via pip (download started)"
   else
     fail "TC-NET-02: Whitelist" "pip could not reach PyPI: ${response:0:200}"
+  fi
+}
+
+# =============================================================================
+# TC-NET-11: Homebrew preset install/use path
+# =============================================================================
+test_net_11_brew_install_hello() {
+  log "=== TC-NET-11: Homebrew Preset Installs and Runs hello ==="
+
+  log "  Adding brew preset for Homebrew formula install test..."
+  if ! apply_preset "brew"; then
+    fail "TC-NET-11: Setup" "Could not apply brew preset"
+    return
+  fi
+
+  local policy_list
+  if ! policy_list=$(nemoclaw "$SANDBOX_NAME" policy-list 2>&1); then
+    fail "TC-NET-11: policy-list" "policy-list failed after brew preset: ${policy_list:0:500}"
+    return
+  fi
+  log "  policy-list: ${policy_list:0:600}"
+  if printf '%s\n' "$policy_list" | grep -E "^[[:space:]]*●[[:space:]]+brew[[:space:]]" >/dev/null; then
+    pass "TC-NET-11: policy-list shows brew applied"
+  else
+    fail "TC-NET-11: policy-list" "brew preset not marked applied: ${policy_list:0:500}"
+    return
+  fi
+
+  local connect_probe connect_rc=0
+  connect_probe=$(run_with_timeout 60 nemoclaw "$SANDBOX_NAME" connect --probe-only 2>&1) || connect_rc=$?
+  log "  connect --probe-only: ${connect_probe:0:500}"
+  if [[ $connect_rc -eq 0 ]]; then
+    pass "TC-NET-11: nemoclaw connect --probe-only reaches sandbox"
+  else
+    fail "TC-NET-11: connect --probe-only" "connect probe failed: ${connect_probe:0:500}"
+    return
+  fi
+
+  log "  Probing Homebrew policy endpoints and installing hello through the wrapper..."
+  local brew_probe_script brew_probe_b64 response
+  brew_probe_script="$(
+    cat <<'BREW_PROBE'
+set -euo pipefail
+export HOMEBREW_NO_AUTO_UPDATE=1
+export HOMEBREW_NO_ENV_HINTS=1
+
+check_status() {
+  local name="$1"
+  local url="$2"
+  local status
+  status=$(curl -sS -o /dev/null -w "%{http_code}" --connect-timeout 10 --max-time 30 "$url") || {
+    echo "BREW_ENDPOINT_${name}_CURL_FAILED"
+    return 1
+  }
+  case "$status" in
+    2??|3??|401)
+      echo "BREW_ENDPOINT_${name}_OK_${status}"
+      ;;
+    *)
+      echo "BREW_ENDPOINT_${name}_BAD_${status}"
+      return 1
+      ;;
+  esac
+}
+
+check_status formulae https://formulae.brew.sh
+check_status raw https://raw.githubusercontent.com/Homebrew/brew/HEAD/README.md
+git ls-remote https://github.com/Homebrew/brew.git HEAD >/dev/null
+echo "BREW_ENDPOINT_github_OK"
+check_status ghcr https://ghcr.io/v2/
+
+command -v brew
+brew --prefix
+brew install --quiet hello
+command -v hello
+hello
+BREW_PROBE
+  )"
+  brew_probe_b64="$(printf '%s' "$brew_probe_script" | base64 | tr -d '\n')"
+  response=$(sandbox_exec "printf '%s' '${brew_probe_b64}' | base64 -d > /tmp/nemoclaw-brew-e2e.sh
+bash /tmp/nemoclaw-brew-e2e.sh" "$PACKAGE_MANAGER_SANDBOX_TIMEOUT_SECONDS" 2>&1) || true
+
+  log "  Response: ${response:0:1000}"
+
+  if echo "$response" | grep -q "BREW_ENDPOINT_formulae_OK_" \
+    && echo "$response" | grep -q "BREW_ENDPOINT_raw_OK_" \
+    && echo "$response" | grep -q "BREW_ENDPOINT_github_OK" \
+    && echo "$response" | grep -q "BREW_ENDPOINT_ghcr_OK_" \
+    && echo "$response" | grep -q "/usr/local/bin/brew" \
+    && echo "$response" | grep -q "/home/linuxbrew/.linuxbrew" \
+    && echo "$response" | grep -q "/home/linuxbrew/.linuxbrew/bin/hello" \
+    && echo "$response" | grep -q "Hello, world!"; then
+    pass "TC-NET-11: brew preset installed hello and ran the formula command"
+  else
+    fail "TC-NET-11: Homebrew install" "brew install/use path failed: ${response:0:500}"
   fi
 }
 
@@ -974,6 +1073,7 @@ main() {
   setup_sandbox
 
   test_net_01_deny_default
+  test_net_11_brew_install_hello
   test_net_02_whitelist_access
   test_net_03_live_policy_add
   test_net_04_dry_run

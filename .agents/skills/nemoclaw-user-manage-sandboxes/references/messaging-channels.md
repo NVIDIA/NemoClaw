@@ -94,6 +94,7 @@ Pair only one sandbox per WhatsApp account at a time.
 
 When the wizard reaches **Messaging channels**, it lists Telegram, Discord, Slack, WeChat, and WhatsApp.
 Press a channel number to toggle it on or off, then press **Enter** when done.
+If no channels are selected, pressing **Enter** skips messaging setup.
 If a token-based channel token is not already in the environment or credential store, the wizard prompts for it and saves it.
 
 If you enable WeChat (experimental), the wizard does not prompt for a paste token.
@@ -155,6 +156,7 @@ The command accepts mixed-case input such as `Telegram`, then stores and prints 
 If a matching built-in network policy preset exists, `channels add` applies it to the sandbox automatically before the rebuild so the bridge has egress to its upstream API.
 If applying the preset fails, NemoClaw warns and tells you to re-apply manually with `nemoclaw <sandbox> policy-add <channel>` after the rebuild.
 Choose the rebuild so the running sandbox image picks up the new channel.
+For Telegram, Discord, and Slack, `channels add` also checks the rebuilt runtime for the selected bridge and reports startup, credential, or missing-plugin warnings before returning.
 If you need optional channel settings such as `TELEGRAM_ALLOWED_IDS`, `TELEGRAM_REQUIRE_MENTION`, `DISCORD_SERVER_ID`, `DISCORD_USER_ID`, `DISCORD_REQUIRE_MENTION`, `SLACK_ALLOWED_USERS`, or `SLACK_ALLOWED_CHANNELS`, export them before the rebuild starts.
 If you defer the rebuild, apply the change later:
 

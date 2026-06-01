@@ -11,8 +11,9 @@ import path from "path";
 
 import { dockerBuild, dockerImageInspect } from "../adapters/docker";
 import { getAgentBranding } from "../cli/branding";
-import { getProviderSelectionConfig } from "../inference/config";
 import type { JsonObject as LooseObject } from "../core/json-types";
+import { sleepSeconds } from "../core/wait";
+import { getProviderSelectionConfig } from "../inference/config";
 import { runSandboxConfigSync } from "../onboard/config-sync";
 import { ROOT, redact, run, shellQuote } from "../runner";
 import {
@@ -20,7 +21,7 @@ import {
   resolveSandboxBaseImage,
   SANDBOX_BASE_TAG,
 } from "../sandbox-base-image";
-import { sleepSeconds } from "../core/wait";
+import { printOptionalDashboardUi } from "./dashboard-ui";
 import { type AgentDefinition, loadAgent, resolveAgentName } from "./defs";
 
 export interface OnboardContext {
@@ -550,6 +551,7 @@ export function printDashboardUi(
       seen.add(url);
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
+    printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
     return;
   }
 
@@ -571,4 +573,5 @@ export function printDashboardUi(
       console.log(`  ${dashboardUrlForDisplay(url)}`);
     }
   }
+  printOptionalDashboardUi(agent, { ...deps, redactUrl: dashboardUrlForDisplay });
 }

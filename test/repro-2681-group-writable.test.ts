@@ -235,6 +235,13 @@ Module._load = function patchedLoad(request, parent, isMain) {
         if (command[0] === "lsattr") {
           return "----i----------------- " + command.at(-1) + "\n";
         }
+        if (command[0] === "sha256sum") {
+          return (
+            "0000000000000000000000000000000000000000000000000000000000000001  " +
+            command.at(-1) +
+            "\n"
+          );
+        }
         return "";
       },
     };

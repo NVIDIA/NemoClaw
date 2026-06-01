@@ -1641,7 +1641,7 @@ exit 1
       }
     });
 
-    it("brew preset whitelists the PATH shim and Homebrew-managed entrypoints (#3913)", () => {
+    it("brew preset whitelists the PATH wrapper and Homebrew-managed entrypoints (#3913)", () => {
       const content = requirePresetContent(policies.loadPreset("brew"));
       const parsed = YAML.parse(content);
       const brewPolicy = parsed.network_policies?.brew as

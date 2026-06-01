@@ -28,6 +28,14 @@ const trace = require("../trace");
 
 // ── Helpers ──────────────────────────────────────────────────────
 
+const ONBOARD_VALIDATION_TIMEOUT_ENV = "NEMOCLAW_ONBOARD_VALIDATION_TIMEOUT_SECONDS";
+const EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS = new Set([
+  "qwen/qwen3.5-397b-a17b",
+  "deepseek-ai/deepseek-v4-flash",
+]);
+const CURL_TIMEOUT_STATUS = 28;
+const NODE_SPAWN_TIMEOUT_STATUS = -110;
+
 // Hostnames that are normally meant for the sandbox/container host boundary.
 // host.openshell.internal only resolves inside the OpenShell sandbox network,
 // so host-side validation cannot prove reachability for that URL. For ordinary
@@ -172,24 +180,31 @@ function getProbeAuthMode(_provider) {
 // getCurlTimingArgs() because validation must not hang the wizard for a
 // minute on a misbehaving model. See issue #1601 (Bug 3).
 function getValidationProbeCurlArgs(opts) {
-  if (isWsl(opts)) {
-    return ["--connect-timeout", "20", "--max-time", "30"];
-  }
-  return ["--connect-timeout", "10", "--max-time", "15"];
+  const args = isWsl(opts)
+    ? ["--connect-timeout", "20", "--max-time", "30"]
+    : ["--connect-timeout", "10", "--max-time", "15"];
+  return withValidationMaxTimeOverride(args);
 }
 
 function getDeepSeekV4ProValidationProbeCurlArgs(opts) {
-  if (isWsl(opts)) {
-    return ["--connect-timeout", "30", "--max-time", "150"];
-  }
-  return ["--connect-timeout", "20", "--max-time", "120"];
+  const args = isWsl(opts)
+    ? ["--connect-timeout", "30", "--max-time", "150"]
+    : ["--connect-timeout", "20", "--max-time", "120"];
+  return withValidationMaxTimeOverride(args);
 }
 
 function getKimiK26ValidationProbeCurlArgs(opts) {
-  if (isWsl(opts)) {
-    return ["--connect-timeout", "20", "--max-time", "90"];
-  }
-  return ["--connect-timeout", "10", "--max-time", "60"];
+  const args = isWsl(opts)
+    ? ["--connect-timeout", "20", "--max-time", "90"]
+    : ["--connect-timeout", "10", "--max-time", "60"];
+  return withValidationMaxTimeOverride(args);
+}
+
+function getExtendedNvidiaEndpointValidationProbeCurlArgs(opts) {
+  const args = isWsl(opts)
+    ? ["--connect-timeout", "30", "--max-time", "300"]
+    : ["--connect-timeout", "10", "--max-time", "300"];
+  return withValidationMaxTimeOverride(args);
 }
 
 function getCurlMaxTimeSeconds(args) {
@@ -197,6 +212,19 @@ function getCurlMaxTimeSeconds(args) {
   if (maxTimeIndex === -1) return 30;
   const value = Number(args[maxTimeIndex + 1]);
   return Number.isFinite(value) && value > 0 ? value : 30;
+}
+
+function withValidationMaxTimeOverride(args) {
+  const raw = (process.env[ONBOARD_VALIDATION_TIMEOUT_ENV] || "").trim();
+  if (!raw) return args;
+  const overrideSeconds = Math.ceil(Number(raw));
+  if (!Number.isFinite(overrideSeconds) || overrideSeconds <= 0) return args;
+  if (overrideSeconds <= getCurlMaxTimeSeconds(args)) return args;
+  const maxTimeIndex = args.indexOf("--max-time");
+  if (maxTimeIndex === -1) return args;
+  const next = [...args];
+  next[maxTimeIndex + 1] = String(overrideSeconds);
+  return next;
 }
 
 function getProbeProcessTimeoutMs(args) {
@@ -228,8 +256,22 @@ function shouldRetryHttpProbe(result) {
   );
 }
 
-function isCurlTimeout(result) {
-  return result && !result.ok && result.curlStatus === 28;
+function isProbeTimeout(result) {
+  return (
+    result &&
+    !result.ok &&
+    (result.curlStatus === CURL_TIMEOUT_STATUS ||
+      result.curlStatus === NODE_SPAWN_TIMEOUT_STATUS)
+  );
+}
+
+function isTimeoutOrConnFailureStatus(curlStatus) {
+  return (
+    curlStatus === CURL_TIMEOUT_STATUS ||
+    curlStatus === NODE_SPAWN_TIMEOUT_STATUS ||
+    curlStatus === 6 ||
+    curlStatus === 7
+  );
 }
 
 function executeProbeWithHttpRetry(probe) {
@@ -334,8 +376,8 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
   const url = useQueryParam && normalizedKey
     ? `${baseUrl}/chat/completions?key=${encodeURIComponent(normalizedKey)}`
     : `${baseUrl}/chat/completions`;
-  const timingArgs = options.timingArgs ?? getValidationProbeCurlArgs();
-  const result = runCurlProbe([
+  const timingArgs = options.timingArgs ?? getChatCompletionsProbeTimingArgs(model);
+  const args = [
     "-sS",
     ...timingArgs,
     "-H",
@@ -399,9 +441,14 @@ function probeChatCompletionsToolCalling(endpointUrl, model, apiKey, options = {
       ],
       tool_choice: "required",
       temperature: 0,
+      // Bound strict tool-call probes so a slow local model cannot keep
+      // generating until the host-side curl process timeout kills validation.
+      max_tokens: 256,
+      stream: false,
     }),
     url,
-  ]);
+  ];
+  const result = runCurlProbe(args, { timeoutMs: getProbeProcessTimeoutMs(args) });
 
   if (!result.ok) {
     return result;
@@ -441,6 +488,19 @@ function isKimiK26Model(model) {
   return String(model || "").toLowerCase() === "moonshotai/kimi-k2.6";
 }
 
+function needsExtendedNvidiaEndpointValidationBudget(model) {
+  return EXTENDED_NVIDIA_ENDPOINT_VALIDATION_MODELS.has(String(model || "").toLowerCase());
+}
+
+function getChatCompletionsProbeTimingArgs(model, opts) {
+  if (isDeepSeekV4ProModel(model)) return getDeepSeekV4ProValidationProbeCurlArgs(opts);
+  if (isKimiK26Model(model)) return getKimiK26ValidationProbeCurlArgs(opts);
+  if (needsExtendedNvidiaEndpointValidationBudget(model)) {
+    return getExtendedNvidiaEndpointValidationProbeCurlArgs(opts);
+  }
+  return getValidationProbeCurlArgs(opts);
+}
+
 function getChatCompletionsProbePayload(model) {
   const payload = {
     model,
@@ -477,11 +537,7 @@ export function getChatCompletionsProbeCurlArgs({
 }) {
   const platformOptions =
     typeof isWslOverride === "boolean" ? { isWsl: isWslOverride } : undefined;
-  const timingArgs = (() => {
-    if (isDeepSeekV4ProModel(model)) return getDeepSeekV4ProValidationProbeCurlArgs(platformOptions);
-    if (isKimiK26Model(model)) return getKimiK26ValidationProbeCurlArgs(platformOptions);
-    return getValidationProbeCurlArgs(platformOptions);
-  })();
+  const timingArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
   return [
     "-sS",
     ...timingArgs,
@@ -506,7 +562,7 @@ function runChatCompletionsProbe({ authHeader, model, url, isWsl: isWslOverride 
       timeoutMs: getProbeProcessTimeoutMs(args),
     });
   }
-  return runCurlProbe(args);
+  return runCurlProbe(args, { timeoutMs: getProbeProcessTimeoutMs(args) });
 }
 
 function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
@@ -658,7 +714,7 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
     if (
       probe.api === "openai-completions" &&
       isDeepSeekV4ProModel(model) &&
-      isCurlTimeout(result)
+      isProbeTimeout(result)
     ) {
       const warning =
         "DeepSeek V4 Pro validation timed out before the stream returned data; continuing with NVIDIA Endpoints because this model can take longer than the onboarding probe budget to emit its first token.";
@@ -689,27 +745,28 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
   // stack can cause the initial probe to time out before the TLS handshake
   // completes (#987); hosted providers also occasionally drop connections for
   // tens of seconds during incidents (#3033).
-  const isTimeoutOrConnFailure = (cs) => cs === 28 || cs === 6 || cs === 7;
   const isRetriableProbeResult = (result) =>
-    isTimeoutOrConnFailure(result.curlStatus) ||
+    isTimeoutOrConnFailureStatus(result.curlStatus) ||
     RETRIABLE_HTTP_PROBE_STATUSES.has(result.httpStatus);
   // Look across every failure entry rather than only failures[0] so a probe
   // ordering like /responses (HTTP error) followed by /chat/completions
   // (curl 28) still triggers the chat-completions retry path.
   let retriedAfterTimeout = false;
-  if (failures.some((failure) => isTimeoutOrConnFailure(failure.curlStatus))) {
+  if (failures.some((failure) => isTimeoutOrConnFailureStatus(failure.curlStatus))) {
     retriedAfterTimeout = true;
-    const baseArgs = getValidationProbeCurlArgs();
+    const platformOptions =
+      typeof options.isWsl === "boolean" ? { isWsl: options.isWsl } : undefined;
+    const baseArgs = getChatCompletionsProbeTimingArgs(model, platformOptions);
     const doubledArgs = baseArgs.map((arg) => (/^\d+$/.test(arg) ? String(Number(arg) * 2) : arg));
     const buildRetryArgs = () => [
       "-sS",
       ...doubledArgs,
       "-H",
       "Content-Type: application/json",
-      ...(apiKey ? ["-H", `Authorization: Bearer ${normalizeCredentialValue(apiKey)}`] : []),
+      ...authHeader,
       "-d",
       JSON.stringify(getChatCompletionsProbePayload(model)),
-      `${String(endpointUrl).replace(/\/+$/, "")}/chat/completions`,
+      appendKey("/chat/completions"),
     ];
     const runRetryProbe = () =>
       options.requireChatCompletionsToolCalling === true
@@ -717,14 +774,17 @@ function probeOpenAiLikeEndpoint(endpointUrl, model, apiKey, options = {}) {
             authMode: options.authMode,
             timingArgs: doubledArgs,
           })
-        : runCurlProbe(buildRetryArgs());
+        : (() => {
+            const retryArgs = buildRetryArgs();
+            return runCurlProbe(retryArgs, { timeoutMs: getProbeProcessTimeoutMs(retryArgs) });
+          })();
     let retryResult = runRetryProbe();
     if (retryResult.ok) {
       return { ok: true, api: "openai-completions", label: "Chat Completions API" };
     }
     for (const delayMs of HTTP_PROBE_RETRY_DELAYS_MS) {
       if (!isRetriableProbeResult(retryResult)) break;
-      const reason = isTimeoutOrConnFailure(retryResult.curlStatus)
+      const reason = isTimeoutOrConnFailureStatus(retryResult.curlStatus)
         ? "timed out"
         : `returned HTTP ${retryResult.httpStatus}`;
       console.log(
@@ -834,7 +894,21 @@ module.exports = {
   RETRIABLE_HTTP_PROBE_STATUSES,
 };
 
-function shouldSmokeOpenAiLikeOnboardRoute(provider) {
+export function shouldSmokeOpenAiLikeOnboardRoute(provider: string, credentialEnv: string | null = null) {
+  const {
+    HERMES_INFERENCE_CREDENTIAL_ENV,
+    HERMES_PROVIDER_NAME,
+  } = require("../hermes-provider-auth");
+  // Hermes Provider OAuth mints a short-lived agent key and stores it with
+  // OpenShell provider storage. A host-side direct probe would resolve the
+  // ambient OPENAI_API_KEY instead, which can falsely fail after successful
+  // OAuth if the user's shell has a different OpenAI key staged. The Nous API
+  // key path still has a host credential and should keep the direct smoke.
+  // Remove this exception once the host smoke can resolve the actual Hermes
+  // OAuth agent key from OpenShell provider storage.
+  if (provider === HERMES_PROVIDER_NAME && credentialEnv === HERMES_INFERENCE_CREDENTIAL_ENV) {
+    return false;
+  }
   const { REMOTE_PROVIDER_CONFIG } = require("../onboard/providers");
   if (provider === "nvidia-nim" || provider === "nvidia-router") return true;
   return Object.values(REMOTE_PROVIDER_CONFIG).some(
@@ -842,8 +916,13 @@ function shouldSmokeOpenAiLikeOnboardRoute(provider) {
   );
 }
 
-function verifyOnboardInferenceSmoke(options) {
-  if (!options.forceOpenAiLike && !shouldSmokeOpenAiLikeOnboardRoute(options.provider)) return;
+export function verifyOnboardInferenceSmoke(options: any) {
+  if (
+    !options.forceOpenAiLike &&
+    !shouldSmokeOpenAiLikeOnboardRoute(options.provider, options.credentialEnv)
+  ) {
+    return;
+  }
   if (process.env.VITEST === "true") return;
 
   const endpointUrl = options.endpointUrl || require("./config").INFERENCE_ROUTE_URL;
