@@ -74,7 +74,46 @@ When you select it, NemoClaw starts the router proxy on the host, waits for its 
 The sandbox does not call the router port directly.
 
 The router model pool lives in `nemoclaw-blueprint/router/pool-config.yaml`.
+Edit that file to define which models the router can choose from.
 The default pool routes between NVIDIA-hosted Nemotron models and uses the `tolerance` value to choose the lowest-cost model whose predicted quality stays within the configured threshold.
+
+```yaml
+routing:
+  method: prefill
+  checkpoint: llm-router/checkpoints/prefill_router_qwen08b.pt
+  tolerance: 0.20
+  encoder: Qwen/Qwen3.5-0.8B
+
+models:
+  - name: nano
+    litellm_model: "openai/nvidia/nvidia/Nemotron-3-Nano-30B-A3B"
+    cost_per_m_input_tokens: 0.05
+    api_base: "https://inference-api.nvidia.com"
+
+  - name: super
+    litellm_model: "openai/nvidia/nvidia/nemotron-3-super-v3"
+    cost_per_m_input_tokens: 0.10
+    api_base: "https://inference-api.nvidia.com"
+```
+
+The `tolerance` parameter controls the accuracy-cost tradeoff.
+
+| Value | Behavior |
+|-------|----------|
+| `0.0` | Always pick the most accurate model. |
+| `0.20` | Allow up to 20 percentage points below the best for a cheaper model (default). |
+| `1.0` | Always pick the cheapest model. |
+
+The router runs on the host, not inside the sandbox.
+
+```text
+Sandbox (agent) ──> OpenShell Gateway (L7 proxy) ──> Model Router (:4000) ──> NVIDIA API
+                                                         └── PrefillRouter selects model
+```
+
+Credentials flow through the OpenShell provider system.
+The sandbox never sees raw API keys.
+
 To use the router in scripted setup, set:
 
 ```console

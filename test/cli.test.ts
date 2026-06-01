@@ -6146,7 +6146,7 @@ describe("CLI dispatch", () => {
     testTimeout(10_000),
   );
 
-  it("auto-cleans an orphan registry entry on status when the named gateway is healthy", () => {
+  it("preserves an orphan registry entry on passive status when the named gateway is healthy", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-status-orphan-"));
     const localBin = path.join(home, "bin");
     const registryDir = path.join(home, ".nemoclaw");
@@ -6200,12 +6200,15 @@ describe("CLI dispatch", () => {
 
     expect(statusResult.code).toBe(1);
     expect(statusResult.out).not.toContain("Inference: healthy");
-    expect(statusResult.out).toContain("is not present in the live OpenShell gateway");
-    expect(statusResult.out).toContain("Removed stale local registry entry");
+    expect(statusResult.out).toContain(
+      "registered locally, but is not present in the live OpenShell gateway",
+    );
+    expect(statusResult.out).toContain("No local registry entry was removed");
+    expect(statusResult.out).not.toContain("Removed stale local registry entry");
 
     const saved = JSON.parse(fs.readFileSync(path.join(registryDir, "sandboxes.json"), "utf8"));
-    expect(saved.sandboxes.alpha).toBeUndefined();
-    expect(saved.defaultSandbox).toBeNull();
+    expect(saved.sandboxes.alpha).toBeDefined();
+    expect(saved.defaultSandbox).toBe("alpha");
   });
 });
 

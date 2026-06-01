@@ -28,6 +28,7 @@ import { runOpenshell } from "../../adapters/openshell/runtime";
 import { shellQuote } from "../../runner";
 import { executeSandboxCommand, executeSandboxExecCommand } from "./process-recovery";
 import { rebuildSandbox } from "./rebuild";
+import { validateSlackChannelCredentials } from "./slack-channel-validation";
 import { printTelegramDirectMessageAllowlistWarning } from "./telegram-channel-bridge-verification";
 import {
   type ChannelDef,
@@ -822,6 +823,17 @@ export async function addSandboxChannel(
     await acquireHostQrChannel(sandboxName, canonical, channel, acquired);
   } else {
     await acquirePasteTokens(canonical, channel, acquired);
+  }
+
+  if (canonical === "slack") {
+    const validation = validateSlackChannelCredentials(channel, acquired);
+    if (!validation.ok) {
+      console.error(`  ${validation.message}`);
+      process.exit(1);
+    }
+    if (validation.message) {
+      console.log(`  ${YW}⚠${R} ${validation.message}`);
+    }
   }
 
   persistChannelTokens(acquired);
