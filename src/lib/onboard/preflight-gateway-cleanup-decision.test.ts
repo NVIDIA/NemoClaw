@@ -34,7 +34,7 @@ describe("preflightGatewayCleanupDecision", () => {
     ).toBe("defer");
   });
 
-  it("refuses when Docker-driver path would destroy live sandboxes", () => {
+  it("refuses on confirmed drift (stale) when live sandboxes exist", () => {
     expect(
       preflightGatewayCleanupDecision({
         gatewayReuseState: "stale",
@@ -44,11 +44,25 @@ describe("preflightGatewayCleanupDecision", () => {
     ).toBe("refuse");
     expect(
       preflightGatewayCleanupDecision({
-        gatewayReuseState: "active-unnamed",
+        gatewayReuseState: "stale",
         isDockerDriverGatewayEnabled: true,
         liveSandboxNames: ["sandbox-a", "sandbox-b"],
       }),
     ).toBe("refuse");
+  });
+
+  it("defers on active-unnamed even with live sandboxes so the port-availability check can run", () => {
+    // `active-unnamed` means there is an endpoint without a named-gateway
+    // metadata entry; the port loop may still fail on its own (e.g. host
+    // listener squatting on the configured gateway port), so deferring lets
+    // that diagnostic fire instead of pre-empting with the refuse message.
+    expect(
+      preflightGatewayCleanupDecision({
+        gatewayReuseState: "active-unnamed",
+        isDockerDriverGatewayEnabled: true,
+        liveSandboxNames: ["sandbox-a"],
+      }),
+    ).toBe("defer");
   });
 
   it("destroys legacy gateway in preflight when Docker-driver gateway is not enabled", () => {

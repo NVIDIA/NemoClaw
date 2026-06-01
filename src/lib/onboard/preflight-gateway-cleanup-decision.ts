@@ -17,13 +17,17 @@ export const PREFLIGHT_LIVE_SANDBOX_REFUSAL_HEADER =
   "  ✗ Refusing to recreate gateway: live sandbox(es) would be destroyed.";
 
 // Decision for the preflight gateway cleanup step. Returns:
-//   - "refuse"         — drift would trigger a destructive gateway recreate
-//                        while one or more sandboxes are live (Ready/Running).
-//                        The singleton-gateway design (`GATEWAY_NAME = "nemoclaw"`)
-//                        means the shared cluster container holds every sandbox,
-//                        so recreating the gateway SIGKILLs them.
+//   - "refuse"         — confirmed drift would trigger a destructive gateway
+//                        recreate while one or more sandboxes are live
+//                        (Ready/Running). The singleton-gateway design
+//                        (`GATEWAY_NAME = "nemoclaw"`) means the shared cluster
+//                        container holds every sandbox, so recreating the
+//                        gateway SIGKILLs them. Only "stale" reflects confirmed
+//                        drift; "active-unnamed" defers so the port-availability
+//                        check can fire its own diagnostic if applicable.
 //   - "defer"          — Docker-driver path: postpone the recreate to step [2/8]
-//                        when no live sandboxes are at risk.
+//                        when no live sandboxes are at risk, or when the
+//                        reuse state hasn't confirmed a destructive recreate.
 //   - "destroy-legacy" — pre-Docker-driver path: destroy immediately so the
 //                        port frees up for the upcoming port-availability checks.
 //   - "noop"           — recorded state needs no preflight cleanup.
@@ -35,7 +39,11 @@ export function preflightGatewayCleanupDecision(opts: {
   if (opts.gatewayReuseState !== "stale" && opts.gatewayReuseState !== "active-unnamed") {
     return "noop";
   }
-  if (opts.isDockerDriverGatewayEnabled && opts.liveSandboxNames.length > 0) {
+  if (
+    opts.isDockerDriverGatewayEnabled &&
+    opts.gatewayReuseState === "stale" &&
+    opts.liveSandboxNames.length > 0
+  ) {
     return "refuse";
   }
   return opts.isDockerDriverGatewayEnabled ? "defer" : "destroy-legacy";
