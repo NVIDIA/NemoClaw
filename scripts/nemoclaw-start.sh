@@ -1536,18 +1536,21 @@ RUN_TIMEOUT_SECS = _env_seconds('NEMOCLAW_AUTO_PAIR_RUN_TIMEOUT_SECS', 10)
 # `openclaw devices approve <scope-upgrade>` can request the upgraded scopes
 # for its own connection and return the same pending-scope error it is trying
 # to resolve. List calls must stay gateway-pinned so we inspect the live
-# gateway, but approval calls temporarily remove OPENCLAW_GATEWAY_URL to use
-# OpenClaw's local pairing fallback. Remove this when OpenClaw approve can
-# complete scope upgrades through the gateway using only operator.pairing.
-def run(*args, strip_gateway_url=False):
+# gateway, but approval calls temporarily remove OPENCLAW_GATEWAY_URL,
+# OPENCLAW_GATEWAY_PORT, and OPENCLAW_GATEWAY_TOKEN to use OpenClaw's local
+# pairing fallback. Remove this when OpenClaw approve can complete scope
+# upgrades through the gateway using only operator.pairing.
+def run(*args, strip_gateway_env=False):
     # Bound every openclaw CLI invocation so a wedged child cannot pin
     # the watcher beyond DEADLINE (CodeRabbit #4292): subprocess.run with
     # no timeout would hold a hung `openclaw devices list/approve` past
     # the fast→slow transition and the 8h deadline check.
     env = None
-    if strip_gateway_url:
+    if strip_gateway_env:
         env = os.environ.copy()
         env.pop('OPENCLAW_GATEWAY_URL', None)
+        env.pop('OPENCLAW_GATEWAY_PORT', None)
+        env.pop('OPENCLAW_GATEWAY_TOKEN', None)
     try:
         proc = subprocess.run(
             args, capture_output=True, text=True, timeout=RUN_TIMEOUT_SECS, env=env,
@@ -1600,7 +1603,7 @@ while time.time() < DEADLINE:
                 print(f'[auto-pair] rejected unknown client={client_id} mode={client_mode}')
                 continue
             arc, aout, aerr = run(
-                OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_url=True,
+                OPENCLAW, 'devices', 'approve', request_id, '--json', strip_gateway_env=True,
             )
             # rc=124 is the timeout sentinel from run() — do NOT add the
             # request to HANDLED on a transient timeout, so the next poll
