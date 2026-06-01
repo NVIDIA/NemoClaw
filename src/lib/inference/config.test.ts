@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, it, expect } from "vitest";
+import { describe, expect, it } from "vitest";
 
 // Import from compiled dist/ for correct coverage attribution.
 import {
@@ -10,15 +10,16 @@ import {
   DEFAULT_OLLAMA_MODEL,
   DEFAULT_ROUTE_CREDENTIAL_ENV,
   DEFAULT_ROUTE_PROFILE,
+  getOpenClawPrimaryModel,
+  getProviderSelectionConfig,
+  getSandboxInferenceConfig,
   HERMES_PROVIDER_MODEL_OPTIONS,
   INFERENCE_ROUTE_URL,
   MANAGED_PROVIDER_ID,
   OLLAMA_LOCAL_CREDENTIAL_ENV,
-  VLLM_LOCAL_CREDENTIAL_ENV,
-  getOpenClawPrimaryModel,
-  getProviderSelectionConfig,
-  getSandboxInferenceConfig,
   parseGatewayInference,
+  planInferenceRouteReconcile,
+  VLLM_LOCAL_CREDENTIAL_ENV,
 } from "../../../dist/lib/inference/config";
 
 describe("inference selection config", () => {
@@ -363,6 +364,41 @@ describe("parseGatewayInference", () => {
     expect(parseGatewayInference("Gateway inference:\n\n  Model: some/model")).toEqual({
       provider: null,
       model: "some/model",
+    });
+  });
+});
+
+describe("planInferenceRouteReconcile", () => {
+  const recorded = { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" };
+
+  it("is aligned when the live gateway matches the recorded route", () => {
+    expect(
+      planInferenceRouteReconcile(
+        { provider: "nvidia-prod", model: "nvidia/nemotron-3-super-120b-a12b" },
+        recorded,
+      ),
+    ).toEqual({ kind: "aligned" });
+  });
+
+  it("repairs when the gateway has no usable route", () => {
+    expect(planInferenceRouteReconcile(null, recorded)).toEqual({ kind: "repair" });
+  });
+
+  it("flags divergence when the gateway model differs (the #3726 case)", () => {
+    const live = { provider: "nvidia-prod", model: "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning" };
+    expect(planInferenceRouteReconcile(live, recorded)).toEqual({
+      kind: "diverged",
+      live,
+      recorded,
+    });
+  });
+
+  it("flags divergence when only the gateway provider differs", () => {
+    const live = { provider: "openai", model: "nvidia/nemotron-3-super-120b-a12b" };
+    expect(planInferenceRouteReconcile(live, recorded)).toEqual({
+      kind: "diverged",
+      live,
+      recorded,
     });
   });
 });

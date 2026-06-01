@@ -423,10 +423,11 @@ describe("sandbox connect inference route swap (#1248)", () => {
         "--no-verify",
       ]);
 
-      // Verify the notice was printed
+      // Override must be loud (#3726), not a silent status-style line.
       const combined = (result.stdout || "") + (result.stderr || "");
+      expect(combined).toContain("differs from the recorded route");
       expect(combined).toContain(
-        "Switching inference route to anthropic-prod/claude-sonnet-4-20250514",
+        "Aligning the gateway to anthropic-prod/claude-sonnet-4-20250514",
       );
     },
   );

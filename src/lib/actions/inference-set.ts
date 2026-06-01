@@ -4,24 +4,25 @@
 import type { SpawnSyncReturns } from "node:child_process";
 
 import { runOpenshell } from "../adapters/openshell/runtime";
+import { CLI_NAME } from "../cli/branding";
 import {
   getProviderSelectionConfig,
   getSandboxInferenceConfig,
   type SandboxInferenceConfig,
 } from "../inference/config";
-import type { ConfigObject, ConfigValue } from "../security/credential-filter";
-import { isConfigObject, isConfigValue } from "../security/credential-filter";
 import {
+  type AgentConfigTarget,
   readSandboxConfig,
   recomputeSandboxConfigHash,
   resolveAgentConfig,
-  type AgentConfigTarget,
   writeSandboxConfig,
 } from "../sandbox/config";
+import type { ConfigObject, ConfigValue } from "../security/credential-filter";
+import { isConfigObject, isConfigValue } from "../security/credential-filter";
 import { appendAuditEntry } from "../shields/audit";
 import * as onboardSession from "../state/onboard-session";
-import * as registry from "../state/registry";
 import type { SandboxEntry } from "../state/registry";
+import * as registry from "../state/registry";
 import { isSafeModelId } from "../validation";
 
 export interface InferenceSetOptions {
@@ -364,6 +365,12 @@ export async function runInferenceSet(
     );
   }
 
+  // Write the registry before the crash-prone in-sandbox sync so the gateway
+  // and registry can't end up split (#3725) and trigger a revert on connect (#3726).
+  if (!deps.updateSandbox(sandboxName, { provider, model })) {
+    throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
+  }
+
   const config = deps.readSandboxConfig(sandboxName, target);
   const patched =
     agentName === "hermes"
@@ -375,11 +382,20 @@ export async function runInferenceSet(
       ? `  Syncing Hermes model route in sandbox '${sandboxName}'...`
       : `  Syncing OpenClaw model identity in sandbox '${sandboxName}'...`,
   );
-  deps.writeSandboxConfig(sandboxName, target, config);
-  deps.recomputeSandboxConfigHash(sandboxName, target);
-
-  if (!deps.updateSandbox(sandboxName, { provider, model })) {
-    throw new InferenceSetError(`Failed to update NemoClaw registry for sandbox '${sandboxName}'.`);
+  // Best-effort: gateway + registry are already consistent, so don't abort on a
+  // sync failure — warn and point at rebuild.
+  try {
+    deps.writeSandboxConfig(sandboxName, target, config);
+    deps.recomputeSandboxConfigHash(sandboxName, target);
+  } catch (error) {
+    const detail = error instanceof Error && error.message ? error.message : String(error);
+    deps.log(
+      `  Warning: gateway and registry now use ${provider} / ${model}, but syncing the ` +
+        `in-sandbox config failed: ${detail}`,
+    );
+    deps.log(
+      `  Run '${CLI_NAME} ${sandboxName} rebuild' to finish applying the model inside the sandbox.`,
+    );
   }
   const sessionUpdated = updateMatchingOnboardSession(sandboxName, provider, model, deps);
 
