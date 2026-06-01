@@ -51,6 +51,16 @@ type ProbeProviderHealth = (
   options?: ProviderHealthProbeOptions,
 ) => ProviderHealthStatus | null;
 
+/**
+ * Returns true when status can validate a cached agent version against the running sandbox.
+ */
+function shouldProbeSandboxRuntimeVersion(
+  lookup: SandboxGatewayState,
+  sandbox: registry.SandboxEntry,
+): boolean {
+  return lookup.state === "present" && Boolean(sandbox.agentVersion);
+}
+
 export function getSandboxStatusInferenceHealth(
   gatewayPresent: boolean,
   currentProvider: unknown,
@@ -312,15 +322,30 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
 
     // Agent version check
     try {
-      const versionCheck = sandboxVersion.checkAgentVersion(sandboxName, { skipProbe: true });
+      const shouldProbeRuntimeVersion = shouldProbeSandboxRuntimeVersion(lookup, sb);
+      const versionCheck = sandboxVersion.checkAgentVersion(sandboxName, {
+        forceProbe: shouldProbeRuntimeVersion,
+        skipProbe: !shouldProbeRuntimeVersion,
+      });
       const agent = agentRuntime.getSessionAgent(sandboxName);
       const agentName = agentRuntime.getAgentDisplayName(agent);
       if (versionCheck.sandboxVersion) {
         console.log(`    Agent:    ${agentName} v${versionCheck.sandboxVersion}`);
+      } else if (shouldProbeRuntimeVersion && versionCheck.expectedVersion) {
+        console.log(
+          `    Agent:    ${agentName} version not verified (expected v${versionCheck.expectedVersion})`,
+        );
       }
       if (versionCheck.isStale) {
         console.log(`    ${YW}Update:   v${versionCheck.expectedVersion} available${R}`);
         console.log(`              Run \`${CLI_NAME} ${sandboxName} rebuild\` to upgrade`);
+      } else if (
+        shouldProbeRuntimeVersion &&
+        versionCheck.detectionMethod === "unavailable" &&
+        versionCheck.expectedVersion
+      ) {
+        console.log(`    ${YW}Update:   unable to verify sandbox ${agentName} version${R}`);
+        console.log(`              Run \`${CLI_NAME} ${sandboxName} rebuild\` if this sandbox predates the current install`);
       }
     } catch {
       /* non-fatal */

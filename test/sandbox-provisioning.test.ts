@@ -722,7 +722,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
       path.join(localBin, "nemoclaw-start"),
       path.join(localBin, "nemoclaw-codex-acp"),
       path.join(localLib, "sandbox-init.sh"),
-      path.join(localLib, "generate-openclaw-config.py"),
+      path.join(localLib, "generate-openclaw-config.mts"),
       path.join(localLib, "openclaw-build-messaging-plugins.py"),
       path.join(localLib, "seed-wechat-accounts.py"),
       path.join(localLib, "ws-proxy-fix.js"),
@@ -751,7 +751,7 @@ describe("sandbox provisioning: copied OpenClaw helper permissions (#2861)", () 
 
       expect(result.status, result.stderr).toBe(0);
       const generatorMode = (
-        fs.statSync(path.join(localLib, "generate-openclaw-config.py")).mode & 0o777
+        fs.statSync(path.join(localLib, "generate-openclaw-config.mts")).mode & 0o777
       ).toString(8);
       const messagingPluginMode = (
         fs.statSync(path.join(localLib, "openclaw-build-messaging-plugins.py")).mode & 0o777

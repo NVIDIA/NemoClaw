@@ -349,6 +349,10 @@ Set `NEMOCLAW_NO_CONNECT_HINT=1` to suppress the hint in scripted workflows.
 If the sandbox is running an outdated agent version, a non-blocking warning prints before connecting with a `nemoclaw <name> rebuild` hint.
 If another terminal is already connected to the sandbox, `connect` prints a note with the number of existing sessions before proceeding. Multiple concurrent sessions are allowed.
 
+`connect` does not pull or serve a model itself, but it does inspect `NEMOCLAW_VLLM_MODEL` if you exported it for the managed-vLLM install path.
+An unknown slug or a gated model (for example `deepseek-r1-distill-70b`) with no `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN` exits non-zero with the same error the installer would emit, before any sandbox readiness probe or SSH attach.
+Unset the variable, or supply the missing token, before retrying.
+
 After a host reboot, the OpenShell gateway rotates its SSH host keys.
 `connect` detects the resulting identity drift, prunes stale `openshell-*` entries from `~/.ssh/known_hosts`, and retries automatically.
 You no longer need to re-run `nemoclaw onboard` after a reboot in this case.
@@ -827,6 +831,19 @@ Files with unsafe path characters are rejected to prevent shell injection.
 If the skill already exists on the sandbox, the command updates it in place and preserves chat history.
 For new installs, the agent session index is refreshed so the agent discovers the skill on the next session.
 
+### `nemoclaw <name> skill remove <skill>`
+
+Remove an installed skill from a running sandbox by skill name.
+The command validates the skill name, removes the sandbox upload directory, removes the OpenClaw home-directory mirror when present, and refreshes the agent session index so the remaining skills are rediscovered on the next session.
+
+```bash
+nemoclaw my-assistant skill remove my-skill
+```
+
+Use the skill name from the `SKILL.md` frontmatter, not the local directory name.
+Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
+For non-OpenClaw agents, restart the agent gateway if prompted so the removal takes effect.
+
 ### `nemoclaw <name> rebuild`
 
 Upgrade a sandbox to the current agent version while preserving workspace state.
@@ -873,6 +890,7 @@ $ nemoclaw update [--check] [--yes|-y]
 | `--yes`, `-y` | Skip the confirmation prompt and run the maintained installer flow |
 
 `nemoclaw update` updates the host-side NemoClaw installation.
+The maintained installer flow follows the admin-promoted `lkg` release tag by default, so it may trail the newest semver or `latest` tag while validation completes.
 It does not replace `nemoclaw upgrade-sandboxes`; use that command to inspect or rebuild existing sandboxes after the CLI has been updated.
 When the command is running from a source checkout, it reports that state and does not replace the checkout with a global package install.
 
@@ -1362,7 +1380,7 @@ Set them before running `nemoclaw onboard`.
 | `NEMOCLAW_OPENSHELL_BIN` | path | Overrides the `openshell` binary the CLI invokes. Defaults to `openshell` (resolved via `PATH`). |
 | `NEMOCLAW_SANDBOX` | sandbox name | Alternate spelling of `NEMOCLAW_SANDBOX_NAME`; used by `services` and `debug` lookups when neither a flag nor `NEMOCLAW_SANDBOX_NAME` is set. |
 | `NEMOCLAW_INSTALL_REF` | git ref | For internal installer commands: the git ref to install from. Overridden by the `--install-ref` flag. |
-| `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install. Overridden by the `--install-tag` flag. |
+| `NEMOCLAW_INSTALL_TAG` | release tag | For internal installer commands: the release tag to install. Defaults to the admin-promoted `lkg` tag when unset. Overridden by the `--install-tag` flag. |
 | `NEMOCLAW_VLLM_MODEL` | registry slug or Hugging Face model id | Selects the model the managed-vLLM install path serves. Recognised slugs: `qwen3.6-27b`, `nemotron-3-nano-4b`, `deepseek-r1-distill-70b`. Unset uses the per-platform profile default. Gated models (e.g. `deepseek-r1-distill-70b`) require `HF_TOKEN` or `HUGGING_FACE_HUB_TOKEN`. |
 | `NEMOCLAW_MODEL_ROUTER_PYTHON` | absolute path | Pins the host Python interpreter used to create the Model Router virtual environment. Strict. NemoClaw probes only that interpreter and aborts with the failure reason if it does not qualify, rather than silently falling back to another python. Relative command names such as `python3.12` are rejected. When unset, NemoClaw probes `python3.13`, `python3.12`, `python3.11`, `python3.10`, and bare `python3`, retains every interpreter whose version is in `[3.10, 3.14)` and whose `ensurepip`, `pyexpat`, `ssl`, and `venv` stdlib modules import cleanly, and tries `python -m venv` on each in priority order until one succeeds. Set the pin when the auto-discovered interpreter is broken (for example, Homebrew `python@3.14` with a `pyexpat` dlopen mismatch on macOS). |
 
