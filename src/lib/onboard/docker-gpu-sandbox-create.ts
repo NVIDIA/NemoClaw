@@ -54,7 +54,6 @@ export type DockerGpuSandboxCreatePatch = {
   ensureApplied: () => void;
   waitForSupervisorReconnectIfNeeded: () => void;
   selectedMode: () => DockerGpuPatchMode | null;
-  patchedContainerId: () => string | null;
   /**
    * Print the Docker GPU readiness-failure block (including the Error-phase
    * classification + patched container State diagnostics) when the
@@ -164,10 +163,6 @@ export function createDockerGpuSandboxCreatePatch(
 
     selectedMode() {
       return result?.mode ?? null;
-    },
-
-    patchedContainerId() {
-      return result?.newContainerId ?? null;
     },
 
     printReadinessFailureIfEnabled() {
