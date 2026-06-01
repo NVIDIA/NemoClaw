@@ -6,7 +6,7 @@ import path from "node:path";
 
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import { isErrnoException } from "../core/errno";
-import { DEFAULT_GATEWAY_NAME, validateGatewayName } from "./gateway-name";
+import { validateGatewayName } from "./gateway-name";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
 
 export { getSandboxGatewayName } from "./gateway-name";
@@ -50,9 +50,10 @@ export interface SandboxEntry {
   /**
    * OpenShell gateway name this sandbox is bound to. Optional for backward
    * compatibility — legacy entries created before per-sandbox gateway tracking
-   * resolve to {@link DEFAULT_GATEWAY_NAME} via {@link getSandboxGatewayName}.
-   * Currently every sandbox uses the singleton name; the field exists so
-   * follow-up work can record per-port gateway names without a schema change.
+   * resolve to the singleton default via `getSandboxGatewayName` (exported
+   * from `./gateway-name`). Currently every sandbox uses the singleton name;
+   * the field exists so follow-up work can record per-port gateway names
+   * without a schema change.
    */
   gatewayName?: string;
 }
