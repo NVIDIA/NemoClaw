@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { ensureConfigDir, readConfigFile, writeConfigFile } from "./config-io";
 import { isErrnoException } from "../core/errno";
+import { DEFAULT_GATEWAY_NAME } from "./gateway-name";
 import type { MessagingChannelConfig } from "../messaging-channel-config";
 
 export interface CustomPolicyEntry {
@@ -44,6 +45,13 @@ export interface SandboxEntry {
   hermesDashboardTui?: boolean;
   disabledChannels?: string[];
   dashboardPort?: number | null;
+  /**
+   * OpenShell gateway name this sandbox is bound to. Optional for backward
+   * compatibility — legacy entries created before per-sandbox gateway tracking
+   * resolve to {@link DEFAULT_GATEWAY_NAME} via {@link getSandboxGatewayName}.
+   * Tracked in NemoClaw#3053; currently every sandbox uses the singleton name.
+   */
+  gatewayName?: string;
 }
 
 export interface SandboxRegistry {
@@ -183,6 +191,17 @@ export function getSandbox(name: string): SandboxEntry | null {
   return data.sandboxes[name] || null;
 }
 
+/**
+ * Resolve the OpenShell gateway name a sandbox is bound to, backfilling the
+ * singleton {@link DEFAULT_GATEWAY_NAME} for legacy entries that predate the
+ * `gatewayName` field. Callers should prefer this over reading
+ * `entry.gatewayName` directly so the backfill stays in one place.
+ */
+export function getSandboxGatewayName(name: string): string {
+  const entry = getSandbox(name);
+  return entry?.gatewayName || DEFAULT_GATEWAY_NAME;
+}
+
 export function getDefault(): string | null {
   const data = load();
   if (data.defaultSandbox && data.sandboxes[data.defaultSandbox]) {
@@ -232,6 +251,7 @@ export function registerSandbox(entry: SandboxEntry): void {
           ? [...entry.disabledChannels]
           : undefined,
       dashboardPort: entry.dashboardPort ?? undefined,
+      gatewayName: entry.gatewayName || undefined,
     };
     if (!data.defaultSandbox) {
       data.defaultSandbox = entry.name;
