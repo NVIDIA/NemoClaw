@@ -7,7 +7,7 @@
 
 NVIDIA NemoClaw is an open-source reference stack for running [OpenClaw](https://openclaw.ai) always-on assistants inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes more safely. It provides CLI tooling, a blueprint for sandbox orchestration, and security hardening.
 
-**Status:** Active development. Interfaces may change without notice.
+Status: Active development. Interfaces may change without notice.
 
 ## Agent Skills
 
