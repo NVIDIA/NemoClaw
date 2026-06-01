@@ -421,6 +421,7 @@ const {
   loadBlueprintProfile,
   reconcileModelRouter,
 } = modelRouter;
+const routedInference: typeof import("./onboard/routed-inference") = require("./onboard/routed-inference");
 const { OnboardRuntimeBoundary }: typeof import("./onboard/runtime-boundary") = require("./onboard/runtime-boundary");
 const { handleAgentSetupState }: typeof import("./onboard/machine/handlers/agent-setup") = require("./onboard/machine/handlers/agent-setup");
 const { handleFinalizationState }: typeof import("./onboard/machine/handlers/finalization") = require("./onboard/machine/handlers/finalization");
@@ -1204,7 +1205,7 @@ async function refreshDockerDriverGatewayReuseState(
   );
   const runtimeIdentity = gatewayBin ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({ gatewayBin, gatewayEnv: baseDesiredEnv, stateDir: getDockerDriverGatewayStateDir(), sandboxBin: resolveOpenShellSandboxBinary() }) : null;
   const desiredEnv = runtimeIdentity?.desiredEnv ?? baseDesiredEnv;
-  const driftBin = runtimeIdentity?.driftGatewayBin ?? gatewayBin;
+  const driftBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
   const identityBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const pid = getDockerDriverGatewayPid();
   if (pid !== null && isDockerDriverGatewayProcessAlive()) {
@@ -2419,7 +2420,7 @@ async function startDockerDriverGateway({ exitOnFailure = true, skipSandboxBridg
   const stateDir = getDockerDriverGatewayStateDir();
   const runtimeIdentity = gatewayBin ? dockerDriverGatewayLaunch.buildDockerDriverGatewayRuntimeIdentity({ gatewayBin, gatewayEnv, stateDir, sandboxBin: resolveOpenShellSandboxBinary() }) : null;
   const gatewayLaunch = runtimeIdentity?.launch ?? null;
-  const driftGatewayBin = runtimeIdentity?.driftGatewayBin ?? gatewayBin;
+  const driftGatewayBin = dockerDriverGatewayLaunch.resolveDriftGatewayBin(runtimeIdentity, gatewayBin);
   const driftGatewayEnv = runtimeIdentity?.desiredEnv ?? gatewayEnv;
   const identityGatewayBin = runtimeIdentity?.identityGatewayBin ?? gatewayBin;
   const { verifySandboxBridgeGatewayReachableOrExit } =
@@ -5517,37 +5518,19 @@ async function setupInference(
     // to unrelated OpenAI-backed sandboxes.
   } else if (isRoutedInferenceProvider(provider)) {
     // Blueprint profile provider (e.g., nvidia-router for the routed profile).
-    // Same pattern as vllm-local: upsert the provider and set the inference route.
+    // reconcileModelRouter also probes sandbox→router reachability (#4564).
     try {
       await reconcileModelRouter();
     } catch (err) {
       console.error(`  ✗ Failed to start model router: ${err instanceof Error ? err.message : String(err)}`);
       process.exit(1);
     }
-    const resolvedCredentialEnv = credentialEnv || DEFAULT_MODEL_ROUTER_CREDENTIAL_ENV;
-    const credentialValue = hydrateCredentialEnv(resolvedCredentialEnv);
-    const env = credentialValue ? { [resolvedCredentialEnv]: credentialValue } : {};
-    const providerResult = upsertProvider(
-      provider,
-      "openai",
-      resolvedCredentialEnv,
-      endpointUrl,
-      env,
-    );
-    if (!providerResult.ok) {
-      console.error(`  ${providerResult.message}`);
-      process.exit(providerResult.status || 1);
+    const routed = routedInference.upsertRoutedProvider(provider, endpointUrl, credentialEnv, { upsertProvider, hydrateCredentialEnv });
+    if (!routed.ok) {
+      console.error(`  ${routed.result.message}`);
+      process.exit(routed.result.status || 1);
     }
-    const inferenceArgs = [
-      "inference",
-      "set",
-      "--no-verify",
-      "--provider",
-      provider,
-      "--model",
-      model,
-    ];
-    runOpenshell(inferenceArgs);
+    runOpenshell(["inference", "set", "--no-verify", "--provider", provider, "--model", model]);
   } else {
     console.error(`  Unsupported provider configuration: ${provider}`);
     process.exit(1);
@@ -6877,6 +6860,10 @@ async function onboard(opts: OnboardOptions = {}): Promise<void> {
         isInferenceRouteReady,
         isRoutedInferenceProvider,
         reconcileModelRouter,
+        reupsertRoutedProvider: (p, url, ce) => {
+          const r = routedInference.upsertRoutedProvider(p, url, ce, { upsertProvider, hydrateCredentialEnv });
+          return { ok: r.ok, endpointUrl: r.endpointUrl, message: r.result.message, status: r.result.status };
+        },
         registryUpdateSandbox: (name, updates) => registry.updateSandbox(name, updates),
         promptValidatedSandboxName,
         assessHost,
