@@ -111,6 +111,12 @@ section() {
   printf '\033[1;36m=== %s ===\033[0m\n' "$1"
 }
 info() { printf '\033[1;34m  [info]\033[0m %s\n' "$1"; }
+is_fake_slack_token() {
+  case "${1:-}" in
+    xoxb-fake-* | xoxb-test-* | xapp-fake-* | xapp-test-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 is_unresolved_placeholder_rejection() {
   printf '%s\n' "$1" | grep -qiE 'credential_injection_failed|unresolved credential placeholder'
 }
@@ -680,6 +686,15 @@ if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] \
   export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
   info "Skipping onboarding Telegram reachability probe for fake-token E2E"
 fi
+if [ -z "${NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION:-}" ] \
+  && [ -z "${SLACK_BOT_TOKEN_REAL:-}" ] \
+  && [ -z "${SLACK_APP_TOKEN_REAL:-}" ] \
+  && { is_fake_slack_token "$SLACK_TOKEN" || is_fake_slack_token "$SLACK_APP"; }; then
+  # This E2E uses fake Slack tokens to prove placeholder/proxy behavior against
+  # the hermetic fake Slack API. Keep real-token runs on the live validation path.
+  export NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1
+  info "Skipping onboarding Slack auth validation for fake-token E2E"
+fi
 
 # Pre-merge Slack policy into the base sandbox policy.
 #
@@ -899,6 +914,34 @@ if echo "$sandbox_list" | grep -q "$SANDBOX_NAME.*Ready"; then
 else
   fail "M-WA6: Sandbox '$SANDBOX_NAME' not Ready after WhatsApp rebuild (list: ${sandbox_list:0:200})"
   exit 1
+fi
+
+# M-WA6b: WhatsApp compact-QR pairing wiring (NemoClaw#4522). The entrypoint
+# installs a NemoClaw-owned preload that forces qrcode-terminal into
+# `{ small: true }` half-block rendering so the in-sandbox pairing QR fits a
+# phone-camera frame, and the openclaw() guard injects it for the single
+# `channels login --channel whatsapp` invocation. Verify both the preload file
+# (root-owned, read-only) and the guard wiring are present in the sandbox.
+whatsapp_qr_preload_stat=$(sandbox_exec "stat -c '%U:%a' /tmp/nemoclaw-whatsapp-qr-compact.js 2>/dev/null || echo missing")
+if [ "$whatsapp_qr_preload_stat" = "root:444" ]; then
+  pass "M-WA6b: WhatsApp compact-QR preload installed root:444 (#4522)"
+elif [ "$whatsapp_qr_preload_stat" = "missing" ]; then
+  fail "M-WA6b: WhatsApp compact-QR preload not installed in sandbox (#4522)"
+else
+  fail "M-WA6b: WhatsApp compact-QR preload has unexpected owner/mode: ${whatsapp_qr_preload_stat} (#4522)"
+fi
+
+# Assert on the actual NODE_OPTIONS injection line, not just the filename: the
+# filename also appears in the install banner and the literal path assignment,
+# so a filename-only grep would still pass if the `--require` wiring regressed.
+# The guard body is emitted inside a single-quoted heredoc, so the proxy-env
+# file contains the literal token `--require $_whatsapp_qr_compact`. Escape `$`
+# so the host shell does not expand it before sandbox_exec ships the command.
+whatsapp_qr_guard_wiring=$(sandbox_exec "grep -cF -- '--require \$_whatsapp_qr_compact' /tmp/nemoclaw-proxy-env.sh 2>/dev/null || echo 0")
+if [ "${whatsapp_qr_guard_wiring:-0}" -ge 1 ] 2>/dev/null; then
+  pass "M-WA6c: openclaw() guard injects compact-QR preload via NODE_OPTIONS for WhatsApp login (#4522)"
+else
+  fail "M-WA6c: openclaw() guard missing compact-QR preload --require injection for WhatsApp login (#4522)"
 fi
 
 # M1: Verify Telegram provider exists in gateway

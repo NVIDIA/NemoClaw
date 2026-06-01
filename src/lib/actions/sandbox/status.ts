@@ -14,7 +14,6 @@ import {
 import * as agentRuntime from "../../agent/runtime";
 import { CLI_DISPLAY_NAME, CLI_NAME } from "../../cli/branding";
 import { D, G, R, RD, YW } from "../../cli/terminal-style";
-import { getNamedGatewayLifecycleState } from "../../gateway-runtime-action";
 import { parseGatewayInference } from "../../inference/config";
 import {
   type ProviderHealthProbeOptions,
@@ -25,8 +24,6 @@ import * as nim from "../../inference/nim";
 import * as sandboxVersion from "../../sandbox/version";
 import * as shields from "../../shields";
 import { parseSandboxPhase } from "../../state/gateway";
-import type { Session } from "../../state/onboard-session";
-import * as onboardSession from "../../state/onboard-session";
 import * as registry from "../../state/registry";
 import {
   createSystemDeps as createSessionDeps,
@@ -51,6 +48,16 @@ type ProbeProviderHealth = (
   options?: ProviderHealthProbeOptions,
 ) => ProviderHealthStatus | null;
 
+/**
+ * Returns true when status can validate a cached agent version against the running sandbox.
+ */
+function shouldProbeSandboxRuntimeVersion(
+  lookup: SandboxGatewayState,
+  sandbox: registry.SandboxEntry,
+): boolean {
+  return lookup.state === "present" && Boolean(sandbox.agentVersion);
+}
+
 export function getSandboxStatusInferenceHealth(
   gatewayPresent: boolean,
   currentProvider: unknown,
@@ -72,7 +79,7 @@ export interface SandboxStatusReport {
   phase: string | null;
   gatewayState: string;
   inferenceHealth: ProviderHealthStatus | null;
-  rpcIssue: { kind: "image_drift" | "protobuf_mismatch" } | null;
+  rpcIssue: { kind: "image_drift" | "host_process_drift" | "protobuf_mismatch" } | null;
   hostGpuDetected: boolean;
   sandboxGpuEnabled: boolean;
   sandboxGpuMode: string | null;
@@ -239,6 +246,29 @@ async function printGatewayFailureLayerHeader(sandboxName: string): Promise<void
   console.log(`  ${getLayerHeader(failure.layer)}`);
 }
 
+function printMissingLiveSandboxStatusGuidance(
+  sandboxName: string,
+  lookup: SandboxGatewayState,
+): void {
+  console.log("");
+  console.log(
+    `  Sandbox '${sandboxName}' is registered locally, but is not present in the live OpenShell gateway.`,
+  );
+  if (lookup.recoveredGateway) {
+    const via = lookup.recoveryVia ? ` via ${lookup.recoveryVia}` : "";
+    console.log(
+      `  The ${CLI_DISPLAY_NAME} gateway was just recovered${via}; it may still be reconciling post-restart sandbox state.`,
+    );
+  }
+  console.log("  No local registry entry was removed by this status check.");
+  console.log(
+    `  Retry \`${CLI_NAME} ${sandboxName} status\` after the gateway finishes reconnecting.`,
+  );
+  console.log(
+    `  If the sandbox was intentionally deleted, run \`${CLI_NAME} list\` to inspect the remaining sandboxes or \`${CLI_NAME} onboard\` to create a new one.`,
+  );
+}
+
 // eslint-disable-next-line complexity
 export async function showSandboxStatus(sandboxName: string): Promise<void> {
   // #2666: never let an unexpected throw from the gateway probe (e.g. openshell
@@ -312,15 +342,30 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
 
     // Agent version check
     try {
-      const versionCheck = sandboxVersion.checkAgentVersion(sandboxName, { skipProbe: true });
+      const shouldProbeRuntimeVersion = shouldProbeSandboxRuntimeVersion(lookup, sb);
+      const versionCheck = sandboxVersion.checkAgentVersion(sandboxName, {
+        forceProbe: shouldProbeRuntimeVersion,
+        skipProbe: !shouldProbeRuntimeVersion,
+      });
       const agent = agentRuntime.getSessionAgent(sandboxName);
       const agentName = agentRuntime.getAgentDisplayName(agent);
       if (versionCheck.sandboxVersion) {
         console.log(`    Agent:    ${agentName} v${versionCheck.sandboxVersion}`);
+      } else if (shouldProbeRuntimeVersion && versionCheck.expectedVersion) {
+        console.log(
+          `    Agent:    ${agentName} version not verified (expected v${versionCheck.expectedVersion})`,
+        );
       }
       if (versionCheck.isStale) {
         console.log(`    ${YW}Update:   v${versionCheck.expectedVersion} available${R}`);
         console.log(`              Run \`${CLI_NAME} ${sandboxName} rebuild\` to upgrade`);
+      } else if (
+        shouldProbeRuntimeVersion &&
+        versionCheck.detectionMethod === "unavailable" &&
+        versionCheck.expectedVersion
+      ) {
+        console.log(`    ${YW}Update:   unable to verify sandbox ${agentName} version${R}`);
+        console.log(`              Run \`${CLI_NAME} ${sandboxName} rebuild\` if this sandbox predates the current install`);
       }
     } catch {
       /* non-fatal */
@@ -360,31 +405,7 @@ export async function showSandboxStatus(sandboxName: string): Promise<void> {
     console.log(lookup.output);
     process.exit(1);
   } else if (lookup.state === "missing") {
-    // Belt-and-suspenders: only destroy registry state if the nemoclaw gateway
-    // is demonstrably the healthy active gateway. Guards against regressions
-    // in the reconciler.
-    const guard = getNamedGatewayLifecycleState();
-    if (guard.state !== "healthy_named") {
-      console.log("");
-      if (guard.state === "connected_other") {
-        printWrongGatewayActiveGuidance(sandboxName, guard.activeGateway, console.log);
-      } else {
-        await printGatewayFailureLayerHeader(sandboxName);
-        printGatewayLifecycleHint(guard.status || "", sandboxName, console.log);
-      }
-    } else {
-      registry.removeSandbox(sandboxName);
-      const session = onboardSession.loadSession();
-      if (session && session.sandboxName === sandboxName) {
-        onboardSession.updateSession((s: Session) => {
-          s.sandboxName = null;
-          return s;
-        });
-      }
-      console.log("");
-      console.log(`  Sandbox '${sandboxName}' is not present in the live OpenShell gateway.`);
-      console.log("  Removed stale local registry entry.");
-    }
+    printMissingLiveSandboxStatusGuidance(sandboxName, lookup);
     process.exit(1);
   } else if (lookup.state === "identity_drift") {
     console.log("");

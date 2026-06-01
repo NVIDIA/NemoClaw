@@ -1351,15 +1351,25 @@ describe("runner", () => {
       expect(store.has(`${runDir}/rolled_back`)).toBe(true);
     });
 
-    it("still writes marker when plan.json is missing", async () => {
+    it("throws when plan.json is missing", async () => {
       const runDir = `${RUNS_DIR}/nc-run-1`;
       addDir(runDir);
-      // No plan.json — should skip sandbox stop/remove but still mark rolled_back
 
-      await actionRollback("nc-run-1");
+      await expect(actionRollback("nc-run-1")).rejects.toThrow(/Cannot read rollback plan/);
 
       expect(mockExeca).not.toHaveBeenCalled();
-      expect(store.has(`${runDir}/rolled_back`)).toBe(true);
+      expect(store.has(`${runDir}/rolled_back`)).toBe(false);
+    });
+
+    it("throws when plan.json is corrupt", async () => {
+      const runDir = `${RUNS_DIR}/nc-run-1`;
+      addDir(runDir);
+      addFile(`${runDir}/plan.json`, "{");
+
+      await expect(actionRollback("nc-run-1")).rejects.toThrow(/Cannot read rollback plan/);
+
+      expect(mockExeca).not.toHaveBeenCalled();
+      expect(store.has(`${runDir}/rolled_back`)).toBe(false);
     });
 
     // ── Path traversal rejection ──────────────────────────────────
@@ -1375,18 +1385,17 @@ describe("runner", () => {
       await expect(actionRollback(rid)).rejects.toThrow(/Invalid run ID/);
     });
 
-    it("defaults sandbox_name to 'openclaw' when not in plan", async () => {
+    it("throws when rollback plan has no sandbox_name", async () => {
       const runDir = `${RUNS_DIR}/nc-run-1`;
       addDir(runDir);
       addFile(`${runDir}/plan.json`, JSON.stringify({}));
 
-      await actionRollback("nc-run-1");
-
-      expect(mockExeca).toHaveBeenCalledWith(
-        "openshell",
-        ["sandbox", "stop", "openclaw"],
-        expect.anything(),
+      await expect(actionRollback("nc-run-1")).rejects.toThrow(
+        /sandbox_name must be a non-empty string/,
       );
+
+      expect(mockExeca).not.toHaveBeenCalled();
+      expect(store.has(`${runDir}/rolled_back`)).toBe(false);
     });
   });
 

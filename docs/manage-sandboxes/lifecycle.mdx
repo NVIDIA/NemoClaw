@@ -179,9 +179,10 @@ Non-interactive re-onboards in the default `suggested` policy mode preserve pres
 To make a re-onboard authoritative, set `NEMOCLAW_POLICY_MODE=custom` and provide `NEMOCLAW_POLICY_PRESETS` with the exact list to apply; onboarding removes anything else.
 See [`NEMOCLAW_POLICY_MODE`](/reference/commands#nemoclaw-onboard) for the full table.
 
-## Update to the Latest Version
+## Update to the Maintained Version
 
-When a new NemoClaw release becomes available, update the `nemoclaw` CLI on your host and check existing sandboxes for stale agent/runtime versions.
+When a maintained NemoClaw release becomes available, update the `nemoclaw` CLI on your host and check existing sandboxes for stale agent/runtime versions.
+The standard installer follows the admin-promoted `lkg` release tag by default, so it may trail the newest semver or `latest` tag while validation completes.
 
 ### Update the NemoClaw CLI
 
