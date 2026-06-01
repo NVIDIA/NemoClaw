@@ -469,11 +469,7 @@ function compactOutput(output: string): string {
 
 export function formatOpenShellStateRpcIssue(
   issue: OpenShellStateRpcIssue,
-  {
-    action = "querying OpenShell sandbox state",
-    command,
-    gatewayName = DEFAULT_GATEWAY_NAME,
-  }: FormatIssueOptions = {},
+  { action = "querying OpenShell sandbox state", command }: FormatIssueOptions = {},
 ): string[] {
   const phaseLine =
     issue.kind === "protobuf_mismatch"
@@ -522,11 +518,16 @@ export function formatOpenShellStateRpcIssue(
     lines.push(
       `  If gateway recreation is required, preserve sandbox state first; do not delete sandbox volumes or backups until \`openshell status\` reports a healthy ${CLI_DISPLAY_NAME} gateway on the installed OpenShell version.`,
     );
-  } else {
-    const gatewayContainerName =
-      drift?.containerName ?? getGatewayClusterContainerName(gatewayName);
+  } else if (drift) {
     lines.push(
-      `  If gateway recreation is required, preserve sandbox state first; do not remove \`${gatewayContainerName}\` Docker volumes unless you have a backup and explicitly accept state loss.`,
+      `  If gateway recreation is required, preserve sandbox state first; do not remove \`${drift.containerName}\` Docker volumes unless you have a backup and explicitly accept state loss.`,
+    );
+  } else {
+    // protobuf_mismatch with no resolved drift: the gateway driver is unknown
+    // here (could be host-process), so stay gateway-neutral rather than naming a
+    // cluster container that may not exist.
+    lines.push(
+      `  If gateway recreation is required, preserve sandbox state first; do not delete sandbox state, backups, or gateway data until \`openshell status\` reports a healthy ${CLI_DISPLAY_NAME} gateway.`,
     );
   }
 

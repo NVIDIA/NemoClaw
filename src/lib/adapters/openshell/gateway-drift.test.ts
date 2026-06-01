@@ -394,7 +394,7 @@ describe("OpenShell gateway drift preflight", () => {
     );
   });
 
-  it("formats runtime protobuf mismatches with gateway-specific recovery guidance", () => {
+  it("formats runtime protobuf mismatches with gateway-neutral recovery guidance when drift is unknown", () => {
     const lines = formatOpenShellStateRpcIssue(
       {
         kind: "protobuf_mismatch",
@@ -402,14 +402,18 @@ describe("OpenShell gateway drift preflight", () => {
       },
       {
         action: "querying live sandboxes",
-        gatewayName: "custom-gw",
       },
     );
 
+    const joined = lines.join("\n");
     expect(lines).toContain(
       "  OpenShell gateway/schema mismatch was detected while querying live sandboxes.",
     );
-    expect(lines.join("\n")).toContain("openshell-cluster-custom-gw");
-    expect(lines.join("\n")).not.toContain("schema preflight failed before");
+    expect(joined).toContain("preserve sandbox state first");
+    expect(joined).toContain("No sandbox data was changed.");
+    // Driver is unknown when no drift was resolved: do not name a cluster container.
+    expect(joined).not.toContain("openshell-cluster");
+    expect(joined).not.toContain("Docker volumes");
+    expect(joined).not.toContain("schema preflight failed before");
   });
 });
