@@ -201,7 +201,7 @@ Maintainers review all incoming PRs on a best-effort basis. Straightforward fixe
 
 This project requires a [Developer Certificate of Origin (DCO)](https://developercertificate.org/) sign-off on every commit. Add the following trailer to each commit message:
 
-```
+```text
 Signed-off-by: Your Name <your.email@example.com>
 ```
 
