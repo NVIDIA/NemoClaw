@@ -63,14 +63,17 @@ The following table lists tested platform and runtime combinations.
 Availability is not limited to these entries, but untested configurations can have issues.
 The table is generated from [`ci/platform-matrix.json`](https://github.com/NVIDIA/NemoClaw/blob/main/ci/platform-matrix.json), the single source of truth kept in sync by CI and QA.
 
+{/* platform-matrix:begin */}
 | OS | Container runtime | Status | Notes |
 |----|-------------------|--------|-------|
 | Linux | Docker | Tested | Primary tested path. |
 | macOS (Apple Silicon) | Colima, Docker Desktop | Tested with limitations | Install Xcode Command Line Tools (`xcode-select --install`) and start the runtime before running the installer. |
 | DGX Spark | Docker | Tested | Use the standard installer and `nemoclaw onboard`. For an end-to-end walkthrough with local Ollama inference, see the [NVIDIA Spark playbook](https://build.nvidia.com/spark/nemoclaw). |
 | Windows WSL2 | Docker Desktop (WSL backend) | Tested with limitations | Requires WSL2 with Docker Desktop backend. |
+{/* platform-matrix:end */}
 
 ## Next Steps
 
 - [Prepare Windows for NemoClaw](/get-started/windows-preparation) if you are using Windows.
 - [Quickstart](/get-started/quickstart) to install NemoClaw and launch your first sandbox.
+- [Agent Skills](/resources/agent-skills) to load NemoClaw guidance into an AI coding assistant before setup.

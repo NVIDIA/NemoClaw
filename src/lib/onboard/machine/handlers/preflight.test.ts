@@ -3,10 +3,12 @@
 
 import { describe, expect, it, vi } from "vitest";
 
+import type { GpuDetection } from "../../../inference/nim";
+import { resolveSandboxGpuConfig } from "../../sandbox-gpu-mode";
 import { createSession, type Session } from "../../../state/onboard-session";
 import { handlePreflightState, type PreflightStateOptions } from "./preflight";
 
-type Gpu = { type: string } | null;
+type Gpu = GpuDetection | null;
 type SandboxEntry = { sandboxGpuEnabled?: boolean };
 type Host = { cdiNvidiaGpuSpecMissing?: boolean };
 
@@ -104,6 +106,26 @@ describe("handlePreflightState", () => {
       sandboxGpuDevice: "GPU-0",
     });
     expect(result.gpuPassthrough).toBe(true);
+  });
+
+  it("keeps sandbox GPU disabled when N1X spoof detection yields no NVIDIA GPU", async () => {
+    const harness = createDeps({
+      runPreflight: vi.fn(async () => null),
+      resolveSandboxGpuConfig,
+    });
+
+    const result = await handlePreflightState({
+      ...baseOptions(harness.deps),
+    });
+
+    expect(harness.deps.runPreflight).toHaveBeenCalledWith({ optedOutGpuPassthrough: false });
+    expect(result.gpu).toBeNull();
+    expect(result.sandboxGpuConfig).toMatchObject({
+      mode: "auto",
+      hostGpuDetected: false,
+      sandboxGpuEnabled: false,
+    });
+    expect(result.gpuPassthrough).toBe(false);
   });
 
   it("skips full preflight on resume but re-detects GPU and revalidates CDI/sandbox GPU", async () => {

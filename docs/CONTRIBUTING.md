@@ -47,10 +47,10 @@ The current generated skills and their source pages are:
 |---|---|
 | `nemoclaw-user-overview` | `docs/about/overview.mdx`, `docs/about/ecosystem.mdx`, `docs/about/how-it-works.mdx`, `docs/about/release-notes.mdx` |
 | `nemoclaw-user-agent-skills` | `docs/resources/agent-skills.mdx` |
-| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.mdx`, `docs/deployment/install-openclaw-plugins.mdx`, `docs/deployment/sandbox-hardening.mdx` |
+| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.mdx`, `docs/deployment/brev-web-ui.mdx`, `docs/deployment/install-openclaw-plugins.mdx`, `docs/deployment/sandbox-hardening.mdx` |
 | `nemoclaw-user-get-started` | `docs/get-started/prerequisites.mdx`, `docs/get-started/quickstart.mdx`, `docs/get-started/quickstart-hermes.mdx`, `docs/get-started/windows-preparation.mdx` |
-| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.mdx`, `docs/inference/use-local-inference.mdx`, `docs/inference/switch-inference-providers.mdx`, `docs/inference/set-up-sub-agent.mdx` |
-| `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.mdx`, `docs/manage-sandboxes/messaging-channels.mdx`, `docs/manage-sandboxes/workspace-files.mdx`, `docs/manage-sandboxes/backup-restore.mdx` |
+| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.mdx`, `docs/inference/use-local-inference.mdx`, `docs/inference/switch-inference-providers.mdx`, `docs/inference/set-up-sub-agent.mdx`, `docs/inference/tool-calling-reliability.mdx` |
+| `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.mdx`, `docs/manage-sandboxes/runtime-controls.mdx`, `docs/manage-sandboxes/messaging-channels.mdx`, `docs/manage-sandboxes/workspace-files.mdx`, `docs/manage-sandboxes/backup-restore.mdx` |
 | `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.mdx` |
 | `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.mdx`, `docs/network-policy/integration-policy-examples.mdx`, `docs/network-policy/approve-network-requests.mdx` |
 | `nemoclaw-user-reference` | `docs/reference/architecture.mdx`, `docs/reference/commands.mdx`, `docs/reference/cli-selection-guide.mdx`, `docs/reference/network-policies.mdx`, `docs/reference/troubleshooting.mdx` |
@@ -87,16 +87,19 @@ Other useful flags:
 
 | Flag | Purpose |
 |------|---------|
-| `--strategy <name>` | Grouping strategy: `smart` (default), `grouped`, or `individual`. |
+| `--strategy <name>` | Grouping strategy: `grouped` (default) or `individual`. |
 | `--doc-platform <name>` | Source format: `fern-mdx` for migrated Fern pages or `myst-md` for legacy Markdown. |
 | `--name-map CAT=NAME` | Override a generated skill name (e.g. `--name-map about=overview`). |
 | `--exclude <file>` | Skip specific files (e.g. `--exclude "release-notes.mdx"`). |
 
 ### How the Script Works
 
-The script reads YAML frontmatter from each doc page to determine its content type (`how_to`, `concept`, `reference`, `get_started`), then groups pages into skills using the `smart` strategy by default.
-Within each group, the procedure page (`how_to`, `get_started`, or `tutorial`) with the lowest `skill.priority` becomes the main body of the skill.
-Sibling procedure pages, concept pages, and reference pages go into a `references/` subdirectory for progressive disclosure, keeping `SKILL.md` concise while preserving access to the full docs.
+The script reads YAML frontmatter from each doc page to determine its content type (`how_to`, `concept`, `reference`, `get_started`), then groups pages into skills using the `grouped` strategy by default.
+Within each directory group, the highest-priority procedure page (`how_to`, `get_started`, or `tutorial`) becomes the full body of `SKILL.md`.
+Sibling pages are written unchanged to `references/`.
+Groups with no procedure page keep every sibling in `references/` only.
+
+Use `--strategy individual` to emit one skill per `how_to`, `get_started`, or `tutorial` page, collect `concept` pages into `nemoclaw-user-concept`, and collect `reference` pages (and other non-procedure types) into `nemoclaw-user-reference`.
 
 Cross-references between doc pages are rewritten as skill-to-skill pointers so agents can navigate between skills.
 Fern MDX components and MyST/Sphinx directives are converted to standard markdown.
@@ -113,26 +116,26 @@ Use the npm scripts so every docs command uses that pinned version.
 
 To print the pinned Fern CLI version, run:
 
-```console
-$ npm run docs:deps
+```bash
+npm run docs:deps
 ```
 
 To validate the Fern configuration and migrated MDX pages, run:
 
-```console
-$ npm run docs
+```bash
+npm run docs
 ```
 
 To serve the docs locally and automatically rebuild on changes, run:
 
-```console
-$ npm run docs:live
+```bash
+npm run docs:live
 ```
 
 To publish a branch-based Fern preview whenever docs files change, run:
 
-```console
-$ npm run docs:preview:watch
+```bash
+npm run docs:preview:watch
 ```
 
 The preview watcher uses the current Git branch name as the Fern preview ID and watches the `docs/` and `fern/` directories.
@@ -144,9 +147,9 @@ Fern `.mdx` pages are the source for generated user skills. Legacy `.md` pages m
 Doc-only pull requests do not need the full test suite by default.
 Before opening a doc-only PR, run:
 
-```console
-$ npx prek run --all-files
-$ npm run docs
+```bash
+npx prek run --all-files
+npm run docs
 ```
 
 Leave `npm test` unchecked in the PR verification checklist unless you actually ran it.
@@ -251,11 +254,17 @@ These patterns are common in LLM-generated text and erode trust with technical r
 - End every sentence with a period.
 - One sentence per line in the source file (makes diffs readable).
 - Use `code` formatting for CLI commands, file paths, flags, parameter names, and values.
-- Use code blocks with the `console` language for CLI examples. Prefix commands with `$`:
+- Use language-specific code blocks for commands that readers should copy.
+  Put only the command text in copyable blocks:
 
-  ```console
-  $ nemoclaw onboard
+  ```bash
+  nemoclaw onboard
   ```
+
+- Use `powershell` for Windows PowerShell commands.
+  Use `bash` or `sh` for Linux, macOS, and WSL shell commands.
+  Reserve `console` blocks for terminal transcripts that include prompts, output, or interactive sessions.
+  Do not use prompt markers such as `$` in copyable command blocks.
 
 - Use tables for structured comparisons. Keep tables simple (no nested formatting).
 - Use Fern callout components (`<Note>`, `<Tip>`, `<Warning>`) for callouts in MDX pages, not bold text.

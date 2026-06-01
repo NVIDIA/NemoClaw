@@ -85,8 +85,12 @@ The agent's home directory (`/sandbox`) is writable by default:
 |------|--------|---------|
 | `/sandbox` | read-write | Home directory — agents can create files and use standard home paths |
 | `/sandbox/.openclaw` | read-write | Agent config, state, workspace, plugins |
-| `/sandbox/.nemoclaw` | read-write | Plugin state and config; blueprints within are DAC-protected (root-owned) |
+| `/sandbox/.nemoclaw` | read-write (Landlock); DAC-restricted | Parent directory is `root:root` mode `1755`; the sandbox user can write only to `state/`, `migration/`, `snapshots/`, `staging/`, and `config.json`. `blueprints/` and the parent itself are root-owned to prevent tampering. |
 | `/tmp` | read-write | Temporary files and logs |
+
+The `Access` column reflects the Landlock policy declaration only.
+Actual write success additionally requires POSIX (DAC) ownership and permissions to allow it.
+For example, Landlock lists `/sandbox/.nemoclaw` as writable, but the sandbox user cannot create files directly under it because the parent directory is root-owned; writes must target the sandbox-owned subdirectories listed above.
 
 This writable default is intentional.
 Seeing the sandbox user create files under `/sandbox` or `/sandbox/.openclaw` in a fresh sandbox does not mean Landlock failed.

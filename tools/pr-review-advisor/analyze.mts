@@ -7,10 +7,16 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { getChangedFiles, getCommits, getDiff, getDiffStat, getHeadSha, gitOutput } from "../advisors/git.mts";
-import { githubGraphql, githubRest, githubRestPaginated } from "../advisors/github.mts";
-import { advisorArtifactPaths, parseArgs, parsePositiveInt, readJson, writeJson, type AdvisorArtifactPaths } from "../advisors/io.mts";
+import { githubRest, githubRestPaginated } from "../advisors/github.mts";
+import { parseArgs, parsePositiveInt, readJson, writeJson } from "../advisors/io.mts";
 import { enumValue, extractJson, getPath, isRecord, recordItems, stringArray, stringOrDefault, stringOrUndefined } from "../advisors/json.mts";
-import { DEFAULT_ADVISOR_MODEL, DEFAULT_ADVISOR_PROVIDER, type RunAdvisorResult, runReadOnlyAdvisor } from "../advisors/session.mts";
+import {
+  DEFAULT_ADVISOR_MODEL,
+  DEFAULT_ADVISOR_PROVIDER,
+  type AdvisorPromptTurn,
+  type RunAdvisorResult,
+  runReadOnlyAdvisor,
+} from "../advisors/session.mts";
 
 const root = process.cwd();
 const ADVISOR_PROVIDER = DEFAULT_ADVISOR_PROVIDER;
@@ -66,7 +72,14 @@ type AcceptanceStatus = (typeof ACCEPTANCE_STATUSES)[number];
 type SecurityVerdict = (typeof SECURITY_VERDICTS)[number];
 type SourceOfTruthStatus = (typeof SOURCE_OF_TRUTH_STATUSES)[number];
 
-type ArtifactPaths = AdvisorArtifactPaths;
+type ArtifactPaths = {
+  promptDir: string;
+  raw: string;
+  result: string;
+  finalResult: string;
+  summary: string;
+  sessionHtml: string;
+};
 
 type ReviewMetadata = {
   baseRef: string;
@@ -195,7 +208,6 @@ type GitHubReviewContext = {
   prNumber: number;
   fetchError?: string;
   pullRequest?: unknown;
-  graphQl?: unknown;
   linkedIssues?: LinkedIssue[];
   openPrOverlaps?: OpenPrOverlap[];
   previousAdvisorReview?: PreviousAdvisorReview | null;
@@ -242,10 +254,9 @@ async function main(): Promise<void> {
   const diff = getDiff(baseRef, headRef, 160000);
   const deterministic = await collectDeterministicContext({ baseRef, headRef, changedFiles, diff });
   const metadata = { baseRef, headRef, headSha, changedFiles, deterministic };
-  const securityReviewSkill = readTrustedSecurityReviewSkill();
-  const systemPrompt = buildSystemPrompt(schema, securityReviewSkill);
-  const prompt = buildPrompt({ metadata, diff, securityReviewSkill });
-  fs.writeFileSync(artifacts.prompt, prompt);
+  const systemPrompt = buildSystemPrompt();
+  const promptTurns = buildPromptTurns({ metadata, diff, schema });
+  writePromptArtifacts({ promptDir: artifacts.promptDir, systemPrompt, promptTurns });
 
   const writeFailure = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, true);
   const writeUnavailable = (reason: string): void => writeUnavailableArtifacts(artifacts, metadata, reason, false);
@@ -260,7 +271,7 @@ async function main(): Promise<void> {
   try {
     sdkResult = await runReadOnlyAdvisor({
       cwd: root,
-      prompt,
+      promptTurns,
       systemPrompt,
       configDir,
       htmlExportPath: artifacts.sessionHtml,
@@ -272,6 +283,7 @@ async function main(): Promise<void> {
       logProgress,
     });
     fs.writeFileSync(artifacts.raw, sdkResult.raw);
+    logProgress(`PR review advisor conversation finished: turns=${sdkResult.turnTexts.length}`);
   } catch (error: unknown) {
     const reason = error instanceof Error ? error.message : String(error);
     fs.writeFileSync(artifacts.raw, `PR review advisor SDK execution failed: ${reason}\n`);
@@ -296,7 +308,14 @@ async function main(): Promise<void> {
 }
 
 function artifactPaths(outDir: string): ArtifactPaths {
-  return advisorArtifactPaths(outDir, "pr-review-advisor");
+  return {
+    promptDir: path.join(outDir, "prompts"),
+    raw: path.join(outDir, "pr-review-advisor-raw-output.txt"),
+    result: path.join(outDir, "pr-review-advisor-result.json"),
+    finalResult: path.join(outDir, "pr-review-advisor-final-result.json"),
+    summary: path.join(outDir, "pr-review-advisor-summary.md"),
+    sessionHtml: path.join(outDir, "pr-review-advisor-session.html"),
+  };
 }
 
 function writeUnavailableArtifacts(
@@ -308,7 +327,7 @@ function writeUnavailableArtifacts(
   const result = unavailableResult(metadata, reason, failed);
   writeJson(
     paths.result,
-    failed ? { failed: true, reason, promptPath: paths.prompt, rawPath: paths.raw } : { skipped: true, reason, promptPath: paths.prompt },
+    failed ? { failed: true, reason, promptPath: paths.promptDir, rawPath: paths.raw } : { skipped: true, reason, promptPath: paths.promptDir },
   );
   writeJson(paths.finalResult, result);
   fs.writeFileSync(paths.summary, renderSummary(result));
@@ -551,15 +570,12 @@ async function collectGitHubContext(): Promise<GitHubReviewContext | null> {
 
   const context: GitHubReviewContext = { repo, prNumber };
   try {
-    const [owner, name] = repo.split("/");
-    const [pullRequest, issueComments, graphQl, openPulls] = await Promise.all([
+    const [pullRequest, issueComments, openPulls] = await Promise.all([
       githubRest<unknown>(`repos/${repo}/pulls/${prNumber}`, token),
       githubRestPaginated<unknown>(`repos/${repo}/issues/${prNumber}/comments`, token, 100),
-      githubGraphql(token, buildPrGraphqlQuery(), { owner, name, number: prNumber }).catch((error: unknown) => ({ error: String(error) })),
       githubRestPaginated<unknown>(`repos/${repo}/pulls?state=open&sort=updated&direction=desc`, token, 100),
     ]);
     context.pullRequest = pullRequest;
-    context.graphQl = graphQl;
     context.previousAdvisorReview = extractPreviousAdvisorReview(issueComments);
     const prText = [
       stringOrUndefined(getPath<unknown>(pullRequest, ["title"])),
@@ -652,21 +668,6 @@ function extractPreviousAdvisorReview(issueComments: unknown[]): PreviousAdvisor
   return { headSha, body: body.slice(0, 12000) };
 }
 
-function buildPrGraphqlQuery(): string {
-  return `
-query($owner: String!, $name: String!, $number: Int!) {
-  repository(owner: $owner, name: $name) {
-    pullRequest(number: $number) {
-      number
-      title
-      isDraft
-      authorAssociation
-      headRefOid
-    }
-  }
-}`;
-}
-
 export function readTrustedSecurityReviewSkill(): string {
   try {
     return fs.readFileSync(TRUSTED_SECURITY_REVIEW_SKILL_PATH, "utf8");
@@ -677,7 +678,12 @@ export function readTrustedSecurityReviewSkill(): string {
   }
 }
 
-export function buildSystemPrompt(schema: Record<string, unknown>, securityReviewSkill = ""): string {
+export function buildSystemPrompt(): string {
+  const securityReviewSkill = readTrustedSecurityReviewSkill();
+  const securityRubric = securityReviewSkill || [
+    "Trusted security review skill was unavailable; use this built-in 9-category security rubric instead:",
+    ...SECURITY_CATEGORIES.map((category, index) => `${index + 1}. ${category}`),
+  ].join("\n");
   return [
     "You are the NemoClaw PR Review Advisor for GitHub Actions.",
     "NemoClaw runs OpenClaw assistants inside OpenShell sandboxes. Security boundaries, workflows, credentials, network policy, SSRF validation, Dockerfiles, installers, and sandbox lifecycle code are high risk.",
@@ -689,9 +695,7 @@ export function buildSystemPrompt(schema: Record<string, unknown>, securityRevie
     "2. Keep the review focused on the code changes in this PR. Do not report GitHub mergeability, branch protection, CI status, reviewer state, CodeRabbit state, or external E2E job status; those are handled by other PR surfaces.",
     "3. Security: use the trusted security code review skill embedded below as the authoritative security rubric. Apply every category with PASS/WARNING/FAIL evidence. NemoClaw-specific focus: sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, and workflow trusted-code boundary.",
     "Trusted security review skill from main checkout:",
-    "```markdown",
-    securityReviewSkill || "Security review skill was unavailable; fall back to the built-in 9-category security review.",
-    "```",
+    fencedBlock(securityRubric, "markdown"),
     "4. Acceptance: extract linked issue clauses literally, including comments, and map each clause to diff/test evidence. Named list items are separate clauses.",
     "5. Correctness: bug-path tests, negative tests, branch coverage, refactor-vs-behavior drift, mocking purity, caller/callee contract verification.",
     "6. Quality: description-vs-diff scope, migration completion, public surface docs/notes, justified error suppression, monolith growth, @ts-nocheck, shell-string execution.",
@@ -701,36 +705,148 @@ export function buildSystemPrompt(schema: Record<string, unknown>, securityRevie
     "Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless it is already fully covered by a more specific correctness, security, architecture, scope, or tests finding.",
     "Set summary.topItem to the most important actionable finding title or short description for first-review comments. Keep it concise and code-focused.",
     "Finding severity mapping: blocker renders as 'Needs attention'; warning renders as 'Worth checking'; suggestion renders as 'Nice ideas'.",
-    "Return JSON only matching this schema:",
-    "```json",
-    JSON.stringify(schema),
-    "```",
+    "This review runs as a multi-turn conversation. In intermediate turns, produce concise working notes only. In the final synthesis turn, return JSON only matching the schema provided in that turn.",
   ].join("\n");
 }
 
-function buildPrompt({ metadata, diff, securityReviewSkill }: { metadata: ReviewMetadata; diff: string; securityReviewSkill: string }): string {
-  return `Return a NemoClaw PR review advisor result for this PR.
+export function buildPromptTurns({
+  metadata,
+  diff,
+  schema,
+}: {
+  metadata: ReviewMetadata;
+  diff: string;
+  schema: Record<string, unknown>;
+}): AdvisorPromptTurn[] {
+  const metadataFields = exactMetadataFields(metadata);
+  const driftContext = JSON.stringify(buildDriftTurnContext(metadata.deterministic), null, 2);
+  const securityContext = JSON.stringify(buildSecurityTurnContext(metadata.deterministic), null, 2);
+  const validationContext = JSON.stringify(buildValidationTurnContext(metadata.deterministic), null, 2);
+  return [
+    {
+      name: "orient-drift",
+      prompt: `Turn 1/4 — orient on the PR and codebase drift.
 
-Set these fields exactly:
-- version: 1
-- baseRef: ${JSON.stringify(metadata.baseRef)}
-- headRef: ${JSON.stringify(metadata.headRef)}
-- headSha: ${JSON.stringify(metadata.headSha)}
-- changedFiles: ${JSON.stringify(metadata.changedFiles)}
+Use this turn to understand the patch, changed surfaces, prior advisor review, overlapping PRs/issues, drift evidence, and monolith growth. Inspect repository files with read-only tools when useful. Do not produce final JSON yet; reply with concise working notes only.
 
-Deterministic context gathered by trusted code:
-\`\`\`json
-${JSON.stringify(metadata.deterministic, null, 2)}
-\`\`\`
-
-Trusted security review skill path: ${SECURITY_REVIEW_SKILL_PATH}
-Trusted security review skill loaded: ${securityReviewSkill ? "yes" : "no"}
+Drift-focused deterministic context gathered by trusted code:
+${fencedBlock(driftContext, "json")}
 
 Git diff, truncated if large:
-\`\`\`diff
-${diff || "<no diff available>"}
-\`\`\`
-`;
+${fencedBlock(diff || "<no diff available>", "diff")}
+`,
+    },
+    {
+      name: "security",
+      prompt: `Turn 2/4 — security review.
+
+Apply the trusted NemoClaw security-review rubric to the already-provided diff and any nearby files you need to inspect. Focus on sandbox escape, SSRF bypass, policy bypass, credential leakage, blueprint tampering, installer trust, workflow trusted-code boundaries, unsafe shell/string execution, and auth/authorization regressions.
+
+Security-focused deterministic context gathered by trusted code:
+${fencedBlock(securityContext, "json")}
+
+Use the trusted security review skill embedded in the system prompt. For each security category, decide PASS/WARNING/FAIL with evidence. Do not produce final JSON yet; reply with concise working notes only.
+`,
+    },
+    {
+      name: "acceptance-correctness-tests",
+      prompt: `Turn 3/4 — acceptance, correctness, test depth, and source-of-truth review.
+
+Using the same PR context, inspect linked issue clauses and comments from the deterministic GitHub context when available. Map each acceptance clause to diff/test evidence. Review correctness risks, negative-path coverage, mocked boundaries, runtime-validation needs, and documentation/source-of-truth drift. For any fallback, recovery, tolerant parsing, monkeypatch, workaround, or compatibility behavior, answer the source-of-truth questions from the system rubric.
+
+Acceptance/correctness/source-of-truth context gathered by trusted code:
+${fencedBlock(validationContext, "json")}
+
+Do not produce final JSON yet; reply with concise working notes only.
+`,
+    },
+    {
+      name: "synthesize-json",
+      prompt: `Turn 4/4 — synthesize the final advisor result.
+
+Return the final NemoClaw PR Review Advisor JSON only. Use your prior working notes, but keep the output focused on actionable findings. Any unmet acceptance clause or security fail/warning must be represented as a finding. Any sourceOfTruthReview item with status=missing or status=needs_followup must also be represented as a finding unless already covered by a more specific finding.
+
+Set these fields exactly:
+${metadataFields}
+
+Return JSON matching this schema. Prefer <pr_review_advisor_json>{...}</pr_review_advisor_json> with raw JSON directly inside the tags and no Markdown outside the tags:
+${fencedBlock(JSON.stringify(schema), "json")}
+`,
+    },
+  ];
+}
+
+function fencedBlock(content: string, language = ""): string {
+  const longestBacktickRun = Math.max(0, ...Array.from(content.matchAll(/`+/g), (match) => match[0]?.length ?? 0));
+  const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
+  return `${fence}${language}\n${content}\n${fence}`;
+}
+
+function buildDriftTurnContext(context: DeterministicReviewContext): Record<string, unknown> {
+  return {
+    diffStat: context.diffStat,
+    commits: context.commits,
+    riskyAreas: context.riskyAreas,
+    workflowSignals: context.workflowSignals,
+    monolithDeltas: context.monolithDeltas,
+    driftEvidence: context.driftEvidence,
+    previousAdvisorReview: context.previousAdvisorReview,
+    openPrOverlaps: context.github?.openPrOverlaps ?? [],
+  };
+}
+
+function buildSecurityTurnContext(context: DeterministicReviewContext): Record<string, unknown> {
+  return {
+    riskyAreas: context.riskyAreas,
+    workflowSignals: context.workflowSignals,
+  };
+}
+
+function buildValidationTurnContext(context: DeterministicReviewContext): Record<string, unknown> {
+  return {
+    testDepth: context.testDepth,
+    localizedPatchSignals: context.localizedPatchSignals,
+    previousAdvisorReview: context.previousAdvisorReview,
+    pullRequest: context.github?.pullRequest ?? null,
+    linkedIssues: context.github?.linkedIssues ?? [],
+    githubFetchError: context.github?.fetchError,
+  };
+}
+
+export function writePromptArtifacts({
+  promptDir,
+  systemPrompt,
+  promptTurns,
+}: {
+  promptDir: string;
+  systemPrompt: string;
+  promptTurns: AdvisorPromptTurn[];
+}): void {
+  fs.rmSync(promptDir, { recursive: true, force: true });
+  fs.mkdirSync(promptDir, { recursive: true });
+
+  const systemPromptPath = path.join(promptDir, "00-system.md");
+  fs.writeFileSync(systemPromptPath, `${systemPrompt.trimEnd()}\n`);
+
+  for (const [index, turn] of promptTurns.entries()) {
+    const fileName = `${String(index + 1).padStart(2, "0")}-${promptArtifactSlug(turn.name)}.md`;
+    const filePath = path.join(promptDir, fileName);
+    fs.writeFileSync(filePath, `${turn.prompt.trimEnd()}\n`);
+  }
+}
+
+function promptArtifactSlug(name: string): string {
+  return name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9._-]/g, "").slice(0, 80) || "turn";
+}
+
+function exactMetadataFields(metadata: ReviewMetadata): string {
+  return [
+    "- version: 1",
+    `- baseRef: ${JSON.stringify(metadata.baseRef)}`,
+    `- headRef: ${JSON.stringify(metadata.headRef)}`,
+    `- headSha: ${JSON.stringify(metadata.headSha)}`,
+    `- changedFiles: ${JSON.stringify(metadata.changedFiles)}`,
+  ].join("\n");
 }
 
 export function normalizeReviewResult(result: unknown, metadata: ReviewMetadata): ReviewAdvisorResult {
@@ -937,10 +1053,6 @@ function appendFindings(lines: string[], heading: string, findings: Finding[]): 
     }
   }
   lines.push("");
-}
-
-export function formatRecommendation(recommendation: SummaryRecommendation): string {
-  return recommendation.replaceAll("_", " ");
 }
 
 function unavailableResult(metadata: ReviewMetadata, reason: string, failed: boolean): ReviewAdvisorResult {

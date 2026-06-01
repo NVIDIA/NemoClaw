@@ -53,8 +53,10 @@ reviews:
           where multiple sentences appear on the same line.
         - CLI commands, file paths, flags, parameter names, and values must use
           inline `code` formatting.
-        - CLI code blocks must use the `console` language tag with `$` prompt
-          prefix. Flag ```bash or ```shell for CLI examples.
+        - Copyable CLI code blocks must use language-specific tags such as
+          `bash`, `sh`, or `powershell`, and must not include prompt markers
+          such as `$`. Reserve `console` blocks for terminal transcripts that
+          include prompts, output, or interactive sessions.
         - Use Fern callout components (<Note>, <Tip>, <Warning>) for callouts
           in MDX pages, not bold text or blockquotes. MyST admonitions are
           acceptable only in legacy .md pages that have not migrated yet.

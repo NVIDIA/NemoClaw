@@ -200,4 +200,37 @@ describe("handlePoliciesState", () => {
       expect.objectContaining({ selectedPresets: ["npm", "github"] }),
     );
   });
+
+  it("forwards 'openclaw' to setupPoliciesWithSelection when agent is null (default OpenClaw)", async () => {
+    const { deps, calls } = createDeps();
+
+    await handlePoliciesState({ ...baseOptions(deps), agent: null });
+
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ agent: "openclaw" }),
+    );
+  });
+
+  it("forwards 'hermes' to setupPoliciesWithSelection when agent.name is hermes", async () => {
+    const { deps, calls } = createDeps();
+
+    await handlePoliciesState({ ...baseOptions(deps), agent: { name: "hermes" } });
+
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ agent: "hermes" }),
+    );
+  });
+
+  it("treats whitespace-only agent.name as default OpenClaw", async () => {
+    const { deps, calls } = createDeps();
+
+    await handlePoliciesState({ ...baseOptions(deps), agent: { name: "   " } });
+
+    expect(calls.setupPolicies).toHaveBeenCalledWith(
+      "my-assistant",
+      expect.objectContaining({ agent: "openclaw" }),
+    );
+  });
 });

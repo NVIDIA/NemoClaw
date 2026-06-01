@@ -60,6 +60,7 @@ NemoClaw ships maintained policy presets for common services in `nemoclaw-bluepr
 | Hugging Face Hub and Inference API | `huggingface` |
 | Jira and Atlassian Cloud | `jira` |
 | Local Ollama or vLLM through the host gateway | `local-inference` |
+| OpenClaw model-pricing reference fetch | `openclaw-pricing` |
 | npm and Yarn packages | `npm` |
 | Microsoft 365, Outlook, and Graph API | `outlook` |
 | Python Package Index | `pypi` |
@@ -213,16 +214,17 @@ $ nemoclaw my-assistant policy-add jira --yes
 The `jira` preset intentionally allows Node.js access to Atlassian Cloud and does not allow `curl`.
 When validating it manually, avoid plain `curl -s` against `auth.atlassian.com`.
 Atlassian can return an empty redirect body even when the request succeeds.
-Use an explicit status probe instead:
+Use a body-visible API probe instead:
 
-```console
-$ node -e "require('https').get('https://api.atlassian.com', r => console.log(r.statusCode))"
-$ curl -sS -o /dev/null -w '%{http_code}' --max-time 10 https://auth.atlassian.com
+```bash
+node -e "require('https').get('https://api.atlassian.com', r => console.log(r.statusCode))"
+curl -sS --max-time 10 -w '\n%{http_code}\n' https://api.atlassian.com/oauth/token/accessible-resources
 ```
 
 Before approval, the curl probe should report `000` or a local policy denial.
-After approving the blocked request in OpenShell, it should report an HTTP
-status such as `301` or `200`.
+After explicitly approving curl for `api.atlassian.com` in OpenShell, it should return Atlassian's unauthenticated `401` JSON response.
+That `401` is the expected success signal for this manual probe.
+This manual probe proves curl reached Atlassian, but no Jira credentials were supplied.
 
 Remove access when the task is done:
 
@@ -250,7 +252,7 @@ Use these presets when an agent workflow installs packages or downloads model as
 | Workflow | Preset |
 |----------|--------|
 | npm or Yarn packages | `npm` |
-| Python packages from PyPI | `pypi` |
+| Python packages from PyPI with `pip`, Python, or `uv` | `pypi` |
 | Homebrew packages | `brew` |
 | Hugging Face model or dataset access | `huggingface` |
 
@@ -272,17 +274,39 @@ $ nemoclaw my-assistant policy-remove brew --yes
 $ nemoclaw my-assistant policy-remove huggingface --yes
 ```
 
+The `pypi` preset allows Python, `pip`, virtual-environment Python and `pip`, and `/usr/local/bin/uv` to reach PyPI endpoints.
+If `uv` is installed somewhere else in the sandbox, add a custom preset for that binary path instead of broadening the maintained preset locally.
+
 ### Homebrew Specifics
 
 The sandbox base image includes Homebrew (Linuxbrew), so applying the `brew` preset is the only step needed before installing a formula.
-A `/usr/local/bin/brew` symlink puts the entry point on the sandbox `PATH`, so the agent can run `brew install <formula>` directly:
+A `/usr/local/bin/brew` wrapper puts the entry point on the sandbox `PATH` while delegating to the Linuxbrew prefix.
+Installed formula commands are available from the Linuxbrew bin directory in sandbox shell sessions:
 
 ```console
 $ nemoclaw my-assistant policy-add brew --yes
 $ nemoclaw my-assistant exec -- brew install <formula>
+$ nemoclaw my-assistant exec -- bash -lc '<formula-command>'
 ```
 
 You do not need to bootstrap Homebrew, install build dependencies, or source `brew shellenv` inside the sandbox.
+
+## Model Pricing
+
+OpenClaw's gateway fetches reference pricing from LiteLLM and OpenRouter on every start so it can populate `usage.cost` in session JSONL records.
+The default-strict egress policy denies both hosts.
+The fetch fails closed, the gateway logs `[gateway/model-pricing] LiteLLM pricing fetch failed: TypeError: fetch failed` (and the matching OpenRouter line) on every startup, and every session record records `usage.cost = 0` even though the input and output token counts populate correctly.
+Tools that read the session log to display per-turn cost (audit dashboards, compliance review surfaces) cannot distinguish a real free run from this silent failure.
+
+Apply the `openclaw-pricing` preset to allow both pricing endpoints.
+The preset pins each host to a single read-only path so it does not widen egress beyond the pricing fetch:
+
+```console
+$ nemoclaw my-assistant policy-add openclaw-pricing --dry-run
+$ nemoclaw my-assistant policy-add openclaw-pricing --yes
+```
+
+After the next gateway restart the WARN entries stop and `usage.cost` populates from the fetched pricing tables.
 
 ## Local Inference
 

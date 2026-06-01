@@ -168,6 +168,24 @@ export function parseSandboxPhase(getOutput: string): string | null {
   return match ? match[1] : null;
 }
 
+// Phases that represent a settled, non-transitional failure rather than a
+// sandbox still coming up. OpenShell only reports these when it has real
+// state, so a Docker-outage reclassification must NOT hide them — the user
+// needs the genuine failure/rebuild guidance even during a daemon blip
+// (#4428). Mirrors the terminal set used by the connect readiness loop.
+export const TERMINAL_SANDBOX_PHASES = new Set<string>([
+  "Failed",
+  "Error",
+  "CrashLoopBackOff",
+  "ImagePullBackOff",
+  "Unknown",
+  "Evicted",
+]);
+
+export function isTerminalSandboxPhase(phase: string | null | undefined): boolean {
+  return !!phase && TERMINAL_SANDBOX_PHASES.has(phase);
+}
+
 export function getSandboxStateFromOutputs(
   sandboxName: string,
   getOutput = "",
