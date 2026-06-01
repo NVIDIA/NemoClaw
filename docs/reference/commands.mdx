@@ -844,6 +844,90 @@ Use the skill name from the `SKILL.md` frontmatter, not the local directory name
 Skill names must contain only alphanumeric characters, dots, hyphens, and underscores, and cannot be `.` or `..`.
 For non-OpenClaw agents, restart the agent gateway if prompted so the removal takes effect.
 
+### `nemoclaw <name> agents add`
+
+Run the OpenClaw interactive add wizard inside the sandbox.
+This is a thin pass-through to `openclaw agents add` via `openshell sandbox exec`; flags accepted by the in-sandbox CLI are forwarded verbatim.
+
+```console
+$ nemoclaw my-assistant agents add
+$ nemoclaw my-assistant agents add work --model gpt-4o
+```
+
+### `nemoclaw <name> agents delete <agent-id>`
+
+Remove an OpenClaw agent from the sandbox.
+This is a thin pass-through to `openclaw agents delete <id>` via `openshell sandbox exec`; the OpenClaw CLI owns gateway dispatch (`agents.delete`), host-side workspace removal, and config edits.
+Flags accepted by the in-sandbox CLI (`--force`, `--json`) are forwarded verbatim.
+
+```console
+$ nemoclaw my-assistant agents delete work
+$ nemoclaw my-assistant agents delete work --force --json
+```
+
+### `nemoclaw <name> sessions`
+
+List OpenClaw conversation sessions in the sandbox.
+With no subcommand the in-sandbox CLI lists stored sessions for the configured default agent.
+This is a thin pass-through to `openclaw sessions` via `openshell sandbox exec`; flags accepted by the in-sandbox CLI are forwarded verbatim.
+
+```console
+$ nemoclaw my-assistant sessions
+$ nemoclaw my-assistant sessions --all-agents --json
+```
+
+### `nemoclaw <name> sessions list`
+
+Pass-through to `openclaw sessions list` inside the sandbox.
+Accepts every flag the in-sandbox CLI does (`--agent`, `--all-agents`, `--active`, `--limit`, `--json`, `--store`, `--verbose`).
+
+```console
+$ nemoclaw my-assistant sessions list
+$ nemoclaw my-assistant sessions list --agent work --json
+```
+
+### `nemoclaw <name> sessions reset <key>`
+
+Archive a session and rebind its key to a fresh `sessionId` by invoking the OpenClaw gateway `sessions.reset` RPC inside the sandbox.
+Goes through `openshell sandbox exec` -> `openclaw gateway call sessions.reset`, so the gateway owns archival, lock handling, and lifecycle events; the host never edits `sessions.json` directly.
+
+```console
+$ nemoclaw my-assistant sessions reset main
+$ nemoclaw my-assistant sessions reset agent:work:telegram:t-1
+$ nemoclaw my-assistant sessions reset telegram:t-1 --agent work --reason new
+$ nemoclaw my-assistant sessions reset agent:main:main --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--agent <id>` | Agent id when `<key>` is an alias rather than the canonical `agent:<id>:<rest>` form. |
+| `--reason new\|reset` | `reset` (default) archives the prior transcript; `new` rebinds without preserving the archive trail. |
+| `--json` | Print the reset result as JSON. |
+| `--verbose` | Print the gateway entry payload after a successful reset. |
+
+The `<key>` argument accepts an alias (e.g. `main`, `telegram:t-1`) or the canonical `agent:<id>:<rest>` form.
+Mismatched `--agent` plus canonical-key combinations are refused before the gateway is invoked.
+
+### `nemoclaw <name> sessions delete <key>`
+
+Remove a session entry by invoking the OpenClaw gateway `sessions.delete` RPC inside the sandbox.
+The gateway refuses to remove the agent's main session.
+The transcript on disk is removed by default; pass `--keep-transcript` to retain it.
+
+```console
+$ nemoclaw my-assistant sessions delete telegram:t-1
+$ nemoclaw my-assistant sessions delete agent:work:telegram:t-1
+$ nemoclaw my-assistant sessions delete telegram:t-1 --agent work --keep-transcript
+$ nemoclaw my-assistant sessions delete agent:main:slack:c-9 --json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--agent <id>` | Agent id when `<key>` is an alias rather than the canonical `agent:<id>:<rest>` form. |
+| `--keep-transcript` | Retain the session transcript on disk after the entry is removed. |
+| `--json` | Print the delete result as JSON. |
+| `--verbose` | Print the gateway entry payload after a successful delete. |
+
 ### `nemoclaw <name> rebuild`
 
 Upgrade a sandbox to the current agent version while preserving workspace state.
