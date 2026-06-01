@@ -2090,7 +2090,7 @@ describe("installer release-tag resolution", () => {
     });
   }
 
-  it("defaults to 'latest' with no env override", () => {
+  it("defaults to 'lkg' with no env override", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-resolve-tag-default-"));
     const fakeBin = path.join(tmp, "bin");
     fs.mkdirSync(fakeBin);
@@ -2100,7 +2100,7 @@ describe("installer release-tag resolution", () => {
     const result = callResolveReleaseTag(fakeBin);
 
     expect(result.status).toBe(0);
-    expect(result.stdout.trim()).toBe("latest");
+    expect(result.stdout.trim()).toBe("lkg");
   });
 
   it("uses NEMOCLAW_INSTALL_TAG override", () => {
@@ -2886,6 +2886,7 @@ describe("installer flag parsing", () => {
 
     expect(result.status).toBe(0);
     expect(`${result.stdout}${result.stderr}`).toMatch(/NEMOCLAW_INSTALL_TAG/);
+    expect(`${result.stdout}${result.stderr}`).toMatch(/default: lkg/);
   });
 });
 
