@@ -42,7 +42,7 @@ info "Running strict Chat Completions tool-call probe against a hermetic mock"
 set +e
 NEMOCLAW_TEST_NO_SLEEP=1 node <<'NODE' 2>&1 | tee /tmp/nemoclaw-e2e-strict-tool-call-probe-node.log
 const assert = require("node:assert/strict");
-const { spawn } = require("node:child_process");
+const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -238,6 +238,88 @@ async function withMockEndpoint(mode, exercise) {
   }
 }
 
+function runOnboardingCallerAgainstMock(endpoint) {
+  const port = new URL(endpoint).port;
+  const childScript = String.raw`
+const assert = require("node:assert/strict");
+
+process.env.NEMOCLAW_NON_INTERACTIVE = "1";
+process.env.NEMOCLAW_PROVIDER = "ollama";
+process.env.NEMOCLAW_MODEL = "mock-tool-model";
+process.env.NEMOCLAW_TEST_NO_SLEEP = "1";
+
+const runner = require("./dist/lib/runner");
+runner.run = () => ({ status: 0 });
+runner.runShell = () => ({ status: 0 });
+runner.runCapture = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : String(command);
+  if (cmd.includes("command -v") && cmd.includes("ollama")) return "";
+  if (cmd.includes("/api/tags")) {
+    return JSON.stringify({ models: [{ name: "mock-tool-model" }] });
+  }
+  if (cmd.includes("/api/show")) {
+    return JSON.stringify({ capabilities: ["completion", "tools"] });
+  }
+  if (cmd.includes("/api/ps")) {
+    return JSON.stringify({ models: [{ name: "mock-tool-model", context_length: 4096 }] });
+  }
+  if (cmd.includes("127.0.0.1:8000/v1/models")) return "";
+  return "";
+};
+runner.runCaptureEx = (command) => {
+  const cmd = Array.isArray(command) ? command.join(" ") : String(command);
+  if (cmd.includes("/api/generate")) {
+    return { stdout: JSON.stringify({ response: "hello" }), stderr: "", exitCode: 0, timedOut: false };
+  }
+  return { stdout: "", stderr: "", exitCode: 0, timedOut: false };
+};
+
+require("./dist/lib/onboard/ollama-systemd").ensureOllamaLoopbackSystemdOverride = () => "ready";
+require("./dist/lib/onboard/local-inference-topology").shouldFrontOllamaWithProxy = () => false;
+
+const credentials = require("./dist/lib/credentials/store");
+credentials.prompt = async (message) => {
+  throw new Error("Unexpected prompt during non-interactive Ollama onboarding: " + message);
+};
+credentials.ensureApiKey = async () => {
+  throw new Error("Unexpected API key request during Local Ollama onboarding");
+};
+
+const lines = [];
+const originalLog = console.log;
+const originalError = console.error;
+console.log = (...args) => lines.push(args.join(" "));
+console.error = (...args) => lines.push(args.join(" "));
+
+(async () => {
+  try {
+    const { setupNim } = require("./dist/lib/onboard");
+    const result = await setupNim(null, null);
+    originalLog(JSON.stringify({ result, lines }));
+  } catch (error) {
+    originalError(lines.join("\n"));
+    originalError(error && error.stack ? error.stack : error);
+    process.exit(1);
+  } finally {
+    console.log = originalLog;
+    console.error = originalError;
+  }
+})();
+`;
+
+  const result = spawnSync(process.execPath, ["-e", childScript], {
+    cwd: process.cwd(),
+    encoding: "utf8",
+    env: { ...process.env, NEMOCLAW_OLLAMA_PORT: port },
+    timeout: 15000,
+  });
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  const payload = JSON.parse(result.stdout.trim().split(/\r?\n/).pop());
+  assert.equal(payload.result.provider, "ollama-local");
+  assert.equal(payload.result.model, "mock-tool-model");
+  assert.equal(payload.result.preferredInferenceApi, "openai-completions");
+}
+
 (async () => {
   await withMockEndpoint("success", async (endpoint, readRequests) => {
     const result = await validate(endpoint);
@@ -248,6 +330,16 @@ async function withMockEndpoint(mode, exercise) {
     assert.equal(requests[0].url, "/v1/chat/completions");
     assertStrictPayload(requests[0].body);
     console.log("[PASS] strict validation succeeds with structured tool_calls");
+  });
+
+  await withMockEndpoint("success", async (endpoint, readRequests) => {
+    runOnboardingCallerAgainstMock(endpoint);
+    const requests = readRequests();
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].method, "POST");
+    assert.equal(requests[0].url, "/v1/chat/completions");
+    assertStrictPayload(requests[0].body);
+    console.log("[PASS] Local Ollama onboarding caller enforces strict Chat Completions validation");
   });
 
   await withMockEndpoint("transient-502", async (endpoint, readRequests) => {
