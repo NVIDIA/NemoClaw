@@ -120,6 +120,7 @@ type SandboxEntry = {
   gpuEnabled: boolean;
   policies: string[];
   agent?: string;
+  openshellDriver?: string | null;
 };
 
 function writeRecordingCommand(
@@ -2560,6 +2561,47 @@ describe("CLI dispatch", () => {
       value: "124",
     });
   });
+
+  for (const driver of ["docker", "vm"] as const) {
+    it(`gates host alias commands on the ${driver} driver without targeting the legacy gateway container`, testTimeoutOptions(30_000), () => {
+      const home = fs.mkdtempSync(
+        path.join(os.tmpdir(), `nemoclaw-cli-hosts-${driver}-`),
+      );
+      const localBin = path.join(home, "bin");
+      const dockerLog = path.join(home, "docker.log");
+      fs.mkdirSync(localBin, { recursive: true });
+      // Record any docker invocation so we can prove the gate fires before
+      // the legacy `docker exec openshell-cluster-nemoclaw kubectl` path.
+      writeHostAliasDockerStub(localBin, dockerLog, [
+        { ip: "10.0.0.5", hostnames: ["old.local"] },
+      ]);
+      writeSandboxRegistry(home, "alpha", { openshellDriver: driver });
+
+      const env = { HOME: home, PATH: `${localBin}:${process.env.PATH || ""}` };
+      const list = runWithEnv("alpha hosts-list", env);
+      const add = runWithEnv("alpha hosts-add searxng.local 192.168.1.105", env);
+      const remove = runWithEnv("alpha hosts-remove searxng.local", env);
+
+      for (const result of [list, add, remove]) {
+        expect(result.code).toBe(1);
+        expect(result.out).toContain(
+          `Host aliases are not supported on the '${driver}' driver sandbox 'alpha'.`,
+        );
+      }
+
+      // Even the dry-run preview must not reach the legacy resource read.
+      const dryRun = runWithEnv(
+        "alpha hosts-add searxng.local 192.168.1.105 --dry-run",
+        env,
+      );
+      expect(dryRun.code).toBe(1);
+      expect(dryRun.out).not.toContain("/spec/podTemplate/spec/hostAliases");
+
+      // The gate runs before any docker exec, so the legacy gateway container
+      // is never targeted.
+      expect(fs.existsSync(dockerLog)).toBe(false);
+    });
+  }
 
   it("supports oclif-native sandbox command forms", () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-cli-native-sandbox-"));
