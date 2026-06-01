@@ -7,17 +7,10 @@
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/NVIDIA/NemoClaw/blob/main/LICENSE)
 [![Security Policy](https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red)](https://github.com/NVIDIA/NemoClaw/blob/main/SECURITY.md)
-[![Project Status](https://img.shields.io/badge/status-alpha-orange)](https://docs.nvidia.com/nemoclaw/latest/about/release-notes.html)
 [![Discord](https://img.shields.io/badge/Discord-Join-7289da)](https://discord.gg/XFpfPv9Uvx)
 
 NVIDIA NemoClaw is an open source reference stack for running always-on AI agents more safely inside [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandboxes.
 It provides guided onboarding, a hardened blueprint, routed inference, network policy, and lifecycle management through a single CLI.
-
-> [!NOTE]
-> NemoClaw is **alpha software**.
-> This software is not production-ready.
-> Interfaces, APIs, and behavior may change without notice.
-> See [Release Notes](https://docs.nvidia.com/nemoclaw/latest/about/release-notes.html) for the current version.
 
 **Supported agents:**
 

@@ -150,6 +150,19 @@ cleanup() {
 }
 trap cleanup EXIT
 
+is_fake_telegram_token() {
+  case "${1:-}" in
+    *fake*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+is_fake_slack_token() {
+  case "${1:-}" in
+    xoxb-fake-* | xoxb-test-* | xapp-fake-* | xapp-test-*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 # ── Phase 0: Install NemoClaw with token A ────────────────────────
 
 section "Phase 0: Install NemoClaw and first onboard with token A"
@@ -157,6 +170,21 @@ section "Phase 0: Install NemoClaw and first onboard with token A"
 # Pre-clean
 openshell sandbox delete "$SANDBOX_NAME" 2>/dev/null || true
 openshell gateway destroy -g nemoclaw 2>/dev/null || true
+
+if [ -z "${NEMOCLAW_SKIP_TELEGRAM_REACHABILITY:-}" ] \
+  && { is_fake_telegram_token "$TELEGRAM_BOT_TOKEN_A" || is_fake_telegram_token "$TELEGRAM_BOT_TOKEN_B"; }; then
+  # This E2E normally uses fake tokens to exercise rotation plumbing, not the
+  # live Telegram API. Remove once onboard has a hermetic fake Telegram API.
+  export NEMOCLAW_SKIP_TELEGRAM_REACHABILITY=1
+  info "Skipping onboarding Telegram reachability probe for fake-token E2E"
+fi
+if [ -z "${NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION:-}" ] \
+  && { is_fake_slack_token "$SLACK_BOT_TOKEN_A" || is_fake_slack_token "$SLACK_BOT_TOKEN_B" || is_fake_slack_token "$SLACK_APP_TOKEN_A" || is_fake_slack_token "$SLACK_APP_TOKEN_B"; }; then
+  # This E2E normally uses fake Slack tokens to exercise rotation plumbing, not
+  # the live Slack API.
+  export NEMOCLAW_SKIP_SLACK_AUTH_VALIDATION=1
+  info "Skipping onboarding Slack auth validation for fake-token E2E"
+fi
 
 export TELEGRAM_BOT_TOKEN="$TELEGRAM_BOT_TOKEN_A"
 export DISCORD_BOT_TOKEN="$DISCORD_BOT_TOKEN_A"

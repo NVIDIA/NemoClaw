@@ -16,6 +16,10 @@ import {
   normalizeSandboxLogsOptions,
 } from "../../domain/sandbox/logs";
 import { ROOT } from "../../runner";
+import {
+  isDockerRuntimeDown,
+  printDockerRuntimeDownGuidance,
+} from "./gateway-failure-classifier";
 
 function exitWithSpawnResult(result: LogProbeResult) {
   if (result.status !== null) {
@@ -174,7 +178,18 @@ function warnSandboxAuditLogsUnavailable(
 }
 
 export function showSandboxLogs(sandboxName: string, options: SandboxLogsOptions | boolean) {
+  // Normalize/validate options before any host I/O so malformed flags still
+  // surface their own error rather than a Docker-outage message.
   const logsOptions = normalizeSandboxLogsOptions(options);
+
+  // Preflight the Docker daemon so a host runtime outage is named as such
+  // instead of surfacing as opaque "log source unavailable" failures from the
+  // underlying OpenShell commands (#4428).
+  if (isDockerRuntimeDown(sandboxName)) {
+    printDockerRuntimeDownGuidance(sandboxName, { retryCommand: "logs" });
+    process.exit(1);
+  }
+
   if (logsOptions.follow) {
     streamSandboxFollowLogs(sandboxName, logsOptions);
     return;

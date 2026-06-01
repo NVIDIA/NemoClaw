@@ -5,11 +5,6 @@
 Use NemoHermes when you want NemoClaw to create an OpenShell sandbox that runs Hermes instead of the default OpenClaw agent.
 The `nemohermes` command is an alias for `nemoclaw` with the Hermes agent pre-selected.
 
-**Experimental Feature:**
-
-The Hermes agent option is experimental.
-Interfaces, defaults, and supported features may change without notice, and it is not recommended for production use.
-
 Review the [Prerequisites](prerequisites.md) before starting.
 Docker must be installed, running, and reachable from the current shell before Hermes onboarding can build the sandbox image.
 On Linux, the installer can install Docker, start the service, and add your user to the `docker` group.

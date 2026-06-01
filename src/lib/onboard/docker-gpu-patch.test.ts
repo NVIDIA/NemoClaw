@@ -26,12 +26,12 @@ import {
   shouldApplyDockerGpuPatch,
   waitForOpenShellSupervisorReconnect,
 } from "../../../dist/lib/onboard/docker-gpu-patch";
+import { waitForCreatedSandboxReadyWithTrace } from "../../../dist/lib/onboard/sandbox-readiness-tracing";
 import {
   getSandboxFailurePhase,
   isSandboxInErrorPhase,
   isSandboxReady,
 } from "../../../dist/lib/state/gateway";
-import { waitForCreatedSandboxReadyWithTrace } from "../../../dist/lib/onboard/sandbox-readiness-tracing";
 
 function inspectFixture(): DockerContainerInspect {
   return {
@@ -825,10 +825,15 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
       runCaptureOpenshell,
       isSandboxReady,
       isSandboxInErrorPhase,
+      getSandboxFailurePhase: () => "Error",
       sleep,
     });
 
-    expect(ready).toBe(false);
+    expect(ready).toEqual({
+      ready: false,
+      reason: "terminal_failure_phase",
+      failurePhase: "Error",
+    });
     expect(runCaptureOpenshell).toHaveBeenCalledTimes(2);
     // Should not sleep after detecting the terminal phase.
     expect(sleep).toHaveBeenCalledTimes(1);
@@ -887,11 +892,11 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
     expect(snapshot.sandboxListLine).toContain("Error");
   });
 
-  it("keeps a terminal get phase when list still reports a stale live phase", () => {
-    // Inverse-staleness guard: when `sandbox get` already reports Error but
-    // `sandbox list` is still showing the row as Ready (gateway list cache
-    // lagging behind the per-sandbox endpoint), the terminal `get` phase
-    // must win so the classifier still surfaces sandbox_error_phase.
+  it("uses the list-derived phase whenever the sandbox row is present", () => {
+    // Regression guard for CodeRabbit feedback: `sandbox list` reflects the
+    // gateway's table row and should be the phase used by the failure
+    // classifier whenever that row is available, even if `sandbox get` reports
+    // a different phase.
     const runCaptureOpenshell = vi.fn((args: readonly string[]) => {
       if (args[0] === "sandbox" && args[1] === "get") {
         return "Name: alpha\nPhase: Error\nReason: ContainerCannotRun\n";
@@ -908,33 +913,8 @@ describe("docker-gpu-patch Error-phase diagnostics (#4316)", () => {
       { runCaptureOpenshell },
     );
 
-    expect(snapshot.sandboxPhase).toBe("Error");
-    // The list row is still captured even when its phase is demoted.
-    expect(snapshot.sandboxListLine).toContain("Ready");
-  });
-
-  it("keeps a live get phase when list is still reporting an older intermediate phase", () => {
-    // Symmetric staleness guard: when `sandbox get` reports Ready but
-    // `sandbox list` is still serving an older Provisioning row, the live
-    // get phase must win. Otherwise a subsequent GPU proof error would
-    // be misclassified as supervisor_unreachable instead of proof_failure.
-    const runCaptureOpenshell = vi.fn((args: readonly string[]) => {
-      if (args[0] === "sandbox" && args[1] === "get") {
-        return "Name: alpha\nPhase: Ready\n";
-      }
-      if (args[0] === "sandbox" && args[1] === "list") {
-        return "alpha   Provisioning   2s ago\n";
-      }
-      return "";
-    });
-
-    const snapshot = captureDockerGpuPatchSandboxSnapshot(
-      "alpha",
-      { patchedContainerId: null },
-      { runCaptureOpenshell },
-    );
-
     expect(snapshot.sandboxPhase).toBe("Ready");
+    expect(snapshot.sandboxListLine).toContain("Ready");
   });
 
   it("keeps the get-derived phase when the sandbox row is absent from list output", () => {

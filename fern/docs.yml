@@ -12,9 +12,6 @@ title: NVIDIA NemoClaw
 
 global-theme: nvidia
 
-announcement:
-  message: "🔔 NVIDIA NemoClaw is <strong>alpha software</strong>. APIs and behavior may change without notice. Do not use in production."
-
 layout:
   searchbar-placement: header
   page-width: 1376px

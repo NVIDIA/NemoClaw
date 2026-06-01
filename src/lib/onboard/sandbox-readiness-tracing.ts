@@ -8,6 +8,11 @@ type RunCaptureOpenshell = (
   options?: { ignoreError?: boolean },
 ) => string;
 
+export type CreatedSandboxReadinessResult =
+  | { ready: true; reason: "ready"; failurePhase: null }
+  | { ready: false; reason: "terminal_failure_phase"; failurePhase: string | null }
+  | { ready: false; reason: "timeout"; failurePhase: null };
+
 export function waitForSandboxReadyWithTrace(options: {
   sandboxName: string;
   attempts: number;
@@ -79,14 +84,16 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
    * timeout window before reporting "did not become ready" (#4316).
    */
   isSandboxInErrorPhase?: (output: string, sandboxName: string) => boolean;
+  getSandboxFailurePhase?: (output: string, sandboxName: string) => string | null;
   sleep: (seconds: number) => void;
-}): boolean {
+}): CreatedSandboxReadinessResult {
   const {
     sandboxName,
     timeoutSecs,
     runCaptureOpenshell,
     isSandboxReady,
     isSandboxInErrorPhase,
+    getSandboxFailurePhase,
     sleep,
   } = options;
   return withSandboxReadinessTrace(sandboxName, { timeout_seconds: timeoutSecs }, () => {
@@ -95,16 +102,17 @@ export function waitForCreatedSandboxReadyWithTrace(options: {
       const list = runCaptureOpenshell(["sandbox", "list"], { ignoreError: true });
       if (isSandboxReady(list, sandboxName)) {
         addTraceEvent("ready", { attempt: i + 1 });
-        return true;
+        return { ready: true, reason: "ready", failurePhase: null };
       }
       if (isSandboxInErrorPhase?.(list, sandboxName)) {
-        addTraceEvent("terminal_failure_phase", { attempt: i + 1 });
-        return false;
+        const failurePhase = getSandboxFailurePhase?.(list, sandboxName) ?? null;
+        addTraceEvent("terminal_failure_phase", { attempt: i + 1, failure_phase: failurePhase });
+        return { ready: false, reason: "terminal_failure_phase", failurePhase };
       }
       if (i < readyAttempts - 1) sleep(2);
     }
     addTraceEvent("not_ready", { attempts: readyAttempts });
-    return false;
+    return { ready: false, reason: "timeout", failurePhase: null };
   });
 }
 

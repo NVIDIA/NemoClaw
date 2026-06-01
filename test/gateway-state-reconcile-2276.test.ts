@@ -315,10 +315,10 @@ describe("Scenario 1: connect — healthy nemoclaw active + sandbox NotFound tru
   });
 });
 
-// ─── Scenario 2 ─── destructive path preserved for `status` ────────────────
+// ─── Scenario 2 ─── passive `status` must preserve registry state ─────────
 describe("Scenario 2: status — healthy nemoclaw active + sandbox NotFound truly gone", () => {
   it(
-    "removes the registry entry, clears session, and logs removal (no exit 1)",
+    "reports the missing live sandbox without removing local registry state",
     { timeout: TIMEOUT_MS },
     () => {
       writeStubOpenshell({
@@ -331,18 +331,16 @@ describe("Scenario 2: status — healthy nemoclaw active + sandbox NotFound trul
 
       const r = runCli("status");
 
-      // status doesn't exit non-zero on a missing sandbox — it just logs.
+      assert.equal(r.status, 1, `expected exit 1, got ${r.status}`);
       assert.equal(
         registrySandboxPresent(r),
-        false,
-        `expected registry entry removed, got: ${JSON.stringify(r.registry)}`,
-      );
-      assert.equal(
-        r.sessionSandboxName === null || r.sessionSandboxName === undefined,
         true,
-        `expected session sandboxName cleared, got: ${r.sessionSandboxName}`,
+        `expected registry entry preserved, got: ${JSON.stringify(r.registry)}`,
       );
-      assert.match(r.stdout, /Removed stale local registry entry/);
+      assert.equal(r.sessionSandboxName, SANDBOX_NAME, "expected session sandboxName preserved");
+      assert.match(r.stdout, /registered locally, but is not present/);
+      assert.match(r.stdout, /No local registry entry was removed/);
+      assert.doesNotMatch(r.stdout, /Removed stale local registry entry/);
     },
   );
 });
