@@ -901,6 +901,28 @@ else
   exit 1
 fi
 
+# M-WA6b: WhatsApp compact-QR pairing wiring (NemoClaw#4522). The entrypoint
+# installs a NemoClaw-owned preload that forces qrcode-terminal into
+# `{ small: true }` half-block rendering so the in-sandbox pairing QR fits a
+# phone-camera frame, and the openclaw() guard injects it for the single
+# `channels login --channel whatsapp` invocation. Verify both the preload file
+# (root-owned, read-only) and the guard wiring are present in the sandbox.
+whatsapp_qr_preload_stat=$(sandbox_exec "stat -c '%U:%a' /tmp/nemoclaw-whatsapp-qr-compact.js 2>/dev/null || echo missing")
+if [ "$whatsapp_qr_preload_stat" = "root:444" ]; then
+  pass "M-WA6b: WhatsApp compact-QR preload installed root:444 (#4522)"
+elif [ "$whatsapp_qr_preload_stat" = "missing" ]; then
+  fail "M-WA6b: WhatsApp compact-QR preload not installed in sandbox (#4522)"
+else
+  fail "M-WA6b: WhatsApp compact-QR preload has unexpected owner/mode: ${whatsapp_qr_preload_stat} (#4522)"
+fi
+
+whatsapp_qr_guard_wiring=$(sandbox_exec "grep -c -- 'nemoclaw-whatsapp-qr-compact.js' /tmp/nemoclaw-proxy-env.sh 2>/dev/null || echo 0")
+if [ "${whatsapp_qr_guard_wiring:-0}" -ge 1 ] 2>/dev/null; then
+  pass "M-WA6c: openclaw() guard references compact-QR preload for WhatsApp login (#4522)"
+else
+  fail "M-WA6c: openclaw() guard missing compact-QR preload wiring for WhatsApp login (#4522)"
+fi
+
 # M1: Verify Telegram provider exists in gateway
 if openshell provider get "${SANDBOX_NAME}-telegram-bridge" >/dev/null 2>&1; then
   pass "M1: Provider '${SANDBOX_NAME}-telegram-bridge' exists in gateway"
