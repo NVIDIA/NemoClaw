@@ -279,7 +279,7 @@ navigation:
                 path: reference/architecture.mdx
                 slug: architecture
               - page: "CLI Commands Reference"
-                path: reference/commands.mdx
+                path: reference/commands-nemohermes.mdx
                 slug: commands
               - page: "CLI Selection Guide"
                 path: reference/cli-selection-guide.mdx
