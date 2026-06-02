@@ -18,8 +18,10 @@ const {
   formatConfigValueForLogs,
   resolveAgentConfig,
   buildRecomputeSandboxConfigHashScript,
-  selectDockerDriverSandboxContainer,
 } = require("../dist/lib/sandbox/config");
+const {
+  selectDirectSandboxContainer,
+} = require("../dist/lib/sandbox/privileged-exec");
 
 type MutableScalar = string | number | boolean | null | undefined;
 type MutableValue = MutableScalar | MutableMap | MutableValue[];
@@ -94,30 +96,34 @@ describe("buildRecomputeSandboxConfigHashScript", () => {
   });
 });
 
-describe("selectDockerDriverSandboxContainer", () => {
-  it("returns the exact Docker-driver sandbox container when present", () => {
-    const selected = selectDockerDriverSandboxContainer(
+describe("selectDirectSandboxContainer", () => {
+  it("returns the exact direct sandbox container when present", () => {
+    const selected = selectDirectSandboxContainer(
       "demo",
-      "docker",
       "openshell-demo\nopenshell-demo-helper\n",
+      ["demo"],
     );
 
     expect(selected).toBe("openshell-demo");
   });
 
-  it("falls back to the generated Docker-driver sandbox container prefix", () => {
-    const selected = selectDockerDriverSandboxContainer(
+  it("falls back to the generated direct sandbox container prefix", () => {
+    const selected = selectDirectSandboxContainer(
       "demo",
-      "docker",
       "openshell-other\nopenshell-demo-abc123\n",
+      ["demo"],
     );
 
     expect(selected).toBe("openshell-demo-abc123");
   });
 
-  it("does not select a container for legacy gateway sandboxes", () => {
+  it("does not select a prefix-collision container owned by a longer sandbox name", () => {
     expect(
-      selectDockerDriverSandboxContainer("demo", "kubernetes", "openshell-demo\n"),
+      selectDirectSandboxContainer(
+        "demo",
+        "openshell-demo-child\n",
+        ["demo", "demo-child"],
+      ),
     ).toBeNull();
   });
 });

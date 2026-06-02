@@ -23,13 +23,20 @@ const ZERO_COST = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 type AdvisorProviderConfig = Parameters<ModelRegistry["registerProvider"]>[1];
 
 export type RunAdvisorResult = {
+  /** Assistant text from the final turn. For single-turn callers, this is the full response. */
   text: string;
   raw: string;
+  turnTexts: string[];
+};
+
+export type AdvisorPromptTurn = {
+  name: string;
+  prompt: string;
 };
 
 export type RunReadOnlyAdvisorOptions = {
   cwd: string;
-  prompt: string;
+  promptTurns: AdvisorPromptTurn[];
   systemPrompt: string;
   configDir: string;
   htmlExportPath: string;
@@ -104,19 +111,23 @@ export async function runReadOnlyAdvisor(options: RunReadOnlyAdvisorOptions): Pr
     settingsManager,
   });
 
+  const promptTurns = normalizePromptTurns(options.promptTurns);
   const rawHeader = [
     modelFallbackMessage ? `[${options.logPrefix}] ${modelFallbackMessage}` : undefined,
     `[${options.logPrefix}] model=${model.provider}/${model.id}`,
     `[${options.logPrefix}] tools=${READ_ONLY_TOOLS.join(",")}`,
+    `[${options.logPrefix}] prompt_turns=${promptTurns.length}`,
     "--- ASSISTANT TEXT ---",
   ].filter((line): line is string => Boolean(line));
 
-  const text = new CappedBuffer(options.maxCaptureBytes);
   const raw = new CappedBuffer(options.maxCaptureBytes, `${rawHeader.join("\n")}\n`);
+  const turnTextBuffers: CappedBuffer[] = [];
+  let currentTurnText: CappedBuffer | undefined;
+  let currentTurnName = "";
 
   const unsubscribe = session.subscribe((event: AgentSessionEvent) => {
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
-      text.append(event.assistantMessageEvent.delta);
+      currentTurnText?.append(event.assistantMessageEvent.delta);
       raw.append(event.assistantMessageEvent.delta);
       return;
     }
@@ -136,7 +147,10 @@ export async function runReadOnlyAdvisor(options: RunReadOnlyAdvisorOptions): Pr
   const startedAt = Date.now();
   const heartbeat = setInterval(() => {
     const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000);
-    options.logProgress(`Advisor SDK still running: elapsed=${elapsedSeconds}s timeout=${Math.round(options.timeoutMs / 1000)}s`);
+    const turnSuffix = currentTurnName ? ` current_turn=${currentTurnName}` : "";
+    options.logProgress(
+      `Advisor SDK still running: elapsed=${elapsedSeconds}s timeout=${Math.round(options.timeoutMs / 1000)}s${turnSuffix}`,
+    );
   }, Math.max(options.heartbeatMs, 1000));
   heartbeat.unref?.();
 
@@ -151,7 +165,21 @@ export async function runReadOnlyAdvisor(options: RunReadOnlyAdvisorOptions): Pr
   });
 
   try {
-    await Promise.race([session.prompt(options.prompt), timeoutPromise]);
+    for (const [index, turn] of promptTurns.entries()) {
+      currentTurnName = turn.name;
+      currentTurnText = new CappedBuffer(options.maxCaptureBytes);
+      turnTextBuffers.push(currentTurnText);
+      const turnIndex = `${index + 1}/${promptTurns.length}`;
+      raw.append(`\n[${options.logPrefix}] user_turn_start ${turnIndex} ${turn.name}\n`);
+      options.logProgress(`Advisor SDK turn ${turnIndex}: ${turn.name}`);
+      await Promise.race([session.prompt(turn.prompt), timeoutPromise]);
+      const turnTextBytes = Buffer.byteLength(currentTurnText.toString(), "utf8");
+      raw.append(
+        `\n[${options.logPrefix}] user_turn_end ${turnIndex} ${turn.name} textBytes=${turnTextBytes}\n`,
+      );
+      currentTurnText = undefined;
+      currentTurnName = "";
+    }
   } finally {
     unsubscribe();
     clearInterval(heartbeat);
@@ -169,11 +197,26 @@ export async function runReadOnlyAdvisor(options: RunReadOnlyAdvisorOptions): Pr
   }
 
   const truncationNotes: string[] = [];
-  if (text.droppedBytes > 0) truncationNotes.push(`<assistant text truncated; dropped ${text.droppedBytes} byte(s)>`);
+  const droppedAssistantBytes = turnTextBuffers.reduce((total, buffer) => total + buffer.droppedBytes, 0);
+  if (droppedAssistantBytes > 0) {
+    truncationNotes.push(`<assistant text truncated; dropped ${droppedAssistantBytes} byte(s)>`);
+  }
   if (raw.droppedBytes > 0) truncationNotes.push(`<raw output truncated; dropped ${raw.droppedBytes} byte(s)>`);
   if (truncationNotes.length > 0) raw.appendFooter(`\n${truncationNotes.join("\n")}\n`);
 
-  return { text: text.toString(), raw: raw.toStringWithTrailingNewline() };
+  const turnTexts = turnTextBuffers.map((buffer) => buffer.toString());
+  return { text: turnTexts.at(-1) || "", raw: raw.toStringWithTrailingNewline(), turnTexts };
+}
+
+function normalizePromptTurns(promptTurns: AdvisorPromptTurn[]): AdvisorPromptTurn[] {
+  return promptTurns.map((turn, index) => ({
+    name: sanitizeTurnName(turn.name || `turn-${index + 1}`),
+    prompt: turn.prompt,
+  }));
+}
+
+function sanitizeTurnName(name: string): string {
+  return name.trim().replace(/\s+/g, "-").replace(/[^A-Za-z0-9._-]/g, "").slice(0, 80) || "turn";
 }
 
 export class CappedBuffer {

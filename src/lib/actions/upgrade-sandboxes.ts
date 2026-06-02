@@ -23,13 +23,26 @@ import {
   captureSandboxListWithGatewayRecovery,
   printSandboxListFailureWithRecoveryContext,
 } from "../openshell-sandbox-list";
-import { parseLiveSandboxNames } from "../runtime-recovery";
+import { parseReadySandboxNames } from "../runtime-recovery";
 import * as sandboxVersion from "../sandbox/version";
 import * as registry from "../state/registry";
 import { rebuildSandbox } from "./sandbox/rebuild";
 
 // ── Upgrade sandboxes (#1904) ────────────────────────────────────
 // Detect sandboxes running stale agent versions and offer to rebuild them.
+
+/**
+ * Checks the sandbox agent version with a live probe when the sandbox is running.
+ */
+function checkAgentVersionForUpgrade(
+  sandboxName: string,
+  liveNames: Set<string>,
+): sandboxVersion.VersionCheckResult {
+  return sandboxVersion.checkAgentVersion(
+    sandboxName,
+    liveNames.has(sandboxName) ? { forceProbe: true } : undefined,
+  );
+}
 
 export async function upgradeSandboxes(
   options: string[] | UpgradeSandboxesOptions = {},
@@ -68,13 +81,13 @@ export async function upgradeSandboxes(
     printSandboxListFailureWithRecoveryContext(liveRecovery);
     process.exit(liveResult.status || 1);
   }
-  const liveNames = parseLiveSandboxNames(liveResult.output || "");
+  const liveNames = parseReadySandboxNames(liveResult.output || "");
 
   // Classify sandboxes as stale, unknown, or current
   const { stale, unknown } = classifyUpgradeableSandboxes(
     sandboxes,
     liveNames,
-    sandboxVersion.checkAgentVersion,
+    (name) => checkAgentVersionForUpgrade(name, liveNames),
   );
 
   if (stale.length === 0 && unknown.length === 0) {

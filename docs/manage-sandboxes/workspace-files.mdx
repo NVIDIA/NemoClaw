@@ -9,6 +9,10 @@ keywords: ["nemoclaw workspace files", "soul.md", "user.md", "identity.md", "age
 content:
   type: "concept"
 ---
+import { AgentOnly } from "../_components/AgentGuide";
+
+<AgentOnly variant="openclaw">
+
 OpenClaw stores its personality, user context, and behavioral configuration in a set of Markdown files inside the sandbox.
 These files live at `/sandbox/.openclaw/workspace/` and are collectively called **workspace files**.
 
@@ -94,7 +98,7 @@ Workspace files are removed from the sandbox unless you created a snapshot or ba
 
 <Warning>
 Back up your workspace files before running `nemoclaw <name> destroy`.
-See [Backup and Restore](/manage-sandboxes/backup-restore) for instructions.
+See [Backup and Restore](backup-restore) for instructions.
 </Warning>
 
 ## Editing Workspace Files
@@ -107,6 +111,45 @@ You can edit them in two ways:
 
 ## Next Steps
 
-- [Set Up Task-Specific Sub-Agents](/inference/set-up-sub-agent)
-- [Backup and Restore workspace files](/manage-sandboxes/backup-restore)
-- [Commands reference](/reference/commands)
+- [Set Up Task-Specific Sub-Agents](../inference/set-up-sub-agent)
+- [Backup and Restore workspace files](backup-restore)
+- [Commands reference](../reference/commands)
+
+</AgentOnly>
+<AgentOnly variant="hermes">
+
+Hermes stores durable agent state under `/sandbox/.hermes/` instead of the OpenClaw workspace directory.
+The main Hermes configuration lives in `/sandbox/.hermes/config.yaml`, environment settings live in `/sandbox/.hermes/.env`, and runtime state such as logs, memory, platform sessions, and the SQLite state database lives under the same `.hermes` tree.
+
+## Important Hermes State
+
+| Path | Purpose |
+|---|---|
+| `/sandbox/.hermes/config.yaml` | NemoClaw-generated Hermes runtime configuration. |
+| `/sandbox/.hermes/.env` | NemoClaw-generated environment and messaging placeholders. |
+| `/sandbox/.hermes/state.db` | Hermes SQLite state database. |
+| `/sandbox/.hermes/platforms/` | Messaging platform state, including QR-paired sessions such as WhatsApp. |
+| `/sandbox/.hermes/logs/` | Hermes runtime logs. |
+| `/sandbox/SOUL.md` | Durable top-level Hermes persona file preserved by NemoClaw snapshots. |
+
+## Persistence Behavior
+
+Hermes state lives in the sandbox's persistent state volume, not only in the container image.
+Normal restarts preserve that state.
+Rebuilds and upgrades use NemoClaw's snapshot flow to preserve manifest-defined Hermes state, including `SOUL.md` and the SQLite database behind `.hermes/state.db`.
+
+Running `nemohermes <name> destroy` deletes the sandbox and its persistent state volume.
+Back up important state before destroying a Hermes sandbox.
+
+## Editing State
+
+Prefer NemoClaw host commands for generated configuration such as model, provider, messaging, and policy settings.
+Direct edits to `/sandbox/.hermes/config.yaml` or `/sandbox/.hermes/.env` can be overwritten by rebuilds.
+Use `nemohermes <name> connect` when you need to inspect runtime files interactively, or use `openshell sandbox download` and `openshell sandbox upload` for manual file transfer.
+
+## Next Steps
+
+- [Backup and Restore workspace files](backup-restore)
+- [Commands reference](../reference/commands)
+
+</AgentOnly>

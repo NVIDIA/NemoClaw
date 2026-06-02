@@ -25,7 +25,7 @@
     "min_openclaw_version": {
       "type": "string",
       "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$",
-      "description": "Minimum compatible OpenClaw version."
+      "description": "Minimum compatible OpenClaw version for direct blueprint consumers. NemoClaw's built runtime target is declared by Dockerfile OPENCLAW_VERSION."
     },
     "digest": {
       "type": "string",

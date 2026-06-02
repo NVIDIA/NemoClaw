@@ -22,7 +22,7 @@
 - [ ] Tests added or updated for new or changed behavior
 - [ ] No secrets, API keys, or credentials committed
 - [ ] Docs updated for user-facing behavior changes
-- [ ] `make docs` builds without warnings (doc changes only)
+- [ ] `npm run docs` builds without warnings (doc changes only)
 - [ ] Doc pages follow the [style guide](https://github.com/NVIDIA/NemoClaw/blob/main/docs/CONTRIBUTING.md) (doc changes only)
 - [ ] New doc pages include SPDX header and frontmatter (new pages only)
 
