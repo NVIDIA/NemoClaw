@@ -21,6 +21,7 @@ type LifecyclePayload = {
 
 type ResumeConflictPayload = {
   exitCode: number;
+  stderr: string;
   events: Array<{
     type: string;
     state: string | null;
@@ -136,11 +137,16 @@ onboardModule.onboard(options).then(
   }
 }
 
-function runResumeConflictEntrypoint(): ResumeConflictPayload {
+function runResumeConflictEntrypoint(
+  options: { failEventEmission?: boolean } = {},
+): ResumeConflictPayload {
   const repoRoot = path.join(import.meta.dirname, "..");
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-onboard-resume-conflict-"));
   const scriptPath = path.join(tmpDir, "onboard-resume-conflict.cjs");
   const onboardPath = JSON.stringify(path.join(repoRoot, "dist", "lib", "onboard.js"));
+  const runtimeBoundaryPath = JSON.stringify(
+    path.join(repoRoot, "dist", "lib", "onboard", "runtime-boundary.js"),
+  );
   const eventsPath = JSON.stringify(
     path.join(repoRoot, "dist", "lib", "onboard", "machine", "events.js"),
   );
@@ -150,7 +156,20 @@ function runResumeConflictEntrypoint(): ResumeConflictPayload {
     `
 const eventsModule = require(${eventsPath});
 const emittedEvents = [];
+const stderrLines = [];
+const originalConsoleError = console.error;
+console.error = (...args) => {
+  stderrLines.push(args.join(" "));
+  originalConsoleError(...args);
+};
 eventsModule.addOnboardMachineEventListener((event) => emittedEvents.push(event));
+
+const { OnboardRuntimeBoundary } = require(${runtimeBoundaryPath});
+if (${JSON.stringify(options.failEventEmission)}) {
+  OnboardRuntimeBoundary.prototype.recordResumeConflict = async () => {
+    throw new Error("synthetic resume-conflict event failure");
+  };
+}
 
 class ExitSignal extends Error {
   constructor(code) {
@@ -198,6 +217,7 @@ onboardModule.onboard({
     }
     console.log(JSON.stringify({
       exitCode: error.code,
+      stderr: stderrLines.join("\\n"),
       events: emittedEvents.map((event) => ({
         type: event.type,
         state: event.state,
@@ -276,5 +296,17 @@ describe("onboard entrypoint lifecycle events", () => {
         },
       ],
     );
+  });
+
+  it("preserves resume conflict diagnostics when event emission fails", () => {
+    const payload = runResumeConflictEntrypoint({ failEventEmission: true });
+
+    assert.equal(payload.exitCode, 1);
+    assert.deepEqual(payload.events, []);
+    assert.match(
+      payload.stderr,
+      /Resumable state belongs to sandbox 'recorded-sandbox', not 'requested-sandbox'/,
+    );
+    assert.match(payload.stderr, /Run: nemoclaw onboard/);
   });
 });
