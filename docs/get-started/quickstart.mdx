@@ -14,13 +14,13 @@ skill:
 Follow these steps to get started with NemoClaw and your first sandboxed OpenClaw agent.
 
 <Note>
-Make sure you have completed reviewing the [Prerequisites](/get-started/prerequisites) before following this guide.
+Make sure you have completed reviewing the [Prerequisites](prerequisites) before following this guide.
 </Note>
 
 <Tip title="Use Agent Skills">
 NemoClaw ships user skills for AI coding assistants.
 Load them when you want your assistant to walk through installation, inference choices, policy approvals, monitoring, or troubleshooting with NemoClaw-specific guidance.
-Refer to [Agent Skills](/resources/agent-skills).
+Refer to [Agent Skills](../resources/agent-skills).
 </Tip>
 
 ## Install NemoClaw and Onboard OpenClaw Agent
@@ -68,9 +68,9 @@ If Docker is installed but your current shell cannot use the Docker socket yet, 
 
 On macOS, the installer uses the Docker-driver OpenShell gateway path with Docker Desktop or Colima.
 
-```console
-$ newgrp docker
-$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```bash
+newgrp docker
+curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
 ```
 
 On DGX Spark, DGX Station, and Windows WSL, an interactive installer offers express install after you accept the third-party software notice.
@@ -113,14 +113,14 @@ The inference provider prompt presents a numbered list.
 ```
 
 Pick the option that matches where you want inference traffic to go, then expand the matching helper below for the follow-up prompts and the API key environment variable to set.
-For the full list of providers and validation behavior, refer to [Inference Options](/inference/inference-options).
+For the full list of providers and validation behavior, refer to [Inference Options](../inference/inference-options).
 Local Ollama appears when NemoClaw detects a usable local Ollama path or can offer an install or start action for your platform.
 The Model Router option appears when the blueprint router profile is enabled.
 
 <Tip>
 Export the API key before launching the installer so the wizard does not have to ask for it.
 For example, run `export NVIDIA_API_KEY=<your-key>` before `curl ... | bash`.
-If you entered a key incorrectly, refer to [Reset a Stored Credential](/manage-sandboxes/lifecycle#reset-a-stored-credential) to clear and re-enter it.
+If you entered a key incorrectly, refer to [Reset a Stored Credential](../manage-sandboxes/lifecycle#reset-a-stored-credential) to clear and re-enter it.
 </Tip>
 
 <Accordion title="Option 1: NVIDIA Endpoints">
@@ -230,7 +230,7 @@ Respond to the wizard as follows.
 1. At the `Choose [1]:` prompt, type `7` to select **Local Ollama**.
 2. At the `Choose model [1]:` prompt, pick from **Ollama models** if any are already installed. If none are installed, pick a **starter model** to pull and load now, or pick **Other...** to enter any Ollama model ID.
 
-For setup details, including GPU recommendations and starter model choices, refer to [Use a Local Inference Server](/inference/use-local-inference).
+For setup details, including GPU recommendations and starter model choices, refer to [Use a Local Inference Server](../inference/use-local-inference).
 
 </Accordion>
 
@@ -249,8 +249,8 @@ Respond to the wizard as follows.
 
 For scripted setup, set:
 
-```console
-$ NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
+```bash
+NEMOCLAW_PROVIDER=routed NVIDIA_API_KEY=<your-key> nemoclaw onboard --non-interactive
 ```
 
 The router listens on the host at port `4000`.
@@ -264,7 +264,7 @@ The sandbox still calls `https://inference.local/v1`, so do not point in-sandbox
 - **Local vLLM (already running)** appears whenever NemoClaw detects a vLLM server on `localhost:8000`. No flag is required for the menu entry. NemoClaw auto-detects the loaded model.
 - **Local vLLM (managed install/start)** appears by default on DGX Spark and DGX Station. Generic Linux NVIDIA GPU hosts require `NEMOCLAW_EXPERIMENTAL=1` or `NEMOCLAW_PROVIDER=install-vllm`. NemoClaw pulls and starts a vLLM container on supported hosts.
 
-For setup, refer to [Use a Local Inference Server](/inference/use-local-inference).
+For setup, refer to [Use a Local Inference Server](../inference/use-local-inference).
 </Accordion>
 
 ### Review the Configuration Before the Sandbox Build
@@ -305,7 +305,7 @@ If you leave all channels unselected, pressing Enter skips messaging setup.
 If you select a channel, NemoClaw validates the token format before it bakes the channel configuration into the sandbox.
 For example, Slack bot tokens must start with `xoxb-`.
 WeChat and WhatsApp are experimental.
-Review [Messaging Channels](/manage-sandboxes/messaging-channels) before enabling them.
+Review [Messaging Channels](../manage-sandboxes/messaging-channels) before enabling them.
 
 ### Choose Network Policy Presets
 
@@ -391,14 +391,14 @@ openclaw tui
 
 Navigate to the following topics to learn more about NemoClaw.
 
-- [NemoClaw Overview](/about/overview) to learn what NemoClaw is and its capabilities.
-- [Architecture Overview](/about/how-it-works) to understand how NemoClaw works.
-- [Ecosystem](/about/ecosystem) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
-- [Agent Skills](/resources/agent-skills) to load NemoClaw guidance into an AI coding assistant.
+- [NemoClaw Overview](../about/overview) to learn what NemoClaw is and its capabilities.
+- [Architecture Overview](../about/how-it-works) to understand how NemoClaw works.
+- [Ecosystem](../about/ecosystem) to understand how OpenClaw, OpenShell, and NemoClaw relate in the wider stack, and when to use NemoClaw versus OpenShell.
+- [Agent Skills](../resources/agent-skills) to load NemoClaw guidance into an AI coding assistant.
 
 Use the following topics to learn how to use NemoClaw.
 
-- [Manage NemoClaw sandboxes](/manage-sandboxes/lifecycle) for port forwards, rebuilds, upgrades, and uninstall.
-- [Inference Options](/inference/inference-options) to use a different model or endpoint.
-- [Network Policies](/network-policy/approve-network-requests) to manage egress approvals.
-- [Troubleshooting](/reference/troubleshooting) for common error messages and resolution steps.
+- [Manage NemoClaw sandboxes](../manage-sandboxes/lifecycle) for port forwards, rebuilds, upgrades, and uninstall.
+- [Inference Options](../inference/inference-options) to use a different model or endpoint.
+- [Network Policies](../network-policy/approve-network-requests) to manage egress approvals.
+- [Troubleshooting](../reference/troubleshooting) for common error messages and resolution steps.

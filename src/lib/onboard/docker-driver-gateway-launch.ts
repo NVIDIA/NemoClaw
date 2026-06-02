@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -362,6 +362,25 @@ export function buildDockerDriverGatewayRuntimeIdentity(
     driftGatewayBin: launch.processGatewayBin,
     identityGatewayBin: launch.processGatewayBin || options.gatewayBin,
   };
+}
+
+/**
+ * Resolve the gateway binary used for the `/proc/<pid>/exe` drift comparison.
+ *
+ * In containerized Docker-compat mode the gateway runs as a host-side
+ * `docker run ... /opt/nemoclaw/openshell-gateway` parent, so the parent
+ * process's executable is `/usr/bin/docker`, not the host openshell-gateway
+ * binary. `buildDockerDriverGatewayRuntimeIdentity()` encodes that with
+ * `driftGatewayBin: null` to mean "skip the executable check". Callers must
+ * preserve that deliberate `null` — coalescing it back to the host binary with
+ * `??` makes the drift check compare `/usr/bin/docker` against the host
+ * gateway path and falsely mark a healthy compat gateway as stale (#4520).
+ */
+export function resolveDriftGatewayBin(
+  runtimeIdentity: DockerDriverGatewayRuntimeIdentity | null,
+  gatewayBin: string | null,
+): string | null {
+  return runtimeIdentity ? runtimeIdentity.driftGatewayBin : gatewayBin;
 }
 
 export function prepareAndLogDockerDriverGatewayLaunch(
