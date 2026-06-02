@@ -402,9 +402,10 @@ $ nemoclaw my-assistant recover
 Show sandbox status, health, and inference configuration.
 
 Pass `--json` to emit a structured per-sandbox report instead of the text renderer.
-The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, and `policies`.
+The JSON output includes at least `schemaVersion`, `name`, `found`, `model`, `provider`, `phase`, `gatewayState`, `inferenceHealth`, `rpcIssue`, `hostGpuDetected`, `sandboxGpuEnabled`, `sandboxGpuMode`, `sandboxGpuDevice`, `openshellDriver`, `openshellVersion`, `policies`, `failureLayer`, and `dockerPaused`.
 `openshellDriver` and `openshellVersion` are always strings (falling back to `"unknown"` when the registry has no value), so consumers can rely on `typeof` checks.
-The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, or the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`).
+`failureLayer` is `null` when no preflight failure was detected and otherwise one of `docker_unreachable`, `sandbox_container_stopped`, or `sandbox_dashboard_port_conflict`; when set, `inferenceHealth` is suppressed to `null` so automation does not see a stale remote-provider healthy status during a local outage.
+The command exits non-zero when the sandbox is missing locally, the gateway state is not `present`, the gateway reports a schema/protobuf mismatch (mirrored as `rpcIssue`), or `failureLayer` is non-null.
 The alias form `nemoclaw <name> status --json` requires the sandbox to be registered locally; the canonical form `nemoclaw sandbox status <name> --json` is the one to use from automation that may run against an unknown sandbox name, since it still emits a JSON document with `found: false` instead of a text error.
 
 ```console
@@ -430,6 +431,11 @@ For Local Ollama, the command also probes the authenticated proxy and prints an 
 Use that line to distinguish a healthy backend from a broken proxy path that the sandbox uses for inference.
 
 For cloud-only providers, the output omits the NIM status line unless a NIM container is registered or an unexpected NIM container is running.
+
+When the sandbox's recorded driver is `docker` and the host Docker daemon is not reachable, the command prints `Failure layer: docker_unreachable — Docker daemon is not reachable.` as the first line of stdout, suppresses the host-side `Inference` probe (which otherwise hits the remote provider directly and is misleading when the local stack is down), and exits with a non-zero status.
+
+When the host Docker daemon is reachable but the per-sandbox container is stopped, the command prints `Failure layer: sandbox_container_stopped — sandbox container exists but is not running.` as the first line of stdout, suppresses the host-side `Inference` probe, and exits with a non-zero status.
+If the sandbox's recorded dashboard port is also held by a foreign listener, the header escalates to `Failure layer: sandbox_dashboard_port_conflict — sandbox container is stopped and the dashboard port is held by a foreign listener.` so the operator can recover the port before restarting the sandbox.
 
 If the sandbox or gateway cannot be verified, the command exits non-zero instead of reporting healthy inference from stale registry state.
 Gateway and dashboard health checks treat HTTP `401` from device auth as a live service, not as an offline gateway.

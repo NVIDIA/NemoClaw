@@ -5,6 +5,7 @@ import { describe, it, expect } from "vitest";
 import { execSync, spawn, spawnSync } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -1108,6 +1109,293 @@ describe("CLI dispatch", () => {
     });
   });
 
+  it("sandbox <name> status surfaces docker_unreachable header and suppresses stale Inference probe", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-docker-unreachable-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha", {
+      provider: "openai-api",
+      model: "gpt-4o-mini",
+      openshellDriver: "docker",
+    } as unknown as Partial<SandboxEntry>);
+
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: openai-api'",
+        "  echo '  Model: gpt-4o-mini'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(r.out.startsWith(
+      "Failure layer: docker_unreachable — Docker daemon is not reachable.",
+    )).toBe(true);
+    expect(r.out).not.toContain("Inference: healthy");
+    const headerIdx = r.out.indexOf("Failure layer: docker_unreachable");
+    const sandboxIdx = r.out.indexOf("Sandbox: alpha");
+    expect(headerIdx).toBeGreaterThanOrEqual(0);
+    expect(sandboxIdx).toBeGreaterThan(headerIdx);
+    expect(
+      (r.out.match(/Failure layer: docker_unreachable/g) || []).length,
+    ).toBe(1);
+  });
+
+  it("sandbox <name> status preserves Inference probe and exits 0 when openshellDriver is not docker", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-non-docker-driver-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha", {
+      provider: "openai-api",
+      model: "gpt-4o-mini",
+      openshellDriver: "vm",
+    } as unknown as Partial<SandboxEntry>);
+
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: openai-api'",
+        "  echo '  Model: gpt-4o-mini'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("Failure layer: docker_unreachable");
+    expect(r.out).toContain("Sandbox: alpha");
+    expect(r.out).toContain("Provider: openai-api");
+    expect(r.out).toContain("Model:    gpt-4o-mini");
+    expect(r.out).toContain("Inference: healthy");
+  });
+
+  it("sandbox <name> status surfaces sandbox_container_stopped when the per-sandbox container exists but is not running", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-container-stopped-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha", {
+      provider: "openai-api",
+      model: "gpt-4o-mini",
+      openshellDriver: "docker",
+    } as unknown as Partial<SandboxEntry>);
+
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "info" ]; then echo "Server: docker"; exit 0; fi',
+        'if [ "$1" = "ps" ] && [ "$2" = "-a" ]; then echo "openshell-alpha-7616dcb1"; exit 0; fi',
+        'if [ "$1" = "ps" ]; then echo "openshell-cluster-nemoclaw"; exit 0; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Sandbox:'",
+        "  echo '  Name: alpha'",
+        "  echo '  Phase: Error'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: openai-api'",
+        "  echo '  Model: gpt-4o-mini'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    expect(
+      r.out.startsWith(
+        "Failure layer: sandbox_container_stopped — sandbox container exists but is not running.",
+      ),
+    ).toBe(true);
+    expect(r.out).not.toContain("Inference: healthy");
+    expect(r.out).toContain("Phase: Error");
+    expect(r.out).not.toContain("Failure layer: docker_unreachable");
+    expect(r.out).not.toContain("Failure layer: sandbox_dashboard_port_conflict");
+    const headerIdx = r.out.indexOf("Failure layer: sandbox_container_stopped");
+    const sandboxIdx = r.out.indexOf("Sandbox: alpha");
+    expect(headerIdx).toBeGreaterThanOrEqual(0);
+    expect(sandboxIdx).toBeGreaterThan(headerIdx);
+    // The downstream gateway-state fallback header (`Failure layer: ...`)
+    // must be suppressed once preflight has already emitted its own.
+    // Otherwise a non-`present` gateway lookup would print a redundant
+    // second `Failure layer:` line later in the output.
+    expect((r.out.match(/Failure layer:/g) || []).length).toBe(1);
+  });
+
+  it("sandbox <name> status surfaces sandbox_dashboard_port_conflict when the sandbox container is stopped and the dashboard port is held by a foreign listener", async () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-port-conflict-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+
+    const server = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      server.close();
+      throw new Error("failed to bind foreign listener on a free port");
+    }
+    const dashboardPort = address.port;
+
+    try {
+      writeSandboxRegistry(home, "alpha", {
+        provider: "openai-api",
+        model: "gpt-4o-mini",
+        openshellDriver: "docker",
+        dashboardPort,
+      } as unknown as Partial<SandboxEntry>);
+
+      fs.writeFileSync(
+        path.join(localBin, "docker"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "info" ]; then echo "Server: docker"; exit 0; fi',
+          'if [ "$1" = "ps" ] && [ "$2" = "-a" ]; then echo "openshell-alpha-7616dcb1"; exit 0; fi',
+          'if [ "$1" = "ps" ]; then echo "openshell-cluster-nemoclaw"; exit 0; fi',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  echo 'Sandbox:'",
+          "  echo '  Name: alpha'",
+          "  echo '  Phase: Error'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+          "  echo 'Gateway inference:'",
+          "  echo '  Provider: openai-api'",
+          "  echo '  Model: gpt-4o-mini'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "status" ]; then',
+          "  echo 'Gateway: nemoclaw'",
+          "  echo 'Status: Connected'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+          "  echo 'Gateway: nemoclaw'",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("alpha status", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(r.code).toBe(1);
+      expect(
+        r.out.startsWith(
+          "Failure layer: sandbox_dashboard_port_conflict — sandbox container is stopped and the dashboard port is held by a foreign listener.",
+        ),
+      ).toBe(true);
+      expect(r.out).not.toContain("Inference: healthy");
+      expect(r.out).toContain("Phase: Error");
+      expect(r.out).not.toContain("Failure layer: sandbox_container_stopped —");
+      const headerIdx = r.out.indexOf("Failure layer: sandbox_dashboard_port_conflict");
+      const sandboxIdx = r.out.indexOf("Sandbox: alpha");
+      expect(headerIdx).toBeGreaterThanOrEqual(0);
+      expect(sandboxIdx).toBeGreaterThan(headerIdx);
+      // Downstream gateway-state fallback must not print a second
+      // `Failure layer:` line when preflight already emitted one.
+      expect((r.out.match(/Failure layer:/g) || []).length).toBe(1);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   it("sandbox status --json emits structured per-sandbox report", () => {
     const home = fs.mkdtempSync(
       path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-"),
@@ -1127,6 +1415,17 @@ describe("CLI dispatch", () => {
       openshellDriver: "docker",
       openshellVersion: "0.0.44",
     } as unknown as Partial<SandboxEntry>);
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "info" ]; then echo "Server: docker"; exit 0; fi',
+        `if [ "$1" = "ps" ] && [ "$2" = "-a" ]; then echo "openshell-cluster-nemoclaw"; echo "openshell-${sandboxName}-7616dcb1"; exit 0; fi`,
+        `if [ "$1" = "ps" ]; then echo "openshell-cluster-nemoclaw"; echo "openshell-${sandboxName}-7616dcb1"; exit 0; fi`,
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
     fs.writeFileSync(
       path.join(localBin, "openshell"),
       [
@@ -1448,6 +1747,252 @@ describe("CLI dispatch", () => {
     expect(parsed.model).toBe("configured-model");
     expect(parsed.provider).toBe("configured-provider");
     expect(parsed.inferenceHealth).toBeNull();
+  });
+
+  it("sandbox status --json sets failureLayer=docker_unreachable, suppresses inferenceHealth, and exits 1 when the host Docker daemon is unreachable", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-docker-unreachable-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha", {
+      provider: "openai-api",
+      model: "gpt-4o-mini",
+      openshellDriver: "docker",
+    } as unknown as Partial<SandboxEntry>);
+
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      ["#!/usr/bin/env bash", "exit 1"].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: openai-api'",
+        "  echo '  Model: gpt-4o-mini'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status --json", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    const parsed = JSON.parse(r.out);
+    expect(parsed.failureLayer).toBe("docker_unreachable");
+    expect(parsed.inferenceHealth).toBeNull();
+    expect(parsed.name).toBe("alpha");
+    expect(parsed.found).toBe(true);
+  });
+
+  it("sandbox status --json sets failureLayer=sandbox_container_stopped when the per-sandbox container is stopped", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-container-stopped-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha", {
+      provider: "openai-api",
+      model: "gpt-4o-mini",
+      openshellDriver: "docker",
+    } as unknown as Partial<SandboxEntry>);
+
+    fs.writeFileSync(
+      path.join(localBin, "docker"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "info" ]; then echo "Server: docker"; exit 0; fi',
+        'if [ "$1" = "ps" ] && [ "$2" = "-a" ]; then echo "openshell-alpha-7616dcb1"; exit 0; fi',
+        'if [ "$1" = "ps" ]; then echo "openshell-cluster-nemoclaw"; exit 0; fi',
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+        "  echo 'Sandbox:'",
+        "  echo '  Name: alpha'",
+        "  echo '  Phase: Error'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: openai-api'",
+        "  echo '  Model: gpt-4o-mini'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status --json", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    expect(r.code).toBe(1);
+    const parsed = JSON.parse(r.out);
+    expect(parsed.failureLayer).toBe("sandbox_container_stopped");
+    expect(parsed.phase).toBe("Error");
+    expect(parsed.inferenceHealth).toBeNull();
+  });
+
+  it("sandbox status --json sets failureLayer=sandbox_dashboard_port_conflict when the dashboard port is held by a foreign listener", async () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-port-conflict-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+
+    const server = net.createServer();
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(0, "127.0.0.1", () => resolve());
+    });
+    const address = server.address();
+    if (!address || typeof address === "string") {
+      server.close();
+      throw new Error("failed to bind foreign listener on a free port");
+    }
+    const dashboardPort = address.port;
+
+    try {
+      writeSandboxRegistry(home, "alpha", {
+        provider: "openai-api",
+        model: "gpt-4o-mini",
+        openshellDriver: "docker",
+        dashboardPort,
+      } as unknown as Partial<SandboxEntry>);
+
+      fs.writeFileSync(
+        path.join(localBin, "docker"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "info" ]; then echo "Server: docker"; exit 0; fi',
+          'if [ "$1" = "ps" ] && [ "$2" = "-a" ]; then echo "openshell-alpha-7616dcb1"; exit 0; fi',
+          'if [ "$1" = "ps" ]; then echo "openshell-cluster-nemoclaw"; exit 0; fi',
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      fs.writeFileSync(
+        path.join(localBin, "openshell"),
+        [
+          "#!/usr/bin/env bash",
+          'if [ "$1" = "sandbox" ] && [ "$2" = "get" ] && [ "$3" = "alpha" ]; then',
+          "  echo 'Sandbox:'",
+          "  echo '  Name: alpha'",
+          "  echo '  Phase: Error'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+          "  echo 'Gateway inference:'",
+          "  echo '  Provider: openai-api'",
+          "  echo '  Model: gpt-4o-mini'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "status" ]; then',
+          "  echo 'Gateway: nemoclaw'",
+          "  echo 'Status: Connected'",
+          "  exit 0",
+          "fi",
+          'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+          "  echo 'Gateway: nemoclaw'",
+          "  exit 0",
+          "fi",
+          "exit 0",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+
+      const r = runWithEnv("alpha status --json", {
+        HOME: home,
+        PATH: `${localBin}:${process.env.PATH || ""}`,
+      });
+
+      expect(r.code).toBe(1);
+      const parsed = JSON.parse(r.out);
+      expect(parsed.failureLayer).toBe("sandbox_dashboard_port_conflict");
+      expect(parsed.phase).toBe("Error");
+      expect(parsed.inferenceHealth).toBeNull();
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  it("sandbox status --json sets failureLayer=null when no preflight failure applies", () => {
+    const home = fs.mkdtempSync(
+      path.join(os.tmpdir(), "nemoclaw-cli-sandbox-status-json-failure-layer-null-"),
+    );
+    const localBin = path.join(home, "bin");
+    fs.mkdirSync(localBin, { recursive: true });
+    writeSandboxRegistry(home, "alpha", {
+      provider: "openai-api",
+      model: "gpt-4o-mini",
+      openshellDriver: "vm",
+    } as unknown as Partial<SandboxEntry>);
+    fs.writeFileSync(
+      path.join(localBin, "openshell"),
+      [
+        "#!/usr/bin/env bash",
+        'if [ "$1" = "inference" ] && [ "$2" = "get" ]; then',
+        "  echo 'Gateway inference:'",
+        "  echo '  Provider: openai-api'",
+        "  echo '  Model: gpt-4o-mini'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "status" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  echo 'Status: Connected'",
+        "  exit 0",
+        "fi",
+        'if [ "$1" = "gateway" ] && [ "$2" = "info" ]; then',
+        "  echo 'Gateway: nemoclaw'",
+        "  exit 0",
+        "fi",
+        "exit 0",
+      ].join("\n"),
+      { mode: 0o755 },
+    );
+
+    const r = runWithEnv("alpha status --json", {
+      HOME: home,
+      PATH: `${localBin}:${process.env.PATH || ""}`,
+    });
+
+    const parsed = JSON.parse(r.out);
+    expect(parsed.failureLayer).toBeNull();
   });
 
   it("sandbox status --help advertises --json flag", () => {
