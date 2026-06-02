@@ -14,7 +14,22 @@ import {
   dockerRunDetached,
   dockerStop,
 } from "../adapters/docker";
-import { envInt } from "./env";
+import {
+  type DockerGpuSupervisorReconnectDeps,
+  DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
+  DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV,
+  getDockerGpuSupervisorReconnectErrorDebouncePolls,
+  getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellSupervisorReconnect,
+} from "./docker-gpu-supervisor-reconnect";
+export {
+  DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
+  DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV,
+  getDockerGpuSupervisorReconnectErrorDebouncePolls,
+  getDockerGpuSupervisorReconnectTimeoutSecs,
+  waitForOpenShellSupervisorReconnect,
+};
+export type { DockerGpuSupervisorReconnectDeps };
 
 export const OPENSHELL_MANAGED_BY_LABEL = "openshell.ai/managed-by";
 export const OPENSHELL_MANAGED_BY_VALUE = "openshell";
@@ -23,18 +38,6 @@ const OPENSHELL_SANDBOX_COMMAND_ENV = "OPENSHELL_SANDBOX_COMMAND";
 
 const DOCKER_GPU_PATCH_TIMEOUT_MS = 30_000;
 const DOCKER_GPU_PATCH_WAIT_SECS = 180;
-const DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS = 900;
-// Default number of consecutive Error-phase polls required before the
-// supervisor-reconnect wait short-circuits. With a 2-second poll interval this
-// is ~10s of sustained Error before fast-fail, which absorbs the transient
-// Error reported while OpenShell's sandbox-list cache catches up to the
-// newly-recreated GPU container (#4664) while still bailing fast on a
-// patched container that actually crashed on startup (#4316).
-const DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS = 5;
-export const DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV =
-  "NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT";
-export const DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV =
-  "NEMOCLAW_DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE";
 export const DOCKER_GPU_PATCH_NETWORK_ENV = "NEMOCLAW_DOCKER_GPU_PATCH_NETWORK";
 const MAX_DOCKER_CONTAINER_NAME_LENGTH = 253;
 const GPU_ENV_KEYS = new Set([
@@ -80,9 +83,8 @@ export type DockerGpuPatchDeps = {
   /** Injectable file reader for unit testing CDI spec content checks. */
   readFile?: (filePath: string) => string | null;
   /**
-   * Number of consecutive Error-phase polls required before the
-   * supervisor-reconnect wait short-circuits. Omit to use the
-   * env-configurable default (#4664).
+   * Forwarded to the supervisor-reconnect wait. See
+   * `DockerGpuSupervisorReconnectDeps.errorPhaseDebouncePolls`.
    */
   errorPhaseDebouncePolls?: number;
 };
@@ -848,92 +850,6 @@ function waitForNewContainerId(
   return null;
 }
 
-function sandboxListShowsErrorPhase(
-  sandboxName: string,
-  runCaptureOpenshell: NonNullable<DockerGpuPatchDeps["runCaptureOpenshell"]>,
-): boolean {
-  try {
-    const list = runCaptureOpenshell(["sandbox", "list"], {
-      ignoreError: true,
-      suppressOutput: true,
-      timeout: DOCKER_GPU_PATCH_TIMEOUT_MS,
-    });
-    return SANDBOX_FAILURE_PHASE_TOKENS.has(
-      parseSandboxPhaseFromListOutput(list, sandboxName) ?? "",
-    );
-  } catch {
-    return false;
-  }
-}
-
-function waitForOpenShellSandboxExec(
-  sandboxName: string,
-  timeoutSecs: number,
-  deps: DockerGpuPatchDeps,
-): boolean {
-  if (!deps.runOpenshell) return true;
-  const d = depsWithDefaults(deps);
-  const deadline = Date.now() + Math.max(1, timeoutSecs) * 1000;
-  const errorPhaseDebouncePolls =
-    deps.errorPhaseDebouncePolls ?? getDockerGpuSupervisorReconnectErrorDebouncePolls();
-  let consecutiveErrorPolls = 0;
-  while (Date.now() <= deadline) {
-    const result = deps.runOpenshell(
-      ["sandbox", "exec", "-n", sandboxName, "--", "true"],
-      { ignoreError: true, suppressOutput: true, timeout: DOCKER_GPU_PATCH_TIMEOUT_MS },
-    );
-    if (isZeroStatus(result)) return true;
-    // Debounce the terminal-phase short-circuit. A patched container that
-    // crashes on startup still fast-fails (#4316), but a transient Error
-    // reported while OpenShell's sandbox-list cache catches up to the
-    // newly-recreated GPU container is not treated as fatal (#4664). The
-    // poll count required is configurable via env for operator tuning.
-    if (
-      deps.runCaptureOpenshell &&
-      sandboxListShowsErrorPhase(sandboxName, deps.runCaptureOpenshell)
-    ) {
-      consecutiveErrorPolls += 1;
-      if (consecutiveErrorPolls >= errorPhaseDebouncePolls) return false;
-    } else {
-      consecutiveErrorPolls = 0;
-    }
-    d.sleep(2);
-  }
-  return false;
-}
-
-export const waitForOpenShellSupervisorReconnect = waitForOpenShellSandboxExec;
-
-export function getDockerGpuSupervisorReconnectTimeoutSecs(
-  sandboxReadyTimeoutSecs: number,
-  env: Record<string, string | undefined> = process.env,
-): number {
-  const readyTimeoutSecs = Number.isFinite(sandboxReadyTimeoutSecs)
-    ? Math.max(1, Math.round(sandboxReadyTimeoutSecs))
-    : 1;
-  const fallback = Math.max(
-    readyTimeoutSecs,
-    DOCKER_GPU_SUPERVISOR_RECONNECT_MIN_SECS,
-  );
-  return Math.max(
-    1,
-    envInt(DOCKER_GPU_SUPERVISOR_RECONNECT_TIMEOUT_ENV, fallback, env),
-  );
-}
-
-export function getDockerGpuSupervisorReconnectErrorDebouncePolls(
-  env: Record<string, string | undefined> = process.env,
-): number {
-  return Math.max(
-    1,
-    envInt(
-      DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_DEBOUNCE_ENV,
-      DOCKER_GPU_SUPERVISOR_RECONNECT_ERROR_PHASE_DEFAULT_DEBOUNCE_POLLS,
-      env,
-    ),
-  );
-}
-
 function decoratePatchError<T extends Error>(
   error: T,
   context: DockerGpuPatchFailureContext,
@@ -1052,7 +968,7 @@ export function recreateOpenShellDockerSandboxWithGpu(
     });
 
     if (options.waitForSupervisor !== false) {
-      const execReady = waitForOpenShellSandboxExec(
+      const execReady = waitForOpenShellSupervisorReconnect(
         options.sandboxName,
         options.timeoutSecs ?? DOCKER_GPU_PATCH_WAIT_SECS,
         deps,
