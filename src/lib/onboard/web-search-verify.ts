@@ -109,6 +109,10 @@ export function verifyWebSearchInsideSandbox(
           warn("  ⚠ Web search was configured but tools.web.search is not enabled in openclaw.json.");
           return;
         }
+        if (search.provider === "duckduckgo") {
+          log("  ✓ Web search is active inside sandbox (DuckDuckGo, experimental)");
+          return;
+        }
         if (search.provider !== "brave") {
           log("  ✓ Web search is active inside sandbox");
           return;

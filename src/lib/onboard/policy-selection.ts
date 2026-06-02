@@ -114,11 +114,15 @@ export function isStaleBuiltinBravePolicyPreset(
     customPresetNames?: ReadonlySet<string> | null;
   } = {},
 ): boolean {
-  return (
-    name === "brave" &&
-    !options.webSearchConfig &&
-    !options.customPresetNames?.has(name)
-  );
+  if (options.customPresetNames?.has(name)) return false;
+  const activeProvider = options.webSearchConfig?.provider ?? "brave";
+  if (name === "brave") {
+    return !options.webSearchConfig || activeProvider !== "brave";
+  }
+  if (name === "duckduckgo") {
+    return !options.webSearchConfig || activeProvider !== "duckduckgo";
+  }
+  return false;
 }
 
 export function computeSetupPresetSuggestions(
@@ -150,7 +154,9 @@ export function computeSetupPresetSuggestions(
     if (known && !known.has(name)) return;
     suggestions.push(name);
   };
-  if (webSearchConfig) add("brave");
+  if (webSearchConfig) {
+    add(webSearchConfig.provider === "duckduckgo" ? "duckduckgo" : "brave");
+  }
   if (provider && deps.localInferenceProviders.includes(provider)) add("local-inference");
   if (agent === "openclaw") add("openclaw-pricing");
   if (Array.isArray(enabledChannels)) {

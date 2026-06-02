@@ -198,6 +198,11 @@ export function patchStagedDockerfile(
     /^ARG NEMOCLAW_WEB_SEARCH_ENABLED=.*$/m,
     `ARG NEMOCLAW_WEB_SEARCH_ENABLED=${sanitizeDockerArg(webSearchConfig ? "1" : "0")}`,
   );
+  const webSearchProvider = webSearchConfig?.provider ?? "brave";
+  dockerfile = dockerfile.replace(
+    /^ARG NEMOCLAW_WEB_SEARCH_PROVIDER=.*$/m,
+    `ARG NEMOCLAW_WEB_SEARCH_PROVIDER=${sanitizeDockerArg(webSearchProvider)}`,
+  );
   // Onboard flow expects immediate dashboard access without device pairing,
   // so disable device auth for images built during onboard (see #1217).
   dockerfile = dockerfile.replace(

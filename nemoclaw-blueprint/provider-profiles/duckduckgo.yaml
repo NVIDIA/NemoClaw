@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+id: duckduckgo
+display_name: DuckDuckGo Search
+description: DuckDuckGo Search access (experimental, unofficial, keyless)
+category: agent
+endpoints:
+  - host: duckduckgo.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+  - host: lite.duckduckgo.com
+    port: 443
+    protocol: rest
+    access: read-write
+    enforcement: enforce
+binaries:
+  - /usr/local/bin/node
+  - /usr/bin/node
+  - /usr/local/bin/curl
+  - /usr/bin/curl
+inference_capable: false

@@ -13,7 +13,7 @@ import path from "node:path";
 
 import { isErrnoException } from "../core/errno";
 import type { JsonObject, JsonValue } from "../core/json-types";
-import type { WebSearchConfig } from "../inference/web-search";
+import { isWebSearchProvider, type WebSearchConfig } from "../inference/web-search";
 import {
   sanitizeMessagingChannelConfig,
   type MessagingChannelConfig,
@@ -283,7 +283,12 @@ function readStepStatus(value: SessionJsonValue | undefined): StepStatus | null 
 }
 
 function parseWebSearchConfig(value: SessionJsonValue | undefined): WebSearchConfig | null {
-  return isObject(value) && value.fetchEnabled === true ? { fetchEnabled: true } : null;
+  if (!isObject(value) || value.fetchEnabled !== true) return null;
+  const config: WebSearchConfig = { fetchEnabled: true };
+  if (isWebSearchProvider(value.provider)) {
+    config.provider = value.provider;
+  }
+  return config;
 }
 
 function parseTelegramConfig(value: unknown): TelegramConfig | null {
@@ -476,8 +481,9 @@ export function createSession(overrides: Partial<Session> = {}): Session {
     nimContainer: overrides.nimContainer ?? null,
     routerPid: readPositiveInteger(overrides.routerPid),
     routerCredentialHash: overrides.routerCredentialHash ?? null,
-    webSearchConfig:
-      overrides.webSearchConfig?.fetchEnabled === true ? { fetchEnabled: true } : null,
+    webSearchConfig: parseWebSearchConfig(
+      overrides.webSearchConfig as SessionJsonValue | undefined,
+    ),
     hermesToolGateways: readStringArray(overrides.hermesToolGateways),
     policyPresets: readStringArray(overrides.policyPresets),
     messagingChannels: readStringArray(overrides.messagingChannels),
@@ -932,7 +938,11 @@ export function filterSafeUpdates(updates: SessionUpdates): Partial<Session> {
     safe.routerCredentialHash = updates.routerCredentialHash;
   }
   if (isObject(updates.webSearchConfig) && updates.webSearchConfig.fetchEnabled === true) {
-    safe.webSearchConfig = { fetchEnabled: true };
+    const sanitized: WebSearchConfig = { fetchEnabled: true };
+    if (isWebSearchProvider(updates.webSearchConfig.provider)) {
+      sanitized.provider = updates.webSearchConfig.provider;
+    }
+    safe.webSearchConfig = sanitized;
   } else if (updates.webSearchConfig === null) {
     safe.webSearchConfig = null;
   }

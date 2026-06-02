@@ -19,7 +19,8 @@
 //   NEMOCLAW_TELEGRAM_CONFIG_B64, NEMOCLAW_WECHAT_CONFIG_B64,
 //   NEMOCLAW_SLACK_CONFIG_B64, NEMOCLAW_DISABLE_DEVICE_AUTH,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
-//   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED.
+//   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED,
+//   NEMOCLAW_WEB_SEARCH_PROVIDER.
 
 import {
   chmodSync,
@@ -805,11 +806,18 @@ export function buildConfig(env: Env = process.env): JsonObject {
   tools.web.fetch = { enabled: true, useTrustedEnvProxy: true };
 
   if (env.NEMOCLAW_WEB_SEARCH_ENABLED === "1") {
-    tools.web.search = {
-      enabled: true,
-      provider: "brave",
-      apiKey: "openshell:resolve:env:BRAVE_API_KEY",
-    };
+    if (env.NEMOCLAW_WEB_SEARCH_PROVIDER === "duckduckgo") {
+      tools.web.search = {
+        enabled: true,
+        provider: "duckduckgo",
+      };
+    } else {
+      tools.web.search = {
+        enabled: true,
+        provider: "brave",
+        apiKey: "openshell:resolve:env:BRAVE_API_KEY",
+      };
+    }
   }
 
   return config;

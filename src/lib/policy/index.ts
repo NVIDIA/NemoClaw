@@ -258,7 +258,8 @@ function setupPolicyPresetSupported(
   name: string,
   options: SetupPolicyPresetSupportOptions = {},
 ): boolean {
-  return name !== "brave" || options.webSearchSupported !== false;
+  if (name !== "brave" && name !== "duckduckgo") return true;
+  return options.webSearchSupported !== false;
 }
 
 function filterSetupPolicyPresets<T extends { name: string }>(

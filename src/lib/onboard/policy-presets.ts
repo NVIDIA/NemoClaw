@@ -55,7 +55,9 @@ export function getSuggestedPolicyPresets({
   maybeSuggestMessagingPreset("wechat", "WECHAT_BOT_TOKEN");
   maybeSuggestMessagingPreset("whatsapp", null);
 
-  if (webSearchConfig) suggestions.push("brave");
+  if (webSearchConfig) {
+    suggestions.push(webSearchConfig.provider === "duckduckgo" ? "duckduckgo" : "brave");
+  }
 
   return suggestions;
 }

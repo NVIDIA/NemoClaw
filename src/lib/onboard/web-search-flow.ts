@@ -5,7 +5,7 @@ import type { CurlProbeResult } from "../adapters/http/probe";
 import { runCurlProbe } from "../adapters/http/probe";
 import type { AgentDefinition } from "../agent/defs";
 import { getCredential, normalizeCredentialValue, saveCredential } from "../credentials/store";
-import type { WebSearchConfig } from "../inference/web-search";
+import type { WebSearchConfig, WebSearchProvider } from "../inference/web-search";
 import { BRAVE_API_KEY_ENV } from "../inference/web-search";
 import { ROOT } from "../runner";
 import { classifyValidationFailure } from "../validation";
@@ -164,6 +164,31 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     }
   }
 
+  function isDuckDuckGoExperimentalEnabled(): boolean {
+    return process.env.NEMOCLAW_EXPERIMENTAL === "1";
+  }
+
+  function isDuckDuckGoExistingConfig(config: WebSearchConfig | null): boolean {
+    return config?.provider === "duckduckgo";
+  }
+
+  async function promptWebSearchProvider(): Promise<WebSearchProvider | null> {
+    if (!isDuckDuckGoExperimentalEnabled()) return "brave";
+    while (true) {
+      const answer = (
+        await deps.prompt("  Web search provider [brave/duckduckgo] (default brave): ")
+      )
+        .trim()
+        .toLowerCase();
+      if (answer === "" || answer === "brave") return "brave";
+      if (answer === "duckduckgo" || answer === "ddg") return "duckduckgo";
+      if (answer === "exit" || answer === "quit") {
+        exitOnboardFromPrompt();
+      }
+      console.error("  Unsupported provider. Enter 'brave' or 'duckduckgo'.");
+    }
+  }
+
   async function configureWebSearch(
     existingConfig: WebSearchConfig | null = null,
     agent: AgentDefinition | null = null,
@@ -175,10 +200,21 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
     }
 
     if (existingConfig) {
+      if (isDuckDuckGoExistingConfig(existingConfig)) {
+        return { fetchEnabled: true, provider: "duckduckgo" };
+      }
       return { fetchEnabled: true };
     }
 
+    const duckDuckGoRequested =
+      isDuckDuckGoExperimentalEnabled() &&
+      (process.env.NEMOCLAW_WEB_SEARCH_PROVIDER || "").toLowerCase() === "duckduckgo";
+
     if (deps.isNonInteractive()) {
+      if (duckDuckGoRequested) {
+        deps.note("  [experimental][non-interactive] DuckDuckGo Web Search requested.");
+        return { fetchEnabled: true, provider: "duckduckgo" };
+      }
       const braveApiKey =
         getCredential(BRAVE_API_KEY_ENV) || normalizeCredentialValue(process.env[BRAVE_API_KEY_ENV]);
       if (!braveApiKey) {
@@ -199,9 +235,20 @@ export function createWebSearchFlowHelpers(deps: WebSearchFlowDeps): WebSearchFl
       process.env[BRAVE_API_KEY_ENV] = braveApiKey;
       return { fetchEnabled: true };
     }
-    const enableAnswer = await deps.prompt("  Enable Brave Web Search? [y/N]: ");
+    const enableAnswer = await deps.prompt("  Enable Web Search? [y/N]: ");
     if (!isAffirmativeAnswer(enableAnswer)) {
       return null;
+    }
+
+    const provider = duckDuckGoRequested ? "duckduckgo" : await promptWebSearchProvider();
+    if (provider === null) {
+      return null;
+    }
+
+    if (provider === "duckduckgo") {
+      console.log("  ✓ Enabled DuckDuckGo Web Search (experimental, unofficial)");
+      console.log("");
+      return { fetchEnabled: true, provider: "duckduckgo" };
     }
 
     const braveApiKey = await ensureValidatedBraveSearchCredential();

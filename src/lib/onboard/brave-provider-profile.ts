@@ -13,12 +13,19 @@ export const BRAVE_PROVIDER_PROFILE_ID = "brave";
  * `createSandbox` to push a Brave provider/token and trip the BRAVE_API_KEY-
  * required abort even when the feature is off, while the downstream
  * finalization/verifier paths already gate on `fetchEnabled`. Keep every gate
- * routed through this helper so they stay aligned.
+ * routed through this helper so they stay aligned. A web-search config that
+ * names a non-Brave provider (e.g. `duckduckgo`) does not enable Brave-specific
+ * setup paths, even when `fetchEnabled` is true.
  */
 export function shouldEnableBraveWebSearch(
-  webSearchConfig: { fetchEnabled?: boolean | null } | null | undefined,
+  webSearchConfig:
+    | { fetchEnabled?: boolean | null; provider?: string | null }
+    | null
+    | undefined,
 ): boolean {
-  return Boolean(webSearchConfig?.fetchEnabled);
+  if (!webSearchConfig?.fetchEnabled) return false;
+  const provider = webSearchConfig.provider;
+  return !provider || provider === BRAVE_PROVIDER_PROFILE_ID;
 }
 
 export type BraveProviderProfileDeps = {
