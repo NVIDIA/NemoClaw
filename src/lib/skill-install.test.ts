@@ -71,9 +71,14 @@ describe("parseFrontmatter", () => {
   });
 
   it("rejects names with invalid characters", () => {
-    expect(() => parseFrontmatter("---\nname: my skill\n---\n")).toThrow("invalid characters");
-    expect(() => parseFrontmatter("---\nname: ../escape\n---\n")).toThrow("invalid characters");
-    expect(() => parseFrontmatter("---\nname: a/b\n---\n")).toThrow("invalid characters");
+    expect(() => parseFrontmatter("---\nname: my skill\n---\n")).toThrow("is invalid");
+    expect(() => parseFrontmatter("---\nname: ../escape\n---\n")).toThrow("is invalid");
+    expect(() => parseFrontmatter("---\nname: a/b\n---\n")).toThrow("is invalid");
+  });
+
+  it("rejects dot and double-dot as skill names in frontmatter", () => {
+    expect(() => parseFrontmatter("---\nname: .\n---\n")).toThrow("is invalid");
+    expect(() => parseFrontmatter("---\nname: ..\n---\n")).toThrow("is invalid");
   });
 });
 
@@ -194,6 +199,7 @@ describe("resolveSkillPaths", () => {
   it("returns OpenClaw defaults when agent is null", () => {
     const paths = resolveSkillPaths(null, "weather");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/weather");
+    expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/weather");
     expect(paths.sessionFile).toBe(
       "/sandbox/.openclaw/agents/main/sessions/sessions.json",
     );
@@ -209,6 +215,7 @@ describe("resolveSkillPaths", () => {
     };
     const paths = resolveSkillPaths(agent, "my-skill");
     expect(paths.uploadDir).toBe("/sandbox/.openclaw/skills/my-skill");
+    expect(paths.mirrorDir).toBe("$HOME/.openclaw/skills/my-skill");
     expect(paths.sessionFile).toBe(
       "/sandbox/.openclaw/agents/main/sessions/sessions.json",
     );
@@ -224,6 +231,7 @@ describe("resolveSkillPaths", () => {
     };
     const paths = resolveSkillPaths(agent, "demo-skill");
     expect(paths.uploadDir).toBe("/sandbox/.hermes/skills/demo-skill");
+    expect(paths.mirrorDir).toBeNull();
     expect(paths.sessionFile).toBeNull();
     expect(paths.isOpenClaw).toBe(false);
   });
@@ -237,6 +245,7 @@ describe("resolveSkillPaths", () => {
     };
     const paths = resolveSkillPaths(agent, "test-skill");
     expect(paths.uploadDir).toBe("/sandbox/.future/skills/test-skill");
+    expect(paths.mirrorDir).toBeNull();
     expect(paths.sessionFile).toBeNull();
     expect(paths.isOpenClaw).toBe(false);
   });

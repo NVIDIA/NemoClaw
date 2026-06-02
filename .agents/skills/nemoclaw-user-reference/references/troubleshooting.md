@@ -211,7 +211,7 @@ $ NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0 NEMOCLAW_GATEWAY_PORT=8990 nemoclaw onbo
 Use `NEMOCLAW_GATEWAY_BIND_ADDRESS=0.0.0.0` only when other hosts on the
 network should be able to reach the gateway.
 
-See Environment Variables (use the `nemoclaw-user-reference` skill) for the full list of port overrides.
+See [Environment Variables](commands.md#environment-variables) for the full list of port overrides.
 
 ### Running multiple sandboxes simultaneously
 
@@ -355,7 +355,8 @@ Run `nemoclaw status` for a broader gateway health report.
 ### Invalid sandbox name
 
 Sandbox names must be lowercase, start with a letter, contain only letters, numbers, and internal hyphens, and end with a letter or number.
-Uppercase letters are automatically lowercased.
+The CLI rejects names that do not match these rules.
+It prints a `Try: <suggested-slug>` recovery line whenever it can derive a valid lowercase, hyphen-separated form from the input, so passing `--name MyAssistant` reports `Try: myassistant` and you can rerun with the suggested slug.
 
 Names that collide with global CLI commands are also rejected.
 Reserved names include `onboard`, `list`, `deploy`, `setup`, `start`, `stop`, `status`, `debug`, `uninstall`, `credentials`, and `help`.
@@ -397,6 +398,9 @@ Default Colima ships with 2 vCPU and 2 GiB of memory, which is not enough headro
 On macOS Apple Silicon, the build can stall part-way through with no progress and no error, leaving the wizard waiting indefinitely.
 
 Preflight inspects `docker info` for `NCPU` and `MemTotal` and prints a warning when the runtime falls below 4 vCPU or 8 GiB.
+In interactive onboarding, the warning prompt defaults to abort, so pressing Enter stops the run before the sandbox build reaches the likely stall point.
+Type `y` only when you intentionally want to continue on the smaller runtime.
+Non-interactive onboarding prints the warning and continues.
 On Colima, raise the resources before re-running onboard:
 
 ```console
@@ -774,6 +778,23 @@ WhatsApp pairs entirely inside the sandbox.
 NemoClaw advertises WhatsApp for OpenClaw and Hermes sandboxes after you add the channel on the host.
 Run `openclaw channels login --channel whatsapp` inside OpenClaw sandboxes, or run `hermes whatsapp` inside Hermes sandboxes.
 
+### `scripts/rcf_patch.py` is missing from the blueprint
+
+`scripts/rcf_patch.py` is intentionally absent from current NemoClaw blueprints.
+Older QA plans used that helper for a Dockerfile "Patch-4" test that corrupted the build-time `replaceConfigFile` monkey-patch and expected `ERROR: Patch 4 (replaceConfigFile EACCES) not applied`.
+The old Patch-4 fail-closed test no longer applies because NemoClaw no longer patches OpenClaw's compiled `replaceConfigFile` source at image build time.
+
+Current sandboxes use a mutable-default config model instead.
+Before a reviewed host-side lockdown, `/sandbox/.openclaw/openclaw.json` is group-writable by the sandbox and gateway users, so OpenClaw config mutations should write normally rather than requiring an EACCES swallow.
+After lockdown, runtime config mutations should fail cleanly or route users to the supported host-side NemoClaw command.
+
+To validate this area now, use the config lifecycle tests instead of looking for `rcf_patch.py`:
+
+```console
+$ npm run build:cli
+$ npm test -- test/repro-2681-group-writable.test.ts
+```
+
 ### `openclaw config set` or `unset` is blocked inside the sandbox
 
 This is expected.
@@ -896,6 +917,14 @@ For Telegram group chats, first check BotFather privacy mode.
 New Telegram bots default to privacy mode enabled, which prevents group messages from reaching `getUpdates` even when the user mentions the bot.
 In @BotFather, run `/setprivacy`, choose the bot, and choose **Disable**.
 Then remove the bot from the affected group and add it back; Telegram applies the privacy-mode change to group delivery only after the bot rejoins.
+
+For Telegram direct messages, make sure the rebuilt sandbox has a DM allowlist.
+Set `TELEGRAM_ALLOWED_IDS` before rebuild; `TELEGRAM_AUTHORIZED_CHAT_IDS` and `TELEGRAM_CHAT_ID` are accepted as compatibility aliases.
+Keep the aliases until QA automation and public repro templates have stopped exporting them for at least one full release.
+Bot API `sendMessage` sends from the bot to a chat, so it only proves outbound Telegram API access.
+To prove inbound agent routing, send a message from the Telegram client as an allowed user and then watch the gateway log for the agent turn and outbound reply.
+For a reproducible live check that also exercises an alias, run `test/e2e/test-messaging-providers.sh` with `TELEGRAM_BOT_TOKEN_REAL`, either `TELEGRAM_AUTHORIZED_CHAT_IDS` or `TELEGRAM_CHAT_ID`, and `NEMOCLAW_TELEGRAM_INBOUND_REPLY_E2E=1`; when prompted, send a fresh direct message from that Telegram client.
+The check waits for `[telegram] [default] inbound update received` and `[telegram] [default] outbound sendMessage attempted` in `/tmp/gateway.log`.
 
 To diagnose, open a shell in the sandbox and inspect the gateway log:
 
@@ -1082,14 +1111,10 @@ In those cases NemoClaw treats an unavailable sandbox-side probe as non-blocking
 
 ### `host.docker.internal` does not reliably reach the host from the sandbox
 
-Configuring an inference provider with a base URL like
-`http://host.docker.internal:11434/v1` does not reliably reach a host Ollama
-service from inside the OpenShell sandbox.
-OpenShell runs sandboxes inside a k3s network, where `host.docker.internal` is
-not a portable host-service route. Depending on the platform, it may fail DNS
-resolution or resolve to an internal gateway/bridge address where the host's
-port `11434` is not forwarded. The sandbox then sees a DNS failure or
-`connection refused`:
+Configuring an inference provider with a base URL like `http://host.docker.internal:11434/v1` does not reliably reach a host Ollama service from inside the OpenShell sandbox.
+OpenShell runs sandboxes inside a k3s network, where `host.docker.internal` is not a portable host-service route.
+Depending on the platform, it may fail DNS resolution or resolve to an internal gateway/bridge address where the host's port `11434` is not forwarded.
+The sandbox then sees a DNS failure or `connection refused`:
 
 ```console
 $ getent hosts host.docker.internal
@@ -1145,11 +1170,12 @@ Run `fix-coredns.sh` to point CoreDNS at the container gateway IP instead, then 
 ### `k3s` cannot find a freshly built image
 
 After building a new sandbox image, `k3s` inside the gateway container sometimes fails to pull it even though the image exists on the host.
-Destroy and restart the gateway, then re-run setup.
+Remove the gateway registration, stop any leftover host gateway process, then re-run setup.
 
 ```console
-$ openshell gateway destroy
-$ openshell gateway start
+$ openshell gateway remove nemoclaw
+$ sudo pkill -f openshell-gateway
+$ nemoclaw onboard --resume
 ```
 
 ### GPU passthrough on Spark
@@ -1167,7 +1193,10 @@ Recent NVIDIA Container Toolkit installs configure the Docker daemon for Contain
 If no `nvidia.com/gpu` CDI spec has been generated on the host yet, gateway start fails with `Docker responded with status code 500: CDI device injection failed: unresolvable CDI devices nvidia.com/gpu=all`.
 The standard NemoClaw installer detects this gap before onboarding, first tries to enable the NVIDIA CDI refresh systemd units, and falls back to generating the spec directly with `nvidia-ctk`.
 If you run `nemoclaw onboard` directly, preflight prints the manual remediation instead.
-The underlying fix is the same on any Docker host whose `docker info` advertises a non-empty `CDISpecDirs`.
+The native Linux fix is the same on Docker hosts whose `docker info` advertises a non-empty `CDISpecDirs`.
+On WSL with Docker Desktop, Docker may advertise CDI directories even though `--device nvidia.com/gpu=all` is not usable from the WSL distro.
+For that runtime, NemoClaw skips Linux CDI repair and uses Docker's `--gpus` compatibility path for sandbox GPU access.
+This compatibility path can be retired once Docker Desktop exposes usable `nvidia.com/gpu` CDI specs inside WSL, or once OpenShell no longer requires host-visible CDI specs for Docker Desktop WSL GPU passthrough.
 
 Enable the refresh units, verify they list `nvidia.com/gpu` entries, then rerun onboarding:
 
@@ -1183,6 +1212,12 @@ If the refresh units are unavailable or do not generate CDI devices, generate th
 $ sudo mkdir -p /etc/cdi
 $ sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml
 $ nvidia-ctk cdi list
+```
+
+On WSL with Docker Desktop, confirm Docker Desktop WSL integration is enabled for your distro and verify Docker GPU access from WSL:
+
+```console
+$ docker run --rm --gpus all nvcr.io/nvidia/k8s/cuda-sample:nbody nbody -gpu -benchmark
 ```
 
 If GPU passthrough is not required on this host, rerun onboarding with `--no-gpu` instead.
@@ -1354,7 +1389,7 @@ If you see this error, use the host-side config command instead:
 $ nemoclaw <name> config set --key <dotpath> --value '<json-or-string>' --restart
 ```
 
-Refer to Commands (use the `nemoclaw-user-reference` skill) for the full list of supported configuration keys.
+Refer to [Commands](commands.md) for the full list of supported configuration keys.
 
 ### OpenClaw dashboard is unreachable after extended uptime on Brev
 
@@ -1390,3 +1425,121 @@ $ nemoclaw <name> rebuild
 ```
 
 After the rebuild completes, return to the Skills page to confirm the skill is ready.
+
+## Hermes
+
+The Hermes agent is experimental.
+The issues below are common problems operators encounter when running Hermes through `nemohermes`.
+For setup, refer to Quickstart with Hermes (use the `nemoclaw-user-get-started` skill).
+
+### Port 8642 in a browser shows a blank page or `Cannot GET /`
+
+`nemohermes onboard` forwards port `8642`, but Hermes serves an OpenAI-compatible API at that port, not a chat dashboard.
+A browser visit to `http://127.0.0.1:8642/` (or any non-API path) returns nothing renderable.
+
+Confirm the agent is healthy with the API health endpoint instead:
+
+```console
+$ curl -sf http://127.0.0.1:8642/health
+{"status":"ok","platform":"hermes-agent"}
+```
+
+Point an OpenAI-compatible client at `http://127.0.0.1:8642/v1` for chat completions.
+For terminal use, run `nemohermes <name> connect` and then `hermes` inside the sandbox.
+
+### `nemohermes` reports `Sandbox 'X' already exists as OpenClaw`
+
+Each sandbox name maps to exactly one agent type.
+If a sandbox named `X` was created with the default OpenClaw agent, a later `nemohermes onboard` for the same name exits with:
+
+```text
+Sandbox 'X' already exists as OpenClaw.
+nemohermes is onboarding Hermes for this sandbox name.
+Side-by-side agents are supported, but each sandbox name has one agent type.
+```
+
+Pick a distinct sandbox name (the Hermes default is `hermes`; a common pattern is `my-hermes`) so Hermes and OpenClaw sandboxes can coexist on the same host.
+To convert an existing sandbox to Hermes instead, destroy and re-onboard:
+
+```console
+$ nemoclaw <name> destroy
+$ NEMOCLAW_AGENT=hermes nemohermes onboard
+```
+
+### `nemohermes: command not found` immediately after install
+
+`nemohermes` is a thin shim installed alongside `nemoclaw` that pre-selects the Hermes agent.
+The installer drops the shim in the same directory as `nemoclaw`; if `nemoclaw` is on `PATH` but `nemohermes` is not, the shim symlink was skipped.
+
+Verify the install:
+
+```console
+$ command -v nemoclaw
+$ command -v nemohermes
+```
+
+If only `nemoclaw` resolves, re-run the installer with `NEMOCLAW_AGENT=hermes` set so the shim is published:
+
+```console
+$ export NEMOCLAW_AGENT=hermes
+$ curl -fsSL https://www.nvidia.com/nemoclaw.sh | bash
+```
+
+Equivalently, every `nemohermes <cmd>` invocation is `NEMOCLAW_AGENT=hermes nemoclaw <cmd>`.
+
+### Choosing between OAuth and API key for the Hermes Provider
+
+The Hermes Provider supports two authentication paths during onboarding.
+Pick OAuth when you have a Nous Portal account and an interactive terminal; pick API key when you have a long-lived `NOUS_API_KEY` and want a non-interactive flow.
+
+Set the method explicitly so the wizard skips the prompt:
+
+```console
+$ # OAuth (default; interactive)
+$ export NEMOCLAW_HERMES_AUTH_METHOD=oauth
+$ nemohermes onboard
+
+$ # API key (non-interactive)
+$ export NEMOCLAW_HERMES_AUTH_METHOD=api-key
+$ export NOUS_API_KEY=nous_...
+$ nemohermes onboard --non-interactive
+```
+
+`NEMOCLAW_HERMES_AUTH_METHOD` accepts `oauth`, `nous-portal-oauth`, `api-key`, and `nous-api-key`.
+The `NEMOCLAW_HERMES_AUTH` and `NEMOCLAW_NOUS_AUTH_METHOD` variables are back-compatible aliases.
+
+If OAuth is selected and onboarding cannot open the host's default browser (a headless host or SSH session), the device-code prompt still prints the verification URL and user code to the terminal.
+Copy them to a browser on any other machine to complete the flow.
+
+### API client returns `401 Unauthorized` against port 8642
+
+Hermes uses bearer-token header authentication for client requests, not an OpenClaw-style URL fragment.
+A request without an `Authorization: Bearer <token>` header (or with an OpenClaw `#token=` fragment appended to the URL) is rejected with `401`.
+
+Configure your OpenAI-compatible client to pass the Hermes API key in the `Authorization` header.
+Stored credentials (including `NOUS_API_KEY` and `OPENAI_API_KEY`) are listed by:
+
+```console
+$ nemohermes credentials list
+```
+
+Reset a specific provider's credentials with `nemohermes credentials reset <provider>` and re-onboard if the stored value is wrong.
+
+### `Brave Search` policy preset has no effect under Hermes
+
+The Hermes wizard intentionally omits the Brave Search preset because Hermes does not use NemoClaw's OpenClaw web-search configuration (see Quickstart with Hermes (use the `nemoclaw-user-get-started` skill) and Network Policies (use the `nemoclaw-user-reference` skill)).
+If you add the `brave` preset to a Hermes sandbox after onboarding, the L7 egress allowlist opens for Brave's endpoints but the agent itself does not start consuming the credential.
+Configure Hermes web search from the agent's own configuration inside the sandbox.
+
+### Re-onboarding asks every messaging prompt again
+
+`nemohermes onboard --resume` against a Hermes sandbox that was originally onboarded with Telegram, Discord, and Slack credentials re-prompts for each channel's bot token and per-channel settings rather than reusing the stored values.
+This is tracked in [#3581](https://github.com/NVIDIA/NemoClaw/issues/3581).
+For unattended re-onboards, export the messaging env vars first so the wizard skips the prompts:
+
+```console
+$ export TELEGRAM_BOT_TOKEN=...
+$ export DISCORD_BOT_TOKEN=...
+$ export SLACK_BOT_TOKEN=...
+$ nemohermes onboard --resume --non-interactive
+```

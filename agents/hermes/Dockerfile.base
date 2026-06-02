@@ -26,7 +26,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Calver tag v2026.5.16 = Hermes Agent v0.14.0.
 ARG HERMES_VERSION=v2026.5.16
 ARG HERMES_TARBALL_SHA256=c0a554050a50ee9a62f3fa5cd288a167ba5640c42d647d100cdea084b7294143
-ARG HERMES_UV_EXTRAS="messaging web"
+ARG HERMES_UV_EXTRAS="messaging web pty"
 ARG UV_VERSION=0.11.8
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -154,8 +154,9 @@ RUN printf '%s\n' \
 
 # Install Hermes Agent from the selected GitHub release.
 # The image prebakes only the extras mapped to NemoClaw-supported onboarding
-# integrations: messaging (Telegram, Discord, Slack, WeChat, WhatsApp) and
-# web (API health/UI runtime). New Hermes integrations should be installed
+# integrations: messaging (Telegram, Discord, Slack, WeChat, WhatsApp),
+# web (API health/UI runtime), and pty (optional browser TUI bridge).
+# New Hermes integrations should be installed
 # by the agent workflow when they are enabled rather than shipped in the
 # base image by default.
 # Root Node dependencies provide Hermes browser tooling such as agent-browser.
@@ -175,6 +176,14 @@ RUN set -eu; \
     done; \
     uv sync --frozen --no-dev "$@" --no-cache \
     && npm ci --prefer-offline --no-audit --no-fund \
+    && for ui_dir in ui-tui web; do \
+        if [ -f "${ui_dir}/package-lock.json" ]; then \
+            npm ci --prefix "${ui_dir}" --prefer-offline --no-audit --no-fund; \
+            npm run build --prefix "${ui_dir}"; \
+        else \
+            echo "Skipping optional Hermes UI package ${ui_dir}: package-lock.json not found"; \
+        fi; \
+    done \
     && rm -rf /tmp/camoufox-* \
     && ln -sf /opt/hermes/.venv/bin/hermes /usr/local/bin/hermes \
     && ln -sf /opt/hermes/.venv/bin/hermes-agent /usr/local/bin/hermes-agent \

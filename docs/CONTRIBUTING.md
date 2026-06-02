@@ -47,10 +47,10 @@ The current generated skills and their source pages are:
 |---|---|
 | `nemoclaw-user-overview` | `docs/about/overview.mdx`, `docs/about/ecosystem.mdx`, `docs/about/how-it-works.mdx`, `docs/about/release-notes.mdx` |
 | `nemoclaw-user-agent-skills` | `docs/resources/agent-skills.mdx` |
-| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.mdx`, `docs/deployment/install-openclaw-plugins.mdx`, `docs/deployment/sandbox-hardening.mdx` |
+| `nemoclaw-user-deploy-remote` | `docs/deployment/deploy-to-remote-gpu.mdx`, `docs/deployment/brev-web-ui.mdx`, `docs/deployment/install-openclaw-plugins.mdx`, `docs/deployment/sandbox-hardening.mdx` |
 | `nemoclaw-user-get-started` | `docs/get-started/prerequisites.mdx`, `docs/get-started/quickstart.mdx`, `docs/get-started/quickstart-hermes.mdx`, `docs/get-started/windows-preparation.mdx` |
-| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.mdx`, `docs/inference/use-local-inference.mdx`, `docs/inference/switch-inference-providers.mdx`, `docs/inference/set-up-sub-agent.mdx` |
-| `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.mdx`, `docs/manage-sandboxes/messaging-channels.mdx`, `docs/manage-sandboxes/workspace-files.mdx`, `docs/manage-sandboxes/backup-restore.mdx` |
+| `nemoclaw-user-configure-inference` | `docs/inference/inference-options.mdx`, `docs/inference/use-local-inference.mdx`, `docs/inference/switch-inference-providers.mdx`, `docs/inference/set-up-sub-agent.mdx`, `docs/inference/tool-calling-reliability.mdx` |
+| `nemoclaw-user-manage-sandboxes` | `docs/manage-sandboxes/lifecycle.mdx`, `docs/manage-sandboxes/runtime-controls.mdx`, `docs/manage-sandboxes/messaging-channels.mdx`, `docs/manage-sandboxes/workspace-files.mdx`, `docs/manage-sandboxes/backup-restore.mdx` |
 | `nemoclaw-user-monitor-sandbox` | `docs/monitoring/monitor-sandbox-activity.mdx` |
 | `nemoclaw-user-manage-policy` | `docs/network-policy/customize-network-policy.mdx`, `docs/network-policy/integration-policy-examples.mdx`, `docs/network-policy/approve-network-requests.mdx` |
 | `nemoclaw-user-reference` | `docs/reference/architecture.mdx`, `docs/reference/commands.mdx`, `docs/reference/cli-selection-guide.mdx`, `docs/reference/network-policies.mdx`, `docs/reference/troubleshooting.mdx` |
@@ -87,16 +87,19 @@ Other useful flags:
 
 | Flag | Purpose |
 |------|---------|
-| `--strategy <name>` | Grouping strategy: `smart` (default), `grouped`, or `individual`. |
+| `--strategy <name>` | Grouping strategy: `grouped` (default) or `individual`. |
 | `--doc-platform <name>` | Source format: `fern-mdx` for migrated Fern pages or `myst-md` for legacy Markdown. |
 | `--name-map CAT=NAME` | Override a generated skill name (e.g. `--name-map about=overview`). |
 | `--exclude <file>` | Skip specific files (e.g. `--exclude "release-notes.mdx"`). |
 
 ### How the Script Works
 
-The script reads YAML frontmatter from each doc page to determine its content type (`how_to`, `concept`, `reference`, `get_started`), then groups pages into skills using the `smart` strategy by default.
-Within each group, the procedure page (`how_to`, `get_started`, or `tutorial`) with the lowest `skill.priority` becomes the main body of the skill.
-Sibling procedure pages, concept pages, and reference pages go into a `references/` subdirectory for progressive disclosure, keeping `SKILL.md` concise while preserving access to the full docs.
+The script reads YAML frontmatter from each doc page to determine its content type (`how_to`, `concept`, `reference`, `get_started`), then groups pages into skills using the `grouped` strategy by default.
+Within each directory group, the highest-priority procedure page (`how_to`, `get_started`, or `tutorial`) becomes the full body of `SKILL.md`.
+Sibling pages are written unchanged to `references/`.
+Groups with no procedure page keep every sibling in `references/` only.
+
+Use `--strategy individual` to emit one skill per `how_to`, `get_started`, or `tutorial` page, collect `concept` pages into `nemoclaw-user-concept`, and collect `reference` pages (and other non-procedure types) into `nemoclaw-user-reference`.
 
 Cross-references between doc pages are rewritten as skill-to-skill pointers so agents can navigate between skills.
 Fern MDX components and MyST/Sphinx directives are converted to standard markdown.

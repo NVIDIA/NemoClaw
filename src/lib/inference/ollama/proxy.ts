@@ -739,7 +739,12 @@ async function checkOllamaModelToolSupport(
 async function prepareOllamaModel(
   model,
   installedModels: string[] = [],
-): Promise<{ ok: boolean; message?: string; allowToolsIncompatible?: boolean }> {
+): Promise<{
+  ok: boolean;
+  message?: string;
+  allowToolsIncompatible?: boolean;
+  daemonFailure?: boolean;
+}> {
   const alreadyInstalled = installedModels.includes(model);
   if (!alreadyInstalled) {
     console.log(`  Pulling Ollama model: ${model}`);
