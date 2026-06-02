@@ -10,10 +10,16 @@
  * diagnosis; a plain helper container on the bridge is not equivalent.
  */
 
+import os from "node:os";
+
 import { dockerCapture, dockerRun } from "../adapters/docker/run";
 import { GATEWAY_PORT } from "../core/ports";
 import { cliDisplayName, cliName } from "./branding";
-import { ensureProbeImageCached, isDockerDaemonUnreachable } from "./preflight";
+import {
+  DOCKER_DESKTOP_WSL_INTEGRATION_HINT,
+  ensureProbeImageCached,
+  isDockerDaemonUnreachable,
+} from "./preflight";
 import type { UfwAutoApplyResult } from "./ufw-auto-apply";
 import { isUfwAutoApplyOptedIn, tryAutoApplyUfwRule } from "./ufw-auto-apply";
 
@@ -82,6 +88,14 @@ export interface SandboxBridgeReachabilityOptions {
   usesHostGatewayRouteImpl?: () => boolean;
   /** Inject a precomputed image-cache result; bypasses real pre-pull. */
   ensureImageCachedOverride?: import("./preflight").EnsureProbeImageCachedResult;
+}
+
+export interface FormatSandboxBridgeUnreachableMessageOptions {
+  isWsl?: boolean;
+}
+
+function isRunningInWsl(env: NodeJS.ProcessEnv = process.env, release = os.release()): boolean {
+  return Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP || /microsoft/i.test(release));
 }
 
 function parseDockerNetworkIpamConfig(raw: string): DockerBridgeNetworkInfo | undefined {
@@ -384,8 +398,10 @@ export async function isSandboxBridgeGatewayReachable(
 export function formatSandboxBridgeUnreachableMessage(
   result: SandboxBridgeReachabilityResult,
   port: number = GATEWAY_PORT,
+  opts: FormatSandboxBridgeUnreachableMessageOptions = {},
 ): string {
   if (result.ok) return "";
+  const includeWslIntegrationHint = opts.isWsl ?? isRunningInWsl();
   if (result.reason === "probe_unavailable") {
     return [
       "  ⚠ Could not verify sandbox bridge reachability.",
@@ -415,6 +431,7 @@ export function formatSandboxBridgeUnreachableMessage(
     return [
       "  ✗ Docker daemon is not reachable for the sandbox bridge probe.",
       result.detail ? `    ${result.detail}` : undefined,
+      includeWslIntegrationHint ? `    ${DOCKER_DESKTOP_WSL_INTEGRATION_HINT}` : undefined,
       "    Restart the Docker daemon (e.g. `sudo systemctl restart docker`, or restart Docker Desktop/Colima)",
       `    and re-run \`${cliName()} onboard\`.`,
     ].filter((line): line is string => Boolean(line)).join("\n");
@@ -490,8 +507,11 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
   if (reach.routeKind === "bridge_gateway" && reach.reason === "tcp_failed" && autoApplyOptedIn()) {
     const autoApplyResult = await autoApply(reach);
     if (autoApplyResult.applied) {
+      const ruleDescription = reach.subnet && reach.gatewayIp
+        ? `allow from ${reach.subnet} to ${reach.gatewayIp}:${port}/tcp`
+        : `allow sandbox bridge traffic to port ${port}/tcp`;
       console.log(
-        `  ✓ Applied UFW rule (NEMOCLAW_AUTO_FIX_FIREWALL=1): allow from ${reach.subnet} to ${reach.gatewayIp}:${port}/tcp`,
+        `  ✓ Applied UFW rule (NEMOCLAW_AUTO_FIX_FIREWALL=1): ${ruleDescription}`,
       );
       reach = await reachability();
       if (reach.ok) return;
@@ -518,5 +538,6 @@ export async function verifySandboxBridgeGatewayReachableOrExit(
 export const __test = {
   buildOpenShellDockerRoute,
   buildProbeArgs,
+  isRunningInWsl,
   parseDockerNetworkIpamConfig,
 };

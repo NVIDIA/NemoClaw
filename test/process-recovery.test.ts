@@ -1,14 +1,43 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-import { describe, expect, it } from "vitest";
+import { createRequire } from "node:module";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  checkAndRecoverSandboxProcesses,
   classifyForwardHealthWithReachability,
   classifySandboxForwardHealth,
   resolveSandboxDashboardPort,
   type SandboxForwardListEntry,
 } from "../dist/lib/actions/sandbox/process-recovery.js";
+
+const requireDist = createRequire(import.meta.url);
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+function withFakeOpenshellBinary<T>(fn: () => T): T {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nemoclaw-fake-openshell-"));
+  const bin = path.join(dir, "openshell");
+  const previous = process.env.NEMOCLAW_OPENSHELL_BIN;
+  fs.writeFileSync(bin, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  process.env.NEMOCLAW_OPENSHELL_BIN = bin;
+  try {
+    return fn();
+  } finally {
+    if (previous === undefined) {
+      delete process.env.NEMOCLAW_OPENSHELL_BIN;
+    } else {
+      process.env.NEMOCLAW_OPENSHELL_BIN = previous;
+    }
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
 
 describe("resolveSandboxDashboardPort", () => {
   it("uses the recorded OpenClaw dashboard port for multi-sandbox recovery", () => {
@@ -141,5 +170,67 @@ describe("classifyForwardHealthWithReachability", () => {
         () => true,
       ),
     ).toBe("occupied");
+  });
+});
+
+describe("checkAndRecoverSandboxProcesses", () => {
+  it("scopes forward stop to the target sandbox when restarting a dead forward", () => {
+    const openshellRuntime = requireDist("../dist/lib/adapters/openshell/runtime.js");
+    const agentRuntime = requireDist("../dist/lib/agent/runtime.js");
+    const registry = requireDist("../dist/lib/state/registry.js");
+    const forwardHealth = requireDist("../dist/lib/actions/sandbox/forward-health.js");
+    const childProcess = requireDist("node:child_process");
+    const deadForward = `SANDBOX  BIND  PORT  PID  STATUS
+beta  127.0.0.1  18789  12345  dead`;
+    const runningForward = `SANDBOX  BIND  PORT  PID  STATUS
+beta  127.0.0.1  18789  12345  running`;
+    let forwardListCalls = 0;
+
+    vi.spyOn(childProcess, "spawnSync").mockReturnValue({
+      status: 0,
+      stdout: "__NEMOCLAW_SANDBOX_EXEC_STARTED__\nRUNNING\n",
+      stderr: "",
+    } as never);
+    vi.spyOn(agentRuntime, "getSessionAgent").mockReturnValue(null);
+    vi.spyOn(registry, "getSandbox").mockReturnValue({
+      name: "beta",
+      agent: "openclaw",
+      dashboardPort: 18789,
+    });
+    vi.spyOn(forwardHealth, "isLocalForwardReachable").mockReturnValue(false);
+    vi.spyOn(openshellRuntime, "captureOpenshell").mockImplementation((rawArgs: unknown) => {
+      const args = Array.isArray(rawArgs) ? rawArgs : [];
+      expect(args).toEqual(["forward", "list"]);
+      forwardListCalls += 1;
+      return {
+        status: 0,
+        output: forwardListCalls >= 3 ? runningForward : deadForward,
+      };
+    });
+    const runOpenshell = vi
+      .spyOn(openshellRuntime, "runOpenshell")
+      .mockReturnValue({ status: 0 } as never);
+
+    expect(
+      withFakeOpenshellBinary(() => checkAndRecoverSandboxProcesses("beta", { quiet: true })),
+    ).toEqual({
+      checked: true,
+      wasRunning: true,
+      recovered: false,
+      forwardRecovered: true,
+    });
+    expect(runOpenshell).toHaveBeenCalledWith(
+      ["forward", "stop", "18789", "beta"],
+      { ignoreError: true, stdio: "ignore" },
+    );
+    expect(
+      runOpenshell.mock.calls.some(
+        ([args]) =>
+          Array.isArray(args) &&
+          args[0] === "forward" &&
+          args[1] === "stop" &&
+          args.length === 3,
+      ),
+    ).toBe(false);
   });
 });

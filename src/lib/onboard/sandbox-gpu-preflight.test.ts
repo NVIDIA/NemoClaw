@@ -83,6 +83,7 @@ describe("sandbox GPU preflight", () => {
     expect(() =>
       validateSandboxGpuPreflight(sandboxGpuConfig(), {
         platform: "linux",
+        env: {},
         dockerInfoFormat: dockerInfo,
         getDockerCdiSpecDirs,
         findReadableNvidiaCdiSpecFiles,

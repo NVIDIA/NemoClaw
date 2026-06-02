@@ -177,6 +177,15 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "flags": "[--dry-run]"
     }
   ],
+  "sandbox:channels:status": [
+    {
+      "group": "Messaging Channels",
+      "order": 25,
+      "usage": "nemoclaw <name> channels status",
+      "description": "Channel-specific runtime diagnostics",
+      "flags": "[--channel <channel>] [--json]"
+    }
+  ],
   "sandbox:config:get": [
     {
       "group": "Sandbox Management",
@@ -358,6 +367,13 @@ const PUBLIC_DISPLAY_LAYOUT: Record<string, readonly PublicDisplayLayout[]> = {
       "group": "Skills",
       "order": 16,
       "flags": "<path>"
+    }
+  ],
+  "sandbox:skill:remove": [
+    {
+      "group": "Skills",
+      "order": 16.1,
+      "flags": "<skill>"
     }
   ],
   "sandbox:snapshot:create": [

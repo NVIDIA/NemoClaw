@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+import { readFileSync } from "node:fs";
+
 import { describe, expect, it } from "vitest";
 
 import { loadE2eWorkflowContract, reusableNightlyJobs } from "./helpers/e2e-workflow-contract";
@@ -32,13 +34,27 @@ describe("E2E reusable workflow contract", () => {
 
   it("passes only named secrets to reusable nightly jobs", () => {
     const reusableJobs = reusableNightlyJobs(nightlyWorkflow);
+    const defaultSecrets = {
+      NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
+      BRAVE_API_KEY: "${{ secrets.BRAVE_API_KEY }}",
+    };
+    const messagingLiveSecrets = {
+      TELEGRAM_BOT_TOKEN_REAL: "${{ secrets.TELEGRAM_BOT_TOKEN_REAL }}",
+      TELEGRAM_CHAT_ID_E2E: "${{ secrets.TELEGRAM_CHAT_ID_E2E }}",
+      DISCORD_BOT_TOKEN_REAL: "${{ secrets.DISCORD_BOT_TOKEN_REAL }}",
+      DISCORD_CHANNEL_ID_E2E: "${{ secrets.DISCORD_CHANNEL_ID_E2E }}",
+      SLACK_BOT_TOKEN_REAL: "${{ secrets.SLACK_BOT_TOKEN_REAL }}",
+      SLACK_APP_TOKEN_REAL: "${{ secrets.SLACK_APP_TOKEN_REAL }}",
+      SLACK_CHANNEL_ID_E2E: "${{ secrets.SLACK_CHANNEL_ID_E2E }}",
+    };
 
     expect(reusableJobs.length).toBeGreaterThan(20);
     for (const [name, job] of reusableJobs) {
-      expect(job.secrets, name).toEqual({
-        NVIDIA_API_KEY: "${{ secrets.NVIDIA_API_KEY }}",
-        BRAVE_API_KEY: "${{ secrets.BRAVE_API_KEY }}",
-      });
+      const expectedSecrets =
+        name === "messaging-providers-e2e"
+          ? { ...defaultSecrets, ...messagingLiveSecrets }
+          : defaultSecrets;
+      expect(job.secrets, name).toEqual(expectedSecrets);
     }
   });
 
@@ -94,5 +110,17 @@ describe("E2E reusable workflow contract", () => {
     expect(cloudJob.uses).toBe("./.github/workflows/e2e-script.yaml");
     expect(cloudJob.with?.script).toBe("test/e2e/test-full-e2e.sh");
     expect(cloudJob.with?.ref).toBe("${{ inputs.target_ref || github.ref }}");
+  });
+
+  it("gates WhatsApp sandbox-owned preload acceptance on non-root entrypoint evidence", () => {
+    const script = readFileSync(new URL("./e2e/test-messaging-providers.sh", import.meta.url), "utf8");
+
+    expect(script).toContain(
+      "entrypoint_start_log_stat=$(sandbox_exec \"stat -c '%U:%a' /tmp/nemoclaw-start.log",
+    );
+    expect(script).toContain(
+      "[ \"$whatsapp_qr_preload_stat\" = \"sandbox:444\" ] && [ \"$entrypoint_start_log_stat\" = \"sandbox:600\" ]",
+    );
+    expect(script).toContain("entrypoint start log: ${entrypoint_start_log_stat}");
   });
 });

@@ -26,7 +26,7 @@ import { DASHBOARD_PORT } from "../lib/ports.js";
 
 type Action = "plan" | "apply" | "status" | "rollback";
 
-type RollbackPlanSource = { sandbox_name?: string };
+type RollbackPlanSource = { sandbox_name?: unknown };
 type UnknownRecord = { [key: string]: unknown };
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS";
 type RestProtocol = "rest";
@@ -264,7 +264,11 @@ function progress(pct: number, label: string): void {
 }
 
 function readRollbackSandboxName(value: RollbackPlanSource | null): string {
-  return value && typeof value.sandbox_name === "string" ? value.sandbox_name : "openclaw";
+  if (!value || typeof value.sandbox_name !== "string" || value.sandbox_name.trim() === "") {
+    throw new Error("rollback plan sandbox_name must be a non-empty string");
+  }
+
+  return value.sandbox_name;
 }
 
 // ── Utilities ───────────────────────────────────────────────────
@@ -901,6 +905,7 @@ export async function actionRollback(rid: string): Promise<void> {
   }
 
   const planFile = join(stateDir, "plan.json");
+  let sandboxName: string;
   try {
     const planData = readFileSync(planFile, "utf-8");
     const parsedPlan: unknown = JSON.parse(planData);
@@ -908,15 +913,20 @@ export async function actionRollback(rid: string): Promise<void> {
       typeof parsedPlan === "object" && parsedPlan !== null && !Array.isArray(parsedPlan)
         ? parsedPlan
         : null;
-    const sandboxName = readRollbackSandboxName(rollbackPlan);
+    sandboxName = readRollbackSandboxName(rollbackPlan);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    throw new Error(`Cannot read rollback plan for run ${rid}: ${detail}`);
+  }
 
+  try {
     progress(30, `Stopping sandbox ${sandboxName}`);
     await runCmd(["openshell", "sandbox", "stop", sandboxName], { reject: false });
 
     progress(60, `Removing sandbox ${sandboxName}`);
     await runCmd(["openshell", "sandbox", "remove", sandboxName], { reject: false });
   } catch {
-    // plan.json missing or corrupt — skip sandbox stop/remove
+    // Sandbox cleanup is best-effort; the rollback marker still records this run as handled.
   }
 
   progress(90, "Cleaning up run state");
