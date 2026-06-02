@@ -137,6 +137,31 @@ describe("config-io", () => {
     }
   });
 
+  it("readConfigFile repairs a 755 parent directory to 700", () => {
+    const root = makeTempDir();
+    const dir = path.join(root, "loose-dir");
+    fs.mkdirSync(dir, { mode: 0o755 });
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, JSON.stringify({ repaired: true }), { mode: 0o600 });
+
+    const result = readConfigFile(file, null);
+
+    expect(result).toEqual({ repaired: true });
+    expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
+  });
+
+  it("readConfigFile repairs a 644 file to 600", () => {
+    const dir = makeTempDir();
+    fs.chmodSync(dir, 0o700);
+    const file = path.join(dir, "config.json");
+    fs.writeFileSync(file, JSON.stringify({ tight: true }), { mode: 0o644 });
+
+    const result = readConfigFile(file, null);
+
+    expect(result).toEqual({ tight: true });
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+  });
+
   it("supports both rich and legacy constructor forms", () => {
     const rich = new ConfigPermissionError("test error", "/some/path");
     expect(rich.name).toBe("ConfigPermissionError");

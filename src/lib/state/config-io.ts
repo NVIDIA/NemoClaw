@@ -185,7 +185,29 @@ export function ensureConfigDir(dirPath: string): void {
 
 export function readConfigFile<T>(filePath: string, fallback: T): T {
   try {
-    return parseJson<T>(fs.readFileSync(filePath, "utf-8"));
+    ensureConfigDir(path.dirname(filePath));
+  } catch (error) {
+    if (error instanceof ConfigPermissionError) {
+      throw error;
+    }
+    // Directory doesn't exist and can't be created — fall through to let
+    // readFileSync produce the appropriate ENOENT / fallback path.
+  }
+
+  try {
+    const content = parseJson<T>(fs.readFileSync(filePath, "utf-8"));
+
+    // Heal file-level permission drift: tighten group/world bits.
+    try {
+      const stat = fs.statSync(filePath);
+      if ((stat.mode & 0o077) !== 0) {
+        fs.chmodSync(filePath, 0o600);
+      }
+    } catch {
+      // Best effort — don't fail the read if we can't heal permissions.
+    }
+
+    return content;
   } catch (error) {
     const errnoError = error instanceof Error ? error : null;
     if (isPermissionError(errnoError)) {
