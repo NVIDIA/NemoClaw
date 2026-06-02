@@ -18,6 +18,7 @@
 //   NEMOCLAW_MESSAGING_ALLOWED_IDS_B64, NEMOCLAW_DISCORD_GUILDS_B64,
 //   NEMOCLAW_TELEGRAM_CONFIG_B64, NEMOCLAW_WECHAT_CONFIG_B64,
 //   NEMOCLAW_SLACK_CONFIG_B64, NEMOCLAW_DISABLE_DEVICE_AUTH,
+//   NEMOCLAW_EXTRA_AGENTS_JSON_B64,
 //   NEMOCLAW_PROXY_HOST, NEMOCLAW_PROXY_PORT,
 //   NEMOCLAW_OPENCLAW_MANAGED_PROXY, NEMOCLAW_WEB_SEARCH_ENABLED.
 
@@ -454,6 +455,93 @@ function coerceCompatDict(value: unknown): JsonObject {
   throw new Error("NEMOCLAW_INFERENCE_COMPAT_B64 must decode to a JSON object or null");
 }
 
+// Canonical primary-agent entry. Always written first into agents.list, always
+// flagged default: true. Pinning the slot here prevents NEMOCLAW_EXTRA_AGENTS_JSON
+// from displacing the primary agent (issue #4562): OpenClaw's
+// resolveDefaultAgentId falls back to agents[0] when no entry carries
+// default: true, so a wholesale list replacement would silently re-elect the
+// first extra agent.
+//
+// The entry intentionally omits workspace/agentDir so OpenClaw applies its
+// built-in defaults (and so the host-side migration-state collector does not
+// register a phantom host root for the in-sandbox path).
+const MAIN_AGENT_ID = "main";
+const MAIN_AGENT_ENTRY: Readonly<JsonObject> = Object.freeze({
+  id: MAIN_AGENT_ID,
+  default: true,
+});
+const AGENT_ID_RE = /^[a-z][a-z0-9_-]{0,31}$/;
+// Secondary agent paths must live under the canonical state dir
+// (/sandbox/.openclaw/). The runtime startup script (scripts/nemoclaw-start.sh
+// :: provision_agent_workspaces) discovers /sandbox/.openclaw/workspace-* and
+// chowns them sandbox:sandbox on first boot. The legacy /sandbox/.openclaw-data
+// path is migrated away on start, so it cannot host live agent state.
+const AGENT_DATA_ROOT = "/sandbox/.openclaw/";
+
+function validateExtraAgents(value: unknown): JsonObject[] {
+  if (value === null || value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw new Error(
+      "NEMOCLAW_EXTRA_AGENTS_JSON must decode to a JSON array of agent objects",
+    );
+  }
+  const seenIds = new Set<string>([MAIN_AGENT_ID]);
+  return value.map((entry, index) => {
+    if (!isObject(entry)) {
+      throw new Error(
+        `NEMOCLAW_EXTRA_AGENTS_JSON[${index}] must be a JSON object`,
+      );
+    }
+    const id = entry.id;
+    if (typeof id !== "string" || !AGENT_ID_RE.test(id)) {
+      throw new Error(
+        `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].id must match ${AGENT_ID_RE} (1-32 chars, lowercase alphanumeric, dash, underscore; must start with a letter)`,
+      );
+    }
+    if (id === MAIN_AGENT_ID) {
+      throw new Error(
+        `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].id "${MAIN_AGENT_ID}" is reserved for the primary agent; use a different id`,
+      );
+    }
+    if (seenIds.has(id)) {
+      throw new Error(
+        `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].id "${id}" is duplicated; agent ids must be unique`,
+      );
+    }
+    seenIds.add(id);
+    for (const pathKey of ["workspace", "agentDir"] as const) {
+      const pathValue = entry[pathKey];
+      if (typeof pathValue !== "string" || pathValue.length === 0) {
+        throw new Error(
+          `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].${pathKey} must be a non-empty string`,
+        );
+      }
+      if (!isAbsolute(pathValue)) {
+        throw new Error(
+          `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].${pathKey} must be an absolute path, got "${pathValue}"`,
+        );
+      }
+      if (!pathValue.startsWith(AGENT_DATA_ROOT)) {
+        throw new Error(
+          `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].${pathKey} must be under ${AGENT_DATA_ROOT}, got "${pathValue}"`,
+        );
+      }
+    }
+    if (entry.default === true) {
+      throw new Error(
+        `NEMOCLAW_EXTRA_AGENTS_JSON[${index}].default cannot be true; the primary "${MAIN_AGENT_ID}" agent is always the default`,
+      );
+    }
+    return entry;
+  });
+}
+
+function buildAgentsList(extras: JsonObject[]): JsonObject[] {
+  return [{ ...MAIN_AGENT_ENTRY }, ...extras];
+}
+
 function applyOpenClawSetupEffects(
   setup: JsonObject,
   inferenceCompat: JsonObject,
@@ -557,6 +645,9 @@ export function buildConfig(env: Env = process.env): JsonObject {
 
   const inferenceCompat = coerceCompatDict(
     decodeJsonEnv(env, "NEMOCLAW_INFERENCE_COMPAT_B64", "e30="),
+  );
+  const extraAgents = validateExtraAgents(
+    decodeJsonEnv(env, "NEMOCLAW_EXTRA_AGENTS_JSON_B64", "W10="),
   );
   const openclawPlugins: JsonObject[] = [];
   const openclawPluginIds = new Set<string>();
@@ -773,7 +864,7 @@ export function buildConfig(env: Env = process.env): JsonObject {
   };
 
   const config: JsonObject = {
-    agents: { defaults: agentDefaults },
+    agents: { defaults: agentDefaults, list: buildAgentsList(extraAgents) },
     models: { mode: "merge", providers },
     channels: { defaults: {}, ...channelConfig },
     tools: openclawTools,

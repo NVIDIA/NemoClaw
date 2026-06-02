@@ -250,5 +250,33 @@ export function patchStagedDockerfile(
       `ARG NEMOCLAW_HERMES_TOOL_GATEWAY_PRESETS_B64=${encodeSanitizedDockerJsonArg(hermesToolGateways)}`,
     );
   }
+  // NEMOCLAW_EXTRA_AGENTS_JSON — define secondary OpenClaw agents to bake into
+  // agents.list[] alongside the canonical "main" entry. Refs #4560, #4562. The
+  // host-side parse only checks that the value is a non-empty JSON array; deep
+  // validation (id format, sandbox-rooted paths, no main override, no
+  // duplicates) happens in scripts/generate-openclaw-config.mts so a malformed
+  // entry fails the build with a clear error instead of producing a silently
+  // broken config.
+  const extraAgentsRaw = process.env.NEMOCLAW_EXTRA_AGENTS_JSON;
+  if (extraAgentsRaw && extraAgentsRaw.trim()) {
+    try {
+      const parsed = JSON.parse(extraAgentsRaw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        dockerfile = dockerfile.replace(
+          /^ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=.*$/m,
+          `ARG NEMOCLAW_EXTRA_AGENTS_JSON_B64=${encodeSanitizedDockerJsonArg(parsed)}`,
+        );
+      } else {
+        console.error(
+          "[onboard] NEMOCLAW_EXTRA_AGENTS_JSON must be a non-empty JSON array; ignoring.",
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(
+        `[onboard] NEMOCLAW_EXTRA_AGENTS_JSON is not valid JSON (${message}); ignoring.`,
+      );
+    }
+  }
   fs.writeFileSync(dockerfilePath, dockerfile);
 }
